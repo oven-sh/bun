@@ -42,7 +42,7 @@ export default [
       flop: { fn: "doFlop", length: 0 },
       modulate: { fn: "doModulate", length: 1 },
       // Chainable output-format setters (Sharp-style); the encode happens
-      // when a terminal below is awaited.
+      // when a terminal below is called.
       jpeg: { fn: "doFormatJpeg", length: 1 },
       png: { fn: "doFormatPng", length: 1 },
       webp: { fn: "doFormatWebp", length: 1 },

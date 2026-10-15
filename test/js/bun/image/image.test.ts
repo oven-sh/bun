@@ -1,6 +1,7 @@
 import { S3Client } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
+import { closeSync, openSync } from "node:fs";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -193,17 +194,211 @@ describe("Bun.Image", () => {
     expect((await res.bytes()).subarray(8, 12)).toEqual(Buffer.from("WEBP"));
   });
 
+  // A terminal works on the pipeline as it is when the terminal is called. A
+  // Bun.file() source reads its bytes first; chainable calls made during that
+  // read belong to the next terminal, the same as for every other source.
+  describe("a terminal uses the pipeline from its own call", () => {
+    // Asymmetric and coloured, so every slot (resize, rotate, flip, flop,
+    // modulate, format) that comes from the wrong call changes the output.
+    const src = makePng(16, 12, (x, y) => [x * 16, y * 20, (x ^ y) * 16, 255]);
+    // `src` after another image: a slice that starts at `src` must not see the first one.
+    const other = makePng(20, 30, (x, y) => [y * 8, x * 12, 99, 255]);
+    const srcDir = () =>
+      tempDir("image-terminal-state", { "src.png": Buffer.from(src), "after-other.png": Buffer.concat([other, src]) });
+    const changeEverySlot = (img: Bun.Image) =>
+      img.resize(5, 10).rotate(90).flip().flop().modulate({ brightness: 0.5, saturation: 0 }).jpeg();
+    // `out` is what `.resize(8, 4).png()` gives, with nothing from a later call.
+    const expectFirstState = async (out: Uint8Array) => {
+      expect(await new Bun.Image(out).metadata()).toEqual({ width: 8, height: 4, format: "png" });
+      expect(out).toEqual(await new Bun.Image(src).resize(8, 4).png().bytes());
+    };
+
+    const sources: Record<string, (dir: string) => Bun.Image> = {
+      "Uint8Array": () => new Bun.Image(src),
+      "path string": dir => new Bun.Image(join(dir, "src.png")),
+      "in-memory Blob": () => new Bun.Image(new Blob([src])),
+      "Bun.file()": dir => Bun.file(join(dir, "src.png")).image(),
+      "new Bun.Image(Bun.file())": dir => new Bun.Image(Bun.file(join(dir, "src.png"))),
+      "Bun.file().slice()": dir => Bun.file(join(dir, "after-other.png")).slice(other.length).image(),
+    };
+    test.each(Object.keys(sources))("%s source", async name => {
+      using dir = srcDir();
+      const img = sources[name](String(dir));
+
+      const first = img.resize(8, 4).png().bytes();
+      changeEverySlot(img);
+      const second = img.bytes();
+
+      await expectFirstState(await first);
+      // The later calls are not lost: the next terminal has them.
+      expect(await new Bun.Image(await second).metadata()).toEqual({ width: 5, height: 10, format: "jpeg" });
+    });
+
+    test("Bun.file(fd) source", async () => {
+      using dir = srcDir();
+      const fd = openSync(join(String(dir), "src.png"), "r");
+      try {
+        const img = Bun.file(fd).image();
+        // One terminal in flight: each terminal starts its own read, and a
+        // second read of this fd would start where the first one ended.
+        const first = img.resize(8, 4).png().bytes();
+        changeEverySlot(img);
+        await expectFirstState(await first);
+        expect(await new Bun.Image(await img.bytes()).metadata()).toEqual({ width: 5, height: 10, format: "jpeg" });
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    // Each returns the encoded bytes that the terminal produced.
+    const terminals: Record<string, (img: Bun.Image, dir: string) => Promise<Uint8Array>> = {
+      bytes: img => img.bytes(),
+      buffer: img => img.buffer(),
+      blob: async img => (await img.blob()).bytes(),
+      toBase64: async img => Buffer.from(await img.toBase64(), "base64"),
+      dataurl: async img => Buffer.from((await img.dataurl()).replace("data:image/png;base64,", ""), "base64"),
+      write: async (img, dir) => {
+        const dest = join(dir, "out.png");
+        await img.write(dest);
+        return await Bun.file(dest).bytes();
+      },
+    };
+    test.each(Object.keys(terminals))("Bun.file() source, %s()", async name => {
+      using dir = srcDir();
+      const img = Bun.file(join(String(dir), "src.png")).image();
+
+      const pending = terminals[name](img.resize(8, 4).png(), String(dir));
+      changeEverySlot(img);
+
+      await expectFirstState(await pending);
+    });
+
+    test("Bun.file() source, two variants started together from one instance", async () => {
+      using dir = srcDir();
+      const img = Bun.file(join(String(dir), "src.png")).image();
+
+      const [small, large] = await Promise.all([
+        img.resize(8, 4).webp({ lossless: true }).bytes(),
+        img.resize(12, 6).rotate(180).png().bytes(),
+      ]);
+      expect(await new Bun.Image(small).metadata()).toEqual({ width: 8, height: 4, format: "webp" });
+      expect(small).toEqual(await new Bun.Image(src).resize(8, 4).webp({ lossless: true }).bytes());
+      expect(await new Bun.Image(large).metadata()).toEqual({ width: 12, height: 6, format: "png" });
+      expect(large).toEqual(await new Bun.Image(src).resize(12, 6).rotate(180).png().bytes());
+      // The getters show the variant that completed last, whichever that is.
+      expect([
+        [8, 4],
+        [12, 6],
+      ]).toContainEqual([img.width, img.height]);
+    });
+
+    test("Bun.file() source, write() takes the resize and the inferred format from one call", async () => {
+      using dir = srcDir();
+      const img = Bun.file(join(String(dir), "src.png")).image();
+      const dest = join(String(dir), "out.webp");
+
+      // No format call: write() infers WebP from the extension of `dest`.
+      const pending = img.resize(8, 4).write(dest);
+      img.resize(5, 10);
+      await pending;
+      expect(await new Bun.Image(dest).metadata()).toEqual({ width: 8, height: 4, format: "webp" });
+    });
+
+    // placeholder() is of the source. Today a resize slot reaches it through
+    // the JPEG decoder's scale, which is how a late resize changed it.
+    test("Bun.file() source, placeholder() is not changed by a resize chained after the call", async () => {
+      const jpeg = await new Bun.Image(
+        makePng(160, 120, (x, y) => [
+          Math.trunc((x * 255) / 159),
+          Math.trunc((y * 255) / 119),
+          Math.trunc(((x + y) * 255) / 278),
+          255,
+        ]),
+      )
+        .jpeg({ quality: 90 })
+        .bytes();
+      using dir = tempDir("image-terminal-state", { "src.jpg": Buffer.from(jpeg) });
+      const img = Bun.file(join(String(dir), "src.jpg")).image();
+
+      const pending = img.placeholder();
+      img.resize(8, 8);
+      expect(await pending).toBe(await new Bun.Image(jpeg).placeholder());
+    });
+
+    // The body is encoded inside `new Response()`, which also turns the
+    // Bun.file() source into a path source under the read that is in flight.
+    test("Bun.file() source, new Response(image) while a read is pending", async () => {
+      using dir = srcDir();
+      const img = Bun.file(join(String(dir), "src.png")).image();
+
+      const pending = img.resize(8, 4).png().bytes();
+      const res = new Response(img.resize(5, 10).webp({ lossless: true }));
+      changeEverySlot(img);
+
+      await expectFirstState(await pending);
+      expect(res.headers.get("content-type")).toBe("image/webp");
+      expect(await res.bytes()).toEqual(await new Bun.Image(src).resize(5, 10).webp({ lossless: true }).bytes());
+    });
+
+    test("Bun.file() source, a failed read rejects its terminal and the next terminal reads again", async () => {
+      using dir = tempDir("image-terminal-state", {});
+      const path = join(String(dir), "later.png");
+      const img = Bun.file(path).image();
+
+      const failed = img.resize(8, 4).png().bytes();
+      changeEverySlot(img);
+      await expect(failed).rejects.toMatchObject({ code: "ENOENT" });
+      expect([img.width, img.height]).toEqual([-1, -1]);
+
+      await Bun.write(path, src);
+      expect(await new Bun.Image(await img.bytes()).metadata()).toEqual({ width: 5, height: 10, format: "jpeg" });
+      expect([img.width, img.height]).toEqual([5, 10]);
+    });
+
+    // write() reads the extension of `dest` when no format was chained. A
+    // String object is accepted as a path, and its toString() is user code
+    // that can chain on the same image, for every kind of source.
+    test.each(["Uint8Array", "Bun.file()"])(
+      "%s source, write(dest) whose toString() chains on the image gives one state",
+      async source => {
+        using dir = srcDir();
+        const img = source === "Uint8Array" ? new Bun.Image(src) : Bun.file(join(String(dir), "src.png")).image();
+        const out = join(String(dir), "out.webp");
+        let calls = 0;
+        const dest = new String(out);
+        dest.toString = () => {
+          if (calls++ === 0) img.resize(20, 20).jpeg();
+          return out;
+        };
+        await img.resize(10, 10).write(dest as any);
+        // Not a 20x20 WebP: that is the extension from before toString() and
+        // the resize from after it.
+        expect(await new Bun.Image(out).metadata()).toEqual({ width: 20, height: 20, format: "jpeg" });
+      },
+    );
+  });
+
   // Store-backed Blob sources are read at terminal time through the Blob's
   // own store dispatch. The Bun.file() test above covers the file store; this
   // covers the S3 download callback (bytes and error arm) and the synchronous
   // in-memory delivery.
   test("S3 and zero-length in-memory Blob sources are read through the same chain", async () => {
+    const png = () => new Response(cornersPng, { headers: { "Content-Type": "image/png" } });
+    // `held.png` is answered only when the test opens the gate.
+    const held = { requests: 0, arrived: Promise.withResolvers<void>(), gate: Promise.withResolvers<void>() };
+    let lateExists = false;
     using server = Bun.serve({
       port: 0,
-      fetch(req) {
+      async fetch(req) {
         const { pathname } = new URL(req.url);
-        if (req.method === "GET" && pathname.endsWith("/src.png")) {
-          return new Response(cornersPng, { headers: { "Content-Type": "image/png" } });
+        if (req.method !== "GET") return new Response("", { status: 404 });
+        if (pathname.endsWith("/src.png")) return png();
+        if (pathname.endsWith("/late.png") && lateExists) return png();
+        if (pathname.endsWith("/held.png")) {
+          held.requests++;
+          held.arrived.resolve();
+          await held.gate.promise;
+          return png();
         }
         return new Response("", { status: 404 });
       },
@@ -230,6 +425,23 @@ describe("Bun.Image", () => {
       expect((await fromS3.png().bytes())[0]).toBe(0x89);
       expect(await client.file("src.png").image().metadata()).toEqual({ width: 4, height: 3, format: "png" });
 
+      // Chainable calls made during the download belong to the next terminal.
+      // The server holds the response, so they run with the request on the
+      // wire, not in the tick of the terminal call.
+      const downloading = client.file("held.png").image();
+      const pending = downloading.resize(2, 1).png().bytes();
+      await held.arrived.promise;
+      downloading.resize(3, 3).rotate(90).jpeg();
+      held.gate.resolve();
+      expect(await new Bun.Image(await pending).metadata()).toEqual({ width: 2, height: 1, format: "png" });
+      expect(await new Bun.Image(await downloading.bytes()).metadata()).toEqual({
+        width: 3,
+        height: 3,
+        format: "jpeg",
+      });
+      // One download for the one terminal that needed it.
+      expect(held.requests).toBe(1);
+
       // Download failure rejects the terminal with the S3 error.
       expect(
         await new Bun.Image(client.file("missing.png")).metadata().then(
@@ -237,6 +449,19 @@ describe("Bun.Image", () => {
           (e: any) => e.code,
         ),
       ).toBe("NoSuchKey");
+      // The instance stays usable: the next terminal downloads again.
+      const late = client.file("late.png").image();
+      expect(
+        await late
+          .png()
+          .bytes()
+          .then(
+            () => null,
+            (e: any) => e.code,
+          ),
+      ).toBe("NoSuchKey");
+      lateExists = true;
+      expect(await late.metadata()).toEqual({ width: 4, height: 3, format: "png" });
     } finally {
       for (const k of proxyKeys) process.env[k] = savedProxyEnv[k] ?? "";
     }
@@ -1201,6 +1426,52 @@ describe("Bun.Image", () => {
       expect((await out3.bytes())[0]).toBe(0x89);
       // 4. fs error propagates from Bun.write, not the Image layer.
       await expect(new Bun.Image(cornersPng).png().write(String(dir))).rejects.toThrow();
+    });
+
+    test(".write(dest): the extension decides only the format of that write", async () => {
+      using dir = tempDir("image-write-extension", {});
+      const paths = {
+        // Not an encode target: the source format is kept.
+        decodeOnly: join(String(dir), "out.gif"),
+        // A BunFile destination carries no extension contract.
+        bunFile: join(String(dir), "file.webp"),
+        inferred: join(String(dir), "out.webp"),
+      };
+      await new Bun.Image(cornersPng).write(paths.decodeOnly);
+      await new Bun.Image(cornersPng).write(Bun.file(paths.bunFile));
+      const img = new Bun.Image(cornersPng);
+      await img.write(paths.inferred);
+      // The inferred format is not recorded on the instance.
+      const next = await img.bytes();
+
+      const format = async (input: string | Uint8Array) => (await new Bun.Image(input).metadata()).format;
+      expect({
+        decodeOnly: await format(paths.decodeOnly),
+        bunFile: await format(paths.bunFile),
+        inferred: await format(paths.inferred),
+        next: await format(next),
+      }).toEqual({ decodeOnly: "png", bunFile: "png", inferred: "webp", next: "png" });
+    });
+
+    test(".write(dest): a chained format beats the extension, and `dest` is not coerced during the call", async () => {
+      using dir = tempDir("image-write-string", {});
+      const out = join(String(dir), "out.webp");
+      let calls = 0;
+      const dest = new String(out);
+      dest.toString = () => (calls++, out);
+      await new Bun.Image(cornersPng).png().write(dest as any);
+      expect(calls).toBe(1);
+      expect(await new Bun.Image(out).metadata()).toMatchObject({ format: "png" });
+
+      // So a toString() that throws fails the write, not the call.
+      const throwing = new String(out);
+      throwing.toString = () => {
+        throw new Error("dest.toString()");
+      };
+      const pending = new Bun.Image(cornersPng).png().write(throwing as any);
+      await expect(pending).rejects.toThrow("dest.toString()");
+      // With no format chained the extension is read during the call.
+      expect(() => new Bun.Image(cornersPng).write(throwing as any)).toThrow("dest.toString()");
     });
 
     test(".write(dest) refuses the Blob destinations Bun.write refuses, with the same error", async () => {

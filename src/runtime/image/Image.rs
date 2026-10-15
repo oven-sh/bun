@@ -6,7 +6,7 @@
 //! write one slot of `Pipeline` and return `this` — there is no op list, so
 //! calling a setter twice overwrites. The actual decode → transform → encode
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
-//! `toBase64`/`metadata`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
+//! `toBase64`/`metadata`) is called, as a `bun_jsc::Job` (`PipelineTask`).
 
 use core::cell::Cell;
 use core::mem;
@@ -961,7 +961,12 @@ impl Image {
                 }
             }
         }
-        self.schedule(&cx, callframe.this(), Kind::Metadata, Deliver::Uint8Array)
+        self.schedule(
+            &cx,
+            callframe.this(),
+            Request::Metadata,
+            Deliver::Uint8Array,
+        )
     }
 
     #[bun_jsc::host_fn(method)]
@@ -970,7 +975,7 @@ impl Image {
         self.schedule(
             &cx,
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Request::Encode { inferred: None },
             Deliver::Uint8Array,
         )
     }
@@ -981,7 +986,7 @@ impl Image {
         self.schedule(
             &cx,
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Request::Encode { inferred: None },
             Deliver::Buffer,
         )
     }
@@ -992,7 +997,7 @@ impl Image {
         self.schedule(
             &cx,
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Request::Encode { inferred: None },
             Deliver::Blob,
         )
     }
@@ -1007,7 +1012,7 @@ impl Image {
         self.schedule(
             &cx,
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Request::Encode { inferred: None },
             Deliver::Base64,
         )
     }
@@ -1020,7 +1025,7 @@ impl Image {
         self.schedule(
             &cx,
             cf.this(),
-            Kind::Encode(self.pipeline.get().output),
+            Request::Encode { inferred: None },
             Deliver::DataUrl,
         )
     }
@@ -1049,7 +1054,7 @@ impl Image {
                 )));
             }
         }
-        self.schedule(&cx, cf.this(), Kind::Placeholder, Deliver::DataUrl)
+        self.schedule(&cx, cf.this(), Request::Placeholder, Deliver::DataUrl)
     }
 
     /// Terminal: encode and write to `path` on the work pool (no round-trip of
@@ -1068,11 +1073,12 @@ impl Image {
             )));
         }
 
-        let mut output = self.pipeline.get().output;
+        let mut inferred = None;
         // Extension inference only when dest is a plain string. BunFile/S3 dests
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
-        if output.is_none() && args[0].is_string() {
+        // Only a peek: coercing `dest` can run user code, so `spec()` reads the format after it.
+        if self.pipeline.get().output.is_none() && args[0].is_string() {
             let str = args[0].to_bun_string(global)?;
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
@@ -1083,12 +1089,7 @@ impl Image {
                     | codecs::Format::Png
                     | codecs::Format::Webp
                     | codecs::Format::Heic
-                    | codecs::Format::Avif => {
-                        output = Some(codecs::EncodeOptions {
-                            format: f,
-                            ..Default::default()
-                        });
-                    }
+                    | codecs::Format::Avif => inferred = Some(f),
                     _ => {}
                 }
             }
@@ -1096,23 +1097,55 @@ impl Image {
         self.schedule(
             &cx,
             cf.this(),
-            Kind::Encode(output),
+            Request::Encode { inferred },
             Deliver::WriteDest(Strong::create(args[0], global)),
         )
     }
 }
 
 impl Image {
+    /// The pipeline and the options of one operation, copied once, when its terminal is called.
+    fn spec(&self, request: Request) -> Spec {
+        let pipeline = self.pipeline.get();
+        Spec {
+            pipeline,
+            kind: match request {
+                Request::Encode { inferred } => Kind::Encode(pipeline.output.or(inferred.map(
+                    |format| codecs::EncodeOptions {
+                        format,
+                        ..Default::default()
+                    },
+                ))),
+                Request::Metadata => Kind::Metadata,
+                Request::Placeholder => Kind::Placeholder,
+            },
+            max_pixels: self.max_pixels,
+            auto_orient: self.auto_orient,
+        }
+    }
+
     fn schedule(
         &self,
         cx: &bun_jsc::JsThread<'_>,
         this_value: JSValue,
-        kind: Kind,
+        request: Request,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
+        let spec = self.spec(request);
         if matches!(self.source.get(), Source::Blob(_)) {
-            return BlobReadChain::start(self, cx, this_value, kind, deliver);
+            return BlobReadChain::start(self, cx, this_value, spec, deliver);
         }
+        self.dispatch(cx, this_value, spec, deliver)
+    }
+
+    /// Pin the input and queue the job for a source whose bytes exist.
+    fn dispatch(
+        &self,
+        cx: &bun_jsc::JsThread<'_>,
+        this_value: JSValue,
+        spec: Spec,
+        deliver: Deliver,
+    ) -> JsResult<JSValue> {
         let (input, pin) = match self.pin_for_task(this_value, cx.global()) {
             Ok(i) => i,
             Err(PinError::Detached) => {
@@ -1128,19 +1161,12 @@ impl Image {
                 .as_value(cx.global()));
             }
         };
-        let work = PipelineTask {
-            pipeline: self.pipeline.get(),
-            input,
-            kind,
-            max_pixels: self.max_pixels,
-            auto_orient: self.auto_orient,
-            result: TaskResult::Err(codecs::Error::DecodeFailed),
-        };
         let promise = jsc::JSPromiseStrong::init(cx.global());
         let promise_value = promise.value();
-        jsc::Job::<PipelineTask>::schedule(
+        PipelineTask::launch(
             cx,
-            work,
+            spec,
+            input,
             PipelineJs {
                 promise,
                 deliver,
@@ -1202,14 +1228,7 @@ impl Image {
             }
         };
         // `_pin` unpins at scope exit, after `run()` is done with the bytes.
-        let mut task = PipelineTask {
-            pipeline: self.pipeline.get(),
-            input,
-            kind: Kind::Encode(self.pipeline.get().output),
-            max_pixels: self.max_pixels,
-            auto_orient: self.auto_orient,
-            result: TaskResult::Err(codecs::Error::DecodeFailed),
-        };
+        let mut task = PipelineTask::new(self.spec(Request::Encode { inferred: None }), input);
         task.run();
         let result = mem::replace(
             &mut task.result,
@@ -1237,7 +1256,7 @@ impl Image {
 /// `.blob` source: ask the Blob for its bytes via the store-agnostic
 /// `Blob.readBytesToHandler` (file → ReadFile/ReadFileUV, S3 → S3.download,
 /// memory → dupe), receive the owned `[]u8` directly — never wrapped in a
-/// JSValue — swap it into `image.source = .owned`, and re-enter `schedule()`.
+/// JSValue — swap it into `image.source = .owned`, and `dispatch()` the job.
 /// Promise-of-promise flattens, so the caller sees one `await` for
 /// read+decode+ops+encode. After the first read, subsequent terminals on the
 /// same instance reuse the `.owned` bytes without re-reading.
@@ -1246,7 +1265,7 @@ struct BlobReadChain<'a> {
     global: &'a JSGlobalObject,
     /// The context of the script that asked: the task the read is followed by is that script's.
     context: jsc::ContextId,
-    kind: Kind,
+    spec: Spec,
     deliver: Deliver,
     outer: jsc::JSPromiseStrong,
 }
@@ -1256,7 +1275,7 @@ impl<'a> BlobReadChain<'a> {
         image: &Image,
         cx: &bun_jsc::JsThread<'a>,
         this_value: JSValue,
-        kind: Kind,
+        spec: Spec,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
         // `deliver` may carry a `.write_dest` Strong; on these defensive
@@ -1288,7 +1307,7 @@ impl<'a> BlobReadChain<'a> {
             image: std::ptr::from_ref::<Image>(image),
             global: cx.global(),
             context: cx.context().id(),
-            kind,
+            spec,
             deliver,
             outer: jsc::JSPromiseStrong::init(cx.global()),
         });
@@ -1314,7 +1333,7 @@ impl<'a> BlobReadChain<'a> {
         // mutation goes through `Cell`/`JsCell`.
         let image = unsafe { &*self.image };
         let mut outer = self.outer;
-        let kind = self.kind;
+        let spec = self.spec;
         let deliver = self.deliver;
         // `bun.destroy(self)` — Box drops at end of scope.
 
@@ -1332,7 +1351,7 @@ impl<'a> BlobReadChain<'a> {
                 // `.owned`; that buffer is then *borrowed* by `pin_for_task`
                 // into a worker-thread PipelineTask. A later resolver MUST NOT
                 // drop the source (it would free what the worker is reading)
-                // — drop the redundant read instead and re-enter `schedule()`
+                // — drop the redundant read instead and `dispatch()`
                 // on the already-swapped source.
                 if matches!(image.source.get(), Source::Blob(_)) {
                     image.source.set(Source::Owned(bytes));
@@ -1348,12 +1367,12 @@ impl<'a> BlobReadChain<'a> {
                         ))),
                     );
                 };
-                // Source is now `.owned`; this re-entry takes the regular path. If `schedule()` threw,
+                // Source is now `.owned`; `dispatch()` takes the regular path. If it threw,
                 // `deliver` was already dropped there and the pending exception is the rejection.
-                let inner = image.schedule(
+                let inner = image.dispatch(
                     &global.js_thread(global.bun_vm().context_of(self.context)),
                     this_value,
-                    kind,
+                    spec,
                     deliver,
                 );
                 outer.settle(global, inner)
@@ -1374,6 +1393,24 @@ impl<'a> ReadBytesHandler for BlobReadChain<'a> {
         let boxed = unsafe { bun_core::heap::take(this) };
         boxed.on_read_bytes_impl(result)
     }
+}
+
+/// What a terminal asks for. `Image::spec` resolves it against the `Image`.
+enum Request {
+    /// `inferred`: the format of `write(dest)`'s extension, used when no format method was chained.
+    Encode {
+        inferred: Option<codecs::Format>,
+    },
+    Metadata,
+    Placeholder,
+}
+
+/// What `Image::spec` copies out of the `Image` for one operation.
+struct Spec {
+    pipeline: Pipeline,
+    kind: Kind,
+    max_pixels: u64,
+    auto_orient: bool,
 }
 
 /// The pool-side work of one `Image` operation: decode → pipeline → encode
@@ -1538,6 +1575,29 @@ pub(crate) enum TaskResult {
 }
 
 impl PipelineTask {
+    /// JS thread: queue one operation. `js.image` keeps the bytes that `input` borrows alive.
+    fn launch(cx: &jsc::JsThread<'_>, spec: Spec, input: Input, js: PipelineJs) {
+        jsc::Job::<PipelineTask>::schedule(cx, Self::new(spec, input), js);
+    }
+
+    /// The only constructor: everything but `input` comes from the terminal call's `Spec`.
+    fn new(spec: Spec, input: Input) -> Self {
+        let Spec {
+            pipeline,
+            kind,
+            max_pixels,
+            auto_orient,
+        } = spec;
+        Self {
+            pipeline,
+            input,
+            kind,
+            max_pixels,
+            auto_orient,
+            result: TaskResult::Err(codecs::Error::DecodeFailed),
+        }
+    }
+
     /// Runs on a `WorkPool` thread. No JSC access.
     pub(crate) fn run(&mut self) {
         // `self.input` was prepared on the JS thread by `pin_for_task`: either a

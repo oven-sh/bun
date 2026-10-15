@@ -859,7 +859,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // handler ran: Node.js hands the socket over with no listeners and
             // tests assert socket.listenerCount("close") === 0 there.
             const promise = $newPromise();
-            socket.once("close", resolveHandoffPromise.$bind(undefined, promise));
+            socket.once("close", $bindFunction.$call(resolveHandoffPromise, undefined, promise));
             return promise;
           } else {
             // Node.js will close the socket and will NOT respond with 400 Bad Request
@@ -1099,7 +1099,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // machinery; hold the native callback open until the raw socket
           // closes.
           const upgradePromise = $newPromise();
-          socket.once("close", resolveHandoffPromise.$bind(undefined, upgradePromise));
+          socket.once("close", $bindFunction.$call(resolveHandoffPromise, undefined, upgradePromise));
           return upgradePromise;
         } else if (rejectMissingHost) {
           http_res.writeHead(400, { Connection: "close" });

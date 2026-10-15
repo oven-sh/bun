@@ -63,7 +63,7 @@ const { deprecate } = require("internal/util/deprecate");
 const SymbolDispose = Symbol.dispose;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const ObjectDefineProperty = Object.defineProperty;
-const FunctionPrototypeBind = Function.prototype.$bind;
+const FunctionPrototypeBind = $bindFunction;
 
 // Mirrors Node's SystemError shape for ERR_SOCKET_BUFFER_SIZE: name
 // "SystemError", an enumerable `info` object, errno/syscall accessors that

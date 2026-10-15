@@ -1685,6 +1685,92 @@ describe("bundler", () => {
     inLoop: "b,b,b",
     inTry: ["2,4", "2,4", "undefined,4"],
   });
+  // A block-level function is not a `var` too when a parameter has its name
+  // (ECMA-262 Annex B.3.3.1). The expected output is what node prints for
+  // "parameter.cjs".
+  const parameterName = {
+    "/entry.js": /* js */ `
+      import rows from "./parameter.cjs";
+      console.log(JSON.stringify(rows));
+    `,
+    "/parameter.cjs": /* js */ `
+      const S = f => (typeof f === "function" ? f() : String(f));
+      function block(f) { { function f() { return 1 } } return S(f); }
+      function ifBlock(f, c) { if (c) { function f() { return 1 } } return S(f); }
+      function clause(f, k) { switch (k) { case 1: function f() { return 1 } break; case 2: break; } return S(f); }
+      function twoClauses(f, k) { switch (k) { case 1: function f() { return 1 } break; case 2: function f() { return 2 } break; } return S(f); }
+      function twoInBlock(f) { x: { function f() { return 1 } break x; function f() { return 2 } } return S(f); }
+      function varToo(f) { var f; { function f() { return 1 } } return S(f); }
+      function defaultValue(f = "D") { { function f() { return 1 } } return S(f); }
+      function destructured({ f }) { { function f() { return 1 } } return S(f); }
+      function rest(...f) { { function f() { return 1 } } return S(f); }
+      function functionToo(f) { function f() { return 0 } { function f() { return 1 } } return S(f); }
+      var arrow = f => { { function f() { return 1 } } return S(f); };
+      var object = { method(f) { { function f() { return 1 } } return S(f); } };
+      function catchParameter(f) { try { throw 0; } catch (f) { { function f() { return 1 } } return S(f); } }
+      function afterCatch(f) { try { throw 0; } catch (f) { { function f() { return 1 } } } return S(f); }
+      function readInside(f) { var inside; { inside = typeof f; function f() { return 1 } } return inside + "," + S(f); }
+      function loop(f) { for (var i = 0; i < 2; i++) { function f() { return 1 } } return S(f); }
+      function nestedBlocks(f) { { { { function f() { return 1 } } } } return S(f); }
+      function tryBlock(f) { try { function f() { return 1 } } finally { } return S(f); }
+      function catchBlock(f) { try { throw 0; } catch (e) { function f() { return 1 } } return S(f); }
+      function finallyBlock(f) { try { } finally { function f() { return 1 } } return S(f); }
+      function ifBody(f) { if (true) function f() { return 1 } return S(f); }
+      function labelledInBlock(f) { { x: function f() { return 1 } } return S(f); }
+      function labelledInClause(f, k) { switch (k) { case 1: x: function f() { return 1 } } return S(f); }
+      // These are not a parameter and a function in a block.
+      function noParameter(g) { { function f() { return 1 } } return S(f); }
+      function nestedFunction(f) { return (function () { { function f() { return 1 } } return S(f); })() + "," + S(f); }
+      function outerParameter(f) { var g = function (q) { { function f() { return 1 } } return S(f); }; return g() + "," + S(f); }
+      var functionExpressionName = function f() { var before = typeof f; { function f() { return 1 } } return before + "," + S(f); };
+      function functionLevel(f) { function f() { return 1 } return S(f); }
+      function labelledAtFunctionLevel(f) { x: function f() { return 1 } return S(f); }
+      function twoLabels(f) { x: y: function f() { return 1 } return S(f); }
+      module.exports = {
+        block: block("P"), ifBlock: [ifBlock("P", true), ifBlock("P", false)], clause: [clause("P", 1), clause("P", 2)],
+        twoClauses: [twoClauses("P", 1), twoClauses("P", 2), twoClauses("P", 3)], twoInBlock: twoInBlock("P"), varToo: varToo("P"),
+        defaultValue: [defaultValue("P"), defaultValue()], destructured: destructured({ f: "P" }), rest: rest("P"), functionToo: functionToo("P"),
+        arrow: arrow("P"), method: object.method("P"), catchParameter: catchParameter("P"), afterCatch: afterCatch("P"), readInside: readInside("P"),
+        loop: loop("P"), nestedBlocks: nestedBlocks("P"), tryBlock: tryBlock("P"), catchBlock: catchBlock("P"),
+        finallyBlock: finallyBlock("P"), ifBody: ifBody("P"), labelledInBlock: labelledInBlock("P"), labelledInClause: labelledInClause("P", 1),
+        noParameter: noParameter("P"), nestedFunction: nestedFunction("P"), outerParameter: outerParameter("P"),
+        functionExpressionName: functionExpressionName(), functionLevel: functionLevel("P"), labelledAtFunctionLevel: labelledAtFunctionLevel("P"),
+        twoLabels: twoLabels("P"),
+      };
+    `,
+  };
+  const parameterNameOutput = JSON.stringify({
+    block: "P",
+    ifBlock: ["P", "P"],
+    clause: ["P", "P"],
+    twoClauses: ["P", "P", "P"],
+    twoInBlock: "P",
+    varToo: "P",
+    defaultValue: ["P", "D"],
+    destructured: "P",
+    rest: "P",
+    functionToo: 0,
+    arrow: "P",
+    method: "P",
+    catchParameter: "0",
+    afterCatch: "P",
+    readInside: "function,P",
+    loop: "P",
+    nestedBlocks: "P",
+    tryBlock: "P",
+    catchBlock: "P",
+    finallyBlock: "P",
+    ifBody: "P",
+    labelledInBlock: "P",
+    labelledInClause: "P",
+    noParameter: 1,
+    nestedFunction: "1,P",
+    outerParameter: "1,P",
+    functionExpressionName: "undefined,1",
+    functionLevel: 1,
+    labelledAtFunctionLevel: 1,
+    twoLabels: 1,
+  });
   for (const format of ["esm", "cjs", "iife"] as const) {
     for (const [name, minify] of [
       ["", {}],
@@ -1696,6 +1782,12 @@ describe("bundler", () => {
         format,
         ...minify,
         run: { stdout: declaredTwiceOutput },
+      });
+      itBundled(`extra/FunctionHoistingParameterName${format.toUpperCase()}${name}`, {
+        files: parameterName,
+        format,
+        ...minify,
+        run: { stdout: parameterNameOutput },
       });
     }
   }

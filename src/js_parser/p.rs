@@ -3716,6 +3716,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     && (scope_kind == js_ast::scope::Kind::Entry
                                         || scope_kind == js_ast::scope::Kind::FunctionBody))
                             {
+                                // A block-level function is not a "var" too when a parameter
+                                // has its name (ECMA-262 Annex B.3.3.1).
+                                if is_sloppy_mode_block_level_fn_stmt
+                                    && __scope.is_some_and(|ancestor| {
+                                        self.is_parameter_name_for_block_fn(
+                                            scope,
+                                            ancestor,
+                                            name,
+                                            hash.unwrap(),
+                                        )
+                                    })
+                                {
+                                    let _ = self
+                                        .hoisted_ref_for_sloppy_mode_block_fn
+                                        .remove(&original_member_ref);
+                                    continue 'next_member;
+                                }
+
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
                                 if self.symbols[symbol_idx].must_not_be_renamed() {
@@ -3820,6 +3838,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.hoist_symbols(*child);
             }
         }
+    }
+
+    /// Whether a parameter of the function that encloses `ancestor` has the name of a
+    /// function declared in the block `scope`. A labelled function at function level is not
+    /// in a block.
+    #[cold]
+    #[inline(never)]
+    fn is_parameter_name_for_block_fn(
+        &self,
+        scope: js_ast::StoreRef<js_ast::Scope>,
+        ancestor: js_ast::StoreRef<js_ast::Scope>,
+        name: &[u8],
+        hash: u32,
+    ) -> bool {
+        let mut function_scope = ancestor;
+        while !function_scope.kind_stops_hoisting() {
+            let Some(parent) = function_scope.parent else {
+                return false;
+            };
+            function_scope = parent;
+        }
+        if function_scope.kind != js_ast::scope::Kind::FunctionBody {
+            return false;
+        }
+        let mut label = scope;
+        while label.kind == js_ast::scope::Kind::Label {
+            let Some(parent) = label.parent else {
+                return false;
+            };
+            label = parent;
+        }
+        if label == function_scope {
+            return false;
+        }
+        function_scope
+            .parent
+            .and_then(|args| args.get_member_with_hash(name, hash))
+            .is_some_and(|member| {
+                self.symbols[member.ref_.inner_index() as usize].kind
+                    == js_ast::symbol::Kind::Hoisted
+            })
     }
 
     #[inline]

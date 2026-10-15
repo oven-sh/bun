@@ -963,7 +963,7 @@ impl RowMap {
         }
     }
 
-    fn rows(&self) -> impl Iterator<Item = (Id, DependencyID)> + '_ {
+    fn rows(&self) -> impl core::iter::Iterator<Item = (Id, DependencyID)> + '_ {
         let first = self.first.iter().enumerate();
         first
             .filter_map(|(row, slot)| slot.map(|(tree_id, _)| (tree_id, row as DependencyID)))

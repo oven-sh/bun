@@ -8,6 +8,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, githubTarball, isLinux, isMusl, isWindows, tempDir } from "harness";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -20,6 +21,7 @@ import {
   watch,
   writeFileSync,
 } from "node:fs";
+import { constants } from "node:os";
 import { join } from "node:path";
 
 // Enough files that a kill lands long before linking finishes, even when the
@@ -83,7 +85,7 @@ function serveRegistry(packages: Record<string, RegistryPackage>) {
     port: 0,
     async fetch(request) {
       const { origin, pathname } = new URL(request.url);
-      const name = pathname.slice(1).replace(/-\d\.0\.0\.tgz$/, "");
+      const name = decodeURIComponent(pathname.slice(1)).replace(/-\d\.0\.0\.tgz$/, "");
       const pkg = packages[name];
       if (!pkg) return new Response("not found", { status: 404 });
       if (pathname.endsWith(".tgz")) {
@@ -147,6 +149,7 @@ type Interrupt = { syscall: "linkat" | "unlinkat"; after: number };
 const shimSource = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -161,7 +164,7 @@ static int interrupted(const char *name) {
   if (!syscall_name || strcmp(syscall_name, name) != 0) return 0;
   if (__sync_add_and_fetch(&calls, 1) <= atoi(getenv("STAGING_TEST_AFTER"))) return 0;
   if (getenv("STAGING_TEST_KILL")) kill(getpid(), SIGKILL);
-  errno = ENOSPC;
+  errno = getenv("STAGING_TEST_ERRNO") ? atoi(getenv("STAGING_TEST_ERRNO")) : ENOSPC;
   return 1;
 }
 
@@ -212,12 +215,33 @@ int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpat
   return real_renameat(olddirfd, oldpath, newdirfd, newpath);
 }
 
+static int has_entries(int dirfd, const char *path) {
+  int entries = 0;
+  DIR *dir = fdopendir(openat(dirfd, path, O_RDONLY | O_DIRECTORY));
+  if (!dir) return 0;
+  while (readdir(dir)) entries++;
+  closedir(dir);
+  return entries > 2;
+}
+
+// STAGING_TEST_DIRECTORY_STAYS: as overlayfs without xattrs, which removes no directory of a lower
+// layer that had entries. STAGING_TEST_FILE_STAYS: a file that the caller may not unlink.
+static int stays(int dirfd, const char *path, int flags) {
+  const char *name = getenv(flags & AT_REMOVEDIR ? "STAGING_TEST_DIRECTORY_STAYS" : "STAGING_TEST_FILE_STAYS");
+  const char *slash = strrchr(path, '/');
+  if (!name || strcmp(slash ? slash + 1 : path, name) != 0) return 0;
+  if (flags & AT_REMOVEDIR && has_entries(dirfd, path)) return 0;
+  errno = flags & AT_REMOVEDIR ? EIO : atoi(getenv("STAGING_TEST_ERRNO"));
+  return 1;
+}
+
 // Only the files of the package count: bun unlinks other things on its way.
 int unlinkat(int dirfd, const char *path, int flags) {
   static int (*real_unlinkat)(int, const char *, int);
   if (!real_unlinkat) real_unlinkat = dlsym(RTLD_NEXT, "unlinkat");
   size_t length = strlen(path);
   if (length > 3 && strcmp(path + length - 3, ".js") == 0 && interrupted("unlinkat")) return -1;
+  if (stays(dirfd, path, flags)) return -1;
   return real_unlinkat(dirfd, path, flags);
 }
 `;
@@ -277,11 +301,17 @@ const shimEnv = ({ syscall, after }: Interrupt, kill: boolean) => ({
 
 // Kills `bun install` at `interrupt` with the shim, elsewhere once `underWay()`
 // holds. Returns false if the install finished first.
-async function installAndKill(cwd: string, args: string[], interrupt: Interrupt, underWay: () => boolean) {
+async function installAndKill(
+  cwd: string,
+  args: string[],
+  interrupt: Interrupt,
+  underWay: () => boolean,
+  knobs: Record<string, string> = {},
+) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "install", ...args],
     cwd,
-    env: shimDir ? shimEnv(interrupt, true) : installEnv,
+    env: shimDir ? { ...shimEnv(interrupt, true), ...knobs } : installEnv,
     stdout: "ignore",
     stderr: "pipe",
   });
@@ -1318,6 +1348,367 @@ describe("hoisted linker: packages linked by the thread pool", () => {
     expect(entriesOf(join(root, "node_modules")).sort()).toEqual(names.toSorted());
     expect(exitCode).toBe(0);
   });
+
+  // overlayfs without xattrs keeps each directory of a lower layer that had entries. The delete in
+  // place goes on past them, so that no file of the other version is left.
+  test.concurrent.skipIf(!shimDir).each([
+    ["the pool", []],
+    ["the main thread", ["sh", "-c", 'ulimit -n 200 && exec "$0" "$@"']],
+  ])("a package is deleted past the directories that stay: %s", async (_who, prefix) => {
+    const names = ["one", "two", "three"];
+    const files = ["a/a.js", "b/b.js"];
+    using registry = serveRegistry(
+      Object.fromEntries(await Promise.all(names.map(async name => [name, { tgz: await pack(name, { files }) }]))),
+    );
+    using dir = project("pool-directories-stay", registry, {
+      dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
+    });
+    const root = String(dir);
+    const nodeModules = join(root, "node_modules");
+
+    await warmUp(root);
+    for (const name of names) {
+      // Not through the hard link, which is the cache's file too.
+      rmSync(join(nodeModules, name, "package.json"));
+      writeFileSync(join(nodeModules, name, "package.json"), JSON.stringify({ name, version: "0.0.1" }));
+      // Where the delete stops at the first of them, the other one is not reached.
+      for (const kept of ["a/kept", "b/kept"]) {
+        mkdirSync(join(nodeModules, name, kept));
+        writeFileSync(join(nodeModules, name, kept, "only-in-the-other-version.js"), "");
+      }
+    }
+
+    const { stderr, exitCode } = await spawned([...prefix, bunExe(), "install"], root, {
+      ...preloadEnv(),
+      STAGING_TEST_NOTHING_MOVES_ASIDE: "1",
+      STAGING_TEST_DIRECTORY_STAYS: "kept",
+    });
+    expect(stderr).not.toContain("error");
+    expect(names.filter(name => !stderr.includes(`EIO: failed to remove ${join(nodeModules, name)}/`))).toEqual([]);
+    expect(
+      names.map(name => ({
+        entries: (readdirSync(join(nodeModules, name), { recursive: true }) as string[]).sort(),
+        version: JSON.parse(readFileSync(join(nodeModules, name, "package.json"), "utf8")).version,
+      })),
+    ).toEqual(
+      names.map(() => ({
+        entries: ["a", "a/a.js", "a/kept", "b", "b/b.js", "b/kept", "package.json"],
+        version: "1.0.0",
+      })),
+    );
+    expect(entriesOf(nodeModules).sort()).toEqual(names.toSorted());
+    expect(exitCode).toBe(0);
+  });
+
+  // What is installed has `.bun-tag`, `package.json`, and a file that the new version has not.
+  const otherVersionOf = (installed: string) => {
+    mkdirSync(installed, { recursive: true });
+    writeFileSync(join(installed, ".bun-tag"), "");
+    writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "flat", version: "0.0.1" }));
+    writeFileSync(join(installed, "only-in-the-other-version.js"), "");
+  };
+  const fileStays = (file: string, errno: "EACCES" | "EPERM") => ({
+    ...preloadEnv(),
+    STAGING_TEST_NOTHING_MOVES_ASIDE: "1",
+    STAGING_TEST_FILE_STAYS: file,
+    STAGING_TEST_ERRNO: String(constants.errno[errno]),
+  });
+
+  // The new version is linked beside a file that cannot be deleted, as on a file system that
+  // renames nothing, and bun says which file that is.
+  test.concurrent.skipIf(!shimDir).each(["EACCES", "EPERM"] as const)(
+    "a file that cannot be deleted stays, with a warning: %s",
+    async errno => {
+      using registry = serveRegistry({ flat: { tgz: await pack("flat", { files: ["a.js", "b.js"] }) } });
+      using dir = project("file-stays", registry, { dependencies: { flat: "1.0.0" } });
+      const installed = join(String(dir), "node_modules", "flat");
+      otherVersionOf(installed);
+
+      const { stderr, exitCode } = await install(String(dir), [], fileStays("only-in-the-other-version.js", errno));
+      expect(stderr).toContain(`warn: ${errno}: failed to remove ${installed}/only-in-the-other-version.js`);
+      expect(stderr).not.toContain("error");
+      expect({
+        entries: readdirSync(installed).sort(),
+        version: JSON.parse(readFileSync(join(installed, "package.json"), "utf8")).version,
+      }).toEqual({ entries: ["a.js", "b.js", "only-in-the-other-version.js", "package.json"], version: "1.0.0" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Without one of them gone, what is left still passes for the package, so nothing else is deleted.
+  test.concurrent.skipIf(!shimDir).each([".bun-tag", "package.json"])(
+    "a delete in place stops at a file that `verify` reads: %s",
+    async marker => {
+      using registry = serveRegistry({ flat: { tgz: await pack("flat", { files: ["a.js", "b.js"] }) } });
+      using dir = project("marker-stays", registry, { dependencies: { flat: "1.0.0" } });
+      const installed = join(String(dir), "node_modules", "flat");
+      otherVersionOf(installed);
+
+      const { stderr } = await install(String(dir), [], fileStays(marker, "EACCES"));
+      expect(stderr).toContain(`warn: EACCES: failed to remove ${installed}/${marker}`);
+      expect(readdirSync(installed)).toContain("only-in-the-other-version.js");
+    },
+  );
+
+  // The delete in place takes what `verify` reads first. `many-files` has it in the middle.
+  test.concurrent.skipIf(!shimDir)("a package whose delete in place was interrupted is installed again", async () => {
+    const tgz = await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes();
+    using registry = serveRegistry({ "many-files": { tgz } });
+    using dir = project("delete-in-place-killed", registry, { dependencies: { "many-files": "1.0.0" } });
+    const root = String(dir);
+    const installed = packageDirs.hoisted(root);
+
+    await warmUp(root);
+    expect(
+      await installAndKill(root, ["--force"], { syscall: "unlinkat", after: 5 }, () => false, {
+        STAGING_TEST_NOTHING_MOVES_ASIDE: "1",
+      }),
+    ).toBe(true);
+    expect(existsSync(join(installed, "package.json"))).toBe(false);
+
+    const repaired = await install(root);
+    expect(repaired.stderr).not.toContain("error");
+    expect(compareWithExpectedTree(installed)).toEqual(completeTree);
+    expect(repaired.exitCode).toBe(0);
+  });
+
+  // The directory of a package that has no other directory in it stays as well.
+  test.concurrent.skipIf(!shimDir)(
+    "a package of which only the emptied directory stays is linked in place",
+    async () => {
+      using registry = serveRegistry({ flat: { tgz: await pack("flat", { files: ["a.js", "b.js"] }) } });
+      using dir = project("pool-directory-stays", registry, { dependencies: { flat: "1.0.0" } });
+      const installed = join(String(dir), "node_modules", "flat");
+      otherVersionOf(installed);
+
+      const { stderr, exitCode } = await install(String(dir), [], {
+        ...preloadEnv(),
+        STAGING_TEST_NOTHING_MOVES_ASIDE: "1",
+        STAGING_TEST_DIRECTORY_STAYS: "flat",
+      });
+      expect(stderr).toContain(`warn: EIO: failed to remove ${installed} `);
+      expect(stderr).not.toContain("error");
+      expect({
+        entries: readdirSync(installed).sort(),
+        version: JSON.parse(readFileSync(join(installed, "package.json"), "utf8")).version,
+      }).toEqual({ entries: ["a.js", "b.js", "package.json"], version: "1.0.0" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // A workspace has the name of a package that is installed as a directory. Files can be linked
+  // into directories that stay. A link cannot take their place, and bun says why.
+  test.concurrent.skipIf(!shimDir)("no link is made where the directories of the previous package stay", async () => {
+    using dir = tempDir("link-directories-stay", {
+      "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"], dependencies: { one: "workspace:*" } }),
+      "bunfig.toml": ({ root }) =>
+        Bun.TOML.stringify({ install: { cache: join(root, ".bun-cache"), linker: "hoisted" } }),
+      "packages/one/package.json": JSON.stringify({ name: "one", version: "1.0.0" }),
+      "node_modules/one/package.json": JSON.stringify({ name: "one", version: "0.0.1" }),
+      "node_modules/one/lib/d0/only-in-the-other-version.js": "",
+    });
+    const installed = join(String(dir), "node_modules", "one");
+
+    const { stderr, exitCode } = await install(String(dir), [], {
+      ...preloadEnv(),
+      STAGING_TEST_NOTHING_MOVES_ASIDE: "1",
+      STAGING_TEST_DIRECTORY_STAYS: "d0",
+    });
+    expect(stderr).toContain(`warn: EIO: failed to remove ${installed}/lib/d0 `);
+    expect(stderr).toContain("EEXIST: failed linking dependency/workspace to node_modules for package one");
+    expect({
+      isDirectory: lstatSync(installed).isDirectory(),
+      entries: (readdirSync(installed, { recursive: true }) as string[]).sort(),
+    }).toEqual({ isDirectory: true, entries: ["lib", "lib/d0"] });
+    expect(exitCode).toBe(1);
+  });
+
+  // A private user and mount namespace. Skipped where there is none, as in most containers.
+  const canMount =
+    isLinux &&
+    Bun.which("unshare") !== null &&
+    Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+  const overlayOptions = (root: string, more: string) =>
+    `lowerdir=${join(root, "project")},upperdir=${join(root, "upper")},workdir=${join(root, "work")}${more}`;
+  // The kernel leaves its work directory without a permission bit. Removing it takes some.
+  const unlockWorkDir = (root: string) => {
+    if (existsSync(join(root, "work", "work"))) chmodSync(join(root, "work", "work"), 0o700);
+  };
+
+  // What an overlay that such a namespace mounts with these options does with the emptied
+  // directory of a lower layer. Undefined where it mounts none.
+  function emptiedDirectoryOnOverlay(more: string) {
+    if (!canMount) return undefined;
+    using dir = tempDir("overlay-probe", { "project/dir/file": "" });
+    const root = String(dir);
+    for (const layer of ["upper", "work", "merged"]) mkdirSync(join(root, layer));
+    const { exitCode } = Bun.spawnSync({
+      cmd: [
+        "unshare",
+        "-Urm",
+        "/bin/sh",
+        "-c",
+        'mount -t overlay overlay -o "$0" merged && rm merged/dir/file || exit 2; rmdir merged/dir || exit 3',
+        overlayOptions(root, more),
+      ],
+      cwd: root,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    unlockWorkDir(root);
+    return exitCode === 0 ? "goes" : exitCode === 3 ? "stays" : undefined;
+  }
+  // As Docker mounts it: a directory of a lower layer is not renamed, and is deleted.
+  const docker = emptiedDirectoryOnOverlay(",userxattr") === "goes" ? ",userxattr" : undefined;
+  // An upper layer that takes no xattrs: such a directory stays as well, once it had entries.
+  const withoutXattrs = emptiedDirectoryOnOverlay("") === "stays" ? "" : undefined;
+
+  // `nested` 1.0.0 has `lib/d0/a.js` and `lib/d1/b.js`. What is installed has the same
+  // directories: where the delete stops at the first, the other one is not reached.
+  const otherVersion = {
+    "package.json": JSON.stringify({ name: "nested", version: "0.0.1" }),
+    "lib/d0/only-in-the-other-version.js": "",
+    "lib/d1/only-in-the-other-version.js": "",
+  };
+  const replaced = ["lib", "lib/d0", "lib/d0/a.js", "lib/d1", "lib/d1/b.js", "package.json"];
+  const mounts: {
+    what: string;
+    // The options of an overlay over the project, or none: the project is where it is.
+    overlay?: string | false;
+    name?: string;
+    installed?: Record<string, string>;
+    // After the overlay, from the directory that has `project`, `volume` and `merged`.
+    mount?: string;
+    args?: string[];
+    scripts?: Record<string, string>;
+    // Of the package, as the mounts show it afterwards.
+    entries: string[];
+    warns?: string;
+    exitCode?: number;
+  }[] = [
+    { what: "overlayfs: a package of a lower layer is replaced whole", overlay: docker, entries: replaced },
+    {
+      what: "overlayfs without xattrs: the new files are linked into the directories that stay",
+      overlay: withoutXattrs,
+      entries: replaced,
+      warns: "EIO: failed to remove",
+    },
+    {
+      what: "overlayfs without xattrs: --force links what is installed again",
+      overlay: withoutXattrs,
+      installed: {
+        "package.json": JSON.stringify({ name: "nested", version: "1.0.0" }),
+        "lib/d0/a.js": "",
+        "lib/d1/b.js": "",
+      },
+      args: ["--force"],
+      entries: replaced,
+      warns: "EIO: failed to remove",
+    },
+    // docker-compose: sources mounted into a package of the image.
+    {
+      what: "overlayfs: a volume that is mounted in the package keeps its files",
+      overlay: docker,
+      installed: { ...otherVersion, "vol/.keep": "" },
+      mount: "mount -o bind volume merged/node_modules/nested/vol",
+      entries: [...replaced, "vol", "vol/host.js"],
+    },
+    {
+      what: "overlayfs: a file that is mounted in the package stays",
+      overlay: docker,
+      installed: { ...otherVersion, "host.js": "" },
+      mount: "mount -o bind volume/host.js merged/node_modules/nested/host.js",
+      entries: [...replaced, "host.js"],
+    },
+    {
+      what: "overlayfs: a volume in a package whose script fails keeps its files",
+      overlay: docker,
+      installed: { ...otherVersion, "vol/.keep": "" },
+      mount: "mount -o bind volume merged/node_modules/nested/vol",
+      scripts: { postinstall: "exit 1" },
+      entries: ["vol", "vol/host.js"],
+      exitCode: 1,
+    },
+    // A volume at `@scope`: nothing is renamed out of it, on any file system.
+    {
+      what: "a package in a volume that is mounted at its scope is replaced whole",
+      overlay: canMount ? false : undefined,
+      name: "@scope/nested",
+      mount: "mount -o bind scope project/node_modules/@scope",
+      entries: replaced,
+    },
+    {
+      what: "a volume in a package in a volume at its scope keeps its files",
+      overlay: canMount ? false : undefined,
+      name: "@scope/nested",
+      installed: { ...otherVersion, "vol/.keep": "" },
+      mount:
+        "mount -o bind scope project/node_modules/@scope && mount -o bind volume project/node_modules/@scope/nested/vol",
+      entries: [...replaced, "vol", "vol/host.js"],
+      // Not told from a directory that is busy: this volume is of the file system that the package is in.
+      warns: "EBUSY: failed to remove",
+    },
+  ];
+  for (const row of mounts) {
+    const { what, overlay, name = "nested", installed = otherVersion, mount = "true", args = [] } = row;
+    test.concurrent.skipIf(overlay === undefined)(what, async () => {
+      const scoped = name.startsWith("@");
+      using registry = serveRegistry({
+        [name]: {
+          tgz: await pack(name, { files: ["lib/d0/a.js", "lib/d1/b.js"], scripts: row.scripts }),
+          scripts: row.scripts,
+        },
+      });
+      using dir = tempDir("mounts", {
+        "project/package.json": JSON.stringify({
+          name: "app",
+          dependencies: { [name]: "1.0.0" },
+          trustedDependencies: [name],
+        }),
+        "project/bunfig.toml": ({ root }) =>
+          Bun.TOML.stringify({
+            install: { registry: registry.url.href, cache: join(root, "cache"), linker: "hoisted" },
+          }),
+        // What is installed: in the project, or in the volume that is mounted at its scope.
+        ...Object.fromEntries(
+          Object.entries(installed).map(([path, contents]) => [
+            scoped ? `scope/nested/${path}` : `project/node_modules/${name}/${path}`,
+            contents.replace('"nested"', JSON.stringify(name)),
+          ]),
+        ),
+        ...(scoped ? { "project/node_modules/@scope/.keep": "" } : {}),
+        "volume/host.js": "",
+      });
+      const root = String(dir);
+      for (const layer of ["upper", "work", "merged"]) mkdirSync(join(root, layer));
+
+      const { stdout, stderr, exitCode } = await spawned(
+        [
+          "unshare",
+          "-Urm",
+          "/bin/sh",
+          "-c",
+          `${overlay === false ? "true" : 'mount -t overlay overlay -o "$0" merged'} || exit 125
+${mount} || exit 125
+cd ${overlay === false ? "project" : "merged"} || exit 125
+"$@" >&2
+code=$?
+"$1" -e 'console.log(JSON.stringify(require("fs").readdirSync("node_modules/${name}", { recursive: true }).sort()))'
+exit $code`,
+          overlay === false ? "-" : overlayOptions(root, overlay ?? ""),
+          bunExe(),
+          "install",
+          ...args,
+        ],
+        root,
+      );
+      unlockWorkDir(root);
+      if (row.warns) expect(stderr).toContain(`warn: ${row.warns}`);
+      else expect(stderr).not.toContain("warn:");
+      expect(JSON.parse(stdout)).toEqual(row.entries.toSorted());
+      expect(exitCode).toBe(row.exitCode ?? 0);
+    });
+  }
 
   // Each host has a tree with three packages that have a script. One script runs at a time, and each
   // waits for the bin of the last tree: it is linked when that tree is done, after which no script

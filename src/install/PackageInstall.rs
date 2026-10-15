@@ -2124,12 +2124,224 @@ pub(crate) fn move_aside(
         Ok(()) => Some(old),
         // overlayfs moves no directory of a lower layer. The new files must not join the old ones.
         Err(err) if err.get_errno() == sys::E::EXDEV => {
-            let _ = destination_dir.delete_tree(subpath.as_bytes());
+            if let Err(err) = delete_in_place(destination_dir, subpath) {
+                warn_not_deleted(destination_dir, &err);
+            }
             None
         }
         // It is not there, or it stays: what is in a mount point (EBUSY) is not bun's to delete.
         Err(_) => None,
     }
+}
+
+/// The new files are linked beside what stays, as they are when nothing can be renamed.
+#[cold]
+fn warn_not_deleted(dir: &Dir, err: &sys::Error) {
+    if PackageManager::get().options.log_level == crate::package_manager::Options::LogLevel::Silent
+    {
+        return;
+    }
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let dir_path = sys::get_fd_path(dir.fd(), &mut buf).map_or(&b"."[..], |path| &*path);
+    bun_core::warn!(
+        "{}: failed to remove {}/{} (of the previous version)",
+        bstr::BStr::new(err.name()),
+        bstr::BStr::new(dir_path),
+        bstr::BStr::new(&err.path),
+    );
+}
+
+/// There EBUSY is the answer for a file in use, and no volume is mounted in a package.
+#[cfg(windows)]
+pub(crate) fn delete_in_place(dir: &Dir, subpath: &ZStr) -> sys::Maybe<()> {
+    dir.delete_tree(subpath.as_bytes())
+}
+
+/// What became of an entry that `delete_in_place` was to remove.
+#[cfg(not(windows))]
+enum Removed {
+    Gone,
+    /// A directory that has entries, to empty first.
+    Open(Dir),
+    /// `None`: because of an entry in it, which has said so.
+    Stays(Option<sys::Error>),
+}
+
+/// Opens a directory on ENOTEMPTY alone: the kernel looks at permissions and mount points first.
+#[cfg(not(windows))]
+fn remove_entry(parent: Fd, name: &ZStr, mut is_dir: bool) -> Removed {
+    // What `unlink` said of a directory (EISDIR, EPERM) or `rmdir` of a file: the other is tried once.
+    let mut other: Option<sys::Error> = None;
+    loop {
+        let removed = if is_dir {
+            sys::rmdirat(parent, name)
+        } else {
+            sys::unlinkat(parent, name)
+        };
+        let Err(err) = removed else {
+            return Removed::Gone;
+        };
+        match err.get_errno() {
+            sys::E::ENOENT => return Removed::Gone,
+            sys::E::EISDIR | sys::E::EPERM if !is_dir && other.is_none() => {
+                other = Some(err);
+                is_dir = true;
+            }
+            sys::E::ENOTDIR if is_dir && other.is_none() => {
+                other = Some(err);
+                is_dir = false;
+            }
+            sys::E::ENOTEMPTY | sys::E::EEXIST if is_dir => {
+                let flags = sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC | sys::O::NOFOLLOW;
+                return match sys::openat(parent, name, flags, 0) {
+                    Ok(fd) => Removed::Open(Dir::from_fd(fd)),
+                    Err(err) if err.get_errno() == sys::E::ENOENT => Removed::Gone,
+                    Err(err) => Removed::Stays(Some(err)),
+                };
+            }
+            // An immutable file: EPERM from `unlink`, which is the error to report.
+            sys::E::ENOTDIR => return Removed::Stays(other.or(Some(err))),
+            _ => return Removed::Stays(Some(err)),
+        }
+    }
+}
+
+/// Deletes `subpath` past what stays, and enters no mount point. `Err`: the first path that stays.
+#[cfg(not(windows))]
+pub(crate) fn delete_in_place(dir: &Dir, subpath: &ZStr) -> sys::Maybe<()> {
+    struct Level {
+        dir: Dir,
+        name: bun_core::ZBox,
+        entries: std::vec::IntoIter<(bun_core::ZBox, bool)>,
+        /// Of its entries since the listing: one went, one stays.
+        went: bool,
+        stays: bool,
+    }
+    const MARKERS: [&[u8]; 2] = [BUN_TAG, b"package.json"];
+
+    let mut first: Option<sys::Error> = None;
+    let mut stack: Vec<Level> = Vec::new();
+    let mut next = Some((
+        remove_entry(dir.fd(), subpath, true),
+        bun_core::ZBox::from_bytes(subpath.as_bytes()),
+    ));
+    loop {
+        if let Some((removed, name)) = next.take() {
+            match removed {
+                Removed::Gone => {
+                    if let Some(parent) = stack.last_mut() {
+                        parent.went = true;
+                    }
+                }
+                Removed::Stays(err) => {
+                    let parent = stack.last().map_or(dir.fd(), |level| level.dir.fd());
+                    let is_marker = stack.len() == 1 && MARKERS.contains(&name.as_bytes());
+                    if let Some(err) = err
+                        && first.is_none()
+                        && !is_mount_point(&err, parent, &name)
+                    {
+                        let mut path = Vec::new();
+                        for level in &stack {
+                            path.extend_from_slice(level.name.as_bytes());
+                            path.push(b'/');
+                        }
+                        path.extend_from_slice(name.as_bytes());
+                        first = Some(err.with_path(&path));
+                    }
+                    if let Some(parent) = stack.last_mut() {
+                        parent.stays = true;
+                    }
+                    // Without a marker gone, what is left still passes for the package.
+                    if let Some(err) = first.take_if(|_| is_marker) {
+                        return Err(err);
+                    }
+                }
+                Removed::Open(opened) => {
+                    // Listed whole: what a listing shows while entries go is unspecified.
+                    let mut entries = Vec::new();
+                    let mut listing = sys::iterate_dir(opened.fd());
+                    let listed = loop {
+                        match listing.next() {
+                            Ok(Some(entry)) => entries.push((
+                                bun_core::ZBox::from_bytes(entry.name.slice_u8()),
+                                matches!(entry.kind, EntryKind::Directory),
+                            )),
+                            Ok(None) => break Ok(()),
+                            Err(err) => break Err(err),
+                        }
+                    };
+                    if stack.is_empty() {
+                        // If bun dies here, nothing is left that passes for the package.
+                        let mut front = 0;
+                        for marker in MARKERS {
+                            let at = entries
+                                .iter()
+                                .position(|(name, _)| name.as_bytes() == marker);
+                            if let Some(at) = at {
+                                entries.swap(front, at);
+                                front += 1;
+                            }
+                        }
+                    }
+                    stack.push(Level {
+                        dir: opened,
+                        name,
+                        entries: entries.into_iter(),
+                        went: false,
+                        stays: false,
+                    });
+                    if let Err(err) = listed
+                        && err.get_errno() != sys::E::ENOENT
+                    {
+                        // Files of the package may be among the entries that were not listed.
+                        next = Some((Removed::Stays(Some(err)), bun_core::ZBox::from_bytes(b".")));
+                        continue;
+                    }
+                }
+            }
+        }
+        let Some(level) = stack.last_mut() else {
+            break;
+        };
+        if let Some((name, is_dir)) = level.entries.next() {
+            next = Some((remove_entry(level.dir.fd(), &name, is_dir), name));
+            continue;
+        }
+        let Some(Level {
+            dir: emptied,
+            name,
+            went,
+            stays,
+            ..
+        }) = stack.pop()
+        else {
+            break;
+        };
+        drop(emptied);
+        let parent = stack.last().map_or(dir.fd(), |level| level.dir.fd());
+        let removed = match sys::rmdirat(parent, &name) {
+            Ok(()) => Removed::Gone,
+            Err(err) => match err.get_errno() {
+                sys::E::ENOENT => Removed::Gone,
+                sys::E::ENOTEMPTY | sys::E::EEXIST if stays => Removed::Stays(None),
+                // Its listing was short: once more, as long as entries go.
+                sys::E::ENOTEMPTY | sys::E::EEXIST if went => remove_entry(parent, &name, true),
+                _ => Removed::Stays(Some(err)),
+            },
+        };
+        next = Some((removed, name));
+    }
+    first.map_or(Ok(()), Err)
+}
+
+/// EBUSY is the answer for a mount point, and on a network file system for a file in use.
+#[cfg(not(windows))]
+fn is_mount_point(err: &sys::Error, parent: Fd, name: &ZStr) -> bool {
+    err.get_errno() == sys::E::EBUSY
+        && matches!(
+            (sys::fstat(parent), sys::lstatat(parent, name)),
+            (Ok(around), Ok(it)) if around.st_dev != it.st_dev
+        )
 }
 
 impl<'a> PackageInstall<'a> {

@@ -274,6 +274,7 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
     "key-from-custom-env",
     "from-dot-env-local",
     "from-dot-env-development",
+    "from-dot-env-production",
     "from-dot-env-test",
     "early-from-dot-env",
     "late-from-dot-env",
@@ -513,6 +514,27 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
       report: { inline: ["from-dot-env-test"], child: ["from-dot-env-test"], own: ["from-dot-env-test"] },
       exitCode: 0,
     });
+  });
+
+  // The process chose its .env files before it read NODE_ENV in .env. A build reads no file of the other mode later.
+  test.concurrent("NODE_ENV in .env: a build has the values of the files that the process read", async () => {
+    using dir = tempDir("env-of-the-process", {
+      ".env": "NODE_ENV=production\n",
+      ".env.production": "PRODUCTION_ONLY=from-dot-env-production\n",
+      ".env.development": "DEVELOPMENT_ONLY=from-dot-env-development\n",
+      "client.ts": "console.log(process.env.PRODUCTION_ONLY, process.env.DEVELOPMENT_ONLY);\n",
+      "seen.ts": seen,
+      "main.ts": String.raw`
+        import { seen } from "./seen.ts";
+
+        const own = seen([process.env.PRODUCTION_ONLY, process.env.DEVELOPMENT_ONLY].join());
+        const result = await Bun.build({ entrypoints: ["./client.ts"], env: "inline" });
+        console.log("REPORT " + JSON.stringify({ own, inline: seen(await result.outputs[0].text()) }));
+      `,
+    });
+    const { report, exitCode } = await run(String(dir), ["main.ts"]);
+    expect(report.own).toHaveLength(1);
+    expect({ inline: report.inline, exitCode }).toEqual({ inline: report.own, exitCode: 0 });
   });
 
   test.concurrent("a Worker has the variables of its parent: it does not read .env again", async () => {

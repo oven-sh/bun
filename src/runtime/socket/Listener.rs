@@ -1211,8 +1211,7 @@ impl Listener {
             Some((local_addr_bytes.to_vec().into_boxed_slice(), local_port))
         };
 
-        // A `node:net` handle that refuses the connect dials nothing: the caller gets the errno by
-        // value. Past the last option getter: script cannot give the handle a socket after this.
+        // Past the last option getter: script cannot give the handle a socket after this check.
         let refusal = match (prev_maybe_tcp, prev_maybe_tls) {
             // SAFETY: the caller passes a live socket, owned by its JS wrapper.
             (Some(prev), _) => unsafe { &*prev }.connect_refusal(&connection),

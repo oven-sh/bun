@@ -1388,8 +1388,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         socket.close(code);
     }
 
-    /// The errno of a `connect()` that node's handle refuses when it still owns a
-    /// socket. `None`: the caller dials. Nothing is closed or dialed for an answer.
+    /// The errno that node's handle answers to this `connect()` while it owns a socket. `None`: dial.
     pub(crate) fn connect_refusal(
         &self,
         connection: &super::listener::UnixOrHost,
@@ -1412,8 +1411,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // A pipe handle reports what connect(2) says for the new path: EISCONN when it is a socket.
             return Some(E::EISCONN);
         }
-        // TCPWrap::Connect parses its address as IPv4 before libuv sees the handle:
-        // https://github.com/nodejs/node/blob/v26.3.0/src/tcp_wrap.cc#L433-L465
+        // Node parses the path as an IPv4 address first: https://github.com/nodejs/node/blob/v26.3.0/src/tcp_wrap.cc#L433-L465
         if let UnixOrHost::Unix(path) = connection {
             if !matches!(
                 bun_core::ip_address::parse_uv_inet_pton(path),
@@ -1423,16 +1421,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         }
         if !socket.is_established() {
-            // One connect per handle: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/tcp.c#L288-L289
-            // libuv has no such check on Windows, where ConnectEx answers EISCONN.
+            // One connect per handle (ConnectEx says EISCONN): https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/tcp.c#L288-L289
             return Some(if cfg!(windows) {
                 E::EISCONN
             } else {
                 E::EALREADY
             });
         }
-        // A client socket that has not sent its FIN: connect(2) answers 0 for it once on
-        // Linux, and node emits 'connect' again. `connect_finish` swaps the connection.
+        // Linux answers 0 once for a client socket that has not sent its FIN: `connect_finish` swaps it, as before.
         if !self.is_server() && !socket.is_shutdown() {
             return None;
         }

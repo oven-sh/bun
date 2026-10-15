@@ -1855,8 +1855,7 @@ function serverHandlersFor(server) {
 
 // node.net.native trace events: one 'b'/'e' pair per connect *attempt*, including
 // failed ones. 'b' fires where the attempt is issued; the per-req flag dedupes the
-// 'e' across the afterConnect(Multiple) / rejected-promise / attempt-timeout /
-// refused-by-the-handle paths.
+// 'e' across the afterConnect(Multiple) / rejected-promise / attempt-timeout paths.
 const kNetTraceCat = "node,node.net,node.net.native";
 const kTraceConnectActive = Symbol("kTraceConnectActive");
 let traceEvents: typeof import("internal/trace_events").default;
@@ -3437,9 +3436,7 @@ function ownsSocket(handle) {
   return handle != null && handle.readyState !== -1;
 }
 
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1161-L1170
-// Node names the local address of every handle whose connect fails in the call. Here a handle whose own
-// dial failed has no socket left: only a handle that refused the connect has an address to name.
+// The "- Local (ip:port)" detail: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1161-L1170
 function boundAddress(handle) {
   const address = handle?.localAddress;
   if (address) return address + ":" + handle.localPort;
@@ -3470,8 +3467,7 @@ function internalConnectMultiple(context, canceled?) {
   const current = context.current++;
 
   if (current > 0) {
-    // The handle refused the last attempt, or was never asked (a bind, a blocked address), and still owns
-    // its socket. Node closes that socket here without an event and dials the next address on a new handle.
+    // Node closes this socket with no event and dials on: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1201-L1203
     if (ownsSocket(self._handle)) {
       self.destroy(context.errors[context.errors.length - 1]);
       return;

@@ -1663,6 +1663,22 @@ describe("bundler", () => {
     },
     run: true,
   });
+  // The clauses of a switch are one block.
+  itBundled(`extra/FunctionHoistingDeclaredTwice3`, {
+    files: {
+      "in.js": `
+      function pick(k) {
+        switch (k) {
+          case 'a': function f() { return 'A' } break
+          case 'b': function f() { return 'B' }
+        }
+        return typeof f === 'function' ? f() : typeof f
+      }
+      if (pick('b') !== 'B' || pick('c') !== 'undefined') throw 'fail'
+    `,
+    },
+    run: true,
+  });
   // A direct eval keeps the declarations, and an ES module is strict code,
   // which rejects two declarations of one name in a block.
   for (const format of ["esm", "cjs"] as const) {

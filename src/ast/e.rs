@@ -2305,26 +2305,9 @@ pub struct If {
     pub no: ExprNodeIndex,
 }
 
-pub enum UnwrappedRequireMarker {}
-/// Index into the parser's `imports_to_convert_from_require`.
-pub type UnwrappedRequireIndex = bun_core::GenericIndex<u32, UnwrappedRequireMarker>;
-pub type UnwrappedRequireIndexOptional =
-    bun_core::GenericIndexOptional<u32, UnwrappedRequireMarker>;
-
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct RequireString {
     pub import_record_index: u32,
-
-    /// Set when `unwrap_commonjs_to_esm` turned this `require()` into an import.
-    pub unwrapped_id: UnwrappedRequireIndexOptional,
-}
-impl Default for RequireString {
-    fn default() -> Self {
-        Self {
-            import_record_index: 0,
-            unwrapped_id: UnwrappedRequireIndexOptional::NONE,
-        }
-    }
 }
 
 #[derive(Clone, Copy)]

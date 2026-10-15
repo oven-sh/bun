@@ -9,9 +9,9 @@ pub(crate) mod visit_stmt;
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
-    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    VisitDeclOpts, is_eval_or_arguments,
+    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, PrependTempRefsOpts, Ref, RelocateVarsMode,
+    ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts, VisitDeclOpts,
+    is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -280,6 +280,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_export: bool,
     ) -> usize {
         let was_const = kind == LocalKind::KConst;
+        // `using` disposes what it holds: the module's own exports, not a namespace.
+        let require_stays_call = kind.is_using();
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
@@ -356,7 +358,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
-                        is_immediately_assigned_to_decl: true,
+                        require_stays_call,
                         // `const { a } = x` reads `x.a` and drops `x`.
                         is_property_access_target: matches!(decl.binding.data, BData::BObject(_)),
                         ..Default::default()
@@ -390,24 +392,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if self.should_unwrap_common_js_to_esm() {
-                    if prev_require_to_convert_count < self.imports_to_convert_from_require.len() {
-                        if let BData::BIdentifier(id) = decl.binding.data {
-                            let ref_ = id.r#ref;
-                            if let Some(value) = decl.value {
-                                if let ExprData::ERequireString(req) = value.data {
-                                    if let Some(unwrapped_id) = req.unwrapped_id.get() {
-                                        let deferred = &mut self.imports_to_convert_from_require
-                                            [unwrapped_id.get_usize()];
-                                        deferred.namespace.ref_ = ref_;
-                                        self.import_items_for_namespace
-                                            .insert(ref_, ImportItemForNamespaceMap::default());
-                                        continue 'outer;
-                                    }
-                                }
-                            }
-                        }
-                    }
+                // `transpose_require` turned a `require()` in the initializer into an import.
+                if prev_require_to_convert_count < self.imports_to_convert_from_require.len()
+                    && self.note_require_alias(
+                        decl.binding,
+                        val,
+                        is_export,
+                        prev_require_to_convert_count,
+                    )
+                {
+                    // Kept as written until `settle_require_aliases`.
+                    decls.swap(j, i - 1);
+                    j += 1;
+                    continue 'outer;
                 }
 
                 // `const|let|var <binding> = await import("str")` — record which
@@ -558,7 +555,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let local = id.r#ref;
                             if self.import_items_for_namespace.contains_key(&local)
                                 || !self.options.bundle
-                                || req.unwrapped_id.get().is_some()
                             {
                                 break 'split_require;
                             }
@@ -780,10 +776,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             }
             StmtData::SLocal(mut st) => {
+                let require_stays_call = st.kind.is_using();
                 for dec in st.decls.slice_mut() {
                     self.visit_binding(dec.binding, None);
                     if let Some(val) = dec.value.as_mut() {
-                        self.visit_expr(val);
+                        self.visit_expr_in_out(
+                            val,
+                            ExprIn {
+                                require_stays_call,
+                                ..Default::default()
+                            },
+                        );
                     }
                 }
                 st.kind = self.select_local_kind(st.kind);
@@ -1499,10 +1502,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Consume before recursing so a nested function body's `visit_stmts`
         // doesn't compile the wrong target.
-        let rc_pending = if kind == StmtsKind::FnBody {
-            p.react_compiler_pending.take()
+        let (rc_pending, rc_first_require) = if kind == StmtsKind::FnBody {
+            (
+                p.react_compiler_pending.take(),
+                p.imports_to_convert_from_require.len(),
+            )
         } else {
-            None
+            (None, 0)
         };
 
         #[cfg(debug_assertions)]
@@ -1752,6 +1758,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = old_is_control_flow_dead;
         }
 
+        // The statements of a function, or of the module when it is one part.
+        if p.require_aliases
+            .last()
+            .is_some_and(|alias| alias.scope == p.current_scope)
+            && (kind == StmtsKind::FnBody
+                || (p.current_scope == p.module_scope
+                    && !p.is_inside_single_stmt_body
+                    && (!p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using)))
+        {
+            p.settle_require_aliases(stmts);
+        }
+
         // Lower using declarations
         if kind != StmtsKind::SwitchStmt && p.should_lower_using_declarations(stmts.as_slice()) {
             let mut ctx = LowerUsingDeclarationsContext::init(p)?;
@@ -1775,6 +1793,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(pending) = rc_pending
             && p.react_compiler_may_replace_body
+            // The compiler declares the locals of the body again as new symbols.
+            // It cannot name a namespace that `transpose_require` minted.
+            && !p.holds_unwrapped_require_namespace(rc_first_require)
             && let Some(mut rc) = p.react_compiler.take()
         {
             let name = pending

@@ -313,7 +313,6 @@ pub(crate) fn convert_stmts_for_chunk(
                                 Expr::init(
                                     E::RequireString {
                                         import_record_index: s.import_record_index,
-                                        ..Default::default()
                                     },
                                     stmt.loc,
                                 )
@@ -343,7 +342,6 @@ pub(crate) fn convert_stmts_for_chunk(
                                 break 'brk Expr::init(
                                     E::RequireString {
                                         import_record_index: s.import_record_index,
-                                        ..Default::default()
                                     },
                                     stmt.loc,
                                 );

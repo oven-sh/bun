@@ -1208,6 +1208,10 @@ impl<'a> Parser<'a> {
 
         visit_tracer.end();
 
+        if !p.require_aliases.is_empty() {
+            p.settle_top_level_require_aliases(&mut parts);
+        }
+
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {
             return Err(crate::Error::SyntaxError);
@@ -2129,7 +2133,6 @@ impl<'a> Parser<'a> {
                 let value = p.new_expr(
                     E::RequireString {
                         import_record_index: import_record_id,
-                        ..Default::default()
                     },
                     bun_ast::Loc::EMPTY,
                 );

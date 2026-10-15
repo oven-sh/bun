@@ -454,9 +454,24 @@ pub struct DeferredImportNamespace {
     pub(crate) import_record_id: u32,
     /// Scope the namespace binding lives in. Used by
     /// `imports_to_convert_from_dynamic_import` to bail when a direct
-    /// `eval()` can observe the binding by name. Unused by
-    /// `imports_to_convert_from_require`.
+    /// `eval()` can observe the binding by name. In
+    /// `imports_to_convert_from_require` it is set when a local of that
+    /// scope became the namespace (`RequireAlias`).
     pub(crate) scope: Option<bun_ast::StoreRef<bun_ast::Scope>>,
+}
+
+/// `var x = require("pkg")` whose `require()` became `import * as ns`. Until
+/// the scope that declares `x` is visited, `x.a` reads `ns.a` and the
+/// declarator stays. Then `x` becomes `ns` if nothing can rebind it.
+#[derive(Clone, Copy)]
+pub struct RequireAlias {
+    pub(crate) local: Ref,
+    /// `ns`. Each `x.a` that became an import item is also recorded as a use
+    /// of `ns`: a use of `x` to take back when `x` becomes `ns`.
+    pub(crate) namespace: Ref,
+    /// Index into `imports_to_convert_from_require`.
+    pub(crate) import: u32,
+    pub(crate) scope: bun_ast::StoreRef<bun_ast::Scope>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -715,7 +730,6 @@ pub struct VisitDeclOpts {
 pub struct TransposeState {
     pub(crate) is_await_target: bool,
     pub(crate) is_then_catch_target: bool,
-    pub(crate) is_require_immediately_assigned_to_decl: bool,
     pub(crate) loc: bun_ast::Loc,
     pub(crate) import_loader: Option<bun_ast::Loader>,
     pub(crate) import_options: Expr,
@@ -726,7 +740,6 @@ impl Default for TransposeState {
         Self {
             is_await_target: false,
             is_then_catch_target: false,
-            is_require_immediately_assigned_to_decl: false,
             loc: bun_ast::Loc::EMPTY,
             import_loader: None,
             import_options: Expr::EMPTY,
@@ -1045,9 +1058,8 @@ pub struct ExprIn {
     /// tests.
     pub(crate) assign_target: js_ast::AssignTarget,
 
-    /// Currently this is only used when unwrapping a call to `require()`
-    /// with `__toESM()`.
-    pub(crate) is_immediately_assigned_to_decl: bool,
+    /// When this expression is a `require()` call, it is not unwrapped into an import.
+    pub(crate) require_stays_call: bool,
 
     pub(crate) property_access_for_method_call_maybe_should_replace_with_undefined: bool,
 

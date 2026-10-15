@@ -2168,21 +2168,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // error from the unbundled require() call failing.
             if e_.args.len_u32() == 1 {
                 let first = e_.args.slice()[0];
-                let state = TransposeState {
-                    is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
-                        && matches!(first.data, Data::EString(..)),
-                    ..Default::default()
-                };
                 match &first.data {
                     Data::EString(..) => {
                         // require(FOO) => require(FOO)
-                        *e = p.transpose_require(first, &state);
+                        *e = p.transpose_require(first, in_.require_stays_call);
                         return;
                     }
                     Data::EIf(..) => {
                         // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                         // This makes static analysis later easier
-                        *e = p.transpose_known_to_be_if_require(first, &state);
+                        *e = p.transpose_known_to_be_if_require(first, in_.require_stays_call);
                         return;
                     }
                     _ => {}

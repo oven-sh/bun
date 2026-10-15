@@ -4800,8 +4800,9 @@ it("http2 materializes pseudo, known, unknown and all-digit header names the sam
   try {
     const roundTrip = () =>
       new Promise((resolve, reject) => {
-        // authorization is never-indexed automatically (nghttp2 behavior), so the receiver lists
-        // it under sensitiveHeaders without the request having to mark anything.
+        // authorization and a cookie field shorter than 20 bytes are never-indexed automatically
+        // (nghttp2 behavior), so the receiver lists them under sensitiveHeaders without the request
+        // having to mark anything.
         const req = client.request({
           ":method": "POST",
           ":path": "/materialize",
@@ -4853,7 +4854,7 @@ it("http2 materializes pseudo, known, unknown and all-digit header names the sam
         ...["cookie", "c=1", "cookie", "d=2"],
         ...["x-unknown", "u1", "x-unknown", "u2"],
       ],
-      sensitive: ["authorization"],
+      sensitive: ["authorization", "cookie", "cookie"],
     });
     expect(first.response).toEqual({
       headers: {

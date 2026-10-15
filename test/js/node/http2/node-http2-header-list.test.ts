@@ -364,26 +364,30 @@ describe("an array in a value slot of a raw header list is sent as one field per
   const invalidValue = {
     name: "TypeError",
     code: "ERR_HTTP2_INVALID_HEADER_VALUE",
-    message: 'Invalid value for header "x-session"',
+    message: 'Invalid value "en\r\nx" for header "x-session"',
   };
 
   // Node.js encodes the header block inside request(). A request made while the session connects
-  // is encoded later. The arrays of its list are read at the call: a change that the caller makes
-  // afterwards is not sent, and a list that cannot be sent throws from the call.
-  test("a queued request() reads the arrays at the call", async () => {
-    let received: string[] = [];
+  // is encoded later. Its list is read at the call: a change that the caller makes afterwards is
+  // not sent, and a list that cannot be sent throws from the call.
+  test("a queued request() reads the list at the call", async () => {
+    const received: string[][] = [];
     const { client, authority, close } = await peers((stream, _headers, _flags, rawHeaders) => {
-      received = nonPseudoFields(rawHeaders);
+      received.push(nonPseudoFields(rawHeaders));
       stream.respond({ ":status": 200 });
       stream.end();
     }, false);
     try {
       const kept = ["k1"];
       // Every pseudo-header is given, so request() adds none to the list.
-      const list: any = [":method", "GET", ":scheme", "http", ":authority", authority, ":path", "/", "x-tag", kept];
+      const pseudo = [":method", "GET", ":scheme", "http", ":authority", authority, ":path", "/"];
+      const list: any = [...pseudo, "x-tag", kept];
       const req = client.request(list);
       kept.push("late-element");
       list.push("x-late", "late-pair");
+      const plainList: any = [...pseudo, "x-tag", "plain"];
+      const plainReq = client.request(plainList);
+      plainList.push("x-late", "late-pair");
 
       const thrown = {
         twoValues: thrownBy(() => client.request([":path", "/", "content-type", ["text/plain", "text/html"]] as any)),
@@ -406,8 +410,12 @@ describe("an array in a value slot of a raw header list is sent as one field per
       };
 
       await exchange(req);
+      await exchange(plainReq);
       expect({ received, thrown }).toEqual({
-        received: ["x-tag", "k1"],
+        received: [
+          ["x-tag", "k1"],
+          ["x-tag", "plain"],
+        ],
         thrown: {
           twoValues: singleValue,
           lineFeed: invalidValue,
@@ -496,6 +504,67 @@ describe("an array in a value slot of a raw header list is sent as one field per
     }
   });
 
+  // A :path with a control character is not a throw from request(): nghttp2 refuses it when the
+  // request is sent, and the stream reports NGHTTP2_PROTOCOL_ERROR. The same for every form of the
+  // slot, and whatever the other slots of the list hold.
+  test("request() reports a bad :path on the stream, not from the call", async () => {
+    const { client, close } = await peers(stream => {
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    try {
+      const outcomes: unknown[] = [];
+      for (const list of [
+        [":path", "/a\n"],
+        [":path", "/a\n", "x-multi", ["b", "c"]],
+        [":path", ["/a\n"]],
+      ]) {
+        let req: http2.ClientHttp2Stream;
+        try {
+          req = client.request(list as any);
+        } catch (err) {
+          outcomes.push({ thrown: describeError(err) });
+          continue;
+        }
+        outcomes.push({ streamError: await exchange(req).then(() => "none", describeError) });
+      }
+      const streamError = {
+        name: "Error",
+        code: "ERR_HTTP2_STREAM_ERROR",
+        message: "Stream closed with error code NGHTTP2_PROTOCOL_ERROR",
+      };
+      expect(outcomes).toEqual([{ streamError }, { streamError }, { streamError }]);
+    } finally {
+      close();
+    }
+  });
+
+  // nghttp2 never indexes a cookie field shorter than 20 bytes, and an array is one field per
+  // element. The receiver lists the name once for each field that arrived never-indexed.
+  test("request() never indexes each short element of a cookie array", async () => {
+    const received: unknown[] = [];
+    const { client, close } = await peers((stream, headers) => {
+      received.push({ cookie: headers.cookie, sensitive: headers[http2.sensitiveHeaders] });
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    try {
+      const long = "session=" + Buffer.alloc(24, "x").toString();
+      await exchange(client.request([":path", "/", "cookie", ["a=1", "b=2"]] as any));
+      await exchange(client.request([":path", "/", "cookie", "a=1", "cookie", "b=2"] as any));
+      await exchange(client.request([":path", "/", "cookie", [long]] as any));
+      await exchange(client.request({ ":path": "/", "cookie": ["a=1", "b=2"] }));
+      expect(received).toEqual([
+        { cookie: "a=1; b=2", sensitive: ["cookie", "cookie"] },
+        { cookie: "a=1; b=2", sensitive: ["cookie", "cookie"] },
+        { cookie: long, sensitive: [] },
+        { cookie: "a=1; b=2", sensitive: ["cookie", "cookie"] },
+      ]);
+    } finally {
+      close();
+    }
+  });
+
   // The single-value rule counts the fields that the list sends: each element of an array is one,
   // an empty array and an undefined value are none, in every slot of the list. A violation throws
   // from the call, before anything is encoded. Every row has the same outcome on Node.js v26.3.0.
@@ -516,6 +585,7 @@ describe("an array in a value slot of a raw header list is sent as one field per
     { pairs: ["content-type", ["text/html"], "content-type", []], outcome: ["text/html"] },
     { pairs: ["content-type", [], "content-type", [], "content-type", "text/html"], outcome: ["text/html"] },
     { pairs: ["x-a", ["a"], "content-type", "text/html", "content-type", undefined], outcome: ["text/html"] },
+    { pairs: ["content-type", "text/html", "content-type", undefined], outcome: ["text/html"] },
     { pairs: ["Content-Type", "text/html", "content-type", []], outcome: ["text/html"] },
   ];
   const contentTypeValues = (rawHeaders: string[]) => {

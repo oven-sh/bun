@@ -3564,7 +3564,6 @@ class ServerHttp2Stream extends Http2Stream {
     // date header appended when missing. The derived object form (original-case
     // keys, array values for duplicates) backs sentHeaders.
     let rawHeadersList: any[] | null = null;
-    let rawHeadersExpanded = false;
     let statusCode;
     if (headers == undefined) {
       headers = {};
@@ -3573,10 +3572,9 @@ class ServerHttp2Stream extends Http2Stream {
       let statusFound = false;
       let isDateSet = false;
       // Never mutate the caller's array: the :status/date defaults below are appended to a copy.
-      // Symbol-keyed own properties (the never-index list) do not survive a copy; carry it over.
+      // Symbol-keyed own properties (the never-index list) do not survive a copy; read it first.
       const sensitiveNamesForCopy = headers[sensitiveHeaders];
       headers = headers.slice();
-      if (sensitiveNamesForCopy !== undefined) headers[sensitiveHeaders] = sensitiveNamesForCopy;
       for (let i = 0; i < headers.length; i += 2) {
         const key = headers[i];
         if (typeof key !== "string") continue;
@@ -3598,7 +3596,6 @@ class ServerHttp2Stream extends Http2Stream {
       }
       const headersObject = { __proto__: null };
       rawHeadersList = foldRawHeaders(headers as any[], headersObject, session[kStrictSingleValueFields] !== false);
-      rawHeadersExpanded = rawHeadersList !== headers;
       if (sensitiveNamesForCopy !== undefined) {
         headersObject[sensitiveHeaders] = sensitiveNamesForCopy;
       }
@@ -3619,8 +3616,8 @@ class ServerHttp2Stream extends Http2Stream {
     const sensitiveNames = buildSensitiveNames(headers, sensitives);
     // Pre-validate single-value headers in JS so a throwing respond() leaves no partial state in
     // the shared HPACK table (same rule request() applies).
-    if (rawHeadersExpanded) {
-      assertExpandedRawHeaders(rawHeadersList!, session[kStrictSingleValueFields] !== false);
+    if (rawHeadersList !== null) {
+      assertRawHeaderList(rawHeadersList, session[kStrictSingleValueFields] !== false);
     } else if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
     // node keeps the never-index list visible on sentHeaders (symbol keys are not iterated by the
     // wire-encoding path, so re-attaching is safe).
@@ -3902,8 +3899,16 @@ function buildSensitiveNames(headers, sensitives): Record<string, boolean> {
       if (lower === "authorization") {
         map["authorization"] = true;
       } else if (lower === "cookie") {
+        // nghttp2 never indexes a cookie field shorter than 20 bytes. An array is one field per element.
         const cookie = headers[keys[i]];
-        if (typeof cookie === "string" && cookie.length < 20) map["cookie"] = true;
+        if ($isArray(cookie)) {
+          for (let j = 0; j < cookie.length; j++) {
+            if (String(cookie[j]).length < 20) {
+              map["cookie"] = true;
+              break;
+            }
+          }
+        } else if (typeof cookie === "string" && cookie.length < 20) map["cookie"] = true;
       }
     }
   }
@@ -3919,17 +3924,14 @@ function copyHeaderValueArray(values: any[]): any[] {
   return copy;
 }
 
-// Folds a raw [name, value, ...] list into `object`, which backs sentHeaders, and returns the list to encode.
-function foldRawHeaders(list: any[], object: Record<string, any>, strictSingleValue: boolean): any[] {
-  let wire = list;
+// Folds a raw [name, value, ...] list into `object`, which backs sentHeaders, and appends the
+// fields to `wire`, the list to encode. The encoder reads `wire`: a caller that changes its own
+// list after the call does not change what a queued request() sends.
+function foldRawHeaders(list: any[], object: Record<string, any>, strictSingleValue: boolean, wire: any[] = []): any[] {
   for (let i = 0; i < list.length; i += 2) {
     const key = list[i];
     let value = list[i + 1];
     if (typeof value === "object" && $isArray(value)) {
-      if (wire === list) {
-        wire = [];
-        for (let j = 0; j < i; j++) $arrayPush(wire, list[j]);
-      }
       value = copyHeaderValueArray(value);
       const length = value.length;
       if (
@@ -3947,20 +3949,23 @@ function foldRawHeaders(list: any[], object: Record<string, any>, strictSingleVa
           $arrayPush(wire, String(value[j]));
         }
       }
-    } else if (wire !== list) {
+    } else {
       $arrayPush(wire, key);
       $arrayPush(wire, value);
     }
     const existing = object[key];
     if (existing === undefined) object[key] = value;
-    else if ($isArray(existing)) existing.push(value);
+    else if ($isArray(existing)) $arrayPush(existing, value);
     else object[key] = [existing, value];
   }
   return wire;
 }
 
-// For a list that foldRawHeaders() expanded: the single-value rule per pair, then the value bytes the encoder refuses.
-function assertExpandedRawHeaders(list: any[], strictSingleValue: boolean) {
+// The checks that must run before the encoder sees a list that foldRawHeaders() built: the
+// single-value rule per field, then the value bytes the encoder refuses. A throw from the
+// encoder leaves the fields before it in the shared HPACK table, so each check runs first.
+// The value of :path is not checked here: request() reports a bad path on the stream.
+function assertRawHeaderList(list: any[], strictSingleValue: boolean) {
   if (strictSingleValue) {
     let seen: Set<string> | null = null;
     for (let i = 0; i < list.length; i += 2) {
@@ -3983,10 +3988,8 @@ function assertExpandedRawHeaders(list: any[], strictSingleValue: boolean) {
       if (c === 0x00 || c === 0x0a || c === 0x0d) {
         const name = list[i];
         const lower = StringPrototypeToLowerCase.$call(typeof name === "string" ? name : String(name));
-        // The encoder's message for this value.
-        const error = new TypeError(`Invalid value for header "${lower}"`);
-        error.code = "ERR_HTTP2_INVALID_HEADER_VALUE";
-        throw error;
+        if (lower === HTTP2_HEADER_PATH) break;
+        throw $ERR_HTTP2_INVALID_HEADER_VALUE(value, lower);
       }
     }
   }
@@ -6065,7 +6068,6 @@ class ClientHttp2Session extends Http2Session {
       // given order. The derived object form (original-case keys, array values
       // for duplicates) backs sentHeaders.
       let rawHeadersList: any[] | null = null;
-      let rawHeadersExpanded = false;
       if (headers == undefined) {
         headers = {};
       } else if ($isArray(headers)) {
@@ -6114,14 +6116,10 @@ class ClientHttp2Session extends Http2Session {
           if (scheme !== undefined) throw $ERR_HTTP2_CONNECT_SCHEME();
           if (path !== undefined) throw $ERR_HTTP2_CONNECT_PATH();
         }
-        let list = raw;
-        if (additionalPseudoHeaders.length) {
-          list = additionalPseudoHeaders;
-          for (let i = 0; i < raw.length; i++) $arrayPush(list, raw[i]);
-        }
         const headersObject = { __proto__: null };
-        rawHeadersList = foldRawHeaders(list, headersObject, this[kStrictSingleValueFields] !== false);
-        rawHeadersExpanded = rawHeadersList !== list;
+        const strictSingleValue = this[kStrictSingleValueFields] !== false;
+        rawHeadersList = foldRawHeaders(additionalPseudoHeaders, headersObject, strictSingleValue);
+        rawHeadersList = foldRawHeaders(raw, headersObject, strictSingleValue, rawHeadersList);
         if (raw[sensitiveHeaders] !== undefined) {
           headersObject[sensitiveHeaders] = raw[sensitiveHeaders];
         }
@@ -6183,8 +6181,8 @@ class ClientHttp2Session extends Http2Session {
       }
       // Validate single-value constraints before anything is encoded (a mid-encode throw would
       // desync the shared HPACK table from the peer).
-      if (rawHeadersExpanded) {
-        assertExpandedRawHeaders(rawHeadersList!, this[kStrictSingleValueFields] !== false);
+      if (rawHeadersList !== null) {
+        assertRawHeaderList(rawHeadersList, this[kStrictSingleValueFields] !== false);
       } else if (this[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
       // node keeps the never-index list visible on the request's sentHeaders (symbol keys are
       // not iterated by the wire-encoding path, so re-attaching is safe).
@@ -6270,8 +6268,19 @@ class ClientHttp2Session extends Http2Session {
         // nghttp2 rejects :path values containing control characters, SP or DEL at send time and
         // surfaces it as a stream error rather than a synchronous throw; mirror that. Validate
         // before a stream id is allocated AND before the concurrency queue, so queued requests are
-        // validated exactly like immediate ones.
-        const path = headers[":path"];
+        // validated exactly like immediate ones. A raw list is read as the encoder reads it: the
+        // first :path field of the list (an array in that slot is one field per element).
+        let path = headers[":path"];
+        if (rawHeadersList !== null) {
+          path = undefined;
+          for (let i = 0; i < rawHeadersList.length; i += 2) {
+            const key = rawHeadersList[i];
+            if (typeof key === "string" && key.toLowerCase() === HTTP2_HEADER_PATH && rawHeadersList[i + 1] != null) {
+              path = rawHeadersList[i + 1];
+              break;
+            }
+          }
+        }
         if (typeof path === "string") {
           for (let i = 0; i < path.length; i++) {
             const c = path.charCodeAt(i);

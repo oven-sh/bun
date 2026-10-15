@@ -14,6 +14,7 @@ import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
+import { duplexPair, type Duplex } from "node:stream";
 import { describe, test } from "node:test";
 
 const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_ENHANCE_YOUR_CALM } = http2.constants;
@@ -367,7 +368,8 @@ const isBun = typeof Bun !== "undefined";
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 // The initial flow-control window of a stream and of the connection (RFC 9113 section 6.9.2).
 const WINDOW = 65535;
-const BODY = Buffer.alloc(4 * 65536, "b");
+// More than one window. The rest is small: it leaves in one socket write on every platform.
+const BODY = Buffer.alloc(WINDOW + 8192, "b");
 // What the peer has of a stream whose BODY is stuck: its HEADERS and one window of DATA.
 const STALLED = `H D${WINDOW}`;
 // What the peer has of a stream that sent all of BODY and END_STREAM.
@@ -388,6 +390,8 @@ function u32(value: number): Buffer {
 }
 // WINDOW_UPDATE with room for all of BODY.
 const windowUpdate = (streamId: number) => frameOf(8, 0, streamId, u32(BODY.length));
+// WINDOW_UPDATE that makes a window of the initial size as wide as a window can be.
+const widest = (streamId: number) => frameOf(8, 0, streamId, u32(0x7fffffff - WINDOW));
 // SETTINGS with one parameter: 3 is MAX_CONCURRENT_STREAMS, 4 is INITIAL_WINDOW_SIZE.
 const settings = (id: 3 | 4, value: number) => frameOf(4, 0, 0, Buffer.concat([Buffer.from([0, id]), u32(value)]));
 // HEADERS with ":status: 200" (0x88 in the HPACK static table).
@@ -398,9 +402,11 @@ const dataFrame = (streamId: number, bytes: number, endStream = false) =>
 // Bun can send the RST_STREAM of close(code) or destroy(err) a second time: #43539.
 const resetOnce = (wire: string) => wire.replace(/( R\d+)\1$/, "$1");
 const nextTurn = () => new Promise<void>(resolve => setImmediate(resolve));
+// How long RawPeer.until() waits. bun test gives a test 5000 ms.
+const DEADLINE = 4000;
 
 class RawPeer {
-  socket: net.Socket;
+  socket: Duplex;
   goaway: number | undefined;
   closed: Promise<void>;
   #streams = new Map<number, string[]>();
@@ -409,16 +415,23 @@ class RawPeer {
   #prefaceLeft: number;
   #pings = 0;
   #acks = 0;
-  #waiting: { condition: () => boolean; resolve: () => void }[] = [];
+  #waiting: { condition: () => boolean; settle: (failure?: string) => void }[] = [];
+  // Why the socket brings no more frames.
+  #gone: string | undefined;
 
-  constructor(socket: net.Socket, role: "client" | "server") {
+  constructor(socket: Duplex, role: "client" | "server") {
     this.socket = socket;
     this.#prefaceLeft = role === "server" ? PREFACE.length : 0;
     this.closed = new Promise(resolve => socket.on("close", () => resolve()));
-    socket.on("error", () => {});
+    const gone = (why: string) => {
+      this.#gone ??= why;
+      for (const wait of this.#waiting) wait.settle(why);
+    };
+    socket.on("close", () => gone("the socket closed"));
+    socket.on("error", (error: NodeJS.ErrnoException) => gone(`the socket failed with ${error.code ?? error.message}`));
     socket.on("data", (chunk: Buffer) => this.#read(chunk));
     // Every frame leaves in its own write, with no wait for the ACK of the one before.
-    socket.setNoDelay(true);
+    if (socket instanceof net.Socket) socket.setNoDelay(true);
     if (role === "client") socket.write(PREFACE);
     socket.write(frameOf(4, 0, 0));
   }
@@ -457,11 +470,36 @@ class RawPeer {
     this.send(frameOf(1, method === "GET" ? 0x5 : 0x4, streamId, block), ...more);
   }
 
+  /**
+   * Resolves when the condition holds. Rejects with what arrived so far when the socket closes
+   * or fails first, or when the condition does not hold in time.
+   */
   until(condition: () => boolean): Promise<void> {
     if (condition()) return Promise.resolve();
-    const { promise, resolve } = Promise.withResolvers<void>();
-    this.#waiting.push({ condition, resolve });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    // Made here, so that its stack has the line that waits.
+    const error = new Error();
+    const wait = {
+      condition,
+      settle: (failure?: string) => {
+        clearTimeout(deadline);
+        this.#waiting = this.#waiting.filter(other => other !== wait);
+        if (failure === undefined) return resolve();
+        error.message = `${failure} before ${condition} held. Received: ${this.#received()}`;
+        reject(error);
+      },
+    };
+    const deadline = setTimeout(wait.settle, DEADLINE, `${DEADLINE} ms passed`).unref();
+    this.#waiting.push(wait);
+    if (this.#gone !== undefined) wait.settle(this.#gone);
     return promise;
+  }
+
+  /** The wire of every stream that has one, and the code of a GOAWAY. */
+  #received(): string {
+    const received = Array.from(this.#streams.keys(), id => `stream ${id}: ${this.wire(id)}`);
+    if (this.goaway !== undefined) received.push(`GOAWAY ${this.goaway}`);
+    return received.join(" | ") || "no frame of a stream";
   }
 
   /**
@@ -485,7 +523,7 @@ class RawPeer {
       if (buffered.length < 9 + length) break;
       this.#frame(buffered[3], buffered[4], buffered.readUInt32BE(5), buffered.subarray(9, 9 + length));
       buffered = buffered.subarray(9 + length);
-      this.#waiting = this.#waiting.filter(({ condition, resolve }) => !condition() || (resolve(), false));
+      for (const wait of this.#waiting) if (wait.condition()) wait.settle();
     }
     this.#buffered = buffered;
   }
@@ -520,10 +558,13 @@ class RawPeer {
 }
 
 /** Runs `run` with a client session whose server is a RawPeer. The peer exists once the session has connected. */
-async function withRawServer(run: (session: http2.ClientHttp2Session, peer: Promise<RawPeer>) => Promise<void>) {
+async function withRawServer(
+  run: (session: http2.ClientHttp2Session, peer: Promise<RawPeer>) => Promise<void>,
+  options?: http2.ClientSessionOptions,
+) {
   const accepted = Promise.withResolvers<RawPeer>();
   const server = net.createServer(socket => accepted.resolve(new RawPeer(socket, "server")));
-  const session = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+  const session = http2.connect(`http://127.0.0.1:${await listen(server)}`, options);
   session.on("error", () => {});
   try {
     await run(session, accepted.promise);
@@ -671,6 +712,8 @@ const requestRows: Record<"connected" | "pending", RequestRow[]> = {
   ],
   pending: [
     ["close()", s => post(s), undefined, r => r.close(), "H D0E R0"],
+    ["close(2)", s => post(s), undefined, r => r.close(NGHTTP2_INTERNAL_ERROR), "H D0E R2"],
+    ["close(8)", s => post(s), undefined, r => r.close(NGHTTP2_CANCEL), "H D0E R8"],
     ["write(BODY), close()", s => post(s, [BODY]), undefined, r => r.close(), `${STALLED} R0`],
     ["resume(), write(BODY), close()", s => post(s, [BODY]).resume(), undefined, r => r.close(), `${STALLED} R0`],
     ["write('hello'), close()", s => post(s, ["hello"]), undefined, r => r.close(), "H D5 R0", "#33380"],
@@ -696,6 +739,23 @@ for (const state of ["connected", "pending"] as const) {
     }
   });
 }
+
+// The caller ended the request, so close() sends RST_STREAM after 'finish'. The peer opens no
+// window, so the rest of BODY stays: no 'finish', no RST_STREAM, and the request stays open.
+test("a pending request: end(BODY), close(), and no WINDOW_UPDATE from the peer", async () => {
+  await withRawServer(async (session, accepted) => {
+    const req = post(session);
+    assert.strictEqual(req.pending, true);
+    let closed = false;
+    req.on("close", () => (closed = true));
+    req.end(BODY).close();
+    const peer = await accepted;
+    await peer.until(() => peer.wire(1) === STALLED);
+    await peer.settle();
+    await peer.settle();
+    assert.deepStrictEqual({ wire: peer.wire(1), closed }, { wire: STALLED, closed: false });
+  });
+});
 
 type ResponseRow = [
   name: string,
@@ -773,6 +833,53 @@ test("close() on a stalled request frees its place under SETTINGS_MAX_CONCURRENT
   });
 });
 
+// nghttp2 holds the HEADERS of a request back while the peer admits no more streams, and the
+// RST_STREAM of close() cancels them. Bun sends the request when it gets a place, then the reset.
+test("close() on a request that waits for a place under SETTINGS_MAX_CONCURRENT_STREAMS", async () => {
+  await withRawServer(async (session, accepted) => {
+    const peer = await accepted;
+    peer.send(settings(3, 1));
+    await peer.settle();
+    const first = post(session).resume();
+    await peer.until(() => peer.wire(1) === "H");
+    const second = post(session);
+    const closed = Promise.all([once(first, "close"), once(second, "close")]);
+    second.close();
+    // The first request ends on both sides, so the peer admits the next one.
+    first.end();
+    await peer.until(() => peer.wire(1) === "H D0E");
+    peer.send(responseHeaders(1, true));
+    await closed;
+    await peer.settle();
+    assert.strictEqual(peer.wire(3), isBun ? "H D0E R0" : "");
+  });
+});
+
+// node keeps a request with unread data open after its RST_STREAM, so its session never closes
+// here. Bun destroys the request, and the session closes after it.
+test("close() with unread data, then session.close(): the request closes first", { skip: !isBun }, async () => {
+  await withRawServer(async (session, accepted) => {
+    const peer = await accepted;
+    const req = post(session, [BODY]);
+    await peer.until(() => peer.wire(1) === STALLED);
+    // A response that nobody reads.
+    const response = once(req, "response");
+    peer.send(responseHeaders(1), dataFrame(1, 100));
+    await response;
+    const order: string[] = [];
+    req.on("close", () => order.push("request"));
+    const destroyed = new Promise(resolve =>
+      session.on("close", () => {
+        order.push("session");
+        resolve(req.destroyed);
+      }),
+    );
+    req.close();
+    session.close();
+    assert.deepStrictEqual({ destroyed: await destroyed, order }, { destroyed: true, order: ["request", "session"] });
+  });
+});
+
 // After the write that RST_STREAM dropped, the stream's _final asks native for the END_STREAM
 // frame that stands in for the trailers. A frame queued for a closed stream never leaves the
 // queue, and the session then queues the DATA of every other stream behind it.
@@ -797,6 +904,120 @@ describe("close() on a response that waits for trailers leaves no frame queued",
       });
     });
   }
+});
+
+// node emits no 'wantTrailers' on a stream that close() has marked as closed: no trailers
+// leave, and RST_STREAM ends the stream.
+describe("close() on a stream that waits for trailers: no 'wantTrailers'", () => {
+  type Outcome = { wantTrailers: number; thrown: string | null; wire: string };
+  type Close = (stream: http2.Http2Stream, peer: RawPeer) => unknown;
+  const cases: [name: string, act: Close, outcome: Outcome][] = [
+    [
+      "write(BODY) stalled, end(), close(2)",
+      async (stream, peer) => {
+        stream.write(BODY);
+        await peer.until(() => peer.wire(1) === STALLED);
+        stream.end().close(NGHTTP2_INTERNAL_ERROR);
+      },
+      { wantTrailers: 0, thrown: null, wire: `${STALLED} R2` },
+    ],
+  ];
+
+  // Answers 'wantTrailers' with trailers, runs `act`, and waits for 'close'.
+  async function outcomeOf(stream: http2.Http2Stream, peer: RawPeer, act: Close) {
+    const outcome: Outcome = { wantTrailers: 0, thrown: null, wire: "" };
+    stream.on("wantTrailers", () => {
+      outcome.wantTrailers++;
+      try {
+        stream.sendTrailers({ "x-t": "1" });
+      } catch (error) {
+        outcome.thrown = (error as NodeJS.ErrnoException).code!;
+      }
+    });
+    const closed = new Promise(resolve => stream.on("close", resolve));
+    await act(stream, peer);
+    await closed;
+    await peer.settle();
+    outcome.wire = resetOnce(peer.wire(1));
+    return outcome;
+  }
+
+  for (const [name, act, outcome] of cases) {
+    test(`request: ${name}`, async () => {
+      await withRawServer(async (session, accepted) => {
+        const peer = await accepted;
+        await peer.settle();
+        const req = post(session, [], { waitForTrailers: true });
+        assert.deepStrictEqual(await outcomeOf(req, peer, act), outcome);
+      });
+    });
+    test(`response: ${name}`, async () => {
+      await withRawClient("GET", async (stream, peer) => {
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        assert.deepStrictEqual(await outcomeOf(stream, peer, act), outcome);
+      });
+    });
+  }
+
+  // The last frame of the request is queued behind another stream's stuck body. It leaves in
+  // front of the RST_STREAM, and the stream then asks for its trailers.
+  for (const [call, act, reset] of [
+    ["close(code)", req => req.close(NGHTTP2_INTERNAL_ERROR), "R2"],
+    ["destroy()", req => req.destroy(), "R0"],
+  ] as [string, Act, string][]) {
+    test(`request behind another stream's stuck body: end('hello'), ${call}`, async () => {
+      await withRawServer(async (session, accepted) => {
+        const peer = await accepted;
+        peer.send(windowUpdate(0));
+        await peer.settle();
+        post(session, [BODY]);
+        await peer.until(() => peer.wire(1) === STALLED);
+        const req = post(session, [], { waitForTrailers: true });
+        let wantTrailers = 0;
+        req.on("wantTrailers", () => {
+          wantTrailers++;
+          req.sendTrailers({ "x-t": "1" });
+        });
+        await peer.until(() => peer.wire(3) === "H");
+        req.end("hello");
+        act(req, peer);
+        await peer.until(() => peer.wire(3).includes("R"));
+        await peer.settle();
+        assert.deepStrictEqual(
+          { wantTrailers, wire: resetOnce(peer.wire(3)) },
+          { wantTrailers: 0, wire: `H D5 ${reset}` },
+        );
+      });
+    });
+  }
+});
+
+// RST_STREAM dropped the rest of the body: the writable side of the stream did not finish.
+describe("no 'finish' after a close() that dropped the rest of the body", () => {
+  async function finishOf(stream: http2.Http2Stream, peer: RawPeer) {
+    let finish = false;
+    stream.on("finish", () => (finish = true));
+    stream.write(BODY);
+    await peer.until(() => peer.wire(1) === STALLED);
+    stream.close();
+    await peer.until(() => peer.wire(1).includes("R0"));
+    await peer.settle();
+    return { finish, writableFinished: stream.writableFinished };
+  }
+  const unfinished = { finish: false, writableFinished: false };
+
+  test("request", expectFailureOnBun("#44881"), async () => {
+    await withRawServer(async (session, accepted) => {
+      const peer = await accepted;
+      assert.deepStrictEqual(await finishOf(post(session), peer), unfinished);
+    });
+  });
+  test("response", expectFailureOnBun("#44881"), async () => {
+    await withRawClient("GET", async (stream, peer) => {
+      stream.respond({ ":status": 200 });
+      assert.deepStrictEqual(await finishOf(stream, peer), unfinished);
+    });
+  });
 });
 
 // close() and destroy() run in a setImmediate callback, so the session reads what the peer
@@ -882,6 +1103,33 @@ describe("close(code) with a chunk that the stream's Writable still holds", () =
   }
 });
 
+// A Writable hands its next chunk to the stream before it runs the callback of the chunk
+// before. The session has B when the callback of A runs, so B leaves too.
+describe("close(code) and destroy() in the callback of write(A), with write(B) behind it", () => {
+  const A = Buffer.alloc(1000, "a");
+  const B = Buffer.alloc(2000, "b");
+  for (const [name, act, reset] of [
+    ["close(NGHTTP2_INTERNAL_ERROR)", req => req.close(NGHTTP2_INTERNAL_ERROR), "R2"],
+    ["destroy()", req => req.destroy(), "R0"],
+  ] as [string, Act, string][]) {
+    test(name, async () => {
+      await withRawServer(async (session, accepted) => {
+        const peer = await accepted;
+        const req = post(session);
+        await peer.until(() => peer.wire(1) === "H");
+        // No window holds a byte of A or B back.
+        peer.send(widest(0), widest(1));
+        await peer.settle();
+        req.write(A, () => act(req, peer));
+        req.write(B);
+        await peer.until(() => peer.wire(1).includes("R"));
+        await peer.settle();
+        assert.strictEqual(resetOnce(peer.wire(1)), `H D${A.length + B.length} ${reset}`);
+      });
+    });
+  }
+});
+
 // Stream 1 is stuck on its own window, so the session has DATA queued. Stream 3 has room in
 // every window: what it wrote before close() or destroy() leaves before its RST_STREAM.
 describe("close() and destroy() behind another stream's stuck body", () => {
@@ -923,11 +1171,54 @@ describe("close() and destroy() behind another stream's stuck body", () => {
   }
 });
 
+// The same for responses. Stream 3 answers a GET, so its request side has ended.
+describe("close() and destroy() on a response behind another stream's stuck body", () => {
+  const respond = (stream: http2.ServerHttp2Stream) => stream.respond({ ":status": 200 });
+  const hello = (stream: http2.ServerHttp2Stream) => (respond(stream), stream.write("hello"));
+  for (const [name, act, wire] of [
+    ["respond(), write('hello'), close()", stream => (hello(stream), stream.close()), "H D5 R0"],
+    [
+      "respond(), write('hello'), close(code)",
+      stream => (hello(stream), stream.close(NGHTTP2_INTERNAL_ERROR)),
+      "H D5 R2",
+    ],
+    // Bun puts END_STREAM on the chunk inside end(chunk). That frame ends the stream on both
+    // sides, so no RST_STREAM follows.
+    [
+      "respond(), end('hello'), close(code)",
+      stream => (respond(stream), stream.end("hello"), stream.close(NGHTTP2_INTERNAL_ERROR)),
+      isBun ? "H D5E" : "H D5 R2",
+    ],
+    ["respond(), write('hello'), destroy()", stream => (hello(stream), stream.destroy()), "H D5 R0"],
+  ] as [string, (stream: http2.ServerHttp2Stream) => unknown, string][]) {
+    test(name, async () => {
+      await withRawClient("GET", async (stuck, peer) => {
+        peer.send(windowUpdate(0));
+        await peer.settle();
+        respond(stuck);
+        stuck.write(BODY);
+        await peer.until(() => peer.wire(1) === STALLED);
+        const opened = once(stuck.session!, "stream");
+        peer.request(3, "GET");
+        const [stream]: http2.ServerHttp2Stream[] = await opened;
+        stream.on("error", () => {});
+        // As in withRawClient(): the session is not reading one turn after 'stream'.
+        await nextTurn();
+        act(stream);
+        // Not every row ends with RST_STREAM on every runtime, so the wait is for the DATA.
+        await peer.until(() => peer.wire(3).includes("D5"));
+        await peer.settle();
+        assert.strictEqual(resetOnce(peer.wire(3)), wire);
+      });
+    });
+  }
+});
+
 // node cannot send a stream's queued DATA while a socket write is in progress. close() then
 // holds RST_STREAM back until that write has completed, and the queued DATA leaves first.
 // destroy() does not wait, also after such a close(): its RST_STREAM leaves next, and what the
 // stream has queued is dropped.
-test("close() and destroy() with a socket write in progress", async () => {
+test("close() and destroy() with a socket write in progress", async t => {
   await withRawServer(async (session, accepted) => {
     const peer = await accepted;
     // More than the socket buffers of a loopback connection hold. The peer stops reading, so a
@@ -948,13 +1239,19 @@ test("close() and destroy() with a socket write in progress", async () => {
     const last = 2 * requests.length - 1;
     await peer.until(() => peer.wire(last) === "H");
     // Room for `big` and for B in every window.
-    peer.send(...[0, 1, 3].map(id => frameOf(8, 0, id, u32(0x7fffffff - WINDOW))));
+    peer.send(...[0, 1, 3].map(widest));
     await peer.settle();
     peer.socket.pause();
     requests[0].write(big);
     // node hands a write to the socket one turn of the event loop after write().
     await nextTurn();
     await nextTurn();
+    // Windows can take all of `big` from the session. A write behind it then completes.
+    let taken = false;
+    requests[0].write("x", () => (taken = true));
+    await nextTurn();
+    await nextTurn();
+    if (taken) return t.skip("the socket took the whole write: no write is in progress");
     for (const [i, [, act]] of calls.entries()) act(requests[1 + i]);
     // The RST_STREAM of close() and destroy() is due one turn after the call.
     await nextTurn();
@@ -966,7 +1263,7 @@ test("close() and destroy() with a socket write in progress", async () => {
       calls.map((_, i) => resetOnce(peer.wire(3 + 2 * i))),
       calls.map(([wire]) => wire),
     );
-    assert.strictEqual(peer.wire(1), `H D${big.length}`);
+    assert.strictEqual(peer.wire(1), `H D${big.length + 1}`);
   });
 });
 
@@ -979,36 +1276,48 @@ describe("close() and destroy() in a listener, with more frames for the stream i
   // "103" as a literal ":status", and a trailer "x-t: 1".
   const earlyHints = frameOf(1, 0x4, 1, Buffer.from([0x08, 0x03, 0x31, 0x30, 0x33]));
   const trailers = frameOf(1, 0x5, 1, Buffer.from([0x00, 0x03, 0x78, 0x2d, 0x74, 0x01, 0x31]));
-  const reads: [name: string, event: string, frames: Buffer[]][] = [
+  // The session gives its streams a small window, so that a read of a few KiB is worth a
+  // WINDOW_UPDATE: the endpoint sends one when half of the window is used.
+  const smallWindow = { settings: { initialWindowSize: 4096 } };
+  const quarter = dataFrame(1, smallWindow.settings.initialWindowSize / 4);
+  type Read = [name: string, event: string, frames: Buffer[], options?: http2.ClientSessionOptions];
+  const reads: Read[] = [
     ["'headers', then the response", "headers", [earlyHints, responseHeaders(1), dataFrame(1, 1)]],
     ["'response', then DATA and trailers with END_STREAM", "response", [responseHeaders(1), dataFrame(1, 1), trailers]],
-    // Half of the stream's window: enough for a WINDOW_UPDATE.
     [
-      "'response', then 49152 bytes of DATA",
+      "'response', then DATA for three quarters of the stream's window",
       "response",
-      [responseHeaders(1), dataFrame(1, 16384), dataFrame(1, 16384), dataFrame(1, 16384)],
+      [responseHeaders(1), quarter, quarter, quarter],
+      smallWindow,
     ],
   ];
-  const calls: [name: string, act: (req: http2.ClientHttp2Stream) => void, events: string[], reset: string][] = [
+  type Call = (req: http2.ClientHttp2Stream) => void;
+  const calls: [name: string, act: Call, events: string[], reset: string][] = [
     ["close()", req => req.close(), ["end"], "R0"],
     ["close(NGHTTP2_INTERNAL_ERROR)", req => req.close(NGHTTP2_INTERNAL_ERROR), [], "R2"],
     ["destroy()", req => req.destroy(), ["end"], "R0"],
   ];
+  // Where the call runs: in a listener of the event, or in a continuation of the read.
+  type Way = (req: http2.ClientHttp2Stream, event: string, call: () => void) => unknown;
+  const inListener: Way = (req, event, call) => req.once(event, call);
+  const continuations: [name: string, way: Way][] = [
+    ["a tick after", (req, event, call) => req.once(event, () => process.nextTick(call))],
+    ["after an await of", async (req, event, call) => (await once(req, event), call())],
+  ];
 
-  async function resultOf(event: string, frames: Buffer[], act: (req: http2.ClientHttp2Stream) => void) {
+  async function resultOf([, event, frames, options]: Read, act: Call, way = inListener) {
     const events: string[] = [];
     let result = {};
     await withRawServer(async (session, accepted) => {
       const peer = await accepted;
       const req = post(session);
+      // The events count from the one that the call follows.
       let called = false;
       for (const name of ["headers", "response", "data", "trailers", "end"]) {
         req.on(name, () => called && events.push(name));
       }
-      req.once(event, () => {
-        called = true;
-        act(req);
-      });
+      req.once(event, () => (called = true));
+      way(req, event, () => act(req));
       await peer.until(() => peer.wire(1) === "H");
       peer.send(...frames);
       await peer.until(() => peer.wire(1).includes("R"));
@@ -1021,21 +1330,45 @@ describe("close() and destroy() in a listener, with more frames for the stream i
       session.close();
       await closed;
       result = { events, wire, windowUpdates: peer.windowUpdates(1) };
-    });
+    }, options);
     return result;
   }
 
-  for (const [read, event, frames] of reads) {
+  for (const read of reads) {
     for (const [call, act, events, reset] of calls) {
-      test(`${call} in ${read}`, async () => {
-        assert.deepStrictEqual(await resultOf(event, frames, act), { events, wire: `H ${reset}`, windowUpdates: 0 });
+      test(`${call} in ${read[0]}`, async () => {
+        const result = await resultOf(read, act);
+        assert.deepStrictEqual(result, { events, wire: `H ${reset}`, windowUpdates: 0 });
       });
     }
   }
 
+  // node runs a tick and a microtask of a listener before it takes the next frame of the
+  // read, so the outcome is that of a call in the listener.
+  for (const [how, way] of continuations) {
+    for (const [call, act, events, reset] of calls) {
+      test(`${call} ${how} ${reads[1][0]}`, async () => {
+        const result = await resultOf(reads[1], act, way);
+        assert.deepStrictEqual(result, { events, wire: `H ${reset}`, windowUpdates: 0 });
+      });
+    }
+  }
+
+  // The control for the rows that expect no WINDOW_UPDATE.
+  test("no call in 'response', then DATA for three quarters of the stream's window: WINDOW_UPDATE", async () => {
+    const [, , frames, options] = reads[2];
+    await withRawServer(async (session, accepted) => {
+      const peer = await accepted;
+      post(session).resume();
+      await peer.until(() => peer.wire(1) === "H");
+      peer.send(...frames);
+      await peer.settle();
+      assert.ok(peer.windowUpdates(1) > 0);
+    }, options);
+  });
+
   test("close(code) in 'response', then pause() and resume(): no WINDOW_UPDATE for the stream", async () => {
-    const [, event, frames] = reads[2];
-    const result = await resultOf(event, frames, req => {
+    const result = await resultOf(reads[2], req => {
       // Runs before the RST_STREAM that close() is about to schedule.
       setImmediate(() => req.pause().resume());
       req.close(NGHTTP2_INTERNAL_ERROR);
@@ -1228,6 +1561,62 @@ test("session.destroy() with an unsent response sends GOAWAY and no RST_STREAM",
     stream.session!.destroy();
     await peer.closed;
     assert.deepStrictEqual({ wire: peer.wire(1), goaway: peer.goaway }, { wire: STALLED, goaway: NGHTTP2_NO_ERROR });
+  });
+});
+
+// The transport is a JS stream. What the session writes reaches the peer inside the write,
+// and a PING round trip is not a turn of the event loop.
+describe("close() and destroy() on a session over a JS stream", () => {
+  async function withDuplexPeer(run: (session: http2.ClientHttp2Session, peer: RawPeer) => Promise<void>) {
+    const [clientSide, serverSide] = duplexPair();
+    const peer = new RawPeer(serverSide, "server");
+    const session = http2.connect("http://localhost", { createConnection: () => clientSide });
+    session.on("error", () => {});
+    try {
+      // A session that answers a PING has connected: its requests are not pending.
+      await peer.settle();
+      await run(session, peer);
+    } finally {
+      session.destroy();
+      serverSide.destroy();
+    }
+  }
+
+  for (const [name, wait] of [
+    ["write(BODY), close() in one tick", undefined],
+    ["write(BODY) stalled, close()", STALLED],
+  ] as const) {
+    test(name, async () => {
+      await withDuplexPeer(async (session, peer) => {
+        const req = post(session, [BODY]);
+        assert.strictEqual(req.pending, false);
+        if (wait !== undefined) await peer.until(() => peer.wire(1) === wait);
+        req.close();
+        // On Bun the PING round trips take no turn of the event loop here: the windows open
+        // while its RST_STREAM is still due. The wait after that is for the frame.
+        await wireAfterGrant(peer);
+        await peer.until(() => peer.wire(1).includes("R"));
+        assert.strictEqual(resetOnce(peer.wire(1)), `${STALLED} R0`);
+      });
+    });
+  }
+
+  test("write(100 kB), destroy() in one tick, with room in every window", async () => {
+    await withDuplexPeer(async (session, peer) => {
+      const data = Buffer.alloc(100_000, "c");
+      const req = post(session);
+      await peer.until(() => peer.wire(1) === "H");
+      peer.send(widest(0), widest(1));
+      await peer.settle();
+      // node completes a write to a JS stream in a setImmediate callback, and destroy() drops
+      // the queued DATA while a write is in progress. Two turns complete that of the PING answer.
+      await nextTurn();
+      await nextTurn();
+      req.write(data);
+      req.destroy();
+      await peer.until(() => peer.wire(1).includes("R"));
+      assert.strictEqual(resetOnce(peer.wire(1)), `H D${data.length} R0`);
+    });
   });
 });
 

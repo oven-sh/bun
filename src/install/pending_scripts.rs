@@ -4,12 +4,11 @@
 //! writes holds `flock` on the file: the next install can tell a dead writer from one whose scripts
 //! still run, and installs what a dead writer left again.
 
-use bun_core::{ZStr, strings};
-use bun_paths::AutoAbsPath;
-use bun_paths::path_options::AssumeOk as _;
+use bun_core::{ZBox, ZStr, strings};
 use bun_sys::{self as sys, Fd, File};
 
-const NAME: &[u8] = b".bun-pending-scripts";
+/// From the project's root, which is the cwd of an install. So are the paths in the file.
+const PATH: &ZStr = bun_core::zstr!("node_modules/.bun-pending-scripts");
 
 #[derive(Default)]
 pub(crate) struct PendingScripts {
@@ -102,13 +101,11 @@ impl PendingScripts {
         };
         // A stale package this install did not come to stays listed while it is in place.
         let unvisited = self.stale.drain(..).any(|path| {
-            let mut abs = AutoAbsPath::init_top_level_dir();
-            abs.append(&path).assume_ok();
-            sys::directory_exists_at(Fd::cwd(), abs.slice_z()).unwrap_or(false)
+            sys::directory_exists_at(Fd::cwd(), &ZBox::from_bytes(&path)).unwrap_or(false)
         });
         if self.begun.is_empty() && !unvisited {
             // Before the lock goes, so that no other install can hold the file this removes.
-            let _ = sys::unlink(file_path().slice_z());
+            let _ = sys::unlinkat(Fd::cwd(), PATH);
         }
         drop(file);
     }
@@ -119,9 +116,7 @@ impl PendingScripts {
         if let (true, Ok(edited)) = (self.has_stale(), sys::stat(dir)) {
             let same: Vec<Box<[u8]>> = (self.stale.iter())
                 .filter(|path| {
-                    let mut abs = AutoAbsPath::init_top_level_dir();
-                    abs.append(path).assume_ok();
-                    sys::stat(abs.slice_z())
+                    sys::fstatat(Fd::cwd(), &ZBox::from_bytes(path))
                         .is_ok_and(|st| st.st_ino == edited.st_ino && st.st_dev == edited.st_dev)
                 })
                 .cloned()
@@ -156,13 +151,6 @@ fn remove(paths: &mut Vec<Box<[u8]>>, path: &[u8]) -> bool {
     }
 }
 
-fn file_path() -> AutoAbsPath {
-    let mut path = AutoAbsPath::init_top_level_dir();
-    path.append(b"node_modules").assume_ok();
-    path.append(NAME).assume_ok();
-    path
-}
-
 /// The paths with a `+` record and no later `-` record. A kill can cut the last line: it is ignored.
 fn parse(bytes: &[u8]) -> Vec<Box<[u8]>> {
     let mut pending: Vec<Box<[u8]>> = Vec::new();
@@ -185,11 +173,10 @@ fn parse(bytes: &[u8]) -> Vec<Box<[u8]>> {
 
 fn open_locked(create: bool) -> Opened {
     use sys::O;
-    let mut path = file_path();
     let flags = O::RDWR | O::APPEND | O::CLOEXEC | O::NOFOLLOW | if create { O::CREAT } else { 0 };
     // Twice: the last owner can delete the file between this open and this lock.
     for _ in 0..2 {
-        let file = match File::openat(Fd::cwd(), path.slice(), flags, 0o644) {
+        let file = match File::openat(Fd::cwd(), PATH.as_bytes(), flags, 0o644) {
             Ok(file) => file,
             Err(err) if err.get_errno() == sys::E::ENOENT => return Opened::Missing,
             Err(_) => return Opened::Busy,
@@ -198,7 +185,7 @@ fn open_locked(create: bool) -> Opened {
             return Opened::Busy;
         }
         // The lock is on the file, not on its name: it counts only while the name still leads to it.
-        if let (Ok(locked), Ok(named)) = (sys::fstat(file.handle), sys::stat(path.slice_z()))
+        if let (Ok(locked), Ok(named)) = (sys::fstat(file.handle), sys::fstatat(Fd::cwd(), PATH))
             && locked.st_ino == named.st_ino
             && locked.st_dev == named.st_dev
         {

@@ -504,7 +504,8 @@ function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
   n.build({
     outputs: [out],
     rule: "esbuild",
-    inputs: [src],
+    // runtime.bun.js re-exports runtime.js and the esbuild rule has no depfile.
+    inputs: [src, resolve(cfg.cwd, "src", "runtime.js")],
     implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {

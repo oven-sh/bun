@@ -1564,7 +1564,9 @@ impl Lockfile {
     /// Re-hoists while a pass bound or moved a peer; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
         const METHOD: tree::BuilderMethod = tree::BuilderMethod::Resolvable;
-        while self.hoist::<METHOD>(log, None, true, &[], None, tree::Layout::Locked)? {}
+        while (self.hoist::<METHOD>(log, None, true, &[], None, tree::Layout::Locked)?)
+            .late_bound_peer
+        {}
         TextLockfile::rebind_peers_to_printed_packages(self)?;
         Ok(())
     }
@@ -1576,7 +1578,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<(), tree::SubtreeError> {
+    ) -> Result<tree::Hoisted, tree::SubtreeError> {
         self.hoist::<{ tree::BuilderMethod::Filter }>(
             log,
             Some(manager),
@@ -1584,11 +1586,10 @@ impl Lockfile {
             workspace_filters,
             packages_to_install,
             tree::Layout::Locked,
-        )?;
-        Ok(())
+        )
     }
 
-    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_peer`.
+    /// Sets `buffers.trees`/`hoisted_dependencies`.
     /// `Filter` without a `manager`: the install tree of every dependency type, member and platform.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
@@ -1598,7 +1599,7 @@ impl Lockfile {
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
         layout: tree::Layout,
-    ) -> Result<bool, tree::SubtreeError> {
+    ) -> Result<tree::Hoisted, tree::SubtreeError> {
         let slice = self.packages.slice();
 
         // Only the install applies the barrier, so the saved tree does not depend on it.
@@ -1656,10 +1657,13 @@ impl Lockfile {
         );
         builder.keep_linked_rows();
         let cleaned = builder.clean()?;
-        let late_bound_peer = builder.late_bound_peer;
+        let hoisted = tree::Hoisted {
+            late_bound_peer: builder.late_bound_peer,
+            leaves_out: builder.kept.is_some(),
+        };
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
-        Ok(late_bound_peer)
+        Ok(hoisted)
     }
 }
 

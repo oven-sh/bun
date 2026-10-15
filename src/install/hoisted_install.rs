@@ -193,7 +193,7 @@ pub(crate) fn install_hoisted_packages(
     let original_trees = this.lockfile.buffers.trees.clone();
     let original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies.clone();
 
-    {
+    let leaves_out = {
         // `lockfile` is `Box<Lockfile>` so the heap object
         // is disjoint from the `PackageManager` struct; snapshot raw `*mut
         // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
@@ -206,15 +206,17 @@ pub(crate) fn install_hoisted_packages(
         // SAFETY: `log` is the always-live logger backref (never null);
         // `mgr_ptr` see shadow-reborrow above.
         unsafe {
-            (*lockfile_ptr).filter(
-                &mut *log,
-                &mut *mgr_ptr,
-                install_root_dependencies,
-                workspace_filters,
-                packages_to_install,
-            )?;
+            (*lockfile_ptr)
+                .filter(
+                    &mut *log,
+                    &mut *mgr_ptr,
+                    install_root_dependencies,
+                    workspace_filters,
+                    packages_to_install,
+                )?
+                .leaves_out
         }
-    }
+    };
     // SAFETY: `mgr_ptr` is the provenance root derived from the unique `&mut`
     // fn param; the first reborrow's tag was popped by `&mut *mgr_ptr` in the
     // block above, so no other borrow of `*mgr_ptr` is live here.
@@ -326,6 +328,7 @@ pub(crate) fn install_hoisted_packages(
 
     let mut summary = package_install::Summary {
         old_modules,
+        leaves_out,
         ..Default::default()
     };
 

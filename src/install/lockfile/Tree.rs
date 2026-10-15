@@ -469,6 +469,14 @@ pub(crate) enum Layout {
     Older,
 }
 
+/// What `Lockfile::hoist` tells besides the tree.
+pub(crate) struct Hoisted {
+    /// `Builder::late_bound_peer`.
+    pub(crate) late_bound_peer: bool,
+    /// The run links less than the tree places. If not, the two layouts are one.
+    pub(crate) leaves_out: bool,
+}
+
 // `manager` and the three fields from `workspace_filters` on: only for `METHOD == .Filter`.
 pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) list: MultiArrayList<BuilderEntry>,

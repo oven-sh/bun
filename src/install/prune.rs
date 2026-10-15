@@ -1612,11 +1612,13 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
 /// `--production`, `--omit`, `--filter` or a package for another platform it nested copies where no
 /// bun.lock has a key, and replaced whatever else it found there. Nothing is laid in such a place
 /// now, nor below it, so the folder goes: it hides the package further up, which has what it needs.
-/// For an install that laid something, as the first one over such a tree does. bun.lock is saved.
+/// For an install that leaves something out and laid something, as the first one over such a tree
+/// does. `laid`: the packages. bun.lock is saved.
 pub(crate) fn remove_copies_of_the_older_layout(
     manager: &mut PackageManager,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
+    laid: &DynamicBitSet,
 ) {
     // A hoist can bind a peer.
     let resolutions = manager.lockfile.buffers.resolutions.clone();
@@ -1624,14 +1626,15 @@ pub(crate) fn remove_copies_of_the_older_layout(
         manager.lockfile.buffers.resolutions = resolutions;
         return;
     };
-    let mut places: Vec<Box<[u8]>> = Vec::new();
+    let mut places: Vec<(Box<[u8]>, PackageID)> = Vec::new();
     {
         let new = HoistedTree::init(&manager.lockfile, true);
         for id in 0..new.folders.len() {
-            places.extend((new.expected(id).iter()).map(|&(alias, _)| join(new.path(id), alias)));
+            let rows = new.expected(id).iter();
+            places.extend(rows.map(|&(alias, pkg_id)| (join(new.path(id), alias), pkg_id)));
         }
     }
-    sort_names(&mut places);
+    index_sort::sort_vec_unstable_by(&mut places, |a, b| a.0.cmp(&b.0));
     if hoist_tree(
         manager,
         false,
@@ -1641,26 +1644,49 @@ pub(crate) fn remove_copies_of_the_older_layout(
     )
     .is_ok()
     {
-        remove_from_older_places(manager, &places);
+        remove_from_older_places(manager, &places, laid);
     }
     restore_tree(&mut manager.lockfile, saved);
     manager.lockfile.buffers.resolutions = resolutions;
 }
 
-/// `manager.lockfile` carries the older layout. `places`: those of today's, sorted.
-fn remove_from_older_places(manager: &PackageManager, places: &[Box<[u8]>]) {
+/// `manager.lockfile` carries the older layout. `places`: those of today's and what is there, sorted.
+fn remove_from_older_places(
+    manager: &PackageManager,
+    places: &[(Box<[u8]>, PackageID)],
+    laid: &DynamicBitSet,
+) {
     let lockfile: &Lockfile = &manager.lockfile;
     let older = HoistedTree::init(lockfile, true);
+    let today = |place: &[u8]| {
+        let found = places.binary_search_by(|(path, _)| (**path).cmp(place));
+        found.ok().map(|i| places[i].1)
+    };
     let mut plan = Plan::default();
     for id in 1..older.folders.len() {
         let path = older.path(id);
-        let only_older = |alias: &[u8]| !contains(places, &join(path, alias));
+        let only_older = |alias: &[u8]| today(&join(path, alias)).is_none();
         if path.is_empty() || !(older.expected(id).iter()).any(|&(alias, _)| only_older(alias)) {
             continue;
         }
-        // A tarball ships folders at any depth below the package that bundles.
+        // Where today's layout has another package or none, what is there is left over as well, and
+        // only other leftovers load it. They go on finding what they need.
+        let owner_place = (path.strip_suffix(b"node_modules")).and_then(|p| p.strip_suffix(&[SEP]));
+        if !is_member_tree(lockfile, id)
+            && owner_place.and_then(&today) != Some(tree_owner(lockfile, id))
+        {
+            continue;
+        }
+        // A tarball ships folders at any depth below the package that bundles. Below a package that
+        // this run laid there is nothing of an earlier one: its tarball and its scripts put it there.
         let mut above = id;
-        while above != 0 && !has_bundled_deps(lockfile, tree_owner(lockfile, above)) {
+        while above != 0 {
+            let owner = tree_owner(lockfile, above);
+            if has_bundled_deps(lockfile, owner)
+                || laid.is_set_allow_out_of_bound(owner as usize, true)
+            {
+                break;
+            }
             above = older.trees[above].parent as usize;
         }
         if above != 0 {

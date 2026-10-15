@@ -85,6 +85,7 @@ public:
     // Transfer ownership out to the upgrade client; after this the
     // destructor is a no-op.
     void* release() { return std::exchange(m_ptr, nullptr); }
+    const void* get() const { return m_ptr; }
 
 private:
     void reset()

@@ -275,7 +275,7 @@ where
         ssl_config: Option<Box<SSLConfig>>,
         // `proxy.tls`. With `has_proxy_tls`, the connection to the proxy uses only this config (`None`
         // means the defaults) and the target uses only `ssl_config`. Otherwise both use `ssl_config`.
-        proxy_ssl_config: Option<Box<SSLConfig>>,
+        proxy_ssl_config: Option<&SSLConfig>,
         has_proxy_tls: bool,
         // Whether the target URL is wss:// (separate from ssl template parameter)
         target_is_secure: bool,
@@ -421,9 +421,9 @@ where
             'brk: {
                 // Through a proxy this socket's peer is the proxy.
                 let socket_config = if has_proxy_tls {
-                    &proxy_ssl_config
+                    proxy_ssl_config
                 } else {
-                    &ssl_config
+                    ssl_config.as_deref()
                 };
                 if let Some(config) = socket_config {
                     if config.requires_custom_request_ctx {
@@ -1900,9 +1900,10 @@ fn identity_name<'a>(
 //     → `Option<&BunString>` (guaranteed null-pointer niche);
 //   - `const BunString*` array + `size_t` count → `&[BunString]`
 //     (count may be 0 with a dangling/null begin());
-//   - `void* sslConfig` / `void* proxySSLConfig` (ownership transferred, boxed by
+//   - `void* sslConfig` (ownership transferred, boxed by
 //     `Bun__WebSocket__parseSSLConfig`) → `Option<Box<SSLConfig>>`
 //     (null-pointer niche; Box matches the transferred ownership);
+//   - `const void* proxySSLConfig` (borrowed for the call, C++ frees it) → `Option<&SSLConfig>`;
 //   - `BunString* connectErrorCode` (out param: the caller passes an empty
 //     string, written only when returning null) → `&mut BunString`.
 // Keep these signatures in sync with headers.h if either side changes.
@@ -1925,7 +1926,7 @@ pub fn bun__websockethttpclient__connect(
     proxy_header_names: &[BunString],
     proxy_header_values: &[BunString],
     ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
-    proxy_ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
+    proxy_ssl_config: Option<&bun_http::ssl_config::SSLConfig>,
     has_proxy_tls: bool,
     target_is_secure: bool,
     target_authorization: Option<&BunString>,
@@ -1998,7 +1999,7 @@ pub fn bun__websockethttpsclient__connect(
     proxy_header_names: &[BunString],
     proxy_header_values: &[BunString],
     ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
-    proxy_ssl_config: Option<Box<bun_http::ssl_config::SSLConfig>>,
+    proxy_ssl_config: Option<&bun_http::ssl_config::SSLConfig>,
     has_proxy_tls: bool,
     target_is_secure: bool,
     target_authorization: Option<&BunString>,

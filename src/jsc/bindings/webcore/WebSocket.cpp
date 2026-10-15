@@ -540,9 +540,9 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     BunString targetAuth = Bun::toString(targetAuthorization);
     BunString extensions = Bun::toString(options.extensions);
 
-    // The upgrade client takes ownership, even if connect() fails.
+    // The upgrade client takes ownership of sslConfig, even if connect() fails. It only borrows proxySSLConfig.
     void* sslConfig = options.tls.sslConfig.release();
-    void* proxySSLConfig = hasProxyTLS ? proxyConfig->tls->sslConfig.release() : nullptr;
+    const void* proxySSLConfig = hasProxyTLS ? proxyConfig->tls->sslConfig.get() : nullptr;
 
     // Set to an errno name when connect() returns null and the cause is known.
     BunString connectErrorCode { BunStringTag::Empty };

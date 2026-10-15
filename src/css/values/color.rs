@@ -1117,16 +1117,16 @@ pub(crate) fn parse_color_function(
     let mut parser = ComponentParser::new(true);
 
     crate::match_ignore_ascii_case! { function, {
-        b"lab" => parse_lab::<LAB>(input, &mut parser, |l, a, b, alpha| {
+        b"lab" => parse_lab::<LAB>(input, &mut parser, 100.0, |l, a, b, alpha| {
             LABColor::Lab(LAB { l, a, b, alpha })
         }),
-        b"oklab" => parse_lab::<OKLAB>(input, &mut parser, |l, a, b, alpha| {
+        b"oklab" => parse_lab::<OKLAB>(input, &mut parser, 1.0, |l, a, b, alpha| {
             LABColor::Oklab(OKLAB { l, a, b, alpha })
         }),
-        b"lch" => parse_lch::<LCH, LAB>(input, &mut parser, LCH_POWERLESS_CHROMA, |l, c, h, alpha| {
+        b"lch" => parse_lch::<LCH, LAB>(input, &mut parser, 100.0, LCH_POWERLESS_CHROMA, |l, c, h, alpha| {
             LABColor::Lch(LCH { l, c, h, alpha })
         }),
-        b"oklch" => parse_lch::<OKLCH, OKLAB>(input, &mut parser, OKLCH_POWERLESS_CHROMA, |l, c, h, alpha| {
+        b"oklch" => parse_lch::<OKLCH, OKLAB>(input, &mut parser, 1.0, OKLCH_POWERLESS_CHROMA, |l, c, h, alpha| {
             LABColor::Oklch(OKLCH { l, c, h, alpha })
         }),
         b"color" => parse_predefined(input, &mut parser),
@@ -1174,10 +1174,18 @@ pub(crate) struct RgbComponents {
     pub(crate) is_legacy: bool,
 }
 
+// See `RelativeComponentParser::percent_basis`.
+const RGB_PERCENT_BASIS: f32 = 255.0;
+const HSL_PERCENT_BASIS: f32 = 100.0;
+
 pub(crate) fn parse_rgb_components(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
 ) -> CssResult<RgbComponents> {
+    if let Some(from) = &mut parser.from {
+        from.percent_basis = (RGB_PERCENT_BASIS, RGB_PERCENT_BASIS, RGB_PERCENT_BASIS);
+    }
+
     let red = parser.parse_number_or_percentage(input)?;
 
     let is_legacy_syntax = parser.from.is_none()
@@ -1213,8 +1221,8 @@ pub(crate) fn parse_rgb_components(
         ) -> CssResult<f32> {
             match value {
                 NumberOrPercentage::Number { value: v } => {
-                    parser.clamp_unit(input, v / 255.0)?;
-                    Ok(v.round().clamp(0.0, 255.0) / 255.0)
+                    parser.clamp_unit(input, v / RGB_PERCENT_BASIS)?;
+                    Ok(v.round().clamp(0.0, RGB_PERCENT_BASIS) / RGB_PERCENT_BASIS)
                 }
                 NumberOrPercentage::Percentage { unit_value } => {
                     parser.clamp_unit(input, unit_value)
@@ -1322,6 +1330,7 @@ fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {
 pub(crate) fn parse_lab<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
+    l_basis: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
 ) -> CssResult<CssColor>
 where
@@ -1330,8 +1339,12 @@ where
     // https://www.w3.org/TR/css-color-4/#funcdef-lab
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
+            if let Some(from) = &mut p.from {
+                from.percent_basis.0 = l_basis;
+            }
+
             // The lightness is clamped when it is parsed: https://www.w3.org/TR/css-color-4/#specifying-lab-lch
-            let l = p.parse_percentage(i)?.clamp(0.0, 1.0);
+            let l = p.parse_unit_channel(i, l_basis)?.clamp(0.0, 1.0);
             let a = p.parse_number(i)?;
             let b = p.parse_number(i)?;
             let alpha = parse_alpha(i, p)?;
@@ -1363,6 +1376,7 @@ fn is_srgb_type(ty: core::any::TypeId) -> bool {
 pub(crate) fn parse_lch<T, R: 'static>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
+    l_basis: f32,
     powerless_chroma: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
 ) -> CssResult<CssColor>
@@ -1372,6 +1386,8 @@ where
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
             if let Some(from) = &mut p.from {
+                from.percent_basis.0 = l_basis;
+
                 // Relative angles should be normalized.
                 // https://www.w3.org/TR/css-color-5/#relative-LCH
                 from.components.2 = from.components.2.rem_euclid(360.0);
@@ -1380,7 +1396,7 @@ where
                 }
             }
 
-            let l = p.parse_percentage(i)?.clamp(0.0, 1.0);
+            let l = p.parse_unit_channel(i, l_basis)?.clamp(0.0, 1.0);
             let c = p.parse_number(i)?.clamp(0.0, f32::MAX);
             // A gray that is converted has no hue (css-color-4 #powerless), and browsers do not agree on its `h`. A color with chroma cannot take it.
             if let Some(from) = &mut p.from {
@@ -1416,7 +1432,7 @@ pub(crate) fn parse_hsl_hwb<
 ) -> CssResult<CssColor> {
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
-            let (h, a, b, is_legacy) = parse_hsl_hwb_components::<T>(i, p, allows_legacy)?;
+            let (h, a, b, is_legacy) = parse_hsl_hwb_components(i, p, allows_legacy)?;
             let alpha = if is_legacy {
                 parse_legacy_alpha(i, p)?
             } else {
@@ -1428,12 +1444,16 @@ pub(crate) fn parse_hsl_hwb<
     })
 }
 
-pub(crate) fn parse_hsl_hwb_components<T>(
+pub(crate) fn parse_hsl_hwb_components(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     allows_legacy: bool,
 ) -> CssResult<(f32, f32, f32, bool)> {
-    let _ = core::marker::PhantomData::<T>; // autofix
+    if let Some(from) = &mut parser.from {
+        from.percent_basis.1 = HSL_PERCENT_BASIS;
+        from.percent_basis.2 = HSL_PERCENT_BASIS;
+    }
+
     // The difference of the largest and the smallest sRGB channel.
     let is_hsl = parser
         .from
@@ -1460,14 +1480,14 @@ pub(crate) fn parse_hsl_hwb_components<T>(
         && !h.is_nan()
         && input.try_parse(|i| i.expect_comma()).is_ok();
 
-    let a = parser.parse_percentage(input)?;
+    let a = parser.parse_unit_channel(input, HSL_PERCENT_BASIS)?;
     let a = parser.clamp_unit(input, a)?;
 
     if is_legacy_syntax {
         input.expect_comma()?;
     }
 
-    let b = parser.parse_percentage(input)?;
+    let b = parser.parse_unit_channel(input, HSL_PERCENT_BASIS)?;
     let b = parser.clamp_unit(input, b)?;
 
     if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
@@ -1550,6 +1570,7 @@ fn parse_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f
     })
 }
 
+/// For alpha and the `color()` channels, whose percent basis is 1.
 pub(crate) fn parse_number_or_percentage(
     input: &mut css::Parser,
     parser: &ComponentParser,
@@ -2057,10 +2078,14 @@ impl ComponentParser {
 
     fn parse_number_or_percentage(&self, input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
         if let Some(from) = &self.from {
-            if let Ok(res) =
-                input.try_parse(|i| RelativeComponentParser::parse_number_or_percentage(i, from))
+            if let Ok(value) = input.try_parse(|i| RelativeComponentParser::parse_number(i, from)) {
+                return Ok(NumberOrPercentage::Number { value });
+            }
+            let allowed = ChannelType::PERCENTAGE | ChannelType::NUMBER;
+            if let Ok(unit_value) =
+                input.try_parse(|i| RelativeComponentParser::parse_percentage(i, from, allowed))
             {
-                return Ok(res);
+                return Ok(NumberOrPercentage::Percentage { unit_value });
             }
         }
 
@@ -2104,14 +2129,23 @@ impl ComponentParser {
         }
     }
 
-    fn parse_percentage(&self, input: &mut css::Parser) -> CssResult<f32> {
+    /// A unit value: a `<percentage>`, or in relative syntax a `<number>` out of `percent_basis`.
+    fn parse_unit_channel(&self, input: &mut css::Parser, percent_basis: f32) -> CssResult<f32> {
         if let Some(from) = &self.from {
-            if let Ok(res) = input.try_parse(|i| RelativeComponentParser::parse_percentage(i, from))
-            {
-                return Ok(res);
+            if let Ok(value) = input.try_parse(|i| self.parse_number(i)) {
+                return Ok(value / percent_basis);
+            }
+            if let Ok(unit_value) = input.try_parse(|i| {
+                RelativeComponentParser::parse_percentage(i, from, ChannelType::PERCENTAGE)
+            }) {
+                return Ok(unit_value);
             }
         }
 
+        self.parse_percentage(input)
+    }
+
+    fn parse_percentage(&self, input: &mut css::Parser) -> CssResult<f32> {
         if let Ok(val) = input.try_parse(Percentage::parse) {
             Ok(val.v)
         } else if self.allow_none {
@@ -2184,6 +2218,8 @@ impl NumberOrPercentage {
 pub(crate) struct RelativeComponentParser {
     pub(crate) names: (&'static [u8], &'static [u8], &'static [u8]),
     pub(crate) components: (f32, f32, f32, f32),
+    /// A keyword is `component * percent_basis`: 255 in `rgb()`, 100 for a percentage channel, 1 for the others.
+    pub(crate) percent_basis: (f32, f32, f32),
     pub(crate) types: (ChannelType, ChannelType, ChannelType),
     /// The type of the origin as written, before its conversion to the color space of the function.
     origin: Option<core::any::TypeId>,
@@ -2194,6 +2230,7 @@ impl RelativeComponentParser {
         RelativeComponentParser {
             names: color.channels(),
             components: color.components(),
+            percent_basis: (1.0, 1.0, 1.0),
             types: color.types(),
             origin: None,
         }
@@ -2203,7 +2240,7 @@ impl RelativeComponentParser {
         input: &mut css::Parser,
         this: &RelativeComponentParser,
     ) -> CssResult<css::color::AngleOrNumber> {
-        let allowed = ChannelType::ANGLE | ChannelType::NUMBER;
+        let allowed = ChannelType::all();
         if let Ok(value) =
             input.try_parse(|i| RelativeComponentParser::parse_ident(i, this, allowed))
         {
@@ -2216,98 +2253,59 @@ impl RelativeComponentParser {
             return Ok(css::color::AngleOrNumber::Number { value });
         }
 
-        // `Calc::Value` is `Box<V>`, so box the temporary `Angle`.
-        if let Ok(value) = input.try_parse(|i| {
-            match Calc::<Angle>::parse_with(i, &|ident| {
-                let value = this.get_ident(ident, allowed)?;
-                Some(Calc::Value(Box::new(Angle::Deg(value))))
-            }) {
+        // An angle. Every keyword is a number: `calc(s * 1deg)`.
+        let number = |ident: &[u8]| Some(Calc::Number(this.get_number(ident, allowed)?));
+        // The older reading, a keyword as an angle: `calc(h + 30deg)`. A browser rejects it.
+        let angle = |ident: &[u8]| {
+            let (degrees, _) = this.get_ident(ident, ChannelType::ANGLE | ChannelType::NUMBER)?;
+            Some(Calc::Value(Box::new(Angle::Deg(degrees))))
+        };
+        let resolvers: [&dyn Fn(&[u8]) -> Option<Calc<Angle>>; 2] = [&number, &angle];
+        for resolver in resolvers {
+            if let Ok(value) = input.try_parse(|i| match Calc::<Angle>::parse_with(i, resolver) {
                 Ok(Calc::Value(v)) => Ok(*v),
                 _ => Err(i.new_custom_error(css::ParserError::invalid_value)),
+            }) {
+                return Ok(css::color::AngleOrNumber::Angle {
+                    degrees: censor_nan(value.to_degrees()),
+                });
             }
-        }) {
-            return Ok(css::color::AngleOrNumber::Angle {
-                degrees: value.to_degrees(),
-            });
         }
 
         Err(input.new_error_for_next_token())
     }
 
-    fn parse_number_or_percentage(
-        input: &mut css::Parser,
-        this: &RelativeComponentParser,
-    ) -> CssResult<NumberOrPercentage> {
+    /// Every keyword but the hue is a `<number>` in the range of the function.
+    fn parse_number(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
         let allowed = ChannelType::PERCENTAGE | ChannelType::NUMBER;
         if let Ok(value) =
             input.try_parse(|i| RelativeComponentParser::parse_ident(i, this, allowed))
         {
-            return Ok(NumberOrPercentage::Percentage { unit_value: value });
+            return Ok(value);
         }
 
         if let Ok(value) =
             input.try_parse(|i| RelativeComponentParser::parse_calc(i, this, allowed))
         {
-            return Ok(NumberOrPercentage::Percentage { unit_value: value });
-        }
-
-        if let Ok(value) = input.try_parse(|i| {
-            match Calc::<Percentage>::parse_with(i, &|ident| {
-                let v = this.get_ident(ident, allowed)?;
-                Some(Calc::Value(Box::new(Percentage { v })))
-            }) {
-                Ok(Calc::Value(v)) => Ok(*v),
-                _ => Err(i.new_custom_error(css::ParserError::invalid_value)),
-            }
-        }) {
-            return Ok(NumberOrPercentage::Percentage {
-                unit_value: value.v,
-            });
+            return Ok(value);
         }
 
         Err(input.new_error_for_next_token())
     }
 
-    fn parse_percentage(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
-        if let Ok(value) = input
-            .try_parse(|i| RelativeComponentParser::parse_ident(i, this, ChannelType::PERCENTAGE))
-        {
-            return Ok(value);
-        }
-
-        if let Ok(value) = input.try_parse(|i| {
-            let calc_value = match Calc::<Percentage>::parse_with(i, &|ident| {
-                let v = this.get_ident(ident, ChannelType::PERCENTAGE)?;
-                Some(Calc::Value(Box::new(Percentage { v })))
-            }) {
-                Ok(v) => v,
-                Err(_) => return Err(i.new_custom_error(css::ParserError::invalid_value)),
-            };
-            if let Calc::Value(v) = calc_value {
-                return Ok(*v);
-            }
-            Err(i.new_custom_error(css::ParserError::invalid_value))
+    /// The older reading, a keyword as a percentage: `calc(r + 10%)`. A browser rejects it.
+    fn parse_percentage(
+        input: &mut css::Parser,
+        this: &RelativeComponentParser,
+        allowed_types: ChannelType,
+    ) -> CssResult<f32> {
+        match Calc::<Percentage>::parse_with(input, &|ident| {
+            let (v, _) = this.get_ident(ident, allowed_types)?;
+            Some(Calc::Value(Box::new(Percentage { v })))
         }) {
-            return Ok(value.v);
+            Ok(Calc::Value(v)) => Ok(censor_nan(v.v)),
+            _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
-
-        Err(input.new_error_for_next_token())
-    }
-
-    fn parse_number(input: &mut css::Parser, this: &RelativeComponentParser) -> CssResult<f32> {
-        if let Ok(value) =
-            input.try_parse(|i| RelativeComponentParser::parse_ident(i, this, ChannelType::NUMBER))
-        {
-            return Ok(value);
-        }
-
-        if let Ok(value) =
-            input.try_parse(|i| RelativeComponentParser::parse_calc(i, this, ChannelType::NUMBER))
-        {
-            return Ok(value);
-        }
-
-        Err(input.new_error_for_next_token())
     }
 
     fn parse_ident(
@@ -2316,7 +2314,7 @@ impl RelativeComponentParser {
         allowed_types: ChannelType,
     ) -> CssResult<f32> {
         let ident = input.expect_ident()?;
-        match this.get_ident(ident, allowed_types) {
+        match this.get_number(ident, allowed_types) {
             Some(v) => Ok(v),
             None => Err(input.new_error_for_next_token()),
         }
@@ -2328,15 +2326,15 @@ impl RelativeComponentParser {
         allowed_types: ChannelType,
     ) -> CssResult<f32> {
         if let Ok(calc_val) = Calc::<f32>::parse_with(input, &|ident| {
-            let v = this.get_ident(ident, allowed_types)?;
+            let v = this.get_number(ident, allowed_types)?;
             Some(Calc::Number(v))
         }) {
             // PERF: I don't like this redundant allocation
             if let Calc::Value(v) = calc_val {
-                return Ok(*v);
+                return Ok(censor_nan(*v));
             }
             if let Calc::Number(n) = calc_val {
-                return Ok(n);
+                return Ok(censor_nan(n));
             }
         }
         Err(input.new_custom_error(css::ParserError::invalid_value))
@@ -2354,33 +2352,44 @@ impl RelativeComponentParser {
         .any(|name| strings::eql_case_insensitive_ascii_check_length(ident, name))
     }
 
-    fn get_ident(&self, ident: &[u8], allowed_types: ChannelType) -> Option<f32> {
+    fn get_number(&self, ident: &[u8], allowed_types: ChannelType) -> Option<f32> {
+        let (component, percent_basis) = self.get_ident(ident, allowed_types)?;
+        Some(component * percent_basis)
+    }
+
+    /// Returns the keyword's stored component and its percent basis.
+    fn get_ident(&self, ident: &[u8], allowed_types: ChannelType) -> Option<(f32, f32)> {
         if strings::eql_case_insensitive_ascii_check_length(ident, self.names.0)
             && allowed_types.intersects(self.types.0)
         {
-            return Some(self.components.0);
+            return Some((self.components.0, self.percent_basis.0));
         }
 
         if strings::eql_case_insensitive_ascii_check_length(ident, self.names.1)
             && allowed_types.intersects(self.types.1)
         {
-            return Some(self.components.1);
+            return Some((self.components.1, self.percent_basis.1));
         }
 
         if strings::eql_case_insensitive_ascii_check_length(ident, self.names.2)
             && allowed_types.intersects(self.types.2)
         {
-            return Some(self.components.2);
+            return Some((self.components.2, self.percent_basis.2));
         }
 
         if strings::eql_case_insensitive_ascii_check_length(ident, b"alpha")
             && allowed_types.contains(ChannelType::PERCENTAGE)
         {
-            return Some(self.components.3);
+            return Some((self.components.3, 1.0));
         }
 
         None
     }
+}
+
+/// A calculation that is NaN is 0 (css-values-4 #top-level-calculation). NaN in a color is `none`.
+fn censor_nan(value: f32) -> f32 {
+    if value.is_nan() { 0.0 } else { value }
 }
 
 bitflags::bitflags! {

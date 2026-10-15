@@ -107,6 +107,44 @@ describe("WebKit prebuilt URL", () => {
     );
   });
 
+  const nameOf = (cfg: Config) => prebuiltUrlOf(cfg).slice(prebuiltUrlOf(cfg).lastIndexOf("/") + 1);
+
+  test("assertions and fuzzilli pick the artifacts built for fuzzing", () => {
+    expect({
+      assertions: nameOf(resolveLinuxRelease({ assertions: true })),
+      fuzzilli: nameOf(resolveLinuxRelease({ fuzzilli: true })),
+      both: nameOf(resolveLinuxRelease({ assertions: true, fuzzilli: true })),
+    }).toEqual({
+      assertions: "bun-webkit-linux-amd64-assertions.tar.gz",
+      fuzzilli: "bun-webkit-linux-amd64-coverage.tar.gz",
+      both: "bun-webkit-linux-amd64-assertions-coverage.tar.gz",
+    });
+  });
+
+  test("fuzzilli turns lto off, by default and when asked for", () => {
+    for (const lto of [undefined, true]) {
+      const cfg = resolveLinuxRelease({ fuzzilli: true, lto });
+      expect(cfg.lto).toBe(false);
+      expect(nameOf(cfg)).toBe("bun-webkit-linux-amd64-coverage.tar.gz");
+    }
+    expect(resolveLinuxRelease({ lto: undefined }).lto).toBe(true);
+  });
+
+  test("those artifacts exist for a Linux x64 glibc release without lto or asan only", () => {
+    const debug: PartialConfig = { buildType: "Debug", asan: false, lto: undefined };
+    expect({
+      arm64: nameOf(resolveLinuxRelease({ arch: "aarch64", assertions: true, fuzzilli: true })),
+      lto: nameOf(resolveLinuxRelease({ lto: true, assertions: true })),
+      asan: nameOf(resolveLinuxRelease({ asan: true, fuzzilli: true })),
+      debug: nameOf(resolveLinuxRelease({ ...debug, fuzzilli: true })),
+    }).toEqual({
+      arm64: "bun-webkit-linux-arm64.tar.gz",
+      lto: "bun-webkit-linux-amd64-lto.tar.gz",
+      asan: "bun-webkit-linux-amd64-asan.tar.gz",
+      debug: "bun-webkit-linux-amd64-debug.tar.gz",
+    });
+  });
+
   test("--webkit-version=<sha> uses the plain autobuild-<sha> tag", () => {
     const sha = "0123456789abcdef0123456789abcdef01234567";
     const cfg = resolveLinuxRelease({ webkitVersion: sha });

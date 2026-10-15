@@ -636,7 +636,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
 }
 
 // node's validateObject with no option flags: null, an array and a function are not objects.
-static bool isObjectForValidateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value)
+ALWAYS_INLINE static bool isObjectForValidateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value)
 {
     bool isArray = JSC::isArray(globalObject, value);
     RETURN_IF_EXCEPTION(scope, false);

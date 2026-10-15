@@ -51,7 +51,7 @@ private:
             : WebCore::CryptoKeyType::Private;
     }
 
-    // Helpers for `importPreparedKey`
+    // Helpers for `importPreparedKeyData`
     static KeyObject getKeyObjectHandleFromJwk(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSObject* jwk, PrepareAsymmetricKeyMode mode);
     static KeyObject getKeyObjectHandleFromRaw(JSC::JSGlobalObject*, JSC::ThrowScope&, std::span<const uint8_t> keyData, ncrypto::EVPKeyPointer::PKFormatType format, const WTF::String& asymmetricKeyType, JSC::JSValue namedCurveValue);
     static KeyObject getPublicOrPrivateKey(
@@ -83,18 +83,12 @@ public:
     // What node's prepareAsymmetricKey() returns: a key argument that is validated and not read yet.
     // It is a key (`keyData`), or the ArrayBufferView, ArrayBuffer or JWK object that holds the key
     // material (`keyDataOwner`), with the buffer that holds the passphrase (`passphraseOwner`). It has
-    // no pointer into those cells, so JS may run before `importPreparedKey` reads them.
+    // no pointer into those cells, so JS may run before `importPreparedKey` reads them. It lives on
+    // the stack, where the collector finds the cells.
     struct PreparedAsymmetricKey {
         WTF_FORBID_HEAP_ALLOCATION;
 
     public:
-        ~PreparedAsymmetricKey()
-        {
-            JSC::ensureStillAliveHere(keyDataOwner);
-            JSC::ensureStillAliveHere(passphraseOwner);
-            JSC::ensureStillAliveHere(namedCurve);
-        }
-
         PrepareAsymmetricKeyMode mode;
         std::optional<RefPtr<KeyObjectData>> keyData { std::nullopt };
         JSC::JSValue keyDataOwner {};
@@ -113,19 +107,23 @@ public:
     // error messages. A public mode labels the key public, a private mode labels it private. A function
     // validates all of its arguments before it imports a key, as node does.
     static PreparedAsymmetricKey prepareAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, WTF::ASCIILiteral name);
-    static KeyObject importPreparedKey(JSC::JSGlobalObject*, JSC::ThrowScope&, PreparedAsymmetricKey&&);
 
-    // Both steps, for a function that validates nothing else in between. ALWAYS_INLINE keeps a call
-    // site as cheap as it was with the two steps written out. An out-of-line frame costs 28
-    // instructions for each key.
+    // ALWAYS_INLINE keeps a KeyObject as cheap as it was when each call site tested `keyData` itself.
+    // An out-of-line frame costs 28 instructions for each key.
+    ALWAYS_INLINE static KeyObject importPreparedKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, PreparedAsymmetricKey&& prepared)
+    {
+        // A KeyObject or a CryptoKey is a key already: there is nothing to import.
+        if (prepared.keyData) {
+            return create(keyTypeForMode(prepared.mode), WTF::move(*prepared.keyData));
+        }
+        return importPreparedKeyData(globalObject, scope, prepared);
+    }
+
+    // Both steps, for a function that validates nothing else in between.
     ALWAYS_INLINE static KeyObject getAsymmetricKeyFromJS(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, WTF::ASCIILiteral name)
     {
         auto prepared = prepareAsymmetricKey(globalObject, scope, keyValue, mode, name);
         RETURN_IF_EXCEPTION(scope, {});
-        // A KeyObject or a CryptoKey is a key already: there is nothing to import.
-        if (prepared.keyData) {
-            return create(keyTypeForMode(mode), WTF::move(*prepared.keyData));
-        }
         return importPreparedKey(globalObject, scope, WTF::move(prepared));
     }
 
@@ -163,6 +161,8 @@ public:
     RefPtr<KeyObjectData> data() const { return m_data; }
 
 private:
+    static KeyObject importPreparedKeyData(JSC::JSGlobalObject*, JSC::ThrowScope&, const PreparedAsymmetricKey&);
+
     RefPtr<KeyObjectData> m_data = nullptr;
     WebCore::CryptoKeyType m_type = WebCore::CryptoKeyType::Secret;
 };

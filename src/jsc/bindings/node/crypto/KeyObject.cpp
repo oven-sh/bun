@@ -2079,13 +2079,11 @@ KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalOb
 }
 
 // The only reader of key material: node's KeyObjectData::GetPrivateKeyFromJs / GetPublicOrPrivateKeyFromJs.
-KeyObject KeyObject::importPreparedKey(JSGlobalObject* globalObject, ThrowScope& scope, PreparedAsymmetricKey&& prepared)
+KeyObject KeyObject::importPreparedKeyData(JSGlobalObject* globalObject, ThrowScope& scope, const PreparedAsymmetricKey& prepared)
 {
     CryptoKeyType keyType = keyTypeForMode(prepared.mode);
 
-    if (prepared.keyData) {
-        return create(keyType, WTF::move(*prepared.keyData));
-    }
+    EnsureStillAliveScope keyDataOwner { prepared.keyDataOwner };
 
     if (prepared.formatType == EVPKeyPointer::PKFormatType::JWK) {
         return getKeyObjectHandleFromJwk(globalObject, scope, asObject(prepared.keyDataOwner), prepared.mode);

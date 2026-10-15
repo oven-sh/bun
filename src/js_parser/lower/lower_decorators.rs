@@ -17,6 +17,22 @@ const GENERATED: bun_ast::Loc = bun_ast::Loc::EMPTY;
 
 // ── Local helper types ───────────────────────────────────────────────────────
 
+/// The body of a decorated `#private` method: a method under a key the leading static block deletes.
+struct Host<'a> {
+    /// Gets the body, then what the decorators return.
+    function: Ref,
+    key: HostKey<'a>,
+    is_static: bool,
+}
+
+#[derive(Clone, Copy)]
+enum HostKey<'a> {
+    /// `"#m"`, `"get #g"` or `"set #g"`, where no key of the home object can equal it.
+    Name(&'a [u8]),
+    /// The temporary that holds a new symbol.
+    Symbol(Ref),
+}
+
 /// What the lowering declares in the body scope of the class it rewrites.
 struct Generated<'a> {
     class_body: js_ast::StoreRef<js_ast::Scope>,
@@ -70,6 +86,17 @@ fn is_constant_key(key: &Expr) -> bool {
         key.data,
         js_ast::ExprData::EString(_) | js_ast::ExprData::ENumber(_)
     )
+}
+
+/// Whether the key of `prop` can never equal the name of a host: `"#m"`, `"get #g"` or `"set #g"`.
+fn differs_from_host_names(prop: &Property) -> bool {
+    match prop.key.map(|key| key.data) {
+        Some(js_ast::ExprData::EPrivateIdentifier(_) | js_ast::ExprData::ENumber(_)) => true,
+        Some(js_ast::ExprData::EString(s)) => {
+            s.next.is_none() && s.is_utf8() && !bun_core::strings::contains_char(&s.data, b'#')
+        }
+        _ => false,
+    }
 }
 
 /// Whether the class of `generated` or a class around it declares the `#private` name `name`.
@@ -415,6 +442,59 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.private_access_object(name, rest, false, generated)
     }
 
+    /// `key ||= $$typeof.constructor()`: a new symbol, where the file can declare `Symbol`.
+    fn new_symbol_once(&mut self, key: Ref, l: bun_ast::Loc) -> Expr {
+        let any_symbol = self.runtime_identifier(l, b"$$typeof");
+        let constructor = self.member(any_symbol, b"constructor", l);
+        let right = self.call(constructor, &[], l);
+        let left = self.use_ref(key, l);
+        self.new_expr(
+            E::Binary {
+                op: js_ast::OpCode::BinLogicalOrAssign,
+                left,
+                right,
+            },
+            l,
+        )
+    }
+
+    /// `this.prototype[key]`, or `this[key]` for a static member
+    fn host_member(&mut self, host: &Host<'a>, l: bun_ast::Loc) -> Expr {
+        let mut target = self.new_expr(E::This {}, l);
+        if !host.is_static {
+            target = self.member(target, b"prototype", l);
+        }
+        let index = match host.key {
+            HostKey::Name(name) => self.new_expr(E::EString::init(name), l),
+            HostKey::Symbol(symbol) => self.use_ref(symbol, l),
+        };
+        self.new_expr(
+            E::Index {
+                target,
+                index,
+                optional_chain: None,
+                is_import_property_use: false,
+            },
+            l,
+        )
+    }
+
+    /// `_m_fn = this.prototype[key]` and `delete this.prototype[key]`, before anything can see the key.
+    fn take_host(&mut self, host: &Host<'a>, l: bun_ast::Loc) -> [Expr; 2] {
+        let body = self.host_member(host, l);
+        let take = self.assign_to(host.function, body, l);
+        let value = self.host_member(host, l);
+        let delete = self.new_expr(
+            E::Unary {
+                op: js_ast::OpCode::UnDelete,
+                value,
+                flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
+            },
+            l,
+        );
+        [take, delete]
+    }
+
     /// The member `get #name() { return value }`, or `set #name(v) { value }` where `value` uses `setter_param`.
     fn private_accessor_member(
         &mut self,
@@ -622,14 +702,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // accessors, static fields, instance fields.
         let mut next_initializer = [0usize; 4];
         let mut has_member_decorators = false;
+        let mut has_hosts = false;
         for prop in class.properties.slice() {
             if prop.ts_decorators.len_u32() == 0 {
                 continue;
             }
             has_member_decorators = true;
+            has_hosts |= prop.flags.contains(Flags::Property::IsMethod)
+                && matches!(
+                    prop.key.map(|key| key.data),
+                    Some(js_ast::ExprData::EPrivateIdentifier(_))
+                );
             if let Some(group) = initializer_group(prop) {
                 for later in &mut next_initializer[group + 1..] {
                     *later += 1;
+                }
+            }
+        }
+        // A host is named `"#m"` only where no key of its home object can be the same string.
+        let mut host_names_are_free = [has_hosts; 2];
+        if has_hosts {
+            for prop in class.properties.slice() {
+                let defines_a_key = prop.flags.contains(Flags::Property::IsMethod)
+                    || prop.kind == PropertyKind::AutoAccessor;
+                if defines_a_key && !differs_from_host_names(prop) {
+                    host_names_are_free
+                        [usize::from(prop.flags.contains(Flags::Property::IsStatic))] = false;
                 }
             }
         }
@@ -652,6 +750,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut first_instance_host: Option<(usize, FieldName)> = None;
         let mut last_key_host: Option<(usize, Option<Expr>)> = None;
         let mut constructor: Option<usize> = None;
+        let mut hosts = BumpVec::<Host<'a>>::new_in(bump);
         let mut decorate: [BumpVec<'a, Expr>; 4] = [
             BumpVec::new_in(bump),
             BumpVec::new_in(bump),
@@ -716,12 +815,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let private_name: &'a [u8] = p.symbols[private_ref.inner_index() as usize]
                     .original_name
                     .slice();
-                let suffix: &[u8] = match kind {
-                    2 => b"_get",
-                    3 => b"_set",
-                    _ => b"_fn",
+                let (prefix, suffix): (&[u8], &[u8]) = match kind {
+                    2 => (b"get ", b"_get"),
+                    3 => (b"set ", b"_set"),
+                    _ => (b"", b"_fn"),
                 };
                 let function = p.declared_temp(p.bump_name3(b"_", &private_name[1..], suffix));
+
+                // The body stays a method where it is written, under a key of its own.
+                let host_key = if host_names_are_free[usize::from(is_static)] {
+                    HostKey::Name(p.bump_name3(prefix, private_name, b""))
+                } else {
+                    HostKey::Symbol(p.declared_temp(b"_key"))
+                };
+                let key_temp = match host_key {
+                    HostKey::Name(name) => {
+                        key_effects.push(p.new_expr(E::EString::init(name), loc));
+                        None
+                    }
+                    HostKey::Symbol(symbol) => {
+                        key_effects.push(p.new_symbol_once(symbol, loc));
+                        Some(p.use_ref(symbol, loc))
+                    }
+                };
+                prop.key = Some(Expr::join_all_with_comma(&key_effects));
+                key_effects.clear();
+                prop.kind = PropertyKind::Normal;
+                prop.flags.insert(Flags::Property::IsComputed);
+                last_key_host = Some((members.len(), key_temp));
+                members.push(prop);
+                hosts.push(Host {
+                    function,
+                    key: host_key,
+                    is_static,
+                });
 
                 // The name gives what the decorators returned.
                 let decorated = p.use_ref(function, GENERATED);
@@ -742,7 +869,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let name_expr = p.new_expr(E::EString::init(private_name), loc);
                 let target = p.private_brand(private_ref, &mut generated);
-                let body = prop.value.expect("a method has a value");
+                let body = p.use_ref(function, loc);
                 let decorated =
                     p.decorate_element(init_ref, flags, name_expr, dec, target, Some(body), loc);
                 decorate[group].push(p.assign_to(function, decorated, loc));
@@ -988,6 +1115,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // ── The leading static block ──
+        for host in &hosts {
+            leading.extend_from_slice(&p.take_host(host, loc));
+        }
         let mut class_decorators_result: Option<ClassDecorators> = None;
         if has_decorators {
             let base = match base_ref {

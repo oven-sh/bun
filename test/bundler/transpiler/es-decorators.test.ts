@@ -1721,7 +1721,9 @@ describe("ES Decorators", () => {
   // A decorated `#private` member stays a member of the class, so the engine
   // runs each use of it. A decorated `#private` method, getter, setter or
   // accessor is a `get` or `set` of its name that gives what the decorators
-  // returned.
+  // returned. The body of a decorated `#private` method, getter or setter
+  // stays a method too, under a key the class deletes before anything can see
+  // it, so `super` in it is the engine's.
   describe("a decorated #private member stays a member of the class", () => {
     test("the lowered class declares the name and calls no helper where it is used", () => {
       const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
@@ -1739,6 +1741,201 @@ describe("ES Decorators", () => {
       expect(output).toContain("{ has: (o) => (#x in o), get: (o) => o.#x, set: (o, v) => o.#x = v }");
       expect(output).not.toMatch(/__private|WeakMap|WeakSet/);
       expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+    });
+
+    test("the body of a decorated #private method stays a method of the class", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
+      const lowered = (source: string) => transpiler.transformSync(source).replace(/\$\d+|_[a-z0-9]{8}\b/g, "");
+      // Under the key `"#m"` where no other key of the class can be that string.
+      const named = lowered("class A extends B { @dec #m() { return super.m(); } static x() {} }");
+      expect(named).toContain('[(_dec = [\n    dec\n  ], "#m")]() {\n    return super.m();\n  }');
+      expect(named).toContain('_m_fn = this.prototype["#m"];\n    delete this.prototype["#m"];');
+      expect(named).toContain("get #m() {\n    return _m_fn;\n  }");
+      expect(named).not.toMatch(/typeof|\bSymbol\b/);
+      // Under a new symbol where one can.
+      const computed = lowered("class A extends B { @dec #m() { return super.m(); } [k]() {} }");
+      expect(computed).toContain("], _key ||= $$typeof.constructor())]() {\n    return super.m();\n  }");
+      expect(computed).toContain("_m_fn = this.prototype[_key];\n    delete this.prototype[_key];");
+      expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(computed)).not.toThrow();
+    });
+
+    // The same members run without the decorators and with them. Both print
+    // the same thing, and the literal below says what that is.
+    test.concurrent("every form of super in a decorated #private method, getter and setter", async () => {
+      const members = (dec: string) => `
+        ${dec}#m(param = super.f("param")) {
+          const out = { param };
+          let keyEvals = 0;
+          const k = () => (keyEvals++, key);
+          super.x = 1;
+          out.get = [super.x, super["x"], super[key] === undefined];
+          out.assignValue = (super[key] = 2);
+          out.call = [super.f(1, ...[2, 3]), super[(keyEvals++, "f")](4)];
+          out.optionalCall = [super.f?.(5), super.nothing?.(), super.f(6)?.length];
+          out.compound = [(super.x += 10), super.x, (super[k()] **= 3), super.y, keyEvals];
+          this._y = null;
+          out.logical = [(super.x ??= "skipped"), (super.y ??= "filled"), (super.y &&= "and"), (super.x ||= "skipped"), super.x, super.y];
+          super[key] = 5;
+          out.update = [super.x++, ++super.x, super[key]--, --super[key], super.x, super.y];
+          [super.x, super[key] = "dflt", ...super.rest] = [100, undefined, 1, 2];
+          ({ a: super.x, ...super.others } = { a: 7, c: 1 });
+          out.targets = [super.x, super.y, this.rest, this.others];
+          for (super.x of [31, 32]) out.forOf = super.x;
+          for (super[key] in { k1: 0 }) out.forIn = super.y;
+          super.defined = "own";
+          out.definesOnReceiver = [Object.hasOwn(this, "defined"), "defined" in Base.prototype];
+          try { super.readonly = 1; out.readonly = "assigned"; } catch (e) { out.readonly = e.constructor.name; }
+          out.tagged = super.tag\`a\${1}b\${2}\`;
+          out.arrows = [(() => super.f("arrow"))(), ((q = super.x) => q)()];
+          class Nested extends super.constructor { own() { return super.f("nested"); } }
+          out.nested = [new Nested().own(), { m() { return super.toString === Object.prototype.toString; } }.m()];
+          out.privateOperands = [super[this.#keyName], super.f(this.#v, this.#p())];
+          try { out.deleteSuper = delete super[(keyEvals++, "probe")]; } catch (e) { out.deleteSuper = [e.constructor.name, keyEvals, probeReads]; }
+          return out;
+        }
+        #keyName = "readonly";
+        #v = 42;
+        ${dec}#p() { return "p"; }
+        ${dec}get #acc() { return super.x; }
+        ${dec}set #acc(v) { super.x = v; }
+        ${dec}get #half() { return super.x; }
+        set #half(v) { super.x = v + "!"; }
+        ${dec}async #asyncM() { return await super.f("async"); }
+        ${dec}*#gen() { yield super.f("gen"); }
+        ${dec}static #s() {
+          super.sx = "s";
+          super.sx += "!";
+          return [super.sx, super.sf("a"), super.sf?.("b"), this._sx];
+        }
+        run() { self = this; this.#acc = "viaSetter"; const acc = this.#acc; this.#half = "half"; return { acc, half: this.#half, m: this.#m() }; }
+        runAsync() { self = this; return this.#asyncM(); }
+        runGen() { self = this; return [...this.#gen()]; }
+        static runStatic() { selfClass = this; return this.#s(); }
+      `;
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        let self, selfClass;
+        let probeReads = 0;
+        class Base {
+          get x() { return this._x; }
+          set x(v) { this._x = v; }
+          get y() { return this._y; }
+          set y(v) { this._y = v; }
+          get readonly() { return "ro"; }
+          get probe() { probeReads++; }
+          f(...args) { return [this === self, ...args]; }
+          tag(strings, ...subs) { return [this === self, strings.raw.join("|"), ...subs]; }
+          static get sx() { return this._sx; }
+          static set sx(v) { this._sx = v; }
+          static sf(a) { return [this === selfClass, a]; }
+        }
+        const key = "y";
+        class Native extends Base {${members("")}}
+        class Decorated extends Base {${members("@dec ")}}
+        for (const C of [Native, Decorated]) {
+          const c = new C();
+          console.log(JSON.stringify({ sync: c.run(), async: await c.runAsync(), gen: c.runGen(), static: C.runStatic() }));
+        }
+      `);
+      expect(stderr).toBe("");
+      const [native, decorated] = stdout.trim().split("\n");
+      expect(decorated).toBe(native);
+      expect(JSON.parse(decorated)).toEqual({
+        sync: {
+          acc: "viaSetter",
+          half: "half!",
+          m: {
+            param: [true, "param"],
+            get: [1, 1, true],
+            assignValue: 2,
+            call: [
+              [true, 1, 2, 3],
+              [true, 4],
+            ],
+            optionalCall: [[true, 5], null, 2],
+            compound: [11, 11, 8, 8, 2],
+            logical: [11, "filled", "and", 11, 11, "and"],
+            update: [11, 13, 5, 3, 13, 3],
+            targets: [7, "dflt", [1, 2], { c: 1 }],
+            forOf: 32,
+            forIn: "k1",
+            definesOnReceiver: [true, false],
+            readonly: "TypeError",
+            tagged: [true, "a|b|", 1, 2],
+            arrows: [[true, "arrow"], 32],
+            nested: [[false, "nested"], true],
+            privateOperands: ["ro", [true, 42, "p"]],
+            // The key is evaluated, the inherited getter is not, and the delete throws.
+            deleteSuper: ["ReferenceError", 3, 0],
+          },
+        },
+        async: [true, "async"],
+        gen: [[true, "gen"]],
+        static: ["s!", [true, "a"], [true, "b"], "s!"],
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("super follows the prototype the class has when the method runs", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        const wrap = (v, ctx) => function (...args) { return "wrapped:" + v.apply(this, args); };
+        class Base { greet() { return "base"; } static greet() { return "static base"; } }
+        function replace(cls, ctx) { return class extends cls { greet() { return "replacement:" + super.greet(); } }; }
+        @replace
+        class C extends Base {
+          greet() { return "c:" + super.greet(); }
+          @wrap #m() { return super.greet(); }
+          @dec static #sm() { return super.greet(); }
+          run() { return [this.#m(), this.greet()]; }
+          static run() { return this.#sm(); }
+        }
+        const Original = Object.getPrototypeOf(C);
+        const c = new C();
+        const before = [c.run(), Original.run()];
+        Object.setPrototypeOf(Original.prototype, { greet() { return "moved"; } });
+        Object.setPrototypeOf(Original, { greet() { return "static moved"; } });
+        class NoBase { @dec #m() { return super.toString === Object.prototype.toString; } @dec static #s() { return super.call === Function.prototype.call; } run() { return [this.#m(), NoBase.#s()]; } }
+        console.log(JSON.stringify([before, c.run()[0], Original.run(), new NoBase().run()]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        '[[["wrapped:base","replacement:c:base"],"static base"],"wrapped:moved","static moved",[true,true]]\n',
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a key the class computes can be the name a body is kept under", async () => {
+      // `"#m"`, `"get #g"` and `"set #g"` are where the bodies of `#m` and `#g`
+      // stay when no other key can be that string. Here each one can.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => v;
+        const m = "#" + "m", get = "get #g";
+        class Base { greet() { return "hi"; } static greet() { return "static hi"; } }
+        class A extends Base {
+          @dec #m() { return "private " + super.greet(); }
+          [m]() { return "public #m"; }
+          @dec get #g() { return "private getter"; }
+          [get]() { return "public get #g"; }
+          "set #g"() { return "public set #g"; }
+          @dec set #g(v) { this.v = v; }
+          @dec static #m2() { return "private " + super.greet(); }
+          static [m + 2]() { return "public static #m2"; }
+          run() { this.#g = 5; return [this.#m(), this[m](), this.#g, this[get](), this["set #g"](), this.v, A.#m2(), A["#m2"]()]; }
+        }
+        class Literal { "#m"() { return "public"; } @dec #m() { return "private"; } run() { return [this.#m(), this["#m"]()]; } }
+        class Free { [m]; static [m] = 1; @dec #m() { return "private"; } @dec static #m2() {} run() { return this.#m(); } }
+        console.log(JSON.stringify([new A().run(), new Literal().run(), new Free().run()]));
+        console.log(JSON.stringify([A, Literal, Free].map(C => [Reflect.ownKeys(C.prototype), Reflect.ownKeys(C).map(String)])));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        '[["private hi","public #m","private getter","public get #g","public set #g",5,"private static hi","public static #m2"],["private","public"],"private"]\n' +
+          '[[["constructor","#m","get #g","set #g","run"],["length","name","prototype","#m2","Symbol(Symbol.metadata)"]],' +
+          '[["constructor","#m","run"],["length","name","prototype","Symbol(Symbol.metadata)"]],' +
+          '[["constructor","run"],["length","name","prototype","#m","Symbol(Symbol.metadata)"]]]\n',
+      );
+      expect(exitCode).toBe(0);
     });
 
     test("the temporaries of a class are declared once for each evaluation of it", () => {
@@ -2920,16 +3117,15 @@ const memberSections = `
 }
 
 // Other uses of a decorated \`#private\` member: optional chains, template
-// tags, direct \`eval\` and \`import()\`. The expected values are what node
-// prints for the same class without the decorators.
+// tags, direct \`eval\`, \`import()\` and \`super\` in its body. The expected
+// values are what node prints for the same class without the decorators.
 {
-  class PU {
+  class PBase { greet() { return "hi:" + this.n; } static greet() { return "static hi"; } }
+  class PU extends PBase {
     n = 7;
-    greet() { return "hi:" + this.n; }
-    static greet() { return "static hi"; }
     @dec #f = function (s, ...v) { return this.n + ":" + s.raw.join("|") + v.join(","); };
-    @dec #m(s, ...v) { return this.greet() + (s ? ":" + s.raw.join("|") + v.join(",") : ""); }
-    @dec static #sm() { return this.greet(); }
+    @dec #m(s, ...v) { return super.greet() + (s ? ":" + s.raw.join("|") + v.join(",") : ""); }
+    @dec static #sm() { return super.greet(); }
     @dec accessor #a = "node:path";
     @dec #none;
     chains(o) { return [typeof o?.#f, o?.#m(), o?.#a.length, this?.#a, this.#m?.(), this.#none?.()]; }
@@ -3059,7 +3255,8 @@ const memberSections = `
 }
 
 // The lowered class names no global: the scope can declare \`WeakMap\`,
-// \`WeakSet\` and \`Symbol\`.
+// \`WeakSet\` and \`Symbol\`. The computed key makes the class keep the bodies
+// of \`#m\` and \`#g\` under a new symbol.
 {
   const WeakMap = 1, WeakSet = 2;
   let k = "k";
@@ -3293,6 +3490,21 @@ const memberSections = `
   }
   out.tailFieldName = new (Outer3.make())().read(new Outer3());
 }
+
+// The body of a decorated \`#private\` method stays a method of the class
+// until its decorators run. It is under the key \`"#m"\` when no other key can
+// be that string, and under a new symbol here, where one can.
+{
+  const m = "#" + "m";
+  class HK extends Object {
+    @dec #m() { return "private:" + typeof super.toString; }
+    [m]() { return "public"; }
+    @dec static #s() { return "static private:" + typeof super.call; }
+    static [m]() { return "static public"; }
+    run() { return [this.#m(), this[m](), HK.#s(), HK[m](), Reflect.ownKeys(HK.prototype).length, Object.getOwnPropertySymbols(HK).length]; }
+  }
+  out.hostKeys = new HK().run();
+}
 `;
 
 const memberExpected = {
@@ -3429,6 +3641,7 @@ const memberExpected = {
   ],
   constructorKey: [1, 2],
   tailFieldName: ["outer", "own", "x", true],
+  hostKeys: ["private:function", "public", "static private:function", "static public", 3, 1],
 };
 
 const fixtureEnd = `\nPromise.all(pending).then(() => console.log(JSON.stringify(out)));\n`;
@@ -3556,6 +3769,16 @@ const privateUses: Record<string, [members: string, body: string, expected: unkn
   "typeof this.#x": ["@dec #x = 1;", "return typeof this.#x", "number"],
   "import(this.#x)": ['@dec #x = "node:path";', "return import(this.#x).then((m) => typeof m.join)", "function"],
   'eval("this.#x")': ["@dec #x = 1;", 'return eval("this.#x")', 1],
+  "super in #m()": ["@dec #m() { return super.greet(); }", "return this.#m()", "hi"],
+  "super in get #x()": ["@dec get #x() { return super.greet(); }", "return this.#x", "hi"],
+  "super in set #x(v)": ["@dec set #x(v) { super.v = v; }", "this.#x = 1; return this.v", 1],
+  // The class deletes a key of a prototype that has more than 128 of them.
+  "super in #m() next to 130 methods": [
+    Array.from({ length: 130 }, (_, i) => `m${i}() { return ${i}; }`).join(" ") +
+      " @dec #m() { return super.greet(); }",
+    "return [this.#m(), this.m0(), this.m129(), Object.getOwnPropertyNames(A.prototype).length]",
+    ["hi", 0, 129, 132],
+  ],
   "static #x++": ["@dec static #x = 1;", "return [A.#x++, A.#x]", [1, 2]],
   "accessor #x++": ["@dec accessor #x = 1;", "return [this.#x++, this.#x]", [1, 2]],
   "static accessor #x += 2": ["@dec static accessor #x = 1;", "return [(A.#x += 2), A.#x]", [3, 3]],

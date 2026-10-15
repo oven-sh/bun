@@ -2772,8 +2772,28 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.type_of_expr(file, e)
         };
+        self.check_expression_in_flow_loop(file, e);
         self.type_only_node = outside;
         ty
+    }
+
+    /// After `type_of_expr(e)`. tsgo's `checkExpression` is the whole check of `e`, and nothing it reports is dropped. Where a
+    /// loop is being analysed it reports with the types the loop has collected so far, which the walk, with the final types,
+    /// does not: `last = last.next = node` after `last === null` assigns to `never`.
+    pub(super) fn check_expression_in_flow_loop(&mut self, file: FileId, e: ExprId) {
+        if !self.is_in_flow_loop() {
+            return;
+        }
+        let reported = self.reported.len();
+        let cuts = self.interruptions();
+        let outer = std::mem::replace(&mut self.is_checking_in_flow_loop, true);
+        self.check_expression(file, e);
+        self.is_checking_in_flow_loop = outer;
+        // What a check that was cut short has reported is not all: it stays with the frames in progress, which drop it, and
+        // the task that gets through has the owner.
+        if cuts == self.interruptions() {
+            self.log_reported_in_flow_loop(reported, file, e);
+        }
     }
 
     /// The tail of `getBindingElementTypeFromParentType`: the type bound to `pat`, an element of a

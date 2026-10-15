@@ -5,14 +5,14 @@ use bun_lint::types::tsutils::{
 };
 use bun_lint::types::utils::{
     find_truthiness_asserted_argument, get_constrained_type_at_location,
-    is_array_method_call_with_predicate, is_type_array_type_or_union_of_array_types,
+    get_constraint_of_type_parameter, is_array_method_call_with_predicate,
+    is_type_array_type_or_union_of_array_types,
 };
-use bun_lint::types::{Type, TypeFlags};
+use bun_lint::types::{IdSet, Type, TypeFlags};
 use bun_lint::utils::estree_span;
 use bun_lint::utils::ts_utils::{
     WrappingFixerParams, get_wrapping_fixer, is_parenless_arrow_function,
 };
-use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 /// Disallow certain types in boolean expressions.
@@ -183,8 +183,6 @@ const STRING: VariantTypes = 1 << 7;
 const TRUTHY_BOOLEAN: VariantTypes = 1 << 8;
 const TRUTHY_NUMBER: VariantTypes = 1 << 9;
 const TRUTHY_STRING: VariantTypes = 1 << 10;
-/// For tsgolint 7.0: none of these, as `T[K]` and `Awaited<T>`, which typescript-eslint takes for objects.
-const MIXED: VariantTypes = 1 << 11;
 
 /// A call of `getWrappingFixer` whose `wrap` is `` code => `${before}${code}${after}` ``.
 #[derive(Copy, Clone)]
@@ -358,10 +356,6 @@ fn inspect_variant_types(types: &mut dyn Iterator<Item = Type<'_>>) -> VariantTy
         | number_like
         | any
         | TypeFlags::NEVER;
-    let an_object = TypeFlags::OBJECT
-        | TypeFlags::NON_PRIMITIVE
-        | TypeFlags::ES_SYMBOL_LIKE
-        | TypeFlags::INTERSECTION;
 
     let mut variant_types = 0;
     let (mut booleans, mut is_first_boolean_true) = (0, false);
@@ -395,9 +389,6 @@ fn inspect_variant_types(types: &mut dyn Iterator<Item = Type<'_>>) -> VariantTy
             variant_types |= ENUM;
         }
         if !flags.intersects(not_an_object) {
-            if !flags.intersects(an_object) && ty.file().language().is_oxlint {
-                variant_types |= MIXED;
-            }
             has_objects = true;
             has_branded_boolean = has_branded_boolean || is_branded_boolean(ty);
         }
@@ -432,6 +423,122 @@ fn inspect_variant_types(types: &mut dyn Iterator<Item = Type<'_>>) -> VariantTy
         variant_types |= if has_branded_boolean { BOOLEAN } else { OBJECT };
     }
     variant_types
+}
+
+/// tsgolint's `typeVariant`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum TypeVariant {
+    Nullish,
+    Boolean,
+    String,
+    Number,
+    BigInt,
+    Object,
+    Any,
+    Unknown,
+    Never,
+    Mixed,
+    Generic,
+}
+
+/// tsgolint's `typeInfo`.
+#[derive(Copy, Clone)]
+struct TypeInfo {
+    variant: TypeVariant,
+    is_nullable: bool,
+    is_truthy: bool,
+    is_enum: bool,
+}
+
+/// tsgolint's `analyzeTypePart`. Whether a bigint is truthy decides nothing in `checkCondition`.
+fn analyze_type_part(ty: Type) -> TypeInfo {
+    let flags = ty.flags();
+    let (mut is_truthy, mut is_enum) = (false, false);
+    let variant = if flags.intersects(TypeFlags::INTERSECTION) {
+        let is_boolean = |it: Type| analyze_type_part(it).variant == TypeVariant::Boolean;
+        match ty.types().iter().any(is_boolean) {
+            true => TypeVariant::Boolean,
+            false => TypeVariant::Object,
+        }
+    } else if flags.intersects(TypeFlags::TYPE_PARAMETER) {
+        TypeVariant::Generic
+    } else if flags.intersects(TypeFlags::ANY) {
+        TypeVariant::Any
+    } else if flags.intersects(TypeFlags::UNKNOWN) {
+        TypeVariant::Unknown
+    } else if flags.intersects(TypeFlags::NEVER) {
+        TypeVariant::Never
+    } else if flags.intersects(TypeFlags::NULL | TypeFlags::UNDEFINED | TypeFlags::VOID_LIKE) {
+        TypeVariant::Nullish
+    } else if flags.intersects(TypeFlags::BOOLEAN_LIKE) {
+        is_truthy = is_true_literal_type(ty);
+        TypeVariant::Boolean
+    } else if flags.intersects(TypeFlags::ENUM_LIKE) {
+        is_enum = true;
+        match flags.intersects(TypeFlags::STRING_LITERAL) {
+            true => TypeVariant::String,
+            false => TypeVariant::Number,
+        }
+    } else if flags.intersects(TypeFlags::STRING_LIKE) {
+        is_truthy = flags.intersects(TypeFlags::STRING_LITERAL)
+            && ty.string_value().is_some_and(|value| !value.is_empty());
+        TypeVariant::String
+    } else if flags.intersects(TypeFlags::NUMBER_LIKE) {
+        is_truthy = flags.intersects(TypeFlags::NUMBER_LITERAL)
+            && ty.number_value().is_some_and(|value| value != 0.0);
+        TypeVariant::Number
+    } else if flags.intersects(TypeFlags::BIG_INT_LIKE) {
+        TypeVariant::BigInt
+    } else if flags
+        .intersects(TypeFlags::ES_SYMBOL_LIKE | TypeFlags::OBJECT | TypeFlags::NON_PRIMITIVE)
+    {
+        TypeVariant::Object
+    } else {
+        TypeVariant::Mixed
+    };
+    TypeInfo {
+        variant,
+        is_nullable: false,
+        is_truthy,
+        is_enum,
+    }
+}
+
+/// tsgolint's `analyzeTypeParts`.
+fn analyze_type_parts<'a>(types: impl Iterator<Item = Type<'a>>) -> TypeInfo {
+    let mut variant = None;
+    let (mut is_nullable, mut is_truthy, mut is_enum) = (false, false, false);
+    let mut met_not_truthy = false;
+    for part in types {
+        let part = analyze_type_part(part);
+        if part.variant == TypeVariant::Nullish {
+            is_nullable = true;
+        } else if variant.is_none() {
+            variant = Some(part.variant);
+        } else if variant != Some(part.variant) {
+            variant = Some(TypeVariant::Mixed);
+        }
+        is_enum = is_enum || part.is_enum;
+        let is_primitive = matches!(
+            part.variant,
+            TypeVariant::Boolean | TypeVariant::Number | TypeVariant::String | TypeVariant::BigInt
+        );
+        if is_primitive && !met_not_truthy {
+            is_truthy = part.is_truthy;
+            met_not_truthy = !part.is_truthy;
+        }
+    }
+    // Nullish parts alone are nullish, no parts at all are mixed.
+    let variant = variant.unwrap_or(match is_nullable {
+        true => TypeVariant::Nullish,
+        false => TypeVariant::Mixed,
+    });
+    TypeInfo {
+        variant,
+        is_nullable,
+        is_truthy,
+        is_enum,
+    }
 }
 
 fn get_suggestions_for_condition_error(
@@ -528,31 +635,9 @@ fn add_boolean_return_type<'a>(
 }
 
 impl StrictBooleanExpressions {
-    fn determine_report_type(
-        &self,
-        types: VariantTypes,
-        is_oxlint: bool,
-    ) -> Option<ConditionError> {
+    fn determine_report_type(&self, types: VariantTypes) -> Option<ConditionError> {
         let is = |wanted_types: VariantTypes| types == wanted_types;
         let unless = |is_allowed: bool, error: ConditionError| (!is_allowed).then_some(error);
-
-        // tsgolint takes the members of an enum for strings or numbers, and says nothing about one beside other types.
-        if is_oxlint && types & ENUM != 0 {
-            return match (types & NULLISH != 0, types & !(ENUM | NULLISH)) {
-                (true, _) => unless(self.allow_nullable_enum, ConditionError::NullableEnum),
-                (false, STRING | TRUTHY_STRING) => {
-                    unless(self.allow_string, ConditionError::String)
-                }
-                (false, NUMBER | TRUTHY_NUMBER) => {
-                    unless(self.allow_number, ConditionError::Number)
-                }
-                (false, _) => None,
-            };
-        }
-
-        if types & MIXED != 0 {
-            return Some(ConditionError::Other);
-        }
 
         // `boolean` and `never` are always okay.
         if is(BOOLEAN) || is(TRUTHY_BOOLEAN) || is(NEVER) {
@@ -605,11 +690,54 @@ impl StrictBooleanExpressions {
         {
             return unless(self.allow_nullable_enum, ConditionError::NullableEnum);
         }
-        // For tsgolint `T | null` is as `T`.
-        if is(ANY) || (is_oxlint && is(NULLISH | ANY)) {
+        if is(ANY) {
             return unless(self.allow_any, ConditionError::Any);
         }
         Some(ConditionError::Other)
+    }
+
+    /// tsgolint's `checkCondition`.
+    fn check_condition<'a>(&self, types: impl Iterator<Item = Type<'a>>) -> Option<ConditionError> {
+        let unless = |is_allowed: bool, error: ConditionError| (!is_allowed).then_some(error);
+        let info = analyze_type_parts(types);
+        match info.variant {
+            TypeVariant::Any | TypeVariant::Unknown | TypeVariant::Generic => {
+                unless(self.allow_any, ConditionError::Any)
+            }
+            TypeVariant::Never => None,
+            TypeVariant::Nullish => Some(ConditionError::Nullish),
+            // Known edge case: truthy primitives and nullish values are always valid boolean expressions.
+            TypeVariant::String if self.allow_string && info.is_truthy => None,
+            TypeVariant::Number if self.allow_number && info.is_truthy => None,
+            TypeVariant::Boolean if info.is_truthy => None,
+            TypeVariant::String | TypeVariant::Number if info.is_nullable && info.is_enum => {
+                unless(self.allow_nullable_enum, ConditionError::NullableEnum)
+            }
+            TypeVariant::String if info.is_nullable => {
+                unless(self.allow_nullable_string, ConditionError::NullableString)
+            }
+            TypeVariant::String => unless(self.allow_string, ConditionError::String),
+            TypeVariant::Number | TypeVariant::BigInt if info.is_nullable => {
+                unless(self.allow_nullable_number, ConditionError::NullableNumber)
+            }
+            TypeVariant::Number | TypeVariant::BigInt => {
+                unless(self.allow_number, ConditionError::Number)
+            }
+            TypeVariant::Boolean if info.is_nullable => {
+                unless(self.allow_nullable_boolean, ConditionError::NullableBoolean)
+            }
+            TypeVariant::Boolean => None,
+            TypeVariant::Object if info.is_nullable => {
+                unless(self.allow_nullable_object, ConditionError::NullableObject)
+            }
+            TypeVariant::Object => Some(ConditionError::Object),
+            // An enum beside other types is reported only where it can be nullish.
+            TypeVariant::Mixed if !info.is_enum => Some(ConditionError::Other),
+            TypeVariant::Mixed if info.is_nullable => {
+                unless(self.allow_nullable_enum, ConditionError::NullableEnum)
+            }
+            TypeVariant::Mixed => None,
+        }
     }
 
     /// Checks whether the type of a node is allowed in a boolean context.
@@ -621,8 +749,12 @@ impl StrictBooleanExpressions {
         if ty.is_unresolved() {
             return;
         }
-        let types = inspect_variant_types(&mut union_constituents(ty).iter());
-        if let Some(report_type) = self.determine_report_type(types, cx.language().is_oxlint) {
+        let types = union_constituents(ty);
+        let report_type = match cx.language().is_oxlint {
+            true => self.check_condition(types.iter()),
+            false => self.determine_report_type(inspect_variant_types(&mut types.iter())),
+        };
+        if let Some(report_type) = report_type {
             let report = cx
                 .report(node, report_type.message())
                 .data("context", "conditional");
@@ -654,6 +786,7 @@ impl StrictBooleanExpressions {
 
     /// Reports a predicate of an array method that does not return a boolean value.
     fn check_array_method_call_predicate<'a>(&self, predicate_node: Expr<'a>, cx: &Cx<'a, Self>) {
+        let is_oxlint = cx.language().is_oxlint;
         let function = predicate_node.as_fn();
         if function.is_some_and(Func::is_async) {
             cx.report(predicate_node, PREDICATE_CANNOT_BE_ASYNC);
@@ -665,10 +798,11 @@ impl StrictBooleanExpressions {
             return;
         }
         let mut flatten_types: SmallVec<[Type<'a>; 8]> = SmallVec::new();
-        let mut seen: FxHashSet<Type<'a>> = FxHashSet::default();
+        let mut seen: IdSet<Type<'a>> = IdSet::new();
         for signature in predicate_type.get_call_signatures() {
             let ty = signature.get_return_type();
             let ty = match is_type_parameter(ty) {
+                true if is_oxlint => get_constraint_of_type_parameter(ty).unwrap_or(ty),
                 true => ty.get_base_constraint_of_type().unwrap_or(ty),
                 false => ty,
             };
@@ -681,8 +815,12 @@ impl StrictBooleanExpressions {
                 }
             }
         }
-        let types = inspect_variant_types(&mut flatten_types.iter().copied());
-        let Some(report_type) = self.determine_report_type(types, cx.language().is_oxlint) else {
+        let report_type = match is_oxlint {
+            true => self.check_condition(flatten_types.iter().copied()),
+            false => self
+                .determine_report_type(inspect_variant_types(&mut flatten_types.iter().copied())),
+        };
+        let Some(report_type) = report_type else {
             return;
         };
 

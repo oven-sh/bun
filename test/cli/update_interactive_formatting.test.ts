@@ -21,9 +21,9 @@ function bunfig() {
   return `[install]\ncache = false\nregistry = "${registryUrl}"\n`;
 }
 
-async function install(dir: string) {
+async function install(dir: string, args: string[] = []) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", ...args],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -52,6 +52,81 @@ async function updateInteractive(
   proc.stdin.end();
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+// The test registry has no package with a name that is not ASCII. This one has versions 1.0.0 and
+// 2.0.0 of every name, or the versions listed for a name. It serves no tarballs, so the tests
+// that use it install with --lockfile-only and update with --dry-run.
+function manifestRegistry(versionsOf: Record<string, string[]> = {}) {
+  return Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { origin, pathname } = new URL(req.url);
+      const name = decodeURIComponent(pathname.slice(1));
+      const versions = versionsOf[name] ?? ["1.0.0", "2.0.0"];
+      return Response.json({
+        name,
+        "dist-tags": { latest: versions.at(-1) },
+        versions: Object.fromEntries(
+          versions.map(version => [version, { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` } }]),
+        ),
+      });
+    },
+  });
+}
+
+// Runs `bun update -i` on a pty. Once the table is drawn it types `keys` (one byte and one new
+// frame each), waits for their frames, and confirms with Enter.
+async function updateInteractiveOnPty(
+  dir: string,
+  { cols, rows = 24, args, keys = "" }: { cols: number; rows?: number; args: string[]; keys?: string },
+) {
+  const decoder = new TextDecoder();
+  let output = "";
+  // The end of a synchronized update closes every frame, before the prompt blocks on input.
+  const frames = () => output.split("\x1b[?2026l").length - 1;
+  const drawn = Promise.withResolvers<void>();
+  const typed = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "update", "-i", ...args],
+    cwd: String(dir),
+    env: bunEnv,
+    terminal: {
+      cols,
+      rows,
+      data(_terminal, chunk) {
+        output += decoder.decode(chunk, { stream: true });
+        if (frames() >= 1) drawn.resolve();
+        if (frames() >= 1 + keys.length) typed.resolve();
+        if (output.includes("No packages selected")) done.resolve();
+      },
+      exit() {
+        const error = new Error(`bun update -i exited early:\n${output}`);
+        drawn.reject(error);
+        typed.reject(error);
+        done.reject(error);
+      },
+    },
+  });
+
+  try {
+    await drawn.promise;
+    proc.terminal!.write(keys);
+    await typed.promise;
+    proc.terminal!.write("\r");
+    await done.promise;
+    return { output, exitCode: await proc.exited };
+  } finally {
+    proc.terminal!.close();
+  }
+}
+
+// The header line and the package lines of the table, without escape sequences.
+function tableLines(output: string) {
+  return Bun.stripANSI(output)
+    .split(/\r?\n/)
+    .filter(line => line.includes("Current") || line.includes("□"));
 }
 
 // Each test owns its own tempDir and subprocesses; the registry is read-only after beforeAll.
@@ -119,6 +194,39 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("should offer what package.json declares now, not what bun.lock recorded", async () => {
+    await using dir = tempDir("update-interactive-edited-package-json", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "a-dep": "1.0.1", "dep-with-tags": "1.0.0", "no-deps": "1.0.0" },
+      }),
+    });
+    await install(dir);
+    const lockfile = await Bun.file(join(dir, "bun.lock")).text();
+
+    // Edited after the install, no reinstall: ranges widened, `a-dep` moved to
+    // devDependencies, `dep-with-tags` removed. bun.lock still has the old list.
+    await Bun.write(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "no-deps": "^1.0.0" },
+        devDependencies: { "a-dep": "^1.0.1" },
+      }),
+    );
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["--dry-run"], input: "\n" });
+
+    // Name, Current, Target, Latest: Target follows the new ranges, not the exact pins bun.lock still has.
+    expect(stdout).toMatch(/no-deps\s+1\.0\.0\s+1\.1\.0\s+2\.0\.0/);
+    expect(stdout).toMatch(/a-dep dev\s+1\.0\.1\s+1\.0\.10\s/);
+    expect(stdout).not.toContain("dep-with-tags");
+    expect(await Bun.file(join(dir, "bun.lock")).text()).toBe(lockfile);
+    expect(exitCode).toBe(0);
+  });
+
   it("should render mixed dependency types under separate section headers", async () => {
     await using dir = tempDir("update-interactive-mixed-sections", {
       "bunfig.toml": bunfig(),
@@ -145,6 +253,65 @@ describe.concurrent("bun update --interactive", () => {
     expect(stdout).toContain("dep-with-tags peer               1.0.0    1.0.0   3.0.0");
     expect(stdout).toContain("optionalDependencies                 Current  Target  Latest");
     expect(stdout).toContain("normal-dep-and-dev-dep optional  1.0.0    1.0.0   1.0.2");
+    expect(exitCode).toBe(0);
+  });
+
+  // With colors on, each version is printed as a diff against the current
+  // version. The latest build-metadata-1 is 1.1.0-rc.1+build.20240101, whose
+  // build tag is longer than the 8 bytes a semver string stores inline, so it
+  // has to be read from the latest version's own string, not the current one's.
+  // Needs a real terminal: colors, and a width at which a 25 character version
+  // is not truncated (truncated versions are printed without the diff). Skipped
+  // on Windows because ConPTY rewrites the escape sequences this asserts on.
+  it.skipIf(isWindows)("should keep the build tag of the latest version when rendering with colors", async () => {
+    await using dir = tempDir("update-interactive-build-tag", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "build-metadata-1": "1.0.0" },
+      }),
+    });
+
+    await install(dir);
+
+    const decoder = new TextDecoder();
+    let output = "";
+    const tableRendered = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "update", "-i", "--latest", "--dry-run"],
+      cwd: String(dir),
+      env: { ...bunEnv, FORCE_COLOR: "1" },
+      terminal: {
+        cols: 200,
+        rows: 50,
+        data(_terminal, chunk) {
+          output += decoder.decode(chunk, { stream: true });
+          // Every frame ends with a clear-to-end-of-screen before the prompt
+          // blocks on input, so once that follows the row the row is complete.
+          const row = output.indexOf("build-metadata-1");
+          if (row !== -1 && output.includes("\x1b[0J", row)) tableRendered.resolve();
+        },
+        exit() {
+          tableRendered.reject(new Error(`exited before rendering the table:\n${output}`));
+        },
+      },
+    });
+
+    let exitCode: number;
+    try {
+      await tableRendered.promise;
+      proc.terminal!.write("\r");
+      exitCode = await proc.exited;
+    } finally {
+      proc.terminal!.close();
+    }
+
+    const row = output.split(/\r?\n/).find(line => line.includes("build-metadata-1"))!;
+    expect(Bun.stripANSI(row)).toMatch(/build-metadata-1 +1\.0\.0 +1\.0\.0 +1\.1\.0-rc\.1\+build\.20240101/);
+    // "1." dim, "1.0" yellow (minor bump), then the whole tag red because
+    // 1.0.0 has no prerelease.
+    expect(row).toContain("\x1b[2m1.\x1b[0m\x1b[1m\x1b[33m1.0\x1b[0m\x1b[1m\x1b[31m-rc.1+build.20240101\x1b[0m");
     expect(exitCode).toBe(0);
   });
 
@@ -232,6 +399,213 @@ describe.concurrent("bun update --interactive", () => {
         closeSync(master);
       } catch {}
     }
+  });
+
+  // The table measures text in terminal columns. A CJK character or an emoji takes two columns
+  // and three or four bytes. "é" takes one column and two bytes.
+  it("should align the columns after a package name that is not ASCII", async () => {
+    await using server = manifestRegistry();
+    await using dir = tempDir("update-interactive-wide-name", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "dep": "1.0.0", "café": "1.0.0", "日本語パッケージ": "1.0.0", "😀-emoji": "1.0.0" },
+      }),
+    });
+
+    await install(dir, ["--lockfile-only"]);
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
+
+    expect(tableLines(stdout)).toEqual([
+      "  dependencies          Current  Target  Latest",
+      "  ❯ □ café              1.0.0    1.0.0   2.0.0",
+      "    □ dep               1.0.0    1.0.0   2.0.0",
+      "    □ 日本語パッケージ  1.0.0    1.0.0   2.0.0",
+      "    □ 😀-emoji          1.0.0    1.0.0   2.0.0",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Piped stdout counts as 80 columns, which limits a name to 35 columns: 17 on each side of the
+  // ellipsis. Eight wide characters fit in 17 columns, and the padding takes the two columns that
+  // are left. A combining accent takes no column and stays with its letter.
+  it("should truncate a package name on a character boundary", async () => {
+    // "e" and a combining acute accent: 3 bytes and 1 column each time.
+    const accentedLetters = (count: number) => Buffer.alloc(count * 3, "e\u0301").toString();
+    await using server = manifestRegistry();
+    await using dir = tempDir("update-interactive-wide-name-truncated", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "a-long-ascii-package-name-that-needs-an-ellipsis": "1.0.0",
+          [accentedLetters(40)]: "1.0.0",
+          "日本語パッケージ名前テスト長い名前のパッケージです": "1.0.0",
+        },
+      }),
+    });
+
+    await install(dir, ["--lockfile-only"]);
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
+
+    expect(tableLines(stdout)).toEqual([
+      "  dependencies                             Current  Target  Latest",
+      "  ❯ □ a-long-ascii-pack…needs-an-ellipsis  1.0.0    1.0.0   2.0.0",
+      `    □ ${accentedLetters(17)}…${accentedLetters(17)}  1.0.0    1.0.0   2.0.0`,
+      "    □ 日本語パッケージ…のパッケージです    1.0.0    1.0.0   2.0.0",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Piped stdout limits a version to 15 columns. These two versions are one and two columns over.
+  it("should truncate a version that is one column wider than its cell", async () => {
+    await using server = manifestRegistry({ "long-version": ["1.0.0-canary.123", "2.0.0-canary.4567"] });
+    await using dir = tempDir("update-interactive-version-truncated", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "dep": "1.0.0", "long-version": "1.0.0-canary.123" },
+      }),
+    });
+
+    await install(dir, ["--lockfile-only"]);
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
+
+    expect(tableLines(stdout)).toEqual([
+      "  dependencies      Current          Target           Latest",
+      "  ❯ □ dep           1.0.0            1.0.0            2.0.0",
+      "    □ long-version  1.0.0-c…ary.123  1.0.0-c…ary.123  2.0.0-c…ry.4567",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The Workspace column shows on a terminal wider than 100 columns. Below 120 columns it limits
+  // a workspace name to 15 columns. The first wide name takes 14 columns and 21 bytes, so it fits.
+  // Not on Windows: ConPTY redraws the screen with its own escape sequences, so the bytes that
+  // the pty delivers are not the bytes that bun wrote.
+  it.skipIf(isWindows)("should size and truncate the Workspace column in terminal columns", async () => {
+    await using server = manifestRegistry();
+    await using dir = tempDir("update-interactive-wide-workspace", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        catalog: { "dep-cat": "1.0.0" },
+      }),
+      "packages/a/package.json": JSON.stringify({
+        name: "plain",
+        version: "1.0.0",
+        dependencies: { "dep-a": "1.0.0" },
+      }),
+      "packages/b/package.json": JSON.stringify({
+        name: "工作区-文档-😀",
+        version: "1.0.0",
+        dependencies: { "dep-b": "1.0.0", "dep-cat": "catalog:" },
+      }),
+      "packages/c/package.json": JSON.stringify({
+        name: "工作区-文档-文档-文档",
+        version: "1.0.0",
+        dependencies: { "dep-c": "1.0.0", "dep-cat": "catalog:" },
+      }),
+    });
+
+    await install(dir, ["--lockfile-only"]);
+    const { output, exitCode } = await updateInteractiveOnPty(dir, {
+      cols: 110,
+      args: ["-r", "--latest", "--dry-run"],
+    });
+
+    expect(tableLines(output)).toEqual([
+      "  dependencies Current  Target  Latest  Workspace",
+      "  ❯ □ dep-a    1.0.0    1.0.0   2.0.0   plain",
+      "    □ dep-b    1.0.0    1.0.0   2.0.0   工作区-文档-😀",
+      "    □ dep-c    1.0.0    1.0.0   2.0.0   工作区-文档-文…",
+      "    □ dep-cat  1.0.0    1.0.0   2.0.0   catalog (工作…",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(isWindows)("should escape control characters in a cell and size it by the escaped text", async () => {
+    await using server = manifestRegistry();
+    await using dir = tempDir("update-interactive-escape", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        catalogs: { "\x1b[2Kx": { "dep-cat": "1.0.0" } },
+      }),
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        dependencies: { "dep-a": "1.0.0", "dep-cat": "catalog:\x1b[2Kx" },
+      }),
+    });
+
+    await install(dir, ["--lockfile-only"]);
+    const { output, exitCode } = await updateInteractiveOnPty(dir, {
+      cols: 200,
+      args: ["-r", "--latest", "--dry-run"],
+    });
+
+    expect(tableLines(output)).toEqual([
+      "  dependencies Current  Target  Latest  Workspace",
+      "  ❯ □ dep-a    1.0.0    1.0.0   2.0.0   a",
+      "    □ dep-cat  1.0.0    1.0.0   2.0.0   catalog:\\x1b[2Kx (a)",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // 9 rows leave 4 for packages: help line, blank + header, bottom indicator, the cursor's own row.
+  it.skipIf(isWindows)("should scroll two catalog rows of a wide name on a short terminal", async () => {
+    await using server = manifestRegistry();
+    await using dir = tempDir("update-interactive-short-terminal", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        catalog: { "日本語パッケージ": "1.0.0" },
+        catalogs: { "固定": { "日本語パッケージ": "1.0.0" } },
+      }),
+      "packages/a/package.json": JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        dependencies: { "dep-a": "1.0.0", "dep-b": "1.0.0", "dep-c": "1.0.0", "日本語パッケージ": "catalog:" },
+      }),
+      "packages/b/package.json": JSON.stringify({
+        name: "b",
+        version: "1.0.0",
+        dependencies: { "日本語パッケージ": "catalog:固定" },
+      }),
+    });
+
+    await install(dir, ["--lockfile-only"]);
+    const { output, exitCode } = await updateInteractiveOnPty(dir, {
+      cols: 110,
+      rows: 9,
+      args: ["-r", "--latest", "--dry-run"],
+      keys: "jjjj",
+    });
+
+    const frames = Bun.stripANSI(output).split("? Select packages to update").slice(1);
+    expect(frames[0]).toContain("↓ 1 more package below");
+    expect(frames.at(-1)).toContain("↑ 1 more package above");
+    expect(tableLines(frames.at(-1)!)).toEqual([
+      "  dependencies          Current  Target  Latest  Workspace",
+      "    □ dep-b             1.0.0    1.0.0   2.0.0   a",
+      "    □ dep-c             1.0.0    1.0.0   2.0.0   a",
+      "    □ 日本語パッケージ  1.0.0    1.0.0   2.0.0   catalog (a)",
+      "  ❯ □ 日本語パッケージ  1.0.0    1.0.0   2.0.0   catalog:固定 (…",
+    ]);
+    const ups = [...output.matchAll(/\x1b\[(\d+)A\x1b\[1G/g)].map(m => Number(m[1]));
+    expect(ups.length).toBeGreaterThan(0);
+    expect(Math.max(...ups)).toBeLessThan(9);
+    expect(exitCode).toBe(0);
   });
 
   it("should update packages when 'a' (select all) is used", async () => {
@@ -660,15 +1034,106 @@ describe.concurrent("bun update --interactive", () => {
     await install(dir);
     const { stdout, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
 
+    // Each catalog gets its own selectable row.
+    expect(stdout).toContain("Selected 2 packages to update");
     expect(stdout).toContain("Installing updates...");
     expect(exitCode).toBe(0);
 
     const packageJson = await Bun.file(join(dir, "package.json")).json();
-    expect(packageJson.workspaces.catalogs.dev).toEqual({ "no-deps": "^2.0.0" });
-    // group_catalog_dependencies currently keys the interactive list by package
-    // name alone, so the catalog:prod reference is deduped with catalog:dev and
-    // only dev's entry is rewritten. When that is addressed this becomes "~2.0.0".
-    expect(packageJson.workspaces.catalogs.prod).toEqual({ "no-deps": expect.stringMatching(/^~[12]\.0\.0$/) });
+    expect(packageJson.workspaces.catalogs).toEqual({
+      dev: { "no-deps": "^2.0.0" },
+      prod: { "no-deps": "~2.0.0" },
+    });
+
+    const appJson = await Bun.file(join(dir, "packages", "app", "package.json")).json();
+    expect(appJson.dependencies).toEqual({ "no-deps": "catalog:prod" });
+    expect(appJson.devDependencies).toEqual({ "no-deps": "catalog:dev" });
+  });
+
+  it("should update default and named catalogs independently for the same package", async () => {
+    await using dir = tempDir("update-interactive-default-and-named-catalog", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: {
+          packages: ["packages/*"],
+          catalog: {
+            "no-deps": "^1.0.0",
+          },
+          catalogs: {
+            pinned: {
+              "no-deps": "~1.0.0",
+            },
+          },
+        },
+      }),
+      "packages/app/package.json": JSON.stringify({
+        name: "@test/app",
+        dependencies: {
+          "no-deps": "catalog:",
+        },
+      }),
+      "packages/lib/package.json": JSON.stringify({
+        name: "@test/lib",
+        dependencies: {
+          "no-deps": "catalog:pinned",
+        },
+      }),
+      "packages/other/package.json": JSON.stringify({
+        name: "@test/other",
+        dependencies: {
+          "no-deps": "catalog:pinned",
+        },
+      }),
+    });
+
+    await install(dir);
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"] });
+
+    // Two rows: the default catalog first, then the named one (lib and other share `catalog:pinned`).
+    expect(stdout).toContain("Selected 2 packages to update");
+    expect(stdout).toContain("Installing updates...");
+    expect(exitCode).toBe(0);
+
+    const packageJson = await Bun.file(join(dir, "package.json")).json();
+    expect(packageJson.workspaces.catalog).toEqual({ "no-deps": "^2.0.0" });
+    expect(packageJson.workspaces.catalogs).toEqual({ pinned: { "no-deps": "~2.0.0" } });
+
+    const appJson = await Bun.file(join(dir, "packages", "app", "package.json")).json();
+    const libJson = await Bun.file(join(dir, "packages", "lib", "package.json")).json();
+    const otherJson = await Bun.file(join(dir, "packages", "other", "package.json")).json();
+    expect(appJson.dependencies).toEqual({ "no-deps": "catalog:" });
+    expect(libJson.dependencies).toEqual({ "no-deps": "catalog:pinned" });
+    expect(otherJson.dependencies).toEqual({ "no-deps": "catalog:pinned" });
+  });
+
+  it("should leave the catalog whose row was not selected alone", async () => {
+    await using dir = tempDir("update-interactive-one-of-two-catalogs", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: {
+          packages: ["packages/*"],
+          catalog: { "no-deps": "^1.0.0" },
+          catalogs: { pinned: { "no-deps": "~1.0.0" } },
+        },
+      }),
+      "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "catalog:" } }),
+      "packages/lib/package.json": JSON.stringify({ name: "lib", dependencies: { "no-deps": "catalog:pinned" } }),
+    });
+
+    await install(dir);
+    // Down to the second row (`catalog:pinned`), select it, confirm.
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["-r", "--latest"], input: "j \n" });
+
+    expect(stdout).toContain("Selected 1 package to update");
+    expect(exitCode).toBe(0);
+
+    const packageJson = await Bun.file(join(dir, "package.json")).json();
+    expect(packageJson.workspaces.catalog).toEqual({ "no-deps": "^1.0.0" });
+    expect(packageJson.workspaces.catalogs).toEqual({ pinned: { "no-deps": "~2.0.0" } });
   });
 
   it("should handle version ranges with multiple conditions", async () => {
@@ -970,5 +1435,93 @@ describe.concurrent("bun update --interactive", () => {
 
     const ws2Json = await Bun.file(join(dir, "packages/workspace2/package.json")).json();
     expect(ws2Json.dependencies["a-dep"]).toBe("catalog:");
+  });
+
+  // Every mouse press and release redrew the whole frame, and with -r the frame was taller than
+  // the terminal, so each redraw scrolled a copy of the prompt line into scrollback.
+  it("does not redraw the prompt on mouse clicks", async () => {
+    await using dir = tempDir("update-interactive-mouse-click", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+          "a-dep": "1.0.1",
+        },
+      }),
+    });
+
+    await install(dir);
+    // Three SGR mouse clicks (press + release), then Enter with nothing selected.
+    const click = "\x1b[<0;5;5M\x1b[<0;5;5m";
+    const { stdout, exitCode } = await updateInteractive(dir, {
+      args: ["--dry-run"],
+      input: click + click + click + "\n",
+    });
+
+    const promptCount = stdout.split("Select packages to update").length - 1;
+    expect(promptCount).toBe(1);
+    expect(exitCode).toBe(0);
+  });
+
+  it("redraws after the key that follows a mouse click", async () => {
+    await using dir = tempDir("update-interactive-click-then-key", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    });
+
+    await install(dir);
+    const { stdout, exitCode } = await updateInteractive(dir, {
+      args: ["--latest", "--dry-run"],
+      input: "\x1b[<0;5;5M\x1b[<0;5;5m \n",
+    });
+
+    expect(stdout.split("Select packages to update").length - 1).toBe(2);
+    expect(stdout).toContain("■ no-deps");
+    expect(stdout).toContain("Selected 1 package to update");
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps the frame within the terminal height with -r and multiple dependency groups", async () => {
+    const files: Record<string, string> = {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+    };
+    // 20 outdated rows across two dependency groups.
+    for (let i = 0; i < 10; i++) {
+      files[`packages/pkg${i}/package.json`] = JSON.stringify({
+        name: `pkg${i}`,
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+        devDependencies: { "a-dep": "1.0.1" },
+      });
+    }
+    await using dir = tempDir("update-interactive-frame-height", files);
+
+    await install(dir);
+    // One wheel-down scroll, then Enter. Without a tty the prompt assumes a 24-row terminal.
+    const { stdout, exitCode } = await updateInteractive(dir, {
+      args: ["-r", "--dry-run"],
+      input: "\x1b[<65;5;5M\n",
+    });
+
+    // The in-place redraw moves the cursor up over the whole frame. It only stays in place when
+    // the frame plus the cursor's resting row fit on screen.
+    const ups = [...stdout.matchAll(/\x1b\[(\d+)A\x1b\[1G/g)].map(m => Number(m[1]));
+    expect(ups.length).toBeGreaterThan(0);
+    expect(Math.max(...ups)).toBeLessThan(24);
+
+    // The 20 rows do not fit in the viewport, so the wheel event scrolls.
+    expect(stdout).toContain("more package above");
+    expect(exitCode).toBe(0);
   });
 });

@@ -85,7 +85,7 @@ Each rule's page says what differs and how to change it.
 
 ## Configure rules
 
-Rules live in `bunfig.toml`. Every built-in rule works the same way. There are no plugins to install.
+Rules live in `bunfig.toml`. Every built-in rule works the same way, with nothing to install.
 
 ```toml bunfig.toml icon="settings"
 [lint.rules]
@@ -119,6 +119,19 @@ bun lint --rules                 # list every rule
 bun lint --explain prefer-const  # what it does, examples, options
 ```
 
+### Add an ESLint plugin
+
+Need a rule that isn't built in? Load any [ESLint plugin](/lint/plugins), from npm or your own. The default rules stay on.
+
+```toml bunfig.toml icon="settings"
+[lint]
+plugins = ["eslint-plugin-perfectionist", "./lint/plugin.js"]
+
+[lint.rules]
+"perfectionist/sort-imports" = "error"
+"local/no-todo" = "warn"
+```
+
 ### Turn on a group of rules
 
 Categories switch on many rules at once: `correctness`, `suspicious`, `pedantic`, `perf`, `style`, `restriction`, `nursery`.
@@ -138,7 +151,7 @@ ignorePatterns = ["vendor/", "**/*.gen.ts"]
 
 ## Disable a rule in code
 
-`bun lint` uses ESLint's comments, so existing ones keep working.
+`bun lint` uses ESLint's comments, so existing ones keep working. oxlint's `oxlint-disable` comments mean the same, except next to an ESLint config, where they are ordinary comments as in ESLint.
 
 ```ts
 // eslint-disable-next-line no-console -- the CLI prints its version

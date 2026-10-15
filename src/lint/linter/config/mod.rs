@@ -82,10 +82,12 @@ use crate::runner::RuleEntry;
 use bun_glob::Candidate;
 use cache::Cache;
 pub use eslintrc::{Eslint8, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions, LoadLegacy};
-pub use flat::{ConfigError, LoadLocatedPlugin};
+pub use flat::{ConfigError, LoadLocatedPlugin, NamedPlugin};
 use ignore_lines::IgnoreLines;
 use merge::RuleSetting;
-pub use rc::{LoadPlugin, oxlint_category, oxlint_lacks, oxlint_runs_on, strings_of};
+pub use rc::{
+    LoadPlugin, is_plugin_of_oxlint, oxlint_category, oxlint_lacks, oxlint_runs_on, strings_of,
+};
 pub(crate) use rc::{OxlintChanges, oxlint_changes};
 pub(crate) use rc::{is_rule_not_built_in, is_rule_of_oxlint};
 use rustc_hash::FxHashMap;
@@ -1741,7 +1743,7 @@ impl Config {
         if !self.js_plugins.is_empty() {
             // ESLint looks for a rule in the plugins that the objects for the file have.
             let has = |it: &&Arc<js_plugin::Plugin>| {
-                self.accepts_all_plugins || plugins.contains(&&it.name[..])
+                self.accepts_all_plugins || self.has_every_rule || plugins.contains(&&it.name[..])
             };
             config.js_plugins = js_plugins.iter().filter(has).cloned().collect();
             let sources: Vec<&Json> = indices

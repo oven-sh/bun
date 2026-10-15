@@ -23,6 +23,7 @@ use crate::lockfile::{self, Lockfile, PackageListEntry};
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::WorkspaceMap;
 use crate::npm as Npm;
+use crate::npm::NegatableExt as _;
 use crate::repository::{Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::resolution::{self, Resolution, TaggedValue as ResTagged};
 use crate::versioned_url::VersionedURLType;
@@ -80,6 +81,31 @@ fn parse_bundle(pkg: &E::ObjectJSON) -> Result<Bundle, Error> {
     }
 }
 
+/// npm copies `os` / `cpu` / `libc` from package.json as-is: it may be a single string.
+fn parse_platform_list<T: Npm::NegatableEnum>(
+    value: Option<&E::JsonValue>,
+    absent: T,
+) -> Result<T, Error> {
+    let Some(value) = value else {
+        return Ok(absent);
+    };
+    let mut list = T::NONE.negatable();
+    if let Some(s) = value.as_str() {
+        list.apply(s);
+        return Ok(list.combine());
+    }
+    let Some(arr) = value.as_array() else {
+        return Err(Error::InvalidNPMLockfile);
+    };
+    for item in arr.items() {
+        let Some(s) = item.as_str() else {
+            return Err(Error::InvalidNPMLockfile);
+        };
+        list.apply(s);
+    }
+    Ok(list.combine())
+}
+
 fn entry_object(entry: &E::PropertyJSON) -> &E::ObjectJSON {
     let Some(pkg) = entry.value.as_object() else {
         unreachable!("npm lockfile: build_index rejected non-object entries")
@@ -96,6 +122,21 @@ fn parent_dir(dir: &[u8]) -> &[u8] {
         Some(i) => &dir[..i],
         None => b"",
     }
+}
+
+/// The part of package-lock key `path` below key `dir`, if it is strictly inside it.
+fn path_inside<'k>(dir: &[u8], path: &'k [u8]) -> Option<&'k [u8]> {
+    path.strip_prefix(dir)?
+        .strip_prefix(b"/")
+        .filter(|rest| !rest.is_empty() && !bin::bin_target_escapes_package_dir(rest))
+}
+
+/// Folder inside a cache-installed dependent; the installer reads its row relative to the package.
+#[derive(Clone, Copy)]
+struct FolderInDependent<'k> {
+    path: &'k [u8],
+    /// Fallback name, as in a fresh resolve; npm writes these entries without one.
+    alias: &'k [u8],
 }
 
 struct Migrator<'a> {
@@ -115,14 +156,16 @@ struct Migrator<'a> {
     url: Vec<u8>,
     patched: String,
     silent: bool,
+    /// `npm-shrinkwrap.json` or `package-lock.json`, for warnings.
+    lockfile_name: &'static str,
 }
 
 pub(super) fn migrate_packages(
     this: &mut Lockfile,
     manager: &mut PackageManager,
-    _log: &mut bun_ast::Log,
     packages_properties: &[E::PropertyJSON],
     workspace_map: Option<&WorkspaceMap>,
+    lockfile_name: &'static str,
 ) -> Result<(), Error> {
     debug_assert!(!packages_properties.is_empty() && packages_properties[0].key.slice().is_empty());
 
@@ -150,11 +193,12 @@ pub(super) fn migrate_packages(
         url: Vec::new(),
         patched: String::new(),
         silent,
+        lockfile_name,
     };
 
     migrator.build_index()?;
 
-    let root_id = migrator.build_package(0, false, DepTag::Npm)?;
+    let root_id = migrator.build_package(0, false, DepTag::Npm, None)?;
     debug_assert_eq!(root_id, 0);
 
     let mut cursor = 0;
@@ -172,8 +216,9 @@ pub(super) fn migrate_packages(
 
     if !migrator.patched.is_empty() {
         bun_core::warn!(
-            "skipped npm patches for {} from package-lock.json",
+            "skipped npm patches for {} from {}",
             migrator.patched,
+            lockfile_name,
         );
         bun_core::note!("bun patch \\<pkg\\>");
     }
@@ -227,10 +272,16 @@ impl<'a> Migrator<'a> {
         if existing != INVALID_PACKAGE_ID {
             return Ok(existing);
         }
-        self.build_package(j, via_link, hint)
+        self.build_package(j, via_link, hint, None)
     }
 
-    fn build_package(&mut self, j: u32, via_link: bool, hint: DepTag) -> Result<PackageID, Error> {
+    fn build_package(
+        &mut self,
+        j: u32,
+        via_link: bool,
+        hint: DepTag,
+        folder_in_dependent: Option<FolderInDependent<'_>>,
+    ) -> Result<PackageID, Error> {
         let entries = self.entries;
         let entry = &entries[j as usize];
         let pkg = entry_object(entry);
@@ -245,6 +296,8 @@ impl<'a> Migrator<'a> {
             &ws.name
         } else if let Some(set_name) = pkg.get(b"name").and_then(|n| n.as_str()) {
             set_name
+        } else if let Some(folder) = folder_in_dependent {
+            folder.alias
         } else {
             package_name_from_path(key)
         };
@@ -269,49 +322,9 @@ impl<'a> Migrator<'a> {
                 lockfile::Origin::Npm
             },
 
-            arch: if let Some(cpu_array) = pkg.get(b"cpu") {
-                'arch: {
-                    let mut arch = Npm::Architecture::NONE.negatable();
-                    let Some(arr) = cpu_array.as_array() else {
-                        return Err(Error::InvalidNPMLockfile);
-                    };
-                    let items = arr.items();
-                    if items.is_empty() {
-                        break 'arch arch.combine();
-                    }
-                    for item in items {
-                        let Some(s) = item.as_str() else {
-                            return Err(Error::InvalidNPMLockfile);
-                        };
-                        arch.apply(s);
-                    }
-                    break 'arch arch.combine();
-                }
-            } else {
-                Npm::Architecture::ALL
-            },
-
-            os: if let Some(os_array) = pkg.get(b"os") {
-                'os: {
-                    let mut os = Npm::OperatingSystem::NONE.negatable();
-                    let Some(arr) = os_array.as_array() else {
-                        return Err(Error::InvalidNPMLockfile);
-                    };
-                    let items = arr.items();
-                    if items.is_empty() {
-                        break 'os Npm::OperatingSystem::ALL;
-                    }
-                    for item in items {
-                        let Some(s) = item.as_str() else {
-                            return Err(Error::InvalidNPMLockfile);
-                        };
-                        os.apply(s);
-                    }
-                    break 'os os.combine();
-                }
-            } else {
-                Npm::OperatingSystem::ALL
-            },
+            arch: parse_platform_list(pkg.get(b"cpu"), Npm::Architecture::ALL)?,
+            os: parse_platform_list(pkg.get(b"os"), Npm::OperatingSystem::ALL)?,
+            libc: parse_platform_list(pkg.get(b"libc"), Npm::Libc::NONE)?,
 
             man_dir: SemverString::default(),
 
@@ -347,6 +360,7 @@ impl<'a> Migrator<'a> {
             workspace_entry.is_some(),
             via_link,
             hint,
+            folder_in_dependent.map(|folder| folder.path),
         )?;
         debug!(
             "{} -> {}",
@@ -384,7 +398,9 @@ impl<'a> Migrator<'a> {
                         self.this.packages.items_resolution_mut()[existing as usize] = res;
                     }
                 }
-                self.entry_package_ids[j as usize] = existing;
+                if folder_in_dependent.is_none() {
+                    self.entry_package_ids[j as usize] = existing;
+                }
                 self.shadow(j);
                 return Ok(existing);
             }
@@ -405,8 +421,12 @@ impl<'a> Migrator<'a> {
             scripts: Default::default(),
         })?;
         self.this.get_or_put_id(id, name_hash)?;
-        self.entry_package_ids[j as usize] = id;
         self.queue.push((j, id));
+        // `build_or_get` must keep handing other dependents the entry-key build.
+        match folder_in_dependent {
+            None => self.entry_package_ids[j as usize] = id,
+            Some(_) => self.shadowed.set(j as usize),
+        }
         Ok(id)
     }
 
@@ -474,6 +494,7 @@ impl<'a> Migrator<'a> {
         is_workspace: bool,
         via_link: bool,
         hint: DepTag,
+        path_in_dependent: Option<&[u8]>,
     ) -> Result<Resolution, Error> {
         if j == 0 {
             return Ok(Resolution::init(ResTagged::Root));
@@ -520,7 +541,10 @@ impl<'a> Migrator<'a> {
             }
         }
 
-        let path = self.this.string_buf().append(key)?;
+        let path = self
+            .this
+            .string_buf()
+            .append(path_in_dependent.unwrap_or(key))?;
         Ok(Resolution::init(ResTagged::Folder(path)))
     }
 
@@ -553,11 +577,13 @@ impl<'a> Migrator<'a> {
         } else {
             name
         };
-        let href: &[u8] = self.manager.scope_for_package_name(name).url.href();
+        let href: &[u8] =
+            strings::without_trailing_slash(self.manager.scope_for_package_name(name).url.href());
         let url = &mut self.url;
         url.clear();
         url.reserve(
             href.len()
+                + 1
                 + name.len()
                 + b"/-/".len()
                 + unscoped.len()
@@ -566,6 +592,7 @@ impl<'a> Migrator<'a> {
                 + b".tgz".len(),
         );
         url.extend_from_slice(href);
+        url.push(b'/');
         url.extend_from_slice(name);
         url.extend_from_slice(b"/-/");
         url.extend_from_slice(unscoped);
@@ -599,7 +626,7 @@ impl<'a> Migrator<'a> {
                 DepTag::Github,
                 &sliced,
                 None,
-                Some(&mut *self.manager as &mut dyn dependency::NpmAliasRegistry),
+                None,
             )
             .map(|v| *v.github())
         } else {
@@ -646,6 +673,7 @@ impl<'a> Migrator<'a> {
         };
         let replace_optional_dups = matches!(res_tag, resolution::Tag::Root | resolution::Tag::Npm);
         let skip_peer_dups = res_tag == resolution::Tag::Npm;
+        let installed_from_cache = res_tag.can_enqueue_install_task();
 
         if j == 0 {
             self.link_workspaces()?;
@@ -677,23 +705,17 @@ impl<'a> Migrator<'a> {
                     let dep_name = sb.append_with_hash(name, name_hash)?;
                     let dep_version = sb.append(spec)?;
                     let sliced = dep_version.sliced(sb.bytes.as_slice());
-                    Dependency::parse(
-                        dep_name,
-                        Some(name_hash),
-                        sliced.slice,
-                        &sliced,
-                        None,
-                        Some(&mut *self.manager),
-                    )
-                    .map(|version| (dep_name, version))
+                    Dependency::parse(dep_name, Some(name_hash), sliced.slice, &sliced, None, None)
+                        .map(|version| (dep_name, version))
                 };
                 let Some((dep_name, version)) = version.filter(|(_, v)| v.tag != DepTag::Catalog)
                 else {
                     if !self.silent {
                         bun_core::warn!(
-                            "skipped \"{}@{}\" from package-lock.json: unsupported version specifier",
+                            "skipped \"{}@{}\" from {}: unsupported version specifier",
                             bstr::BStr::new(name),
-                            bstr::BStr::new(spec),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(spec)),
+                            self.lockfile_name,
                         );
                     }
                     continue;
@@ -733,30 +755,55 @@ impl<'a> Migrator<'a> {
                     && version_tag == DepTag::Folder
                     && self.local_declared.is_set(j as usize);
                 let mut found = self.find_target(key, name);
+                if let Some((t, false)) = found
+                    && self.is_copied_folder(t)
+                {
+                    self.skip_copied_folder(t, name);
+                    continue;
+                }
                 if let Some((t, _)) = found
                     && is_local
                 {
                     self.local_declared.set(t as usize);
                 }
+                let has_entry = found.is_some();
+                let mut folder_in_dependent: Option<FolderInDependent<'_>> = None;
                 if let Some((t, through_link)) = found
                     && !is_local
                     && !declares_folder
-                    && self.is_external_folder(t, through_link)
                 {
-                    self.skip_external(t, name);
-                    found = None;
+                    if through_link && installed_from_cache {
+                        folder_in_dependent = path_inside(key, entries[t as usize].key.slice())
+                            .map(|path| FolderInDependent { path, alias: name });
+                    }
+                    if folder_in_dependent.is_none() && self.is_external_folder(t, through_link) {
+                        self.skip_external(t, name);
+                        found = None;
+                    }
                 }
                 let target = match found {
-                    Some((t, through_link)) => self.build_or_get(t, through_link, version_tag)?,
+                    Some((t, through_link)) => match folder_in_dependent {
+                        Some(folder) => {
+                            self.build_package(t, through_link, version_tag, Some(folder))?
+                        }
+                        None => self.build_or_get(t, through_link, version_tag)?,
+                    },
                     None if behavior.is_peer() || behavior.contains(Behavior::OPTIONAL) => {
                         INVALID_PACKAGE_ID
                     }
                     None => {
-                        debug!(
-                            "could not find package '{}' from '{}'",
-                            bstr::BStr::new(name),
-                            bstr::BStr::new(key)
-                        );
+                        if !has_entry && !self.silent {
+                            bun_core::warn!(
+                                "skipped \"{}@{}\" from package-lock.json: no entry for this dependency of \"{}\"",
+                                bun_core::fmt::for_terminal(bstr::BStr::new(name)),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(spec)),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(if key.is_empty() {
+                                    &b"."[..]
+                                } else {
+                                    key
+                                })),
+                            );
+                        }
                         continue;
                     }
                 };
@@ -810,9 +857,10 @@ impl<'a> Migrator<'a> {
             let Some(t) = target else {
                 if !self.silent {
                     bun_core::warn!(
-                        "workspace \"{}\" ({}) is not in package-lock.json; resolving it from package.json",
+                        "workspace \"{}\" ({}) is not in {}; resolving it from package.json",
                         bstr::BStr::new(&ws.name),
                         bstr::BStr::new(path),
+                        self.lockfile_name,
                     );
                 }
                 continue;
@@ -910,9 +958,30 @@ impl<'a> Migrator<'a> {
         self.skipped_external.set(t as usize);
         if !self.silent {
             bun_core::warn!(
-                "skipped \"{}\" from package-lock.json: transitive folder dependency \"{}\" is outside the project",
+                "skipped \"{}\" from {}: transitive folder dependency \"{}\" is outside the project",
                 bstr::BStr::new(name),
+                self.lockfile_name,
                 bstr::BStr::new(self.entries[t as usize].key.slice()),
+            );
+        }
+        self.shadow(t);
+    }
+
+    /// `npm install --install-links`: an ordinary entry whose `resolved` is `file:<dir>`.
+    fn is_copied_folder(&self, t: u32) -> bool {
+        entry_object(&self.entries[t as usize])
+            .get(b"resolved")
+            .and_then(|resolved| resolved.as_str())
+            .is_some_and(|r| r.starts_with(b"file:") && DepTag::infer(r) == DepTag::Folder)
+    }
+
+    /// The edge is dropped: the install resolves it from its declarer's `file:` spec.
+    fn skip_copied_folder(&mut self, t: u32, name: &[u8]) {
+        if !self.silent && !self.shadowed.is_set(t as usize) {
+            bun_core::warn!(
+                "skipped \"{}\" from {}: a folder npm copied (--install-links)",
+                bstr::BStr::new(name),
+                self.lockfile_name,
             );
         }
         self.shadow(t);
@@ -974,8 +1043,9 @@ impl<'a> Migrator<'a> {
             let _ = write!(list, " and {} more", count - 5);
         }
         bun_core::warn!(
-            "skipped {} package-lock.json {} not depended on by any package: {}",
+            "skipped {} {} {} not depended on by any package: {}",
             count,
+            self.lockfile_name,
             if count == 1 { "entry" } else { "entries" },
             list,
         );
@@ -1020,28 +1090,7 @@ pub(super) fn apply_root_overrides(
     ) else {
         return Err(Error::InvalidPackageJSON);
     };
-    let json = parsed.root;
-    if json.as_property(b"overrides").is_none() && json.as_property(b"resolutions").is_none() {
-        return Ok(());
-    }
-
     let empty = WorkspaceMap::init();
     let names = workspace_map.unwrap_or(&empty);
-    let root_package = *this.packages.get(0);
-    let (mut builder, lf) = this.string_builder_split();
-    lf.overrides
-        .parse_count(manager, log, &source, names, json, &mut builder);
-    builder.allocate()?;
-    lf.overrides.parse_append(
-        manager,
-        lf.dependencies.as_slice(),
-        &root_package,
-        log,
-        &source,
-        names,
-        json,
-        &mut builder,
-    )?;
-    builder.clamp();
-    Ok(())
+    super::parse_root_overrides(this, manager, log, &source, parsed.root, names)
 }

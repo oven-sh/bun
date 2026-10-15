@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync, symlinkSync } from "fs";
+import { chmodSync, mkdirSync, readdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
@@ -742,8 +742,9 @@ describe("bunshell", () => {
       TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~/$(echo a)/$(echo b)/c`
         .stdout("/home/user/a/b/c\n")
         .runAsTest("multiple cmd substs");
+      // The `/` comes from the substitution, not from the script, so the `~` is text, as in bash.
       TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~$(echo /bin)/sub`
-        .stdout("/home/user/bin/sub\n")
+        .stdout("~/bin/sub\n")
         .runAsTest("cmd subst immediately after tilde");
       TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~/$(echo bin)`
         .stdout("/home/user/bin\n")
@@ -759,6 +760,123 @@ describe("bunshell", () => {
       TestBuilder.command`echo ${"a b"}~bak`
         .stdout("a b~bak\n")
         .runAsTest("backup-suffix idiom after interpolated value");
+      // A value is data, so it cannot end the tilde-prefix of a `~` before it.
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~${"/x"} ~${"/dir1"} ~${""} ~/${"x"}`
+        .stdout("~/x ~/dir1 ~ /home/user/x\n")
+        .runAsTest("tilde before an interpolated value stays literal");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ${""}~ ${"~"}~`
+        .stdout("~ ~~\n")
+        .runAsTest("literal tilde after an empty or a tilde value stays literal");
+      TestBuilder.command`echo hi > ${"~"} && FOO=${"~"} && [[ -f ${"~"} ]] && echo $FOO`
+        .ensureTempDir()
+        .stdout("~\n")
+        .fileEquals("~", "hi\n")
+        .runAsTest("interpolated tilde as redirect target, [[ ]] operand and assignment value");
+    });
+
+    describe("quoted or escaped tilde", async () => {
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo \~ \~/x {\~,b}`
+        .stdout("~ ~/x ~ b\n")
+        .runAsTest("backslash-escaped tilde is text");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && FOO=\~ && echo $FOO '~' "~" x\~`
+        .stdout("~ ~ ~ x~\n")
+        .runAsTest("guard: escaped tilde in an assignment, quoted tilde");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ${{ raw: 'é\\~ \\~é ~/é é~ "é"~' }}`
+        .stdout("é~ ~é /home/user/é é~ é~\n")
+        .runAsTest("in a script that is not ASCII");
+    });
+
+    describe("tilde in the middle of a word", async () => {
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user f=notes.txt && echo "$f"~ $f~ "notes.txt"~ 'notes.txt'~ ''~ $(echo a)~ "$(echo a)"~`
+        .stdout("notes.txt~ notes.txt~ notes.txt~ notes.txt~ ~ a~ a~\n")
+        .runAsTest("after a variable, a quoted part or a command substitution");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user f=notes.txt && FOO=$f~ && BAR="$f"~ && echo $FOO $BAR`
+        .stdout("notes.txt~ notes.txt~\n")
+        .runAsTest("in an assignment value");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user f=notes.txt && echo v2 > "$f"~ && [[ -f "$f"~ ]] && echo yes`
+        .ensureTempDir()
+        .stdout("yes\n")
+        .fileEquals("notes.txt~", "v2\n")
+        .runAsTest("in a redirect target and a [[ ]] operand");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo "$UNSET_VAR"~ $UNSET_VAR~`
+        .stdout("~ ~\n")
+        .runAsTest("after a variable that is not set");
+
+      test("backup-suffix idiom after a shell variable", async () => {
+        using dir = tempDir("shell-tilde-backup", { "notes.txt": "v1", "home": { "keep.txt": "" } });
+        const home = join(String(dir), "home");
+        const { stderr, exitCode } = await $`f=notes.txt && touch "$f"~ && mv notes.txt "$f".old~`
+          .cwd(String(dir))
+          .env({ ...bunEnv, HOME: home, USERPROFILE: home })
+          .nothrow()
+          .quiet();
+        expect({
+          stderr: stderr.toString(),
+          exitCode,
+          files: readdirSync(String(dir)).sort(),
+          home: readdirSync(home),
+        }).toEqual({ stderr: "", exitCode: 0, files: ["home", "notes.txt.old~", "notes.txt~"], home: ["keep.txt"] });
+      });
+    });
+
+    describe("tilde before a quoted or expanded part", async () => {
+      // The tilde-prefix runs to the first unquoted `/` of the script. A quote or an
+      // expansion in it makes the `~` text, as in bash.
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user s=/x e= && echo ~"/x" ~'/x' ~\/x ~$s ~"$s" ~"$e"/ ~"$e" ~$e`
+        .stdout("~/x ~/x ~/x ~/x ~/x ~/ ~ ~\n")
+        .runAsTest("quoted slash, variable");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~"$UNSET_VAR"/ ~$(echo /a)`
+        .stdout("~/ ~/a\n")
+        .runAsTest("variable that is not set, command substitution");
+      // Each word of a substitution that splits is a word of its own: only the first starts with the `~`.
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log(JSON.stringify(process.argv.slice(1)))"} -- ~/$(echo a b)/c ~$(echo /a /b)`
+        .stdout('["/home/user/a","b/c","~/a","/b"]\n')
+        .runAsTest("command substitution that splits into words");
+    });
+
+    describe("with brace expansion", async () => {
+      // bash expands braces first, then looks for a tilde-prefix in each word.
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo x{~,y} {a,b}~ {a,b}{~,c} {a,x{~,b}} "x"{~,b} {~x,a} {~,a}x`
+        .stdout("x~ xy a~ b~ a~ ac b~ bc a x~ xb x~ xb ~x a ~x ax\n")
+        .runAsTest("tilde in the middle of a brace alternative is text");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo {~} {~, a,~`
+        .stdout("{~} {~, a,~\n")
+        .runAsTest("tilde beside braces that form no group is text");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && FOO=a{~,b} && echo $FOO`
+        .stdout("a~ ab\n")
+        .runAsTest("tilde in a brace group after the start of an assignment value is text");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~{/a,/b}`
+        .stdout("/home/user/a /home/user/b\n")
+        .runAsTest("tilde before a group of alternatives that all start with a slash expands");
+      // bash expands the `~` of `{a,}~` in the second word only: `a~ /home/user`. Here the
+      // alternatives share one `~`, so where they disagree about it, it stays text.
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo {a,}~ {,a}~ {~,}~ ~{a,/b} ~{/a,b}`
+        .stdout("a~ ~ ~ a~ ~~ ~ ~a ~/b ~/a ~b\n")
+        .runAsTest("tilde that is a tilde-prefix in only some of the brace alternatives is text");
+
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo {~,foo} {foo,~} {~,a}/x {~/a,~/b} ~/{a,b} ~{a,b} {{~,a},b} {a,{~,b}}`
+        .stdout(
+          "/home/user foo foo /home/user /home/user/x a/x /home/user/a /home/user/b /home/user/a /home/user/b ~a ~b /home/user a b a /home/user b\n",
+        )
+        .runAsTest("guard: tilde that starts every brace alternative that holds it expands");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo {,}~ {,}{,}~ {,}~/x`
+        .stdout(Array(6).fill("/home/user").join(" ") + " /home/user/x /home/user/x\n")
+        .runAsTest("guard: tilde after groups of empty alternatives expands");
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo {,}{,}{,}{,}{,}{,}{,}~`
+        .stdout(Array(128).fill("/home/user").join(" ") + "\n")
+        .runAsTest("guard: tilde after 128 empty brace alternatives expands in each");
+      const pairs = ["ab", "cd", "ef", "gh", "ij", "kl", "mn"];
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~/{a,b}{c,d}{e,f}{g,h}{i,j}{k,l}{m,n}`
+        .stdout(
+          pairs
+            .reduce((words, pair) => words.flatMap(word => [word + pair[0], word + pair[1]]), ["/home/user/"])
+            .join(" ") + "\n",
+        )
+        .runAsTest("guard: tilde before 128 brace alternatives expands in each");
+      const names = Array.from({ length: 65 }, (_, i) => `n${i}`);
+      TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~/{${{ raw: names.join(",") }}}`
+        .stdout(names.map(name => `/home/user/${name}`).join(" ") + "\n")
+        .runAsTest("guard: tilde before one group of 65 alternatives expands in each");
     });
   });
 

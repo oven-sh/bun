@@ -161,13 +161,6 @@ impl Expansion {
             let node = me.node;
             let atom = node.get();
             let atoms_len = atom.atoms_len();
-            // Leading `~` in a compound is skipped during the walk and
-            // post-processed below.
-            let leading_tilde = matches!(atom, ast::Atom::Compound(c)
-                if c.atoms.first().is_some_and(|a| matches!(a, ast::SimpleAtom::Tilde)));
-            if me.word_idx == 0 && leading_tilde {
-                me.word_idx = 1;
-            }
 
             let shell_ptr: *mut ShellExecEnv = me.base.shell;
             while me.word_idx < atoms_len {
@@ -182,7 +175,6 @@ impl Expansion {
                     &mut me.current_out,
                     &mut me.meta_offsets,
                     &mut me.has_quoted_empty,
-                    true,
                     event_loop,
                     command_ctx,
                     vm_args_utf8,
@@ -223,35 +215,6 @@ impl Expansion {
                 return Script::start(interp, script);
             }
 
-            // All sub-atoms expanded — post-process leading tilde then finish.
-            if leading_tilde {
-                let home = me.base.shell().get_homedir();
-                let len_before = me.current_out.len();
-                match me.current_out.first() {
-                    Some(b'/') | Some(b'\\') => {
-                        me.current_out.splice(0..0, home.slice().iter().copied());
-                    }
-                    Some(_) => me.current_out.insert(0, b'~'),
-                    // `~""` expands to $HOME,
-                    // but `~$unset` expands to nothing (word is dropped).
-                    None if me.has_quoted_empty => {
-                        me.current_out.extend_from_slice(home.slice());
-                    }
-                    None => {}
-                }
-                // The first two arms prepend; shift the recorded brace
-                // metacharacter offsets so they keep pointing at the same
-                // bytes. The `extend_from_slice` arm only runs when
-                // `current_out` (and therefore `meta_offsets`) is
-                // empty, so the shift is a no-op there.
-                let prepended = (me.current_out.len() - len_before) as u32;
-                if prepended != 0 {
-                    for off in &mut me.meta_offsets {
-                        *off += prepended;
-                    }
-                }
-                home.deref();
-            }
             // Brace expansion
             // first, then glob, else flush as a single word.
             if atom.has_brace_expansion() {
@@ -472,7 +435,6 @@ impl Expansion {
         out: &mut Vec<u8>,
         meta_offsets: &mut Vec<u32>,
         has_quoted_empty: &mut bool,
-        expand_tilde: bool,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
         vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
@@ -525,14 +487,11 @@ impl Expansion {
                 meta_offsets.push(out.len() as u32);
                 out.push(b',');
             }
+            // The parser keeps a `Tilde` only for a tilde-prefix, so nothing is decided here.
             ast::SimpleAtom::Tilde => {
-                if expand_tilde {
-                    let home = shell.get_homedir();
-                    out.extend_from_slice(home.slice());
-                    home.deref();
-                } else {
-                    out.push(b'~');
-                }
+                let home = shell.get_homedir();
+                out.extend_from_slice(home.slice());
+                home.deref();
             }
             ast::SimpleAtom::CmdSubst(_) => return true,
         }

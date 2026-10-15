@@ -577,6 +577,7 @@ impl<'a> ShellSrcBuilder<'a> {
             // marker recognized regardless of quote context (e.g. inside single quotes).
             if needs_escape_bunstr(&bunstr)
                 || is_if_clause_keyword_bunstr(&bunstr)
+                || self.outbuf_ends_with_tilde()
                 || self.outbuf_ends_with_var_ref()
             {
                 self.append_js_str_ref(bunstr)?;
@@ -607,6 +608,7 @@ impl<'a> ShellSrcBuilder<'a> {
         if ALLOW_ESCAPE {
             if needs_escape_utf8_ascii_latin1(utf8)
                 || IfClauseTok::from_text(utf8).is_some()
+                || self.outbuf_ends_with_tilde()
                 || self.outbuf_ends_with_var_ref()
             {
                 self.append_js_str_ref(BunString::clone_utf8(utf8))?;
@@ -616,6 +618,12 @@ impl<'a> ShellSrcBuilder<'a> {
 
         self.append_utf8_impl(utf8)?;
         Ok(true)
+    }
+
+    /// A value pasted right after a `~` could end its tilde-prefix (`~${"/x"}`).
+    /// A string ref is data, so the `~` is text whatever the value is.
+    fn outbuf_ends_with_tilde(&self) -> bool {
+        self.outbuf.last() == Some(&b'~')
     }
 
     fn outbuf_ends_with_var_ref(&self) -> bool {

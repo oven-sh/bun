@@ -9,6 +9,7 @@ use std::io::Write as _;
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 use bun_core::{String as BunString, strings};
+use smallvec::SmallVec;
 
 // `strings::Cursor` aliased as `CodepointCursor` for readability.
 type CodepointCursor = strings::Cursor;
@@ -570,6 +571,8 @@ pub mod ast {
     }
 
     impl<'arena> Atom<'arena> {
+        /// Appends `right` to the word that `self` starts. A `~` in `right` is
+        /// then in the middle of the word, so it becomes text.
         pub(crate) fn merge(
             self,
             right: &Atom<'arena>,
@@ -582,7 +585,7 @@ pub mod ast {
                     // seed with `QuotedEmpty` then overwrite.
                     let atoms = bump.alloc_slice_fill_with(2, |_| SimpleAtom::QuotedEmpty);
                     atoms[0] = l.clone();
-                    atoms[1] = r.clone();
+                    atoms[1] = r.mid_word();
                     let brace = matches!(l, SA::BraceBegin | SA::BraceEnd)
                         || matches!(r, SA::BraceBegin | SA::BraceEnd);
                     let glob = matches!(l, SA::Asterisk | SA::DoubleAsterisk)
@@ -600,7 +603,9 @@ pub mod ast {
                 let total = l.atoms.len() + r.atoms.len();
                 let atoms = bump.alloc_slice_fill_with(total, |_| SimpleAtom::QuotedEmpty);
                 atoms[..l.atoms.len()].clone_from_slice(l.atoms);
-                atoms[l.atoms.len()..].clone_from_slice(r.atoms);
+                for (dst, src) in atoms[l.atoms.len()..].iter_mut().zip(r.atoms) {
+                    *dst = src.mid_word();
+                }
                 return Ok(Atom::Compound(CompoundAtom {
                     atoms,
                     brace_expansion_hint: l.brace_expansion_hint || r.brace_expansion_hint,
@@ -615,7 +620,9 @@ pub mod ast {
                 let atoms =
                     bump.alloc_slice_fill_with(1 + r.atoms.len(), |_| SimpleAtom::QuotedEmpty);
                 atoms[0] = l.clone();
-                atoms[1..].clone_from_slice(r.atoms);
+                for (dst, src) in atoms[1..].iter_mut().zip(r.atoms) {
+                    *dst = src.mid_word();
+                }
                 return Ok(Atom::Compound(CompoundAtom {
                     atoms,
                     brace_expansion_hint: matches!(l, SA::BraceBegin | SA::BraceEnd)
@@ -632,7 +639,7 @@ pub mod ast {
             };
             let atoms = bump.alloc_slice_fill_with(1 + l.atoms.len(), |_| SimpleAtom::QuotedEmpty);
             atoms[..l.atoms.len()].clone_from_slice(l.atoms);
-            atoms[l.atoms.len()] = r.clone();
+            atoms[l.atoms.len()] = r.mid_word();
             Ok(Atom::Compound(CompoundAtom {
                 atoms,
                 brace_expansion_hint: matches!(r, SA::BraceBegin | SA::BraceEnd)
@@ -680,6 +687,8 @@ pub mod ast {
         BraceBegin,
         BraceEnd,
         Comma,
+        /// A tilde-prefix: expansion writes the home directory in its place.
+        /// `Parser::parse_atom` makes every other `~` a `Text`.
         Tilde,
         CmdSubst(CmdSubst<'arena>),
     }
@@ -693,6 +702,14 @@ pub mod ast {
     impl<'arena> SimpleAtom<'arena> {
         pub(crate) fn glob_hint(&self) -> bool {
             matches!(self, SimpleAtom::Asterisk | SimpleAtom::DoubleAsterisk)
+        }
+
+        /// This atom as a later part of a word, where a `~` is text.
+        fn mid_word(&self) -> SimpleAtom<'arena> {
+            match self {
+                SimpleAtom::Tilde => SimpleAtom::Text(b"~"),
+                atom => atom.clone(),
+            }
         }
     }
 
@@ -709,8 +726,7 @@ pub mod ast {
 pub struct Parser<'bump> {
     pub(crate) strpool: &'bump [u8],
     pub(crate) tokens: &'bump [Token],
-    /// Strpool ranges that came from interpolated JS values (`\x08__bunstr_N`
-    /// refs). See `Lexer::js_string_ranges`.
+    /// Strpool ranges that hold data, not shell syntax. See `Lexer::js_string_ranges`.
     pub(crate) js_string_ranges: &'bump [TextRange],
     pub(crate) alloc: &'bump Bump,
     pub(crate) jsobjs: &'bump mut [JSValue],
@@ -1489,6 +1505,7 @@ impl<'bump> Parser<'bump> {
         let mut has_brace_close = false;
         let mut has_comma = false;
         let mut has_glob_syntax = false;
+        let mut has_tentative_tilde = false;
         {
             while match self.peek() {
                 Token::Delimit => {
@@ -1586,12 +1603,26 @@ impl<'bump> Parser<'bump> {
                     | Token::DoubleQuotedText(txtrng)
                     | Token::Text(txtrng) => {
                         let _ = self.advance();
-                        let mut txt = self.text(txtrng);
+                        let txt = self.text(txtrng);
                         if peeked.tag() == TokenTag::Text && !txt.is_empty() && txt[0] == b'~' {
-                            txt = &txt[1..];
-                            atoms.push(ast::SimpleAtom::Tilde);
-                            if !txt.is_empty() {
+                            let starts_word = atoms.is_empty();
+                            let ends_token = txt.len() == 1;
+                            let before_slash = !ends_token
+                                && ends_tilde_prefix(txt[1])
+                                && !self.is_interpolated_position(txtrng.start + 1);
+                            // A quoted `~` and `~name` are text.
+                            if self.is_interpolated_position(txtrng.start)
+                                || !(ends_token || before_slash)
+                            {
                                 atoms.push(ast::SimpleAtom::Text(txt));
+                            } else {
+                                atoms.push(ast::SimpleAtom::Tilde);
+                                if before_slash {
+                                    atoms.push(ast::SimpleAtom::Text(&txt[1..]));
+                                }
+                                // `~/` that starts the word is a tilde-prefix. Any other `~`
+                                // waits for `certify_tildes`, when the word is complete.
+                                has_tentative_tilde |= !(starts_word && before_slash);
                             }
                         } else if txt.is_empty()
                             && (peeked.tag() == TokenTag::SingleQuotedText
@@ -1661,13 +1692,78 @@ impl<'bump> Parser<'bump> {
 
         Ok(match atoms.len() {
             0 => None,
+            // A `~` that is the whole word is a tilde-prefix.
             1 => Some(ast::Atom::new_simple(atoms.into_iter().next().unwrap())),
-            _ => Some(ast::Atom::Compound(ast::CompoundAtom {
-                atoms: atoms.into_bump_slice(),
-                brace_expansion_hint: has_brace_open && has_brace_close && has_comma,
-                glob_hint: has_glob_syntax,
-            })),
+            _ => {
+                let brace_expansion_hint = has_brace_open && has_brace_close && has_comma;
+                if has_tentative_tilde {
+                    self.certify_tildes(&mut atoms, brace_expansion_hint);
+                }
+                Some(ast::Atom::Compound(ast::CompoundAtom {
+                    atoms: atoms.into_bump_slice(),
+                    brace_expansion_hint,
+                    glob_hint: has_glob_syntax,
+                }))
+            }
         })
+    }
+
+    /// Decides each tentative `Tilde` of a finished word: it stays only if it is a
+    /// tilde-prefix in every brace alternative that holds it. bash expands braces first,
+    /// so `{a,b}~` is `a~ b~`. Where the alternatives disagree (`{a,}~`) the `~` is text.
+    #[cold]
+    #[inline(never)]
+    fn certify_tildes(&self, atoms: &mut [ast::SimpleAtom<'bump>], has_braces: bool) {
+        use ast::SimpleAtom as SA;
+        if !has_braces {
+            // Nothing expands at run time: the word is its only alternative.
+            let keep_first = self.is_source_slash(&atoms[1]);
+            for (i, atom) in atoms.iter_mut().enumerate() {
+                if matches!(atom, SA::Tilde) && !(i == 0 && keep_first) {
+                    *atom = SA::Text(b"~");
+                }
+            }
+            return;
+        }
+        // One byte per atom, so that the brace lexer of the expansion says which
+        // `{`, `,`, `}` form a group.
+        let word: SmallVec<[u8; 32]> = atoms
+            .iter()
+            .map(|atom| match atom {
+                SA::BraceBegin => b'{',
+                SA::Comma => b',',
+                SA::BraceEnd => b'}',
+                SA::Tilde => b'~',
+                atom if self.is_source_slash(atom) => b'/',
+                _ => b'x',
+            })
+            .collect();
+        let tokens = bun_core::handle_oom(crate::braces::Lexer::tokenize(&word)).tokens;
+        for (atom, is_prefix) in atoms.iter_mut().zip(tilde_prefixes(&tokens, word.len())) {
+            if matches!(atom, SA::Tilde) && !is_prefix {
+                *atom = SA::Text(b"~");
+            }
+        }
+    }
+
+    /// Whether `atom` is text that starts with a `/` written unquoted in the script, the
+    /// only thing that may follow a tilde-prefix. The atom does not record its quoting;
+    /// the token that covers its slice of the strpool does.
+    fn is_source_slash(&self, atom: &ast::SimpleAtom<'bump>) -> bool {
+        let ast::SimpleAtom::Text(txt) = atom else {
+            return false;
+        };
+        if !txt.first().is_some_and(|&byte| ends_tilde_prefix(byte)) {
+            return false;
+        }
+        let Some([pos, _]) = bun_alloc::range_of_slice_in_buffer(txt, self.strpool) else {
+            return false;
+        };
+        let token = self.tokens[..self.current as usize].iter().rev().find(|token| {
+            matches!(token, Token::Text(r) | Token::SingleQuotedText(r) | Token::DoubleQuotedText(r)
+                if r.start <= pos && pos < r.end)
+        });
+        matches!(token, Some(Token::Text(_))) && !self.is_interpolated_position(pos)
     }
 
     fn allocate<T>(&self, val: T) -> &'bump mut T {
@@ -1678,12 +1774,13 @@ impl<'bump> Parser<'bump> {
         &self.strpool[range.start as usize..range.end as usize]
     }
 
-    /// Whether the strpool position holds a byte that came from an
-    /// interpolated JS value (a `\x08__bunstr_N` ref spliced in by the lexer).
+    /// Whether the strpool position holds a byte that is data, not shell syntax:
+    /// spliced in from an interpolated JS value (a `\x08__bunstr_N` ref), or a
+    /// backslash-escaped `~` or `/`.
     fn is_interpolated_position(&self, pos: u32) -> bool {
-        self.js_string_ranges
-            .iter()
-            .any(|r| pos >= r.start && pos < r.end)
+        // The lexer pushes the ranges in strpool order and they do not overlap.
+        let i = self.js_string_ranges.partition_point(|r| r.end <= pos);
+        self.js_string_ranges.get(i).is_some_and(|r| r.start <= pos)
     }
 
     fn if_clause_tok_at(&self, range: TextRange) -> Option<IfClauseTok> {
@@ -1874,6 +1971,87 @@ impl<'bump> Parser<'bump> {
             <&'static str>::from(kind)
         ))
     }
+}
+
+/// Whether `byte` ends a tilde-prefix: `/`, and on Windows also `\`, so that
+/// `~\\dir` stays a path under the home directory there.
+fn ends_tilde_prefix(byte: u8) -> bool {
+    byte == b'/' || (cfg!(windows) && byte == b'\\')
+}
+
+/// `tokens` are the brace tokens of a word spelled with one byte per atom: `{`, `,`, `}`,
+/// `~` for a tentative tilde, `/` for text that starts with an unquoted slash, `x` for any
+/// other atom. Says per atom whether a `~` there is a tilde-prefix in every brace
+/// alternative that holds it: nothing comes before it, and the end of the word or a `/`
+/// comes after it. One pass each way; no alternative is built.
+fn tilde_prefixes(tokens: &[crate::braces::Token], atoms: usize) -> SmallVec<[bool; 32]> {
+    use crate::braces::Token as BraceToken;
+    let mut is_prefix: SmallVec<[bool; 32]> = smallvec::smallvec![false; atoms];
+
+    // Forward: is the word empty up to here in every alternative?
+    // Per open group: the answer at its `{`, then over the ends of its alternatives so far.
+    let mut groups: SmallVec<[(bool, bool); 8]> = SmallVec::new();
+    let mut empty = true;
+    let mut at = 0;
+    for token in tokens {
+        match token {
+            BraceToken::Open(_) => groups.push((empty, true)),
+            BraceToken::Comma => {
+                if let Some((at_open, at_ends)) = groups.last_mut() {
+                    *at_ends &= empty;
+                    empty = *at_open;
+                }
+            }
+            BraceToken::Close => {
+                if let Some((_, at_ends)) = groups.pop() {
+                    empty &= at_ends;
+                }
+            }
+            BraceToken::Text(text) => {
+                for &byte in text.slice() {
+                    is_prefix[at] = empty && byte == b'~';
+                    empty = false;
+                    at += 1;
+                }
+                continue;
+            }
+            BraceToken::Eof => break,
+        }
+        at += 1;
+    }
+
+    // Backward: is everything that can come right after here the end of the word or a `/`?
+    // Per open group: the answer after its `}`, then over the starts of its alternatives so far.
+    groups.clear();
+    let mut ends = true;
+    for token in tokens.iter().rev() {
+        match token {
+            BraceToken::Close => groups.push((ends, true)),
+            BraceToken::Comma => {
+                if let Some((at_close, at_starts)) = groups.last_mut() {
+                    *at_starts &= ends;
+                    ends = *at_close;
+                }
+            }
+            BraceToken::Open(_) => {
+                if let Some((_, at_starts)) = groups.pop() {
+                    ends &= at_starts;
+                }
+            }
+            BraceToken::Text(text) => {
+                for &byte in text.slice().iter().rev() {
+                    at -= 1;
+                    is_prefix[at] &= ends;
+                    ends = byte == b'/';
+                }
+                continue;
+            }
+            BraceToken::Eof => continue,
+        }
+        at -= 1;
+    }
+    debug_assert!(at == 0);
+    is_prefix
 }
 
 /// Join error messages with a newline so each one renders on its own line in
@@ -2201,10 +2379,10 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     pub(crate) subshell_depth: u32,
     pub(crate) errors: bun_alloc::ArenaVec<'bump, LexError>,
 
-    /// Strpool ranges that hold bytes spliced in from interpolated JS values
-    /// (`\x08__bunstr_N` refs). Interpolated bytes are data, not shell
-    /// syntax, so the parser must not reinterpret them (e.g. an `=` inside
-    /// one must not create an env assignment).
+    /// Strpool ranges that hold data, not shell syntax: bytes spliced in from
+    /// interpolated JS values (`\x08__bunstr_N` refs), and a backslash-escaped
+    /// `~` or `/`. The parser must not reinterpret them (an `=` inside one must
+    /// not create an env assignment, a `~` is not a tilde). In strpool order.
     pub(crate) js_string_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
 
     /// Contains a list of strings we need to escape
@@ -2882,6 +3060,15 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 }
                 continue;
             }
+            // `\~` and `\/` are quoted: they neither start nor end a tilde-prefix.
+            else if char == u32::from(b'~') || char == u32::from(b'/') {
+                debug_assert!(input.escaped && self.chars.state == CharState::Normal);
+                let start = self.j;
+                self.js_string_ranges.push(TextRange {
+                    start,
+                    end: start + 1,
+                });
+            }
 
             self.append_char_to_str_pool(char)?;
         }
@@ -3197,19 +3384,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
         let start = self.j;
         self.append_string_to_str_pool(bunstr)?;
+        // Interpolated values are data, not shell syntax. The range tells the
+        // parser so; the value stays coalesced with the text after it.
         self.js_string_ranges.push(TextRange { start, end: self.j });
-        // Interpolated values are data, not shell syntax. If the value would
-        // begin its Text token with `~`, flush it as a quoted-text token so the
-        // parser does not re-interpret it as tilde expansion. Values that
-        // cannot be misread stay coalesced with the surrounding word so that
-        // literal source text after the interpolation (e.g. `${name}~bak`)
-        // keeps its meaning.
-        if self.chars.state == CharState::Normal && self.strpool.get(start as usize) == Some(&b'~')
-        {
-            self.tokens
-                .push(Token::DoubleQuotedText(TextRange { start, end: self.j }));
-            self.word_start = self.j;
-        }
         Ok(())
     }
 
@@ -4300,5 +4477,100 @@ impl<T, const N: usize> Drop for SmolList<T, N> {
             unsafe { core::ptr::drop_in_place(i.slice_mut()) };
             i.len = 0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::braces::{self, Token as BraceToken};
+
+    /// Every brace alternative of `tokens[*i..]`, up to the `,` or `}` that ends this level.
+    fn alternatives(tokens: &[BraceToken], i: &mut usize) -> Vec<Vec<u8>> {
+        let mut words = vec![Vec::new()];
+        loop {
+            match &tokens[*i] {
+                BraceToken::Text(text) => {
+                    words
+                        .iter_mut()
+                        .for_each(|word| word.extend_from_slice(text.slice()));
+                    *i += 1;
+                }
+                BraceToken::Open(_) => {
+                    let mut group = Vec::new();
+                    loop {
+                        *i += 1;
+                        group.extend(alternatives(tokens, i));
+                        if matches!(tokens[*i], BraceToken::Close) {
+                            break;
+                        }
+                    }
+                    *i += 1;
+                    words = words
+                        .iter()
+                        .flat_map(|word| group.iter().map(move |rest| [&word[..], rest].concat()))
+                        .collect();
+                }
+                BraceToken::Comma | BraceToken::Close | BraceToken::Eof => return words,
+            }
+        }
+    }
+
+    /// `tilde_prefixes` from its definition: expand the braces, then look at each word.
+    fn tilde_prefixes_by_expansion(word: &[u8]) -> Vec<bool> {
+        // One byte >= 0x80 names each atom, so the expanded words say where each atom went.
+        let named: Vec<u8> = word
+            .iter()
+            .enumerate()
+            .map(|(i, &byte)| match byte {
+                b'{' | b',' | b'}' => byte,
+                _ => 0x80 | i as u8,
+            })
+            .collect();
+        let tokens = braces::Lexer::tokenize(&named).unwrap().tokens;
+        let is_slash = |name: u8| name >= 0x80 && word[usize::from(name & 0x7f)] == b'/';
+        let mut is_prefix: Vec<bool> = word.iter().map(|&byte| byte == b'~').collect();
+        for alternative in alternatives(&tokens, &mut 0) {
+            for (at, &name) in alternative.iter().enumerate() {
+                if name >= 0x80 {
+                    let followed = alternative.get(at + 1).is_none_or(|&next| is_slash(next));
+                    is_prefix[usize::from(name & 0x7f)] &= at == 0 && followed;
+                }
+            }
+        }
+        is_prefix
+    }
+
+    #[test]
+    fn tilde_prefixes_match_brace_expansion() {
+        const ATOMS: &[u8] = b"{,}~/x";
+        // Every word of up to `max_len` atoms, fewer under Miri, which is slow.
+        let (max_len, tilde_prefixes_found) = if cfg!(miri) { (3, 13) } else { (6, 1702) };
+        let short = (1..=max_len).flat_map(|len| {
+            (0..ATOMS.len().pow(len)).map(move |n| {
+                (0..len)
+                    .map(|i| ATOMS[n / ATOMS.len().pow(i) % ATOMS.len()])
+                    .collect::<Vec<u8>>()
+            })
+        });
+        let long: [&[u8]; 4] = [
+            b"{,}{,}{,}{,}{,}{,}{,}~",
+            b"~/{x,x}{x,x}{x,x}{x,x}{x,x}{x,x}{x,x}",
+            b"{{~,x},{x,{,~}/}}/x",
+            b"{x,{,{,{,~}}}}{,/x}",
+        ];
+        let mut found = 0;
+        for word in short.chain(long.iter().map(|word| word.to_vec())) {
+            let tokens = braces::Lexer::tokenize(&word).unwrap().tokens;
+            let is_prefix = tilde_prefixes(&tokens, word.len());
+            assert_eq!(
+                is_prefix.as_slice(),
+                tilde_prefixes_by_expansion(&word),
+                "{}",
+                bstr::BStr::new(&word)
+            );
+            found += is_prefix.iter().filter(|&&keep| keep).count();
+        }
+        assert_eq!(found, tilde_prefixes_found);
     }
 }

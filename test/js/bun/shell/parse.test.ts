@@ -95,6 +95,36 @@ describe("parse shell", () => {
     });
   });
 
+  test("only a tilde-prefix is a tilde atom", () => {
+    const words = (ast: string) => JSON.parse(ast).stmts[0].exprs[0].cmd.name_and_args.slice(1);
+    const compound = (...atoms: object[]) => ({ compound: { atoms, brace_expansion_hint: false, glob_hint: false } });
+
+    expect(words(parse`echo ~/x "$f"~ \~ \~/x ~"/x" ~$f`)).toEqual([
+      compound({ tilde: {} }, { Text: "/x" }),
+      compound({ Var: "f" }, { Text: "~" }),
+      { simple: { Text: "~" } },
+      { simple: { Text: "~/x" } },
+      compound({ Text: "~" }, { Text: "/x" }),
+      compound({ Text: "~" }, { Var: "f" }),
+    ]);
+    expect(words(parse`echo {~,a}/x {a,}~`)).toEqual([
+      {
+        compound: {
+          atoms: [{ brace_begin: {} }, { tilde: {} }, { comma: {} }, { Text: "a" }, { brace_end: {} }, { Text: "/x" }],
+          brace_expansion_hint: true,
+          glob_hint: false,
+        },
+      },
+      {
+        compound: {
+          atoms: [{ brace_begin: {} }, { Text: "a" }, { comma: {} }, { brace_end: {} }, { Text: "~" }],
+          brace_expansion_hint: true,
+          glob_hint: false,
+        },
+      },
+    ]);
+  });
+
   test("compound atom", () => {
     const expected = {
       stmts: [

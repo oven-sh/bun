@@ -51,14 +51,13 @@ test("empty interpolation inside single quotes passes empty arg", async () => {
   expect(JSON.parse(result.trim())).toEqual([""]);
 });
 
-test("tilde with empty double quotes expands to homedir", async () => {
+// The word is kept, and the quotes are part of the tilde-prefix, so the `~` is text, as in bash.
+test("tilde with empty double quotes is a literal tilde", async () => {
   const result = await $`echo ~""`.env(bunEnv).text();
-  const homedir = require("os").homedir();
-  expect(result.trim()).toBe(homedir);
+  expect(result).toBe("~\n");
 });
 
-test("tilde with empty single quotes expands to homedir", async () => {
+test("tilde with empty single quotes is a literal tilde", async () => {
   const result = await $`echo ~''`.env(bunEnv).text();
-  const homedir = require("os").homedir();
-  expect(result.trim()).toBe(homedir);
+  expect(result).toBe("~\n");
 });

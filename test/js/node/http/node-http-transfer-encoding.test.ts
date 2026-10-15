@@ -1496,32 +1496,35 @@ describe("res.end() when a replaced res.writeHead sends the head", () => {
     test.concurrent("the response still drains: the callback of the outer end() waits for 'finish'", async () => {
       const events: string[] = [];
       const body = Buffer.alloc(1024 * 1024, "x");
-      const handled = Promise.withResolvers<void>();
+      const handled = Promise.withResolvers<ServerResponse>();
       const closed = Promise.withResolvers<void>();
       const server = createServer((req, res) => {
         res.on("close", () => closed.resolve());
         endInWriteHead(res, body, events);
-        handled.resolve();
+        handled.resolve(res);
       });
       // A duplexPair side completes a write when the other side reads it, so this body drains until the client reads.
       const [clientSide, serverSide] = duplexPair();
       try {
         server.emit("connection", serverSide);
         clientSide.write(GET_CLOSE);
-        await handled.promise;
+        const res = await handled.promise;
+        // One turn of the event loop with no reader: a 'finish' that does not wait for the reader runs in it.
         await new Promise<void>(resolve => setImmediate(resolve));
-        events.push("the client reads");
+        const beforeRead = { events: [...events], writableFinished: res.writableFinished };
         const chunks: Buffer[] = [];
         clientSide.on("data", (chunk: Buffer) => chunks.push(chunk));
         await closed.promise;
         const bytes = Buffer.concat(chunks);
         const bodyStart = bytes.indexOf("\r\n\r\n") + 4;
         expect({
+          beforeRead,
           events,
           head: bytes.toString("latin1", 0, bodyStart).replace(/^Date: .*\r\n/m, ""),
           body: bytes.subarray(bodyStart).equals(body),
         }).toEqual({
-          events: ["end() returned", "the client reads", "finish", "end callback: no error"],
+          beforeRead: { events: ["end() returned"], writableFinished: false },
+          events: ["end() returned", "finish", "end callback: no error"],
           head: `${HEAD_CLOSE}Content-Length: ${body.length}\r\n\r\n`,
           body: true,
         });

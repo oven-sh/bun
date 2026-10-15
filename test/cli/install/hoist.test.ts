@@ -1780,6 +1780,82 @@ describe.concurrent("a peer dependency is the package that its dependent loads",
     await run(dir, "install", "--frozen-lockfile");
     expect([loaded(app, "ui"), loaded(lib, "ui")]).toEqual(["1.2.0", "1.0.0"]);
   });
+
+  // The member `lib` is 3.0.0, which the peer range of `plug` accepts too.
+  test.each(
+    ["*", ">=1.0.0"].flatMap(range =>
+      (
+        [
+          ["a registry package", {}],
+          ["a registry package", { plug: "^2.0.0" }],
+          ["another member", {}],
+        ] as const
+      ).map(([host, root]) => [range, host, root] as const),
+    ),
+  )(
+    "hoisted: peer %p, next to the published version that %s uses of a member (the root has %p)",
+    async (range, host, root) => {
+      const plug = { peerDependencies: { lib: range } };
+      const uses = { lib: "^1.0.0", plug: "^1.0.0" };
+      using server = await serveGraph({
+        lib: { "1.0.0": {} },
+        plug: { "1.0.0": plug, "2.0.0": plug },
+        host: { "1.0.0": { dependencies: uses } },
+      });
+      using tmp = tempDir("peer-member-and-published", {
+        "bunfig.toml": bunfig(server, "hoisted"),
+        "package.json": JSON.stringify({ name: "root", workspaces: ["pk/*"], dependencies: root }),
+        "pk/lib/package.json": JSON.stringify({ name: "lib", version: "3.0.0" }),
+        "pk/app/package.json": JSON.stringify({
+          name: "app",
+          dependencies: host === "another member" ? uses : { host: "^1.0.0" },
+        }),
+      });
+      const dir = String(tmp);
+      const app = join(dir, "pk", "app");
+      const libs = () => {
+        const from = host === "another member" ? app : folderOf(app, "host");
+        return [loaded(from, "lib"), loaded(folderOf(from, "plug"), "lib")];
+      };
+
+      await run(dir, "install");
+      expect(libs()).toEqual(["1.0.0", "1.0.0"]);
+      expect(Object.values(await lockfileTree(dir)).filter(to => to.startsWith("lib@workspace:"))).toHaveLength(1);
+      expect(await run(dir, "install")).toContain("(no changes)");
+      await wipe(dir, "pk/app");
+      await run(dir, "install", "--frozen-lockfile");
+      expect(libs()).toEqual(["1.0.0", "1.0.0"]);
+    },
+  );
+
+  // util@1.1.0 below the published lib links the member, which has the published lib below it.
+  test.each(linkers)("%s: a member that builds with the published version of itself", async linker => {
+    using server = await serveGraph({
+      util: { "1.0.0": {}, "1.1.0": { dependencies: { lib: "*" } } },
+      lib: { "2.1.0": { optionalDependencies: { util: "^1.0.0" } } },
+    });
+    using tmp = tempDir("member-and-its-published-version", {
+      "bunfig.toml": bunfig(server, linker),
+      "package.json": JSON.stringify({
+        name: "root",
+        workspaces: ["pk/*"],
+        dependencies: { util: "^1.0.0" },
+        peerDependencies: { lib: "^1.1.0" },
+      }),
+      "pk/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        dependencies: { util: "~1.0.0" },
+        devDependencies: { lib: "^2.0.0" },
+      }),
+    });
+    const dir = String(tmp);
+
+    await run(dir, "install");
+    expect(loaded(join(dir, "pk", "lib"), "lib")).toBe("2.1.0");
+    expect(await run(dir, "install")).toContain("(no changes)");
+    await run(dir, "install", "--frozen-lockfile");
+  });
 });
 
 // Up to 1.4.3 what a run left out took no place, so the rest moved: here m's b@1.0.0 to the root, which gave n a b of

@@ -2772,7 +2772,7 @@ pub(crate) fn parse_into_binary_lockfile(
             manager.is_none_or(|manager| manager.options.link_workspace_packages);
         let workspace_paths = &lockfile.workspace_paths;
         let workspace_versions = &lockfile.workspace_versions;
-        // As the resolver, which looks at no version when the range of a peer links a member.
+        // `Package::parse` makes a peer of the project a link when its range links a member.
         let linked_member = |dep: &Dependency| {
             let (range, name_hash) =
                 version_based_peer_range(dep, catalogs, overrides, string_buf)?;
@@ -2787,18 +2787,17 @@ pub(crate) fn parse_into_binary_lockfile(
             (members.clone()).find(|&id| pkg_name_hashes[id as usize] == name_hash)
         };
         let peer_by_version = |dep: &Dependency| {
-            linked_member(dep).or_else(|| {
-                resolve_peer_dep_version_based(
-                    dep,
-                    catalogs,
-                    package_index,
-                    overrides,
-                    pkg_resolutions,
-                    string_buf,
-                    |_| true,
-                )
-            })
+            resolve_peer_dep_version_based(
+                dep,
+                catalogs,
+                package_index,
+                overrides,
+                pkg_resolutions,
+                string_buf,
+                |_| true,
+            )
         };
+        let own_peer = |dep: &Dependency| linked_member(dep).or_else(|| peer_by_version(dep));
 
         {
             // first the root dependencies are resolved
@@ -2814,7 +2813,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         .find(|&id| pkg_name_hashes[id as usize] == dep.name_hash)
                         .or(named)
                 } else {
-                    peer_by_version(dep).or(named)
+                    own_peer(dep).or(named)
                 };
                 let Some(res_id) = bound else {
                     if may_stay_unresolved(dep) {
@@ -2873,7 +2872,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         &buf_slice[..needed]
                     };
 
-                    let Some(res_id) = peer_by_version(dep).or_else(|| {
+                    let Some(res_id) = own_peer(dep).or_else(|| {
                         pkg_map
                             .get(workspace_node_modules)
                             .or_else(|| pkg_map.get(dep_name))
@@ -2931,7 +2930,14 @@ pub(crate) fn parse_into_binary_lockfile(
                     continue 'deps;
                 }
 
-                let res_id = match peer_by_version(dep) {
+                // A published copy in range comes first for a registry package: its dependent may
+                // use that one next to the member, and the hoist finds out.
+                let by_version = if res.tag == ResolutionTag::Workspace {
+                    own_peer(dep)
+                } else {
+                    peer_by_version(dep)
+                };
+                let res_id = match by_version {
                     Some(id) => id,
                     None => {
                         // Bounded so the loaded lockfile binds optional peers
@@ -3028,8 +3034,9 @@ pub(crate) fn parse_into_binary_lockfile(
 /// re-keys isolated-linker store entries (and global-store entry hashes)
 /// on warm installs.
 ///
-/// A peer whose range links a workspace never gets here: the fresh resolver binds it to the
-/// workspace before any deferral, and so does the loader (`linked_member`).
+/// The fresh resolver binds a peer whose range links a workspace to it before any deferral. For a
+/// peer of the project so does the loader (`linked_member`). A registry package's gets here, in
+/// the loader and in the hoist, and keeps the workspace when no published copy is in range.
 ///
 /// The hoist only starts from this binding: an edge that finds the root's dependency of that name,
 /// or its package's own, in range ends on that package (`tree::bind_served_peers`).

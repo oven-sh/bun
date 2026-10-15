@@ -1229,6 +1229,24 @@ impl Tree {
             return Ok(());
         }
 
+        // A link to a member from below that member: what it needs has its places further up.
+        if dependency_id != ROOT_DEP_ID
+            && !builder.dependencies[dependency_id as usize]
+                .behavior
+                .is_workspace()
+            && builder.lockfile().packages.items_resolution()[parent_pkg_id as usize].tag
+                == crate::resolution::Tag::Workspace
+        {
+            let mut tree_id = self.id;
+            while tree_id != INVALID_ID {
+                let tree: Tree = builder.list.items_tree()[tree_id as usize];
+                if builder.resolutions.get(tree.dependency_id as usize) == Some(&parent_pkg_id) {
+                    return Ok(());
+                }
+                tree_id = tree.parent;
+            }
+        }
+
         if let Some(period) = repeating_period(&builder.list, self.id, dependency_id) {
             builder.crash_on_endless_nesting(self.id, dependency_id, period);
         }

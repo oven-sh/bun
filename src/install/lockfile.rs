@@ -2260,6 +2260,20 @@ impl Lockfile {
             if res.tag != ResolutionTag::Workspace {
                 continue;
             }
+            // Tagged when the lockfile was loaded. A published copy in range may have come since.
+            if dep.version.tag == dependency::Tag::Workspace
+                && dep.behavior.is_peer()
+                && !dep.behavior.is_optional_peer()
+                && !is_local_row(dep_id)
+            {
+                let literal = dep.version.literal.sliced(buf);
+                if let Some(range) =
+                    dependency::parse(dep.name, dep.name_hash, literal.slice, &literal, None, None)
+                    && range.tag == dependency::Tag::Npm
+                {
+                    dep.version = range;
+                }
+            }
             let linked = match dep.version.tag {
                 dependency::Tag::Workspace => true,
                 dependency::Tag::Npm => {
@@ -2273,8 +2287,21 @@ impl Lockfile {
                         buf,
                     )
                     .is_some()
-                        // The hoist binds it, so a fresh install saves it as the range it is.
-                        && (!dep.behavior.is_optional_peer() || is_local_row(dep_id))
+                        // The hoist binds a registry package's peer, so it stays the range it is:
+                        // an optional one always, another while a published copy is in range.
+                        && (!dep.behavior.is_peer()
+                            || is_local_row(dep_id)
+                            || (!dep.behavior.is_optional_peer()
+                                && bun_lock::resolve_peer_dep_version_based(
+                                    dep,
+                                    &self.catalogs,
+                                    &self.package_index,
+                                    &self.overrides,
+                                    pkg_resolutions,
+                                    buf,
+                                    |_| true,
+                                )
+                                .is_none()))
                 }
                 // For the root, the workspace of that name wins over a `file:` folder.
                 dependency::Tag::Folder => {

@@ -144,6 +144,7 @@ pub struct Loader {
     /// Once set, `load` reads no default `.env` file into this loader, whatever its caller asks.
     /// Set by the VM that owns the loader at the end of its boot, and by a transpiler whose
     /// options exclude the default files. Atomic: build threads call `load` on a VM's loader.
+    /// `Relaxed`: it is only ever set, and no other memory is ordered against it.
     default_files_closed: AtomicBool,
 
     /// only populated with files specified explicitly (e.g. --env-file arg)

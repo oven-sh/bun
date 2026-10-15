@@ -7263,19 +7263,21 @@ describe("connectionListener requireHostHeader", () => {
 
   describe.each(connections)("on %s", (_kind, open) => {
     it.each([
-      ["a GET", request("/"), missingHostReply],
+      ["a GET without Host", request("/"), missingHostReply],
       // A response to HEAD has no body, so there is no chunk framing.
-      ["a HEAD", "HEAD / HTTP/1.1\r\n\r\n", `${refused}Connection: close\r\nDate: <date>\r\n\r\n`],
-      ["a POST with a body", "POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello", missingHostReply],
-      ["a request with 40 other header fields", request("/", ...otherFields), missingHostReply],
-      ["Expect: 100-continue", request("/", "Expect: 100-continue"), missingHostReply],
-      ["an Expect value the server does not know", request("/", "Expect: something"), missingHostReply],
+      ["a HEAD without Host", "HEAD / HTTP/1.1\r\n\r\n", `${refused}Connection: close\r\nDate: <date>\r\n\r\n`],
+      ["a POST with a body and no Host", "POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello", missingHostReply],
+      ["40 header fields, none of them Host", request("/", ...otherFields), missingHostReply],
+      // Only a field name counts.
+      ["Host as a field value only", request("/", "X-Field: Host"), missingHostReply],
+      ["Expect: 100-continue without Host", request("/", "Expect: 100-continue"), missingHostReply],
+      ["an unknown Expect value without Host", request("/", "Expect: something"), missingHostReply],
       [
-        "an Upgrade that no 'upgrade' listener takes",
+        "an Upgrade without Host that no 'upgrade' listener takes",
         request("/", "Upgrade: test", "Connection: Upgrade"),
         missingHostReply,
       ],
-    ])("answers %s without Host with 400 and ends the connection", async (_name, rawRequest, reply) => {
+    ])("answers %s with 400 and ends the connection", async (_name, rawRequest, reply) => {
       const { server, events } = recordingServer();
       using connection = await open();
       expect({ received: await exchange(server, connection, rawRequest, refused), events }).toEqual({
@@ -7325,6 +7327,9 @@ describe("connectionListener requireHostHeader", () => {
 
     it.each([
       ["an HTTP/1.0 request without Host", {}, "GET / HTTP/1.0\r\n\r\n"],
+      // The rule is for HTTP/1.1 alone. The lenient parser lets the other versions in.
+      ["an HTTP/1.2 request without Host", { insecureHTTPParser: true }, `GET / HTTP/1.2\r\n${close}\r\n\r\n`],
+      ["an HTTP/2.1 request without Host", { insecureHTTPParser: true }, `GET / HTTP/2.1\r\n${close}\r\n\r\n`],
       ["a Host field with an empty value", {}, request("/", "Host:", close)],
       ["a Host field name in another case", {}, request("/", "hOsT: example.test", close)],
       // The parser hands over 32 fields at a time, so this Host arrives in the second batch.

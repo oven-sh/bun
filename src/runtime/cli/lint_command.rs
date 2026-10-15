@@ -4,12 +4,15 @@
 //! (`lint_js.rs`) rules that are written in JavaScript.
 
 use bstr::BStr;
+use core::ffi::CStr;
+use std::ffi::CString;
 
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
 use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig, git};
 use bun_sys::File;
 
+use super::captured_child::CapturedChild;
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
 use bun_bunfig::Above;
@@ -195,54 +198,23 @@ fn run_to_end(
     cwd: &[u8],
     adapt: &dyn Fn(&mut bun_dotenv::Map) -> bool,
     input: &[&[u8]],
-) -> Result<crate::api::bun::process::sync::Result, Vec<u8>> {
-    use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
+) -> Result<bun_spawn::process::sync::Result, Vec<u8>> {
+    let not_started = |why: &[u8]| [b"Could not start a process: ", why].concat();
     let mut variables = bun_dotenv::Loader::init();
     let is_ready = variables.load_process().is_ok() && adapt(&mut variables.map);
     let Some(envp) = is_ready
         .then(|| variables.map.create_null_delimited_env_map().ok())
         .flatten()
     else {
-        return Err(b"Could not start a process: out of memory".to_vec());
+        return Err(not_started(b"out of memory"));
     };
-    let [read, written] = match bun_sys::pipe() {
-        Ok(ends) => ends.map(File::from_fd),
-        Err(err) => return Err([&b"Could not start a process: "[..], err.name()].concat()),
+    let argv: Result<Vec<CString>, _> = argv.into_iter().map(CString::new).collect();
+    let Ok(argv) = argv else {
+        return Err(not_started(b"an argument has a NUL character"));
     };
-    // The process is not to have the end that is written to: it would wait for itself to close it.
-    #[cfg(unix)]
-    for end in [&read, &written] {
-        let _ = bun_sys::set_close_on_exec(end.handle());
-    }
-    let options = SpawnOptions {
-        argv,
-        stdout: SyncStdio::Buffer,
-        stderr: SyncStdio::Buffer,
-        stdin: SyncStdio::Pipe(read.handle()),
-        cwd: Box::<[u8]>::from(cwd),
-        envp: Some(envp.as_ptr()),
-        #[cfg(windows)]
-        windows: crate::api::bun::process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
-            )),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    // It is written while what the program prints is read, so neither waits for the other.
-    let spawned = std::thread::scope(|scope| {
-        scope.spawn(move || input.iter().try_for_each(|it| written.write_all(it)));
-        let spawned = spawn(&options);
-        // Who still writes is told that nobody reads any more.
-        drop(read);
-        spawned
-    });
-    match spawned {
-        Ok(Ok(result)) => Ok(result),
-        Ok(Err(err)) => Err([&b"Could not start a process: "[..], err.name()].concat()),
-        Err(err) => Err([&b"Could not start a process: "[..], err.name().as_bytes()].concat()),
-    }
+    let argv: Vec<&CStr> = argv.iter().map(CString::as_c_str).collect();
+    let envp: Vec<&CStr> = envp.iter().collect();
+    CapturedChild::run(&argv, &envp, cwd, input.concat()).map_err(not_started)
 }
 
 /// Reports that the command line of `bun <command>` cannot be used.
@@ -267,7 +239,7 @@ pub(crate) fn run_and_exit(
     if let Some(cwd) = cwd {
         change_directory(cwd);
     }
-    // One at a time: a process is started with state that threads share.
+    // One at a time, so that lint threads don't each start a process at once.
     let turn = bun_threading::Guarded::new(());
     let run_script = |script: &Script| {
         let _turn = turn.lock();

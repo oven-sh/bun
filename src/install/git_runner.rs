@@ -1405,9 +1405,9 @@ impl GitSubprocess {
                 if !lost_a_ref {
                     this.hold_output(stderr);
                 }
-                // Twice no ref could be written, or git names the clone's own folder: the fault is
-                // in there, not at the remote.
-                let is_damaged = matches!(status, Status::Exited(exit) if exit.code == 1)
+                // 128 is what git ends with when it cannot reach the remote. Another code, or the
+                // name of the clone's own folder in what it says: the fault is in there.
+                let is_damaged = matches!(status, Status::Exited(exit) if !matches!(exit.code, 0 | 128))
                     || strings::contains(stderr, &bare_repo_folder_name(this.task().id));
                 let next = if lost_a_ref {
                     Self::spawn_fetch(this, repo, &url, true)

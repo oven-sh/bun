@@ -16796,10 +16796,6 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     ["--ignore-engines"],
     ["--unsafe-perm"],
     ["--non-interactive"],
-    ["--include=dev"],
-    ["--include", "optional"],
-    ["--include=peer"],
-    ["--no-frozen-lockfile"],
     ["--prefer-frozen-lockfile"],
     ["--loglevel=notice"],
     ["--loglevel", "http"],
@@ -16864,7 +16860,16 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     [["install", "--no-bin-links"], "install", "--no-bin-links"],
     [["pm", "ls", "--no-audit"], "pm", "--no-audit"],
     [["link", "--no-fund"], "link", "--no-fund"],
-  ])("bun %j is still an error", async (cmd, command, flag) => {
+    // These ask for a default, but .npmrc, bunfig.toml or another flag can say the opposite.
+    ...["install", "add", "remove", "update"].flatMap(command => [
+      [[command, "--include=dev"], command, "--include"],
+      [[command, "--include", "dev"], command, "--include"],
+      [[command, "--include=optional"], command, "--include"],
+      [[command, "--include=peer"], command, "--include"],
+      [[command, "--no-frozen-lockfile"], command, "--no-frozen-lockfile"],
+    ]),
+    [["ci", "--no-frozen-lockfile"], "install", "--no-frozen-lockfile"],
+  ] as [string[], string, string][])("bun %j is still an error", async (cmd, command, flag) => {
     const { stderr, packageJson, exitCode } = await outcome(cmd);
     expect(stderr).toBe(
       `error: bun ${command} has no ${flag} flag.\nnote: Run 'bun ${command} --help' for more information\n`,

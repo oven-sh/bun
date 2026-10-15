@@ -376,7 +376,7 @@ const PM_SUBCOMMAND_FLAGS: &[(&[u8], &[&[u8]])] = &[
 enum ForeignFlag {
     /// The same thing under bun's name.
     AliasOf(&'static [u8]),
-    /// Asks for what bun does unless it is told otherwise: dropped.
+    /// Asks for what bun does whatever its settings say: dropped.
     Satisfied,
     /// Not the same thing: the flag stays an error, which names this one.
     Near(&'static [u8]),
@@ -419,10 +419,6 @@ const FOREIGN_FLAGS: &[(&[u8], ForeignFlag)] = &[
     (b"--ignore-engines", Satisfied),
     (b"--unsafe-perm", Satisfied),
     (b"--non-interactive", Satisfied),
-    (b"--include=dev", Satisfied),
-    (b"--include=optional", Satisfied),
-    (b"--include=peer", Satisfied),
-    (b"--no-frozen-lockfile", Satisfied),
     (b"--prefer-frozen-lockfile", Satisfied),
     // `--no-save` also leaves package.json as it is, and it still reads bun.lock.
     (b"--no-package-lock", Near(b"--no-save")),

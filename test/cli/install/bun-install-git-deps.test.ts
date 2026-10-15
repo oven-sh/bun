@@ -3912,20 +3912,63 @@ test.concurrent("a git dependency with a submodule, under the user's own setting
       `M 100644 inline .gitmodules\n${fastImportData('[submodule "vendored"]\n\tpath = vendored\n\turl = ./vendored.git\n')}` +
       `M 160000 ${commit} vendored\n\n`,
   );
+  await git(bare, "update-server-info");
   const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#main` });
 
   const env = { GIT_CONFIG_GLOBAL: join(root, "gitconfig") };
   const { stderr, exitCode } = await runInstall(project, join(root, "cache"), env);
   expect(diagnostics(stderr)).toEqual([]);
-  expect(treeOf(join(project, "node_modules", "dep"))).toEqual(
+  // in the cache: not every way of installing from it makes an empty folder
+  expect(treeOf(join(root, "cache", `@G@${branchCommits(bare).main}`))).toEqual(
     [".bun-tag", ".gitmodules", "index.js", "package.json", "vendored"].sort(),
   );
+  expect(await installedVersionOf(project, "dep")).toBe("main");
   expect(exitCode).toBe(0);
 });
+
+// How git ends when it cannot use the clone depends on its version.
+test.concurrent.skipIf(isWindows)("clones again after a git fetch that did not fail at the remote", async () => {
+  using dir = tempDir("git-dep-fetch-exit-code", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}` });
+  const cache = join(root, "cache");
+  expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+  await moveBranch(bare, "main", "main-v2");
+
+  mkdirSync(join(root, "bin"));
+  writeFileSync(
+    join(root, "bin", "git"),
+    `#!/bin/sh
+case " $* " in *" fetch "*) echo 'error: the refs cannot be written' >&2; exit 254 ;; esac
+exec ${quote(Bun.which("git", { PATH: gitEnv.PATH })!)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  const { stderr, exitCode } = await runBun(project, cache, { PATH: `${join(root, "bin")}:${gitEnv.PATH}` }, "update");
+  expect(diagnostics(stderr)).toEqual([]);
+  expect(await installedVersionOf(project, "dep")).toBe("main-v2");
+  expect(exitCode).toBe(0);
+});
+
+// Makes `levels` folders below `folder`, each in the one before. In parts, and each part takes in
+// what is there so far, so that no call needs a long path.
+function nestFolders(folder: string, levels: number) {
+  const part = new Array(299).fill("d");
+  for (let made = 0; made < levels; made += part.length + 1) {
+    mkdirSync(join(folder, "next", ...part), { recursive: true });
+    if (made > 0) renameSync(join(folder, "d"), join(folder, "next", ...part, "d"));
+    renameSync(join(folder, "next"), join(folder, "d"));
+  }
+}
 
 // git takes the refs and objects of a cached clone from its folder, and nothing else. A folder
 // that git cannot use, or that leads elsewhere, is replaced by a new clone.
 type Places = { clone: string; other: string; kept: string; command: string };
+// since git 2.45
+const usageOfInit = Bun.spawnSync({ cmd: ["git", "init", "-h"], env: gitEnv });
+const gitKnowsReftable = `${usageOfInit.stdout}${usageOfInit.stderr}`.includes("--ref-format");
 test.concurrent.skipIf(isWindows).each<{ what: string; change(at: Places): void }>([
   {
     what: "is a link",
@@ -3988,18 +4031,22 @@ test.concurrent.skipIf(isWindows).each<{ what: string; change(at: Places): void 
     what: "has a lock that nobody holds",
     change: ({ clone }) => writeFileSync(join(clone, "refs", "heads", "main.lock"), ""),
   },
-  {
-    what: "says that its refs are stored in another way",
-    change: ({ clone }) =>
-      writeFileSync(
-        join(clone, "config"),
-        "[core]\n\trepositoryformatversion = 1\n\tbare = true\n[extensions]\n\trefstorage = reftable\n",
-      ),
-  },
-  {
-    what: "holds folders nested deep",
-    change: ({ clone }) => mkdirSync(join(clone, ...new Array(1500).fill("d")), { recursive: true }),
-  },
+  // An older git does not go on to look at the refs: it knows no such setting.
+  ...(gitKnowsReftable
+    ? [
+        {
+          what: "says that its refs are stored in another way",
+          change: ({ clone }: Places) =>
+            writeFileSync(
+              join(clone, "config"),
+              "[core]\n\trepositoryformatversion = 1\n\tbare = true\n[extensions]\n\trefstorage = reftable\n",
+            ),
+        },
+      ]
+    : []),
+  // A path has room for about 500 levels on macOS, and 2,000 on Linux.
+  { what: "holds folders nested deep", change: ({ clone }) => nestFolders(clone, 1500) },
+  { what: "holds folders nested deeper than a path can name", change: ({ clone }) => nestFolders(clone, 3000) },
 ])(
   "a cached clone that $what",
   async ({ change }) => {

@@ -2638,23 +2638,25 @@ describe("a package in node_modules", () => {
 });
 
 it.concurrent("a package without a bin is not installed again to say so", async () => {
-  using registry = await localRegistry({ name: "lib", version: "1.0.0", files: { "index.js": "" } });
+  // No program in $PATH has this name.
+  const name = "bunx-fixture-without-bin";
+  using registry = await localRegistry({ name, version: "1.0.0", files: { "index.js": "" } });
   using box = sandbox(registry);
-  const error = "error: could not determine executable to run for package lib\n";
+  const error = `error: could not determine executable to run for package ${name}\n`;
 
-  expect(await box.run(["lib"])).toMatchObject({
+  expect(await box.run([name])).toMatchObject({
     stdout: "",
     stderr: expect.stringContaining(error),
     exitCode: 1,
-    requests: ["/lib", "/lib/-/lib-1.0.0.tgz"],
+    requests: [`/${name}`, `/${name}/-/${name}-1.0.0.tgz`],
   });
-  expect(await box.run(["lib"])).toEqual({ stdout: "", stderr: error, exitCode: 1, requests: [] });
+  expect(await box.run([name])).toEqual({ stdout: "", stderr: error, exitCode: 1, requests: [] });
   // What the tag names by now may have one.
-  expect(await box.run(["lib@latest"])).toMatchObject({
+  expect(await box.run([`${name}@latest`])).toMatchObject({
     stdout: "",
     stderr: expect.stringContaining(error),
     exitCode: 1,
-    requests: ["/lib"],
+    requests: [`/${name}`],
   });
 });
 

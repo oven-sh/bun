@@ -115,15 +115,18 @@ describe("readline line splitting", () => {
     expect(out).toEqual(["a", "cx", "b", "y"]);
   });
 
-  test.concurrent.each([1, 2, 3, 7, 64, 65536])("reads a file through createReadStream with highWaterMark %d", async hwm => {
-    const lines = Array.from({ length: 30 }, (_, i) => `line${i}`);
-    using dir = tempDir("readline-split", { "lines.txt": lines.join("\n") + "\n" });
-    const stream = fs.createReadStream(`${dir}/lines.txt`, { highWaterMark: hwm });
-    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    const out: string[] = [];
-    for await (const line of rl) out.push(line);
-    expect(out).toEqual(lines);
-  });
+  test.concurrent.each([1, 2, 3, 7, 64, 65536])(
+    "reads a file through createReadStream with highWaterMark %d",
+    async hwm => {
+      const lines = Array.from({ length: 30 }, (_, i) => `line${i}`);
+      using dir = tempDir("readline-split", { "lines.txt": lines.join("\n") + "\n" });
+      const stream = fs.createReadStream(`${dir}/lines.txt`, { highWaterMark: hwm });
+      const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+      const out: string[] = [];
+      for await (const line of rl) out.push(line);
+      expect(out).toEqual(lines);
+    },
+  );
 
   test("splitting a chunk of newline-terminated lines does not allocate an array per line", async () => {
     // The split used one RegExp match array and one rest-args array per line.

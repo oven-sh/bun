@@ -1,12 +1,12 @@
 #pragma once
-#include "BunIDLTypes.h"
+#include "Bindgen/IDLTypes.h"
 #include "BunIDLConvertBase.h"
 #include <JavaScriptCore/JSBigInt.h>
 #include <limits>
 #include <type_traits>
 #include <utility>
 
-namespace Bun::Detail {
+namespace Bun::Bindgen::Detail {
 template<std::signed_integral T>
 std::optional<T> tryBigIntToInt(JSC::JSValue value)
 {
@@ -36,8 +36,8 @@ std::optional<T> tryBigIntToInt(JSC::JSValue value)
 
 template<std::integral T>
     requires(sizeof(T) <= sizeof(std::uint64_t))
-struct WebCore::Converter<Bun::IDLStrictInteger<T>>
-    : Bun::DefaultTryConverter<Bun::IDLStrictInteger<T>> {
+struct WebCore::Converter<Bun::Bindgen::IDLStrictInteger<T>>
+    : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictInteger<T>> {
 
     static constexpr bool conversionHasSideEffects = false;
 
@@ -83,11 +83,11 @@ private:
 
         using Largest = std::conditional_t<std::signed_integral<T>, std::int64_t, std::uint64_t>;
         if (value.isBigInt()) {
-            if (auto result = Bun::Detail::tryBigIntToInt<T>(value)) {
+            if (auto result = Bun::Bindgen::Detail::tryBigIntToInt<T>(value)) {
                 return *result;
             }
             if constexpr (maxInt < std::numeric_limits<Largest>::max()) {
-                if (auto result = Bun::Detail::tryBigIntToInt<Largest>(value)) {
+                if (auto result = Bun::Bindgen::Detail::tryBigIntToInt<Largest>(value)) {
                     ctx.throwIntegerOutOfRange(globalObject, scope, *result, minInt, maxInt);
                     return {};
                 }
@@ -125,7 +125,7 @@ private:
 };
 
 template<>
-struct WebCore::Converter<Bun::IDLStrictDouble> : Bun::DefaultTryConverter<Bun::IDLStrictDouble> {
+struct WebCore::Converter<Bun::Bindgen::IDLStrictDouble> : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictDouble> {
     static constexpr bool conversionHasSideEffects = false;
 
     template<Bun::IDLConversionContext Ctx>
@@ -151,8 +151,8 @@ struct WebCore::Converter<Bun::IDLStrictDouble> : Bun::DefaultTryConverter<Bun::
 };
 
 template<std::integral T>
-struct WebCore::Converter<Bun::IDLLooseInteger<T>>
-    : Bun::DefaultContextConverter<Bun::IDLLooseInteger<T>> {
+struct WebCore::Converter<Bun::Bindgen::IDLLooseInteger<T>>
+    : Bun::DefaultContextConverter<Bun::Bindgen::IDLLooseInteger<T>> {
 
     template<Bun::IDLConversionContext Ctx>
     static T convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
@@ -163,6 +163,6 @@ struct WebCore::Converter<Bun::IDLLooseInteger<T>>
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(
             scope,
-            Bun::convertIDL<Bun::IDLStrictInteger<T>>(globalObject, numeric, ctx));
+            Bun::convertIDL<Bun::Bindgen::IDLStrictInteger<T>>(globalObject, numeric, ctx));
     }
 };

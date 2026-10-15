@@ -1,5 +1,5 @@
 #include "root.h"
-#include "Bindgen/JSBindgenObject.h"
+#include "Bindgen/JSWrapper.h"
 #include "GeneratedBindings+Tables.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -7,34 +7,34 @@
 namespace Bun::Bindgen {
 using namespace JSC;
 
-const ClassInfo JSBindgenConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBindgenConstructor) };
+const ClassInfo JSClassConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSClassConstructor) };
 
-static JSC_DECLARE_HOST_FUNCTION(callJSBindgenConstructor);
-JSC_DEFINE_HOST_FUNCTION(callJSBindgenConstructor, (JSGlobalObject * globalObject, CallFrame* callFrame))
+static JSC_DECLARE_HOST_FUNCTION(callJSClassConstructor);
+JSC_DEFINE_HOST_FUNCTION(callJSClassConstructor, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* constructor = uncheckedDowncast<JSBindgenConstructor>(callFrame->jsCallee());
+    auto* constructor = uncheckedDowncast<JSClassConstructor>(callFrame->jsCallee());
     Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, makeString(constructor->name(), " constructor cannot be invoked without 'new'"_s));
     return {};
 }
 
-JSBindgenConstructor::JSBindgenConstructor(VM& vm, Structure* structure, NativeFunction construct)
-    : Base(vm, structure, callJSBindgenConstructor, construct)
+JSClassConstructor::JSClassConstructor(VM& vm, Structure* structure, NativeFunction construct)
+    : Base(vm, structure, callJSClassConstructor, construct)
 {
 }
 
-JSBindgenConstructor* JSBindgenConstructor::create(VM& vm, JSGlobalObject* globalObject, const ClassDefinition& definition, JSObject* prototype)
+JSClassConstructor* JSClassConstructor::create(VM& vm, JSGlobalObject* globalObject, const ClassDefinition& definition, JSObject* prototype)
 {
     auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
-    auto* constructor = new (NotNull, allocateCell<JSBindgenConstructor>(vm)) JSBindgenConstructor(vm, structure, definition.construct);
+    auto* constructor = new (NotNull, allocateCell<JSClassConstructor>(vm)) JSClassConstructor(vm, structure, definition.construct);
     constructor->finishCreation(vm, definition.constructorLength, definition.info->className, PropertyAdditionMode::WithoutStructureTransition);
     Bun::reifyStaticPropertyTable(vm, info(), definition.constructorTableValues, *constructor);
     constructor->putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     return constructor;
 }
 
-static void setupClassStructure(LazyClassStructure::Initializer& init, unsigned classIndex)
+void setupClassStructure(LazyClassStructure::Initializer& init, unsigned classIndex)
 {
     const ClassDefinition& definition = *Tables::classes[classIndex];
     VM& vm = init.vm;
@@ -48,7 +48,7 @@ static void setupClassStructure(LazyClassStructure::Initializer& init, unsigned 
     init.setPrototype(prototype);
     init.setStructure(definition.createStructure(vm, init.global, prototype));
     if (definition.construct)
-        init.setConstructor(JSBindgenConstructor::create(vm, init.global, definition, prototype));
+        init.setConstructor(JSClassConstructor::create(vm, init.global, definition, prototype));
 }
 
 Structure* structureForClass(JSGlobalObject* globalObject, unsigned classIndex)
@@ -74,32 +74,6 @@ Structure* structureForNewTarget(JSGlobalObject* globalObject, CallFrame* callFr
     auto* functionGlobalObject = getFunctionRealm(globalObject, newTarget);
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_AND_RETURN(scope, InternalFunction::createSubclassStructure(globalObject, newTarget, structureForClass(functionGlobalObject, classIndex)));
-}
-
-}
-
-namespace Bun {
-
-BindgenAdditionsToGlobalObject::BindgenAdditionsToGlobalObject()
-    : m_objectStructures(Bindgen::Tables::objectStructures.size())
-    , m_classes(Bindgen::Tables::classes.size())
-{
-}
-
-void BindgenAdditionsToGlobalObject::initialize()
-{
-    for (auto& structure : m_objectStructures) {
-        structure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            auto& additions = defaultGlobalObject(init.owner)->m_bindgenAdditions;
-            init.set(Bindgen::createObjectStructure(init.vm, init.owner, &init.property - additions.m_objectStructures.begin()));
-        });
-    }
-    for (auto& lazyClass : m_classes) {
-        lazyClass.initLater([](JSC::LazyClassStructure::Initializer& init) {
-            auto& additions = defaultGlobalObject(init.global)->m_bindgenAdditions;
-            Bindgen::setupClassStructure(init, &init.classStructure - additions.m_classes.begin());
-        });
-    }
 }
 
 }

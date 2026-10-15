@@ -1,9 +1,76 @@
 #pragma once
-#include <BunIDLTypes.h>
+#include "Bindgen/JSStringUTF8View.h"
+// WebCore's. In quotes it would be this file.
+#include <IDLTypes.h>
+#include <concepts>
+#include <cstddef>
 #include <span>
-#include "JSStringUTF8View.h"
+#include <wtf/Vector.h>
+
+namespace WTF {
+struct CrashOnOverflow;
+}
+
+namespace Bun {
+struct MimallocMalloc;
+}
 
 namespace Bun::Bindgen {
+
+// Like `IDLAny`, but always stored as a raw `JSValue`. This should only be
+// used in contexts where the `JSValue` will be stored on the stack.
+struct IDLRawAny : WebCore::IDLType<JSC::JSValue> {
+    // Storage in a sequence is explicitly unsupported, as this would create a
+    // `Vector<JSValue>`, whose contents are invisible to the GC.
+    using SequenceStorageType = void;
+};
+
+// For use in unions, to represent a nullable union.
+struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
+
+// Treats all falsy values as null.
+template<typename IDL>
+struct IDLFalsyAsNull : WebCore::IDLNullable<IDL> {};
+
+template<std::integral T>
+struct IDLStrictInteger : WebCore::IDLInteger<T> {};
+struct IDLStrictDouble : WebCore::IDLUnrestrictedDouble {};
+struct IDLStrictBoolean : WebCore::IDLBoolean {};
+struct IDLStrictString : WebCore::IDLDOMString {};
+
+// Converts to a number first.
+template<std::integral T>
+struct IDLLooseInteger : IDLStrictInteger<T> {};
+
+namespace Detail {
+template<typename IDL>
+using IDLMimallocSequence = WebCore::IDLSequence<
+    IDL,
+    WTF::Vector<
+        typename IDL::SequenceStorageType,
+        0,
+        WTF::CrashOnOverflow,
+        16,
+        Bun::MimallocMalloc>>;
+}
+
+template<typename IDL>
+struct IDLArray : Detail::IDLMimallocSequence<IDL> {
+    using Base = Detail::IDLMimallocSequence<IDL>;
+};
+
+template<typename T, typename RefDerefTraits = WTF::DefaultRefDerefTraits<T>>
+struct IDLRef : WebCore::IDLType<WTF::RefPtr<T, WTF::RawPtrTraits<T>, RefDerefTraits>> {
+    using NullableType = WTF::RefPtr<T, WTF::RawPtrTraits<T>, RefDerefTraits>;
+    using NullableInnerParameterType = NullableType;
+
+    static inline std::nullptr_t nullValue() { return nullptr; }
+};
+
+struct IDLArrayBufferRef : IDLRef<JSC::ArrayBuffer> {};
+
+// Defined in IDLConvertBlob.h
+struct IDLBlobRef;
 
 // Dictionaries that hold a raw `JSValue` or a `JSStringUTF8View` must live on the stack.
 template<typename T>
@@ -37,7 +104,7 @@ struct IDLBufferSourceBytes : WebCore::IDLType<std::span<const uint8_t>> {
     static NullableType nullValue() { return {}; }
 };
 
-// The same values, as the `JSValue` itself. See Bun::IDLRawAny.
+// The same values, as the `JSValue` itself. See IDLRawAny.
 struct IDLRawBufferSource : WebCore::IDLType<JSC::JSValue> {
     using SequenceStorageType = void;
 };

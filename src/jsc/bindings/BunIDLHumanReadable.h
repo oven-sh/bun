@@ -1,5 +1,6 @@
 #pragma once
-#include "BunIDLTypes.h"
+#include "IDLTypes.h"
+#include <array>
 #include "ConcatCStrings.h"
 #include <wtf/text/ASCIILiteral.h>
 #include <concepts>
@@ -8,6 +9,10 @@ namespace Bun {
 
 template<typename IDL>
 struct IDLHumanReadableName;
+
+// A list of types, named "a, b, or c".
+template<typename... IDL>
+struct IDLAlternatives {};
 
 template<typename IDL>
 concept HasIDLHumanReadableName = requires { IDLHumanReadableName<IDL>::humanReadableName; };
@@ -47,10 +52,6 @@ static constexpr auto separatorForHumanReadableBinaryDisjunction()
     }
 }
 }
-
-template<> struct IDLHumanReadableName<Bun::IDLStrictNull> : BaseIDLHumanReadableName {
-    static constexpr auto humanReadableName = std::to_array("null");
-};
 
 template<typename IDL>
     requires std::derived_from<IDL, WebCore::IDLBoolean>
@@ -100,17 +101,6 @@ struct IDLHumanReadableName<WebCore::IDLOptional<IDL>> : BaseIDLHumanReadableNam
         "undefined");
 };
 
-template<typename IDL>
-struct IDLHumanReadableName<IDLFalsyAsNull<IDL>>
-    : IDLHumanReadableName<WebCore::IDLNullable<IDL>> {};
-
-template<HasIDLHumanReadableName IDL>
-struct IDLHumanReadableName<Bun::IDLArray<IDL>> : BaseIDLHumanReadableName {
-    static constexpr bool hasPreposition = true;
-    static constexpr auto humanReadableName
-        = Bun::concatCStrings("array of ", Detail::nestedHumanReadableName<IDL>());
-};
-
 // Will generally be overridden by each specific dictionary type.
 template<typename T>
 struct IDLHumanReadableName<WebCore::IDLDictionary<T>> : BaseIDLHumanReadableName {
@@ -125,14 +115,6 @@ struct IDLHumanReadableName<Bun::IDLAlternatives<IDL...>> : BaseIDLHumanReadable
     static constexpr bool isDisjunction = sizeof...(IDL) > 1;
     static constexpr auto humanReadableName
         = Bun::joinCStringsAsList(Detail::nestedHumanReadableName<IDL>()...);
-};
-
-template<> struct IDLHumanReadableName<Bun::IDLArrayBufferRef> : BaseIDLHumanReadableName {
-    static constexpr auto humanReadableName = std::to_array("ArrayBuffer");
-};
-
-template<> struct IDLHumanReadableName<Bun::IDLBlobRef> : BaseIDLHumanReadableName {
-    static constexpr auto humanReadableName = std::to_array("Blob");
 };
 
 }

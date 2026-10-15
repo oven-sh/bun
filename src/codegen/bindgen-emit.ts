@@ -241,7 +241,11 @@ return;`;
 
 function cppHeaderForUnion(type: UnionType): string {
   const { name, alternatives } = type;
-  const idlTypes = alternatives.map(a => a.type.idlType).join(", ");
+  /** As error messages list them: null last. */
+  const idlTypes = alternatives
+    .toSorted((a, b) => Number(a.type instanceof UnitType) - Number(b.type instanceof UnitType))
+    .map(a => a.type.idlType)
+    .join(", ");
   const { outcomes, code } = cppChooseByKind("value", type.alternativesByKind);
   const mayMatchNone = (candidates: readonly number[]) =>
     candidates.length === 0 || alternatives[candidates.at(-1)!].type.mayRefuse;
@@ -369,7 +373,7 @@ ${
 export function cppHeader(file: SchemaFile): string {
   const headers = new Set<string>();
   for (const type of file.types) for (const dependency of type.dependencies) dependency.getHeaders(headers);
-  if (file.types.some(type => type instanceof ClassType)) headers.add("Bindgen/JSBindgenObject.h");
+  if (file.types.some(type => type instanceof ClassType)) headers.add("Bindgen/JSWrapper.h");
   headers.delete(`Generated${file.origin.namespace}.h`);
   return `${banner(file.origin)}#pragma once
 #include "root.h"
@@ -580,7 +584,7 @@ struct ${name}Traits {
     static size_t payloadSize() { return ${symbolName(type, "payloadSize")}; }
     static void finalize(void* payload) { ${classSymbolName(type, "finalize")}(payload); }
 };
-using JS${name} = JSBindgenObject<${name}Traits>;
+using JS${name} = JSWrapper<${name}Traits>;
 extern const ClassDefinition JS${name}ClassDefinition;
 }
 template<> struct Bun::IDLHumanReadableName<${type.idlType}> : Bun::BaseIDLHumanReadableName {
@@ -865,7 +869,7 @@ export function cppTables(tables: Tables): string {
     ${items.join(",\n    ")}
 } };`;
   return `${banner(null)}#pragma once
-#include "Bindgen/JSBindgenObject.h"
+#include "Bindgen/JSWrapper.h"
 #include <array>
 #include <wtf/text/ASCIILiteral.h>
 

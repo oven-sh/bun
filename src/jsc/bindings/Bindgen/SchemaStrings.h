@@ -5,15 +5,15 @@
 
 namespace Bun::Bindgen {
 
-// Identifiers for dictionary member names and JSStrings for enumeration values, each made on first use.
-class Identifiers {
-    WTF_MAKE_NONCOPYABLE(Identifiers);
-    WTF_MAKE_NONMOVABLE(Identifiers);
+// The strings schemas name, per VM: Identifiers for dictionary members and JSStrings for enumeration values, each made on first use.
+class SchemaStrings {
+    WTF_MAKE_NONCOPYABLE(SchemaStrings);
+    WTF_MAKE_NONMOVABLE(SchemaStrings);
 
 public:
-    explicit Identifiers(JSC::VM&);
+    explicit SchemaStrings(JSC::VM&);
 
-    // `count` identifiers starting at Tables::memberNames[first] (GeneratedBindings+Tables.h).
+    // `count` of them, starting at Tables::memberNames[first] (GeneratedBindings+Tables.h).
     ALWAYS_INLINE const JSC::Identifier* memberNames(unsigned first, unsigned count)
     {
         if (m_memberNames[first].isNull()) [[unlikely]]
@@ -42,9 +42,6 @@ private:
     const std::unique_ptr<JSC::JSString*[]> m_enumerationValues;
 };
 
-Identifiers& identifiers(JSC::VM&);
-
-// The Structure of a returned dictionary, by index into Tables::objectStructures.
-JSC::Structure* createObjectStructure(JSC::VM&, JSC::JSGlobalObject*, unsigned index);
+SchemaStrings& schemaStrings(JSC::VM&);
 
 }

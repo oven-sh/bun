@@ -1,18 +1,18 @@
 #pragma once
-#include "BunIDLTypes.h"
+#include "Bindgen/IDLTypes.h"
 #include "BunIDLConvertBase.h"
 #include "blob.h"
 #include "ZigGeneratedClasses.h"
 
-namespace Bun {
-struct IDLBlobRef : IDLBunInterface<WebCore::BlobImpl, WebCore::BlobImplRefDerefTraits> {};
+namespace Bun::Bindgen {
+struct IDLBlobRef : IDLRef<WebCore::BlobImpl, WebCore::BlobImplRefDerefTraits> {};
 }
 
-template<> struct WebCore::Converter<Bun::IDLBlobRef> : Bun::DefaultTryConverter<Bun::IDLBlobRef> {
+template<> struct WebCore::Converter<Bun::Bindgen::IDLBlobRef> : Bun::DefaultTryConverter<Bun::Bindgen::IDLBlobRef> {
     static constexpr bool conversionHasSideEffects = false;
 
     template<Bun::IDLConversionContext Ctx>
-    static std::optional<typename Bun::IDLBlobRef::ImplementationType> tryConvert(
+    static std::optional<typename Bun::Bindgen::IDLBlobRef::ImplementationType> tryConvert(
         JSC::JSGlobalObject& globalObject,
         JSC::JSValue value,
         Ctx& ctx)

@@ -45,9 +45,13 @@ export const any = new AnyType();
 export const bufferSource = new BufferSourceType();
 
 /** The native `Blob` behind a JS `Blob`. */
-export const blob = new RefType("Bun::IDLBlobRef", "Blob", "bun_jsc::webcore_types::Blob", "BunIDLConvertBlob.h", [
-  { cpp: "WebCore::JSBlob" },
-]);
+export const blob = new RefType(
+  "Bun::Bindgen::IDLBlobRef",
+  "Blob",
+  "bun_jsc::webcore_types::Blob",
+  "Bindgen/IDLConvertBlob.h",
+  [{ cpp: "WebCore::JSBlob" }],
+);
 
 const null_ = new UnitType("null");
 

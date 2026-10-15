@@ -1,6 +1,6 @@
 #pragma once
 #include "root.h"
-#include "Bindgen/Identifiers.h"
+#include "Bindgen/SchemaStrings.h"
 #include <JavaScriptCore/JSObject.h>
 
 namespace Bun::Bindgen {
@@ -12,7 +12,7 @@ public:
         : m_vm(vm)
         , m_globalObject(globalObject)
         , m_object(object)
-        , m_memberNames(identifiers(vm).memberNames(firstMemberNameIndex, memberNameCount))
+        , m_memberNames(schemaStrings(vm).memberNames(firstMemberNameIndex, memberNameCount))
     {
     }
 

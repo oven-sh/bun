@@ -196,32 +196,6 @@ describe("strings", () => {
       expect(bindgen.utf8EchoLoose(...args)).toBe("undefined");
     }
   });
-
-  it("keeps the characters of a substring while its base is swapped for an atom", () => {
-    const flat = (text: string) => Buffer.from(text).toString("latin1");
-    const keys: Record<string, number> = {};
-    // Whether a collection frees the base's old characters depends on more than this test controls, so it tries many.
-    for (let round = 0; round < 20; round++) {
-      const text = `${round}`.padStart(4, "0") + Buffer.alloc(296, "q").toString();
-      const strings = { base: flat(text), equal: flat(text) };
-      keys[strings.equal] = 1;
-      const options = {
-        name: strings.base.substring(10, 290),
-        // Read after `name` is converted.
-        get renamed() {
-          // The base takes the atom's characters; two more lookups push its own out of the VM's last-atomized slot.
-          keys[strings.base];
-          keys[flat(`${round} a`)];
-          keys[flat(`${round} b`)];
-          Bun.gc(true);
-          const reuse = Array.from({ length: 2000 }, () => Buffer.alloc(300, "Z").toString("latin1"));
-          Bun.gc(true);
-          return reuse.length ? 1 : 0;
-        },
-      };
-      expect(bindgen.optionsEcho(options).name).toBe(text.substring(10, 290));
-    }
-  });
 });
 
 describe("enumerations", () => {

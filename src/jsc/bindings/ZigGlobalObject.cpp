@@ -67,7 +67,6 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
-#include "BunIDLConvert.h"
 #include "BunObject.h"
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"

@@ -11,18 +11,18 @@
 #include <JavaScriptCore/Lookup.h>
 
 namespace Bun::Bindgen {
-template<typename Traits> class JSBindgenObject;
+template<typename Traits> class JSWrapper;
 }
 
 // A cell whose type is JSDOMWrapperType is a JSDestructibleObject, so its ClassInfo is in the cell: no Structure load.
 template<typename Traits>
-struct JSC::JSCastingHelpers::InheritsTraits<Bun::Bindgen::JSBindgenObject<Traits>> {
+struct JSC::JSCastingHelpers::InheritsTraits<Bun::Bindgen::JSWrapper<Traits>> {
     static constexpr std::optional<JSTypeRange> typeRange { std::nullopt };
     template<typename From>
     static inline bool inherits(From* from)
     {
         return from->type() == static_cast<JSType>(WebCore::JSDOMWrapperType)
-            && uncheckedDowncast<const JSDestructibleObject>(from)->classInfo() == Bun::Bindgen::JSBindgenObject<Traits>::info();
+            && uncheckedDowncast<const JSDestructibleObject>(from)->classInfo() == Bun::Bindgen::JSWrapper<Traits>::info();
     }
 };
 
@@ -43,7 +43,7 @@ struct ClassDefinition {
 
 // JSDestructibleObject | WriteBarrier internalFields[numberOfInternalFields] | the Rust payload
 template<typename Traits>
-class JSBindgenObject final : public JSC::JSDestructibleObject {
+class JSWrapper final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
@@ -77,16 +77,16 @@ public:
     }
 
     // The payload is uninitialized: the caller writes it before anything else can run.
-    static JSBindgenObject* create(JSC::VM& vm, JSC::Structure* structure)
+    static JSWrapper* create(JSC::VM& vm, JSC::Structure* structure)
     {
-        auto* object = new (NotNull, JSC::allocateCell<JSBindgenObject>(vm, allocationSize())) JSBindgenObject(vm, structure);
+        auto* object = new (NotNull, JSC::allocateCell<JSWrapper>(vm, allocationSize())) JSWrapper(vm, structure);
         object->finishCreation(vm);
         return object;
     }
 
     static void destroy(JSC::JSCell* cell)
     {
-        Traits::finalize(static_cast<JSBindgenObject*>(cell)->payload());
+        Traits::finalize(static_cast<JSWrapper*>(cell)->payload());
     }
 
     static constexpr size_t offsetOfInternalFields() { return sizeof(Base); }
@@ -101,7 +101,7 @@ public:
     }
 
 private:
-    JSBindgenObject(JSC::VM& vm, JSC::Structure* structure)
+    JSWrapper(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
         // Rust reads the schema's `internalFields`, which start as `undefined`. The rest hold cached getters: empty until computed.
@@ -116,24 +116,24 @@ private:
 
 template<typename Traits>
 template<typename Visitor>
-void JSBindgenObject<Traits>::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
+void JSWrapper<Traits>::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = uncheckedDowncast<JSBindgenObject>(cell);
+    auto* thisObject = uncheckedDowncast<JSWrapper>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     for (auto& field : thisObject->internalFields())
         visitor.append(field);
 }
 
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename Traits>, JSBindgenObject<Traits>);
+DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename Traits>, JSWrapper<Traits>);
 
 template<typename Traits>
-const JSC::ClassInfo JSBindgenObject<Traits>::s_info = { Traits::className, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBindgenObject) };
+const JSC::ClassInfo JSWrapper<Traits>::s_info = { Traits::className, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWrapper) };
 
-template<typename Traits> struct ExternTraits<JSBindgenObject<Traits>*> : TrivialExtern<JSBindgenObject<Traits>*> {};
+template<typename Traits> struct ExternTraits<JSWrapper<Traits>*> : TrivialExtern<JSWrapper<Traits>*> {};
 
 // The constructor object of every generated class that has one.
-class JSBindgenConstructor final : public JSC::InternalFunction {
+class JSClassConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
@@ -145,7 +145,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSBindgenConstructor, WebCore::UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<JSClassConstructor, WebCore::UseCustomHeapCellType::No>(
             vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForBunClassConstructor, m_subspaceForBunClassConstructor));
     }
 
@@ -154,14 +154,15 @@ public:
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
-    static JSBindgenConstructor* create(JSC::VM&, JSC::JSGlobalObject*, const ClassDefinition&, JSC::JSObject* prototype);
+    static JSClassConstructor* create(JSC::VM&, JSC::JSGlobalObject*, const ClassDefinition&, JSC::JSObject* prototype);
 
 private:
-    JSBindgenConstructor(JSC::VM&, JSC::Structure*, JSC::NativeFunction construct);
+    JSClassConstructor(JSC::VM&, JSC::Structure*, JSC::NativeFunction construct);
 };
 
 // By index into Tables::classes (GeneratedBindings+Tables.h).
 JSC::Structure* structureForClass(JSC::JSGlobalObject*, unsigned classIndex);
+void setupClassStructure(JSC::LazyClassStructure::Initializer&, unsigned classIndex);
 JSC::JSObject* constructorForClass(JSC::JSGlobalObject*, unsigned classIndex);
 // The class's own, or one for `new.target` (a subclass, Reflect.construct). May throw.
 JSC::Structure* structureForNewTarget(JSC::JSGlobalObject*, JSC::CallFrame*, unsigned classIndex);

@@ -4,11 +4,11 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <wtf/FixedVector.h>
 
-namespace Bun {
+namespace Bun::Bindgen {
 
-// The per-global-object state of generated bindings, by index into Bindgen::Tables.
-struct BindgenAdditionsToGlobalObject {
-    BindgenAdditionsToGlobalObject();
+// The per-global-object state of generated bindings, by index into Tables.
+struct AdditionsToGlobalObject {
+    AdditionsToGlobalObject();
     void initialize();
 
     template<typename Visitor>

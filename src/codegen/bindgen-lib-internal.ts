@@ -296,7 +296,7 @@ class PrimitiveType extends Type {
 }
 
 export class BoolType extends PrimitiveType {
-  constructor(idlType = "Bun::IDLStrictBoolean", valueKinds: ValueKinds = ["boolean"]) {
+  constructor(idlType = "Bun::Bindgen::IDLStrictBoolean", valueKinds: ValueKinds = ["boolean"]) {
     super(idlType, "boolean", "bool", 1, valueKinds);
   }
   /** `ToBoolean`: any value is accepted. */
@@ -320,7 +320,7 @@ export class IntegerType extends PrimitiveType {
   /** Only the strict conversion is given no `idlType`. */
   constructor(info: IntegerInfo, idlType?: string) {
     super(
-      idlType ?? `Bun::IDLStrictInteger<${info.cpp}>`,
+      idlType ?? `Bun::Bindgen::IDLStrictInteger<${info.cpp}>`,
       "number",
       info.rust,
       info.size,
@@ -342,7 +342,7 @@ export class IntegerType extends PrimitiveType {
   }
   /** `ToNumeric` first, then as strict as the default. */
   get loose(): IntegerType {
-    return new IntegerType(this.info, `Bun::IDLLooseInteger<${this.info.cpp}>`);
+    return new IntegerType(this.info, `Bun::Bindgen::IDLLooseInteger<${this.info.cpp}>`);
   }
   /** WebIDL conversion: `ToNumber`, then wrap modulo the width. */
   get wrap(): IntegerType {
@@ -398,7 +398,7 @@ export const integers = {
 
 export class DoubleType extends PrimitiveType {
   constructor() {
-    super("Bun::IDLStrictDouble", "number", "f64", 8, ["number"]);
+    super("Bun::Bindgen::IDLStrictDouble", "number", "f64", 8, ["number"]);
   }
 }
 
@@ -409,7 +409,7 @@ export class UnitType extends Type {
   constructor(tsType: "null" | "undefined") {
     super();
     this.tsType = tsType;
-    this.idlType = tsType === "null" ? "Bun::IDLStrictNull" : "";
+    this.idlType = tsType === "null" ? "Bun::Bindgen::IDLStrictNull" : "";
   }
   get valueKinds(): ValueKinds {
     return this.tsType === "null" ? ["undefined", "null"] : ["undefined"];
@@ -445,7 +445,7 @@ export class StringType extends Type {
   readonly idlType: string;
   readonly tsType = "string";
   readonly #valueKinds: ValueKinds;
-  constructor(idlType = "Bun::IDLStrictString", valueKinds: ValueKinds = ["string"]) {
+  constructor(idlType = "Bun::Bindgen::IDLStrictString", valueKinds: ValueKinds = ["string"]) {
     super();
     this.idlType = idlType;
     this.#valueKinds = valueKinds;
@@ -620,7 +620,13 @@ export class BufferSourceType extends Type {
   }
   /** A reference on a `JSC::ArrayBuffer`, which can be stored: the buffer itself, or a copy of what a view shows. */
   get arrayBuffer(): RefType {
-    return new RefType("Bun::IDLArrayBufferRef", this.tsType, "bun_jsc::JSCArrayBuffer", null, bufferSourceKinds);
+    return new RefType(
+      "Bun::Bindgen::IDLArrayBufferRef",
+      this.tsType,
+      "bun_jsc::JSCArrayBuffer",
+      null,
+      bufferSourceKinds,
+    );
   }
   get holdsJSValue(): boolean {
     return true;
@@ -693,7 +699,7 @@ export class WithValueType extends Type {
 }
 
 export class AnyType extends Type {
-  readonly idlType = "Bun::IDLRawAny";
+  readonly idlType = "Bun::Bindgen::IDLRawAny";
   readonly tsType = "any";
   get holdsJSValue(): boolean {
     return true;
@@ -789,7 +795,7 @@ export class OptionalType extends Type {
     const template = {
       optional: "WebCore::IDLOptional",
       nullable: "WebCore::IDLNullable",
-      falsyAsNull: "Bun::IDLFalsyAsNull",
+      falsyAsNull: "Bun::Bindgen::IDLFalsyAsNull",
     }[this.modifier];
     return `${template}<${this.inner.idlType}>`;
   }
@@ -965,7 +971,7 @@ export class ArrayType extends Type {
       !this.element.borrowsFrame,
       "an array argument cannot hold borrowed views; use b.string or b.string.utf8.owned",
     );
-    return `Bun::IDLArray<${this.element.idlType}>`;
+    return `Bun::Bindgen::IDLArray<${this.element.idlType}>`;
   }
   get tsType(): string {
     return `(${this.element.tsType})[]`;

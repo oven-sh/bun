@@ -1,7 +1,7 @@
 #pragma once
 #include "root.h"
+#include "Bindgen/IDLTypes.h"
 #include "ErrorCode.h"
-#include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
 
 namespace Bun::Bindgen {

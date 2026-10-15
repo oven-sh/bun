@@ -13,18 +13,6 @@ struct IDLConversionContextMarker {};
 template<typename T>
 concept IDLConversionContext = std::derived_from<T, Detail::IDLConversionContextMarker>;
 
-namespace Detail {
-template<typename... IDL>
-struct IDLUnionForDiagnostic {
-    using Type = IDLAlternatives<IDL...>;
-};
-
-template<typename... IDL>
-struct IDLUnionForDiagnostic<IDLStrictNull, IDL...> {
-    using Type = IDLAlternatives<IDL..., Bun::IDLStrictNull>;
-};
-}
-
 template<typename Derived>
 struct IDLConversionContextBase : Detail::IDLConversionContextMarker {
     void throwRequired(JSC::JSGlobalObject& global, JSC::ThrowScope& scope)
@@ -134,11 +122,10 @@ struct IDLConversionContextBase : Detail::IDLConversionContextMarker {
         requires(sizeof...(Alternatives) > 0)
     void throwNoMatchInUnion(JSC::JSGlobalObject& global, JSC::ThrowScope& scope)
     {
-        using Union = Detail::IDLUnionForDiagnostic<Alternatives...>::Type;
         derived().throwTypeErrorWithPredicate(
             global,
             scope,
-            WTF::makeString("must be of type "_s, idlHumanReadableName<Union>()));
+            WTF::makeString("must be of type "_s, idlHumanReadableName<IDLAlternatives<Alternatives...>>()));
     }
 
     template<typename... Alternatives>

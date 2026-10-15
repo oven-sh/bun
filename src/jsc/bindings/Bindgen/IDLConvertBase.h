@@ -1,6 +1,6 @@
 #pragma once
-#include <BunIDLConvertBase.h>
-#include <ErrorCode.h>
+#include "BunIDLConvertBase.h"
+#include "ErrorCode.h"
 #include <wtf/text/MakeString.h>
 
 namespace Bun::Bindgen {

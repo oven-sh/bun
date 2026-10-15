@@ -71,7 +71,7 @@ struct node_module;
 #include <js_native_api.h>
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
-#include "BindgenAdditionsToGlobalObject.h"
+#include "Bindgen/AdditionsToGlobalObject.h"
 #include "NativeModuleList.h"
 #include "streams/JSStreamsRuntime.h"
 
@@ -500,7 +500,7 @@ public:
 
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
     V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
-    V(public, Bun::BindgenAdditionsToGlobalObject, m_bindgenAdditions)                                       \
+    V(public, Bun::Bindgen::AdditionsToGlobalObject, m_bindgenAdditions)                                      \
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
                                                                                                              \

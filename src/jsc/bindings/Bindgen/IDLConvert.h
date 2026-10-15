@@ -1,12 +1,38 @@
 #pragma once
-#include <BunIDLConvert.h>
+#include "Bindgen/IDLConvertBase.h"
+#include "Bindgen/IDLConvertNumbers.h"
+#include "Bindgen/IDLTypes.h"
+#include "JSDOMConvert.h"
+#include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/StringObject.h>
-#include "IDLTypes.h"
-#include "IDLConvertBase.h"
+#include <utility>
 
 namespace Bun {
+template<> struct IDLHumanReadableName<Bindgen::IDLStrictNull> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("null");
+};
+
+template<typename IDL>
+struct IDLHumanReadableName<Bindgen::IDLFalsyAsNull<IDL>>
+    : IDLHumanReadableName<WebCore::IDLNullable<IDL>> {};
+
+template<HasIDLHumanReadableName IDL>
+struct IDLHumanReadableName<Bindgen::IDLArray<IDL>> : BaseIDLHumanReadableName {
+    static constexpr bool hasPreposition = true;
+    static constexpr auto humanReadableName
+        = Bun::concatCStrings("array of ", Detail::nestedHumanReadableName<IDL>());
+};
+
+template<> struct IDLHumanReadableName<Bindgen::IDLArrayBufferRef> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("ArrayBuffer");
+};
+
+template<> struct IDLHumanReadableName<Bindgen::IDLBlobRef> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("Blob");
+};
+
 template<> struct IDLHumanReadableName<Bindgen::IDLStrictUTF8String> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("string");
 };
@@ -145,5 +171,145 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawInterface<JSClass>> : Bun::Default
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
         ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, JSClass::info()->className));
+    }
+};
+
+template<> struct WebCore::Converter<Bun::Bindgen::IDLRawAny> : WebCore::DefaultConverter<Bun::Bindgen::IDLRawAny> {
+    static JSC::JSValue convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
+    {
+        return value;
+    }
+};
+
+template<typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLFalsyAsNull<IDL>>
+    : Bun::DefaultContextConverter<Bun::Bindgen::IDLFalsyAsNull<IDL>> {
+
+    using ReturnType = WebCore::Converter<WebCore::IDLNullable<IDL>>::ReturnType;
+
+    template<Bun::IDLConversionContext Ctx>
+    static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        if (!value.toBoolean(&globalObject))
+            return IDL::nullValue();
+        return Bun::convertIDL<IDL>(globalObject, value, ctx);
+    }
+};
+
+template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictBoolean>
+    : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictBoolean> {
+
+    static constexpr bool conversionHasSideEffects = false;
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<bool> tryConvert(
+        JSC::JSGlobalObject& globalObject,
+        JSC::JSValue value,
+        Ctx& ctx)
+    {
+        if (value.isBoolean()) {
+            return value.asBoolean();
+        }
+        return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(
+        JSC::JSGlobalObject& globalObject,
+        JSC::ThrowScope& scope,
+        Ctx& ctx)
+    {
+        ctx.throwNotBoolean(globalObject, scope);
+    }
+};
+
+template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictString>
+    : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictString> {
+
+    static constexpr bool conversionHasSideEffects = false;
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<WTF::String> tryConvert(
+        JSC::JSGlobalObject& globalObject,
+        JSC::JSValue value,
+        Ctx& ctx)
+    {
+        if (value.isString()) {
+            return value.toWTFString(&globalObject);
+        }
+        return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(
+        JSC::JSGlobalObject& globalObject,
+        JSC::ThrowScope& scope,
+        Ctx& ctx)
+    {
+        ctx.throwNotString(globalObject, scope);
+    }
+};
+
+template<typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLArray<IDL>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLArray<IDL>> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<typename Bun::Bindgen::IDLArray<IDL>::ImplementationType> tryConvert(
+        JSC::JSGlobalObject& globalObject,
+        JSC::JSValue value,
+        Ctx& ctx)
+    {
+        if (JSC::isJSArray(value)) {
+            return Bun::convertIDL<typename Bun::Bindgen::IDLArray<IDL>::Base>(globalObject, value, ctx);
+        }
+        return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(
+        JSC::JSGlobalObject& globalObject,
+        JSC::ThrowScope& scope,
+        Ctx& ctx)
+    {
+        ctx.template throwNotArray<IDL>(globalObject, scope);
+    }
+};
+
+template<> struct WebCore::Converter<Bun::Bindgen::IDLArrayBufferRef>
+    : Bun::DefaultTryConverter<Bun::Bindgen::IDLArrayBufferRef> {
+
+    static constexpr bool conversionHasSideEffects = false;
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<typename Bun::Bindgen::IDLArrayBufferRef::ImplementationType> tryConvert(
+        JSC::JSGlobalObject& globalObject,
+        JSC::JSValue value,
+        Ctx& ctx)
+    {
+        auto& vm = JSC::getVM(&globalObject);
+        if (auto* jsBuffer = JSC::toUnsharedArrayBuffer(vm, value)) {
+            return jsBuffer;
+        }
+        if (auto* jsView = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+            if (jsView->isShared()) {
+                return std::nullopt;
+            }
+            // A copy: the view's buffer can hold more than the view shows.
+            if (auto bytes = JSC::ArrayBuffer::tryCreate(jsView->span())) {
+                return bytes;
+            }
+            // Declared where it throws: at the top, every caller would owe a check for the paths that cannot.
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            JSC::throwOutOfMemoryError(&globalObject, scope);
+        }
+        return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(
+        JSC::JSGlobalObject& globalObject,
+        JSC::ThrowScope& scope,
+        Ctx& ctx)
+    {
+        ctx.throwNotBufferSource(globalObject, scope);
     }
 };

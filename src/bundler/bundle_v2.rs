@@ -51,6 +51,15 @@ pub use bv2_impl::JSBundleCompletionTask;
 /// `jsc::api::JSBundler::FileMap` — re-exported from the canonical def below.
 pub use api::JSBundler::FileMap;
 
+/// The import records of one file that are at the onResolve plugins.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct RecordsAtPlugins {
+    /// The answers that are still to come.
+    pub(crate) pending: u32,
+    /// An answer gave a record its module.
+    pub(crate) patched: bool,
+}
+
 pub struct BundleV2<'a> {
     // `ssr_transpiler` may alias this same transpiler when the SSR graph
     // isn't separate, so it stays `*mut`; `transpiler` is `&'a mut` for
@@ -103,6 +112,9 @@ pub struct BundleV2<'a> {
 
     /// The queue of `resolve_records_of_parsed_file`, kept for its capacity.
     pub(crate) late_resolve_queue: ResolveQueue,
+
+    /// The files that have import records at the onResolve plugins, by source index.
+    pub(crate) records_at_plugins: ArrayHashMap<IndexInt, RecordsAtPlugins>,
 
     /// Allocations not tracked by a threadlocal heap.
     pub(crate) free_list: Vec<Box<[u8]>>,
@@ -2979,6 +2991,7 @@ pub mod bv2_impl {
                 source_code_length: 0,
                 thread_lock: bun_core::ThreadLock::init_locked(),
                 late_resolve_queue: ResolveQueue::default(),
+                records_at_plugins: ArrayHashMap::new(),
                 free_list: Vec::new(),
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
@@ -4929,7 +4942,43 @@ pub mod bv2_impl {
         }
     }
 
+    /// Runs `BundleV2::plugin_answer_done` when `on_resolve` returns, on every path.
+    struct PluginAnswerGuard {
+        bv2: *mut BundleV2<'static>,
+        importer_source_index: IndexInt,
+    }
+
+    impl Drop for PluginAnswerGuard {
+        fn drop(&mut self) {
+            // SAFETY: see `ScanCounterGuard`: a local of `on_resolve`, which holds the live bundle.
+            unsafe { (*self.bv2).plugin_answer_done(self.importer_source_index) };
+        }
+    }
+
     impl<'a> BundleV2<'a> {
+        /// An onResolve answer gave an import record of this file its module.
+        fn record_patched_by_plugin_answer(&mut self, importer_source_index: IndexInt) {
+            if let Some(at_plugins) = self.records_at_plugins.get_mut(&importer_source_index) {
+                at_plugins.patched = true;
+            }
+        }
+
+        /// Runs the barrel pass that skipped the plugin-routed records of the file (#40606), once all of them are back.
+        fn plugin_answer_done(&mut self, importer_source_index: IndexInt) {
+            let Some(at_plugins) = self.records_at_plugins.get_mut(&importer_source_index) else {
+                return;
+            };
+            at_plugins.pending -= 1;
+            if at_plugins.pending > 0 {
+                return;
+            }
+            let patched = at_plugins.patched;
+            self.records_at_plugins.swap_remove(&importer_source_index);
+            if patched {
+                self.schedule_barrel_imports_after_plugin_resolve(importer_source_index);
+            }
+        }
+
         /// Re-run the idempotent barrel seeding pass after a plugin `onResolve` result patches a record that the importer's parse-completion pass saw unresolved and skipped (#40606).
         fn schedule_barrel_imports_after_plugin_resolve(
             &mut self,
@@ -4957,6 +5006,11 @@ pub mod bv2_impl {
             // RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
             let _dec_guard = this.decrement_scan_counter_on_drop();
+            // Drops before the scan counter guard: the barrel pass can schedule parse tasks.
+            let _answer_guard = PluginAnswerGuard {
+                bv2: std::ptr::from_mut::<BundleV2>(this).cast::<BundleV2<'static>>(),
+                importer_source_index: resolve.import_record.importer_source_index,
+            };
             // `Resolve` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct ResolveDeinitGuard(*mut jsc_api::JSBundler::Resolve);
             impl Drop for ResolveDeinitGuard {
@@ -5052,7 +5106,7 @@ pub mod bv2_impl {
                             PluginAnswer::Declined,
                         );
                         this.graph.pending_items += u32::try_from(scheduled).expect("int cast");
-                        this.schedule_barrel_imports_after_plugin_resolve(
+                        this.record_patched_by_plugin_answer(
                             resolve.import_record.importer_source_index,
                         );
                         return;
@@ -5166,7 +5220,7 @@ pub mod bv2_impl {
                             PluginAnswer::Path(&mut answer),
                         );
                         this.graph.pending_items += u32::try_from(scheduled).expect("int cast");
-                        this.schedule_barrel_imports_after_plugin_resolve(
+                        this.record_patched_by_plugin_answer(
                             resolve.import_record.importer_source_index,
                         );
                     }
@@ -5962,6 +6016,16 @@ pub mod bv2_impl {
                         bstr::BStr::new(&import_record.path.text)
                     );
                     self.increment_scan_counter();
+                    {
+                        let at_plugins = self
+                            .records_at_plugins
+                            .get_or_put(source_index)
+                            .expect("oom");
+                        if !at_plugins.found_existing {
+                            *at_plugins.value_ptr = Default::default();
+                        }
+                        at_plugins.value_ptr.pending += 1;
+                    }
 
                     // Arena-owned; the dispatch
                     // chain holds the raw `*mut Resolve` until the JS thread calls

@@ -272,7 +272,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
 
             if (short_ticks == s->timeout) {
                 s->timeout = 255;
-                us_dispatch_timeout(s);
+                s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
             }
             /* An owner must not deinit the embedding group from a timeout handler
              * (see us_socket_group_deinit). Survive one that closed every socket
@@ -317,7 +317,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         unsigned char long_stamp = s->group->long_timestamp;
         if (stamp == s->timeout) {
             s->timeout = 255;
-            us_dispatch_timeout(s);
+            s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
             if (loop_data->low_prio_iterator != s) continue;
         }
         if (long_stamp == s->long_timeout) {
@@ -809,9 +809,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         ) {
                             repeat_recv_count++;
 
-                            // When not hung up, read a maximum of 10 times to avoid starving other sockets
+                            // When not hung up, read a maximum of 10 more times: a peer that refills the receive buffer
+                            // during on_data keeps every read full, and timers only run once we return to the loop.
                             // We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT
-                            if (!(repeat_recv_count > 10 && loop->num_ready_polls > 2)) {
+                            if (repeat_recv_count <= 10) {
                                 continue;
                             }
                         }
@@ -889,15 +890,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * read_eof is set there is nothing left to drain and deferring would only
              * lose the close. Error-flagged events keep the error path. A hangup
              * takes the write side down too, so a hangup_closes_unsent socket does
-             * not wait when the write this event retried failed again.
-             * A socket that waits in the low-priority queue has its reads off too, and
-             * us_internal_handle_low_priority_sockets is its resume(). READABLE in
-             * `events` means that the read loop ran here: that eof is behind the data. */
+             * not wait when the write this event retried failed again. */
             const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
             const int unsent_is_lost = hangup && s && s->hangup_closes_unsent && s->flags.last_write_failed;
-            const int reads_are_off = eof_deferrable &&
-                (s->flags.is_paused || (s->flags.low_prio_state == 1 && !(events & LIBUS_SOCKET_READABLE)));
-            if (reads_are_off && !unsent_is_lost) {
+            if (eof_deferrable && s->flags.is_paused && !unsent_is_lost) {
 #ifdef LIBUS_USE_EPOLL
                 /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail stays in
                  * the kernel until resume() re-adds the fd via us_poll_change (end() while paused keeps it parked). */
@@ -914,6 +910,21 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * this batch resumed it: reads are armed again and nothing was read
                  * here, so let the next poll re-report it together with READABLE and
                  * the read loop drain it, instead of closing over the unread tail. */
+                eof = 0;
+            } else if (eof_deferrable && s->flags.low_prio_state == 1 && !unsent_is_lost) {
+                /* Parked in the low-priority queue, where kqueue's sentinel knote still reports the
+                 * peer's FIN and epoll still reports a hangup. What the peer sent ahead of it is
+                 * unread: a TLS 1.3 client that ends right after its handshake has its Finished
+                 * there, and an end here would fail the server's handshake and reset that client.
+                 * Leaving the queue re-arms the reads. */
+#ifdef LIBUS_USE_EPOLL
+                /* As for a paused socket: leave epoll, or EPOLLHUP fires again on every poll. The queue
+                 * registers the socket again (us_internal_handle_low_priority_sockets). */
+                if (hangup) {
+                    us_poll_stop(&s->p, loop);
+                    s->p.state.poll_type = us_internal_poll_type(&s->p);
+                }
+#endif
                 eof = 0;
             }
             if (eof && error && !read_fin) {
@@ -932,7 +943,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
                 if (us_socket_is_shut_down(s)) {
                     /* We got FIN back after sending it */
-                    s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+                    if (s->ssl && s->ssl_send_rejected && unsent_is_lost) {
+                        /* This owner reads nothing until the lost bytes drain: left open for what is queued, its hangup would fire for ever. */
+                        s = us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
+                        return;
+                    }
+                    s = s->ssl && s->ssl_send_rejected ? us_internal_ssl_on_end_after_rejected_send(s)
+                                                       : us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
                 if (s->flags.allow_half_open && !hangup && s->read_eof) {

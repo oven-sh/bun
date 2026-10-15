@@ -1,0 +1,27 @@
+{
+  "_id": "bundled-shipped-host",
+  "name": "bundled-shipped-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-shipped-host",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "bundled-shipped-inner": "1.0.0",
+        "one-dep": "1.0.0"
+      },
+      "bundleDependencies": [
+        "bundled-shipped-inner"
+      ],
+      "_id": "bundled-shipped-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-K61nLfhnj1NNBR+DHwnI/08sQEfn6DpaXoGz69ubdwJuZ44ysLvzb0IIvEjfMOmhILZZqI9H62X8E+vB+a8LSQ==",
+        "shasum": "e0a019deab9a791b1ec9cbf2a5af86381dd65f0d",
+        "tarball": "http://localhost:4873/bundled-shipped-host/-/bundled-shipped-host-1.0.0.tgz"
+      }
+    }
+  }
+}

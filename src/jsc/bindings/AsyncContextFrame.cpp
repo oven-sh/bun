@@ -127,6 +127,8 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__callbackOf(JSC::EncodedJSValue
     auto& vm = global->vm();                                                                                               \
     if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]                                                     \
         return jsUndefined();                                                                                              \
+    if (Bun::isFromRetiredTestIsolationRealm(functionObject)) [[unlikely]]                                                 \
+        return jsUndefined();                                                                                              \
     JSValue restoreAsyncContext;                                                                                           \
     InternalFieldTuple* asyncContextData = nullptr;                                                                        \
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(functionObject)) {                                              \
@@ -150,7 +152,7 @@ JSValue AsyncContextFrame::call(JSGlobalObject* global, JSValue functionObject, 
 #endif
 
     if (!global->isAsyncContextTrackingEnabled()) [[likely]] {
-        if (WebCore::clientData(global->vm())->isStoppingOrStopped(global->vm())) [[unlikely]]
+        if (WebCore::clientData(global->vm())->isStoppingOrStopped(global->vm()) || Bun::isFromRetiredTestIsolationRealm(functionObject)) [[unlikely]]
             return jsUndefined();
         return JSC::profiledCall(global, ProfilingReason::API, functionObject, JSC::getCallData(functionObject), thisValue, args);
     }

@@ -280,6 +280,8 @@ pub enum AllocatorType {
     #[default]
     Js,
     Mini,
+    /// The loop `Bun.spawnSync` waits on. Only what that call makes for its own child lives there.
+    SpawnSync,
 }
 
 // `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
@@ -323,6 +325,9 @@ impl FilePoll {
         let flags = self.flags;
         if flags.contains(Flags::Socket) {
             return FileType::Socket;
+        }
+        if flags.contains(Flags::Tty) {
+            return FileType::File;
         }
         if flags.contains(Flags::Nonblocking) {
             return FileType::NonblockingPipe;
@@ -517,7 +522,7 @@ impl FilePoll {
             flags,
             owner,
             next_to_free: ptr::null_mut(),
-            allocator_type: if vm.is_js() { AllocatorType::Js } else { AllocatorType::Mini },
+            allocator_type: vm.allocator_type(),
             #[cfg(all(target_os = "macos", debug_assertions))]
             // Single-threaded event loop so `Relaxed` ordering is sufficient.
             generation_number: MAX_GENERATION_NUMBER
@@ -1212,6 +1217,7 @@ pub enum Flags {
     IgnoreUpdates,
 
     Socket,
+    Tty,
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;

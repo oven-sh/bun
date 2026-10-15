@@ -12,7 +12,7 @@ export function main() {
 
 // This function is bound when constructing instances of CommonJSModule
 $visibility = "Private";
-export function require(this: JSCommonJSModule, _: string) {
+export function require(this: JSCommonJSModule, _id: string) {
   // Do not use $tailCallForwardArguments here, it causes https://github.com/oven-sh/bun/issues/9225
   return $overridableRequire.$apply(this, arguments);
 }
@@ -213,14 +213,8 @@ export function requireESM(this, resolved: string, requirer?: JSCommonJSModule) 
 
 export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
   $assert(this);
-  let namespace;
-  try {
-    namespace = $requireESM(id, this);
-  } catch (exception) {
-    // Since the ESM code is mostly JS, we need to handle exceptions here.
-    (this.$requireMap || $requireMap).$delete(id);
-    throw exception;
-  }
+  // Runs inside `$require`, which removes the require map entry if the user's handler lets this throw.
+  const namespace = $requireESM(id, this);
 
   // See `overridableRequire`: TDZ-safe reads for the require-cycle case.
   let esModule, moduleExports;

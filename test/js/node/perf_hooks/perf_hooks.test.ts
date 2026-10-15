@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "net";
-import perf, { PerformanceObserver } from "perf_hooks";
+import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
 
 test("stubs", () => {
   expect(perf.performance.nodeTiming).toBeObject();
@@ -21,6 +21,7 @@ test("doesn't throw", () => {
   expect(() => performance.getEntriesByType("measure")).not.toThrow();
   expect(() => performance.now()).not.toThrow();
   expect(() => performance.timeOrigin).not.toThrow();
+  // @ts-expect-error
   expect(() => performance.markResourceTiming()).not.toThrow();
 });
 
@@ -28,9 +29,9 @@ test("doesn't throw", () => {
 // Symbol hits V8's ToString message. Verified against Node v26.3.0.
 test("Symbol name argument throws V8 wording", () => {
   const msg = "Cannot convert a Symbol value to a string";
-  expect(() => performance.mark(Symbol())).toThrow(new TypeError(msg));
-  expect(() => performance.clearMarks(Symbol())).toThrow(new TypeError(msg));
-  expect(() => performance.clearMeasures(Symbol())).toThrow(new TypeError(msg));
+  expect(() => performance.mark(Symbol() as any)).toThrow(new TypeError(msg));
+  expect(() => performance.clearMarks(Symbol() as any)).toThrow(new TypeError(msg));
+  expect(() => performance.clearMeasures(Symbol() as any)).toThrow(new TypeError(msg));
 });
 
 // Node only looks at start/end to decide whether the options dict supplies
@@ -55,8 +56,8 @@ test("measure(name, optionsWithoutStartOrEnd, endMark) honours the trailing endM
 });
 
 test("timerify entry shape", async () => {
-  const { promise, resolve } = Promise.withResolvers();
-  const observer = new PerformanceObserver(list => resolve(list.getEntries()[0]));
+  const { promise, resolve } = Promise.withResolvers<PerformanceNodeEntry>();
+  const observer = new PerformanceObserver(list => resolve(list.getEntries()[0] as PerformanceNodeEntry));
   observer.observe({ entryTypes: ["function"] });
 
   const fn = perf.performance.timerify(function work(_a, _b) {});
@@ -170,13 +171,13 @@ test("timerify and AsyncResource.bind survive Object.prototype.get pollution", a
 });
 
 test("net entries are instanceof PerformanceEntry", async () => {
-  const { promise, resolve } = Promise.withResolvers();
-  const observer = new PerformanceObserver(list => resolve(list.getEntries()[0]));
+  const { promise, resolve } = Promise.withResolvers<PerformanceNodeEntry>();
+  const observer = new PerformanceObserver(list => resolve(list.getEntries()[0] as PerformanceNodeEntry));
   observer.observe({ entryTypes: ["net"] });
 
   const server = net.createServer(c => c.end());
-  await new Promise(r => server.listen(0, r));
-  const port = server.address().port;
+  await new Promise<void>(r => server.listen(0, r));
+  const port = (server.address() as net.AddressInfo).port;
   const socket = net.connect(port, "127.0.0.1");
   await new Promise(r => socket.on("connect", r));
 
@@ -194,7 +195,7 @@ test("re-wrapped native entries, timing and observer keep JS identity", async ()
   const name = "identity-" + Math.random();
   performance.mark(name);
   expect(performance.getEntriesByName(name)[0]).toBe(performance.getEntriesByName(name)[0]);
-  expect(performance.timing).toBe(performance.timing);
+  expect((performance as any).timing).toBe((performance as any).timing);
 
   const { promise, resolve } = Promise.withResolvers<boolean>();
   const observer = new PerformanceObserver((list, obs) => {

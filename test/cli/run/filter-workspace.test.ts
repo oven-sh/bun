@@ -1,10 +1,13 @@
 import { spawnSync } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, runBunInstall, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { constants } from "os";
 import { join } from "path";
+
+const { parseLockfile } = install_test_helpers;
 
 const cwd_root = tempDirWithFiles("testworkspace", {
   packages: {
@@ -1029,6 +1032,104 @@ describe("selectors", () => {
   });
 });
 
+describe.concurrent("a '!' entry in \"workspaces\"", () => {
+  // Every script prints the directory of its package. `other/*` is outside every entry: the
+  // paths equal those of members but for the first segment, and `!packages` is not a glob for
+  // "any directory but packages".
+  function fixture(workspaces: string[] | { packages: string[] }) {
+    const pkg = (dir: string, name: string, dependencies?: Record<string, string>) => ({
+      "package.json": JSON.stringify({ name, dependencies, scripts: { present: `echo ran:${dir}` } }),
+    });
+    return tempDir("filter-negated-workspaces", {
+      packages: {
+        app: pkg("packages/app", "app", { lib: "workspace:*" }),
+        lib: pkg("packages/lib", "lib"),
+        legacy: {
+          ...pkg("packages/legacy", "legacy", { lib: "workspace:*" }),
+          nested: pkg("packages/legacy/nested", "legacy-nested"),
+        },
+      },
+      other: { legacy: pkg("other/legacy", "other-legacy"), lib: pkg("other/lib", "other-lib") },
+      "package.json": JSON.stringify({ name: "ws", workspaces }),
+    });
+  }
+
+  async function run(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args, "present"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { ran: [...stdout.matchAll(/ran:(\S+)/g)].map(m => m[1]).sort(), stderr, exitCode };
+  }
+
+  const selections = [
+    { args: ["--filter", "*"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--workspaces"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--filter", "./packages/*"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--filter", "{packages}"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--filter", "...lib"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--filter", "l*"], ran: ["packages/lib"] },
+    { args: ["--parallel", "--filter", "*"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--sequential", "--workspaces"], ran: ["packages/app", "packages/lib"] },
+  ];
+  test.each(selections.map(row => [row.args.join(" "), row] as const))(
+    "bun run %s skips the excluded package",
+    async (_, { args, ran }) => {
+      using dir = fixture(["packages/*", "!packages/legacy"]);
+      expect(await run(String(dir), args)).toMatchObject({ ran, exitCode: 0 });
+    },
+  );
+
+  test("the excluded package is not selectable by name", async () => {
+    using dir = fixture(["packages/*", "!packages/legacy"]);
+    const result = await run(String(dir), ["--filter", "legacy"]);
+    expect(result.stderr).toContain('error: No workspace packages matched the filter "legacy"');
+    expect(result).toMatchObject({ ran: [], exitCode: 1 });
+  });
+
+  async function installedMembers(cwd: string): Promise<string[]> {
+    await runBunInstall(bunEnv, cwd);
+    return Object.values<string>(parseLockfile(cwd).workspace_paths).sort();
+  }
+
+  const appAndLib = ["packages/app", "packages/lib"];
+  const configs: { workspaces: string[] | { packages: string[] }; members: string[] }[] = [
+    { workspaces: { packages: ["packages/*", "!packages/legacy"] }, members: appAndLib },
+    { workspaces: ["packages/*", "!**/legacy"], members: appAndLib },
+    { workspaces: ["packages/*", "!packages/{app,legacy}"], members: ["packages/lib"] },
+    {
+      workspaces: ["packages/**", "!packages/legacy"],
+      members: ["packages/app", "packages/legacy/nested", "packages/lib"],
+    },
+    // every spelling of the directory
+    { workspaces: ["./packages/*", "!./packages/legacy"], members: appAndLib },
+    { workspaces: ["packages/*", "!./packages/legacy"], members: appAndLib },
+    { workspaces: ["packages/*", "!packages/legacy/"], members: appAndLib },
+    { workspaces: ["packages/*", "!././packages/legacy//"], members: appAndLib },
+    // wherever the entry is in the array
+    { workspaces: ["!packages/legacy", "packages/*"], members: appAndLib },
+    { workspaces: ["!./packages/legacy/", "packages/*"], members: appAndLib },
+    { workspaces: ["packages/*", "!packages/legacy", "packages/leg*"], members: appAndLib },
+    // `dir/**` removes `dir` and everything below it
+    { workspaces: ["packages/**", "!packages/legacy/**"], members: appAndLib },
+    { workspaces: ["packages/*", "!packages/leg*/**"], members: appAndLib },
+    // a path that is listed as is stays
+    { workspaces: ["packages/lib", "!packages/lib"], members: ["packages/lib"] },
+  ];
+  test.each(configs.map(row => [JSON.stringify(row.workspaces), row] as const))(
+    "bun run and bun install find the same members for %s",
+    async (_, { workspaces, members }) => {
+      using dir = fixture(workspaces);
+      expect(await run(String(dir), ["--workspaces"])).toMatchObject({ ran: members, exitCode: 0 });
+      expect(await installedMembers(String(dir))).toEqual(members);
+    },
+  );
+});
+
 // #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script
 // as `bun exec "<script>"` with CREATE_NO_WINDOW, so the user's Ctrl+C never
 // reaches the scripts and cleanup is entirely on the parent. libuv's global
@@ -1136,6 +1237,98 @@ describe.skipIf(!isWindows).each([
     },
     30000,
   );
+});
+
+// The script runner never passes the default .env* files into package.json
+// scripts (see "does not pass variables from .env files into scripts" in
+// env.test.ts): the script's own bun instance loads them, so a script such as
+// `NODE_ENV=production bun start` reads .env.production and not the
+// .env.development the runner would have picked (#9635). The environment the
+// runner did build is passed as envp, which on POSIX goes straight to `sh -c`.
+// On Windows `--filter` / `--parallel` go through a `bun exec` hop, which used
+// to auto-load the package directory's .env* files on top of envp, ignoring
+// the --no-env-file / --env-file given to the runner.
+describe.each([
+  { via: "--filter", argv: (script: string) => ["--filter", "app", script], cwd: (root: string) => root },
+  {
+    via: "run --parallel",
+    argv: (script: string) => ["--parallel", script],
+    cwd: (root: string) => join(root, "packages", "app"),
+  },
+])("$via: scripts only see the environment the runner built", ({ argv, cwd }) => {
+  function workspace() {
+    return tempDir("filter-env-files", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      "packages/app/package.json": JSON.stringify({
+        name: "app",
+        scripts: {
+          "show-env": "echo ENV_FILE_NAME=$ENV_FILE_NAME CUSTOM=$CUSTOM_VAR INHERITED=$INHERITED_VAR",
+          "show-env-prod": `NODE_ENV=production "${bunExe()}" show-env.js`,
+        },
+      }),
+      "packages/app/show-env.js": `
+        const { ENV_FILE_NAME = "", CUSTOM_VAR = "", INHERITED_VAR = "" } = process.env;
+        console.log("ENV_FILE_NAME=" + ENV_FILE_NAME + " CUSTOM=" + CUSTOM_VAR + " INHERITED=" + INHERITED_VAR);
+      `,
+      // Whichever NODE_ENV the test runner itself is under, one of these is in
+      // the default set, so auto-loading shows up as a non-empty ENV_FILE_NAME.
+      "packages/app/.env": "ENV_FILE_NAME=.env",
+      "packages/app/.env.development": "ENV_FILE_NAME=.env.development",
+      "packages/app/.env.production": "ENV_FILE_NAME=.env.production",
+      "packages/app/.env.test": "ENV_FILE_NAME=.env.test",
+      "packages/app/.env.custom": "CUSTOM_VAR=from-custom",
+    });
+  }
+
+  async function run(root: string, runnerFlags: string[], script = "show-env") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...runnerFlags, ...argv(script)],
+      cwd: cwd(root),
+      env: { ...bunEnv, ENV_FILE_NAME: undefined, CUSTOM_VAR: undefined, INHERITED_VAR: "from-parent" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = stdout.match(/ENV_FILE_NAME=(\S*) CUSTOM=(\S*) INHERITED=(\S*)/);
+    if (!line) throw new Error(`script output missing.\nstdout: ${stdout}\nstderr: ${stderr}`);
+    return { envFile: line[1], custom: line[2], inherited: line[3], exitCode };
+  }
+
+  test.concurrent("the package directory's .env* files are not loaded", async () => {
+    using dir = workspace();
+    expect(await run(String(dir), [])).toEqual({ envFile: "", custom: "", inherited: "from-parent", exitCode: 0 });
+  });
+
+  test.concurrent("--no-env-file", async () => {
+    using dir = workspace();
+    expect(await run(String(dir), ["--no-env-file"])).toEqual({
+      envFile: "",
+      custom: "",
+      inherited: "from-parent",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("--env-file loads only the requested file", async () => {
+    using dir = workspace();
+    const envFile = join(String(dir), "packages", "app", ".env.custom");
+    expect(await run(String(dir), ["--env-file", envFile])).toEqual({
+      envFile: "",
+      custom: "from-custom",
+      inherited: "from-parent",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a script that sets its own NODE_ENV gets the matching .env file (#9635)", async () => {
+    using dir = workspace();
+    expect(await run(String(dir), [], "show-env-prod")).toEqual({
+      envFile: ".env.production",
+      custom: "",
+      inherited: "from-parent",
+      exitCode: 0,
+    });
+  });
 });
 
 describe("output timing", () => {

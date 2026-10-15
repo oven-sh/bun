@@ -1,7 +1,6 @@
 use crate::bundled_ast;
 use crate::mal_prelude::*;
 use bun_alloc::Arena;
-use bun_ast::ImportKind;
 use bun_ast::base::RefTag;
 use bun_ast::server_component_boundary;
 use bun_ast::symbol;
@@ -905,90 +904,6 @@ impl<'a> LinkerGraph<'a> {
         for v in self.ast.items_parts_mut() {
             bun_alloc::transfer_arena(v, heap);
         }
-    }
-
-    pub(crate) fn propagate_async_dependencies(&mut self) -> Result<(), crate::Error> {
-        // Explicit-stack postorder DFS (was per-edge recursive). A parent's
-        // flag is read from each child after that child's subtree is fully
-        // processed; `AfterChild` is the resumption point for that read.
-        #[derive(Copy, Clone)]
-        enum Frame {
-            Enter(usize),
-            AfterChild { parent: usize, child: usize },
-        }
-
-        let import_records = self.ast.items_import_records();
-        let flags = self.meta.items_flags_mut();
-        let len = import_records.len();
-        let mut visited = AutoBitSet::init_empty(self.ast.len())?;
-        let mut stack: Vec<Frame> = Vec::new();
-
-        for root in 0..len {
-            if visited.is_set(root) {
-                continue;
-            }
-            stack.push(Frame::Enter(root));
-
-            while let Some(frame) = stack.pop() {
-                match frame {
-                    Frame::AfterChild { parent, child } => {
-                        if flags[child].is_async_or_has_async_dependency {
-                            flags[parent].is_async_or_has_async_dependency = true;
-                        }
-                    }
-                    Frame::Enter(index) => {
-                        if visited.is_set(index) {
-                            continue;
-                        }
-                        visited.set(index);
-                        if flags[index].is_async_or_has_async_dependency {
-                            continue;
-                        }
-
-                        let mark = stack.len();
-                        for import_record in import_records[index].as_slice().iter() {
-                            match import_record.kind {
-                                ImportKind::Stmt => {}
-
-                                // Any use of `import()` that makes the parent async will necessarily use
-                                // top-level await, so this will have already been detected by `validateTLA`,
-                                // and `is_async_or_has_async_dependency` will already be true.
-                                //
-                                // We don't want to process these imports here because `import()` can appear in
-                                // non-top-level contexts (like inside an async function) or in contexts that
-                                // don't use `await`, which don't necessarily make the parent module async.
-                                ImportKind::Dynamic => continue,
-
-                                // `require()` cannot import async modules.
-                                ImportKind::Require | ImportKind::RequireResolve => continue,
-
-                                // Entry points; not imports from JS
-                                ImportKind::EntryPointRun | ImportKind::EntryPointBuild => continue,
-                                // CSS imports
-                                ImportKind::At
-                                | ImportKind::AtConditional
-                                | ImportKind::Url
-                                | ImportKind::Composes => continue,
-                                // Other non-JS imports
-                                ImportKind::HtmlManifest | ImportKind::Internal => continue,
-                            }
-
-                            let import_index: usize = import_record.source_index.get() as usize;
-                            if import_index >= len {
-                                continue;
-                            }
-                            stack.push(Frame::Enter(import_index));
-                            stack.push(Frame::AfterChild {
-                                parent: index,
-                                child: import_index,
-                            });
-                        }
-                        stack[mark..].reverse();
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 }
 

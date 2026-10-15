@@ -4,7 +4,7 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_collections::MultiArrayList;
-use bun_core::{ThreadLock, ZStr, feature_flags, output as Output, strings, zstr};
+use bun_core::{ThreadLock, ZBox, ZStr, feature_flags, output as Output, strings, zstr};
 use bun_sys::{self as sys, Fd};
 use bun_threading::Mutex;
 
@@ -155,17 +155,31 @@ impl UnresolvedImport {
     }
 }
 
-fn for_each_dir_entry(dir_path: &[u8], mut f: impl FnMut(&[u8], sys::EntryKind) -> bool) -> bool {
+type DirEntry = sys::dir_iterator::IteratorResult;
+
+fn for_each_dir_entry(dir_path: &[u8], mut f: impl FnMut(&sys::Dir, &DirEntry) -> bool) -> bool {
     let Ok(dir) = sys::Dir::open(strings::without_trailing_slash(dir_path)) else {
         return false;
     };
     let mut iter = sys::iterate_dir(dir.fd());
     while let Ok(Some(entry)) = iter.next() {
-        if f(entry.name.slice_u8(), entry.kind) {
+        if f(&dir, &entry) {
             return true;
         }
     }
     false
+}
+
+/// A link counts as what it points at, as in the resolver. NFS and FUSE do not fill d_type, so `Unknown` needs the same stat.
+fn is_directory(dir: &sys::Dir, entry: &DirEntry) -> bool {
+    match entry.kind {
+        sys::EntryKind::Directory => true,
+        sys::EntryKind::SymLink | sys::EntryKind::Unknown => {
+            let name = ZBox::from_bytes(entry.name.slice_u8());
+            sys::directory_exists_at(dir, &name).unwrap_or(false)
+        }
+        _ => false,
+    }
 }
 
 // TODO: some platform-specific behavior is implemented in
@@ -1081,40 +1095,35 @@ impl Watcher {
         }
         let dir_hash = Self::unresolved_dir_hash(lookup.dir);
         let candidates = UnresolvedImport::candidates_of(lookup);
-        let is_this = |u: &UnresolvedImport| u.dir_hash == dir_hash && u.candidates == candidates;
+        // Held from the listing to the push: the event for an entry the listing did not see waits, then finds the record.
+        let _guard = self.mutex.lock_guard();
+        // A program can probe any number of names that do not exist. The first records are the ones a reload made.
+        if self.unresolved_imports.len() >= MAX_UNRESOLVED_IMPORTS
+            || self
+                .unresolved_imports
+                .iter()
+                .any(|u| u.dir_hash == dir_hash && u.candidates == candidates)
         {
-            let _guard = self.mutex.lock_guard();
-            // A program can probe any number of names that do not exist. The first records are the ones a reload made.
-            if self.unresolved_imports.len() >= MAX_UNRESOLVED_IMPORTS
-                || self.unresolved_imports.iter().any(is_this)
-            {
-                return false;
-            }
-            self.unresolved_imports.push(UnresolvedImport {
-                dir_hash,
-                candidates: candidates.clone(),
-                present: Vec::new(),
-            });
+            return false;
         }
-        // Listed after the record is in place: an entry created from here on has an event that finds the record.
         let mut present: Vec<PresentCandidate> = Vec::new();
-        for_each_dir_entry(lookup.dir, |name, kind| {
+        for_each_dir_entry(lookup.dir, |dir, entry| {
+            let name = entry.name.slice_u8();
             if UnresolvedImport::is_candidate(&candidates, name) {
                 present.push(PresentCandidate {
                     name: name.into(),
-                    is_directory: kind == sys::EntryKind::Directory,
+                    is_directory: is_directory(dir, entry),
                 });
             }
             false
         });
-        if present.is_empty() {
-            return false;
-        }
-        let _guard = self.mutex.lock_guard();
-        if let Some(record) = self.unresolved_imports.iter_mut().find(|u| is_this(u)) {
-            record.present = present;
-        }
-        true
+        let appeared = !present.is_empty();
+        self.unresolved_imports.push(UnresolvedImport {
+            dir_hash,
+            candidates,
+            present,
+        });
+        appeared
     }
 
     /// Callers spell the same directory with and without a trailing slash.
@@ -1142,7 +1151,8 @@ impl Watcher {
             return records.any(|u| u.is_satisfied_by_created(name));
         }
         let records: Vec<&UnresolvedImport> = records.collect();
-        for_each_dir_entry(dir_path, |listed_name, _| {
+        for_each_dir_entry(dir_path, |_, entry| {
+            let listed_name = entry.name.slice_u8();
             records.iter().any(|u| u.is_new_in_listing(listed_name))
         })
     }

@@ -50,7 +50,7 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
   }
 });
 
-describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import", () => {
+describe("--watch recovers from a missing import", () => {
   test.concurrent.each([
     ["./a.js", "a.js"],
     // The resolver looks a name up without regard to ASCII case.
@@ -176,6 +176,38 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
     proc.kill("SIGKILL");
     await proc.exited;
   });
+
+  // A link to a directory is a directory for the resolver: made again, it holds nothing new.
+  test
+    .skipIf(isWindows)
+    .concurrent("a caught miss does not rerun when a link to a directory is made again", async () => {
+      await using dir = tempDir("watch-probed-link", {
+        "entry.js": `
+        import { rmSync, symlinkSync } from "node:fs";
+        let linked = "none";
+        try { require("./linked"); linked = "found"; } catch {}
+        console.log("RUN", linked);
+        rmSync("linked");
+        symlinkSync("store", "linked");
+      `,
+        "store": {},
+      });
+      symlinkSync("store", join(String(dir), "linked"));
+      await using proc = spawn({
+        cmd: [bunExe(), "--watch", "--no-clear-screen", "entry.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const stdout = new LineReader(proc.stdout);
+
+      expect(await stdout.until(line => line.startsWith("RUN"))).toBe("RUN none");
+      // Same bounded window as above: a correct build prints nothing here.
+      expect(await stdout.within(2000)).toEqual([]);
+
+      proc.kill("SIGKILL");
+      await proc.exited;
+    });
 
   test.concurrent("bun build --watch keeps rebuilding and recovers", async () => {
     await using dir = tempDir("build-watch-missing-import", {

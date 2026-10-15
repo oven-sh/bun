@@ -5470,7 +5470,7 @@ const depthSearch = `
 
 // A debug build has no such length: its visit pass takes a frame for each link
 // of the chain, and reports first.
-it.skipIf(isDebug)("a long conditional chain in import() does not crash the process", async () => {
+it.skipIf(isDebug).concurrent("a long conditional chain in import() does not crash the process", async () => {
   const script = `
     ${depthSearch}
     const transpiler = new Bun.Transpiler({ loader: "js", deadCodeElimination: true });
@@ -5503,7 +5503,7 @@ it.skipIf(isDebug)("a long conditional chain in import() does not crash the proc
   });
 });
 
-it("a conditional chain in import() or require() in a deep nest does not crash the process", async () => {
+it.concurrent("a conditional chain in import() or require() in a deep nest does not crash the process", async () => {
   const script = `
     ${depthSearch}
     const transpiler = new Bun.Transpiler({ loader: "js", deadCodeElimination: true });
@@ -5561,7 +5561,7 @@ const buildOutcome = `
   };
 `;
 
-it("Bun.build logs only the stack overflow when the argument of require() is too deep", async () => {
+it.concurrent("Bun.build logs only the stack overflow when the argument of require() is too deep", async () => {
   using dir = tempDir("transpose-after-overflow", {
     "a.js": "module.exports = 1;",
     "build-fixture.ts": `
@@ -5595,7 +5595,7 @@ it("Bun.build logs only the stack overflow when the argument of require() is too
 
 // The bundler adds a walk of the same kind, for `const ns = c ? require("./a") : null`.
 // A debug build is too slow for the number of builds that the search takes.
-it.skipIf(isDebug)("Bun.build takes a conditional chain inside a deep nest", async () => {
+it.skipIf(isDebug).concurrent("Bun.build takes a conditional chain inside a deep nest", async () => {
   using dir = tempDir("transpose-conditional-chain", {
     "a.js": "module.exports = { foo: 1 };",
     "build-fixture.ts": `
@@ -5636,7 +5636,7 @@ it.skipIf(isDebug)("Bun.build takes a conditional chain inside a deep nest", asy
 
 // A define whose key is a member chain is matched by a walk along the chain.
 // No other pass bounds that walk, and it took a stack frame for each part.
-it("a define key of many parts is matched instead of crashing the process", async () => {
+it.concurrent("a define key of many parts is matched instead of crashing the process", async () => {
   // The walk took 160 bytes a part on Linux x64. macOS and Windows give the
   // main thread 18 MB, so it takes this many parts to run out of stack there.
   const parts = isDebug ? 12_000 : 500_000;

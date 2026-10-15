@@ -1251,6 +1251,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     version_was_replaced,
                                 )
                                 && let Some(find_result) = manifest.find_by_version(exact)
+                                && manifest.is_in_bounds(find_result.package)
                             {
                                 if let Some(min_age_ms) = this.options.minimum_release_age_ms
                                     && !manifest.should_exclude_from_age_filter(excludes)
@@ -2311,7 +2312,7 @@ fn may_be_collapsed(
         && this
             .lockfile
             .has_appended_match(name_hash, version, own_pick)
-        && !this.lockfile.is_workspace_dependency(dependency_id)
+        && !this.lockfile.is_row_of_project(dependency_id)
 }
 
 fn tarball_task(
@@ -2393,6 +2394,7 @@ fn get_or_put_resolved_package_with_find_result(
         Some(version)
     };
     let inside_bundle = this.lockfile.is_row_inside_bundle(dependency_id, behavior);
+    this.lockfile.note_project_packages();
     let existing = if inside_bundle {
         this.lockfile
             .get_package_id(name_hash, reusable_range, &npm_resolution)
@@ -2445,6 +2447,13 @@ fn get_or_put_resolved_package_with_find_result(
 
     let waits_for_dedupe = reusable_range.is_some()
         && may_be_collapsed(this, name_hash, version, dependency_id, invalid_package_id);
+    // A damaged file in the cache is fetched again.
+    if !manifest.is_in_bounds(find_result.package) {
+        if refetch_stale_manifest(this, manifest.name(), behavior.is_optional())? {
+            return Ok(None);
+        }
+        return Err(crate::Error::PackageFailedToParse);
+    }
     let log = this.log_mut();
     let package = Package::from_npm(
         &mut this.lockfile,

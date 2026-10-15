@@ -1473,7 +1473,6 @@ fn build_store(
 pub(crate) fn move_node_modules_aside(
     lockfile: &Lockfile,
     keep_links: bool,
-    linked: &LinkedNodeModules,
     log_level: LogLevel,
 ) -> Option<OldModules> {
     let mut old_modules = AutoRelPath::from(b"node_modules").assume_ok();
@@ -1489,10 +1488,18 @@ pub(crate) fn move_node_modules_aside(
         return None;
     }
     let old_modules_name = old_modules.basename().to_vec();
-    linked.warn_not_cleared(log_level, |path| holds_a_tree(path, &old_modules_name));
+    let mut not_cleared: Vec<Box<[u8]>> = Vec::new();
+    // See `LinkedNodeModules`. `None`: nothing is there.
+    let mut is_linked = |node_modules: &mut AutoRelPath| {
+        let is_linked = LinkedNodeModules::is_at(node_modules.slice_z())?;
+        if is_linked && holds_a_tree(node_modules.slice(), &old_modules_name) {
+            not_cleared.push(node_modules.slice().into());
+        }
+        Some(is_linked)
+    };
 
     let mut node_modules = AutoRelPath::from(b"node_modules").assume_ok();
-    if !linked.contains(node_modules.slice()) {
+    if is_linked(&mut node_modules) == Some(false) {
         move_entries_aside(&mut node_modules, &mut old_modules, keep_links, log_level);
     }
 
@@ -1503,7 +1510,7 @@ pub(crate) fn move_node_modules_aside(
         }
         let mut workspace_node_modules = AutoRelPath::from(workspace_path).assume_ok();
         workspace_node_modules.append(b"node_modules").assume_ok();
-        if linked.contains(workspace_node_modules.slice()) {
+        if is_linked(&mut workspace_node_modules) != Some(false) {
             continue;
         }
 
@@ -1523,6 +1530,7 @@ pub(crate) fn move_node_modules_aside(
 
         old_modules.set_length(old_modules_len);
     }
+    LinkedNodeModules::warn_not_cleared(log_level, &not_cleared);
 
     if sys::rmdir(old_modules.slice_z()).is_ok() {
         // nothing was there
@@ -2039,7 +2047,11 @@ pub(crate) fn install_isolated_packages(
         None
     };
 
-    let linked = LinkedNodeModules::find(lockfile);
+    let linked = {
+        let mut node_modules = AbsPath::init_top_level_dir();
+        node_modules.append(b"node_modules").assume_ok();
+        LinkedNodeModules::at(node_modules.slice_z())
+    };
 
     // setup node_modules/.bun
     let mut old_modules: Option<OldModules> = None;
@@ -2075,7 +2087,6 @@ pub(crate) fn install_isolated_packages(
             old_modules = move_node_modules_aside(
                 lockfile,
                 manager.options.global,
-                &linked,
                 manager.options.log_level,
             );
         }
@@ -2094,7 +2105,7 @@ pub(crate) fn install_isolated_packages(
 
     // Remove the fallback a previous install with hoisting on left behind.
     // `delete_tree` succeeds on a missing tree, so any error here is real.
-    let clears_fallback = !is_new_bun_modules && !linked.contains(b"node_modules");
+    let clears_fallback = !is_new_bun_modules && linked.is_none();
     if clears_fallback && !manager.options.hoist {
         use bun_sys::FdExt as _;
         if let Err(err) =

@@ -847,7 +847,8 @@ pub struct Linker<'a> {
     pub rel_buf: &'a mut [u8],
 
     /// See `LinkedNodeModules`: a file or a directory of a bin's name stays, and the link fails.
-    pub is_behind_link: bool,
+    /// `None`: `node_modules_path` is looked at when it matters.
+    pub is_behind_link: Option<bool>,
 
     pub err: Option<Error>,
     pub skipped_due_to_missing_bin: bool,
@@ -871,6 +872,12 @@ impl<'a> Linker<'a> {
     pub fn ensure_umask() {
         #[cfg(not(windows))]
         exec_mode();
+    }
+
+    fn is_behind_link(known: &mut Option<bool>, node_modules_path: &mut AbsPath) -> bool {
+        *known.get_or_insert_with(|| {
+            crate::prune::LinkedNodeModules::is_at(node_modules_path.slice_z()) == Some(true)
+        })
     }
 
     /// The global bin dir also holds what is not bun's: only a link into `global_owner` goes.
@@ -997,7 +1004,8 @@ impl<'a> Linker<'a> {
             #[cfg(windows)]
             Self::unlink_bin_or_shim(
                 abs_dest,
-                (global || self.is_behind_link).then_some(&b""[..]),
+                (global || Self::is_behind_link(&mut self.is_behind_link, self.node_modules_path))
+                    .then_some(&b""[..]),
             );
             if let Some(seen) = self.seen.as_deref_mut() {
                 seen.remove(abs_dest.as_bytes());
@@ -1192,7 +1200,8 @@ impl<'a> Linker<'a> {
         let abs_dest_w_len = abs_dest_w.len();
         let exe_suffix = w!(".exe\x00");
         dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
-        let foreign_exe_exists = (global || self.is_behind_link)
+        let foreign_exe_exists = (global
+            || Self::is_behind_link(&mut self.is_behind_link, self.node_modules_path))
             && sys::exists_os_path(
                 bun_core::WStr::from_buf(&dest_buf[..], abs_dest_w_len + b".exe".len()),
                 false,
@@ -1350,7 +1359,13 @@ impl<'a> Linker<'a> {
             }
             Err(readlink_err) => match readlink_err.get_errno() {
                 // A file or a directory.
-                sys::Errno::EINVAL if global || self.is_behind_link => {
+                sys::Errno::EINVAL
+                    if global
+                        || Self::is_behind_link(
+                            &mut self.is_behind_link,
+                            self.node_modules_path,
+                        ) =>
+                {
                     return Err(Error::Sys(bun_errno::SystemErrno::EEXIST));
                 }
                 sys::Errno::EINVAL => {
@@ -1854,12 +1869,10 @@ pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr)
     link_free_bins(lockfile, b"node_modules", Some(global_bin_path), &placed);
 }
 
-/// The linker skips a seen destination, so what is in the folder stays as it is. False: no folder.
-fn see_names_in(bin_path: &[u8], seen: &mut StringHashMap<()>) -> bool {
+/// The linker skips a seen destination, so what is in the folder stays as it is.
+fn see_names_in(bin_path: &[u8], seen: &mut StringHashMap<()>) -> sys::Maybe<()> {
     let bin_path = strings::without_trailing_slash(bin_path);
-    let Ok(bin_dir) = sys::Dir::open(bin_path) else {
-        return false;
-    };
+    let bin_dir = sys::Dir::open(bin_path)?;
     let mut iter = sys::iterate_dir(bin_dir.fd());
     while let Some(entry) = iter.next().unwrap_or(None) {
         let name = entry.name.slice_u8();
@@ -1869,13 +1882,13 @@ fn see_names_in(bin_path: &[u8], seen: &mut StringHashMap<()>) -> bool {
             .unwrap_or(name);
         let _ = seen.put(&[bin_path, &[SEP][..], name].concat(), ());
     }
-    true
+    Ok(())
 }
 
-/// `see_names_in` the `.bin` of `node_modules`.
+/// `see_names_in` the `.bin` of `node_modules`. Without a `.bin` no name is taken.
 pub(crate) fn see_linked_names(node_modules: &[u8], seen: &mut StringHashMap<()>) {
     let node_modules = strings::without_trailing_slash(node_modules);
-    see_names_in(&[node_modules, &[SEP][..], &b".bin"[..]].concat(), seen);
+    let _ = see_names_in(&[node_modules, &[SEP][..], &b".bin"[..]].concat(), seen);
 }
 
 /// Links the bins of `placed`, packages of `node_modules` (from the top-level dir) by folder, in
@@ -1898,7 +1911,7 @@ pub(crate) fn link_free_bins(
     let mut seen: StringHashMap<()> = StringHashMap::default();
     match global_bin_path {
         // The linker makes a `.bin`, and no global folder.
-        Some(bin_path) if !see_names_in(bin_path.as_bytes(), &mut seen) => return,
+        Some(bin_path) if see_names_in(bin_path.as_bytes(), &mut seen).is_err() => return,
         Some(_) => {}
         None => see_linked_names(node_modules_path.slice(), &mut seen),
     }
@@ -1927,7 +1940,7 @@ pub(crate) fn link_free_bins(
             abs_target_buf: abs_target_buf.as_mut_slice(),
             abs_dest_buf: abs_dest_buf.as_mut_slice(),
             rel_buf: rel_buf.as_mut_slice(),
-            is_behind_link: false,
+            is_behind_link: Some(false),
             err: None,
             skipped_due_to_missing_bin: false,
         }

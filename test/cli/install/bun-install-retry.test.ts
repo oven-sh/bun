@@ -786,6 +786,64 @@ describe.concurrent("backoff", () => {
     });
   });
 
+  describe.each([[["info", "bar"]], [["pm", "whoami"]], [["pm", "diff", "bar"]], [["audit"]]])("%j", cmd => {
+    async function run(registry: string, extraEnv: Record<string, string> = {}) {
+      using dir = tempDir("retry-one-request", {
+        "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { cache: false, registry: { url: registry, token: "t" } } }),
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: { "": { name: "foo", dependencies: { bar: "0.0.2" } } },
+          packages: { bar: ["bar@0.0.2", "", {}, ""] },
+        }),
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+        env: { ...env, ...extraEnv },
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { err, exitCode };
+    }
+
+    // Whoever typed the command has waited for as long as the timeout allows.
+    it("does not ask again a registry that takes the connection and never answers", async () => {
+      let connections = 0;
+      using silent = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open() {
+            connections++;
+          },
+          data() {},
+        },
+      });
+      const { exitCode } = await run(`http://127.0.0.1:${silent.port}/`, { BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" });
+      expect({ connections, exitCode }).toEqual({ connections: 1, exitCode: 1 });
+    });
+
+    it("does not ask again after a 501", async () => {
+      let requests = 0;
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => (requests++, busy(501)) });
+      const { exitCode } = await run(server.url.href);
+      expect({ requests, exitCode }).toEqual({ requests: 1, exitCode: 1 });
+    });
+
+    it("says that it waits once the wait is long", async () => {
+      let requests = 0;
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => (requests++, busy(503)) });
+      const { err, exitCode } = await run(server.url.href, {
+        BUN_CONFIG_HTTP_RETRY_BACKOFF: "1000",
+        BUN_CONFIG_HTTP_RETRY_COUNT: "1",
+      });
+      expect(err).toMatch(/^warn: the request to the registry failed\. Retry 1\/1 in \d+ms\.\.\.$/m);
+      expect({ requests, exitCode }).toEqual({ requests: 2, exitCode: 1 });
+    });
+  });
+
   // The next handshake would see the same certificate.
   it("does not retry a certificate it refuses", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("unreachable") });

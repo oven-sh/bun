@@ -893,7 +893,7 @@ pub fn install_with_manager(
             !load_result.migrated_from_npm() && manager.lockfile.workspace_paths.len() > 0,
         );
     let mut removes_collapsed_copies = false;
-    let install_summary: PackageInstallSummary = 'install_summary: {
+    let mut install_summary: PackageInstallSummary = 'install_summary: {
         if !manager.options.do_.install_packages() {
             break 'install_summary PackageInstallSummary::default();
         }
@@ -1033,7 +1033,7 @@ pub fn install_with_manager(
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;
     // `skipped`: something of an earlier install is still there. The root's scripts lay what they
     // like, and lay it again if they run after this.
-    if install_summary.older_layout_can_differ
+    if !install_summary.places.is_empty()
         && install_summary.success > 0
         && install_summary.skipped > 0
         && install_summary.fail == 0
@@ -1043,6 +1043,7 @@ pub fn install_with_manager(
             manager,
             install_root_dependencies,
             &workspace_filters,
+            core::mem::take(&mut install_summary.places),
         );
     }
     if manager.options.global && manager.options.do_.install_packages() {

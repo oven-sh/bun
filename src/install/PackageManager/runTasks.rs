@@ -636,7 +636,8 @@ fn run_tasks_erased(
                 // Headers can arrive and the connection still die before the
                 // body does; for a 2xx/3xx that is a failed download too (an
                 // error status keeps its own handling below).
-                let (download_failed, retry) = download_outcome(&task.response, &manager.options);
+                let (download_failed, retry) =
+                    download_outcome(&task.response, manager.options.runtime_auto_install);
                 if download_failed && task.retried > 0 {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
@@ -924,7 +925,8 @@ fn run_tasks_erased(
                 // NetworkTask back here to be retried like any failed download.
                 debug_assert!(!task.streaming_committed);
 
-                let (download_failed, retry) = download_outcome(&task.response, &manager.options);
+                let (download_failed, retry) =
+                    download_outcome(&task.response, manager.options.runtime_auto_install);
                 if download_failed && task.retried > 0 {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
@@ -1639,9 +1641,10 @@ fn run_tasks_erased(
 }
 
 /// `(failed, retry)`. `failed`: the connection died before a response or under a 2xx/3xx one.
+/// `blocking`: someone waits for this one request. No second try after a silence or a 501 (Not Implemented).
 pub(crate) fn download_outcome(
     response: &http::HTTPClientResult<'static>,
-    options: &Options::Options,
+    blocking: bool,
 ) -> (bool, bool) {
     let proxy_status = response
         .proxy_connect_response
@@ -1665,7 +1668,6 @@ pub(crate) fn download_outcome(
                 | http::Error::TooManyRedirects
         )
     );
-    // Auto-install blocks the JS thread on the request: it does not sit out the same silence twice.
     // `connect_errno` is a Winsock code on Windows: WSAETIMEDOUT.
     const CONNECT_TIMED_OUT: i32 = if cfg!(windows) {
         10060
@@ -1675,7 +1677,7 @@ pub(crate) fn download_outcome(
     let silence = matches!(response.fail, Some(http::Error::Timeout))
         || response.connect_errno == CONNECT_TIMED_OUT;
     let retry = !is_final
-        && !(silence && options.runtime_auto_install)
+        && !(blocking && (silence || status == Some(501)))
         && (failed || status.is_some_and(|status| status > 499 || status == 429 || status == 408));
     (failed, retry)
 }

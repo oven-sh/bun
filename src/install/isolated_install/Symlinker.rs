@@ -7,6 +7,9 @@ pub(crate) struct Symlinker {
     pub(crate) target: bun_paths::RelPath,
     /// The directories of `dest` after `dest[..real_len]` may be links that came with the project.
     pub(crate) real_len: usize,
+    /// After `real_len`: `dest[..node_modules_len]` is the `node_modules` of a workspace. A link there
+    /// stays, and `ensure_symlink` fails with `ELOOP` before it writes. See `LinkedNodeModules`.
+    pub(crate) node_modules_len: usize,
     /// See `LinkedNodeModules`: a directory or a file in the way of `dest` stays, and the link fails.
     pub(crate) is_behind_link: bool,
     /// Windows: the link's text is `fallback_junction_target`. See `LinkedNodeModules::resolve`.
@@ -21,6 +24,15 @@ impl Symlinker {
         let Some(parent) = self.dest.dirname().filter(|dir| dir.len() > self.real_len) else {
             return Ok(false);
         };
+        if self.real_len < self.node_modules_len {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let node_modules =
+                bun_paths::resolve_path::z(&parent[..self.node_modules_len], &mut buf);
+            if crate::prune::LinkedNodeModules::is_at(node_modules) == Some(true) {
+                return Err(bun_sys::Error::from_code(Errno::ELOOP, bun_sys::Tag::lstat));
+            }
+            self.real_len = self.node_modules_len;
+        }
         crate::prune::remove_planted_links(parent, self.real_len)?;
         self.real_len = parent.len();
         Ok(true)

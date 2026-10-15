@@ -855,6 +855,42 @@ test.concurrent.each(["isolated", "hoisted"] as const)(
   },
 );
 
+test.concurrent.each(["install", "remove test-native-binlink"])(
+  "the command that leads into a store entry goes when bun prune removes the entry: after bun %s",
+  async command => {
+    const native = ["test-native-binlink"];
+    const root = { name: "command-into-the-store", nativeDependencies: native, trustedDependencies: native };
+    const { packageDir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          ...root,
+          dependencies: { "test-native-binlink": "1.0.0", "no-deps": "1.0.0" },
+        }),
+      },
+    });
+    const run = async (...args: string[]) => {
+      const env = installEnv(packageDir);
+      await using proc = spawn({ cmd: [bunExe(), ...args], cwd: packageDir, env, stdout: "pipe", stderr: "pipe" });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    };
+    const nodeModules = join(packageDir, "node_modules");
+    await run("install");
+    expect(await readdirSorted(join(nodeModules, ".bin"))).toHaveBins(["test-binlink-cmd"]);
+
+    if (command === "install") {
+      await write(packageJson, JSON.stringify({ ...root, dependencies: { "no-deps": "1.0.0" } }));
+    }
+    await run(...command.split(" "));
+    await run("prune");
+
+    expect(await readdirSorted(join(nodeModules, ".bun"))).toEqual(["no-deps@1.0.0", "node_modules"]);
+    expect(await readdirSorted(join(nodeModules, ".bin"))).toEqual([]);
+  },
+);
+
 test.concurrent("the last dependency that left package.json is unlinked from node_modules", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },

@@ -14,7 +14,6 @@ use crate::bin_real::Bin;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
-use crate::isolated_install::installer::is_link;
 
 use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
@@ -399,6 +398,16 @@ impl NodeModulesFolder {
     }
 }
 
+/// When the bins of a tree are linked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BinPass {
+    /// A bin that leads into a tree that is not complete yet waits for `Remaining`.
+    TreeDone,
+    Remaining,
+    /// What is in `.bin` stays as it is.
+    AfterScripts,
+}
+
 pub struct TreeContext {
     /// Each tree (other than the root tree) can accumulate packages it cannot install until
     /// each parent tree has installed their packages. We keep arrays of these pending
@@ -654,8 +663,7 @@ impl<'a> PackageInstaller<'a> {
             let mut link_rel_buf = bun_paths::path_buffer_pool::get();
             self.link_tree_bins(
                 tree_id,
-                true,
-                false,
+                BinPass::TreeDone,
                 link_target_buf.as_mut_slice(),
                 link_dest_buf.as_mut_slice(),
                 link_rel_buf.as_mut_slice(),
@@ -674,12 +682,10 @@ impl<'a> PackageInstaller<'a> {
         self.increment_tree_install_count(is_pending_package_install, log_level);
     }
 
-    /// `only_free_names`: what is in `.bin` stays as it is.
     fn link_tree_bins(
         &mut self,
         tree_id: TreeContextId,
-        can_defer: bool,
-        only_free_names: bool,
+        pass: BinPass,
         link_target_buf: &mut [u8],
         link_dest_buf: &mut [u8],
         link_rel_buf: &mut [u8],
@@ -689,8 +695,7 @@ impl<'a> PackageInstaller<'a> {
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let mut node_modules_path: AbsPath =
             AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
-        let is_behind_link = lockfile.is_importer_tree_id(tree_id)
-            && is_link(node_modules_path.slice_z()) == Some(true);
+        let mut is_behind_link = (!lockfile.is_importer_tree_id(tree_id)).then_some(false);
 
         let pkgs = lockfile.packages.slice();
         let pkg_name_hashes = pkgs.items_name_hash();
@@ -722,7 +727,7 @@ impl<'a> PackageInstaller<'a> {
             while tree.binaries.remove_or_null().is_some() {}
             return;
         }
-        if only_free_names {
+        if pass == BinPass::AfterScripts {
             bin::see_linked_names(node_modules_path.slice(), &mut self.seen_bin_links);
         }
 
@@ -785,7 +790,8 @@ impl<'a> PackageInstaller<'a> {
                                 };
 
                                 if target_tree_id != tree_id {
-                                    if can_defer && !completed_trees.is_set(target_tree_id as usize)
+                                    if pass == BinPass::TreeDone
+                                        && !completed_trees.is_set(target_tree_id as usize)
                                     {
                                         // Platform package's tree isn't installed
                                         // yet: link the package's own bin now and
@@ -867,6 +873,7 @@ impl<'a> PackageInstaller<'a> {
                 };
 
                 bin_linker.link(global);
+                is_behind_link = bin_linker.is_behind_link;
 
                 if can_retry_without_native_binlink_optimization
                     && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
@@ -923,7 +930,11 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    pub(crate) fn link_remaining_bins(&mut self, only_free_names: bool) {
+    pub(crate) fn link_remaining_bins(&mut self) {
+        self.link_queued_bins(BinPass::Remaining);
+    }
+
+    fn link_queued_bins(&mut self, pass: BinPass) {
         let mut depth_buf = lockfile::tree::depth_buf_uninit();
         let mut node_modules_rel_path_buf = bun_paths::path_buffer_pool::get();
         node_modules_rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
@@ -958,8 +969,7 @@ impl<'a> PackageInstaller<'a> {
 
                 self.link_tree_bins(
                     tree_id as u32,
-                    false,
-                    only_free_names,
+                    pass,
                     link_target_buf.as_mut_slice(),
                     link_dest_buf.as_mut_slice(),
                     link_rel_buf.as_mut_slice(),
@@ -978,7 +988,7 @@ impl<'a> PackageInstaller<'a> {
             }
         }
         if queued {
-            self.link_remaining_bins(true);
+            self.link_queued_bins(BinPass::AfterScripts);
         }
     }
 

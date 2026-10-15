@@ -62,6 +62,7 @@ pub(crate) fn retry(
 
 impl PackageManager {
     /// `send_sync` with the attempts and the waits of `bun install`, for a command that sends one request at a time.
+    /// A request that timed out is not sent again: the user has waited for as long as the timeout allows.
     /// Not for a request the registry must not get twice: the PUT of `bun publish`.
     pub fn send_with_retries(
         &self,
@@ -72,7 +73,7 @@ impl PackageManager {
         loop {
             response_buffer.reset();
             let response = request.send_sync_for_result(response_buffer)?;
-            let (_, retry) = download_outcome(&response, &self.options);
+            let (_, retry) = download_outcome(&response, true);
             if !retry || attempt >= self.options.max_retry_count {
                 return response.into_metadata();
             }
@@ -84,11 +85,13 @@ impl PackageManager {
                         "the registry asked to wait {}s before the next attempt",
                         wait.as_secs(),
                     );
-                } else if matches!(response.fail, Some(bun_http::Error::Timeout)) {
+                } else if wait >= Duration::from_millis(750) {
+                    // From the third retry on, with the default backoff: no long wait without a word.
                     bun_core::warn!(
-                        "Timeout waiting for the registry. Retrying {}/{}...",
+                        "the request to the registry failed. Retry {}/{} in {}ms...",
                         attempt,
                         self.options.max_retry_count,
+                        wait.as_millis(),
                     );
                 }
             }

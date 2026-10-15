@@ -1650,8 +1650,8 @@ pub mod package_manifest {
             let extern_strings_bin_entries = Self::read_array::<ExternalString>(&mut pkg_stream)?;
             let bundled_deps_buf = Self::read_array::<PackageNameHash>(&mut pkg_stream)?;
 
-            // Nobody checks an offset or a length later: a file in which one leaves its array counts as no file.
-            // Checked before the arrays are copied, so that the copy finds them in the CPU cache.
+            // A file in which a list of the package leaves its array counts as no file. The lists of
+            // a version wait for `PackageManifest::is_in_bounds`. A string out of bounds reads as "".
             let string = |s: &SemverString| s.is_within(string_buf);
             let package_versions = {
                 let bin_at = core::mem::offset_of!(PackageVersion, bin);
@@ -1662,16 +1662,12 @@ pub mod package_manifest {
                     .as_chunks::<{ core::mem::size_of::<PackageVersion>() }>()
                     .0
                 {
-                    let mut bin_value = bun_io::FixedBufferStream::new(&raw_pkg[bin_value_at..]);
                     let is_bin_valid = match raw_pkg[bin_tag_at] {
-                        0 => true,
-                        // The bytes after a lone string are zero, which is the empty string.
-                        1..=3 => {
-                            let name_and_path = bin_value.read_struct::<[SemverString; 2]>()?;
-                            name_and_path.iter().all(string)
-                        }
+                        0..=3 => true,
                         4 => {
-                            let names_and_paths = bin_value.read_struct::<ExternalStringList>()?;
+                            let names_and_paths =
+                                bun_io::FixedBufferStream::new(&raw_pkg[bin_value_at..])
+                                    .read_struct::<ExternalStringList>()?;
                             names_and_paths.len.is_multiple_of(2)
                                 && names_and_paths.is_within(extern_strings_bin_entries)
                         }
@@ -1682,11 +1678,6 @@ pub mod package_manifest {
                     }
                 }
                 Self::array_from_bytes::<PackageVersion>(raw_package_versions)
-            };
-            let string_map = |map: &ExternalStringMap| {
-                map.name.len == map.value.len
-                    && map.name.is_within(external_strings)
-                    && map.value.is_within(external_strings_for_versions)
             };
             let version_map = |map: &ExternVersionMap| {
                 map.keys.len == map.values.len
@@ -1702,37 +1693,7 @@ pub mod package_manifest {
                 && pkg.string_lists_buf.is_within(external_strings)
                 && [pkg.last_modified, pkg.etag, pkg.modified, pkg.name.value]
                     .iter()
-                    .all(string)
-                && [
-                    external_strings,
-                    external_strings_for_versions,
-                    extern_strings_bin_entries,
-                ]
-                .iter()
-                .all(|list| list.iter().all(|external| string(&external.value)))
-                && versions.iter().all(|version| {
-                    string(&version.tag.pre.value) && string(&version.tag.build.value)
-                })
-                && package_versions.iter().all(|version| {
-                    [
-                        &version.dependencies,
-                        &version.optional_dependencies,
-                        &version.peer_dependencies,
-                        &version.dev_dependencies,
-                        &version.engines,
-                    ]
-                    .into_iter()
-                    .all(string_map)
-                        && (version.all_dependencies_bundled()
-                            || version.bundled_dependencies.is_within(bundled_deps_buf))
-                        && [
-                            version.man_dir.value,
-                            version.tarball_url.value,
-                            version.deprecated,
-                        ]
-                        .iter()
-                        .all(string)
-                });
+                    .all(string);
             if !is_in_bounds {
                 return Ok(None);
             }
@@ -1756,6 +1717,25 @@ pub mod package_manifest {
 impl PackageManifest {
     pub(crate) fn str<'a>(&'a self, external: &'a ExternalString) -> &'a [u8] {
         external.slice(&self.string_buf)
+    }
+
+    /// Do the lists of `version` lie in their arrays? Asked before `Package::from_npm` reads them:
+    /// reading a cached manifest costs nothing for the versions that nobody picks.
+    pub(crate) fn is_in_bounds(&self, version: &PackageVersion) -> bool {
+        [
+            &version.dependencies,
+            &version.optional_dependencies,
+            &version.peer_dependencies,
+            &version.dev_dependencies,
+            &version.engines,
+        ]
+        .into_iter()
+        .all(|map| {
+            map.name.len == map.value.len
+                && map.name.is_within(&self.external_strings)
+                && map.value.is_within(&self.external_strings_for_versions)
+        }) && (version.all_dependencies_bundled()
+            || (version.bundled_dependencies).is_within(&self.bundled_deps_buf))
     }
 }
 

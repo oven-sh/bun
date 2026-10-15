@@ -1438,6 +1438,30 @@ test.concurrent("packs the same tarball as `bun pm pack`", async () => {
   });
 });
 
+test.concurrent("a bundled optional dependency that is not installed on this machine is left out", async () => {
+  using mock = mockRegistry();
+  using dir = tempDir("publish-bundled-absent", {
+    "package.json": JSON.stringify({
+      name: "bundled-absent",
+      version: "1.0.0",
+      dependencies: { dep1: "1.0.0" },
+      optionalDependencies: { absent: "1.0.0" },
+      bundledDependencies: ["absent", "dep1"],
+    }),
+    "node_modules/dep1/package.json": JSON.stringify({ name: "dep1", version: "1.0.0" }),
+    "bunfig.toml": mockBunfig(mock),
+  });
+
+  const { err, exitCode } = await publish(env, String(dir));
+  expect(err).toBe("");
+  expect(mock.requests).toEqual([request("PUT", "/bundled-absent")]);
+  expect((await attachedTarball(mock.requests[0].manifest)).files).toEqual([
+    "package/node_modules/dep1/package.json",
+    "package/package.json",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 describe.concurrent("--dry-run", () => {
   test("does not publish", async () => {
     using dir = await registryPackage({ name: "dry-run-1", version: "1.1.1", dependencies: { "dry-run-1": "1.1.1" } });

@@ -473,8 +473,47 @@ pub(crate) enum Layout {
 pub(crate) struct Hoisted {
     /// `Builder::late_bound_peer`.
     pub(crate) late_bound_peer: bool,
-    /// `Builder::older_layout_can_differ`.
-    pub(crate) older_layout_can_differ: bool,
+    /// `Builder::places`.
+    pub(crate) places: Vec<(u64, PackageID)>,
+}
+
+/// A number for the `node_modules` of each tree. It is the `place_key` of the tree's owner, and the
+/// same in another hoist that has the folder.
+pub(crate) fn folder_keys(trees: &[Tree], dependencies: &[Dependency]) -> Vec<u64> {
+    let mut keys: Vec<u64> = Vec::with_capacity(trees.len());
+    for tree in trees {
+        // A tree follows its parent.
+        let key = match (
+            keys.get(tree.parent as usize),
+            dependencies.get(tree.dependency_id as usize),
+        ) {
+            (Some(&parent), Some(owner)) => place_key(parent, owner.name_hash),
+            _ => 0,
+        };
+        keys.push(key);
+    }
+    keys
+}
+
+pub(crate) fn place_key(folder_key: u64, name_hash: PackageNameHash) -> u64 {
+    (folder_key.rotate_left(5) ^ name_hash).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
+fn places_of(
+    trees: &[Tree],
+    rows: &[DependencyIDList],
+    dependencies: &[Dependency],
+    resolutions: &[PackageID],
+) -> Vec<(u64, PackageID)> {
+    let folders = folder_keys(trees, dependencies);
+    let mut places = Vec::with_capacity(rows.iter().map(Vec::len).sum());
+    for (&folder, rows) in folders.iter().zip(rows) {
+        places.extend(rows.iter().map(|&row| {
+            let name_hash = dependencies[row as usize].name_hash;
+            (place_key(folder, name_hash), resolutions[row as usize])
+        }));
+    }
+    places
 }
 
 // `manager` and the three fields from `workspace_filters` on: only for `METHOD == .Filter`.
@@ -514,7 +553,9 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) self_contained: Vec<PackageID>,
     pub(crate) peer_probes: PeerProbes,
     /// The first row of each name in each tree, which is what `hoist_dependency` looks for.
-    pub(crate) placed: bun_collections::HashMap<(Id, PackageNameHash), DependencyID>,
+    pub(crate) placed: Placed,
+    /// A row went to a later edge, so it no longer says which edge placed it.
+    pub(crate) replaced_row: bool,
     /// Install-tree rows a tarball ships: placed as in the saved tree, then dropped by `clean`.
     pub(crate) shipped_rows: bun_collections::HashMap<(Id, DependencyID), ()>,
     /// The folder `process_subtree` is filling is one of `shipped_rows`.
@@ -525,12 +566,13 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// The rows that did not get such a place. Each has one tree there, as a placed row has.
     pub(crate) contested_rows: bun_collections::HashMap<(Id, DependencyID), ()>,
     /// Install-tree rows this run links, each with the edge the installer reads. `None`: all.
-    pub(crate) kept: Option<bun_collections::HashMap<(Id, DependencyID), DependencyID>>,
+    pub(crate) kept: Option<RowMap>,
     /// The install tree of bun 1.4.3 and before: what the run leaves out takes no place, so the
     /// rest moves up. `prune::remove_copies_of_the_older_layout` asks where that put a package.
     pub(crate) older_layout: bool,
-    /// False: `older_layout` would give the rows of this run the places they have.
-    pub(crate) older_layout_can_differ: bool,
+    /// The `place_key` of every row and what is there. Empty if `older_layout` would give the rows of
+    /// this run the places they have.
+    pub(crate) places: Vec<(u64, PackageID)>,
     pub(crate) linked: reachable::Linked,
 }
 
@@ -835,13 +877,14 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             install_root_dependencies: self.install_root_dependencies,
             packages_to_install: self.packages_to_install,
             placed: &self.placed,
+            replaced_row: self.replaced_row,
             shipped_rows: &self.shipped_rows,
             contested: &self.contested,
             linked: &mut self.linked,
         })
     }
 
-    /// Fills `kept` and `older_layout_can_differ`.
+    /// Fills `kept` and `places`.
     pub(crate) fn keep_linked_rows(&mut self) {
         if self.older_layout {
             return;
@@ -851,11 +894,82 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         };
         let (kept, older_layout_can_differ) = rows.walk();
         self.kept = kept;
-        self.older_layout_can_differ = older_layout_can_differ;
+        if older_layout_can_differ {
+            self.places = places_of(
+                self.list.items_tree(),
+                self.list.items_dependencies(),
+                self.dependencies,
+                &*self.resolutions,
+            );
+        }
     }
 }
 
-type KeptRows = bun_collections::HashMap<(Id, DependencyID), DependencyID>;
+/// A name hash is a hash already.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct PlaceContext;
+
+impl bun_collections::HashContext<(Id, PackageNameHash)> for PlaceContext {
+    #[inline]
+    fn ctx_hash(key: &(Id, PackageNameHash)) -> u64 {
+        key.1 ^ u64::from(key.0).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+    }
+    #[inline]
+    fn ctx_eql(a: &(Id, PackageNameHash), b: &(Id, PackageNameHash)) -> bool {
+        a == b
+    }
+}
+
+pub(crate) type Placed =
+    bun_collections::HashMap<(Id, PackageNameHash), DependencyID, PlaceContext>;
+
+/// A number for some rows of the trees. A row is in a second tree only if its owner is placed twice.
+pub(crate) struct RowMap {
+    /// By row: the first tree that had it, and the number there.
+    first: Vec<Option<(Id, u32)>>,
+    more: bun_collections::HashMap<(Id, DependencyID), u32>,
+}
+
+impl RowMap {
+    fn new(rows: usize) -> RowMap {
+        RowMap {
+            first: vec![None; rows],
+            more: Default::default(),
+        }
+    }
+
+    fn get(&self, tree_id: Id, row: DependencyID) -> Option<u32> {
+        match *self.first.get(row as usize)? {
+            None => None,
+            Some((first, number)) if first == tree_id => Some(number),
+            Some(_) => self.more.get(&(tree_id, row)).copied(),
+        }
+    }
+
+    fn get_mut(&mut self, tree_id: Id, row: DependencyID) -> Option<&mut u32> {
+        match self.first.get_mut(row as usize)? {
+            None => None,
+            Some((first, number)) if *first == tree_id => Some(number),
+            Some(_) => self.more.get_mut(&(tree_id, row)),
+        }
+    }
+
+    fn insert(&mut self, tree_id: Id, row: DependencyID, number: u32) {
+        match &mut self.first[row as usize] {
+            Some((first, _)) if *first != tree_id => {
+                self.more.insert((tree_id, row), number);
+            }
+            slot => *slot = Some((tree_id, number)),
+        }
+    }
+
+    fn rows(&self) -> impl Iterator<Item = (Id, DependencyID)> + '_ {
+        let first = self.first.iter().enumerate();
+        first
+            .filter_map(|(row, slot)| slot.map(|(tree_id, _)| (tree_id, row as DependencyID)))
+            .chain(self.more.keys().copied())
+    }
+}
 
 /// What `Builder::keep_linked_rows` reads of a finished install tree.
 struct LinkedRows<'b> {
@@ -868,7 +982,8 @@ struct LinkedRows<'b> {
     workspace_filters: &'b [WorkspaceFilter],
     install_root_dependencies: bool,
     packages_to_install: Option<&'b [PackageID]>,
-    placed: &'b bun_collections::HashMap<(Id, PackageNameHash), DependencyID>,
+    placed: &'b Placed,
+    replaced_row: bool,
     shipped_rows: &'b bun_collections::HashMap<(Id, DependencyID), ()>,
     contested: &'b bun_collections::HashMap<(Id, PackageNameHash), ()>,
     linked: &'b mut reachable::Linked,
@@ -909,10 +1024,8 @@ impl LinkedRows<'_> {
 
     /// The rows this run's importers reach, each name looked up as node does. `None`: all.
     /// A pass of its own: an edge the run follows can lead to a row that one it leaves out placed.
-    /// And `Builder::older_layout_can_differ`.
-    fn walk(&mut self) -> (Option<KeptRows>, bool) {
-        use bun_collections::HashMap;
-
+    /// And `older_layout_can_differ`.
+    fn walk(&mut self) -> (Option<RowMap>, bool) {
         let (dependencies, trees, lists) = (self.dependencies, self.trees, self.resolution_lists);
 
         // By edge, which has one owner.
@@ -930,14 +1043,13 @@ impl LinkedRows<'_> {
             return (None, false);
         }
 
-        let mut kept: HashMap<(Id, DependencyID), DependencyID> =
-            HashMap::with_capacity(self.placed.len());
+        let mut kept = RowMap::new(dependencies.len());
 
         // The `node_modules` of what an edge places in `parent`. Not by name: an unlinked member and
         // the losing group of a contested place have one too.
-        let mut own_folder: HashMap<(Id, DependencyID), Id> = HashMap::default();
+        let mut own_folder = RowMap::new(dependencies.len());
         for tree in trees.iter().skip(1) {
-            own_folder.insert((tree.parent, tree.dependency_id), tree.id);
+            own_folder.insert(tree.parent, tree.dependency_id, tree.id);
         }
 
         // The tree to look up from, the package, whether a tarball ships it.
@@ -960,7 +1072,7 @@ impl LinkedRows<'_> {
                     && dep.behavior.is_workspace()
                     && self.placed.get(&(0, dep.name_hash)) != Some(&dep_id)
                 {
-                    let own = own_folder.get(&(0, dep_id)).copied().unwrap_or(0);
+                    let own = own_folder.get(0, dep_id).unwrap_or(0);
                     todo.push((own, target, false));
                     continue;
                 }
@@ -987,7 +1099,7 @@ impl LinkedRows<'_> {
                     }
                 };
 
-                if let Some(edge) = kept.get_mut(&(tree_id, row)) {
+                if let Some(edge) = kept.get_mut(tree_id, row) {
                     if dep_id == row {
                         *edge = row;
                     }
@@ -1008,44 +1120,67 @@ impl LinkedRows<'_> {
                 {
                     continue;
                 }
-                kept.insert((tree_id, row), if follows { dep_id } else { row });
+                kept.insert(tree_id, row, if follows { dep_id } else { row });
                 let filler_pkg_id = self.resolutions[filler as usize];
                 if filler_pkg_id != invalid_package_id {
-                    let own = own_folder.get(&(tree_id, filler)).copied();
+                    let own = own_folder.get(tree_id, filler);
                     let shipped = self.shipped_rows.contains_key(&(tree_id, row));
                     todo.push((own.unwrap_or(tree_id), filler_pkg_id, shipped));
                 }
             }
         }
 
-        // Where a row stands depends on the rows of its name, on where its owner stands and, for one
-        // with a peer, on the rows of that name. So without the edges that the run does not follow
-        // a kept row can stand elsewhere only if one of them has its name, leads to a package that
-        // the run links too (whose rows it then placed from another folder), or is a peer's.
-        let mut idle_names: Vec<PackageNameHash> = Vec::new();
-        let mut can_differ = false;
-        for (pkg_id, list) in lists.iter().enumerate() {
-            for dep_id in list.begin()..list.end() {
-                let target = self.resolutions[dep_id as usize];
-                if target == invalid_package_id || (walked[pkg_id] && !left_out[dep_id as usize]) {
-                    continue;
+        let can_differ = any_left_out && self.older_layout_can_differ(&kept, left_out, &walked);
+        (Some(kept), can_differ)
+    }
+
+    /// The older layout is the hoist of the edges that the run follows, in the same order. An edge
+    /// is placed as here unless one that the run does not follow got in its way or did its work:
+    /// placed the row it shares, placed a row of its name above it, or placed a second copy of a
+    /// linked package, whose edges then came early. A package also stays near a peer.
+    fn older_layout_can_differ(&self, kept: &RowMap, mut idle: Vec<bool>, walked: &[bool]) -> bool {
+        if self.replaced_row || !self.contested.is_empty() {
+            return true;
+        }
+        for (pkg_id, list) in self.resolution_lists.iter().enumerate() {
+            for dep_id in list.begin() as usize..list.end() as usize {
+                if !walked[pkg_id] {
+                    idle[dep_id] = true;
+                } else if idle[dep_id]
+                    && self.dependencies[dep_id].behavior.is_peer()
+                    && self.resolutions[dep_id] != invalid_package_id
+                {
+                    return true;
                 }
-                let dep = &dependencies[dep_id as usize];
-                can_differ |= walked.get(target as usize) == Some(&true)
-                    || (walked[pkg_id] && dep.behavior.is_peer());
-                idle_names.push(dep.name_hash);
             }
         }
-        if !can_differ && !idle_names.is_empty() {
-            idle_names.sort_unstable();
-            can_differ = kept.keys().any(|&(_, row)| {
-                idle_names
-                    .binary_search(&dependencies[row as usize].name_hash)
-                    .is_ok()
-            });
+        let mut has_kept_row = vec![false; self.trees.len()];
+        for (tree_id, row) in kept.rows() {
+            if idle[row as usize] {
+                return true;
+            }
+            has_kept_row[tree_id as usize] = true;
         }
-
-        (Some(kept), can_differ)
+        let mut in_the_way: Vec<PackageNameHash> = Vec::new();
+        for (&(tree_id, name_hash), &row) in self.placed.iter() {
+            let target = self.resolutions[row as usize] as usize;
+            if target >= walked.len() || kept.get(tree_id, row).is_some() {
+                continue;
+            }
+            if walked[target] && self.resolution_lists[target].len > 0 {
+                return true;
+            }
+            if tree_id == 0 || has_kept_row[tree_id as usize] {
+                in_the_way.push(name_hash);
+            }
+        }
+        in_the_way.sort_unstable();
+        !in_the_way.is_empty()
+            && kept.rows().any(|(_, row)| {
+                in_the_way
+                    .binary_search(&self.dependencies[row as usize].name_hash)
+                    .is_ok()
+            })
     }
 }
 
@@ -1068,7 +1203,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         for (tree, child) in trees.iter_mut().zip(dependencies.iter_mut()) {
             // `is_unlinked_member` looks for the owner's row in the parent's list.
             if let Some(kept) = &self.kept
-                && let Some(&edge) = kept.get(&(tree.parent, tree.dependency_id))
+                && let Some(edge) = kept.get(tree.parent, tree.dependency_id)
             {
                 tree.dependency_id = edge;
             }
@@ -1084,7 +1219,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
                     && self.shipped_rows.contains_key(&(tree.id, dep_id));
                 let edge = match &self.kept {
                     None => Some(dep_id),
-                    Some(kept) => kept.get(&(tree.id, dep_id)).copied(),
+                    Some(kept) => kept.get(tree.id, dep_id),
                 };
                 let (false, Some(edge)) = (shipped, edge) else {
                     continue;
@@ -1190,7 +1325,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     }
 
     if parent_pkg_id != 0 {
-        return lockfile.is_member_outside(parent_pkg_id);
+        return linked.is_member_outside(lockfile, parent_pkg_id);
     }
 
     if !dep.behavior.is_workspace() {
@@ -1445,6 +1580,7 @@ impl Tree {
                     dep_id: replaced,
                 } => {
                     debug_assert!(pkg_id != invalid_package_id);
+                    builder.replaced_row = true;
                     // A member only loses the link: its tree is queued, and holds what cannot hoist.
                     if !dependencies[replaced as usize].behavior.is_workspace() {
                         builder.late_bound_peer = true;

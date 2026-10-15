@@ -2912,6 +2912,39 @@ describe.concurrent("bundledDependencies", () => {
     },
   );
 
+  // What an install may leave out, such as an optional dependency for another platform. npm and pnpm do the same.
+  test.each([
+    ["an optional dependency", { optionalDependencies: { absent: "1.0.0" } }],
+    [
+      "an optional dependency that is in dependencies too",
+      { dependencies: { dep1: "1.0.0", absent: "1.0.0" }, optionalDependencies: { absent: "1.0.0" } },
+    ],
+    ["a peer", { peerDependencies: { absent: "*" } }],
+    ["an optional peer", { peerDependencies: { absent: "*" }, peerDependenciesMeta: { absent: { optional: true } } }],
+    ["a devDependency", { devDependencies: { absent: "1.0.0" } }],
+    ["a name in no group", {}],
+  ])("a bundled dependency that is not installed is left out: %s", async (_, groups) => {
+    using dir = tempDir("pack-bundled-absent", {
+      "package.json": JSON.stringify({
+        name: "pack-bundled-absent",
+        version: "1.0.0",
+        dependencies: { dep1: "1.0.0" },
+        ...groups,
+        bundledDependencies: ["absent", "dep1"],
+      }),
+      "node_modules/dep1/package.json": JSON.stringify({ name: "dep1", version: "1.0.0" }),
+    });
+
+    const { out, err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(out.split("\n").filter(line => line.startsWith("bundled "))).toEqual(["bundled dep1"]);
+    expect(tarballEntries(join(dir, "pack-bundled-absent-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/node_modules/dep1/package.json",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a workspace bundles what is in the node_modules of the workspace root", async () => {
     using dir = tempDir("pack-bundled-hoisted-workspace", {
       "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),

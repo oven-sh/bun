@@ -188,6 +188,10 @@ pub struct Lockfile {
 
     /// Packages that so far only rows inside a bundle resolve to. Runtime-only, sized lazily.
     pub(crate) only_bundled: DynamicBitSet,
+
+    /// The root and the workspaces among the first `project_packages_of` packages. Runtime-only.
+    project_packages: Vec<PackageID>,
+    project_packages_of: usize,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
@@ -269,7 +273,7 @@ impl LinkedMembers {
         self.members.put(path, member).unwrap_or_oom();
     }
 
-    /// `path`: from the project. Empty: it could not be resolved.
+    /// `path`: from the project, or absolute. Empty: it could not be resolved.
     pub(crate) fn real_path_of(path: &[u8]) -> Box<[u8]> {
         let mut buf = bun_paths::path_buffer_pool::get();
         let mut real_buf = bun_paths::path_buffer_pool::get();
@@ -1632,13 +1636,14 @@ impl Lockfile {
             sort_buf: Default::default(),
             peer_probes: Default::default(),
             placed: Default::default(),
+            replaced_row: false,
             shipped_rows: Default::default(),
             in_shipped_folder: false,
             contested: Default::default(),
             contested_rows: Default::default(),
             kept: None,
             older_layout: layout == tree::Layout::Older,
-            older_layout_can_differ: false,
+            places: Vec::new(),
             linked: Default::default(),
         };
 
@@ -1661,7 +1666,7 @@ impl Lockfile {
         let cleaned = builder.clean()?;
         let hoisted = tree::Hoisted {
             late_bound_peer: builder.late_bound_peer,
-            older_layout_can_differ: builder.older_layout_can_differ,
+            places: core::mem::take(&mut builder.places),
         };
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
@@ -2205,6 +2210,8 @@ impl Lockfile {
             loaded_package_count: 0,
             held_at_load: DynamicBitSet::default(),
             only_bundled: DynamicBitSet::default(),
+            project_packages: Vec::new(),
+            project_packages_of: 0,
         }
     }
 
@@ -2413,7 +2420,7 @@ impl Lockfile {
         &self,
         name_hash: u64,
         // If non-null, attempt to use an existing package
-        // that satisfies this version range.
+        // that satisfies this version range. Call `note_project_packages` first.
         version: Option<&DependencyVersion>,
         resolution: &Resolution,
     ) -> Option<PackageID> {
@@ -2436,25 +2443,56 @@ impl Lockfile {
         Some(id)
     }
 
+    /// Brings `project_packages` up to date. Each package is looked at once.
+    pub(crate) fn note_project_packages(&mut self) {
+        let resolutions = self.packages.items_resolution();
+        for (id, owner) in (resolutions.iter().enumerate()).skip(self.project_packages_of) {
+            if matches!(owner.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
+                self.project_packages.push(id as PackageID);
+            }
+        }
+        self.project_packages_of = resolutions.len();
+    }
+
+    /// `is_workspace_dependency` without the walk over every package, after `note_project_packages`.
+    pub(crate) fn is_row_of_project(&self, id: DependencyID) -> bool {
+        let rows = self.packages.items_dependencies();
+        (self.project_packages.iter()).any(|&owner| rows[owner as usize].contains(id))
+    }
+
     /// Does a row of the root or of a workspace resolve to `id`? `pinned`: one with an exact version.
     fn is_picked_by_project(&self, id: PackageID, pinned: bool) -> bool {
-        let packages = self.packages.slice();
-        (packages.items_resolution().iter())
-            .zip(packages.items_dependencies())
-            .filter(|(owner, _)| {
-                matches!(owner.tag, ResolutionTag::Root | ResolutionTag::Workspace)
-            })
-            .flat_map(|(_, rows)| rows.begin()..rows.end())
-            .any(|row| {
-                self.buffers.resolutions[row as usize] == id
-                    && (!pinned
-                        || crate::dedupe::effective_npm_range(
-                            self,
-                            row,
-                            &self.buffers.dependencies[row as usize],
-                        )
-                        .is_some_and(|range| range.npm().version.is_exact()))
-            })
+        debug_assert_eq!(self.project_packages_of, self.packages.len());
+        let resolutions = self.buffers.resolutions.as_slice();
+        let picks = |rows: core::ops::Range<usize>| {
+            resolutions[rows.clone()].contains(&id)
+                && (!pinned
+                    || rows.into_iter().any(|row| {
+                        resolutions[row] == id
+                            && crate::dedupe::effective_npm_range(
+                                self,
+                                row as DependencyID,
+                                &self.buffers.dependencies[row],
+                            )
+                            .is_some_and(|range| range.npm().version.is_exact())
+                    }))
+        };
+        // Workspaces are read one after the other: in a fresh install these rows are one stretch.
+        let mut stretch = 0..0;
+        for &owner in &self.project_packages {
+            let rows = self.packages.items_dependencies()[owner as usize];
+            if rows.len == 0 {
+                continue;
+            }
+            if rows.begin() as usize != stretch.end {
+                if picks(stretch) {
+                    return true;
+                }
+                stretch = rows.begin() as usize..rows.begin() as usize;
+            }
+            stretch.end = rows.end() as usize;
+        }
+        picks(stretch)
     }
 
     /// Does a version that this run appended, other than `own_pick`, satisfy `version`?

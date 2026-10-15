@@ -8,8 +8,8 @@ use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
+use bun_paths::SEP;
 use bun_paths::path_options::AssumeOk as _;
-use bun_paths::{AutoAbsPath, AutoRelPath, SEP};
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
@@ -1616,42 +1616,29 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
 /// bun.lock has a key, and replaced whatever else it found there. Nothing is laid in such a place
 /// now, nor below it, so the folder goes: it hides the package further up, which has what it needs.
 /// What the owner's tarball or scripts can have put there stays. For an install that laid something,
-/// as the first one over such a tree does. bun.lock is saved.
+/// as the first one over such a tree does. bun.lock is saved. `places`: `tree::Builder::places`.
 pub(crate) fn remove_copies_of_the_older_layout(
     manager: &mut PackageManager,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
+    mut places: Vec<(u64, PackageID)>,
 ) {
     let Ok(cache) = crate::package_manager::directories::try_get_cache_directory(manager) else {
         return;
     };
+    places.sort_unstable();
     // A hoist can bind a peer.
     let resolutions = manager.lockfile.buffers.resolutions.clone();
-    let Ok(saved) = hoist_install_tree(manager, true) else {
-        manager.lockfile.buffers.resolutions = resolutions;
-        return;
-    };
-    let mut places: Vec<(Box<[u8]>, PackageID)> = Vec::new();
-    {
-        let new = HoistedTree::init(&manager.lockfile, true);
-        for id in 0..new.folders.len() {
-            let rows = new.expected(id).iter();
-            places.extend(rows.map(|&(alias, pkg_id)| (join(new.path(id), alias), pkg_id)));
-        }
-    }
-    index_sort::sort_vec_unstable_by(&mut places, |a, b| a.0.cmp(&b.0));
-    if hoist_tree(
+    if let Ok(saved) = hoist_tree(
         manager,
         false,
         install_root_dependencies,
         workspace_filters,
         tree::Layout::Older,
-    )
-    .is_ok()
-    {
+    ) {
         remove_from_older_places(manager, &places, cache);
+        restore_tree(&mut manager.lockfile, saved);
     }
-    restore_tree(&mut manager.lockfile, saved);
     manager.lockfile.buffers.resolutions = resolutions;
 }
 
@@ -1699,61 +1686,63 @@ fn tarball_has(
     is_folder(&entry)?.then_some(false)
 }
 
-/// `manager.lockfile` carries the older layout. `places`: those of today's and what is there, sorted.
-fn remove_from_older_places(
-    manager: &PackageManager,
-    places: &[(Box<[u8]>, PackageID)],
-    cache: sys::Fd,
-) {
+/// `manager.lockfile` carries the older layout. `places`: `tree::Builder::places` of today's, sorted.
+fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)], cache: sys::Fd) {
     let lockfile: &Lockfile = &manager.lockfile;
+    let trees = lockfile.buffers.trees.as_slice();
+    let rows = lockfile.buffers.hoisted_dependencies.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let older = HoistedTree::init(lockfile, true);
-    let today = |place: &[u8]| {
-        let found = places.binary_search_by(|(path, _)| (**path).cmp(place));
+    let folders = tree::folder_keys(trees, deps);
+    let today = |place: u64| {
+        let found = places.binary_search_by_key(&place, |&(key, _)| key);
         found.ok().map(|i| places[i].1)
     };
     let mut plan = Plan::default();
-    for id in 1..older.folders.len() {
-        let path = older.path(id);
-        let only_older = |alias: &[u8]| today(&join(path, alias)).is_none();
-        if path.is_empty() || !(older.expected(id).iter()).any(|&(alias, _)| only_older(alias)) {
+    for (id, older) in trees.iter().enumerate().skip(1) {
+        let only_older: Vec<u64> = (older.dependencies.get(rows).iter())
+            .map(|&row| deps[row as usize].name_hash)
+            .filter(|&name_hash| today(tree::place_key(folders[id], name_hash)).is_none())
+            .collect();
+        if only_older.is_empty() {
             continue;
         }
         // Where today's layout has another package or none, what is there is left over as well, and
         // only other leftovers load it. They go on finding what they need.
-        let owner_place = (path.strip_suffix(b"node_modules")).and_then(|p| p.strip_suffix(&[SEP]));
-        if !is_member_tree(lockfile, id)
-            && owner_place.and_then(&today) != Some(tree_owner(lockfile, id))
-        {
+        let owner = tree_owner(lockfile, id);
+        if !is_member_tree(lockfile, id) && today(folders[id]) != Some(owner) {
             continue;
         }
         // A tarball ships folders at any depth below the package that bundles.
+        let mut chain: Vec<&[u8]> = Vec::new();
         let mut above = id;
         while above != 0 {
             let owner = tree_owner(lockfile, above);
-            let folder = older.trees[above].folder_name(deps, buf);
+            let folder = trees[above].folder_name(deps, buf);
             if has_bundled_deps(lockfile, owner) || can_have_run_scripts(lockfile, folder, owner) {
                 break;
             }
-            above = older.trees[above].parent as usize;
+            chain.push(folder);
+            above = trees[above].parent as usize;
         }
         if above != 0 {
             continue;
         }
-        let tree_id = id as tree::Id;
-        let Some(dir) = open_tree_folder(lockfile, tree_id, &mut plan.linked_folders) else {
+        let mut path: Box<[u8]> = ROOT_DIR.into();
+        for folder in chain.iter().rev() {
+            path = join(&join(&path, folder), ROOT_DIR);
+        }
+        let Some(dir) = open_tree_folder(lockfile, older.id, &mut plan.linked_folders) else {
             continue;
         };
-        let owner = tree_owner(lockfile, id);
         scan_folder(
             dir,
-            path,
+            &path,
             false,
             &|entry: &Entry| {
+                let name_hash = bun_semver::semver_string::Builder::string_hash(entry.alias);
                 entry.kind != EntryKind::Directory
-                    || older.expected_in(tree_id, entry.alias).is_none()
-                    || !only_older(entry.alias)
+                    || !only_older.contains(&name_hash)
                     || tarball_has(manager, cache, owner, entry.alias) != Some(false)
             },
             &mut plan,
@@ -1880,7 +1869,7 @@ pub(crate) fn unlink_dropped_dependencies(manager: &mut PackageManager, before: 
         // Every package in the store can load what is linked here. What no row names is left over.
         if let Some(hidden) = open_real_subdir(&store_dir, b"node_modules") {
             let mut names: Vec<_> = deps.iter().map(|dep| dep.name_hash).collect();
-            index_sort::sort_vec_unstable_by(&mut names, |a, b| a.cmp(b));
+            names.sort_unstable();
             scan_folder(
                 hidden,
                 &join(STORE_DIR, b"node_modules"),
@@ -2011,56 +2000,40 @@ fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> 
     }
 }
 
-struct LinkedFolder {
-    /// From the project.
-    path: Box<[u8]>,
+/// The `node_modules` of the project or of a workspace that is a link: a volume, a cache disk.
+/// The linkers install through one. Not all behind it need be bun's, so they clear nothing there.
+///
+/// A workspace's is looked at when something is about to be written or removed there, not before.
+pub(crate) struct LinkedNodeModules {
     abs_path: Box<[u8]>,
     /// Empty: the link dangles, or on Windows.
     real_path: Box<[u8]>,
 }
 
-/// The `node_modules` of the project and of its workspaces that are links: a volume, a cache disk.
-/// The linkers install through one. Not all behind it need be bun's, so they clear nothing there.
-#[derive(Default)]
-pub(crate) struct LinkedNodeModules(Vec<LinkedFolder>);
-
 impl LinkedNodeModules {
-    /// One `lstat` for each folder.
-    pub(crate) fn find(lockfile: &Lockfile) -> LinkedNodeModules {
-        let members = (lockfile.workspace_paths.values().iter())
-            .map(|path| path.slice(&lockfile.buffers.string_bytes))
-            .filter(|path| !lockfile.is_member_path_outside(path));
-        let mut linked = Vec::new();
-        for package_dir in core::iter::once(&b""[..]).chain(members) {
-            let mut path = AutoRelPath::from(package_dir).assume_ok();
-            path.append(ROOT_DIR).assume_ok();
-            match sys::lstat(path.slice_z()) {
-                Ok(st) if sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink => {}
-                _ => continue,
-            }
-            let mut abs_path = AutoAbsPath::init_top_level_dir();
-            abs_path.append(path.slice()).assume_ok();
-            linked.push(LinkedFolder {
-                real_path: if cfg!(windows) {
-                    Box::default()
-                } else {
-                    LinkedMembers::real_path_of(path.slice())
-                },
-                abs_path: abs_path.slice().into(),
-                path: path.slice().into(),
-            });
+    /// `None`: nothing is there.
+    pub(crate) fn is_at(node_modules: &ZStr) -> Option<bool> {
+        let st = sys::lstat(node_modules).ok()?;
+        Some(sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink)
+    }
+
+    /// `node_modules`: absolute.
+    pub(crate) fn at(node_modules: &ZStr) -> Option<LinkedNodeModules> {
+        if Self::is_at(node_modules) != Some(true) {
+            return None;
         }
-        LinkedNodeModules(linked)
+        Some(LinkedNodeModules {
+            real_path: if cfg!(windows) {
+                Box::default()
+            } else {
+                LinkedMembers::real_path_of(node_modules.as_bytes())
+            },
+            abs_path: node_modules.as_bytes().into(),
+        })
     }
 
-    /// `node_modules`: from the project, or absolute.
-    pub(crate) fn contains(&self, node_modules: &[u8]) -> bool {
-        (self.0.iter())
-            .any(|folder| *folder.path == *node_modules || *folder.abs_path == *node_modules)
-    }
-
-    /// True if `path`, which is absolute, is one of them or below one: it then starts with what the
-    /// link leads to. A relative link counts from where it really is.
+    /// True if `path`, which is absolute, is it or below it: it then starts with what the link
+    /// leads to. A relative link counts from where it really is.
     ///
     /// Not on Windows, where `path` stays: behind a junction a relative link counts from the path
     /// that goes through the junction, behind a symlink from the real one. A link that leaves what
@@ -2069,41 +2042,30 @@ impl LinkedNodeModules {
         &self,
         path: &mut bun_paths::Path<u8, KIND, SEP>,
     ) -> bool {
-        for folder in &self.0 {
-            let below = match path.slice().strip_prefix(&*folder.abs_path) {
-                Some([]) => Vec::new(),
-                Some([sep, below @ ..]) if bun_paths::is_sep_any(*sep) => below.to_vec(),
-                _ => continue,
-            };
-            if !folder.real_path.is_empty() {
-                *path = bun_paths::Path::from(&*folder.real_path).assume_ok();
-                path.append(&below).assume_ok();
-            }
-            return true;
+        let below = match path.slice().strip_prefix(&*self.abs_path) {
+            Some([]) => Vec::new(),
+            Some([sep, below @ ..]) if bun_paths::is_sep_any(*sep) => below.to_vec(),
+            _ => return false,
+        };
+        if !self.real_path.is_empty() {
+            *path = bun_paths::Path::from(&*self.real_path).assume_ok();
+            path.append(&below).assume_ok();
         }
-        false
+        true
     }
 
-    /// `holds_a_tree`: whether a linker that starts over would have cleared the folder.
-    pub(crate) fn warn_not_cleared(
-        &self,
-        log_level: LogLevel,
-        holds_a_tree: impl Fn(&[u8]) -> bool,
-    ) {
-        if log_level == LogLevel::Silent {
+    /// `folders`: from the project, those that a linker that starts over would have cleared.
+    pub(crate) fn warn_not_cleared(log_level: LogLevel, folders: &[Box<[u8]>]) {
+        if log_level == LogLevel::Silent || folders.is_empty() {
             return;
         }
-        let mut warned = false;
-        for folder in self.0.iter().filter(|folder| holds_a_tree(&folder.path)) {
+        for folder in folders {
             bun_core::warn!(
                 "{} is a symlink, so what another linker installed there was not removed",
-                native_path(&folder.path)
+                native_path(folder)
             );
-            warned = true;
         }
-        if warned {
-            bun_core::note!("remove the link and run 'bun install'");
-        }
+        bun_core::note!("remove the link and run 'bun install'");
     }
 }
 
@@ -2745,16 +2707,24 @@ pub(crate) fn prune_bins(node_modules: &Dir) {
     }
 }
 
-/// `path`: from `node_modules` to a file in a package.
+/// `path`: from `node_modules` to a file in a package. The package can be in a store entry, so its
+/// folder is the one after the last `node_modules` on the way.
 fn leads_into_package(node_modules: &Dir, path: &[u8]) -> bool {
-    let Some(mut end) = strings::index_of_any(path, b"/\\") else {
+    let (mut package, mut at) = (0, 0);
+    while let Some(end) = strings::index_of_any_pos(path, b"/\\", at) {
+        if &path[at..end] == b"node_modules" {
+            package = end + 1;
+        }
+        at = end + 1;
+    }
+    let Some(mut end) = strings::index_of_any_pos(path, b"/\\", package) else {
         return false;
     };
-    if path.first() == Some(&b'@') {
-        let Some(name) = strings::index_of_any(&path[end + 1..], b"/\\") else {
+    if path[package] == b'@' {
+        let Some(name) = strings::index_of_any_pos(path, b"/\\", end + 1) else {
             return false;
         };
-        end += 1 + name;
+        end = name;
     }
     !is_dangling(node_modules, &path[..end])
 }

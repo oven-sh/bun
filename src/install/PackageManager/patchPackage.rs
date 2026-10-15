@@ -1148,7 +1148,7 @@ fn make_bins_executable(
         abs_target_buf: abs_target_buf.as_mut_slice(),
         abs_dest_buf: abs_dest_buf.as_mut_slice(),
         rel_buf: rel_buf.as_mut_slice(),
-        is_behind_link: false,
+        is_behind_link: Some(false),
         err: None,
         skipped_due_to_missing_bin: false,
     }

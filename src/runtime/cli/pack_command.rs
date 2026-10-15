@@ -672,6 +672,8 @@ fn resolve_installed(project: &[u8], from: &[u8], name: &[u8]) -> Option<(Box<[u
 /// The files of the bundled dependencies and of everything they depend on, in the order of their paths in the tarball.
 fn iterate_bundled_deps(
     bundled_deps: &mut Vec<BundledDep>,
+    // Of the packed package. By value: the cache entry it is from moves when the manifests are loaded.
+    package_json: Expr,
     stats: &mut Stats,
     manager: &mut PackageManager,
     workspace_manifests: &mut Option<WorkspaceManifests>,
@@ -697,13 +699,22 @@ fn iterate_bundled_deps(
             .unwrap_or_else(|err| fail_open_dir(err.into(), project_path));
     }
 
+    let is_in = |group: &[u8], name: &[u8]| {
+        (package_json.get(group)).is_some_and(|dependencies| dependencies.get(name).is_some())
+    };
+
     // All of these first: what one of them depends on must not take the place of another.
-    for dep in bundled_deps.iter() {
+    for dep in core::mem::take(bundled_deps) {
         let found = bun_install::package_installer::alias_is_safe_install_target(&dep.name)
             .then(|| resolve_installed(&bundle.project_path, root_path, &dep.name))
             .flatten();
-        // The tarball's package.json tells whoever installs it that the package is inside.
         let Some((real_path, _)) = found else {
+            // Like npm, what an install may leave out is left out: an optional dependency for another platform,
+            // a peer, a devDependency, a name in no group.
+            if !is_in(b"dependencies", &dep.name) || is_in(b"optionalDependencies", &dep.name) {
+                continue;
+            }
+            // The tarball's package.json tells whoever installs it that the package is inside.
             Output::err_generic(
                 "bundled dependency \"{}\" is not installed",
                 format_args!("{}", bstr::BStr::new(&dep.name)),
@@ -714,6 +725,7 @@ fn iterate_bundled_deps(
         if !bundle.placed.contains_key(subpath.as_slice()) {
             bundle.place(None, &dep.name, real_path)?;
         }
+        bundled_deps.push(dep);
     }
 
     let mut add = |bundle: &mut Bundle, index: usize| {
@@ -1721,6 +1733,7 @@ pub(crate) fn pack(
 
     let bundled_files = iterate_bundled_deps(
         &mut ctx.bundled_deps,
+        json.root,
         &mut ctx.stats,
         ctx.manager,
         &mut workspace_manifests,

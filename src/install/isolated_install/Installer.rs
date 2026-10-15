@@ -23,6 +23,7 @@ use crate::package_install::{
 use crate::package_manager_real::Command;
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
+use crate::prune::LinkedNodeModules;
 use crate::resolution;
 use crate::{
     self as install, Lockfile, PackageID, PackageManager, Resolution, TaskCallbackContext,
@@ -66,7 +67,8 @@ pub struct Installer<'a> {
     pub(crate) installed: Bitset,
     pub(crate) install_node: Option<&'a mut ProgressNode>,
     pub(crate) is_new_bun_modules: bool,
-    pub(crate) linked: crate::prune::LinkedNodeModules,
+    /// The project's.
+    pub(crate) linked: Option<LinkedNodeModules>,
     /// Taken by the first task that links a project-local package.
     pub(crate) staging_lock: std::sync::OnceLock<StagingLock>,
 
@@ -1889,6 +1891,7 @@ impl<'a> Installer<'a> {
             dest: hidden_hoisted_node_modules.into_sep::<{ PathSeparators::ANY }>(),
             target: target.into_sep::<{ PathSeparators::ANY }>(),
             real_len,
+            node_modules_len: 0,
             is_behind_link: false,
             is_absolute: false,
             #[cfg(windows)]
@@ -1940,6 +1943,31 @@ impl<'a> Installer<'a> {
         strategy: symlinker::Strategy,
         made_entry: bool,
     ) -> TaskResult<Relink> {
+        match self.symlink_dependencies_behind(None, entry_id, strategy, made_entry) {
+            // See `Symlinker::node_modules_len`.
+            Err(TaskError::SymlinkDependencies(err))
+                if err.get_errno() == sys::E::ELOOP
+                    && self.resolution(entry_id).tag == ResolutionTag::Workspace =>
+            {
+                let mut node_modules = AutoPath::init_top_level_dir();
+                self.append_store_node_modules_path(&mut node_modules, entry_id);
+                let Some(linked) = LinkedNodeModules::at(node_modules.slice_z()) else {
+                    return Err(TaskError::SymlinkDependencies(err));
+                };
+                self.symlink_dependencies_behind(Some(&linked), entry_id, strategy, made_entry)
+            }
+            result => result,
+        }
+    }
+
+    /// `own`: the `node_modules` of the entry, a member.
+    fn symlink_dependencies_behind(
+        &self,
+        own: Option<&LinkedNodeModules>,
+        entry_id: StoreEntryId,
+        strategy: symlinker::Strategy,
+        made_entry: bool,
+    ) -> TaskResult<Relink> {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
@@ -1953,7 +1981,7 @@ impl<'a> Installer<'a> {
         let mut dest = AutoPath::init_top_level_dir();
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
         // A relative link counts from where it really is: `node_modules` or a member can be a link.
-        let is_linked = self.linked.resolve(&mut dest);
+        let is_linked = (self.linked.iter().chain(own)).any(|linked| linked.resolve(&mut dest));
         let linked_member = if !is_linked && pkg_res.tag == ResolutionTag::Workspace {
             let path = lockfile.str(pkg_res.workspace());
             lockfile.linked_members.get(path)
@@ -1984,12 +2012,17 @@ impl<'a> Installer<'a> {
             _ if is_behind_link => base_len,
             _ => base_len - "/node_modules".len(),
         };
+        let node_modules_len = match pkg_res.tag {
+            ResolutionTag::Workspace => base_len,
+            _ => 0,
+        };
         let mut real_scope: &[u8] = b"";
 
         // Gives `dest` back, with the `real_len` the symlinker ends with.
         let link = |mut dest: AutoPath, mut to: AutoAbsPath, real_len: usize| {
             // A store entry's link to another one does not leave what the link leads to.
-            let stays_behind_link = is_linked && self.linked.resolve(&mut to);
+            let stays_behind_link =
+                is_linked && (self.linked.iter().chain(own)).any(|linked| linked.resolve(&mut to));
             let dest_len = dest.len();
             dest.undo(1);
             let target = dest.relative(&to);
@@ -1999,6 +2032,7 @@ impl<'a> Installer<'a> {
                 dest: dest.into_sep::<{ PathSeparators::ANY }>(),
                 target: target.into_sep::<{ PathSeparators::ANY }>(),
                 real_len: if all_real { dest_len } else { real_len },
+                node_modules_len,
                 is_behind_link,
                 is_absolute: all_absolute || (cfg!(windows) && is_linked && !stays_behind_link),
                 #[cfg(windows)]
@@ -2237,8 +2271,12 @@ impl<'a> Installer<'a> {
     fn bin_links(&self, entry_id: StoreEntryId) -> BinLinks {
         let mut node_modules_path = DefaultAbsPath::init_top_level_dir();
         self.append_real_store_node_modules_path(&mut node_modules_path, entry_id, Which::Staging);
-        let is_behind_link = self.linked.contains(node_modules_path.slice());
-        self.linked.resolve(&mut node_modules_path);
+        let is_linked = (self.linked.iter()).any(|linked| linked.resolve(&mut node_modules_path));
+        let is_behind_link = match self.resolution(entry_id).tag {
+            ResolutionTag::Root => Some(is_linked),
+            ResolutionTag::Workspace => None,
+            _ => Some(false),
+        };
         BinLinks {
             node_modules_path,
             is_behind_link,
@@ -2265,12 +2303,22 @@ impl<'a> Installer<'a> {
             .map(|entry_id| {
                 let mut path = DefaultAbsPath::init_top_level_dir();
                 self.append_real_store_node_modules_path(&mut path, entry_id, Which::Final);
-                self.linked.resolve(&mut path);
+                if let Some(linked) = &self.linked {
+                    linked.resolve(&mut path);
+                }
                 (
                     path,
                     strings::StringOrTinyString::init(self.pkg_name(entry_id)),
                 )
             });
+        // Such a link leaves the member's `node_modules`: it counts from where that really is.
+        if replacement.is_some() && links.is_behind_link != Some(false) {
+            if let Some(linked) = LinkedNodeModules::at(links.node_modules_path.slice_z()) {
+                linked.resolve(&mut links.node_modules_path);
+                links.is_behind_link = Some(true);
+            }
+            links.is_behind_link.get_or_insert(false);
+        }
         // Aliases `node_modules_path` without a replacement: the Linker field is a raw pointer.
         let (target_node_modules_path, target_package_name) = match &replacement {
             Some((path, name)) => (core::ptr::from_ref(path), *name),
@@ -2315,6 +2363,7 @@ impl<'a> Installer<'a> {
             bin_linker.link(global);
         }
 
+        links.is_behind_link = bin_linker.is_behind_link;
         bin_linker.err.map_or(Ok(()), Err)
     }
 
@@ -2749,7 +2798,8 @@ pub enum Which {
 
 struct BinLinks {
     node_modules_path: DefaultAbsPath,
-    is_behind_link: bool,
+    /// See `bin::Linker::is_behind_link`.
+    is_behind_link: Option<bool>,
     seen: StringHashMap<()>,
     abs_target_buf: paths::path_buffer_pool::Guard,
     abs_dest_buf: paths::path_buffer_pool::Guard,

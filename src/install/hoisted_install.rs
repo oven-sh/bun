@@ -25,6 +25,7 @@ use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
 use crate::package_manager_task as Task;
+use crate::prune::LinkedNodeModules;
 
 /// `RunTasksCallbacks` impl for the hoisted-install loop, with
 /// `Ctx == PackageInstaller`.
@@ -193,7 +194,7 @@ pub(crate) fn install_hoisted_packages(
     let original_trees = this.lockfile.buffers.trees.clone();
     let original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies.clone();
 
-    let older_layout_can_differ = {
+    let places = {
         // `lockfile` is `Box<Lockfile>` so the heap object
         // is disjoint from the `PackageManager` struct; snapshot raw `*mut
         // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
@@ -214,7 +215,7 @@ pub(crate) fn install_hoisted_packages(
                     workspace_filters,
                     packages_to_install,
                 )?
-                .older_layout_can_differ
+                .places
         }
     };
     // SAFETY: `mgr_ptr` is the provenance root derived from the unique `&mut`
@@ -252,22 +253,21 @@ pub(crate) fn install_hoisted_packages(
         && this.options.node_linker == bun_install_types::NodeLinker::NodeLinker::Hoisted
         && sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
             .unwrap_or(false);
-    let linked = if has_isolated_store {
-        crate::prune::LinkedNodeModules::find(&this.lockfile)
-    } else {
-        Default::default()
-    };
     // Behind a link the store stays, so every run finds it: none of them starts over.
-    let replacing_isolated_node_modules = has_isolated_store && !linked.contains(b"node_modules");
+    let is_linked = has_isolated_store
+        && LinkedNodeModules::is_at(bun_paths::path_literal!("node_modules")) == Some(true);
+    let replacing_isolated_node_modules = has_isolated_store && !is_linked;
     let old_modules = if replacing_isolated_node_modules {
         crate::isolated_install::move_node_modules_aside(
             &this.lockfile,
             this.options.global,
-            &linked,
             log_level,
         )
     } else {
-        linked.warn_not_cleared(log_level, |path| path == b"node_modules");
+        if is_linked {
+            let folder = Box::<[u8]>::from(&b"node_modules"[..]);
+            LinkedNodeModules::warn_not_cleared(log_level, &[folder]);
+        }
         None
     };
 
@@ -328,7 +328,7 @@ pub(crate) fn install_hoisted_packages(
 
     let mut summary = package_install::Summary {
         old_modules,
-        older_layout_can_differ,
+        places,
         ..Default::default()
     };
 
@@ -575,7 +575,7 @@ pub(crate) fn install_hoisted_packages(
 
         // need to make sure bins are linked before completing any remaining scripts.
         // this can happen if a package fails to download
-        installer.link_remaining_bins(false);
+        installer.link_remaining_bins();
         installer.complete_remaining_scripts(log_level);
 
         // .monotonic is okay because this value is only accessed on this thread.

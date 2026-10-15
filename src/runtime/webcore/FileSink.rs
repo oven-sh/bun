@@ -1686,7 +1686,7 @@ impl FileSink {
     }
 }
 
-bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, _cause| {
+bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, cause| {
     // What is buffered is dropped with the graph: the writer closes without draining (a reader
     // that never reads would keep it open for ever), and a parked write gives up its promise and
     // the wrapper it pins, as when an attached process exits. `on_close` may free `this`.
@@ -1694,7 +1694,14 @@ bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, _cause| {
     // write+dealloc provenance; the guard keeps it so across `close()` and `run_pending`.
     unsafe {
         let _guard = RefPtr::init_ref(this);
-        if (*this).flush_on_abort.get() {
+        // The isolate swap flushes stdio first; a backpressured `end()` then drains on the live
+        // loop. VM teardown has no loop left to drain on, so it takes the native close below.
+        if (*this).flush_on_abort.get()
+            && matches!(
+                cause,
+                bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::Disposed)
+            )
+        {
             let _ = (*this).end(None);
             return;
         }

@@ -79,10 +79,8 @@ describe.concurrent("bun test --isolate", () => {
   test.skipIf(!isLinux)("with --isolate, stdio sinks do not leak a dup'd fd per file", async () => {
     const countFixture = `
       import { test } from "bun:test";
-      import { readdirSync, readlinkSync } from "node:fs";
-      test("count dups of stderr", () => {
-        process.stderr.write("");
-        process.stdout.write("");
+      import { existsSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+      function countStderrDups() {
         const target = readlinkSync("/proc/self/fd/2");
         let count = 0;
         for (const fd of readdirSync("/proc/self/fd")) {
@@ -93,6 +91,22 @@ describe.concurrent("bun test --isolate", () => {
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
           }
         }
+        return count;
+      }
+      test("count dups of stderr", () => {
+        process.stderr.write("");
+        process.stdout.write("");
+        // The first file records the baseline. The swap closes the previous
+        // file's dup on a work-pool thread, so later files poll until that
+        // close lands. A leaked dup never closes, so the poll then times out.
+        const baseline = existsSync("baseline.txt") ? Number(readFileSync("baseline.txt", "utf8")) : null;
+        const deadline = Date.now() + 5000;
+        let count = countStderrDups();
+        while (baseline !== null && count > baseline && Date.now() < deadline) {
+          Bun.sleepSync(1);
+          count = countStderrDups();
+        }
+        if (baseline === null) writeFileSync("baseline.txt", String(count));
         console.log("FDCOUNT:" + count);
       });
     `;

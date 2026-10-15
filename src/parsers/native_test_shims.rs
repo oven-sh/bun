@@ -65,6 +65,18 @@ unsafe extern "C" fn highway_memmem(
 }
 
 #[unsafe(no_mangle)]
+unsafe extern "C" fn highway_memmem_anchored(
+    haystack: *const u8,
+    haystack_len: usize,
+    needle: *const u8,
+    needle_len: usize,
+    _first: usize,
+    _second: usize,
+) -> *const u8 {
+    unsafe { highway_memmem(haystack, haystack_len, needle, needle_len) }
+}
+
+#[unsafe(no_mangle)]
 unsafe extern "C" fn highway_last_index_of_char(
     haystack: *const u8,
     haystack_len: usize,

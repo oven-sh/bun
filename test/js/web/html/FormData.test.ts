@@ -1,4 +1,4 @@
-import { describe, expect, it, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 
@@ -255,129 +255,272 @@ describe("FormData", () => {
     }
   });
 
-  // RFC 2046 §5.1.1: the CRLF preceding the boundary delimiter line is part of
-  // the delimiter. A `--boundary` sequence that is not at the start of a line
-  // is part of the enclosing field's value, not a delimiter.
-  describe("multipart boundary must follow CRLF", () => {
-    const B = "AaB03x";
+  // RFC 2046 §5.1.1: a delimiter is CRLF, "--", the boundary. It counts only
+  // where a line starts, and the first close delimiter ends the body.
+  describe("multipart delimiters", () => {
+    // Lowercase, because a Blob lowercases its type.
+    const B = "aab03x";
     const CRLF = "\r\n";
-    const make = (body: string) =>
-      new Response(body, { headers: { "Content-Type": `multipart/form-data; boundary=${B}` } }).formData();
+    const header = (name: string) => `Content-Disposition: form-data; name="${name}"${CRLF}`;
+    const part = (name: string, value: string) => `--${B}${CRLF}${header(name)}${CRLF}${value}${CRLF}`;
+    const filePart = (name: string, value: string) =>
+      `--${B}${CRLF}Content-Disposition: form-data; name="${name}"; filename="${name}.bin"${CRLF}${CRLF}${value}${CRLF}`;
+    const close = `--${B}--${CRLF}`;
+    // What a client can put inside a value to try to add a field.
+    const forged = `--${B}${CRLF}${header("role")}${CRLF}admin`;
+    const honest = part("role", "user") + close;
 
-    for (const prefix of ["hello", "x", "zz", "-", "--"]) {
-      it(`keeps mid-line '${prefix}--${B}\\r\\n' in a value (not a delimiter)`, async () => {
-        const value = `${prefix}--${B}${CRLF}` + `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` + `admin`;
-        const body =
-          `--${B}${CRLF}` +
-          `Content-Disposition: form-data; name="comment"${CRLF}${CRLF}` +
-          `${value}${CRLF}` +
-          `--${B}--${CRLF}`;
-        const fd = await make(body);
-        expect([...fd]).toEqual([["comment", value]]);
-        expect(fd.get("role")).toBeNull();
-      });
-    }
+    type Entries = [string, string | { filename: string; text: string }][];
+    type Row = { name: string; body: string; entries: Entries } | { name: string; body: string; rejects: string };
 
-    it("keeps mid-line '--boundary--' in a value (not the close delimiter)", async () => {
-      const value = `hello--${B}--world`;
-      const body =
-        `--${B}${CRLF}` +
-        `Content-Disposition: form-data; name="comment"${CRLF}${CRLF}` +
-        `${value}${CRLF}` +
-        `--${B}--${CRLF}`;
-      const fd = await make(body);
-      expect([...fd]).toEqual([["comment", value]]);
-    });
+    const rows: Row[] = [
+      // A boundary inside a line is part of the value.
+      {
+        name: "a delimiter in the middle of a line",
+        body: part("comment", "hello" + forged) + honest,
+        entries: [
+          ["comment", "hello" + forged],
+          ["role", "user"],
+        ],
+      },
+      {
+        name: "a delimiter behind a bare LF",
+        body: part("comment", "hello\n" + forged) + honest,
+        entries: [
+          ["comment", "hello\n" + forged],
+          ["role", "user"],
+        ],
+      },
+      {
+        name: "a delimiter behind a bare CR",
+        body: part("comment", "hello\r" + forged) + honest,
+        entries: [
+          ["comment", "hello\r" + forged],
+          ["role", "user"],
+        ],
+      },
+      {
+        name: "a delimiter behind a dash at a line start",
+        body: part("comment", "hello" + CRLF + "-" + forged) + honest,
+        entries: [
+          ["comment", "hello" + CRLF + "-" + forged],
+          ["role", "user"],
+        ],
+      },
+      {
+        name: "a delimiter in the middle of a line of a file",
+        body: filePart("f", "\x00\x01\x7f" + forged) + honest,
+        entries: [
+          ["f", { filename: "f.bin", text: "\x00\x01\x7f" + forged }],
+          ["role", "user"],
+        ],
+      },
+      {
+        name: "the same name again, in the middle of a line",
+        body: part("role", "user" + forged) + close,
+        entries: [["role", "user" + forged]],
+      },
+      {
+        name: "a close delimiter in the middle of a line",
+        body: part("a", `1--${B}--`) + honest,
+        entries: [
+          ["a", `1--${B}--`],
+          ["role", "user"],
+        ],
+      },
+      { name: "a value that ends in x--boundary", body: part("a", `x--${B}`) + close, entries: [["a", `x--${B}`]] },
+      {
+        name: "a value that ends in CRLF",
+        body: part("a", "line1" + CRLF + "line2" + CRLF) + close,
+        entries: [["a", "line1" + CRLF + "line2" + CRLF]],
+      },
+      { name: "an empty value", body: part("a", "") + close, entries: [["a", ""]] },
+      {
+        name: "a line that starts with the boundary and more text",
+        body: part("a", `x${CRLF}--${B}suffix${CRLF}y`) + close,
+        entries: [["a", `x${CRLF}--${B}suffix${CRLF}y`]],
+      },
+      {
+        name: "a delimiter line with a space behind the boundary",
+        body: part("comment", `hello${CRLF}--${B} ${CRLF}${header("role")}${CRLF}admin`) + honest,
+        entries: [
+          ["comment", `hello${CRLF}--${B} ${CRLF}${header("role")}${CRLF}admin`],
+          ["role", "user"],
+        ],
+      },
 
-    it("stops at the first close delimiter and discards the epilogue", async () => {
-      const body =
-        `--${B}${CRLF}` +
-        `Content-Disposition: form-data; name="comment"${CRLF}${CRLF}` +
-        `foo${CRLF}` +
-        `--${B}--${CRLF}` +
-        `--${B}${CRLF}` +
-        `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` +
-        `admin${CRLF}` +
-        `--${B}--${CRLF}`;
-      const fd = await make(body);
-      expect([...fd]).toEqual([["comment", "foo"]]);
-      expect(fd.get("role")).toBeNull();
-    });
+      // The first close delimiter ends the body.
+      {
+        name: "a part behind the close delimiter",
+        body: part("a", "1") + honest + part("role", "admin") + close,
+        entries: [
+          ["a", "1"],
+          ["role", "user"],
+        ],
+      },
+      {
+        name: "a part behind a close delimiter with a suffix",
+        body: part("a", "1") + `--${B}--x${CRLF}` + part("role", "admin") + close,
+        entries: [["a", "1"]],
+      },
+      { name: "two close delimiters", body: part("a", "1") + close + close, entries: [["a", "1"]] },
+      { name: "only a close delimiter", body: close, entries: [] },
+      { name: "a part behind a close delimiter at offset 0", body: close + part("role", "admin") + close, entries: [] },
+      {
+        name: "a part behind a close delimiter in the preamble",
+        body: "preamble" + CRLF + close + part("role", "admin") + close,
+        entries: [],
+      },
+      { name: "a close delimiter with no CRLF behind it", body: part("a", "1") + `--${B}--`, entries: [["a", "1"]] },
+      { name: "text behind the close delimiter", body: part("a", "1") + close + "epilogue", entries: [["a", "1"]] },
+      { name: "a preamble", body: "a preamble" + CRLF + part("a", "1") + close, entries: [["a", "1"]] },
+      { name: "a CRLF before the opening delimiter", body: CRLF + part("a", "1") + close, entries: [["a", "1"]] },
 
-    it("keeps a value that ends in CRLF", async () => {
-      const value = `line1${CRLF}line2${CRLF}`;
-      const body =
-        `--${B}${CRLF}` +
-        `Content-Disposition: form-data; name="a"${CRLF}${CRLF}` +
-        `${value}${CRLF}` +
-        `--${B}--${CRLF}`;
-      const fd = await make(body);
-      expect([...fd]).toEqual([["a", value]]);
-    });
+      // The blank line belongs to the part. Its CRLF is not a delimiter's CRLF.
+      {
+        name: "a forged part at the start of a value",
+        body: `--${B}${CRLF}${header("a")}${CRLF}${forged}${CRLF}${close}`,
+        rejects: "is missing header end",
+      },
+      {
+        name: "a part with headers and no blank line",
+        body: `--${B}${CRLF}${header("a")}${CRLF}${close}`,
+        rejects: "is missing header end",
+      },
+      {
+        name: "a value that is the boundary line",
+        body: part("a", `--${B}`) + close,
+        rejects: "is missing header end",
+      },
+      {
+        name: "two delimiter lines with no part between them",
+        body: `--${B}${CRLF}` + part("a", "1") + close,
+        rejects: "is missing header end",
+      },
+      {
+        name: "a delimiter line with the close delimiter below it",
+        body: part("a", "1") + `--${B}${CRLF}` + close,
+        rejects: "is missing header end",
+      },
 
-    it("accepts the close delimiter at offset 0 (empty form)", async () => {
-      const fd = await make(`--${B}--${CRLF}`);
-      expect([...fd]).toEqual([]);
-    });
+      // No close delimiter at a line start.
+      { name: "no close delimiter", body: part("a", "1"), rejects: "missing final boundary" },
+      {
+        name: "a close delimiter only in the middle of a line",
+        body: part("a", "1").slice(0, -2) + close,
+        rejects: "missing final boundary",
+      },
+      {
+        name: "LF line ends",
+        body: (part("a", "1") + close).replaceAll(CRLF, "\n"),
+        rejects: "missing final boundary",
+      },
+      {
+        name: "a close delimiter at offset 0 with text behind it",
+        body: `--${B}--${B}--${CRLF}`,
+        rejects: "missing final boundary",
+      },
+      {
+        name: "a header with no colon, and no close delimiter",
+        body: `--${B}${CRLF}no colon${CRLF}${CRLF}x${CRLF}` + part("a", "1"),
+        rejects: "is missing header colon separator",
+      },
 
-    it("treats the offset-0 close delimiter as final even when more parts follow", async () => {
-      const body =
-        `--${B}--${CRLF}` +
-        `--${B}${CRLF}` +
-        `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` +
-        `admin${CRLF}` +
-        `--${B}--${CRLF}`;
-      const fd = await make(body);
-      expect([...fd]).toEqual([]);
-      expect(fd.get("role")).toBeNull();
-    });
+      // Bytes in front of the opening delimiter, on its line.
+      {
+        name: "a byte order mark before the opening delimiter",
+        body: "\ufeff" + part("a", "1") + honest,
+        rejects: "boundary is not at the start of a line",
+      },
+      {
+        name: "a LF before the opening delimiter",
+        body: "\n" + part("a", "1") + honest,
+        rejects: "boundary is not at the start of a line",
+      },
+      {
+        name: "a space before the opening delimiter",
+        body: " " + part("a", "1") + honest,
+        rejects: "boundary is not at the start of a line",
+      },
+      {
+        name: "a forged part in the middle of a line of the preamble",
+        body: "x" + forged + CRLF + part("a", "1") + honest,
+        rejects: "boundary is not at the start of a line",
+      },
+    ];
 
-    it("parses a headers-only part (no body octets) as an empty value", async () => {
-      const fd = await make(
-        `--${B}${CRLF}` + `Content-Disposition: form-data; name="a"${CRLF}` + `${CRLF}--${B}--${CRLF}`,
-      );
-      expect([...fd]).toEqual([["a", ""]]);
-    });
-
-    it("parses a zero-octet body as an empty value", async () => {
-      const fd = await make(
-        `--${B}${CRLF}` + `Content-Disposition: form-data; name="a"${CRLF}${CRLF}` + `${CRLF}--${B}--${CRLF}`,
-      );
-      expect([...fd]).toEqual([["a", ""]]);
-    });
-
-    it("ignores a preamble before the first delimiter", async () => {
-      const body =
-        `this is a preamble${CRLF}` +
-        `--${B}${CRLF}` +
-        `Content-Disposition: form-data; name="a"${CRLF}${CRLF}` +
-        `hello${CRLF}` +
-        `--${B}--${CRLF}`;
-      const fd = await make(body);
-      expect([...fd]).toEqual([["a", "hello"]]);
-    });
-
-    it("Bun.serve req.formData(): mid-line boundary in a value is not a delimiter", async () => {
-      const value = `hello--${B}${CRLF}` + `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` + `admin`;
-      const body =
-        `--${B}${CRLF}` +
-        `Content-Disposition: form-data; name="comment"${CRLF}${CRLF}` +
-        `${value}${CRLF}` +
-        `--${B}--${CRLF}`;
-      await using server = Bun.serve({
-        port: 0,
-        async fetch(req) {
-          const fd = await req.formData();
-          return Response.json([...fd]);
+    const type = `multipart/form-data; boundary=${B}`;
+    const headers = { "Content-Type": type };
+    const stream = (bytes: Uint8Array) =>
+      new ReadableStream({
+        start(controller) {
+          const half = bytes.length >> 1;
+          controller.enqueue(bytes.subarray(0, half));
+          controller.enqueue(bytes.subarray(half));
+          controller.close();
         },
       });
-      const res = await fetch(server.url, {
-        method: "POST",
-        headers: { "Content-Type": `multipart/form-data; boundary=${B}` },
-        body,
+    const read = async (formData: FormData): Promise<Entries> =>
+      Promise.all(
+        [...formData].map(async ([name, value]): Promise<Entries[number]> =>
+          typeof value === "string" ? [name, value] : [name, { filename: value.name, text: await value.text() }],
+        ),
+      );
+
+    let server: ReturnType<typeof Bun.serve>;
+    beforeAll(() => {
+      server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          try {
+            return Response.json({ entries: await read(await req.formData()) });
+          } catch (e: any) {
+            return Response.json({ rejects: String(e?.message) });
+          }
+        },
       });
-      expect(await res.json()).toEqual([["comment", value]]);
     });
+    afterAll(() => server.stop(true));
+
+    // Every way a multipart body reaches the parser.
+    const entryPoints: [string, (body: string, bytes: Uint8Array) => Promise<FormData> | FormData][] = [
+      ["Response(string)", body => new Response(body, { headers }).formData()],
+      ["Response(ReadableStream)", (_, bytes) => new Response(stream(bytes), { headers }).formData()],
+      ["Request", body => new Request("http://example.com/", { method: "POST", body, headers }).formData()],
+      ["Blob", (_, bytes) => new Blob([bytes], { type }).formData()],
+      ["FormData.from(string)", body => FormData.from(body, B)],
+      ["FormData.from(Uint8Array)", (_, bytes) => FormData.from(bytes, B)],
+      ["FormData.from(Blob)", (_, bytes) => FormData.from(new Blob([bytes]), B)],
+      ["Bun.readableStreamToFormData", (_, bytes) => Bun.readableStreamToFormData(stream(bytes), B)],
+    ];
+
+    for (const row of rows) {
+      it(row.name, async () => {
+        const bytes = new TextEncoder().encode(row.body);
+        const results: Record<string, unknown> = {};
+        for (const [entryPoint, parse] of entryPoints) {
+          try {
+            results[entryPoint] = await read(await parse(row.body, bytes));
+          } catch (e: any) {
+            results[entryPoint] = { rejects: String(e?.message) };
+          }
+        }
+        const response = await fetch(server.url, { method: "POST", headers, body: bytes });
+        const served = await response.json();
+        results["Bun.serve req.formData()"] = served.entries ?? { rejects: served.rejects };
+
+        const names = [...entryPoints.map(([entryPoint]) => entryPoint), "Bun.serve req.formData()"];
+        if ("entries" in row) {
+          expect(results).toEqual(Object.fromEntries(names.map(entryPoint => [entryPoint, row.entries])));
+        } else {
+          expect(results).toEqual(
+            Object.fromEntries(
+              names.map(entryPoint => [entryPoint, { rejects: expect.stringContaining(row.rejects) }]),
+            ),
+          );
+        }
+      });
+    }
   });
 
   // RFC 2045 §5.1 / RFC 7231 §3.1.1.1: media type/subtype and parameter

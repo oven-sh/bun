@@ -1301,7 +1301,7 @@ static HWY_INLINE size_t MemMemSearchVec(D d, const Char* haystack, size_t end,
 // kFallback with *resume set once the false-positive budget is spent.
 // Requires 1 <= needle_len <= haystack_len.
 template<bool kForward, typename Char>
-static size_t MemMemSearch(const Char* haystack, size_t haystack_len,
+static HWY_INLINE size_t MemMemSearchInline(const Char* haystack, size_t haystack_len,
     const Char* needle, size_t needle_len,
     size_t anchor_a, size_t anchor_b, size_t* resume)
 {
@@ -1329,6 +1329,15 @@ static size_t MemMemSearch(const Char* haystack, size_t haystack_len,
     return kNotFound;
 }
 
+// Not forced inline, so MemMemImpl and its siblings compile as they did; MemMemAnchoredImpl inlines the body.
+template<bool kForward, typename Char>
+static size_t MemMemSearch(const Char* haystack, size_t haystack_len,
+    const Char* needle, size_t needle_len,
+    size_t anchor_a, size_t anchor_b, size_t* resume)
+{
+    return MemMemSearchInline<kForward, Char>(haystack, haystack_len, needle, needle_len, anchor_a, anchor_b, resume);
+}
+
 // Highway implementation of memmem
 // Returns a pointer to the first occurrence of `needle` in `haystack`,
 // or nullptr if not found. The return type is non-const `uint8_t*`
@@ -1348,6 +1357,20 @@ uint8_t* MemMemImpl(const uint8_t* haystack, size_t haystack_len,
     bun::MemMemPickAnchors(needle, needle_len, &a, &b);
     size_t resume = 0;
     size_t pos = MemMemSearch<true, uint8_t>(haystack, haystack_len, needle, needle_len, a, b, &resume);
+    if (pos == kNotFound) return nullptr;
+    if (HWY_UNLIKELY(pos == kFallback)) {
+        pos = bun::MemMemTwoWayFallback<uint8_t>(haystack, haystack_len, needle, needle_len, resume, true);
+        return pos == haystack_len ? nullptr : const_cast<uint8_t*>(haystack + pos);
+    }
+    return const_cast<uint8_t*>(haystack + pos);
+}
+
+// MemMemImpl with the filter offsets given by the caller: `first` is compared on every block, `second` on a hit.
+uint8_t* MemMemAnchoredImpl(const uint8_t* haystack, size_t haystack_len,
+    const uint8_t* needle, size_t needle_len, size_t first, size_t second)
+{
+    size_t resume = 0;
+    size_t pos = MemMemSearchInline<true, uint8_t>(haystack, haystack_len, needle, needle_len, first, second, &resume);
     if (pos == kNotFound) return nullptr;
     if (HWY_UNLIKELY(pos == kFallback)) {
         pos = bun::MemMemTwoWayFallback<uint8_t>(haystack, haystack_len, needle, needle_len, resume, true);
@@ -2528,6 +2551,7 @@ HWY_EXPORT(LineStartsImpl);
 HWY_EXPORT(LowerAscii16Impl);
 HWY_EXPORT(LowerAsciiImpl);
 HWY_EXPORT(MemMemImpl);
+HWY_EXPORT(MemMemAnchoredImpl);
 HWY_EXPORT(MemRMemImpl);
 HWY_EXPORT(MemMem16Impl);
 HWY_EXPORT(MemRMem16Impl);
@@ -2559,6 +2583,12 @@ extern "C" {
 void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len)
 {
     return BUN_HWY_DISPATCH(MemMemImpl)(haystack, haystack_len, needle, needle_len);
+}
+
+// Requires 1 <= needle_len <= haystack_len and first, second < needle_len.
+void* highway_memmem_anchored(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len, size_t first, size_t second)
+{
+    return BUN_HWY_DISPATCH(MemMemAnchoredImpl)(haystack, haystack_len, needle, needle_len, first, second);
 }
 
 size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len)

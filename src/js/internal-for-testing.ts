@@ -27,6 +27,7 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // behind `bun_core::strings`, driven directly so tests can sweep lengths and
 // alignments. Returns the kernel's raw result: an index (`haystack.length` =
 // not found), a count, or for memmem/memrmem the offset with -1 = not found.
+// memmemAnchored also takes the two filter offsets into the needle.
 // scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
 // fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
 // with uint64 words and returns 0.
@@ -39,6 +40,7 @@ export const highwayStringsForTesting: (
     | "indexOfAny"
     | "lastIndexOfAny"
     | "memmem"
+    | "memmemAnchored"
     | "memrmem"
     | "memmem16"
     | "memrmem16"
@@ -47,6 +49,8 @@ export const highwayStringsForTesting: (
     | "oddBlocks",
   haystack: Uint8Array,
   arg: number | Uint8Array,
+  first?: number,
+  second?: number,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");

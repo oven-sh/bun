@@ -20,6 +20,16 @@ unsafe extern "C" {
         needle_len: usize,
     ) -> *const u8;
 
+    #[cfg(not(miri))]
+    fn highway_memmem_anchored(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: *const u8,
+        needle_len: usize,
+        first: usize,
+        second: usize,
+    ) -> *const u8;
+
     // These three return `usize::MAX` for not-found (the empty needle matches at
     // 0 / `haystack_len` respectively).
     #[cfg(not(miri))]
@@ -325,6 +335,46 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
             None
         } else {
             // SAFETY: highway_memmem returns a pointer within `haystack` on success.
+            Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
+        }
+    }
+}
+
+/// [`memmem`] with the filter's two needle offsets chosen by the caller. Panics if one is outside `needle`.
+#[inline(always)]
+pub fn memmem_anchored(
+    haystack: &[u8],
+    needle: &[u8],
+    first: usize,
+    second: usize,
+) -> Option<usize> {
+    assert!(first < needle.len() && second < needle.len());
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    #[cfg(miri)]
+    {
+        scalar_memmem(haystack, needle)
+    }
+    #[cfg(not(miri))]
+    {
+        // SAFETY: both (ptr,len) pairs are valid readable ranges, the needle is
+        // not empty and not longer than the haystack, and both offsets are
+        // inside the needle (asserted above).
+        let p = unsafe {
+            highway_memmem_anchored(
+                haystack.as_ptr(),
+                haystack.len(),
+                needle.as_ptr(),
+                needle.len(),
+                first,
+                second,
+            )
+        };
+        if p.is_null() {
+            None
+        } else {
+            // SAFETY: the kernel returns a pointer within `haystack` on success.
             Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
         }
     }

@@ -574,6 +574,20 @@ unsafe extern "C" fn highway_memmem(
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
+unsafe extern "C" fn highway_memmem_anchored(
+    h: *const u8,
+    h_len: usize,
+    n: *const u8,
+    n_len: usize,
+    _first: usize,
+    _second: usize,
+) -> *const u8 {
+    // SAFETY: the caller passes two slices, each as a pointer and a length. The two offsets only
+    // tell the kernel which bytes to compare first.
+    unsafe { highway_memmem(h, h_len, n, n_len) }
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_memrmem(
     h: *const u8,
     h_len: usize,

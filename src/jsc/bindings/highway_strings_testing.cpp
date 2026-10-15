@@ -21,6 +21,7 @@ extern "C" size_t highway_line_starts(const uint8_t* text, size_t text_len, uint
 extern "C" size_t highway_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
 extern "C" size_t highway_last_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
 extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" void* highway_memmem_anchored(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len, size_t first, size_t second);
 extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
 extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
@@ -29,12 +30,12 @@ extern "C" void highway_odd_blocks(const uint8_t* text, size_t text_len, uint64_
 
 namespace Bun {
 
-//   (op: string, haystack: Uint8Array, arg: number | Uint8Array) -> number
+//   (op: string, haystack: Uint8Array, arg: number | Uint8Array, first?: number, second?: number) -> number
 //
 // `arg` is the byte for the *Char ops and the needle / char-set view for the
 // others. Returns exactly what the kernel returns: an index (with
 // `haystack.length` meaning "not found" for the index_of family), a count, or
-// for memmem/memrmem the match offset with -1 for "not found". scannerRunStops
+// for memmem/memmemAnchored/memrmem the match offset with -1 for "not found". scannerRunStops
 // writes its three bitmaps into `arg`, a third of the view each, and returns 0.
 // lineStarts writes uint32 offsets into `arg` and returns how many.
 // oddBlocks writes its uint64 words into `arg` and returns 0.
@@ -90,6 +91,17 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayStringsForTesting, (JSC::JSGlobalObject * g
         if (!needle_len)
             RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(0)));
         void* p = highway_memmem(haystack, len, needle, needle_len);
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(p ? static_cast<double>(static_cast<const uint8_t*>(p) - haystack) : -1.0)));
+    } else if (op == "memmemAnchored"_s) {
+        uint32_t first = callFrame->argument(3).toUInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        uint32_t second = callFrame->argument(4).toUInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (first >= needle_len || second >= needle_len) {
+            throwRangeError(globalObject, scope, "both offsets must be inside the needle"_s);
+            return {};
+        }
+        void* p = needle_len <= len ? highway_memmem_anchored(haystack, len, needle, needle_len, first, second) : nullptr;
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(p ? static_cast<double>(static_cast<const uint8_t*>(p) - haystack) : -1.0)));
     } else if (op == "memrmem"_s) {
         size_t r = highway_memrmem(haystack, len, needle, needle_len);

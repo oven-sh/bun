@@ -607,6 +607,11 @@ pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     Some(i)
 }
 
+/// [`index_of`], where the SIMD filter compares `str[first]` on every candidate and `str[second]` next.
+pub fn index_of_anchored(self_: &[u8], str: &[u8], first: usize, second: usize) -> Option<usize> {
+    highway::memmem_anchored(self_, str, first, second)
+}
+
 pub fn split<'a>(self_: &'a [u8], delimiter: &'a [u8]) -> SplitIterator<'a> {
     SplitIterator {
         buffer: self_,

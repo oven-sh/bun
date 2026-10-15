@@ -416,6 +416,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // setup and `backing` is never moved (static storage).
     let loader = unsafe { &mut *backing.loader.get() };
     loader.map.put(b"NODE_ENV", b"production")?;
+    // The graph transpilers and the VMs of their macros get this loader with default options,
+    // not the one that the VM above closed.
+    if !vm.transpiler.options.env.loads_default_files() {
+        loader.close_default_files();
+    }
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
     // In-place init via `MaybeUninit` (`init_transpiler_with_options`

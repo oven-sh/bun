@@ -15,7 +15,7 @@ foo();
 
 The first time you run this script, Bun auto-installs `"foo"` and caches it. Later runs use the cached version.
 
-Auto-install is off when a [security scanner](/runtime/bunfig#install-security-scanner) is configured in the global `.bunfig.toml`, in the `bunfig.toml` of the [project root](#project-root), or in a `bunfig.toml` in the working directory or higher. It is also off when one of those files, or a `.npmrc`, cannot be read. `-i` and `--install` do not turn it back on. The import fails and tells you to run `bun install`.
+Auto-install is off when a [security scanner](/runtime/bunfig#install-security-scanner) is configured in the global `.bunfig.toml`, or in a `bunfig.toml` from the working directory up to the [project root](#project-root). It is also off when one of those files, or a `.npmrc`, cannot be read. `-i` and `--install` do not turn it back on. The import fails and tells you to run `bun install`.
 
 ---
 
@@ -61,7 +61,7 @@ With `bun --prefer-offline` (or [`install.prefer = "offline"`](/runtime/bunfig#i
 
 The first import of a package that is not in the cache blocks the thread until the download finishes. Timers and other requests' handlers do not run inside `require()`, `import()`, or `Bun.resolveSync()`.
 
-The import fails if the registry sends nothing for 30 seconds (`BUN_CONFIG_HTTP_IDLE_TIMEOUT` changes that). On macOS and Linux, a `SIGINT` or `SIGTERM` that has a `process.on` listener also ends the wait: the import throws, and the listener runs once the stack has unwound.
+The import fails if the registry sends nothing for 30 seconds (`BUN_CONFIG_HTTP_IDLE_TIMEOUT` changes that).
 
 When the registry answers that a package does not exist (404), Bun does not ask for it again for 5 minutes, or less if the response's `Cache-Control` says so. After any other failure of a lookup or a download, such as a 5xx or a dropped connection, Bun retries the request a few times. If the import still fails, an import in a later turn of the event loop (after a timer or I/O) asks again.
 

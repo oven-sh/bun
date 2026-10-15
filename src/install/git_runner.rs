@@ -88,8 +88,8 @@ pub(crate) enum Finalize {
     Repo(Fd),
     /// A fresh bare clone, to move into the cache.
     PublishRepo(CacheStaging),
-    /// A checkout the cache already has.
-    CachedCheckout(bun_sys::Dir),
+    /// A checkout the cache already has, and what `read_package_json_in` returned for it.
+    CachedCheckout(bun_sys::Dir, bun_sys::Maybe<Vec<u8>>),
     /// A fresh checkout, to strip and move into the cache.
     PublishCheckout(
         CacheStaging,
@@ -125,9 +125,11 @@ impl Finalize {
                         git_clone: ManuallyDrop::new(dir.into_raw()),
                     })
             }
-            Finalize::CachedCheckout(dir) => read_package_json(task, dir).map(|data| Task::Data {
-                git_checkout: ManuallyDrop::new(data),
-            }),
+            Finalize::CachedCheckout(dir, json) => {
+                read_package_json(task, dir, json).map(|data| Task::Data {
+                    git_checkout: ManuallyDrop::new(data),
+                })
+            }
             Finalize::PublishCheckout(staging, tree) => {
                 finish_checkout(task, staging, &tree).map(|data| Task::Data {
                     git_checkout: ManuallyDrop::new(data),
@@ -220,8 +222,9 @@ fn finish_checkout(
     }
 
     let folder_name = checkout_folder_name(&resolved);
-    let package_dir = staging.publish(&mut task.log, &name, &folder_name, is_tagged_checkout)?;
-    read_package_json(task, package_dir)
+    let package_dir = staging.publish(&mut task.log, &name, &folder_name, is_usable_checkout)?;
+    let json = read_package_json_in(&package_dir);
+    read_package_json(task, package_dir, json)
 }
 
 /// A link to a file of the repository becomes a copy of that file. Any other link is left out.
@@ -345,22 +348,22 @@ pub(crate) fn read_package_json_in(package_dir: &bun_sys::Dir) -> bun_sys::Maybe
         .read_to_end()
 }
 
-/// Closes `package_dir`.
+/// `json` is what `read_package_json_in` returned for `package_dir`, which this closes.
 fn read_package_json(
     task: &mut Task::Task<'_>,
     package_dir: bun_sys::Dir,
+    json: bun_sys::Maybe<Vec<u8>>,
 ) -> Result<ExtractData, Error> {
     let req = task.request_git_checkout();
     let name = req.name.slice().to_vec();
     let (url, resolved): (Box<[u8]>, Box<[u8]>) =
         (req.url.slice().into(), req.resolved.slice().into());
 
-    let json_buf = match read_package_json_in(&package_dir) {
+    let json_buf = match json {
         Ok(v) => v,
         Err(err) => {
             package_dir.close();
-            // ELOOP: a link, which only a checkout made by an older version has.
-            if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ELOOP) {
+            if err.get_errno() == bun_sys::E::ENOENT {
                 // allow git dependencies without package.json
                 return Ok(ExtractData {
                     url,
@@ -492,6 +495,16 @@ impl CacheStaging {
 /// `.bun-tag` is written last, so a checkout that has it is complete.
 fn is_tagged_checkout(dir: &bun_sys::Dir) -> bool {
     bun_sys::exists_at(dir.fd(), bun_core::zstr!(".bun-tag"))
+}
+
+/// Of what `read_package_json_in` returned. Only a checkout made by an older version has a link:
+/// it is not used, and the commit is checked out again in its place.
+fn is_link(json: &bun_sys::Maybe<Vec<u8>>) -> bool {
+    matches!(json, Err(err) if err.get_errno() == bun_sys::E::ELOOP)
+}
+
+fn is_usable_checkout(dir: &bun_sys::Dir) -> bool {
+    is_tagged_checkout(dir) && !is_link(&read_package_json_in(dir))
 }
 
 /// git's own test. A tool that copies no empty folder drops the `refs` of a fresh clone.
@@ -803,8 +816,11 @@ impl GitSubprocess {
         match bun_sys::Dir::borrow(&this.cache_dir).open_at(&checkout_folder_name(&resolved)) {
             Ok(dir) => {
                 if is_tagged_checkout(&dir) {
-                    Self::finish_on_pool(this, Finalize::CachedCheckout(dir));
-                    return Ok(());
+                    let json = read_package_json_in(&dir);
+                    if !is_link(&json) {
+                        Self::finish_on_pool(this, Finalize::CachedCheckout(dir, json));
+                        return Ok(());
+                    }
                 }
                 dir.close();
             }

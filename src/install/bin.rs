@@ -670,7 +670,7 @@ pub(crate) struct LinkOrder<'a> {
     transitive: bool,
     /// A workspace, `file:` or `link:` directory, not a registry, tarball or git package.
     local_directory: bool,
-    dependency_name: &'a [u8],
+    pub(crate) dependency_name: &'a [u8],
 }
 
 impl<'a> LinkOrder<'a> {
@@ -1862,25 +1862,34 @@ impl<'a> Linker<'a> {
     }
 }
 
-/// Whether the bin link `name` is left from another version of one of `placed`, the packages of a
-/// `node_modules` by folder: `target` (from there, with `/`) is in one, and none has that bin.
+/// A package in a `node_modules`.
+pub(crate) struct Placed<'a> {
+    pub(crate) folder: &'a [u8],
+    pub(crate) package_id: crate::PackageID,
+    /// This run put it in the place of what was in the folder.
+    pub(crate) replaced: bool,
+}
+
+/// Whether the bin link `name` is left from what one of `placed`, the packages of a `node_modules`,
+/// replaced: `target` (from there, with `/`) is in that package, and none of them has that bin.
 pub(crate) fn is_left_over(
     lockfile: &Lockfile,
-    placed: &[(&[u8], crate::PackageID)],
+    placed: &[Placed<'_>],
     name: &[u8],
     target: &[u8],
 ) -> bool {
     let bins = lockfile.packages.items_bin();
-    let Some(&(_, owner)) = placed.iter().find(|(folder, _)| {
-        (target.strip_prefix(*folder)).is_some_and(|rest| rest.first() == Some(&b'/'))
+    let Some(owner) = placed.iter().find(|package| {
+        package.replaced
+            && (target.strip_prefix(package.folder)).is_some_and(|rest| rest.first() == Some(&b'/'))
     }) else {
         return false;
     };
     // The names of `directories.bin` are the files of the folder.
-    bins[owner as usize].tag != Tag::Dir
-        && !placed.iter().any(|&(folder, package_id)| {
-            bins[package_id as usize].links_name(
-                folder,
+    bins[owner.package_id as usize].tag != Tag::Dir
+        && !placed.iter().any(|package| {
+            bins[package.package_id as usize].links_name(
+                package.folder,
                 name,
                 lockfile.buffers.string_bytes.as_slice(),
                 lockfile.buffers.extern_strings.as_slice(),
@@ -1891,49 +1900,74 @@ pub(crate) fn is_left_over(
 /// The installers link what the command names or installs. This links the bins of the other global packages, under free names only.
 pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr) {
     let pkgs = lockfile.packages.slice();
-    let (Some(dependencies), Some(resolutions), Ok(bin_dir)) = (
+    let (Some(dependencies), Some(resolutions)) = (
         pkgs.items_dependencies().first(),
         pkgs.items_resolutions().first(),
-        sys::Dir::open(global_bin_path.as_bytes()),
     ) else {
         return;
+    };
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = dependencies.get(lockfile.buffers.dependencies.as_slice());
+    let resolutions = resolutions.get(lockfile.buffers.resolutions.as_slice());
+    let placed = (dependencies.iter().zip(resolutions))
+        .map(|(dependency, &package_id)| (dependency.name.slice(string_buf), package_id));
+    link_free_bins(lockfile, b"node_modules", Some(global_bin_path), placed);
+}
+
+/// Links the bins of `placed`, packages of `node_modules` (from the top-level dir) by folder, in
+/// that order and under free names only. Without a `global_bin_path`, into its `.bin`.
+pub(crate) fn link_free_bins<'a>(
+    lockfile: &Lockfile,
+    node_modules: &[u8],
+    global_bin_path: Option<&ZStr>,
+    placed: impl Iterator<Item = (&'a [u8], crate::PackageID)>,
+) {
+    // Twice: `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) cannot be one value.
+    let abs_node_modules = || -> AbsPath {
+        let mut dir = AbsPath::init_top_level_dir();
+        let _ = dir.append(node_modules);
+        dir
+    };
+    let (target_node_modules_path, mut node_modules_path) =
+        (abs_node_modules(), abs_node_modules());
+    let bin_path: Vec<u8> = match global_bin_path {
+        Some(bin_path) => strings::without_trailing_slash(bin_path.as_bytes()).to_vec(),
+        None => {
+            let node_modules = strings::without_trailing_slash(node_modules_path.slice());
+            [node_modules, &[SEP][..], &b".bin"[..]].concat()
+        }
     };
 
     // The linker skips a seen destination, so what is in the folder stays as it is.
     let mut seen: StringHashMap<()> = StringHashMap::default();
-    let bin_path = strings::without_trailing_slash(global_bin_path.as_bytes());
-    let mut iter = sys::iterate_dir(bin_dir.fd());
-    while let Some(entry) = iter.next().unwrap_or(None) {
-        let name = entry.name.slice_u8();
-        #[cfg(windows)]
-        let name = (name.strip_suffix(b".bunx"))
-            .or_else(|| name.strip_suffix(b".exe"))
-            .unwrap_or(name);
-        let _ = seen.put(&[bin_path, &[SEP][..], name].concat(), ());
+    match sys::Dir::open(&bin_path) {
+        Ok(bin_dir) => {
+            let mut iter = sys::iterate_dir(bin_dir.fd());
+            while let Some(entry) = iter.next().unwrap_or(None) {
+                let name = entry.name.slice_u8();
+                #[cfg(windows)]
+                let name = (name.strip_suffix(b".bunx"))
+                    .or_else(|| name.strip_suffix(b".exe"))
+                    .unwrap_or(name);
+                let _ = seen.put(&[&bin_path[..], &[SEP][..], name].concat(), ());
+            }
+        }
+        // The linker makes a `.bin`, and no global folder.
+        Err(_) if global_bin_path.is_some() => return,
+        Err(_) => {}
     }
 
-    // Twice: `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) cannot be one value.
-    let node_modules = || -> AbsPath {
-        let mut dir = AbsPath::init_top_level_dir();
-        let _ = dir.append(b"node_modules");
-        dir
-    };
-    let (target_node_modules_path, mut node_modules_path) = (node_modules(), node_modules());
     let mut abs_target_buf = path::path_buffer_pool::get();
     let mut abs_dest_buf = path::path_buffer_pool::get();
     let mut rel_buf = path::path_buffer_pool::get();
-    let string_buf = lockfile.buffers.string_bytes.as_slice();
-
-    let dependencies = dependencies.get(lockfile.buffers.dependencies.as_slice());
-    let resolutions = resolutions.get(lockfile.buffers.resolutions.as_slice());
-    for (dependency, &package_id) in dependencies.iter().zip(resolutions) {
-        let Some(&bin) = pkgs.items_bin().get(package_id as usize) else {
+    for (folder, package_id) in placed {
+        let Some(&bin) = lockfile.packages.items_bin().get(package_id as usize) else {
             continue;
         };
         if bin.tag == Tag::None {
             continue;
         }
-        let package_name = strings::StringOrTinyString::init(dependency.name.slice(string_buf));
+        let package_name = strings::StringOrTinyString::init(folder);
         Linker {
             bin,
             target_node_modules_path: &raw const target_node_modules_path,
@@ -1941,16 +1975,16 @@ pub(crate) fn link_free_global_bins(lockfile: &Lockfile, global_bin_path: &ZStr)
             seen: Some(&mut seen),
             node_modules_path: &mut node_modules_path,
             package_name,
-            global_bin_path,
-            string_buf,
+            global_bin_path: global_bin_path.unwrap_or(ZStr::EMPTY),
+            string_buf: lockfile.buffers.string_bytes.as_slice(),
             extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
             abs_target_buf: abs_target_buf.as_mut_slice(),
             abs_dest_buf: abs_dest_buf.as_mut_slice(),
             rel_buf: rel_buf.as_mut_slice(),
             err: None,
             skipped_due_to_missing_bin: false,
-            keeps_target: false,
+            keeps_target: lockfile.is_member_outside(package_id),
         }
-        .link(true);
+        .link(global_bin_path.is_some());
     }
 }

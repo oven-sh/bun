@@ -1381,6 +1381,46 @@ describe("Bun.semver.satisfies()", () => {
     ]);
   });
 
+  test("a comparator that means >=0.0.0 does not shut out a prerelease of 0.0.0", () => {
+    // Every expectation is node-semver 7.8's answer for the same input: it reads such a comparator as any version.
+    testSatisfiesTable([
+      ...[
+        "*",
+        "x",
+        "^x",
+        "~x",
+        "~>*",
+        "0.x",
+        "0",
+        "0.0.x",
+        "0.0",
+        ">=0",
+        ">=0.0.0",
+        "^0",
+        "~0",
+        "~>0",
+        "^0.0",
+        "~0.0",
+      ].flatMap((any): [string, string, boolean][] => [
+        ["0.0.0-b", `>=0.0.0-a ${any}`, true],
+        ["0.0.0-b", `${any} >=0.0.0-b`, true],
+        ["0.0.0-b", `<0.0.0-c ${any}`, true],
+        ["0.0.0-b", `>=0.0.0-c ${any}`, false],
+        ["0.0.1-b", `>=0.0.0-a ${any}`, false],
+        ["0.0.0-b", any, false],
+      ]),
+      ["0.0.0-b", ">=0.0.0-a ^0.0.0", true],
+      ["0.0.0-b", ">=0.0.0-a ~0.0.0", true],
+      ["0.0.0-b", "0.0.0 - 0.0.0-c", true],
+      ["0.0.0-d", "0.0.0 - 0.0.0-c", false],
+      ["0.0.0-b", ">=0.0.0-a >0.0.0", false],
+      ["0.0.0-b", ">=0.0.0-a 0.0.0", false],
+      ["0.0.0-b", ">=0.0.0-a >=0.0.1", false],
+      ["1.0.0-b", ">=1.0.0-a 1.x", false],
+      ["1.0.0-b", ">=1.0.0-b *", true],
+    ]);
+  });
+
   test("spaces between < or > and = do not split the operator", () => {
     // Every expectation is node-semver 7's answer for the same input. "< =1" used to be "<1".
     testSatisfiesTable([

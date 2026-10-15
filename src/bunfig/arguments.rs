@@ -166,24 +166,27 @@ pub fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) {
     }
 }
 
-/// Whether `[install.security] scanner` is set where `bun install` in `dir` would read it: the user's own file, and the
-/// bunfig.toml of the project's root, which is `dir` or a directory above it. All of those are asked.
+/// Whether `[install.security] scanner` is set in the user's own file or in a bunfig.toml from `dir` up to `root`.
 /// `Err`: the path of one that is there and cannot be read or parsed.
-pub fn has_security_scanner(dir: &[u8]) -> Result<bool, Box<[u8]>> {
+pub fn has_security_scanner(dir: &[u8], root: &[u8]) -> Result<bool, Box<[u8]>> {
     let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf)
         && file_has_security_scanner(path)?
     {
         return Ok(true);
     }
-    let mut next_dir = Some(dir);
+    let mut next_dir = Some(bun_paths::string_paths::without_trailing_slash_windows_path(dir));
     while let Some(dir) = next_dir {
         if let Some(path) = join_config_path(dir, b"bunfig.toml", &mut config_buf)
             && file_has_security_scanner(path)?
         {
             return Ok(true);
         }
-        next_dir = bun_core::dirname(dir);
+        // A `dir` outside `root` is the only one read.
+        next_dir = match resolve_path::is_parent_or_equal(root, dir) {
+            resolve_path::ParentEqual::Parent => bun_core::dirname(dir),
+            _ => None,
+        };
     }
     Ok(false)
 }
@@ -201,9 +204,22 @@ fn file_has_security_scanner(config_path: &ZStr) -> Result<bool, Box<[u8]>> {
 /// `Err`: the path of the file, which is there and cannot be read or parsed.
 pub fn load_install_section(dir: &[u8]) -> Result<Option<Box<api::BunInstall>>, Box<[u8]>> {
     let mut config_buf = bun_paths::path_buffer_pool::get();
-    let Some(config_path) = join_config_path(dir, b"bunfig.toml", &mut config_buf) else {
-        return Ok(None);
-    };
+    match join_config_path(dir, b"bunfig.toml", &mut config_buf) {
+        Some(config_path) => read_install_section(config_path),
+        None => Ok(None),
+    }
+}
+
+/// [`load_install_section`] of the user's own file.
+pub fn load_user_install_section() -> Result<Option<Box<api::BunInstall>>, Box<[u8]>> {
+    let mut config_buf = bun_paths::path_buffer_pool::get();
+    match get_home_config_path(&mut config_buf) {
+        Some(config_path) => read_install_section(config_path),
+        None => Ok(None),
+    }
+}
+
+fn read_install_section(config_path: &ZStr) -> Result<Option<Box<api::BunInstall>>, Box<[u8]>> {
     let path = config_path.as_bytes();
     let source =
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {

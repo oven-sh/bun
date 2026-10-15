@@ -208,6 +208,8 @@ impl PmLicensesCommand {
         let mut store = BunStore::init();
         let mut disk = DiskIndex { entries: None };
         let mut entries: Vec<Entry> = Vec::new();
+        // Installed at their place in the tree, listed under the version in their own package.json.
+        let mut other_versions: Vec<Entry> = Vec::new();
         let mut missing: usize = 0;
         let mut checked: usize = 0;
 
@@ -241,15 +243,16 @@ impl PmLicensesCommand {
                 None
             };
 
+            let mut other_version: Option<PackageInfo> = None;
             if info.is_none() {
                 if let Some(location) = &locations[pkg_id] {
                     let segments: [&[u8]; 1] = [location];
                     info = read_package_info_at(&mut path, top_len, &segments, &mut log);
                 }
                 if is_npm {
-                    info = info.filter(|info| match &info.version {
-                        Some(installed) => installed[..] == version[..],
-                        None => true,
+                    other_version = info.take_if(|info| match &info.version {
+                        Some(installed) => installed[..] != version[..],
+                        None => false,
                     });
                 }
             }
@@ -275,12 +278,21 @@ impl PmLicensesCommand {
                 );
             }
 
-            let Some(info) = info else {
-                missing += 1;
-                continue;
+            let (info, list) = match (info, other_version) {
+                (Some(info), _) => (info, &mut entries),
+                (None, Some(info)) => {
+                    if let Some(installed) = &info.version {
+                        version = installed.to_vec();
+                    }
+                    (info, &mut other_versions)
+                }
+                (None, None) => {
+                    missing += 1;
+                    continue;
+                }
             };
 
-            entries.push(Entry {
+            list.push(Entry {
                 license: info.license,
                 name: pkg_names[pkg_id].slice(buf).into(),
                 version: version.into_boxed_slice(),
@@ -291,6 +303,15 @@ impl PmLicensesCommand {
                 description: info.description,
                 dev_only: production.as_ref().is_some_and(|prod| !prod.is_set(pkg_id)),
             });
+        }
+
+        // The copy on disk may already be listed for the package in bun.lock that has its version.
+        for entry in other_versions {
+            if entries.iter().any(|listed| listed.path == entry.path) {
+                missing += 1;
+            } else {
+                entries.push(entry);
+            }
         }
 
         index_sort::sort_vec_by(&mut entries, |a, b| {

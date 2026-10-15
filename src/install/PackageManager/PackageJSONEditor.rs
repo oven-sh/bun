@@ -1553,7 +1553,7 @@ pub(crate) fn edit(
                         split_npm_alias(installed).is_some_and(|(_, version)| version.is_empty());
                     if request.version.tag == dependency::Tag::DistTag
                         || bare_alias
-                        || (manager.subcommand == Subcommand::Update
+                        || ((manager.subcommand == Subcommand::Update || options.exact_versions)
                             && request.version.tag == dependency::Tag::Npm
                             && !request.version.npm().version.is_exact())
                     {

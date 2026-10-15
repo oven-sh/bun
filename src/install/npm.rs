@@ -679,9 +679,21 @@ pub mod registry {
         NotFound,
     }
 
-    /// 300 seconds is what registry.npmjs.org sends, the most that is honoured, and the default.
+    /// In seconds: what registry.npmjs.org sends, the most that is honoured, and the default.
+    const MAX_MANIFEST_AGE: u32 = 300;
+
+    fn seconds_from_now(seconds: u32) -> u32 {
+        (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast") as u32)
+            .saturating_add(seconds)
+    }
+
+    /// A cached manifest that expires later was written while the clock stood ahead.
+    pub(crate) fn latest_manifest_expiry() -> u32 {
+        seconds_from_now(MAX_MANIFEST_AGE)
+    }
+
     pub(crate) fn manifest_expiry(headers: &picohttp::HeaderList) -> u32 {
-        let mut max_age: u64 = 300;
+        let mut max_age = u64::from(MAX_MANIFEST_AGE);
         for directive in strings::split(headers.get(b"cache-control").unwrap_or(b""), b",") {
             let directive = directive.trim_ascii();
             if strings::eql_case_insensitive_ascii(directive, b"no-cache", true)
@@ -693,8 +705,7 @@ pub mod registry {
                 max_age = max_age.min(seconds.unwrap_or(0));
             }
         }
-        (u64::try_from(bun_core::time::timestamp().max(0)).expect("int cast") as u32)
-            .saturating_add(max_age as u32)
+        seconds_from_now(max_age as u32)
     }
 
     pub(crate) fn get_package_metadata(
@@ -1566,16 +1577,11 @@ pub mod package_manifest {
                 return Ok(None);
             };
 
-            'delete: {
-                match Self::load_by_file(scope, &cache_file) {
-                    Ok(Some(m)) if m.name() == name => return Ok(Some(m)),
-                    Ok(_) | Err(_) => break 'delete,
-                }
-            }
-
-            // delete the outdated/invalid manifest
-            bun_sys::unlinkat(cache_dir, file_name)?;
-            Ok(None)
+            // What cannot be used stays: another version of bun may have written it, and the next fetch replaces it.
+            Ok(Self::load_by_file(scope, &cache_file)
+                .ok()
+                .flatten()
+                .filter(|manifest| manifest.name() == name))
         }
 
         pub fn load_by_file(
@@ -1613,8 +1619,6 @@ pub mod package_manifest {
             let mut pkg_stream = bun_io::FixedBufferStream::new(bytes);
             pkg_stream.pos = Self::HEADER_BYTES.len();
 
-            let mut package_manifest = PackageManifest::default();
-
             let registry_hash = pkg_stream.read_int_le::<u64>()?;
             if scope.url_hash != registry_hash {
                 return Ok(None);
@@ -1626,7 +1630,7 @@ pub mod package_manifest {
             }
 
             // Keep the order in sync with `Serializer::write` and SIZES_FIELDS.
-            {
+            let pkg = {
                 pkg_stream.pos = pkg_stream
                     .pos
                     .next_multiple_of(core::mem::align_of::<NpmPackage>());
@@ -1635,38 +1639,114 @@ pub mod package_manifest {
                 if !matches!(bytes.get(flag_at).copied(), Some(0 | 1)) {
                     return Ok(None);
                 }
-                package_manifest.pkg = pkg_stream.read_struct::<NpmPackage>()?;
-            }
-            package_manifest.string_buf = Self::read_array::<u8>(&mut pkg_stream)?.into();
-            package_manifest.versions =
-                Self::read_array::<Semver::Version>(&mut pkg_stream)?.into();
-            package_manifest.external_strings =
-                Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.external_strings_for_versions =
-                Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.package_versions = {
-                let raw = Self::read_array_bytes::<PackageVersion>(&mut pkg_stream)?;
-                let bin_tag_at =
-                    core::mem::offset_of!(PackageVersion, bin) + core::mem::offset_of!(Bin, tag);
+                pkg_stream.read_struct::<NpmPackage>()?
+            };
+            let string_buf = Self::read_array::<u8>(&mut pkg_stream)?;
+            let versions = Self::read_array::<Semver::Version>(&mut pkg_stream)?;
+            let external_strings = Self::read_array::<ExternalString>(&mut pkg_stream)?;
+            let external_strings_for_versions =
+                Self::read_array::<ExternalString>(&mut pkg_stream)?;
+            let raw_package_versions = Self::read_array_bytes::<PackageVersion>(&mut pkg_stream)?;
+            let extern_strings_bin_entries = Self::read_array::<ExternalString>(&mut pkg_stream)?;
+            let bundled_deps_buf = Self::read_array::<PackageNameHash>(&mut pkg_stream)?;
+
+            // Nobody checks an offset or a length later: a file in which one leaves its array counts as no file.
+            // Checked before the arrays are copied, so that the copy finds them in the CPU cache.
+            let string = |s: &SemverString| s.is_within(string_buf);
+            let package_versions = {
+                let bin_at = core::mem::offset_of!(PackageVersion, bin);
+                let bin_tag_at = bin_at + core::mem::offset_of!(Bin, tag);
+                let bin_value_at = bin_at + core::mem::offset_of!(Bin, value);
                 let install_script_at = core::mem::offset_of!(PackageVersion, has_install_script);
-                for raw_pkg in raw
+                for raw_pkg in raw_package_versions
                     .as_chunks::<{ core::mem::size_of::<PackageVersion>() }>()
                     .0
                 {
-                    if !matches!(raw_pkg[bin_tag_at], 0..=4)
-                        || !matches!(raw_pkg[install_script_at], 0 | 1)
-                    {
+                    let mut bin_value = bun_io::FixedBufferStream::new(&raw_pkg[bin_value_at..]);
+                    let is_bin_valid = match raw_pkg[bin_tag_at] {
+                        0 => true,
+                        // The bytes after a lone string are zero, which is the empty string.
+                        1..=3 => {
+                            let name_and_path = bin_value.read_struct::<[SemverString; 2]>()?;
+                            name_and_path.iter().all(string)
+                        }
+                        4 => {
+                            let names_and_paths = bin_value.read_struct::<ExternalStringList>()?;
+                            names_and_paths.len % 2 == 0
+                                && names_and_paths.is_within(extern_strings_bin_entries)
+                        }
+                        _ => false,
+                    };
+                    if !is_bin_valid || !matches!(raw_pkg[install_script_at], 0 | 1) {
                         return Ok(None);
                     }
                 }
-                Self::array_from_bytes::<PackageVersion>(raw).into()
+                Self::array_from_bytes::<PackageVersion>(raw_package_versions)
             };
-            package_manifest.extern_strings_bin_entries =
-                Self::read_array::<ExternalString>(&mut pkg_stream)?.into();
-            package_manifest.bundled_deps_buf =
-                Self::read_array::<PackageNameHash>(&mut pkg_stream)?.into();
+            let string_map = |map: &ExternalStringMap| {
+                map.name.len == map.value.len
+                    && map.name.is_within(external_strings)
+                    && map.value.is_within(external_strings_for_versions)
+            };
+            let version_map = |map: &ExternVersionMap| {
+                map.keys.len == map.values.len
+                    && map.keys.is_within(versions)
+                    && map.values.is_within(package_versions)
+            };
+            let is_in_bounds = version_map(&pkg.releases)
+                && version_map(&pkg.prereleases)
+                && pkg.dist_tags.tags.len == pkg.dist_tags.versions.len
+                && pkg.dist_tags.tags.is_within(external_strings)
+                && pkg.dist_tags.versions.is_within(versions)
+                && pkg.versions_buf.is_within(versions)
+                && pkg.string_lists_buf.is_within(external_strings)
+                && [pkg.last_modified, pkg.etag, pkg.modified, pkg.name.value]
+                    .iter()
+                    .all(string)
+                && [
+                    external_strings,
+                    external_strings_for_versions,
+                    extern_strings_bin_entries,
+                ]
+                .iter()
+                .all(|list| list.iter().all(|external| string(&external.value)))
+                && versions.iter().all(|version| {
+                    string(&version.tag.pre.value) && string(&version.tag.build.value)
+                })
+                && package_versions.iter().all(|version| {
+                    [
+                        &version.dependencies,
+                        &version.optional_dependencies,
+                        &version.peer_dependencies,
+                        &version.dev_dependencies,
+                        &version.engines,
+                    ]
+                    .into_iter()
+                    .all(string_map)
+                        && (version.all_dependencies_bundled()
+                            || version.bundled_dependencies.is_within(bundled_deps_buf))
+                        && [
+                            version.man_dir.value,
+                            version.tarball_url.value,
+                            version.deprecated,
+                        ]
+                        .iter()
+                        .all(string)
+                });
+            if !is_in_bounds {
+                return Ok(None);
+            }
 
-            Ok(Some(package_manifest))
+            Ok(Some(PackageManifest {
+                pkg,
+                string_buf: string_buf.into(),
+                versions: versions.into(),
+                external_strings: external_strings.into(),
+                external_strings_for_versions: external_strings_for_versions.into(),
+                package_versions: package_versions.into(),
+                extern_strings_bin_entries: extern_strings_bin_entries.into(),
+                bundled_deps_buf: bundled_deps_buf.into(),
+            }))
         }
     }
 }
@@ -1692,6 +1772,10 @@ impl FindResult<'_> {
             .tarball_url
             .slice(&manifest.string_buf)
             .to_vec()
+    }
+
+    pub fn integrity(&self) -> Integrity {
+        self.package.integrity
     }
 
     pub fn is_newer_than(
@@ -1795,6 +1879,10 @@ impl PackageManifest {
         // Checked before classifying because published tag names like `v12-lts` read as a range.
         if let Some((_, version)) = self.dist_tags().find(|(tag, _)| *tag == spec) {
             return self.find_by_version(version).ok_or(Error::DistTagNotFound);
+        }
+        // What `bun add` installs: `*` is no range, and stands in for `latest` where the document has no such tag.
+        if spec == b"*" || spec == b"latest" {
+            return (self.find_any_version(None, None).unwrap()).ok_or(Error::NoMatchingVersion);
         }
         match Tag::infer(spec) {
             Tag::DistTag => Err(Error::DistTagNotFound),

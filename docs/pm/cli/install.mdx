@@ -232,7 +232,7 @@ To perform a dry run, without installing anything:
 bun install --dry-run
 ```
 
-Bun resolves the dependency tree and prints the summary. During a dry run, Bun does not:
+Bun resolves the dependency tree and lists every package that the install would put in `node_modules`. During a dry run, Bun does not:
 
 - install packages into `node_modules`
 - change an existing `package.json`
@@ -498,7 +498,7 @@ Each flag can be repeated, takes `*` to allow every value, and takes `!name` to 
 
 Bun handles peer dependencies like Yarn: `bun install` installs them automatically. If the dependency is marked optional in `peerDependenciesMeta`, Bun uses an existing dependency if possible.
 
-If nothing else depends on the peer, Bun installs the newest version that every package asking for it accepts. Otherwise the peer reuses the copy that is already there, which can be outside its range. An install that resolves dependencies then prints which package gets which copy:
+If nothing else depends on the peer, Bun installs the newest version that every package asking for it accepts. Otherwise the peer reuses the copy that is already there, which can be outside its range. With `--verbose`, an install that resolves dependencies prints which package gets which copy:
 
 ```txt
 warn: incorrect peer dependency "react@17.0.2": "react-dom@18.3.1" requires "react@^18.3.1"
@@ -514,13 +514,15 @@ Before Bun 1.2, the lockfile was binary and called `bun.lockb`. To upgrade an ol
 
 ## Cache
 
-Bun caches registry metadata (the manifest of each package) for 5 minutes. To fetch fresh metadata before that, for example after you publish a new version, use `--force`. It asks the registry again for every package and rewrites the cached manifests:
+Bun caches registry metadata (the manifest of each package) for 5 minutes. To fetch fresh metadata before that, for example after you publish a new version, use `--force`. For every range or tag that Bun has to resolve, it asks the registry again and rewrites the cached manifest:
 
 ```bash
-bun install --force
-# or, for one package
 bun add <pkg> --force
+# or, in a project without a lockfile
+bun install --force
 ```
+
+Bun does not resolve a version that `bun.lock` already holds, and it takes an exact version such as `1.2.3` from the cached manifest, so `--force` sends no request for those. To move a package in `bun.lock` to the new version, run `bun update <pkg>`, which never reads the manifest cache.
 
 `bun install --no-cache` skips the manifest cache for one run. To turn the manifest cache off for a project, set `disableManifest = true` under `[install.cache]` in `bunfig.toml`. See [Global cache](/pm/global-cache).
 
@@ -609,7 +611,7 @@ A flag that `bun install` does not know is an error. So that a command line writ
 | `--loglevel=verbose`, `--loglevel=silly`                       | `--verbose`                                              |
 | `--loglevel=notice`, `--loglevel=http`, `--loglevel=info`      | Nothing: the default output                              |
 | `--no-audit`, `--no-fund`, `--no-update-notifier`              | Nothing: an install does none of these                   |
-| `--legacy-peer-deps`                                           | Nothing: peers that conflict are a warning, not an error |
+| `--legacy-peer-deps`                                           | Nothing: peers that conflict are not an error            |
 | `--ignore-engines`                                             | Nothing: `engines` is not checked                        |
 | `--unsafe-perm`                                                | Nothing: scripts run as the current user                 |
 | `--non-interactive`                                            | Nothing: an install asks no questions                    |

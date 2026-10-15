@@ -2039,6 +2039,36 @@ const makeInstallRunner = (cwd: string) => async (args: string[]) => {
   return { out, err };
 };
 
+it.concurrent("bun install saves the root's new name after it is renamed in package.json", async () => {
+  const root = (name: string) =>
+    JSON.stringify({ name, workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0", lib: "workspace:*" } });
+  const { packageDir, packageJson } = await registry.createTestDir({
+    files: {
+      "package.json": root("old-name"),
+      "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+    },
+  });
+  const run = makeInstallRunner(packageDir);
+  const lockedName = async () => Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()).workspaces[""].name;
+  await run(["install"]);
+  expect(await lockedName()).toBe("old-name");
+
+  await write(packageJson, root("new-name"));
+  // The name is no reason to refuse a frozen lockfile.
+  await run(["install", "--frozen-lockfile"]);
+  expect(await lockedName()).toBe("old-name");
+
+  await run(["install"]);
+  expect(await lockedName()).toBe("new-name");
+  await run(["install", "--filter", "new-name"]);
+  await run(["outdated", "--filter", "new-name"]);
+  expect((await run(["why", "lib"])).out).toContain("new-name");
+
+  const saved = await file(join(packageDir, "bun.lock")).text();
+  expect((await run(["install"])).err).not.toContain("Saved lockfile");
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(saved);
+});
+
 // https://github.com/oven-sh/bun/issues/8662#issuecomment-3379529330
 it("bun remove drops a package that was only otherwise an optional peer", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });

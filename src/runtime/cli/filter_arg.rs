@@ -368,7 +368,8 @@ impl<'a> PackageFilterIterator<'a> {
         let walker = OwnedWalker(bun_core::heap::alloc_nn(GlobWalker::init_with_cwd(
             pattern,
             self.root_dir,
-            true,
+            // As in `bun install`, `*` and `**` do not match a dot folder.
+            false,
             true,
             false,
             true,

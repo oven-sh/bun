@@ -3557,3 +3557,208 @@ test("dependencies with no entry in yarn.lock are reported", async () => {
   expect(none.stderr).toContain("migrated lockfile from yarn.lock");
   expect(none.exitCode).toBe(0);
 });
+
+describe.concurrent("yarn.lock entries of packages that are not the registry's", () => {
+  type Manifest = { name: string; version: string; [key: string]: unknown };
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  const header = "# yarn lockfile v1\n\n\n";
+  const sri = (bytes: Uint8Array) => "sha512-" + new Bun.CryptoHasher("sha512").update(bytes).digest("base64");
+  // One manifest, one tarball: two servers that publish it serve the same bytes.
+  const tarballs = new Map<string, Promise<Uint8Array>>();
+  const tarball = (manifest: Manifest, root = "package") => {
+    const json = JSON.stringify(manifest);
+    if (!tarballs.has(root + json)) {
+      tarballs.set(root + json, githubTarball(root, { "package.json": json, "cli.js": "#!/usr/bin/env node\n" }));
+    }
+    return tarballs.get(root + json)!;
+  };
+
+  // Publishes `manifests` as a registry does, serves `downloads` by path, and records every path asked for.
+  async function serve(manifests: Manifest[], downloads: Record<string, Uint8Array> = {}) {
+    const requests: string[] = [];
+    const path = ({ name, version }: Manifest) => `/${name}/-/${name}-${version}.tgz`;
+    const published = new Map(await Promise.all(manifests.map(async m => [path(m), await tarball(m)] as const)));
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        const bytes = published.get(pathname) ?? downloads[pathname];
+        if (bytes) return new Response(bytes);
+        const versions = manifests.filter(m => `/${m.name}` === pathname);
+        if (versions.length === 0) return new Response("not found", { status: 404 });
+        return Response.json({
+          name: versions[0].name,
+          "dist-tags": { latest: versions.at(-1)!.version },
+          versions: Object.fromEntries(
+            versions.map(m => [
+              m.version,
+              { ...m, dist: { tarball: server.url.origin + path(m), integrity: sri(published.get(path(m))!) } },
+            ]),
+          ),
+        });
+      },
+    });
+    const entry = (m: Manifest, range: string, body = "") =>
+      `${m.name}@${range}:\n  version "${m.version}"\n  resolved "${server.url.origin}${path(m)}"\n  integrity ${sri(published.get(path(m))!)}\n${body}\n`;
+    return { url: server.url.href, requests, entry, [Symbol.dispose]: () => void server.stop(true) };
+  }
+
+  async function bun(cwd: string, registry: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: registry, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const errors = (stderr: string) => stderr.split("\n").filter(line => line.startsWith("error"));
+  const readJson = (...path: string[]) => JSON.parse(fs.readFileSync(join(...path), "utf8"));
+  const lockPackages = (dir: string) =>
+    (Bun.JSONC.parse(fs.readFileSync(join(dir, "bun.lock"), "utf8")) as { packages: Record<string, unknown[]> })
+      .packages;
+  const bins = (dir: string) => [
+    ...new Set(fs.readdirSync(join(dir, "node_modules", ".bin")).map(name => name.replace(/\.(exe|bunx)$/, ""))),
+  ];
+
+  test.each(["url", "file", "owner/repo"] as const)(
+    "%s: a dependency with the name and version of a registry package stays apart from it",
+    async kind => {
+      const upstream = { name: "b", version: "1.0.0", from: "registry" };
+      const user = { name: "p", version: "1.0.0", dependencies: { b: "^1.0.0" } };
+      const mine = await tarball({ name: "b", version: "1.0.0", from: "mine" });
+      using server = await serve([upstream, user], { "/dl/b.tgz": mine, [`/me/b/tar.gz/${commit}`]: mine });
+      const [range, resolved] = {
+        url: [`${server.url}dl/b.tgz`, `${server.url}dl/b.tgz`],
+        file: ["file:./b.tgz", "file:./b.tgz"],
+        "owner/repo": ["me/b", `${server.url}me/b/tar.gz/${commit}`],
+      }[kind];
+      using dir = tempDir("yarn-migration-same-name-and-version", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { b: range, p: "^1.0.0" } }),
+        "b.tgz": mine,
+        "yarn.lock":
+          header +
+          server.entry(upstream, "^1.0.0") +
+          `"b@${range}":\n  version "1.0.0"\n  resolved "${resolved}"\n\n` +
+          server.entry(user, "^1.0.0", '  dependencies:\n    b "^1.0.0"\n'),
+      });
+
+      const { stderr, exitCode } = await bun(String(dir), server.url, "install", "--linker", "hoisted");
+      expect(errors(stderr)).toEqual([]);
+      const from = (...folder: string[]) =>
+        fs.existsSync(join(String(dir), ...folder)) ? readJson(String(dir), ...folder, "package.json").from : null;
+      expect({
+        app: from("node_modules", "b"),
+        p: from("node_modules", "p", "node_modules", "b"),
+      }).toEqual({ app: "mine", p: "registry" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("an owner/repo dependency is the archive that yarn.lock names", async () => {
+    // Somebody else's package of that name.
+    const other = { name: "g", version: "1.0.0", os: ["sunos"], bin: { tsc: "cli.js" } };
+    const mine = await tarball({ name: "g", version: "1.0.0", bin: { g: "cli.js" } }, `r-${commit}`);
+    using server = await serve([other], { [`/o/r/tar.gz/${commit}`]: mine });
+    using dir = tempDir("yarn-migration-hosted-archive", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { g: "o/r" } }),
+      "yarn.lock": header + `g@o/r:\n  version "1.0.0"\n  resolved "${server.url}o/r/tar.gz/${commit}"\n`,
+    });
+
+    const { stderr, exitCode } = await bun(String(dir), server.url, "install");
+    expect(errors(stderr)).toEqual([]);
+    expect(server.requests).toEqual([`/o/r/tar.gz/${commit}`]);
+    expect(lockPackages(String(dir))).toEqual({
+      g: [`g@${server.url}o/r/tar.gz/${commit}`, { bin: { g: "cli.js" } }, sri(mine)],
+    });
+    expect(bins(String(dir))).toEqual(["g"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("the registry's manifest completes a package of another host only when it is the same tarball", async () => {
+    const same = { name: "same", version: "1.0.0", bin: { same: "cli.js" } };
+    using registry = await serve([same, { name: "c", version: "1.0.0", os: ["sunos"], bin: { tsc: "cli.js" } }]);
+    using mirror = await serve([same, { name: "c", version: "1.0.0", from: "mirror" }]);
+    using dir = tempDir("yarn-migration-another-host", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { c: "^1.0.0", same: "^1.0.0" } }),
+      "yarn.lock": header + mirror.entry({ name: "c", version: "1.0.0" }, "^1.0.0") + mirror.entry(same, "^1.0.0"),
+    });
+
+    const { stderr, exitCode } = await bun(String(dir), registry.url, "pm", "migrate", "-f");
+    expect(errors(stderr)).toEqual([]);
+    const { c, same: completed } = lockPackages(String(dir));
+    expect({ c: c.slice(0, 3), same: completed.slice(0, 3) }).toEqual({
+      c: ["c@1.0.0", `${mirror.url}c/-/c-1.0.0.tgz`, {}],
+      same: ["same@1.0.0", `${mirror.url}same/-/same-1.0.0.tgz`, { bin: { same: "cli.js" } }],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["the root", "a workspace"])(
+    "a registry package that %s uses can depend on a workspace, for which yarn.lock has no entry",
+    async user => {
+      const plugin = { name: "plugin", version: "1.0.0", dependencies: { core: "^1.0.0" } };
+      using server = await serve([plugin, { ...plugin, version: "1.1.0" }]);
+      const dependencies = { plugin: "^1.0.0" };
+      using dir = tempDir("yarn-migration-registry-to-workspace", {
+        "package.json": JSON.stringify({
+          name: "mono",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: user === "the root" ? dependencies : {},
+        }),
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: user === "the root" ? {} : dependencies,
+        }),
+        "packages/core/package.json": JSON.stringify({ name: "core", version: "1.2.0" }),
+        "yarn.lock": header + server.entry(plugin, "^1.0.0", '  dependencies:\n    core "^1.0.0"\n'),
+      });
+
+      const { stderr, exitCode } = await bun(String(dir), server.url, "install", "--linker", "hoisted");
+      expect(errors(stderr)).toEqual([]);
+      expect(server.requests).not.toContain("/core");
+      expect(readJson(String(dir), "node_modules", "plugin", "package.json").version).toBe("1.0.0");
+      expect(fs.realpathSync(join(String(dir), "node_modules", "core"))).toBe(
+        fs.realpathSync(join(String(dir), "packages", "core")),
+      );
+      expect(lockPackages(String(dir)).core).toEqual(["core@workspace:packages/core"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.each(["url", "file"] as const)("the bins of a %s tarball are linked and recorded", async kind => {
+    const tool = await tarball({ name: "t", version: "1.0.0", bin: { t: "cli.js" } });
+    using server = await serve([], { "/dl/t-1.0.0.tgz": tool });
+    const range = kind === "url" ? `${server.url}dl/t-1.0.0.tgz` : "file:./t-1.0.0.tgz";
+    // yarn.lock goes by the name of the dependency, which need not be the package's own.
+    using dir = tempDir("yarn-migration-tarball-bins", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { tool: range } }),
+      "t-1.0.0.tgz": tool,
+      "yarn.lock": header + `"tool@${range}":\n  version "1.0.0"\n  resolved "${range}"\n`,
+    });
+
+    // The second time, the tarball is in the cache.
+    for (const _ of ["cold", "warm"]) {
+      const { stderr, exitCode } = await bun(String(dir), server.url, "install");
+      expect(errors(stderr)).toEqual([]);
+      expect(stderr).toContain("migrated lockfile from yarn.lock");
+      expect(lockPackages(String(dir)).tool[1]).toEqual({ bin: { t: "cli.js" } });
+      expect(bins(String(dir))).toEqual(["t"]);
+      expect(exitCode).toBe(0);
+      fs.rmSync(join(String(dir), "node_modules"), { recursive: true });
+      fs.rmSync(join(String(dir), "bun.lock"));
+    }
+
+    const frozen = await bun(String(dir), server.url, "install", "--frozen-lockfile");
+    expect(errors(frozen.stderr)).toEqual([]);
+    expect(bins(String(dir))).toEqual(["t"]);
+    expect(frozen.exitCode).toBe(0);
+  });
+});

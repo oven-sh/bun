@@ -3643,7 +3643,21 @@ impl<T: Display> Display for EscapeControlCharsMultiline<T> {
 struct EscapeControlCharsWriter<'a, 'f>(&'a mut Formatter<'f>, bool);
 
 impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
+    /// `Raw` and `write_bytes` pass bytes nobody checked off as a `str`, and this is the writer that decodes it.
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        s.as_bytes().utf8_chunks().try_for_each(|chunk| {
+            self.write_valid(chunk.valid())?;
+            if chunk.invalid().is_empty() {
+                Ok(())
+            } else {
+                self.0.write_char(char::REPLACEMENT_CHARACTER)
+            }
+        })
+    }
+}
+
+impl EscapeControlCharsWriter<'_, '_> {
+    fn write_valid(&mut self, s: &str) -> fmt::Result {
         let Self(f, keep_line_breaks) = self;
         let mut start = 0;
         let mut next = 0;

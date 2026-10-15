@@ -157,6 +157,8 @@ enum HoistDependencyResult {
     ResolveLater,
     /// `Hoisted`, plus the optional peer's slot now points at the version it deduplicated onto.
     Rebind(PackageID),
+    /// `Hoisted`, onto another package than the one the required peer is bound to.
+    Served(PackageID),
     Placement {
         id: Id,
         bundled: bool,
@@ -253,6 +255,26 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
         self.tree_id = 0;
     }
 
+    /// The saved tree has what such a member needs. No `node_modules` has it: `is_member_outside`.
+    fn is_in_member_outside(&self, id: Id) -> bool {
+        let mut top = self.trees[id as usize];
+        for _ in 0..MAX_DEPTH {
+            if top.parent == 0 {
+                return (self.dependencies.get(top.dependency_id as usize)).is_some_and(|member| {
+                    member.behavior.is_workspace()
+                        && crate::bin::path_climbs_out(
+                            member.version.workspace().slice(self.string_bytes),
+                        )
+                });
+            }
+            match self.trees.get(top.parent as usize) {
+                Some(parent) => top = *parent,
+                None => break,
+            }
+        }
+        false
+    }
+
     // `Option<&mut DynamicBitSet>` is accepted unconditionally; callers with PkgPath must pass None.
     pub fn next(
         &mut self,
@@ -266,7 +288,10 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
 
         let mut completed_trees = completed_trees;
 
-        while trees[self.tree_id as usize].dependencies.len == 0 {
+        while trees[self.tree_id as usize].dependencies.len == 0
+            || (PATH_STYLE == IteratorPathStyle::NodeModules
+                && self.is_in_member_outside(self.tree_id))
+        {
             if PATH_STYLE == IteratorPathStyle::NodeModules {
                 if let Some(ct) = completed_trees.as_deref_mut() {
                     ct.set(self.tree_id as usize);
@@ -455,6 +480,8 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) late_bound_peer: bool,
     /// The packages whose rows this pass has walked; it walks them once per place of the package.
     pub(crate) walked: DynamicBitSet,
+    /// Peers `bind_peer` bound, with the other package their dependent finds from its first place.
+    pub(crate) served: Vec<(DependencyID, PackageID)>,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
     /// Of `sort_buf`: `names_listed_again`, sorted.
@@ -682,11 +709,11 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         self.lockfile().buffers.string_bytes.as_slice()
     }
 
-    /// Binds a peer edge the way loading `bun.lock` does, so every tree of these packages agrees.
-    fn bind_peer(&mut self, dep_id: DependencyID) {
-        let lockfile_ref = self.lockfile;
-        let lockfile: &Lockfile = lockfile_ref.get();
-        if let Some(pkg_id) = bun_lock::resolve_peer_dep_version_based(
+    /// What loading `bun.lock` binds a peer edge to at first. `None`: the edge keeps its package.
+    #[inline]
+    fn peer_by_version(&self, dep_id: DependencyID) -> Option<PackageID> {
+        let lockfile = self.lockfile();
+        bun_lock::resolve_peer_dep_version_based(
             &self.dependencies[dep_id as usize],
             &lockfile.catalogs,
             &lockfile.package_index,
@@ -694,7 +721,31 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             lockfile.packages.items_resolution(),
             lockfile.buffers.string_bytes.as_slice(),
             |_| true,
-        ) {
+        )
+    }
+
+    /// Every tree of these packages places a peer from that binding, so they agree.
+    #[inline]
+    fn bind_peer(&mut self, dep_id: DependencyID) -> bool {
+        let bound = self.peer_by_version(dep_id);
+        if let Some(pkg_id) = bound {
+            self.resolutions[dep_id as usize] = pkg_id;
+        }
+        bound.is_some()
+    }
+
+    /// Once all have a place: a peer that is no row of a tree takes the package its dependent loads.
+    pub(crate) fn bind_served_peers(&mut self) {
+        if self.served.is_empty() {
+            return;
+        }
+        let (served, dependencies) = (&mut self.served, self.dependencies);
+        for &row in self.list.items_dependencies().iter().flatten() {
+            if dependencies[row as usize].behavior.is_peer() {
+                served.retain(|&(dep_id, _)| dep_id != row);
+            }
+        }
+        for (dep_id, pkg_id) in self.served.drain(..) {
             self.resolutions[dep_id as usize] = pkg_id;
         }
     }
@@ -1183,7 +1234,7 @@ impl Tree {
 
         'dep: for sort_idx in 0..builder.sort_buf.len() {
             let dep_id = builder.sort_buf[sort_idx];
-            builder.bind_peer(dep_id);
+            let bound_by_version = builder.bind_peer(dep_id);
             let pkg_id = builder.resolutions[dep_id as usize];
             let dependency = &dependencies[dep_id as usize];
 
@@ -1225,12 +1276,10 @@ impl Tree {
                     // A peer an ancestor edge already provides dedupes instead of nesting
                     // a second copy of the folder.
                     if dependency.behavior.is_peer()
-                        && matches!(
-                            hoist(hoist_root_id, &mut *builder),
-                            HoistDependencyResult::Hoisted
-                        )
+                        && let provided @ (HoistDependencyResult::Hoisted
+                        | HoistDependencyResult::Served(_)) = hoist(hoist_root_id, &mut *builder)
                     {
-                        break 'hoisted HoistDependencyResult::Hoisted;
+                        break 'hoisted provided;
                     }
 
                     // Folder packages never hoist, so a cycle between them would nest forever.
@@ -1273,6 +1322,12 @@ impl Tree {
             match hoisted {
                 HoistDependencyResult::DependencyLoop | HoistDependencyResult::Hoisted => continue,
 
+                HoistDependencyResult::Served(res_id) => {
+                    // One row for all places of its package: the first decides, as in `Rebind`.
+                    if first_walk && bound_by_version {
+                        builder.served.push((dep_id, res_id));
+                    }
+                }
                 HoistDependencyResult::Contested { id } => {
                     let again = (builder.contested)
                         .insert((id, dependency.name_hash), ())
@@ -1518,6 +1573,10 @@ impl Tree {
                         dep_id,
                     };
                 }
+                // Its own dependency of that name is what the package loads, in every run.
+                if dependency.behavior.is_peer() && !dependency.behavior.is_optional_peer() {
+                    return HoistDependencyResult::Served(res_id); // 1
+                }
                 // same package lists this name in another dependency group
                 let own = builder.resolution_lists[res_id as usize];
                 if METHOD == BuilderMethod::Filter
@@ -1547,8 +1606,9 @@ impl Tree {
 
                 // An optional peer's binding follows the dedupe, but only in the tree being saved.
                 let dedupe = || {
-                    if METHOD == BuilderMethod::Resolvable && dependency.behavior.is_optional_peer()
-                    {
+                    if !dependency.behavior.is_optional_peer() {
+                        HoistDependencyResult::Served(res_id)
+                    } else if METHOD == BuilderMethod::Resolvable {
                         HoistDependencyResult::Rebind(res_id)
                     } else {
                         HoistDependencyResult::Hoisted
@@ -1573,6 +1633,17 @@ impl Tree {
                 // Root dependencies are manually chosen by the user. Allow them
                 // to hoist other peers even if they don't satisfy the version
                 if builder.lockfile().is_workspace_root_dependency(dep_id) {
+                    return dedupe(); // 1
+                }
+
+                // Its own dependency of that name shares this copy: a copy below would hide it.
+                if !dependency.behavior.is_optional_peer()
+                    && (input_dep_range.begin()..input_dep_range.end()).any(|own| {
+                        deps[own as usize].name_hash == dependency.name_hash
+                            && !deps[own as usize].behavior.is_peer()
+                            && builder.resolutions[own as usize] == res_id
+                    })
+                {
                     return dedupe(); // 1
                 }
             }
@@ -1663,9 +1734,11 @@ impl Tree {
             let pkg_deps = resolution_lists[pkg_id as usize];
             (pkg_deps.begin()..pkg_deps.end()).any(|dep_id| {
                 let dep = &deps[dep_id as usize];
+                // Until this pass walks its package, a peer has what the last pass `served` it.
                 dep.name_hash == name_hash
                     && !dep.behavior.is_bundled()
-                    && resolutions[dep_id as usize] != package_id
+                    && (builder.peer_by_version(dep_id)).unwrap_or(resolutions[dep_id as usize])
+                        != package_id
             })
         };
 

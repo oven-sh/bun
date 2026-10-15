@@ -3807,7 +3807,7 @@ test.concurrent("a peerDependencies entry another group provides keeps following
   const dir = await setup({ "package.json": provided("^1.0.0") });
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
   await write(join(dir, "package.json"), stringify(provided("^2.0.0")));
-  const stderr = await install(dir);
+  const stderr = await install(dir, "--verbose");
   expect(stderr).toContain('warn: incorrect peer dependency "no-deps@1.1.0"');
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
   expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
@@ -3823,7 +3823,7 @@ test.concurrent(
   async () => {
     const dir = await setup({ "package.json": peerOnly("^1.0.0") });
     expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
-    const { stderr, exitCode } = await run(dir, "add", "no-deps@1.5.0");
+    const { stderr, exitCode } = await run(dir, "add", "no-deps@1.5.0", "--verbose");
     expect(stderr).toContain('warn: incorrect peer dependency "no-deps@1.1.0"');
     expect(stderr).not.toContain("error:");
     expect(await packageJsonOf(dir)).toStrictEqual(peerOnly("1.5.0"));
@@ -3847,7 +3847,7 @@ test.concurrent(
     const dir = await installServed(server, "peer-entry-min-age-", entry("^1.0.0"));
     expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
     await write(join(dir, "package.json"), stringify(entry("^2.0.0")));
-    const { stderr, exitCode } = await run(dir, "install", "--minimum-release-age", THREE_DAYS_SECONDS);
+    const { stderr, exitCode } = await run(dir, "install", "--verbose", "--minimum-release-age", THREE_DAYS_SECONDS);
     expect(stderr).toContain('warn: incorrect peer dependency "leaf@1.0.0"');
     expect(stderr).not.toContain("error:");
     expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
@@ -3895,7 +3895,7 @@ test.concurrent("a package's own peer entry still binds to the highest copy in b
     join(dir, "package.json"),
     stringify(rootPeer("^1.0.0", { "one-fixed-dep": "1.0.0", "strict-peer-dep": "1.0.0" })),
   );
-  const stderr = await install(dir);
+  const stderr = await install(dir, "--verbose");
   expect(stderr).toContain('warn: incorrect peer dependency "no-deps@1.1.0"');
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
   expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
@@ -3923,7 +3923,7 @@ async function sharedPeer(root: Json, ...members: [string, string][]) {
 test.concurrent("a member's rewritten entry keeps binding to the copy the root's own entry holds", async () => {
   const dir = await sharedPeer(peerRoot("^1.0.0"), ["pkg1", "^1.0.0"]);
   await write(join(dir, "packages/pkg1/package.json"), stringify(peerMember("pkg1", "^2.0.0")));
-  const stderr = await install(dir);
+  const stderr = await install(dir, "--verbose");
   expect(stderr).toContain('warn: incorrect peer dependency "no-deps@1.1.0"');
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
   expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
@@ -3977,7 +3977,7 @@ test.concurrent("on a fresh install two peer entries nothing provides still shar
     bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
     files: { "package.json": stringify(pkgJson({ "peer-deps-fixed": "1.0.0", "strict-peer-dep": "1.0.0" })) },
   });
-  const stderr = await install(dir, ...linkerArgs({}));
+  const stderr = await install(dir, "--verbose", ...linkerArgs({}));
   const [version] = await lockedVersions(dir, "no-deps");
   expect(["1.1.0", "2.0.0"]).toContain(version);
   expect(stderr).toContain(`warn: incorrect peer dependency "no-deps@${version}"`);

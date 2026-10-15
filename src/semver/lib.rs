@@ -530,6 +530,13 @@ pub mod semver_string {
             Pointer::from_bits(masked)
         }
 
+        /// False for an offset and a length, read from a file, that `slice` would turn into "".
+        #[inline]
+        pub fn is_within(self, buf: &[u8]) -> bool {
+            let ptr_ = self.ptr();
+            self.is_inline() || ptr_.off as usize + ptr_.len as usize <= buf.len()
+        }
+
         // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
         #[inline]
         pub fn slice<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {

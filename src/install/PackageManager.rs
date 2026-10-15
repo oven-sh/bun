@@ -976,6 +976,11 @@ impl PackageManager {
         self.env_mut().get_http_proxy_for(url)
     }
 
+    /// Goes with `http_proxy`: a redirect takes the road that its own URL asks for.
+    pub(crate) fn proxy_settings(&self) -> Option<Box<http::ProxySettings>> {
+        http::ProxySettings::from_env(self.env())
+    }
+
     pub fn tls_reject_unauthorized(&self) -> bool {
         self.env().get_tls_reject_unauthorized()
     }
@@ -1004,6 +1009,7 @@ impl PackageManager {
             headers_buf,
             body,
             http_proxy,
+            self.proxy_settings(),
             http::FetchRedirect::Follow,
         );
         req.client.flags.reject_unauthorized = self.tls_reject_unauthorized();
@@ -1822,6 +1828,20 @@ pub fn config_ignores_scripts(
         &mut None,
     );
     Ok(npmrc.ignore_scripts.unwrap_or(false))
+}
+
+/// The cache directory in the user's own `.bunfig.toml`, else `.npmrc`: the files the `bun add` that `bunx` spawns reads.
+/// For `bunx`, which has no manager.
+pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8]>> {
+    let bunfig = (::bun_bunfig::arguments::load_user_install_section().ok())
+        .flatten()
+        .unwrap_or_default();
+    if bunfig.cache_directory.is_some() {
+        return bunfig.cache_directory;
+    }
+    initialize_store();
+    let diagnostics = ini::NpmrcDiagnostics::Discard;
+    load_npmrc_files(&bunfig, env, cwd, None, diagnostics, &mut None).cache_directory
 }
 
 /// The one upward walk of [`init`]: to the first `package.json`, then on to the workspace root.
@@ -2782,12 +2802,14 @@ fn init_with_runtime_once(
             None
         })
     };
+    // Also one in a folder between the two, which `bun install` does not read: in doubt it counts.
+    let has_scanner = ::bun_bunfig::arguments::has_security_scanner(start_dir, project_dir);
     // A scanner is shown what `bun install` is about to install, and nothing else.
     if [bun_install, root_bunfig.as_deref()]
         .into_iter()
         .flatten()
         .any(|config| config.security_scanner.is_some())
-        || ::bun_bunfig::arguments::has_security_scanner(start_dir).unwrap_or_else(|path| {
+        || has_scanner.unwrap_or_else(|path| {
             unreadable = Some(path);
             false
         })

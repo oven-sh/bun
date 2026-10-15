@@ -288,6 +288,18 @@ const hostile: Hostile[] = [
   inPackage("a file below a file", [file("a"), file("a/b")], /ENOTDIR|ENOENT/),
   inPackage("a file before its directory", [file("a/b"), dir("a")], "ENOENT"),
   inPackage("a directory before its parent", [dir("a/b"), dir("a")], "ENOENT"),
+  // macOS has no such file names.
+  inPackage(
+    "the same file twice, its name in Latin-1",
+    [file(Buffer.from("caf\xe9", "latin1"), "1"), file(Buffer.from("caf\xe9", "latin1"), "2")],
+    /EEXIST|EILSEQ/,
+  ),
+  inPackage("a file without its directory, its name in Latin-1", [file(Buffer.from("a/caf\xe9", "latin1"))], "ENOENT"),
+  inPackage(
+    "a file without its directory, that name in Latin-1",
+    [file(Buffer.from("a\xafb/c", "latin1"))],
+    /ENOENT|EILSEQ/,
+  ),
   { title: "the same package twice", packages: [pkg(evil), pkg(evil)], error: "packages are not in order" },
   {
     title: "packages out of order",

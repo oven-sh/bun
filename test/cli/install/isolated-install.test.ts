@@ -1033,13 +1033,13 @@ test.concurrent("a folder dependency whose folder is gone fails the install and 
 });
 
 test.concurrent("a link replaces the copy of the project that older versions put in the store", async () => {
-  const copy = join("node_modules", ".bun", "root-file-dep@root", "node_modules", "root-file-dep");
+  const copy = "node_modules/.bun/root-file-dep@root/node_modules/root-file-dep";
   const { packageDir } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
     files: {
       "package.json": JSON.stringify({ name: "root-file-dep", dependencies: { self: "file:." } }),
       "index.js": "module.exports = 2;",
-      [join(copy, "index.js")]: "module.exports = 1;",
+      [`${copy}/index.js`]: "module.exports = 1;",
     },
   });
   const self = join(packageDir, "node_modules", "self");
@@ -8500,6 +8500,27 @@ describe.concurrent("hoist", () => {
         join(packageDir, "node_modules", ".bun", "no-deps@1.1.0", "node_modules", "no-deps", "package.json"),
       ).json(),
     ).toMatchObject({ name: "no-deps", version: "1.1.0" });
+  });
+
+  test("hoistPattern set after an install removes the fallback links it does not match", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+    });
+    await write(packageJson, JSON.stringify({ name: "hoist-narrowed", dependencies: { "two-range-deps": "1.0.0" } }));
+    const fallback = join(packageDir, "node_modules", ".bun", "node_modules");
+
+    await runBunInstall(installEnv(packageDir), packageDir);
+    expect(await readdirSorted(fallback)).toEqual(["@types", "no-deps", "two-range-deps"]);
+
+    await registry.writeBunfig(packageDir, { linker: "isolated", hoistPattern: ["no-*"] });
+    await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
+    expect(await readdirSorted(fallback)).toEqual(["no-deps"]);
+    expect(readlinkSync(join(fallback, "no-deps"))).toBe(join("..", "no-deps@1.1.0", "node_modules", "no-deps"));
+
+    // and back
+    await registry.writeBunfig(packageDir, { linker: "isolated" });
+    await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
+    expect(await readdirSorted(fallback)).toEqual(["@types", "no-deps", "two-range-deps"]);
   });
 
   test("hoist = false takes precedence over hoistPattern", async () => {

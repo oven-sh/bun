@@ -681,18 +681,6 @@ fn wait_for_tasks(this: &mut PackageManager) -> crate::Result<()> {
         if this.pending_task_count() == 0 {
             break Ok(());
         }
-        // What is in flight stays so: a later import of the package waits for it again.
-        if parked.is_interrupted() {
-            this.log_mut().add_error_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!(
-                    "A signal ended the wait for {}",
-                    bun_fmt::redacted_npm_url(this.options.scope.url.href()),
-                ),
-            );
-            break Err(crate::Error::Sys(bun_errno::SystemErrno::EINTR));
-        }
         parked.wait(wakes);
     };
     drop(parked);

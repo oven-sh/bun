@@ -1969,13 +1969,19 @@ describe("Bun.Archive", () => {
       if (isLinux || isWindows) expect(allocated).toBeLessThan(chunkCount * 64 * 1024 + 1024 * 1024);
     });
 
-    // In memory a hole would be real bytes.
-    test("files() returns the bytes stored for each member", async () => {
+    test("files() returns each member whole, as extract() writes it", async () => {
+      using dir = tempDir("sparse-members-files", {});
+      await new Bun.Archive(bytes).extract(String(dir));
       const files = await new Bun.Archive(bytes).files();
+
       const wrong: { name: string; length?: number }[] = [];
-      for (const { name, chunks } of members) {
+      for (const { name, size, chunks } of members) {
+        const expected = Buffer.alloc(size, 0);
+        for (const c of chunks) c.data.copy(expected, c.offset);
         const got = await files.get(name)?.bytes();
-        if (!got || !Buffer.concat(chunks.map(c => c.data)).equals(got)) wrong.push({ name, length: got?.length });
+        if (!got || !expected.equals(got) || !readFileSync(join(String(dir), name)).equals(got)) {
+          wrong.push({ name, length: got?.length });
+        }
       }
       expect(wrong).toEqual([]);
     });

@@ -129,12 +129,19 @@ pub struct OverrideMap {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Field {
+pub(crate) enum Field {
     Overrides,
     Resolutions,
 }
 
 impl Field {
+    /// The one field that is read: `"resolutions"` counts only without `"overrides"`.
+    pub(crate) fn of(root: &Expr) -> Option<(Field, bun_ast::expr::Query)> {
+        [Field::Overrides, Field::Resolutions]
+            .into_iter()
+            .find_map(|field| Some((field, root.as_property(field.json_name().as_bytes())?)))
+    }
+
     fn label(self) -> &'static str {
         match self {
             Field::Overrides => "override",
@@ -142,7 +149,7 @@ impl Field {
         }
     }
 
-    fn json_name(self) -> &'static str {
+    pub(crate) fn json_name(self) -> &'static str {
         match self {
             Field::Overrides => "overrides",
             Field::Resolutions => "resolutions",
@@ -175,9 +182,6 @@ fn is_comment_key(key: &[u8]) -> bool {
 
 struct ParseContext<'a, 'b> {
     field: Field,
-    /// Parsing appends or replaces in place: the rules of `"overrides"` are the first this many.
-    overrides_flat: usize,
-    overrides_scoped: usize,
     pm: &'a mut PackageManager,
     lockfile_dependencies: &'a [Dependency],
     root_package: &'a Package,
@@ -396,6 +400,39 @@ impl OverrideMap {
         }
     }
 
+    /// A `catalog:` rule without an entry leaves what it selects with no version to resolve.
+    pub(crate) fn warn_missing_catalog_entries(
+        &self,
+        catalogs: &CatalogMap,
+        buf: &[u8],
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+        root: &Expr,
+        has_workspaces: bool,
+    ) {
+        let rules = (self.map.values().iter()).chain(self.scoped.iter().map(|rule| &rule.dep));
+        for dep in rules.filter(|dep| dep.version.tag == VersionTag::Catalog) {
+            if (catalogs.get_ref(buf, *dep.version.catalog(), dep.name)).is_some() {
+                continue;
+            }
+            let name = dep.name.slice(buf);
+            log.add_range_warning_fmt(
+                Some(source),
+                source.range_of_string(rule_loc(root, name)),
+                format_args!(
+                    "{}@{} is not in the catalog{}",
+                    bstr::BStr::new(name),
+                    bstr::BStr::new(dep.version.literal.slice(buf)),
+                    if has_workspaces {
+                        ""
+                    } else {
+                        ": catalogs require a \"workspaces\" field in the root package.json"
+                    },
+                ),
+            );
+        }
+    }
+
     pub(crate) fn changed(
         from: &mut OverrideMap,
         from_string_bytes: &[u8],
@@ -538,13 +575,8 @@ impl OverrideMap {
 
     /// Replaces the rule with the same (parent, parent range, target, target range); `buf` is the buffer `rule` was appended into.
     pub(crate) fn push_scoped(&mut self, rule: ScopedOverride, buf: &[u8]) {
-        self.put_scoped(rule, buf, 0);
-    }
-
-    /// `push_scoped`, except that a matching rule among the first `keep` wins over `rule`.
-    fn put_scoped(&mut self, rule: ScopedOverride, buf: &[u8], keep: usize) {
         if self.scoped_names.contains(&rule.dep.name_hash) {
-            if let Some(index) = self.scoped.iter().position(|existing| {
+            if let Some(existing) = self.scoped.iter_mut().find(|existing| {
                 existing.dep.name_hash == rule.dep.name_hash
                     && match (&existing.parent, &rule.parent) {
                         (None, None) => true,
@@ -559,9 +591,7 @@ impl OverrideMap {
                         .literal
                         .eql(rule.target_range.literal, buf, buf)
             }) {
-                if index >= keep {
-                    self.scoped[index] = rule;
-                }
+                *existing = rule;
                 return;
             }
         } else {
@@ -651,10 +681,7 @@ impl OverrideMap {
         expr: Expr,
         builder: &mut StringBuilder,
     ) {
-        for field in [Field::Overrides, Field::Resolutions] {
-            let Some(property) = expr.as_property(field.json_name().as_bytes()) else {
-                continue;
-            };
+        if let Some((field, property)) = Field::of(&expr) {
             property.expr.for_each_property(|key, _key_loc, value| {
                 if is_comment_key(key) {
                     return;
@@ -705,7 +732,7 @@ impl OverrideMap {
         }
     }
 
-    /// The map must be empty. Where both fields define a selector, the `"overrides"` rule wins.
+    /// The map must be empty.
     pub(crate) fn parse_append(
         &mut self,
         pm: &mut PackageManager,
@@ -718,10 +745,11 @@ impl OverrideMap {
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         debug_assert!(self.map.count() == 0 && self.scoped.is_empty()); // only call parse once
+        let Some((field, rules)) = Field::of(&expr) else {
+            return Ok(());
+        };
         let mut ctx = ParseContext {
-            field: Field::Overrides,
-            overrides_flat: 0,
-            overrides_scoped: 0,
+            field,
             pm,
             lockfile_dependencies,
             root_package,
@@ -730,13 +758,9 @@ impl OverrideMap {
             workspace_names,
             builder,
         };
-        if let Some(overrides) = expr.as_property(b"overrides") {
-            self.parse_from_overrides(&mut ctx, overrides.expr)?;
-            (ctx.overrides_flat, ctx.overrides_scoped) = (self.map.count(), self.scoped.len());
-        }
-        if let Some(resolutions) = expr.as_property(b"resolutions") {
-            ctx.field = Field::Resolutions;
-            self.parse_from_resolutions(&mut ctx, resolutions.expr)?;
+        match field {
+            Field::Overrides => self.parse_from_overrides(&mut ctx, rules.expr)?,
+            Field::Resolutions => self.parse_from_resolutions(&mut ctx, rules.expr)?,
         }
         scoped_log!(
             OverrideMap,
@@ -947,15 +971,6 @@ impl OverrideMap {
 
         let name_hash = SemverBuilder::string_hash(target.name);
         let is_flat = parent.is_none() && target.range.is_empty();
-        // Before parsing the value, which registers a flat `npm:` alias; a skipped rule must not.
-        if is_flat
-            && self
-                .map
-                .get_index(&name_hash)
-                .is_some_and(|index| index < ctx.overrides_flat)
-        {
-            return Ok(());
-        }
         let Some(dep) =
             parse_override_value(ctx, value_loc, target.name, name_hash, value, is_flat)?
         else {
@@ -969,18 +984,24 @@ impl OverrideMap {
         if is_flat {
             self.map.put_assume_capacity(dep.name_hash, dep);
         } else {
-            self.put_scoped(
+            self.push_scoped(
                 ScopedOverride {
                     parent: parent.cloned(),
                     target_range,
                     dep,
                 },
                 ctx.builder.string_bytes.as_slice(),
-                ctx.overrides_scoped,
             );
         }
         Ok(())
     }
+}
+
+/// Where the root package.json has the plain rule for `name`, or else the field with the rules.
+fn rule_loc(root: &Expr, name: &[u8]) -> bun_ast::Loc {
+    Field::of(root).map_or(bun_ast::Loc::EMPTY, |(_, rules)| {
+        (rules.expr.as_property(name)).map_or(rules.loc, |rule| rule.loc)
+    })
 }
 
 /// A parent is selected by its installed version. A target is selected by how it is declared.

@@ -4287,6 +4287,41 @@ describe("a workspace outside the project", () => {
       expect(out).toContain(`app@workspace:${join("..", "app")}`);
       expect(exitCode).toBe(0);
     });
+
+    test.concurrent("the project can install a published package of its name", async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      const project = await setup(packageDir, {
+        workspaces: ["../no-deps"],
+        dependencies: { "no-deps": "^2", "a-dep": "1.0.2" },
+      });
+      const member = { name: "no-deps", version: "0.0.1", dependencies: { "a-dep": "1.0.1" } };
+      await write(join(packageDir, "no-deps", "package.json"), JSON.stringify(member));
+
+      const results: Record<string, unknown> = {};
+      for (const args of [["install", `--linker=${linker}`], ["pm", "ls"], ["pm", "ls", "--all"], ["prune"]]) {
+        const { out, err, exitCode } = await run(project, env, ...args);
+        results[args.join(" ")] = {
+          errors: err.split("\n").filter(line => /^(error|note):/.test(line)),
+          listed: out.split("\n").flatMap(line => line.match(/^[├└]── (.*)$/)?.[1] ?? []),
+          exitCode,
+        };
+      }
+      expect(results).toEqual({
+        [`install --linker=${linker}`]: { errors: [note("../no-deps").trimEnd()], listed: [], exitCode: 0 },
+        "pm ls": {
+          errors: [],
+          listed: ["a-dep@1.0.2", `no-deps@workspace:${join("..", "no-deps")}`, "no-deps@2.0.0"],
+          exitCode: 0,
+        },
+        "pm ls --all": { errors: [], listed: ["a-dep@1.0.2", "no-deps@2.0.0"], exitCode: 0 },
+        "prune": { errors: [], listed: [], exitCode: 0 },
+      });
+      expect(await readdirSorted(join(packageDir, "no-deps"))).toEqual(["package.json"]);
+      // What it needs stays resolved.
+      const { packages } = Bun.JSON5.parse(await file(join(project, "bun.lock")).text());
+      expect(packages["./no-deps/a-dep"][0]).toBe("a-dep@1.0.1");
+    });
   });
 
   test.concurrent.skipIf(isWindows)("a folder with a colon in its name is inside", async () => {

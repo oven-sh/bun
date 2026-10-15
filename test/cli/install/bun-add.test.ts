@@ -1044,6 +1044,34 @@ it("should add exact version with -E", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it.each([
+  ["-E", "0"],
+  ["-E", "^0.0.2"],
+  ["-E", "~0.0.1"],
+  ["-E", "0.x"],
+  ["-E", ">=0.0.1"],
+  ["-E", "*"],
+  ["install.exact", "^0.0.2"],
+])("%s pins the version that BaR@%s resolves to", async (how, range) => {
+  setHandler(dummyRegistry([]));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+  if (how === "install.exact") await appendFile(join(package_dir, "bunfig.toml"), `exact = true\n`);
+  await using proc = spawn({
+    cmd: [bunExe(), "add", "--save-text-lockfile", ...(how === "-E" ? ["-E"] : []), `BaR@${range}`],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).not.toContain("error:");
+  expect(out).toContain("installed BaR@0.0.2\n");
+  expect((await file(join(package_dir, "package.json")).json()).dependencies).toEqual({ BaR: "0.0.2" });
+  const lockfile = Bun.JSONC.parse(await file(join(package_dir, "bun.lock")).text()) as BunLockFile;
+  expect(lockfile.workspaces[""].dependencies).toEqual({ BaR: "0.0.2" });
+  expect(exitCode).toBe(0);
+});
+
 it("should add dependency with package.json in it and http tarball", async () => {
   const old_check_npm_auth_type = check_npm_auth_type.check;
   check_npm_auth_type.check = false;
@@ -1588,6 +1616,11 @@ describe("npm aliases", () => {
       args: ["bar@npm:@scope/baz@>=0.0.2"],
       resolved: scoped,
       expected: { dependencies: { bar: "npm:@scope/baz@>=0.0.2" } },
+    },
+    {
+      args: ["--exact", "bar@npm:@scope/baz@>=0.0.2"],
+      resolved: scoped,
+      expected: { dependencies: { bar: "npm:@scope/baz@0.0.3" } },
     },
     {
       args: ["--dev", "bar@npm:@scope/baz"],

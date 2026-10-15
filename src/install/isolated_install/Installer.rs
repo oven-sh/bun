@@ -795,7 +795,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Whether the scripts of a dependency's entry may run. Main and task threads.
-    fn is_trusted(&self, entry_id: StoreEntryId) -> bool {
+    pub(crate) fn is_trusted(&self, entry_id: StoreEntryId) -> bool {
         let store::Ids { dep_id, pkg_id } = self.store.ids(entry_id);
         if dep_id == invalid_dependency_id {
             return false;
@@ -951,8 +951,8 @@ pub struct Task {
     pub(crate) newly_trusted: bool,
     /// Set by `Step::RunPreinstall` on the task thread, read by `on_task_complete` like `relink`.
     pub(crate) blocked_scripts: u8,
-    /// The entry was there before and got another dependency link. See `Installer::prune_bins`.
-    pub(crate) relinked: bool,
+    /// The dependency links written into an entry that was there before. See `Installer::prune_bins`.
+    pub(crate) relinked: Vec<install::DependencyID>,
     /// Warnings of `lay_folder_links`. See `Installer::warn_left_out_links`.
     pub(crate) left_out_links: Vec<Box<[u8]>>,
 }
@@ -1114,9 +1114,12 @@ impl Task {
                         symlinker::Strategy::ExpectMissing
                     };
 
-                    let changed = installer.symlink_dependencies(entry_id, strategy, made_entry)?;
-                    self.relinked = matches!(strategy, symlinker::Strategy::ExpectExisting)
-                        && changed != Relink::Unchanged;
+                    let changed = installer.symlink_dependencies(
+                        entry_id,
+                        strategy,
+                        made_entry,
+                        &mut self.relinked,
+                    )?;
 
                     if relinking {
                         self.relink = changed;
@@ -1841,17 +1844,27 @@ impl<'a> Installer<'a> {
 
     pub(crate) fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
         for name in self.hidden_hoist_names(entry_id) {
-            self.link_to_hidden_node_modules_as(entry_id, name);
+            let (store, lockfile) = (self.store, self.lockfile());
+            Self::link_hidden_name(store, lockfile, entry_id, name, self.is_new_bun_modules);
         }
     }
 
-    fn link_to_hidden_node_modules_as(&self, entry_id: StoreEntryId, name: &[u8]) {
+    /// `entry_id`: of a package that `can_enqueue_install_task`.
+    pub(crate) fn link_hidden_name(
+        store: &Store,
+        lockfile: &Lockfile,
+        entry_id: StoreEntryId,
+        name: &[u8],
+        is_new_bun_modules: bool,
+    ) {
+        let pkg_id = store.ids(entry_id).pkg_id;
+        let pkg_name = lockfile.str(&lockfile.packages.items_name()[pkg_id as usize]);
         let mut hidden_hoisted_node_modules = AutoPath::init();
         let _ = hidden_hoisted_node_modules.append(b"node_modules/.bun/node_modules");
         // `install_isolated_packages` looked at it.
         let mut real_len = hidden_hoisted_node_modules.len();
         let _ = hidden_hoisted_node_modules.append(name); // OOM/capacity: fire-and-forget
-        if self.is_new_bun_modules {
+        if is_new_bun_modules {
             real_len = hidden_hoisted_node_modules.len();
         }
 
@@ -1865,14 +1878,18 @@ impl<'a> Installer<'a> {
         // OOM/capacity: fire-and-forget
         let _ = target.append_fmt(format_args!(
             "{}/node_modules/{}",
-            store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-            bstr::BStr::new(self.pkg_name(entry_id)),
+            store::entry::fmt_store_path(entry_id, store, lockfile),
+            bstr::BStr::new(pkg_name),
         ));
 
         #[cfg(windows)]
         let mut full_target = AutoAbsPath::init_top_level_dir();
         #[cfg(windows)]
-        self.append_store_path(&mut full_target, entry_id);
+        let _ = full_target.append_fmt(format_args!(
+            "node_modules/.bun/{}/node_modules/{}",
+            store::entry::fmt_store_path(entry_id, store, lockfile),
+            bstr::BStr::new(pkg_name),
+        ));
 
         let mut symlinker = Symlinker {
             dest: hidden_hoisted_node_modules.into_sep::<{ PathSeparators::ANY }>(),
@@ -1883,7 +1900,7 @@ impl<'a> Installer<'a> {
         };
 
         // symlinks won't exist if node_modules/.bun is new
-        let link_strategy: symlinker::Strategy = if self.is_new_bun_modules {
+        let link_strategy: symlinker::Strategy = if is_new_bun_modules {
             symlinker::Strategy::ExpectMissing
         } else {
             symlinker::Strategy::ExpectExisting
@@ -1926,6 +1943,7 @@ impl<'a> Installer<'a> {
         entry_id: StoreEntryId,
         strategy: symlinker::Strategy,
         made_entry: bool,
+        relinked: &mut Vec<install::DependencyID>,
     ) -> TaskResult<Relink> {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -2037,6 +2055,9 @@ impl<'a> Installer<'a> {
                     .unwrap_or(b"");
             }
             if written? {
+                if matches!(strategy, symlinker::Strategy::ExpectExisting) {
+                    relinked.push(dep.dep_id);
+                }
                 let behavior = dependencies[dep.dep_id as usize].behavior;
                 if !(behavior.is_optional() || behavior.is_optional_peer()) {
                     changed = Relink::Changed;
@@ -2138,21 +2159,26 @@ impl<'a> Installer<'a> {
         }
         let (lockfile, store) = (self.lockfile(), self.store);
         let options = &self.manager().options;
-        for task in self.tasks.iter().filter(|task| task.relinked) {
+        for task in self.tasks.iter().filter(|task| !task.relinked.is_empty()) {
             let entry_id = task.entry_id;
-            let mut placed: Vec<(&[u8], PackageID)> = store.entries.items_dependencies()
+            let mut placed: Vec<bin_real::Placed<'_>> = store.entries.items_dependencies()
                 [entry_id.get() as usize]
                 .slice()
                 .iter()
-                .map(|dep| {
-                    let name = &lockfile.buffers.dependencies[dep.dep_id as usize].name;
-                    (lockfile.str(name), store.ids(dep.entry_id).pkg_id)
+                .map(|dep| bin_real::Placed {
+                    folder: lockfile.str(&lockfile.buffers.dependencies[dep.dep_id as usize].name),
+                    package_id: store.ids(dep.entry_id).pkg_id,
+                    replaced: task.relinked.contains(&dep.dep_id),
                 })
                 .collect();
             // `Step::Binaries` links the package's own.
             placed.extend(
                 self.entry_store_node_modules_package_name(entry_id)
-                    .map(|own_name| (own_name, store.ids(entry_id).pkg_id)),
+                    .map(|folder| bin_real::Placed {
+                        folder,
+                        package_id: store.ids(entry_id).pkg_id,
+                        replaced: false,
+                    }),
             );
             let is_left_over = |name: &[u8], target: &[u8]| {
                 bin_real::is_left_over(lockfile, &placed, name, target)

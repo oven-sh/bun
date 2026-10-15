@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   statSync,
@@ -2394,6 +2395,86 @@ const fakeNodeGyp: ScriptPackage = {
   bin: { "node-gyp": "node-gyp.js" },
   files: { "node-gyp.js": `#!/usr/bin/env node\nrequire("fs").writeFileSync("build.node", "built");\n` },
 };
+
+// `dist` is not there when the packages are linked. The root's script lists what it finds.
+describe.concurrent.each(["hoisted", "isolated"] as const)("a bin whose file a script writes (%s)", linker => {
+  const build = "mkdir dist && cp cli.js dist/tool";
+  const files = { "cli.js": "#!/usr/bin/env node\n" };
+  const names = isWindows ? ["tool.bunx", "tool.exe"] : ["tool"];
+
+  async function expectLinked(ctx: Awaited<ReturnType<typeof setupScriptPackages>>, manifest: object) {
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({ name: "root", scripts: { postinstall: "ls node_modules/.bin > bins.txt" }, ...manifest }),
+    );
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    expect({
+      bins: await readdirSorted(ctx.installed(".bin")),
+      seenByRoot: readFileSync(join(ctx.packageDir, "bins.txt"), "utf8").split(/\r?\n/).filter(Boolean).sort(),
+    }).toEqual({ bins: names, seenByRoot: names });
+    expect(exitCode).toBe(0);
+  }
+
+  test.each([
+    { form: "bin", hook: "preinstall", bin: { bin: { tool: "dist/tool" } } },
+    { form: "bin", hook: "postinstall", bin: { bin: { tool: "dist/tool" } } },
+    { form: "bin", hook: "prepare", bin: { bin: { tool: "dist/tool" } } },
+    { form: "directories.bin", hook: "postinstall", bin: { directories: { bin: "dist" } } },
+  ])("a member's $form, written by its $hook", async ({ hook, bin }) => {
+    using ctx = await setupScriptPackages(linker, {});
+    await mkdir(join(ctx.packageDir, "packages", "tool"), { recursive: true });
+    await writeFile(join(ctx.packageDir, "packages", "tool", "cli.js"), files["cli.js"]);
+    await writeFile(
+      join(ctx.packageDir, "packages", "tool", "package.json"),
+      JSON.stringify({ name: "tool", version: "1.0.0", ...bin, scripts: { [hook]: build } }),
+    );
+    await expectLinked(ctx, { workspaces: ["packages/*"], dependencies: { tool: "workspace:*" } });
+  });
+
+  test("a trusted package's bin, written by its postinstall", async () => {
+    using ctx = await setupScriptPackages(linker, {
+      tool: { bin: { tool: "dist/tool" }, scripts: { postinstall: build }, files },
+    });
+    await expectLinked(ctx, { dependencies: { tool: "1.0.0" }, trustedDependencies: ["tool"] });
+  });
+
+  test("the first package in the order of the links keeps a name", async () => {
+    using ctx = await setupScriptPackages(linker, {
+      "a-tool": { bin: { tool: "cli.js" }, files },
+      tool: { bin: { tool: "dist/tool" }, scripts: { postinstall: build }, files },
+    });
+    await expectLinked(ctx, { dependencies: { "a-tool": "1.0.0", tool: "1.0.0" }, trustedDependencies: ["tool"] });
+    if (!isWindows) expect(readlinkSync(ctx.installed(".bin", "tool"))).toBe(join("..", "a-tool", "cli.js"));
+  });
+});
+
+// The copy in node_modules has hard links to the files of the folder, and a file that is written in place keeps
+// its inode: nothing shows that it changed.
+test.concurrent.each(["hoisted", "isolated"] as const)(
+  "a trusted file: folder is built again after one of its files was written in place (%s)",
+  async linker => {
+    using ctx = await setupScriptPackages(linker, {});
+    const source = join(ctx.packageDir, "addon", "addon.c");
+    ctx.env.BUILT = join(ctx.packageDir, "built.c");
+    await mkdir(join(ctx.packageDir, "addon"));
+    await writeFile(source, "int v = 1;\n");
+    await writeFile(
+      join(ctx.packageDir, "addon", "package.json"),
+      JSON.stringify({ name: "addon", version: "1.0.0", scripts: { install: 'cp addon.c "$BUILT"' } }),
+    );
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({ name: "root", dependencies: { addon: "file:./addon" }, trustedDependencies: ["addon"] }),
+    );
+    expect(await ctx.bun("install")).toMatchObject({ exitCode: 0 });
+    expect(readFileSync(ctx.env.BUILT, "utf8")).toBe("int v = 1;\n");
+
+    await writeFile(source, "int v = 2;\n");
+    expect(await ctx.bun("install")).toMatchObject({ exitCode: 0 });
+    expect(readFileSync(ctx.env.BUILT, "utf8")).toBe("int v = 2;\n");
+  },
+);
 
 describe.concurrent.each(["hoisted", "isolated"] as const)("bun add --trust (%s)", linker => {
   // The isolated linker decides on its task threads whether a package is trusted. Under ASAN

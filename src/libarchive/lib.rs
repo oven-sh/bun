@@ -160,16 +160,11 @@ pub mod lib {
     /// One per extraction: once `pwrite` fails, later entries do not try it again.
     pub struct WriteStrategy {
         pub pwrite: bool,
-        /// Off for npm tarballs: a file is its stored bytes, whatever length a sparse map claims.
-        pub holes: bool,
     }
 
     impl Default for WriteStrategy {
         fn default() -> Self {
-            Self {
-                pwrite: cfg!(unix),
-                holes: true,
-            }
+            Self { pwrite: cfg!(unix) }
         }
     }
 
@@ -220,7 +215,6 @@ pub mod lib {
             if data.is_empty() {
                 return Ok(());
             }
-            let offset = if strategy.holes { offset } else { self.end };
             let fd = self.fd;
             let file = bun_sys::File::borrow(&fd);
 
@@ -255,8 +249,8 @@ pub mod lib {
         }
 
         /// `end` is the offset libarchive returned with `ARCHIVE_EOF`: the length of the file.
-        pub fn finish(&mut self, strategy: &WriteStrategy, end: i64) -> bun_sys::Maybe<()> {
-            if strategy.holes && end > self.end {
+        pub fn finish(&mut self, end: i64) -> bun_sys::Maybe<()> {
+            if end > self.end {
                 self.before_hole();
                 bun_sys::ftruncate(self.fd, end)?;
                 self.end = end;
@@ -316,21 +310,38 @@ pub mod lib {
             unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
         }
 
-        /// Appends the entry's stored bytes, not a sparse map's holes. `Ok(false)`: read error.
+        /// Appends the entry's data, the holes of a sparse map as zeros. `Ok(false)`: read error.
         pub fn read_data_to_vec(
             &self,
             out: &mut Vec<u8>,
         ) -> core::result::Result<bool, bun_core::OOM> {
+            let start = out.len();
             let mut offset: i64 = 0;
-            while let Some(block) = self.next(&mut offset) {
-                if block.result != Result::Ok {
+            loop {
+                let block = self.next(&mut offset);
+                let bytes: &[u8] = match &block {
+                    Some(block) if block.result != Result::Ok => return Ok(false),
+                    Some(block) => block.bytes,
+                    None => &[],
+                };
+                // Where the block goes or, behind the last one, where the entry ends.
+                let Some(at) = usize::try_from(offset)
+                    .ok()
+                    .and_then(|offset| start.checked_add(offset))
+                else {
+                    return Ok(false);
+                };
+                if block.is_some() && at < out.len() {
                     return Ok(false);
                 }
-                out.try_reserve(block.bytes.len())
+                out.try_reserve(at.saturating_sub(out.len()).saturating_add(bytes.len()))
                     .map_err(|_| bun_core::AllocError)?;
-                out.extend_from_slice(block.bytes);
+                out.resize(at, 0);
+                out.extend_from_slice(bytes);
+                if block.is_none() {
+                    return Ok(true);
+                }
             }
-            Ok(true)
         }
 
         /// `archive_read_data_block` — returns `None` on EOF; `*offset` is then the entry's length.
@@ -372,7 +383,7 @@ pub mod lib {
                     return Result::Failed;
                 }
             }
-            match writer.finish(strategy, offset) {
+            match writer.finish(offset) {
                 Ok(()) => Result::Ok,
                 Err(_) => Result::Failed,
             }
@@ -1486,10 +1497,7 @@ impl Archiver {
         let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
 
         let mut normalized_buf = bun_paths::os_path_buffer_pool::get();
-        let mut write_strategy = lib::WriteStrategy {
-            holes: !options.npm,
-            ..Default::default()
-        };
+        let mut write_strategy = lib::WriteStrategy::default();
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime

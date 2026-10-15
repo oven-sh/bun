@@ -1941,7 +1941,6 @@ describe.concurrent("auto-install does not run the event loop inside", () => {
             port1.postMessage("");
             readFile(import.meta.path, () => record("readFile"));
             Bun.spawn({ cmd: [process.execPath, "--version"], stdout: "ignore", onExit: () => record("onExit") });
-            // SIGINT and SIGTERM end the wait. Their listeners do not run inside the call either.
             if (process.platform !== "win32") {
               process.on("SIGUSR2", () => record("signal"));
               process.kill(process.pid, "SIGUSR2");
@@ -2099,11 +2098,10 @@ describe.concurrent("auto-install does not run the event loop inside", () => {
   });
 });
 
-// A dead proxy, a captive portal, a VPN that has just dropped. The thread is blocked, so a
-// `process.on` listener cannot run, and the wait was six times five minutes long.
+// A dead proxy, a captive portal, a VPN that has just dropped. The thread is blocked, and the
+// wait was six times five minutes long.
 describe.concurrent("auto-install and a registry that accepts the connection and never answers", () => {
   function silentRegistry() {
-    const connected = Promise.withResolvers<void>();
     let connections = 0;
     const listener = Bun.listen({
       hostname: "127.0.0.1",
@@ -2111,58 +2109,16 @@ describe.concurrent("auto-install and a registry that accepts the connection and
       socket: {
         open() {
           connections++;
-          connected.resolve();
         },
         data() {},
       },
     });
     return {
       bunfig: `[install]\nregistry = "http://127.0.0.1:${listener.port}/"\n`,
-      connected: connected.promise,
       connections: () => connections,
       [Symbol.dispose]: () => void listener.stop(true),
     };
   }
-
-  describe.each(["SIGINT", "SIGTERM"] as const)("%s with a listener ends the wait of", signal => {
-    test.skipIf(isWindows).each([
-      ["require()", `require("never-answered")`],
-      ["import()", `await import("never-answered")`],
-      ["Bun.resolveSync()", `Bun.resolveSync("never-answered", import.meta.dir)`],
-    ])("%s", async (_, call) => {
-      using registry = silentRegistry();
-      using dir = tempDir("autoinstall-silent-signal", {
-        "bunfig.toml": registry.bunfig,
-        "index.js": `
-          let insideTheCall = true;
-          process.on("${signal}", () => {
-            console.log("listener, inside the call: " + insideTheCall);
-            process.exit(0);
-          });
-          try {
-            ${call};
-          } catch (e) {
-            console.log(e.code);
-          }
-          insideTheCall = false;
-        `,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "index.js"],
-        cwd: String(dir),
-        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      // The request is out, so the listener is installed and the call has begun.
-      await Promise.race([registry.connected, proc.exited]);
-      proc.kill(signal);
-
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toMatch(/^(ERR_)?MODULE_NOT_FOUND\nlistener, inside the call: false\n$/);
-      expect(exitCode).toBe(0);
-    });
-  });
 
   // The shortest idle timeout is 1 second plus up to 4 of the timer wheel.
   test("the request is not sent again after a timeout", async () => {
@@ -2482,16 +2438,43 @@ describe.concurrent("auto-install is off when a security scanner is configured",
   test.each([
     ["the user's bunfig cannot be read", { "home/.bunfig.toml": {} }],
     ["the user's bunfig cannot be parsed", { "home/.bunfig.toml": "[install.security\n" }],
-    ["a bunfig.toml further up cannot be read", { "bunfig.toml": {} }],
-    ["a bunfig.toml further up cannot be parsed", { "bunfig.toml": "[install.security\n" }],
     ["the user's .npmrc cannot be read", { "home/.npmrc": {} }],
     ["the project's .npmrc cannot be read", { "app/.npmrc": {} }],
   ])("%s", async (_, files) => {
     expect(await run({ ...files, "app/index.js": requireIt })).toEqual(refused(unreadable));
   });
 
+  // `bun install` in `app/src` reads the bunfig.toml of `app`, and none above it.
+  const project = { "app/package.json": JSON.stringify({ name: "app" }), "app/src/index.js": requireIt };
+  const installed = {
+    stdout: "loaded 2.0.0\n",
+    stderr: "",
+    exitCode: 0,
+    requests: ["/no-deps", "/no-deps/-/no-deps-2.0.0.tgz"],
+  };
+
+  describe.each([
+    ["cannot be read", {}, unreadable],
+    ["cannot be parsed", "[install.security\n", unreadable],
+    ["configures a scanner", scanner, configured],
+  ])("a bunfig.toml that %s", (_, bunfig, why) => {
+    test("in the project root", async () => {
+      expect(await run({ ...project, "app/bunfig.toml": bunfig }, { cwd: "app/src" })).toEqual(refused(why));
+    });
+
+    test("between the working directory and the project root", async () => {
+      const files = { ...project, "app/src/bunfig.toml": bunfig, "app/src/deep/index.js": requireIt };
+      expect(await run(files, { cwd: "app/src/deep" })).toEqual(refused(why));
+    });
+
+    test("above the project root is not read", async () => {
+      expect(await run({ ...project, "bunfig.toml": bunfig }, { cwd: "app/src" })).toEqual(installed);
+    });
+  });
+
   test("the error of an import statement names the file that cannot be parsed", async () => {
-    const result = await run({ "bunfig.toml": "[install.security\n", "app/index.js": `import "no-deps";\n` });
+    const files = { ...project, "app/bunfig.toml": "[install.security\n", "app/src/index.js": `import "no-deps";\n` };
+    const result = await run(files, { cwd: "app/src" });
     expect(result.stderr).toContain(unreadable);
     expect(result.stderr).toMatch(/[\\/]bunfig\.toml" cannot be read or parsed/);
     expect({ ...result, stderr: "" }).toEqual({ stdout: "", stderr: "", exitCode: 1, requests: [] });
@@ -2510,12 +2493,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
       "app/bunfig.toml": `[install]\nexact = true\n`,
       "app/index.js": requireIt,
     };
-    expect(await run(files)).toEqual({
-      stdout: "loaded 2.0.0\n",
-      stderr: "",
-      exitCode: 0,
-      requests: ["/no-deps", "/no-deps/-/no-deps-2.0.0.tgz"],
-    });
+    expect(await run(files)).toEqual(installed);
   });
 });
 

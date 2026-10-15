@@ -1653,9 +1653,14 @@ fn download_outcome(
         .as_ref()
         .map(|m| m.response.status_code)
         .or(proxy_status);
-    let bad_certificate = matches!(
+    // The next attempt would end in the same way.
+    let is_final = matches!(
         response.fail,
-        Some(http::Error::Cert(_) | http::Error::ERR_TLS_CERT_ALTNAME_INVALID)
+        Some(
+            http::Error::Cert(_)
+                | http::Error::ERR_TLS_CERT_ALTNAME_INVALID
+                | http::Error::TooManyRedirects
+        )
     );
     // Auto-install blocks the JS thread on the request: it does not sit out the same silence twice.
     // `connect_errno` is a Winsock code on Windows: WSAETIMEDOUT.
@@ -1666,7 +1671,7 @@ fn download_outcome(
     };
     let silence = matches!(response.fail, Some(http::Error::Timeout))
         || response.connect_errno == CONNECT_TIMED_OUT;
-    let retry = !bad_certificate
+    let retry = !is_final
         && !(silence && options.runtime_auto_install)
         && (failed || status.is_some_and(|status| status > 499 || status == 429 || status == 408));
     (failed, retry)
@@ -1883,6 +1888,24 @@ pub(crate) fn failed_request_error() -> crate::Error {
         bun_core::Global::exit(BUNX_REGISTRY_UNREACHABLE);
     }
     crate::Error::InstallFailed
+}
+
+/// The package.json of a tree of `bunx` while it is linked: a tree that still has it was not linked to the end.
+pub const BUNX_UNFINISHED_PACKAGE_JSON: &[u8] = b"{}\n";
+
+/// Right before anything is linked. Until then the tree that `bunx` has stays as it is, so it needs all of the next one.
+pub(crate) fn begin_linking_for_bunx(root_package_json_path: &bun_core::ZStr, had_errors: bool) {
+    if bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() != Some(true) {
+        return;
+    }
+    if had_errors {
+        bun_core::Global::crash();
+    }
+    let _ = bun_sys::File::write_file(
+        bun_sys::Fd::cwd(),
+        root_package_json_path,
+        BUNX_UNFINISHED_PACKAGE_JSON,
+    );
 }
 
 /// `bun add` / `bun update <name>` exits 1 and saves nothing when a download for the request fails.

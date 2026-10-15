@@ -3952,9 +3952,10 @@ describe.concurrent("binaries", () => {
     },
   );
 
-  // Version 2 drops the bin `tool-legacy` and keeps the file of it.
+  // Version 2 drops the bin `legacy-tool` and keeps the file of it. The names are in the order of
+  // a sorted listing, also with `.bunx` and `.exe` after them.
   const toolVersions = [
-    ["1.0.0", { tool: "a.js", "tool-legacy": "a.js" }],
+    ["1.0.0", { "legacy-tool": "a.js", tool: "a.js" }],
     ["2.0.0", { tool: "b.js" }],
   ] as const;
   const writeToolTarballs = (dir: string) =>
@@ -4020,6 +4021,30 @@ describe.concurrent("binaries", () => {
         expect(join(packageDir, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "tool", bin.tool));
         expect({ version, exitCode }).toEqual({ version, exitCode: 0 });
       }
+    },
+  );
+
+  test.skipIf(isWindows).each(["hoisted", "isolated"])(
+    "a link in .bin that bun did not make, into a package that is not replaced, stays (%s)",
+    async linker => {
+      const { packageDir, packageJson, env } = await setupTest();
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "what-bin": "1.0.0" } }));
+      const own = join(packageDir, "node_modules", ".bin", "my-what-bin");
+
+      for (const args of [["install"], ["add", "no-deps@1.0.0"]]) {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args, "--linker", linker],
+          cwd: packageDir,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect({ args, exitCode }).toEqual({ args, exitCode: 0 });
+        if (args[0] === "install") await symlink(join("..", "what-bin", "what-bin.js"), own);
+      }
+      expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(["my-what-bin", "what-bin"]);
     },
   );
 
@@ -4127,6 +4152,26 @@ describe.concurrent("binaries", () => {
         expect({ version, exitCode }).toEqual({ version, exitCode: 0 });
       }
       expect(await file(join(binDir, "not-a-bin.txt")).text()).toBe("stays");
+    });
+
+    test.skipIf(isWindows)("a link that bun did not make, into a package that is not replaced, stays", async () => {
+      const { packageDir, env } = await setupTest();
+      const own = join(packageDir, "global-bin-dir", "my-what-bin");
+
+      let result = await runGlobal(packageDir, env, "add", "what-bin@1.0.0");
+      expect(result.err).not.toContain("error:");
+      expect(result.exitCode).toBe(0);
+      await symlink(linkTarget("what-bin", "what-bin.js"), own);
+
+      result = await runGlobal(packageDir, env, "add", "dep-with-file-bin");
+      expect(result.err).not.toContain("error:");
+      expect(await readdirSorted(join(packageDir, "global-bin-dir"))).toEqual([
+        "dep-with-file-bin",
+        "my-what-bin",
+        "what-bin",
+      ]);
+      expect(await readlink(own)).toBe(linkTarget("what-bin", "what-bin.js"));
+      expect(result.exitCode).toBe(0);
     });
 
     test("the package's own bin from an earlier install is replaced", async () => {
@@ -6972,7 +7017,7 @@ describe.concurrent("hoisting", async () => {
     );
 
     var { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--verbose"],
       cwd: packageDir,
       stdout: "pipe",
       stdin: "pipe",
@@ -6987,14 +7032,12 @@ describe.concurrent("hoisting", async () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("incorrect peer dependency");
 
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      expect.stringContaining("+ no-deps@1.0.0"),
-      "+ peer-deps-fixed@1.0.0",
-      "",
-      "2 packages installed",
-    ]);
+    expect(
+      out
+        .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+        .split(/\r?\n/)
+        .slice(-4),
+    ).toEqual([expect.stringContaining("+ no-deps@1.0.0"), "+ peer-deps-fixed@1.0.0", "", "2 packages installed"]);
 
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -7150,7 +7193,7 @@ describe.concurrent("hoisting", async () => {
     );
 
     var { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--verbose"],
       cwd: packageDir,
       stdout: "pipe",
       stdin: "pipe",
@@ -7165,14 +7208,12 @@ describe.concurrent("hoisting", async () => {
     expect(err).not.toContain("error:");
     expect(err).toContain("incorrect peer dependency");
 
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      "+ no-deps@2.0.0",
-      "+ peer-deps-fixed@1.0.0",
-      "",
-      "2 packages installed",
-    ]);
+    expect(
+      out
+        .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+        .split(/\r?\n/)
+        .slice(-4),
+    ).toEqual(["+ no-deps@2.0.0", "+ peer-deps-fixed@1.0.0", "", "2 packages installed"]);
 
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -7252,8 +7293,10 @@ describe.concurrent("hoisting", async () => {
       return packageDir;
     }
 
+    const peerWarnings = (dir: string, ...args: string[]) => peerWarningLines(dir, "--verbose", ...args);
+
     /** The `incorrect peer dependency` lines an install prints, sorted (their order follows the layout). */
-    async function peerWarnings(dir: string, ...args: string[]) {
+    async function peerWarningLines(dir: string, ...args: string[]) {
       const tmp = join(dir, ".bun-tmp");
       await using proc = spawn({
         cmd: [bunExe(), "install", "--linker", linker, ...args],
@@ -7280,6 +7323,14 @@ describe.concurrent("hoisting", async () => {
 
     const rootsNoDeps2 =
       'warn: incorrect peer dependency "no-deps@2.0.0": "peer-deps-fixed@1.0.0" requires "no-deps@^1.0.0"';
+
+    test("only --verbose says it", async () => {
+      const files = {
+        "package.json": { name: "foo", dependencies: { "no-deps": "2.0.0", "peer-deps-fixed": "1.0.0" } },
+      };
+      expect(await peerWarningLines(await project(files))).toEqual([]);
+      expect(await peerWarningLines(await project(files), "--verbose")).toEqual([rootsNoDeps2]);
+    });
 
     test("a copy inside the range somewhere else does not hide it", async () => {
       // one-fixed-dep has its own no-deps@1.0.0. peer-deps-fixed loads the root's.
@@ -11692,7 +11743,7 @@ describe.concurrent("yarn tests", () => {
     );
 
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install", "--dev"],
+      cmd: [bunExe(), "install", "--dev", "--verbose"],
       cwd: packageDir,
       stdout: "pipe",
       stdin: "pipe",
@@ -11706,14 +11757,12 @@ describe.concurrent("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      expect.stringContaining("+ no-deps@1.0.0"),
-      "+ peer-deps-fixed@1.0.0",
-      "",
-      "2 packages installed",
-    ]);
+    expect(
+      out
+        .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+        .split(/\r?\n/)
+        .slice(-4),
+    ).toEqual([expect.stringContaining("+ no-deps@1.0.0"), "+ peer-deps-fixed@1.0.0", "", "2 packages installed"]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["no-deps", "peer-deps-fixed"]);
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -11734,7 +11783,7 @@ describe.concurrent("yarn tests", () => {
     );
 
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install", "--dev"],
+      cmd: [bunExe(), "install", "--dev", "--verbose"],
       cwd: packageDir,
       stdout: "pipe",
       stdin: "pipe",
@@ -11748,14 +11797,12 @@ describe.concurrent("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
     expect(err).toContain("incorrect peer dependency");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      "+ no-deps@2.0.0",
-      "+ peer-deps-fixed@1.0.0",
-      "",
-      "2 packages installed",
-    ]);
+    expect(
+      out
+        .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+        .split(/\r?\n/)
+        .slice(-4),
+    ).toEqual(["+ no-deps@2.0.0", "+ peer-deps-fixed@1.0.0", "", "2 packages installed"]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["no-deps", "peer-deps-fixed"]);
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -11778,7 +11825,7 @@ describe.concurrent("yarn tests", () => {
       );
       const install = async (...args: string[]) => {
         await using proc = spawn({
-          cmd: [bunExe(), "install", "--linker", linker, "--save-text-lockfile", ...args],
+          cmd: [bunExe(), "install", "--verbose", "--linker", linker, "--save-text-lockfile", ...args],
           cwd: packageDir,
           stdout: "pipe",
           stderr: "pipe",
@@ -11815,7 +11862,7 @@ describe.concurrent("yarn tests", () => {
     );
 
     var { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--verbose"],
       cwd: packageDir,
       stdout: "pipe",
       stdin: "pipe",
@@ -11829,14 +11876,12 @@ describe.concurrent("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      "+ provides-peer-deps-1-0-0@1.0.0",
-      "+ provides-peer-deps-2-0-0@1.0.0",
-      "",
-      "5 packages installed",
-    ]);
+    expect(
+      out
+        .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+        .split(/\r?\n/)
+        .slice(-4),
+    ).toEqual(["+ provides-peer-deps-1-0-0@1.0.0", "+ provides-peer-deps-2-0-0@1.0.0", "", "5 packages installed"]);
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
@@ -11924,7 +11969,7 @@ describe.concurrent("yarn tests", () => {
     );
 
     var { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--verbose"],
       cwd: packageDir,
       stdout: "pipe",
       stdin: "pipe",
@@ -11938,14 +11983,12 @@ describe.concurrent("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
-      "+ provides-peer-deps-1-0-0@1.0.0",
-      "+ provides-peer-deps-1-0-0-too@1.0.0",
-      "",
-      "4 packages installed",
-    ]);
+    expect(
+      out
+        .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+        .split(/\r?\n/)
+        .slice(-4),
+    ).toEqual(["+ provides-peer-deps-1-0-0@1.0.0", "+ provides-peer-deps-1-0-0-too@1.0.0", "", "4 packages installed"]);
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
@@ -11990,7 +12033,7 @@ describe.concurrent("yarn tests", () => {
     );
 
     var { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--verbose"],
       cwd: packageDir,
       stdout: "pipe",
       stdin: "pipe",
@@ -12004,9 +12047,12 @@ describe.concurrent("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
+    expect(
+      out
+        .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+        .split(/\r?\n/)
+        .slice(-5),
+    ).toEqual([
       "+ forward-peer-deps@1.0.0",
       "+ forward-peer-deps-too@1.0.0",
       expect.stringContaining("+ no-deps@1.0.0"),
@@ -12057,7 +12103,7 @@ describe.concurrent("yarn tests", () => {
     );
 
     var { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", "--verbose"],
       cwd: packageDir,
       stdout: "pipe",
       stdin: "pipe",
@@ -12071,9 +12117,12 @@ describe.concurrent("yarn tests", () => {
     expect(err).not.toContain("error:");
     expect(err).not.toContain("not found");
     expect(err).not.toContain("incorrect peer dependency");
-    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-      expect.stringContaining("bun install v1."),
-      "",
+    expect(
+      out
+        .replace(/\s*\[[0-9\.]+m?s\]\s*$/, "")
+        .split(/\r?\n/)
+        .slice(-5),
+    ).toEqual([
       expect.stringContaining("+ no-deps@1.0.0"),
       "+ peer-deps@1.0.0",
       "+ peer-deps-too@1.0.0",
@@ -14375,14 +14424,8 @@ test.concurrent("npm manifest cache entries are only reused for the package name
   expect(npmPackages.map(pkg => pkg.name)).toEqual(["no-deps"]);
   expect(npmPackages[0].resolution.resolved).toBe(`http://localhost:${port}/no-deps/-/no-deps-1.0.0.tgz`);
 
-  // The rejected entry is deleted as soon as it is read; its replacement is written by a
-  // thread pool task that `bun install` does not wait for (#37203). The first install above
-  // still had tarballs to download while its manifests were being written, but this one has
-  // everything cached and exits while the write is still in flight (always, with a Windows
-  // debug build). So the file is either gone or holds no-deps; it must never still be basic-1's.
-  if (await exists(byName["no-deps"])) {
-    expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("no-deps");
-  }
+  // The rejected entry stays until its replacement is renamed over it, which the process waits for before it exits.
+  expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("no-deps");
   expect(exitCode).toBe(0);
 });
 
@@ -14911,6 +14954,92 @@ describe("manifest conditional requests", () => {
     });
   });
 
+  function cachedManifestPath() {
+    const cacheDir = join(packageDir, ".bun-cache");
+    const names = readdirSync(cacheDir).filter(name => name.endsWith(".npm"));
+    expect(names).toHaveLength(1);
+    return join(cacheDir, names[0]);
+  }
+  // In a cache entry: the record of the package, and in it the time at which the entry expires.
+  const packageRecord = 72;
+  const expiry = packageRecord + 24;
+
+  test.each([3600, 365 * 24 * 3600])(
+    "a cached manifest that expires %d seconds from now, as a clock that stood ahead leaves it, is checked",
+    async ahead => {
+      const served = { etag, versions: ["1.0.0"] };
+      const { server, requests } = startRegistry(served);
+      using _ = server;
+      await setup(server.port);
+      await install("1.0.0");
+
+      const manifestPath = cachedManifestPath();
+      const manifest = readFileSync(manifestPath);
+      const now = Math.floor(Date.now() / 1000);
+      expect(manifest.readUInt32LE(expiry)).toBeWithin(now, now + 301);
+      manifest.writeUInt32LE(now + ahead, expiry);
+      await write(manifestPath, manifest);
+
+      served.versions.push("1.0.1");
+      served.etag = '"no-deps-manifest-v2"';
+      await install("1.0.1");
+      expect(requests.map(request => [request.ifNoneMatch, request.status])).toStrictEqual([
+        [null, 200],
+        [etag, 200],
+      ]);
+    },
+  );
+
+  test("a cached manifest in which an offset or a length leaves its array is fetched again", async () => {
+    const { server, requests } = startRegistry({ etag });
+    using _ = server;
+    await setup(server.port);
+    await install("1.0.0");
+
+    const manifestPath = cachedManifestPath();
+    const whole = readFileSync(manifestPath);
+    // Arrays follow the package record, each behind its length in bytes. The fifth has 248 bytes for each version.
+    let versionRecord = 0;
+    let end = packageRecord + 120;
+    for (const alignment of [1, 8, 8, 8, 8]) {
+      const byteLength = Number(whole.readBigUInt64LE(end));
+      versionRecord = byteLength === 0 ? end + 8 : Math.ceil((end + 8) / alignment) * alignment;
+      end = versionRecord + byteLength;
+    }
+    expect(end - versionRecord).toBe(248);
+
+    const outside = 0x10000;
+    for (const [what, at, value] of [
+      ["offset of the etag", packageRecord + 8, outside],
+      ["offset of the versions of the releases", packageRecord + 48, outside],
+      ["offset of the records of the releases", packageRecord + 56, outside],
+      ["number of the records of the releases", packageRecord + 60, 0],
+      ["offset of the names of the dist-tags", packageRecord + 80, outside],
+      ["offset of the versions of the dist-tags", packageRecord + 88, outside],
+      ["offset of the names of the dependencies", versionRecord + 68, outside],
+      ["number of the names of the dependencies", versionRecord + 72, outside],
+      ["offset of the ranges of the dependencies", versionRecord + 76, outside],
+      ["number of the ranges of the dependencies", versionRecord + 80, outside],
+      ["offset of the names of the optional dependencies", versionRecord + 84, outside],
+      ["offset of the names of the peer dependencies", versionRecord + 100, outside],
+      ["offset of the bundled dependencies", versionRecord + 132, outside],
+    ] as const) {
+      const damaged = Buffer.from(whole);
+      damaged.writeUInt32LE(value, at);
+      await write(manifestPath, damaged);
+      requests.length = 0;
+      await install("1.0.0");
+
+      const written = readFileSync(manifestPath);
+      whole.copy(written, expiry, expiry, expiry + 4);
+      expect({
+        what,
+        requests: requests.map(request => [request.ifNoneMatch, request.status]),
+        isWholeAgain: written.equals(whole),
+      }).toEqual({ what, requests: [[null, 200]], isWholeAgain: true });
+    }
+  });
+
   // The 304 makes the install rewrite the cache entry from a thread pool task that nothing
   // waits for, so the install can exit at any point of the rewrite. On Linux the rewrite used
   // to unlink the entry and link the new file in its place, so an install exiting in between
@@ -14969,5 +15098,45 @@ describe("manifest conditional requests", () => {
         status: 304,
       })),
     ]);
+  });
+});
+
+describe.concurrent("--dry-run lists the packages that the install puts in node_modules", () => {
+  test.each([
+    {
+      cmd: ["install"],
+      dependencies: { "has-peer": "1.0.0", "one-dep": "1.0.0", "no-deps": "1.0.1" },
+      listed: [" has-peer@1.0.0", " no-deps@1.0.1", " one-dep@1.0.0", " peer-no-deps@1.0.1"],
+    },
+    { cmd: ["add", "has-peer@1.0.0"], dependencies: {}, listed: [" peer-no-deps@1.0.1", "installed has-peer@1.0.0"] },
+  ])("bun $cmd", async ({ cmd, dependencies, listed }) => {
+    const { packageDir, packageJson, env } = await setupTest();
+    await write(
+      packageJson,
+      JSON.stringify({ name: "foo", dependencies, optionalDependencies: { "native-foo-x64": "1.0.0" } }),
+    );
+
+    const run = async (...flags: string[]) => {
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd, ...flags],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return out.split("\n");
+    };
+
+    const lines = await run("--dry-run");
+    expect(lines.filter(line => /^( |installed )/.test(line)).sort()).toEqual(listed);
+    expect(existsSync(join(packageDir, "node_modules"))).toBeFalse();
+
+    await run();
+    expect((await readdirSorted(join(packageDir, "node_modules"))).filter(name => !name.startsWith("."))).toEqual(
+      listed.map(line => line.slice(line.lastIndexOf(" ") + 1, line.indexOf("@"))).sort(),
+    );
   });
 });

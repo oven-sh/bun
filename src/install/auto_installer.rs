@@ -21,7 +21,7 @@
 //! `value` union by plain assignment.
 
 use core::mem::{align_of, size_of};
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_install_types::resolver_hooks as hooks;
 use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
@@ -134,22 +134,6 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> resolution::Resolution {
 static WAKES: AtomicU32 = AtomicU32::new(0);
 /// Threads blocked on `WAKES` (Workers share the manager). At zero a wake skips the syscall.
 static PARKED: AtomicU32 = AtomicU32::new(0);
-/// A SIGINT or SIGTERM is queued for its `process.on` listener, which only the event loop runs.
-static SIGNAL_QUEUED: AtomicBool = AtomicBool::new(false);
-
-/// Ends the waits, so that the stack unwinds to the event loop. Called from the signal handler:
-/// atomics and a futex wake only.
-pub fn on_signal_queued() {
-    SIGNAL_QUEUED.store(true, Ordering::SeqCst);
-    Parked::wake_all();
-}
-
-/// The event loop is about to take the queued signals.
-pub fn on_signals_taken() {
-    if SIGNAL_QUEUED.load(Ordering::Relaxed) {
-        SIGNAL_QUEUED.store(false, Ordering::SeqCst);
-    }
-}
 
 /// Blocks: an event loop would run timers inside `require()`. SeqCst: write own word, read other's.
 pub(crate) struct Parked(());
@@ -167,11 +151,6 @@ impl Parked {
 
     pub(crate) fn wait(&self, wakes: u32) {
         Futex::wait_forever(&WAKES, wakes);
-    }
-
-    /// Read after [`Parked::wakes`]: a signal that lands later ends [`Parked::wait`] at once.
-    pub(crate) fn is_interrupted(&self) -> bool {
-        SIGNAL_QUEUED.load(Ordering::SeqCst)
     }
 
     pub(crate) fn wake_all() {

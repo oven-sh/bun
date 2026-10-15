@@ -10671,6 +10671,7 @@ declare module "bun" {
   type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
+    hasInstallScript?: true;
     bundled?: true;
   };
 

@@ -745,6 +745,7 @@ impl NetworkTask {
             http::FetchRedirect::Follow,
             AsyncHTTPOptions {
                 http_proxy,
+                proxy_settings: pm.proxy_settings(),
                 idle_timeout_seconds: pm.idle_timeout_seconds(),
                 ..Default::default()
             },
@@ -936,6 +937,7 @@ impl NetworkTask {
 
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),
+            proxy_settings: pm.proxy_settings(),
             idle_timeout_seconds: pm.idle_timeout_seconds(),
             ..Default::default()
         };

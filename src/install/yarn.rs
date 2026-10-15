@@ -19,12 +19,12 @@ use bun_install::install::{self, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
 use bun_install::npm;
 use bun_paths::AutoAbsPath;
-use bun_semver::{self as Semver, SlicedString, String as SemverString};
+use bun_semver::{self as Semver, String as SemverString};
 
 #[derive(Default)]
 pub(crate) struct YarnLock<'a> {
     pub(crate) entries: Vec<Entry<'a>>,
-    /// `dedupe_name()`, `\n`, version, `\n`, `link` -> index in `entries`.
+    /// The key that `consolidate_and_append_entry` builds -> index in `entries`.
     entry_by_name_version: StringHashMap<usize>,
 }
 
@@ -387,12 +387,28 @@ impl<'a> YarnLock<'a> {
         }
         // Every `link:` entry has version 0.0.0.
         let link = new_entry.link.as_deref().unwrap_or(b"");
+        // Off the registry, a name and a version do not say which package it is.
+        let (file, resolved, commit) = if new_entry.is_registry_entry() {
+            Default::default()
+        } else {
+            (
+                new_entry.file.unwrap_or_default(),
+                new_entry.resolved.as_deref().unwrap_or_default(),
+                new_entry.commit.unwrap_or_default(),
+            )
+        };
         let key = [
             new_entry.dedupe_name(),
             b"\n",
             new_entry.version,
             b"\n",
             link,
+            b"\n",
+            file,
+            b"\n",
+            resolved,
+            b"\n",
+            commit,
         ]
         .concat();
         let index = *self
@@ -671,13 +687,15 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 };
                 break 'blk Resolution::init(value(repository));
             } else {
+                // yarn locks `owner/repo` and the like to the host's archive of the commit.
+                let is_registry_entry = entry.is_registry_entry();
                 match resolved_url {
-                    Some(resolved) if is_direct_url_dep => {
+                    Some(resolved) if is_direct_url_dep || !is_registry_entry => {
                         break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                             sbuf!(this).append(resolved)?,
                         ));
                     }
-                    None if !entry.is_registry_entry() => break 'blk Resolution::default(),
+                    None if !is_registry_entry => break 'blk Resolution::default(),
                     _ => {}
                 }
 
@@ -804,12 +822,12 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let name_hash = string_hash(dep_name);
                 let dep_name_string = sbuf!(this).append_with_hash(dep_name, name_hash)?;
                 let dep_version_string = sbuf!(this).append(dep_version_literal)?;
-                let version_bytes = dep_version_string.slice(this.buffers.string_bytes.as_slice());
-                let sliced_string = SlicedString::init(version_bytes, version_bytes);
+                let string_bytes = this.buffers.string_bytes.as_slice();
+                let sliced_string = dep_version_string.sliced(string_bytes);
                 let mut parsed_version = Dependency::parse(
                     dep_name_string,
                     Some(name_hash),
-                    version_bytes,
+                    sliced_string.slice,
                     &sliced_string,
                     Some(&mut *log),
                     None,
@@ -817,18 +835,31 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 .unwrap_or_default();
                 parsed_version.literal = dep_version_string;
 
+                key.clear();
+                key.extend_from_slice(dep_name);
+                key.push(b'@');
+                key.extend_from_slice(dep_version_literal);
+                let locked = spec_to_package_id.get(key.as_slice()).copied();
+                // yarn links a workspace that the range accepts, and writes no entry for it.
+                let resolution = locked.or_else(|| {
+                    let npm = parsed_version.try_npm().filter(|_| !behavior.is_peer())?;
+                    let path = lockfile::linked_workspace_path(
+                        manager.options.link_workspace_packages,
+                        &this.workspace_paths,
+                        &this.workspace_versions,
+                        string_hash(npm.name.slice(string_bytes)),
+                        &npm.version,
+                        string_bytes,
+                    )?;
+                    workspace_id_by_path.get(path.slice(string_bytes)).copied()
+                });
+
                 this.buffers.dependencies.push(Dependency {
                     name: dep_name_string,
                     name_hash,
                     version: parsed_version,
                     behavior,
                 });
-
-                key.clear();
-                key.extend_from_slice(dep_name);
-                key.push(b'@');
-                key.extend_from_slice(dep_version_literal);
-                let resolution = spec_to_package_id.get(key.as_slice()).copied();
                 this.buffers
                     .resolutions
                     .push(resolution.unwrap_or(install::INVALID_PACKAGE_ID));

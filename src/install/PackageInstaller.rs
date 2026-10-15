@@ -410,6 +410,8 @@ pub struct TreeContext {
     pub(crate) pending_installs: Vec<DependencyInstallContext>,
 
     pub(crate) binaries: bin::PriorityQueue,
+    /// A package with a bin runs scripts, which can write the bin's file.
+    pub(crate) links_bins_after_scripts: bool,
 
     /// Number of installed dependencies. Could be successful or failure.
     pub(crate) install_count: usize,
@@ -952,6 +954,25 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
+    /// Every bin of a tree that `links_bins_after_scripts`, in their order: the first link stays.
+    pub(crate) fn link_bins_after_scripts(&mut self) {
+        let lockfile = self.lockfile();
+        let rows = lockfile.buffers.hoisted_dependencies.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        for (tree, context) in lockfile.buffers.trees.iter().zip(self.trees.iter_mut()) {
+            if !context.links_bins_after_scripts {
+                continue;
+            }
+            for &dep_id in tree.dependencies.get(rows) {
+                let bin = self.bins.get(resolutions[dep_id as usize] as usize);
+                if bin.is_some_and(|bin| bin.tag != bin::Tag::None) {
+                    context.binaries.add(dep_id).unwrap_or_oom();
+                }
+            }
+        }
+        self.link_remaining_bins();
+    }
+
     /// What was replaced may have had other bins. After the scripts, which can write a bin's file.
     pub(crate) fn prune_bins(&self) {
         let lockfile = self.lockfile();
@@ -965,14 +986,15 @@ impl<'a> PackageInstaller<'a> {
             if context.replaced.is_empty() && !replaced_all {
                 continue;
             }
-            let placed: Vec<(&[u8], PackageID)> = (tree.dependencies)
+            let placed: Vec<bin::Placed<'_>> = (tree.dependencies)
                 .get(lockfile.buffers.hoisted_dependencies.as_slice())
                 .iter()
-                .map(|&dep_id| {
-                    let name = dependencies[dep_id as usize].name.slice(string_buf);
-                    (name, resolutions[dep_id as usize])
+                .map(|&dep_id| bin::Placed {
+                    folder: dependencies[dep_id as usize].name.slice(string_buf),
+                    package_id: resolutions[dep_id as usize],
+                    replaced: replaced_all || context.replaced.contains(&dep_id),
                 })
-                .filter(|&(_, package_id)| (package_id as usize) < lockfile.packages.len())
+                .filter(|package| (package.package_id as usize) < lockfile.packages.len())
                 .collect();
             let is_left_over =
                 |name: &[u8], target: &[u8]| bin::is_left_over(lockfile, &placed, name, target);
@@ -1913,9 +1935,19 @@ impl<'a> PackageInstaller<'a> {
         let verifying = needs_verify && !self.skip_verify_installed_version_number;
         let inside_replaced_folder =
             self.trees[self.current_tree_id as usize].inside_replaced_folder;
+        // Its scripts build from its files. One written in place keeps its inode.
+        let builds_folder = resolution.tag == resolution::Tag::Folder
+            && self.manager().options.do_.run_scripts()
+            && !self.lockfile().is_folder_inside_declarer(dependency_id)
+            && self.lockfile().has_trusted_dependency(
+                alias.slice(string_buf!()),
+                pkg_name.slice(string_buf!()),
+                resolution,
+            );
         let needs_install = !verifying
             || remove_patch
             || inside_replaced_folder
+            || builds_folder
             || !installer.verify(
                 resolution,
                 &self.metas[package_id as usize].integrity,
@@ -2702,6 +2734,8 @@ impl<'a> PackageInstaller<'a> {
         let optional = !self
             .manager()
             .is_package_required(dependency_id, package_id);
+        self.trees[self.current_tree_id as usize].links_bins_after_scripts |=
+            self.bins[package_id as usize].tag != bin::Tag::None;
         self.unfinished_scripts
             .borrow_mut()
             .push((self.current_tree_id, scripts_list.package_name.clone()));

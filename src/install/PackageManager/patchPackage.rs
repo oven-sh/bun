@@ -479,6 +479,10 @@ pub fn do_patch_commit(
             );
         }
         Output::flush();
+        // The copy has no edit to keep and lacks what the scripts write. The install lays it again.
+        if !manager.options.dry_run && has_trusted_scripts(manager, &pkg, &name, &new_folder) {
+            let _ = Fd::cwd().delete_tree(&new_folder);
+        }
         return Ok(None);
     }
 
@@ -756,10 +760,10 @@ impl HiddenFromDiff {
         // bun.lock does not record the hash, so the names come from the folder.
         let mut iter = sys::iterate_dir(self.folder.fd);
         while let Some(entry) = iter.next()? {
-            let name = entry.name.slice_u8();
-            if entry.kind != sys::EntryKind::Directory && is_tag_of_another_entry(cache_entry, name)
+            if entry.kind != sys::EntryKind::Directory
+                && strings::has_prefix(entry.name.slice_u8(), crate::bun_hash_tag)
             {
-                let name = ZBox::from_bytes(name);
+                let name = ZBox::from_bytes(entry.name.slice_u8());
                 sys::renameat(self.folder.fd, &name, self.stash.fd, &name)?;
             }
         }
@@ -915,42 +919,31 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         &mut folder_path_buf,
         existing_patchfile_hash,
     );
-    let cache_dir = cache_result.cache_dir;
-    let cache_dir_subpath = cache_result.cache_dir_subpath.as_bytes().to_vec();
-    let cache_path = cache_dir_path(cache_dir);
-    let folder = real_folder(&cache_path, &target.folder, true);
+    let folder = real_folder(
+        &cache_dir_path(cache_result.cache_dir),
+        &target.folder,
+        true,
+    );
     // Only a package of the global store that no package.json of the project names has no folder.
     let is_loaded = sys::exists(&folder);
 
     make_bins_executable(
         &manager.lockfile,
         &pkg,
-        cache_dir,
-        &cache_dir_subpath,
+        cache_result.cache_dir,
+        cache_result.cache_dir_subpath.as_bytes(),
         &folder,
     );
-
-    // An earlier `bun patch` may have handed the folder out: what differs in it is somebody's work.
-    let cache_entry =
-        resolve_path::join::<platform::Posix>(&[&cache_path, &cache_dir_subpath]).to_vec();
-    let keeps_changes = is_loaded
-        && !manager.options.enable.force_install()
-        && !is_link(&folder)
-        && may_be_a_copy_of(&cache_entry, &folder)
-        && {
-            let Some(changes) = diff_against_cache(manager, &cache_entry, &folder) else {
-                Global::crash();
-            };
-            !changes.is_empty()
-        };
 
     // The package may be installed using the hard link method,
     // meaning that changes to the folder will also change the package in the cache.
     //
     // So we will overwrite the folder by directly copying the package in cache into it
-    if !keeps_changes
-        && let Err(e) = replace_with_cache_copy(cache_dir, &cache_dir_subpath, &folder)
-    {
+    if let Err(e) = replace_with_cache_copy(
+        cache_result.cache_dir,
+        cache_result.cache_dir_subpath.as_bytes(),
+        &folder,
+    ) {
         bun_core::pretty_error!(
             "<r><red>error<r>: error overwriting folder in node_modules: {}\n<r>",
             e.name(),
@@ -979,19 +972,13 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
         bstr::BStr::new(shown_folder)
     );
-    if keeps_changes {
-        bun_core::pretty!(
-            "\nThe folder has changes, which were kept. To start over, run:\n\n  <cyan>bun patch --force '{}'<r>\n",
-            bstr::BStr::new(shown_folder)
-        );
-    }
     if !is_loaded {
         bun_core::pretty!(
             "\nThe packages that depend on <b>{}<r> load it from the global store. They see your changes after <cyan>bun patch --commit<r>.\n",
             bstr::BStr::new(&pkg_name),
         );
     }
-    if !keeps_changes && has_trusted_scripts(manager, &pkg, &pkg_name, &folder) {
+    if has_trusted_scripts(manager, &pkg, &pkg_name, &folder) {
         bun_core::pretty!(
             "\nThe install scripts of <b>{}<r> have not run on this copy. They run again at <cyan>bun patch --commit<r>.\n",
             bstr::BStr::new(&pkg_name),
@@ -999,42 +986,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     }
 
     Ok(())
-}
-
-/// False for what an install hard-linked to the cache, which no `bun patch` has copied yet.
-pub(crate) fn has_its_own_files(folder: &[u8]) -> bool {
-    let package_json = resolve_path::join::<platform::Auto>(&[folder, b"package.json"]);
-    sys::lstat(&ZBox::from_bytes(package_json)).map_or(true, |stat| stat.st_nlink == 1)
-}
-
-/// The `.bun-tag-<hash>` of a patched entry, which `cache_entry` is not.
-fn is_tag_of_another_entry(cache_entry: &[u8], name: &[u8]) -> bool {
-    strings::has_prefix(name, crate::bun_hash_tag)
-        && !sys::exists(resolve_path::join::<platform::Auto>(&[cache_entry, name]))
-}
-
-/// False for what an install laid, from this entry or from another.
-fn may_be_a_copy_of(cache_entry: &[u8], folder: &[u8]) -> bool {
-    let modified = |dir: &[u8]| {
-        let package_json = resolve_path::join::<platform::Auto>(&[dir, b"package.json"]);
-        (sys::lstat(&ZBox::from_bytes(package_json)).ok()).map(|stat| sys::stat_mtime(&stat))
-    };
-    // clonefile(2) gives a file of its own the times of the entry's. (So does a copy on Windows.)
-    let is_clone = cfg!(target_os = "macos")
-        && modified(cache_entry).is_some_and(|time| modified(folder) == Some(time));
-    if is_clone || !has_its_own_files(folder) {
-        return false;
-    }
-    let Ok(dir) = Dir::cwd().open_dir(folder, ITERATE) else {
-        return false;
-    };
-    let mut iter = sys::iterate_dir(dir.fd);
-    while let Ok(Some(entry)) = iter.next() {
-        if is_tag_of_another_entry(cache_entry, entry.name.slice_u8()) {
-            return false;
-        }
-    }
-    true
 }
 
 /// Whether an install ran scripts in the folder that the copy replaced: what they wrote is gone.
@@ -1695,9 +1646,6 @@ fn pkg_info_for_name_and_version(
             );
             Global::crash();
         };
-        if lockfile.is_member_outside(lockfile.owning_workspace_of_tree(node_modules.tree_id)) {
-            continue;
-        }
         if let Some(&id) = (pairs.iter()).find(|id| node_modules.dependencies.contains(&id.0)) {
             break (id, node_modules.relative_path.as_bytes().to_vec());
         }

@@ -940,7 +940,9 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
                 minify: false,
                 ..bun_css::PrinterOptions::default()
             },
-            None,
+            Some(bun_css::ImportInfo::init_outside_of_bundler(
+                &import_records,
+            )),
             None,
             &symbols,
         )

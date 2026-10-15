@@ -520,6 +520,7 @@ impl<'a> AsyncHTTP<'a> {
         headers_buf: &'a [u8],
         request_body: &'a [u8],
         http_proxy: Option<URL<'a>>,
+        proxy_settings: Option<Box<crate::ProxySettings>>,
         redirect_type: FetchRedirect,
     ) -> AsyncHTTP<'a> {
         Self::init(
@@ -532,6 +533,7 @@ impl<'a> AsyncHTTP<'a> {
             redirect_type,
             Options {
                 http_proxy,
+                proxy_settings,
                 ..Options::default()
             },
         )
@@ -750,10 +752,14 @@ impl<'a> AsyncHTTP<'a> {
                         .append_list_assume_capacity(&(*this).request_headers);
                     let original_url = (*this).url.clone();
                     let original_method = (*this).method;
+                    let original_client = &(*this).real.expect("unreachable").as_ref().client;
                     let client = &mut (*this).client;
                     client.url = original_url;
                     client.connected_url = URL::default();
                     client.method = original_method;
+                    // Every hop also spends one redirect and looks the proxy up again.
+                    client.remaining_redirect_count = original_client.remaining_redirect_count;
+                    client.http_proxy = original_client.http_proxy.clone();
                     // Clone-owned (allocated after `ptr::read`).
                     drop(core::mem::take(&mut client.redirect));
                     drop(core::mem::take(&mut client.prev_redirect));

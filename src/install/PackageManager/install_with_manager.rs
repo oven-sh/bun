@@ -113,6 +113,7 @@ pub fn install_with_manager(
     };
 
     update_lockfile_if_needed(manager, &load_result)?;
+    read_bins_of_migrated_tarballs(manager, &load_result)?;
 
     // Snapshot the loaded-from-lockfile package count so
     // `Lockfile::get_package_id` can tell loaded pins apart from packages
@@ -365,6 +366,7 @@ pub fn install_with_manager(
                     maybe_root
                         .scripts
                         .count(&lockfile.buffers.string_bytes, builder);
+                    builder.count(maybe_root.name.slice(&lockfile.buffers.string_bytes));
 
                     let off = lf.dependencies.len() as u32;
                     let len = (new_dependencies.len() + kept_pruned.len()) as u32;
@@ -440,6 +442,10 @@ pub fn install_with_manager(
                     lf.packages.items_scripts_mut()[0] = maybe_root
                         .scripts
                         .clone_into(&lockfile.buffers.string_bytes, builder);
+                    lf.packages.items_name_mut()[0] = builder.append::<SemverString>(
+                        maybe_root.name.slice(&lockfile.buffers.string_bytes),
+                    );
+                    lf.packages.items_name_hash_mut()[0] = maybe_root.name_hash;
 
                     // Update workspace paths
                     {
@@ -689,8 +695,21 @@ pub fn install_with_manager(
             clean_lockfile(manager, log_level)?;
             root = *manager.lockfile.packages.get(0);
         }
-        if synced.overrides && !manager.options.dry_run {
-            moved_by_overrides = reresolve_rows_outside_overrides(manager, &mut root, log_level)?;
+        if !manager.lockfile.overrides.is_empty() && !manager.options.dry_run {
+            let outside = rows_outside_overrides(&manager.lockfile);
+            if !outside.is_empty() {
+                let frozen = manager.options.enable.frozen_lockfile()
+                    && !matches!(load_result, lockfile::LoadResult::NotFound);
+                moved_by_overrides = reresolve_rows_outside_overrides(
+                    manager,
+                    outside,
+                    frozen.then(|| loaded_lockfile_name(&load_result)),
+                    root_package_json_path,
+                    &mut root,
+                    log_level,
+                )?;
+                had_any_diffs |= !moved_by_overrides.is_empty();
+            }
         }
 
         if manager.options.security_scanner.is_some() {
@@ -869,6 +888,10 @@ pub fn install_with_manager(
             break 'install_summary PackageInstallSummary::default();
         }
 
+        crate::package_manager_real::run_tasks::begin_linking_for_bunx(
+            root_package_json_path,
+            had_errors_before_cleaning_lockfile,
+        );
         note_members_outside(manager);
 
         // Every workspace is a root dependency, so without a diff the workspace set is unchanged.
@@ -876,7 +899,8 @@ pub fn install_with_manager(
             remove_stale_workspace_links(&lockfile_before_clean, &manager.lockfile);
         }
 
-        let warn_incorrect_peers = manager.options.local_package_features.peer_dependencies
+        let warn_incorrect_peers = log_level.is_verbose()
+            && manager.options.local_package_features.peer_dependencies
             && (had_any_diffs
                 || manager.to_update
                 || !manager.update_requests.is_empty()
@@ -1572,15 +1596,8 @@ fn overrides_field_name(
     else {
         return "overrides";
     };
-    let root = entry.root;
-    match (
-        root.as_property(b"overrides").is_some(),
-        root.as_property(b"resolutions").is_some(),
-    ) {
-        (false, true) => "resolutions",
-        (true, true) => "overrides or resolutions",
-        _ => "overrides",
-    }
+    lockfile::override_map::Field::of(&entry.root)
+        .map_or("overrides", |(field, _)| field.json_name())
 }
 
 pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'static str {
@@ -1602,6 +1619,40 @@ pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'stat
 // hot verify-and-exit path during fat-LTO emission, so a no-op
 // `bun install` / `bun install --frozen-lockfile` (node_modules already up to
 // date) faults in far fewer distinct `.text` pages.
+
+/// yarn.lock and pnpm-lock.yaml do not record the bins of a tarball: its package.json does.
+/// Runs before `mark_loaded_packages`: `append_extracted_package` then keeps the row's dependencies.
+#[cold]
+#[inline(never)]
+fn read_bins_of_migrated_tarballs(
+    manager: &mut PackageManager,
+    load_result: &lockfile::LoadResult,
+) -> crate::Result<()> {
+    if !matches!(
+        load_result,
+        lockfile::LoadResult::Ok(ok)
+            if matches!(ok.migrated, lockfile::Migrated::Yarn | lockfile::Migrated::Pnpm)
+    ) {
+        return Ok(());
+    }
+    let offline =
+        manager.options.offline == crate::package_manager_real::options::OfflineMode::Offline;
+    let packages = manager.lockfile.packages.slice();
+    let tarballs: Vec<PackageID> = (packages.items_resolution().iter())
+        .zip(packages.items_bin())
+        .enumerate()
+        .filter(|(_, (resolution, bin))| {
+            bin.tag == crate::bin::Tag::None
+                && (resolution.tag == ResolutionTag::LocalTarball
+                    || (resolution.tag == ResolutionTag::RemoteTarball && !offline))
+        })
+        .map(|(id, _)| id as PackageID)
+        .collect();
+    for id in tarballs {
+        super::populate_package_cache::download_pinned_packages(manager, Some(id), false)?;
+    }
+    Ok(())
+}
 
 #[cold]
 #[inline(never)]
@@ -2288,50 +2339,84 @@ fn clean_lockfile(
     Ok(before_clean)
 }
 
-/// After `edit_after_resolve` gave `overrides` other values. Returns the packages rows moved to.
+/// The rows bound to a version that the rule for them does not allow, each with that package.
+#[inline(never)]
+fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let names = lockfile.packages.items_name();
+    let resolutions = lockfile.packages.items_resolution();
+    (lockfile.buffers.dependencies.iter())
+        .zip(lockfile.buffers.resolutions.iter())
+        .enumerate()
+        .filter(|&(row, (dependency, &package_id))| {
+            lockfile.overrides.has_rule_for_name(dependency.name_hash)
+                && !dependency.behavior.is_bundled()
+                && (package_id as usize) < resolutions.len()
+                && resolutions[package_id as usize].tag == ResolutionTag::Npm
+                && crate::dedupe::applied_override(lockfile, row as DependencyID, dependency)
+                    .is_some()
+                && crate::dedupe::effective_version(lockfile, row as DependencyID, dependency)
+                    .is_some_and(|version| {
+                        version.try_npm().is_some_and(|npm| {
+                            // Under another name the row follows an `npm:` alias, not the rule.
+                            npm.name.slice(buf) == names[package_id as usize].slice(buf)
+                                && !npm.version.satisfies(
+                                    resolutions[package_id as usize].npm().version,
+                                    buf,
+                                    buf,
+                                )
+                        })
+                    })
+        })
+        .map(|(row, (_, &package_id))| (row as DependencyID, package_id))
+        .collect()
+}
+
+/// `frozen` names the lockfile that may not change. Returns the packages rows moved to.
 #[cold]
 #[inline(never)]
 fn reresolve_rows_outside_overrides(
     manager: &mut PackageManager,
+    mut outside: Vec<(DependencyID, PackageID)>,
+    frozen: Option<&'static str>,
+    root_package_json_path: &ZStr,
     root: &mut lockfile::Package,
     log_level: Options::LogLevel,
 ) -> crate::Result<Vec<PackageID>> {
-    let outside: Vec<(DependencyID, PackageID)> = {
-        let lockfile: &Lockfile = &manager.lockfile;
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        let names = lockfile.packages.items_name();
-        let resolutions = lockfile.packages.items_resolution();
-        (lockfile.buffers.dependencies.iter())
-            .zip(lockfile.buffers.resolutions.iter())
-            .enumerate()
-            .filter(|&(row, (dependency, &package_id))| {
-                lockfile.overrides.has_rule_for_name(dependency.name_hash)
-                    && !dependency.behavior.is_bundled()
-                    && (package_id as usize) < resolutions.len()
-                    && resolutions[package_id as usize].tag == ResolutionTag::Npm
-                    && crate::dedupe::effective_version(lockfile, row as DependencyID, dependency)
-                        .is_some_and(|version| {
-                            version.try_npm().is_some_and(|npm| {
-                                // Under another name the row follows an `npm:` alias, not the rule.
-                                npm.name.slice(buf) == names[package_id as usize].slice(buf)
-                                    && !npm.version.satisfies(
-                                        resolutions[package_id as usize].npm().version,
-                                        buf,
-                                        buf,
-                                    )
-                            })
-                        })
-            })
-            .map(|(row, (_, &package_id))| (row as DependencyID, package_id))
-            .collect()
-    };
-    if outside.is_empty() {
+    // As in `enqueue_named_updates`: a peer with a provider only follows it.
+    let plannable_peers = plannable_peer_rows(&manager.lockfile, &DirectDependencies::default());
+    outside.retain(|&(row, _)| {
+        let behavior = manager.lockfile.buffers.dependencies[row as usize].behavior;
+        !behavior.is_peer() || plannable_peers.is_set(row as usize)
+    });
+    let Some(&(first_row, first_package)) = outside.first() else {
         return Ok(Vec::new());
+    };
+    if let Some(lockfile_name) = frozen {
+        if log_level != Options::LogLevel::Silent {
+            let field = overrides_field_name(manager, root_package_json_path);
+            let lockfile: &Lockfile = &manager.lockfile;
+            let dependency = &lockfile.buffers.dependencies[first_row as usize];
+            let wanted = crate::dedupe::effective_version(lockfile, first_row, dependency)
+                .map_or(dependency.version.literal, |version| version.literal);
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
+            );
+            bun_core::note!(
+                "{} has {}, and {} in package.json asks for {}",
+                lockfile_name,
+                bstr::BStr::new(&crate::dedupe::label(lockfile, first_package)),
+                field,
+                bun_core::fmt::for_terminal(wanted.fmt(lockfile.buffers.string_bytes.as_slice())),
+            );
+            bun_core::note!(
+                "try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile"
+            );
+        }
+        Global::crash();
     }
 
     manager.lockfile.mark_loaded_packages()?;
-    // As in `enqueue_named_updates`: a peer with a provider only follows it.
-    let plannable_peers = plannable_peer_rows(&manager.lockfile, &DirectDependencies::default());
     let mut moved: Vec<(DependencyID, PackageID)> = Vec::new();
     let mut peer_rows: Vec<DependencyID> = Vec::new();
     for (row, package_id) in outside {
@@ -2339,9 +2424,7 @@ fn reresolve_rows_outside_overrides(
             .behavior
             .is_peer()
         {
-            if plannable_peers.is_set(row as usize) {
-                peer_rows.push(row);
-            }
+            peer_rows.push(row);
             continue;
         }
         manager.lockfile.buffers.resolutions[row as usize] = invalid_package_id;
@@ -2349,9 +2432,6 @@ fn reresolve_rows_outside_overrides(
         enqueue_row(manager, row, invalid_package_id);
     }
     enqueue_peer_rows(manager, &peer_rows, &mut moved)?;
-    if moved.is_empty() {
-        return Ok(Vec::new());
-    }
     manager.drain_dependency_list();
     if manager.pending_task_count() > 0 || manager.peer_dependencies.readable_length() > 0 {
         resolve_pending_tasks(manager, root, log_level, &mut NamedUpdates::default())?;

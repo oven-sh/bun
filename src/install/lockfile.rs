@@ -1699,6 +1699,7 @@ impl Lockfile {
             pending_peers: Default::default(),
             late_bound_peer: false,
             walked: DynamicBitSet::init_empty(slice.len())?,
+            served: Default::default(),
             list: Default::default(),
             sort_buf: Default::default(),
             listed_again: Default::default(),
@@ -1720,6 +1721,7 @@ impl Lockfile {
             tree.process_subtree(item.dependency_id, item.hoist_root_id, &mut builder)?;
         }
 
+        builder.bind_served_peers();
         builder.keep_linked_rows();
         let cleaned = builder.clean()?;
         let late_bound_peer = builder.late_bound_peer;
@@ -1817,6 +1819,24 @@ impl Lockfile {
                 continue;
             };
 
+            // Only when the tarball is the one the manifest describes.
+            let url = pkg_res
+                .npm()
+                .url
+                .slice(self.buffers.string_bytes.as_slice());
+            let locked_integrity = pkg_metas[i].integrity;
+            if !url.is_empty()
+                && !bun_lock::url_is_under_registry(
+                    url,
+                    &crate::yarn_berry::registry_without_auth(scope.url.href()),
+                )
+                && url != pkg.package.tarball_url.slice(&manifest.string_buf)
+                && !(locked_integrity.tag.is_supported()
+                    && locked_integrity == pkg.package.integrity)
+            {
+                continue;
+            }
+
             let mut builder = string_builder!(self);
 
             let bin_extern_strings_count = pkg.package.bin.count(
@@ -1857,24 +1877,11 @@ impl Lockfile {
                     pkg_meta.libc = pkg.package.libc;
                 }
             }
-            // Only when the tarball is the one the manifest describes.
             if fill_integrity
                 && !pkg_meta.integrity.tag.is_supported()
                 && pkg.package.integrity.tag.is_supported()
             {
-                let url = pkg_res
-                    .npm()
-                    .url
-                    .slice(self.buffers.string_bytes.as_slice());
-                if url.is_empty()
-                    || bun_lock::url_is_under_registry(
-                        url,
-                        &crate::yarn_berry::registry_without_auth(scope.url.href()),
-                    )
-                    || url == pkg.package.tarball_url.slice(&manifest.string_buf)
-                {
-                    pkg_meta.integrity = pkg.package.integrity;
-                }
+                pkg_meta.integrity = pkg.package.integrity;
             }
         }
         Ok(())
@@ -2043,6 +2050,17 @@ impl Lockfile {
         }
 
         Some(*self.packages.get(0))
+    }
+
+    /// What the lockfile records for the registry package `name@version`.
+    pub fn npm_integrity(&self, name: &[u8], version: Semver::Version) -> Option<crate::Integrity> {
+        let resolutions = self.packages.items_resolution();
+        let id = (0..resolutions.len()).find(|&id| {
+            resolutions[id].tag == ResolutionTag::Npm
+                && resolutions[id].npm().version.eql(version)
+                && self.str(&self.packages.items_name()[id]) == name
+        })?;
+        Some(self.packages.items_meta()[id].integrity)
     }
 
     #[inline]

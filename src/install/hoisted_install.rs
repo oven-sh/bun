@@ -422,6 +422,7 @@ pub(crate) fn install_hoisted_packages(
                                 direct_packages: bun_ptr::BackRef::new(&direct_packages),
                             }),
                             pending_installs: Vec::new(),
+                            links_bins_after_scripts: false,
                             install_count: 0,
                             replaced: Vec::new(),
                             inside_replaced_folder: false,
@@ -569,9 +570,6 @@ pub(crate) fn install_hoisted_packages(
         // need to make sure bins are linked before completing any remaining scripts.
         // this can happen if a package fails to download
         installer.link_remaining_bins();
-        // Bin linking reads `successfully_installed`, so the summary takes it after.
-        installer.summary.successfully_installed =
-            Some(core::mem::take(&mut installer.successfully_installed));
         installer.complete_remaining_scripts(log_level);
 
         // .monotonic is okay because this value is only accessed on this thread.
@@ -580,6 +578,10 @@ pub(crate) fn install_hoisted_packages(
 
             this.sleep();
         }
+        installer.link_bins_after_scripts();
+        // Bin linking reads `successfully_installed`, so the summary takes it after.
+        installer.summary.successfully_installed =
+            Some(core::mem::take(&mut installer.successfully_installed));
         installer.prune_bins();
 
         if log_level.show_progress() {

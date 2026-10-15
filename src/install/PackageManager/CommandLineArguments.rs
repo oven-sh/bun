@@ -1721,12 +1721,15 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd = bun_core::getcwd(&mut cwd_buf)?.as_bytes();
         let start_dir = bun_paths::fs::FileSystem::init(cwd).initial_top_level_dir();
-        let typed = |path: &[u8]| -> &'static [u8] {
-            bun_core::heap::release(BunInstall::resolve_path(start_dir, path))
-        };
-        cli.config = cli.config.map(typed);
-        cli.cache_dir = cli.cache_dir.map(typed);
-        cli.ca_file_name = typed(cli.ca_file_name);
+        // Every parse sees the arguments of `PARSED_ARGS`, so these are the same each time.
+        static TYPED_PATHS: OnceLock<[Box<[u8]>; 3]> = OnceLock::new();
+        let [config, cache_dir, ca_file_name] = TYPED_PATHS.get_or_init(|| {
+            [cli.config, cli.cache_dir, Some(cli.ca_file_name)]
+                .map(|path| BunInstall::resolve_path(start_dir, path.unwrap_or_default()))
+        });
+        cli.config = cli.config.map(|_| &**config);
+        cli.cache_dir = cli.cache_dir.map(|_| &**cache_dir);
+        cli.ca_file_name = &**ca_file_name;
 
         if subcommand == Subcommand::Update {
             cli.latest = args.flag(b"--latest");

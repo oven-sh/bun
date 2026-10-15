@@ -990,6 +990,92 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
   const LRI = "\u2066";
   const PDI = "\u2069";
 
+  test("a tarball is asked for and checked as bun install does", async () => {
+    const versions = ["1.0.0", "2.0.0"];
+    const balls = async (body: string) =>
+      Object.fromEntries(
+        await Promise.all(
+          versions.map(async version => {
+            const manifest = JSON.stringify({ name: "p", version });
+            const files = { "package/package.json": manifest, "package/index.js": `${body} ${version}\n` };
+            return [version, await new Bun.Archive(files).bytes("gzip")] as const;
+          }),
+        ),
+      );
+    const [published, other] = [await balls("published"), await balls("other")];
+    let [listed, served] = [published, published];
+    const asked: Record<string, string>[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const version = new URL(req.url).pathname.match(/p-(.+)\.tgz$/)?.[1];
+        if (version) {
+          asked.push(req.headers.toJSON());
+          return new Response(served[version]);
+        }
+        const entry = (version: string) => ({
+          name: "p",
+          version,
+          dist: {
+            tarball: `${server.url.origin}/p/-/p-${version}.tgz`,
+            integrity: "sha512-" + new Bun.CryptoHasher("sha512").update(listed[version]).digest("base64"),
+          },
+        });
+        return Response.json({
+          name: "p",
+          "dist-tags": { latest: "2.0.0" },
+          versions: Object.fromEntries(versions.map(version => [version, entry(version)])),
+        });
+      },
+    });
+    using dir = tempDir("pm-diff-checked", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { p: "1.0.0" } }),
+    });
+    const run = async (...cmd: string[]) => {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          NPM_CONFIG_REGISTRY: server.url.origin,
+          BUN_CONFIG_REGISTRY: server.url.origin,
+          BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+          NO_COLOR: "1",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    expect(await run("install")).toMatchObject({ exitCode: 0 });
+    const [byInstall] = asked.splice(0);
+    expect(await run("pm", "diff", "p")).toMatchObject({
+      stdout: expect.stringContaining("+published 2.0.0"),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(asked).toEqual([byInstall, byInstall]);
+
+    // not the bytes the registry lists
+    served = other;
+    expect(await run("pm", "diff", "p@1.0.0", "2.0.0")).toEqual({
+      stdout: "",
+      stderr: expect.stringMatching(/^error: Integrity check failed for tarball: p@[12]\.0\.0\n$/),
+      exitCode: 1,
+    });
+
+    // not the bytes bun.lock has
+    listed = other;
+    expect(await run("pm", "diff", "p@1.0.0", "2.0.0")).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(await run("pm", "diff", "p")).toEqual({
+      stdout: "",
+      stderr: "error: Integrity check failed for tarball: p@1.0.0\n",
+      exitCode: 1,
+    });
+  });
+
   test("package bytes never drive the terminal: ESC/CR/C1 and bidi controls are drawn, and called out", async () => {
     const evil = `exports.ok = true;\nexports.motd = "${ESC}[2K${ESC}[1A hidden \r";\nconst s = "${CSI_C1}31m"; // C1 CSI\n`;
     const trojan = `const isAdmin = false; /*${RLO} } ${LRI}if (isAdmin)${PDI} ${LRI} begin admins only */\n`;
@@ -2085,6 +2171,22 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(text).not.toMatch(/│[-+].*"b"/);
     expect(text).toMatch(/\nbad\.css ─+ not parsed \+2 -1\n/);
     expect(text).toMatch(/\nbad\.json ─+ not parsed \+1 -1\n/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a style sheet with url() is compared by its canonical print too", async () => {
+    const { text, exitCode } = await pretty({
+      "a/same.css": `.a{background:url(a.png)}@font-face{font-family:x;src:url("x.woff2")}`,
+      "b/same.css": `.a {\n  background: url(a.png);\n}\n@font-face {\n  font-family: x;\n  src: url("x.woff2");\n}\n`,
+      "a/moved.css": `.a{margin:0}.b{background:url(a.png)}`,
+      "b/moved.css": `.a { margin: 0 }\n.b { background: url(https://example.com/b.png) }\n`,
+    });
+    expect(text).toMatch(/\nsame\.css ─+ formatting only\n/);
+    expect(text).toMatch(/\nmoved\.css ─+ normalized \+1 -1\n/);
+    expect(changedLines(text).map(line => line.replace(/^.*│/, ""))).toEqual([
+      '-   background: url("a.png");',
+      '+   background: url("https://example.com/b.png");',
+    ]);
     expect(exitCode).toBe(0);
   });
 

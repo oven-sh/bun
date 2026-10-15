@@ -3856,12 +3856,14 @@ test.concurrent.each([
   };
   await install();
 
-  // a checkout as an older version left it in the cache
-  if (!isLinux) return;
-  symlinkSync(join(root, target), join(cache, `@G@${branchCommits(bare).main}`, "package.json"));
+  // a checkout as an older version left it in the cache is made anew
+  if (isWindows) return;
+  const checkout = join(cache, `@G@${branchCommits(bare).main}`);
+  symlinkSync(join(root, target), join(checkout, "package.json"));
   rmSync(join(project, "node_modules"), { recursive: true });
   rmSync(join(project, "bun.lock"));
   await install();
+  expect(treeOf(checkout)).toEqual([".bun-tag", "index.js"]);
 });
 
 test.concurrent("a package.json that is a link to a file of the repository is a copy of that file", async () => {
@@ -3879,12 +3881,25 @@ test.concurrent("a package.json that is a link to a file of the repository is a 
     },
   ]);
   const project = writeProject(root, { dep: `${url}#main` });
+  const cached = join(root, "cache", `@G@${branchCommits(bare).main}`, "package.json");
+  const install = async () => {
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+    expect(diagnostics(stderr)).toEqual([]);
+    expect(lstatSync(cached).isFile()).toBe(true);
+    expect(readFileSync(join(project, "node_modules", "dep", "package.json"), "utf8")).toBe(manifest);
+    expect(await installedVersions(project, ["dep", "leaf"])).toEqual({ dep: "main", leaf: "leaf" });
+    expect((await lockedPackages(project)).dep[1]).toEqual({ dependencies: { leaf: `${url}#leaf` } });
+    expect(exitCode).toBe(0);
+  };
+  await install();
 
-  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
-  expect(diagnostics(stderr)).toEqual([]);
-  expect(readFileSync(join(project, "node_modules", "dep", "package.json"), "utf8")).toBe(manifest);
-  expect(await installedVersions(project, ["dep", "leaf"])).toEqual({ dep: "main", leaf: "leaf" });
-  expect(exitCode).toBe(0);
+  // a checkout as an older version left it in the cache is made anew
+  if (isWindows) return;
+  rmSync(cached);
+  symlinkSync("real/manifest.json", cached);
+  rmSync(join(project, "node_modules"), { recursive: true });
+  rmSync(join(project, "bun.lock"));
+  await install();
 });
 
 // A link to a file of the repository is installed as a copy of that file. No other link is installed.

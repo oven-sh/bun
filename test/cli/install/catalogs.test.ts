@@ -1833,7 +1833,7 @@ describe("peer dependencies", () => {
         bunfigOpts: { linker: "hoisted" },
         files: { "package.json": packageJson },
       });
-      const { err } = await install(packageDir, "hoisted");
+      const { err } = await install(packageDir, "hoisted", "--verbose");
       expect(peerWarnings(err)).toBe(0);
       expect((await Bun.file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe(
         "1.0.0",
@@ -1844,7 +1844,7 @@ describe("peer dependencies", () => {
     /** The version the peer moved to; no warning may be printed on the way. */
     async function reinstall(dir: string, packageJson: string) {
       await Bun.write(join(dir, "package.json"), packageJson);
-      const { err } = await install(dir, "hoisted");
+      const { err } = await install(dir, "hoisted", "--verbose");
       expect(err).toContain("Saved lockfile");
       expect(peerWarnings(err)).toBe(0);
       return (await Bun.file(join(dir, "node_modules", "no-deps", "package.json")).json()).version;

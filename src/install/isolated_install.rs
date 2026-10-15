@@ -533,6 +533,25 @@ fn build_store(
     let is_contained_folder = |dep_id: DependencyID| contained.is_set(dep_id as usize);
     let mut linked = lockfile::reachable::Linked::default();
 
+    // Of a filtered row: does only this run leave it out (`--production`, `--omit`, `--filter`)? It
+    // is not linked then, but what is below takes its package as a peer, as in a full install.
+    let links_peers = manager.options.local_package_features.peer_dependencies
+        && manager.options.remote_package_features.peer_dependencies;
+    let provides_in_every_run = |dep_id: DependencyID| {
+        let dep = &dependencies[dep_id as usize];
+        let meta = pkgs.items_meta().get(resolutions[dep_id as usize] as usize);
+        links_peers
+            && !dep.behavior.is_bundled()
+            && meta.is_some_and(|meta| {
+                !meta.is_disabled(
+                    manager.options.cpu,
+                    manager.options.os,
+                    manager.options.libc.for_dependency(dep.behavior),
+                )
+            })
+    };
+    let mut left_out: HashMap<DependencyID, ()> = HashMap::default();
+
     let mut nodes: store::node::List = store::node::List::default();
 
     // DFS so a deduplicated node's full subtree (and therefore its `peers`)
@@ -609,7 +628,7 @@ fn build_store(
                 if dep.behavior.is_peer() {
                     own_peers.set(pkg_id as usize, bit);
                 } else if !is_contained_folder(dep_id)
-                    && !is_filtered_dependency_or_workspace(
+                    && (!is_filtered_dependency_or_workspace(
                         dep_id,
                         pkg_id,
                         workspace_filters,
@@ -618,7 +637,7 @@ fn build_store(
                         lockfile,
                         resolutions,
                         &mut linked,
-                    )
+                    ) || provides_in_every_run(dep_id))
                 {
                     provides.set(pkg_id as usize, bit);
                 }
@@ -1044,6 +1063,16 @@ fn build_store(
                         &mut linked,
                     )
                 {
+                    if !dep.behavior.is_peer()
+                        && peer_name_idx.contains(&dep.name_hash)
+                        && !is_unlinked_member(dep_id)
+                        && provides_in_every_run(dep_id)
+                    {
+                        let pkg_id = resolutions[dep_id as usize];
+                        node_dependencies[node_id.get() as usize]
+                            .push(store::node::DependencyIds { dep_id, pkg_id });
+                        left_out.insert(dep_id, ());
+                    }
                     continue;
                 }
 
@@ -1053,6 +1082,7 @@ fn build_store(
                 if !listed_again.is_empty()
                     && listed_again.binary_search(&dep_id).is_ok()
                     && (node_dependencies[node_id.get() as usize].iter())
+                        .filter(|ids| !left_out.contains_key(&ids.dep_id))
                         .map(|ids| &dependencies[ids.dep_id as usize])
                         .take_while(|first| !first.behavior.is_prod())
                         .any(|first| {
@@ -1083,6 +1113,7 @@ fn build_store(
         }
 
         for &peer_dep_id in &peer_dep_ids {
+            let mut own_row_is_left_out = false;
             let (resolved_pkg_id, auto_installed) = 'resolved_pkg_id: {
                 // Go through the peers parents looking for a package with the same name.
                 // If none is found, use current best version. Parents visited must have
@@ -1134,6 +1165,8 @@ fn build_store(
                             break 'resolved_pkg_id (best_version, true);
                         }
 
+                        own_row_is_left_out =
+                            curr_id == node_id && left_out.contains_key(&ids.dep_id);
                         break 'resolved_pkg_id (ids.pkg_id, false);
                     }
 
@@ -1216,9 +1249,9 @@ fn build_store(
                 node_peers[visited_parent_id.get() as usize].insert(peer, &peer_ctx)?;
             }
 
-            if !visited_parent_node_ids.is_empty() {
+            if !visited_parent_node_ids.is_empty() || own_row_is_left_out {
                 // visited parents length == 0 means the node satisfied it's own
-                // peer. don't queue.
+                // peer. don't queue, unless nothing else links that row.
                 node_dependencies[node_id.get() as usize].push(store::node::DependencyIds {
                     dep_id: peer_dep_id,
                     pkg_id: resolved_pkg_id,
@@ -2073,6 +2106,8 @@ pub(crate) fn install_isolated_packages(
             );
             Global::exit(1);
         }
+    } else if !is_new_bun_modules {
+        crate::prune::unlink_unhoisted(manager);
     }
 
     let store_inode = sys::stat(paths::path_literal!("node_modules/.bun"))
@@ -2134,7 +2169,7 @@ pub(crate) fn install_isolated_packages(
                 relink: installer::Relink::Off,
                 newly_trusted: false,
                 blocked_scripts: 0,
-                relinked: false,
+                relinked: Vec::new(),
                 left_out_links: Vec::new(),
                 task: bun_threading::thread_pool::CountedTask::new(
                     installer::Task::callback,
@@ -2304,8 +2339,14 @@ pub(crate) fn install_isolated_packages(
                         continue;
                     }
 
+                    // Its scripts build from its files. One written in place keeps its inode.
+                    let builds = installer.manager().options.do_.run_scripts()
+                        && installer.is_trusted(entry_id);
                     // folders are always hardlinked to keep them up-to-date
-                    if !is_new_bun_modules && !installer.manager().options.enable.force_install() {
+                    if !builds
+                        && !is_new_bun_modules
+                        && !installer.manager().options.enable.force_install()
+                    {
                         let mut store_path: AbsPath = AbsPath::init_top_level_dir();
                         installer.append_real_store_path(&mut store_path, entry_id, Which::Final);
                         if let (Ok(src), Ok(dest)) =

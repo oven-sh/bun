@@ -5,7 +5,7 @@ use bun_semver as semver;
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::{PackageUpdateInfo, TrackInstalledBin};
 use bun_core::fmt::{PathSep, escape_control_chars};
-use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
+use bun_install::lockfile::{Printer, package::Meta as PackageMeta, reachable};
 use bun_install::{
     self as install, Bin, Dependency, DependencyID, DependencyVersionTag, INVALID_PACKAGE_ID,
     PackageID, PackageManager, PackageNameHash, Resolution, Subcommand, bin, resolution,
@@ -755,17 +755,32 @@ pub(crate) fn print<W: Write>(
     } else {
         debug_assert_eq!(dependencies_buffer.len(), resolutions_buffer.len());
         let is_update = manager.subcommand == Subcommand::Update;
-        'outer: for (dep_id, (dependency, &package_id)) in dependencies_buffer
-            .iter()
-            .zip(resolutions_buffer)
-            .enumerate()
+        // What an install would put on disk, each package once.
+        let wanted = reachable::packages(
+            this.lockfile,
+            resolutions_buffer,
+            reachable::Options {
+                bundled: true,
+                ..reachable::Options::install(manager)
+            },
+        );
+        let mut listed = Bitset::init_empty(resolved.len())?;
+        // Peer edges come last: they name a package only when no other edge does.
+        let edges = || {
+            dependencies_buffer
+                .iter()
+                .zip(resolutions_buffer)
+                .enumerate()
+        };
+        'outer: for (dep_id, (dependency, &package_id)) in edges()
+            .filter(|(_, (dependency, _))| !dependency.behavior.is_peer())
+            .chain(edges().filter(|(_, (dependency, _))| dependency.behavior.is_peer()))
         {
             if package_id >= end {
                 continue;
             }
-            if dependency.behavior.is_peer() {
-                continue;
-            }
+            let listed_before = listed.is_set(package_id as usize);
+            listed.set(package_id as usize);
             let package_name = dependency.name.slice(string_buf);
 
             if !this.updates.is_empty() {
@@ -782,6 +797,9 @@ pub(crate) fn print<W: Write>(
                         continue 'outer;
                     }
                 }
+            }
+            if listed_before || !wanted.is_set(package_id as usize) {
+                continue;
             }
 
             bun_core::write_pretty!(

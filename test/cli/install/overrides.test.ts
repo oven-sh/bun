@@ -270,8 +270,7 @@ test.concurrent("overrides do not apply to workspaces", async () => {
   await expectLockfileStable(dir, lock);
 });
 
-// Bun 1.4 and older read "resolutions" only when package.json had no "overrides". Its bun.lock looks exactly like one
-// saved before "resolutions" was added, so a frozen install fails on both: `bun install` would rewrite either.
+// "resolutions" is read only when package.json has no "overrides", so an upgrade leaves bun.lock as it is.
 describe("a bun.lock written by Bun 1.4", () => {
   const dependencies = { "one-dep": "1.0.0", "a-dep": "^1.0.1" };
   const integrity = {
@@ -314,69 +313,30 @@ describe("a bun.lock written by Bun 1.4", () => {
       title: "the same key in both",
       rules: { overrides: { "no-deps": "1.0.0" }, resolutions: { "no-deps": "2.0.0" } },
     },
-  ])("$title", ({ rules }) => {
+    {
+      title: "overrides, and another name in resolutions",
+      rules: { overrides: { "no-deps": "1.0.0" }, resolutions: { "a-dep": "1.0.2" } },
+    },
+    {
+      title: "overrides, and a scoped rule in resolutions",
+      rules: { overrides: { "no-deps": "1.0.0" }, resolutions: { "one-dep/no-deps": "2.0.0" } },
+    },
+    {
+      title: "overrides, and resolutions that is not an object",
+      rules: { overrides: { "no-deps": "1.0.0" }, resolutions: "2.0.0" },
+    },
+    {
+      title: "an empty overrides, and resolutions",
+      rules: { overrides: {}, resolutions: { "no-deps": "1.0.0" } },
+      overridden: false,
+    },
+  ])("$title", ({ rules, overridden = true }) => {
     test.concurrent.each([...frozen, "install"])("bun %s says nothing", async command => {
-      const { dir, lock } = await upgraded(rules);
+      const { dir, lock } = await upgraded(rules, overridden);
       const { stderr, exitCode } = await bun(dir, ...command.split(" "));
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
       expect(await lockfile(dir)).toBe(lock);
-    });
-  });
-
-  describe.each([
-    {
-      title: "a flat rule in resolutions",
-      rules: { overrides: { "no-deps": "1.0.0" }, resolutions: { "a-dep": "1.0.2" } },
-      overridden: true,
-      updated: "a-dep@1.0.2, no-deps@1.0.0",
-    },
-    {
-      title: "a scoped rule in resolutions",
-      rules: { overrides: { "no-deps": "1.0.0" }, resolutions: { "one-dep/no-deps": "2.0.0" } },
-      overridden: true,
-      updated: "a-dep@1.0.10, no-deps@2.0.0",
-    },
-    {
-      title: "an empty overrides",
-      rules: { overrides: {}, resolutions: { "no-deps": "1.0.0" } },
-      overridden: false,
-      updated: "a-dep@1.0.10, no-deps@1.0.0",
-    },
-  ])("overrides and resolutions, $title", ({ rules, overridden, updated }) => {
-    const installed = async (dir: string) =>
-      (
-        await Promise.all(
-          ["a-dep", "no-deps"].map(async name => {
-            const { version } = await file(join(dir, "node_modules", name, "package.json")).json();
-            return `${name}@${version}`;
-          }),
-        )
-      ).join(", ");
-
-    test.concurrent.each(frozen)("bun %s fails until bun.lock records both fields", async command => {
-      const { dir, lock } = await upgraded(rules, overridden);
-      const { stderr, exitCode } = await bun(dir, ...command.split(" "));
-      expect(stderr).toBe(changed("overrides or resolutions"));
-      expect(await lockfile(dir)).toBe(lock);
-      expect(exitCode).toBe(1);
-
-      expect((await bun(dir, "install")).exitCode).toBe(0);
-      expect(await installed(dir)).toBe(updated);
-      const after = await bun(dir, ...command.split(" "));
-      expect(after.stderr).toBe("");
-      expect(after.exitCode).toBe(0);
-    });
-
-    test.concurrent("bun install records both fields, once", async () => {
-      const { dir, lock } = await upgraded(rules, overridden);
-      const { stderr, exitCode } = await bun(dir, "install");
-      expect(stderr).toBe("Saved lockfile");
-      expect(await installed(dir)).toBe(updated);
-      expect(exitCode).toBe(0);
-      const saved = await lockfile(dir);
-      expect(saved).not.toBe(lock);
-      await expectLockfileStable(dir, saved);
     });
   });
 
@@ -385,32 +345,36 @@ describe("a bun.lock written by Bun 1.4", () => {
   test.concurrent("an edit of overrides still fails a frozen install", async () => {
     const { dir, lock } = await upgraded({ ...both, overrides: { "no-deps": "1.0.1" } });
     const { stderr, exitCode } = await bun(dir, "install", "--frozen-lockfile");
-    expect(stderr).toBe(changed("overrides or resolutions"));
+    expect(stderr).toBe(changed("overrides"));
     expect(exitCode).toBe(1);
     expect(await lockfile(dir)).toBe(lock);
   });
 
-  test.concurrent("resolutions added next to overrides that this version recorded fail a frozen install", async () => {
+  test.concurrent("resolutions added or edited next to overrides change nothing", async () => {
     const dir = await project({ name: "foo", dependencies, overrides: both.overrides });
     expect((await bun(dir, "install")).exitCode).toBe(0);
     const lock = await lockfile(dir);
-    await editPackageJson(dir, pkg => void (pkg.resolutions = both.resolutions));
-    for (const command of frozen) {
-      const { stderr, exitCode } = await bun(dir, ...command.split(" "));
-      expect({ command, stderr }).toEqual({ command, stderr: changed("overrides or resolutions") });
-      expect(await lockfile(dir)).toBe(lock);
-      expect(exitCode).toBe(1);
+    for (const resolutions of [both.resolutions, { "a-dep": "1.0.3", "one-dep": "1.0.0" }, {}]) {
+      await editPackageJson(dir, pkg => void (pkg.resolutions = resolutions));
+      await expectLockfileStable(dir, lock);
     }
   });
 
-  test.concurrent("once both fields are recorded, an edit of resolutions fails a frozen install", async () => {
-    const { dir } = await upgraded(both);
+  test.concurrent("a rule that bun.lock has from resolutions goes with the next install", async () => {
+    const dir = await project({ name: "foo", dependencies, overrides: { ...both.overrides, ...both.resolutions } });
     expect((await bun(dir, "install")).exitCode).toBe(0);
-    for (const resolutions of [{ "a-dep": "1.0.3" }, { "a-dep": "1.0.2", "one-dep": "1.0.0" }, {}]) {
-      await editPackageJson(dir, pkg => void (pkg.resolutions = resolutions));
-      const { stderr, exitCode } = await bun(dir, "install", "--frozen-lockfile");
-      expect({ resolutions, stderr }).toEqual({ resolutions, stderr: changed("overrides or resolutions") });
-      expect(exitCode).toBe(1);
-    }
+    expect(await lockfile(dir)).toContain('"a-dep": "1.0.2"');
+    await editPackageJson(dir, pkg => void Object.assign(pkg, both));
+
+    const refused = await bun(dir, "install", "--frozen-lockfile");
+    expect(refused.stderr).toBe(changed("overrides"));
+    expect(refused.exitCode).toBe(1);
+
+    const { stderr, exitCode } = await bun(dir, "install");
+    expect(stderr).toBe("Saved lockfile");
+    expect(exitCode).toBe(0);
+    const saved = await lockfile(dir);
+    expect(saved).not.toContain('"a-dep": "1.0.2"');
+    await expectLockfileStable(dir, saved);
   });
 });

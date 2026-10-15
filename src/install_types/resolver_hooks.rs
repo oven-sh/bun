@@ -107,6 +107,12 @@ impl<T> ExternalSlice<T> {
         id >= self.off && (id as u64) < self.len as u64 + self.off as u64
     }
 
+    /// For an offset and a length read from a file, before anything calls `get`.
+    #[inline]
+    pub fn is_within(self, in_: &[T]) -> bool {
+        self.off as usize + self.len as usize <= in_.len()
+    }
+
     #[inline]
     pub fn get(self, in_: &[T]) -> &[T] {
         // Compute the sum in usize so

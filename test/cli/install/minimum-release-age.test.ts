@@ -3743,7 +3743,8 @@ describe("minimum-release-age", () => {
           expect(exitCode).toBe(0);
         };
 
-        await installUntilManifestsCached(String(dir), 2, expectBoundToInstalledVersion);
+        const verbose = { args: ["--verbose"] };
+        await installUntilManifestsCached(String(dir), 2, expectBoundToInstalledVersion, verbose);
         const lockfile = await Bun.file(`${dir}/bun.lock`).text();
         expect(lockfile).toContain('"gated@1.0.0"');
 
@@ -3752,7 +3753,7 @@ describe("minimum-release-age", () => {
         // that binds peers to what the tree contains.
         await reResolve(String(dir));
         registry.requests.length = 0;
-        expectBoundToInstalledVersion(await install(String(dir)));
+        expectBoundToInstalledVersion(await install(String(dir), verbose));
         expect(registry.requests).toEqual([]);
         expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
       },

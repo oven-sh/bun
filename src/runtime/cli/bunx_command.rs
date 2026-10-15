@@ -17,6 +17,7 @@ use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
 use bun_paths::{self, DELIMITER};
 use bun_resolver::fs::RealFS;
+use bun_semver::{SlicedString, Version};
 use bun_sys::{self, Fd, FdDirExt as _, O};
 use bun_wyhash::hash;
 use std::env::consts::EXE_SUFFIX;
@@ -28,33 +29,27 @@ bun_output::declare_scope!(bunx, visible);
 
 pub(crate) struct BunxCommand;
 
+/// The range of `pkg@<range>`, and the buffer its strings are in.
+type Range<'a> = (&'a bun_semver::query::Group, &'a [u8]);
+
 /// `flock` on `<bunx cache dir>.lock`, next to the tree. CLOEXEC: exec'ing the target releases it.
 struct InstallLock {
     _file: bun_sys::File,
 }
 
 impl InstallLock {
-    /// `None` when the lock cannot be taken, or is held elsewhere and `nonblocking`.
-    fn acquire(
-        bunx_cache_dir: &[u8],
-        mode: bun_sys::FileLockMode,
-        nonblocking: bool,
-    ) -> Option<Self> {
+    /// Waits for the `bun x` that holds it. `None` when the lock cannot be taken.
+    fn acquire(bunx_cache_dir: &[u8]) -> Option<Self> {
         let path = ZBox::from_bytes([bunx_cache_dir, b".lock"].concat());
         let flags = O::CREAT | O::RDWR | O::CLOEXEC | O::NOFOLLOW;
         let file = bun_sys::File::from_fd(bun_sys::openat(Fd::cwd(), &path, flags, 0o600).ok()?);
-        bun_sys::flock(file.fd(), mode, nonblocking)
-            .ok()?
-            .then_some(Self { _file: file })
-    }
-
-    /// Whether another `bun x` is installing into `bunx_cache_dir` right now (its tree is partial).
-    fn install_in_progress(bunx_cache_dir: &[u8]) -> bool {
-        Self::acquire(bunx_cache_dir, bun_sys::FileLockMode::Shared, true).is_none()
+        bun_sys::flock(file.fd(), bun_sys::FileLockMode::Exclusive, false).ok()?;
+        Some(Self { _file: file })
     }
 }
 
-/// `bun add` replaces the tree's `EMPTY_PACKAGE_JSON` only once everything is linked.
+/// The tree's package.json is `EMPTY_PACKAGE_JSON` from before `bun add` links the first package until all are linked.
+/// A run that only reads goes by that, not by the lock: an install that is still asking the registry has changed nothing.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tree {
     Missing,
@@ -286,7 +281,8 @@ impl BunxCommand {
     /// 1 day
     const SECONDS_CACHE_VALID: i64 = 60 * 60 * 24;
 
-    const EMPTY_PACKAGE_JSON: &[u8] = b"{}\n";
+    const EMPTY_PACKAGE_JSON: &[u8] =
+        bun_install::package_manager_real::run_tasks::BUNX_UNFINISHED_PACKAGE_JSON;
 
     /// `bun_which::which` resolves a name with a slash against the cwd, not `node_modules/.bin`.
     fn is_safe_bin_name(name: &[u8]) -> bool {
@@ -297,10 +293,14 @@ impl BunxCommand {
             && strings::index_of_char(name, b'\\').is_none()
     }
 
+    /// The bin called `preferred` if the package has it, else its first one.
+    /// `NeedToInstall`: the version of the package is outside `range`.
     fn get_bin_name_from_subpath(
         transpiler: &mut Transpiler,
         dir_fd: Fd,
         subpath_z: &ZStr,
+        preferred: &[u8],
+        range: Option<Range<'_>>,
     ) -> crate::Result<Box<[u8]>> {
         let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
         let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
@@ -313,9 +313,21 @@ impl BunxCommand {
         let parsed = json::ParsedJson::parse_package_json(&source, transpiler.log_mut())?;
         let expr = parsed.root;
 
+        if let Some((range, range_buf)) = range
+            && !expr.get(b"version").is_some_and(|version| {
+                version.as_utf8_string_literal().is_some_and(|literal| {
+                    Version::parse_exact(SlicedString::init(literal, literal))
+                        .is_some_and(|version| range.satisfies(version, range_buf, literal))
+                })
+            })
+        {
+            return Err(crate::Error::NeedToInstall);
+        }
+
         if let Some(bin_expr) = expr.get(b"bin") {
             match &bin_expr.data {
                 ExprData::EObjectJSON(object) => {
+                    let mut first: Option<Box<[u8]>> = None;
                     for prop in object.get().properties() {
                         let bin_name = prop.key.slice();
                         // Same values the bin linker does not link (`bin.rs`).
@@ -326,7 +338,13 @@ impl BunxCommand {
                         if !is_linked || !Self::is_safe_bin_name(bin_name) {
                             continue;
                         }
-                        return Ok(Box::<[u8]>::from(bin_name));
+                        if bin_name == preferred {
+                            return Ok(Box::<[u8]>::from(bin_name));
+                        }
+                        first.get_or_insert_with(|| Box::<[u8]>::from(bin_name));
+                    }
+                    if let Some(bin_name) = first {
+                        return Ok(bin_name);
                     }
                 }
                 ExprData::EString(_) => {
@@ -358,32 +376,62 @@ impl BunxCommand {
             let bin_dir = bun_sys::openat(dir_fd, path, O::RDONLY | O::DIRECTORY, 0)?;
             let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
             let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);
+            let mut first: Option<Box<[u8]>> = None;
             while let Ok(Some(current)) = iterator.next() {
                 if current.kind == bun_sys::EntryKind::File && !current.name.slice().is_empty() {
-                    return Ok(Box::<[u8]>::from(current.name.slice_u8()));
+                    if current.name.slice_u8() == preferred {
+                        return Ok(Box::<[u8]>::from(preferred));
+                    }
+                    first.get_or_insert_with(|| Box::<[u8]>::from(current.name.slice_u8()));
                 }
+            }
+            if let Some(bin_name) = first {
+                return Ok(bin_name);
             }
         }
 
         Err(crate::Error::NoBinFound)
     }
 
-    fn get_bin_name_from_project_directory(
+    /// The copy of `package_name` that node would load from `cwd`: the nearest `node_modules/<package_name>` at or above
+    /// it. Returns its bin in the `node_modules/.bin` beside it, and nothing when its version is outside `range`.
+    /// `only_that_bin`: `bin_name` or nothing. `NoBinFound`: the copy has no bin at all.
+    fn find_in_project(
         transpiler: &mut Transpiler,
-        dir_fd: Fd,
+        cwd: &[u8],
         package_name: &[u8],
-    ) -> crate::Result<Box<[u8]>> {
-        let mut subpath = bun_paths::path_buffer_pool::get();
-        let subpath_z = bun_core::fmt::buf_print_z(
-            &mut subpath[..],
-            format_args!(
-                "node_modules{sep}{pkg}{sep}package.json",
-                sep = bun_paths::SEP as char,
-                pkg = BStr::new(package_name),
-            ),
-        )
-        .map_err(|_| crate::Error::PathTooLong)?;
-        Self::get_bin_name_from_subpath(transpiler, dir_fd, subpath_z)
+        range: Option<Range<'_>>,
+        bin_name: &[u8],
+        only_that_bin: bool,
+    ) -> crate::Result<Option<ZBox>> {
+        const SEP: &[u8] = &[bun_paths::SEP];
+        let mut next_dir = Some(cwd);
+        while let Some(dir) = next_dir {
+            next_dir = bun_paths::dirname(dir);
+            let dir = strings::without_trailing_slash(dir);
+            let node_modules = [dir, SEP, b"node_modules", SEP].concat();
+            let package_json = [node_modules.as_slice(), package_name, SEP, b"package.json"];
+            let found = match Self::get_bin_name_from_subpath(
+                transpiler,
+                Fd::cwd(),
+                &ZBox::from_vec(package_json.concat()),
+                bin_name,
+                range,
+            ) {
+                Ok(found) => found,
+                Err(err @ crate::Error::NoBinFound) => return Err(err),
+                Err(crate::Error::NeedToInstall) => return Ok(None),
+                Err(_) => continue,
+            };
+            if only_that_bin && *found != *bin_name {
+                return Ok(None);
+            }
+            let bin_dir = [node_modules.as_slice(), b".bin"].concat();
+            let mut buf = bun_paths::path_buffer_pool::get();
+            return Ok(bun_which::which(&mut buf, &bin_dir, b"", &found)
+                .map(|bin| ZBox::from_bytes(bin.as_bytes())));
+        }
+        Ok(None)
     }
 
     fn tree_state(bunx_cache_dir: &[u8]) -> Tree {
@@ -418,40 +466,22 @@ impl BunxCommand {
             ),
         )
         .map_err(|_| crate::Error::PathTooLong)?;
-        Self::get_bin_name_from_subpath(transpiler, Fd::cwd(), subpath_z)
-    }
-
-    /// From the project's node_modules, else the bunx cache dir. Any error but `NoBinFound`: it has to be installed.
-    fn get_bin_name(
-        transpiler: &mut Transpiler,
-        toplevel_fd: Fd,
-        bunx_cache_dir: Option<&[u8]>,
-        package_name: &[u8],
-    ) -> crate::Result<Box<[u8]>> {
-        debug_assert!(toplevel_fd.is_valid());
-        match Self::get_bin_name_from_project_directory(transpiler, toplevel_fd, package_name) {
-            Err(err) if !matches!(err, crate::Error::NoBinFound) => {}
-            result => return result,
-        }
-        let Some(bunx_cache_dir) =
-            bunx_cache_dir.filter(|dir| Self::tree_state(dir) == Tree::Fresh)
-        else {
-            return Err(crate::Error::NeedToInstall);
-        };
-        Self::get_bin_name_from_cache_directory(transpiler, bunx_cache_dir, package_name)
+        Self::get_bin_name_from_subpath(transpiler, Fd::cwd(), subpath_z, b"", None)
     }
 
     /// `.bunx-<uid>`, this user's with mode 0700, is the trust boundary: nothing below is checked.
+    /// `configured`: see `user_cache_directory`.
     #[cfg(unix)]
     fn cache_dir(
         env: &mut bun_dotenv::Loader,
+        configured: Option<&[u8]>,
         package_fmt: &[u8],
         create: bool,
     ) -> Option<Vec<u8>> {
         let uid = bun_sys::c::getuid();
         let root_name = cache_root_name();
         let install_cache =
-            bun_install::package_manager_real::fetch_cache_directory_path(env, None)
+            bun_install::package_manager_real::fetch_cache_directory_path(env, configured)
                 .ok()
                 .filter(|dir| !dir.is_cwd_fallback);
         let bases = [
@@ -490,6 +520,7 @@ impl BunxCommand {
     #[cfg(windows)]
     fn cache_dir(
         _env: &mut bun_dotenv::Loader,
+        _configured: Option<&[u8]>,
         package_fmt: &[u8],
         _create: bool,
     ) -> Option<Vec<u8>> {
@@ -603,7 +634,7 @@ impl BunxCommand {
             }
         }
 
-        // The "bar" of `@foo/bar` is a guess: not for the system $PATH (`@uidotsh/install` is not /usr/bin/install).
+        // The "bar" of `@foo/bar` is a guess: only the package says what its bin is called (`@uidotsh/install` is not /usr/bin/install).
         let mut initial_bin_name_is_a_guess = false;
         let initial_bin_name: &[u8] = if let Some(bin_name) = opts.binary_name {
             bin_name
@@ -626,7 +657,6 @@ impl BunxCommand {
         bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
         let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
-        let mut original_path: Vec<u8> = Vec::new();
 
         let root_dir_info = Run::configure_env_for_run(
             ctx,
@@ -634,7 +664,7 @@ impl BunxCommand {
             None,
             ConfigureEnvOptions {
                 log_errors: true,
-                store_root_fd: true,
+                store_root_fd: false,
             },
         )?;
         // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is initialized.
@@ -642,9 +672,8 @@ impl BunxCommand {
 
         let force_using_bun = ctx.debug.run_in_bun;
         Run::configure_path_for_run(
-            root_dir_info,
             this_transpiler,
-            Some(&mut original_path),
+            None,
             root_dir_info.abs_path,
             force_using_bun,
         )?;
@@ -677,9 +706,6 @@ impl BunxCommand {
         }
 
         let path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();
-
-        // What `configure_path_for_run` put in front of the original $PATH: the `*/node_modules/.bin` directories.
-        let local_bin_dirs: &[u8] = path.strip_suffix(original_path.as_slice()).unwrap_or(&path);
 
         let display_version: &[u8] = if update_request.version.literal.is_empty() {
             b"latest"
@@ -734,12 +760,17 @@ impl BunxCommand {
         } else {
             update_request.name
         };
-        let install_param: Vec<u8> = format!(
-            "{}@{}",
-            BStr::new(result_package_name),
-            BStr::new(display_version),
-        )
-        .into_bytes();
+        // Nobody wrote `latest`: `bun add` does not follow that tag onto a deprecated version then.
+        let install_param: Vec<u8> = if update_request.version.literal.is_empty() {
+            result_package_name.to_vec()
+        } else {
+            format!(
+                "{}@{}",
+                BStr::new(result_package_name),
+                BStr::new(display_version),
+            )
+            .into_bytes()
+        };
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
 
         let path_for_bin_dirs: Vec<u8> = if ignore_cwd.is_empty() {
@@ -762,14 +793,6 @@ impl BunxCommand {
             new_path
         };
 
-        // `None`: bunx has not installed anything yet, so there is nothing to look for in its cache.
-        let existing_cache_dir = Self::cache_dir(env_loader, &package_fmt, false);
-        let existing_cache_dir: Option<&[u8]> = existing_cache_dir.as_deref();
-        if let Some(bunx_cache_dir) = existing_cache_dir {
-            Self::prepend_to_path(env_loader, bunx_cache_dir, &path)?;
-            bun_output::scoped_log!(bunx, "bunx_cache_dir: {}", BStr::new(bunx_cache_dir));
-        }
-
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
         let top_level_dir: &[u8] = unsafe { &*this_transpiler.fs }.top_level_dir;
         let which_cwd: &[u8] = if ignore_cwd.is_empty() {
@@ -780,115 +803,103 @@ impl BunxCommand {
 
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
 
-        // An explicit dist-tag (`pkg@latest`, `pkg@next`) asks the registry on every run.
-        let look_for_existing_bin = update_request.version.literal.is_empty()
-            || update_request.version.tag != VersionTag::DistTag;
+        let is_versioned = !update_request.version.literal.is_empty();
+        // An explicit dist-tag (`pkg@latest`, `pkg@next`) asks the registry on every run that may.
+        let look_for_existing_bin =
+            opts.no_install || !is_versioned || update_request.version.tag != VersionTag::DistTag;
+        let package_with_bin = opts.binary_name.is_none().then_some(result_package_name);
 
-        // `bin_name` in `dirs`, unless a version is specified, else in the bunx cache.
-        let find_existing = |dirs: &[u8], bin_name: &[u8]| -> crate::Result<Option<ZBox>> {
+        // 1. Like npx: one word for both the package and its bin is looked up as a bin, in `node_modules/.bin` and $PATH.
+        if !is_versioned && !initial_bin_name_is_a_guess && opts.binary_name.is_none() {
             let mut buf = bun_paths::path_buffer_pool::get();
-            if update_request.version.literal.is_empty()
-                && let Some(bin) = bun_which::which(&mut buf, dirs, which_cwd, bin_name)
+            if let Some(bin) =
+                bun_which::which(&mut buf, &path_for_bin_dirs, which_cwd, initial_bin_name)
             {
-                return Ok(Some(ZBox::from_bytes(bin.as_bytes())));
+                Run::run_binary(
+                    ctx,
+                    bin.as_bytes(),
+                    bin,
+                    top_level_dir,
+                    env_loader,
+                    passthrough,
+                    None,
+                )?;
             }
-            let Some(bunx_cache_dir) = existing_cache_dir else {
-                return Ok(None);
-            };
-            Ok(
-                Self::which_in_cache(&mut buf, bunx_cache_dir, which_cwd, bin_name)?
-                    .map(|bin| ZBox::from_bytes(bin.as_bytes())),
-            )
+        }
+
+        // 2. The project's copy of the package. Whether it is what a tag, a URL or an alias names cannot be told.
+        let range: Option<Range<'_>> = (update_request.version.try_npm())
+            .filter(|npm| is_versioned && !npm.is_alias)
+            .map(|npm| (&npm.version, update_request.version_buf()));
+        if !is_versioned || range.is_some() {
+            match Self::find_in_project(
+                this_transpiler,
+                top_level_dir,
+                result_package_name,
+                range,
+                initial_bin_name,
+                opts.binary_name.is_some(),
+            ) {
+                Ok(Some(bin)) => {
+                    Run::run_binary(
+                        ctx,
+                        bin.as_bytes(),
+                        &bin,
+                        top_level_dir,
+                        env_loader,
+                        passthrough,
+                        None,
+                    )?;
+                }
+                Err(crate::Error::NoBinFound) if !is_versioned && opts.binary_name.is_none() => {
+                    Output::err_generic(
+                        "could not determine executable to run for package <b>{}<r>",
+                        format_args!("{}", BStr::new(&update_request.name)),
+                    );
+                    Global::exit(1);
+                }
+                _ => {}
+            }
+        }
+
+        let configured_cache = if cfg!(unix) {
+            bun_install::package_manager_real::user_cache_directory(env_loader, top_level_dir)
+        } else {
+            None
         };
+        let configured_cache: Option<&[u8]> = configured_cache.as_deref();
 
-        bun_output::scoped_log!(bunx, "try run existing? {}", look_for_existing_bin);
-        if look_for_existing_bin {
-            'try_run_existing: {
-                // 1. Like npx: the bin in the current node_modules, then the bin in the bunx cache.
-                let dirs: &[u8] = if initial_bin_name_is_a_guess {
-                    local_bin_dirs
-                } else {
-                    &path_for_bin_dirs
-                };
-                if let Some(destination) = find_existing(dirs, initial_bin_name)? {
-                    let out: &[u8] = destination.as_bytes();
-
-                    // A tree that bunx installed goes stale, so that `bunx hello` updates hello.
-                    if let Some(bunx_cache_dir) =
-                        existing_cache_dir.filter(|dir| strings::has_prefix(out, dir))
-                    {
-                        if Self::tree_state(bunx_cache_dir) != Tree::Fresh {
-                            bun_output::scoped_log!(bunx, "found stale binary: {}", BStr::new(out));
-                            if opts.no_install {
-                                bun_core::warn!(
-                                    "Using a stale installation of <b>{}<r> because --no-install was passed. Run `bunx` without --no-install to use a fresh binary.",
-                                    BStr::new(&update_request.name),
-                                );
-                            } else {
-                                break 'try_run_existing;
-                            }
-                        }
-
-                        // The install path waits for it; with --no-install that path is an error.
-                        if !opts.no_install && InstallLock::install_in_progress(bunx_cache_dir) {
-                            break 'try_run_existing;
-                        }
-                    }
-
-                    bun_output::scoped_log!(bunx, "running existing binary: {}", BStr::new(out));
-                    Run::run_binary(
-                        ctx,
-                        out,
-                        &destination,
-                        top_level_dir,
-                        env_loader,
-                        passthrough,
-                        None,
-                    )?;
-                }
-
-                // 2. The package.json says what the "bin" is called, unless `--package` did.
-                if opts.binary_name.is_some() {
-                    break 'try_run_existing;
-                }
-                let package_name_for_bin = match Self::get_bin_name(
+        // 3. The tree that bunx installed, if any. It goes stale, so that `bunx hello` updates hello.
+        if look_for_existing_bin
+            && let Some(bunx_cache_dir) =
+                Self::cache_dir(env_loader, configured_cache, &package_fmt, false)
+        {
+            let is_fresh = Self::tree_state(&bunx_cache_dir) == Tree::Fresh;
+            if (is_fresh || opts.no_install)
+                && let Some(bin) = Self::find_in_cache(
                     this_transpiler,
-                    root_dir_info.get_file_descriptor(),
-                    existing_cache_dir,
-                    result_package_name,
-                ) {
-                    Ok(name) => name,
-                    Err(crate::Error::NoBinFound) => {
-                        Output::err_generic(
-                            "could not determine executable to run for package <b>{}<r>",
-                            format_args!("{}", BStr::new(&update_request.name)),
-                        );
-                        Global::exit(1);
-                    }
-                    Err(_) => break 'try_run_existing,
-                };
-                // Not in the system $PATH: the real bin name may be the name of an unrelated binary there.
-                if !strings::eql_long(&package_name_for_bin, initial_bin_name, true)
-                    && let Some(destination) = find_existing(local_bin_dirs, &package_name_for_bin)?
-                {
-                    let out: &[u8] = destination.as_bytes();
-                    if !opts.no_install
-                        && existing_cache_dir.is_some_and(|dir| {
-                            strings::has_prefix(out, dir) && InstallLock::install_in_progress(dir)
-                        })
-                    {
-                        break 'try_run_existing;
-                    }
-                    Run::run_binary(
-                        ctx,
-                        out,
-                        &destination,
-                        top_level_dir,
-                        env_loader,
-                        passthrough,
-                        None,
-                    )?;
+                    &bunx_cache_dir,
+                    which_cwd,
+                    initial_bin_name,
+                    package_with_bin,
+                )?
+            {
+                if !is_fresh {
+                    bun_core::warn!(
+                        "Using a stale installation of <b>{}<r> because --no-install was passed. Run `bunx` without --no-install to use a fresh binary.",
+                        BStr::new(&update_request.name),
+                    );
                 }
+                Self::prepend_to_path(env_loader, &bunx_cache_dir, &path)?;
+                Run::run_binary(
+                    ctx,
+                    bin.as_bytes(),
+                    &bin,
+                    top_level_dir,
+                    env_loader,
+                    passthrough,
+                    None,
+                )?;
             }
         }
 
@@ -901,7 +912,9 @@ impl BunxCommand {
         }
 
         // The install cache comes first again, whichever root the lookups above found.
-        let Some(bunx_cache_dir) = Self::cache_dir(env_loader, &package_fmt, true) else {
+        let Some(bunx_cache_dir) =
+            Self::cache_dir(env_loader, configured_cache, &package_fmt, true)
+        else {
             Output::err_generic(
                 "bunx could not create a cache directory that only the current user can access. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory you own.",
                 (),
@@ -913,12 +926,10 @@ impl BunxCommand {
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
         // Held through the install and the bin lookups, until exec. Unlockable: install without it.
-        let mut install_lock =
-            InstallLock::acquire(bunx_cache_dir, bun_sys::FileLockMode::Exclusive, false);
+        let mut install_lock = InstallLock::acquire(bunx_cache_dir);
 
         // Looked at under the lock: the holder this run queued behind may just have installed the tree.
         let tree = Self::tree_state(bunx_cache_dir);
-        let package_with_bin = opts.binary_name.is_none().then_some(result_package_name);
         let installed = if tree == Tree::Fresh {
             Self::find_in_cache(
                 this_transpiler,
@@ -943,7 +954,6 @@ impl BunxCommand {
             )?;
         }
 
-        // See `Tree`.
         let write_package_json = |contents: &[u8]| {
             if let Ok(package_json) = bun_sys::File::create(
                 bunx_install_dir.fd,
@@ -953,11 +963,25 @@ impl BunxCommand {
                 let _ = package_json.write_all(contents);
             }
         };
-        // Of a finished install: written back when the registry cannot be reached.
+        // Of a finished install, which stays one until `bun add` links: see `Tree`.
         let finished_package_json = bun_sys::File::read_from(bunx_install_dir.fd, b"package.json")
             .ok()
             .filter(|contents| contents.len() > Self::EMPTY_PACKAGE_JSON.len());
-        write_package_json(Self::EMPTY_PACKAGE_JSON);
+        if finished_package_json.is_none() {
+            write_package_json(Self::EMPTY_PACKAGE_JSON);
+        }
+        if tree == Tree::Stale {
+            // It pins what the refresh is there to move: the version within a range, and every dependency.
+            for lockfile in [bun_core::zstr!("bun.lock"), bun_core::zstr!("bun.lockb")] {
+                let _ = bun_sys::unlinkat(bunx_install_dir.fd, lockfile);
+            }
+        }
+        // A run on a fresh tree asks for the package alone: it does not put off the refresh of the rest.
+        let package_json_path =
+            ZBox::from_vec([bunx_cache_dir, &[bun_paths::SEP], b"package.json"].concat());
+        let last_refresh = (tree == Tree::Fresh)
+            .then(|| bun_sys::stat(&package_json_path).ok())
+            .flatten();
 
         let minimum_release_age_arg = opts
             .minimum_release_age
@@ -1066,19 +1090,27 @@ impl BunxCommand {
 
                 use bun_install::package_manager_real::run_tasks::BUNX_REGISTRY_UNREACHABLE;
                 match (exited.code as u32, &finished_package_json) {
-                    (0, _) => {}
-                    // Counts as refreshed: without a network every run would wait for the attempt.
-                    (BUNX_REGISTRY_UNREACHABLE, Some(package_json)) => {
-                        write_package_json(package_json);
-                        if !look_for_existing_bin {
-                            Global::exit(1);
+                    (0, _) => {
+                        if let Some(stat) = &last_refresh {
+                            let [atime, mtime] =
+                                [bun_sys::stat_atime(stat), bun_sys::stat_mtime(stat)].map(
+                                    |time| bun_sys::TimeLike {
+                                        sec: time.sec,
+                                        nsec: time.nsec,
+                                    },
+                                );
+                            let _ = bun_sys::utimens(&package_json_path, atime, mtime);
                         }
+                    }
+                    (BUNX_REGISTRY_UNREACHABLE, Some(package_json)) if look_for_existing_bin => {
+                        // Counts as refreshed: without a network every run would wait for the attempt.
+                        write_package_json(package_json);
                         bun_core::warn!(
                             "Could not reach the registry. Using the installation of <b>{}<r> that bunx has.",
                             BStr::new(&update_request.name),
                         );
                     }
-                    (BUNX_REGISTRY_UNREACHABLE, None) => Global::exit(1),
+                    (BUNX_REGISTRY_UNREACHABLE, _) => Global::exit(1),
                     (code, _) => Global::exit(code),
                 }
             }

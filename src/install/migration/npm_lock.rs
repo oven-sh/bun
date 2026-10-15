@@ -155,6 +155,8 @@ struct Migrator<'a> {
     probe: Vec<u8>,
     url: Vec<u8>,
     patched: String,
+    /// Entries without an integrity whose tarball is on a host bun is not configured with.
+    unverifiable: Vec<u32>,
     silent: bool,
     /// `npm-shrinkwrap.json` or `package-lock.json`, for warnings.
     lockfile_name: &'static str,
@@ -163,6 +165,8 @@ struct Migrator<'a> {
 pub(super) fn migrate_packages(
     this: &mut Lockfile,
     manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
     packages_properties: &[E::PropertyJSON],
     workspace_map: Option<&WorkspaceMap>,
     lockfile_name: &'static str,
@@ -192,6 +196,7 @@ pub(super) fn migrate_packages(
         probe: Vec::new(),
         url: Vec::new(),
         patched: String::new(),
+        unverifiable: Vec::new(),
         silent,
         lockfile_name,
     };
@@ -213,6 +218,25 @@ pub(super) fn migrate_packages(
     }
 
     migrator.warn_unreachable();
+
+    if let Some((&first, more)) = migrator.unverifiable.split_first() {
+        let entry = &packages_properties[first as usize];
+        let resolved = entry_object(entry).get(b"resolved");
+        let url = resolved.and_then(|url| url.as_str()).unwrap_or_default();
+        let more = match more.len() {
+            0 => String::new(),
+            count => format!(", and {count} more like it"),
+        };
+        log.add_warning_fmt(
+            Some(source),
+            entry.key_loc,
+            format_args!(
+                "this entry has no integrity and {} is not under a registry bun is configured with: bun downloads the same version from the configured registry{}",
+                bun_core::fmt::for_terminal(bstr::BStr::new(url)),
+                more,
+            ),
+        );
+    }
 
     if !migrator.patched.is_empty() {
         bun_core::warn!(
@@ -350,7 +374,7 @@ impl<'a> Migrator<'a> {
             ..lockfile::Meta::default()
         };
 
-        let res = self.entry_resolution(
+        let mut res = self.entry_resolution(
             j,
             pkg,
             key,
@@ -379,7 +403,9 @@ impl<'a> Migrator<'a> {
                 )
                 && !meta.integrity.tag.is_supported()
             {
-                return Err(Error::InvalidNPMLockfile);
+                // Nothing checks what that host sends. Empty: the configured registry's tarball.
+                res.npm_mut().url = SemverString::default();
+                self.unverifiable.push(j);
             }
         }
 

@@ -1274,7 +1274,7 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         root_node_modules_dir: &Dir,
         mutable: &mut MutableString,
-        resolution_tag: resolution::Tag,
+        until_eof: bool,
     ) -> Option<bun_ast::Source> {
         let mut total: usize = 0;
         mutable.reset();
@@ -1292,7 +1292,6 @@ impl<'a> PackageInstall<'a> {
             .ok()?;
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
-        // Less than was asked for is the end of the file. Were it not, the cut JSON would not verify.
         loop {
             if mutable.list.len() - total < 1024 {
                 mutable.grow_by(4096).ok()?;
@@ -1301,24 +1300,9 @@ impl<'a> PackageInstall<'a> {
             let remain = &mut mutable.list[total..];
             let read = package_json_file.read(remain).ok()?;
             total += read;
-            if read < remain.len() {
+            if read == 0 || (!until_eof && read < remain.len()) {
                 break;
             }
-        }
-
-        // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
-        let minimum =
-            if resolution_tag == resolution::Tag::Workspace && self.package_version.is_empty() {
-                // workspaces aren't required to have a version
-                br#"{"name":""}"#.len() + self.package_name.len()
-            } else {
-                br#"{"name":"","version":""}"#.len()
-                    + self.package_name.len()
-                    + self.package_version.len()
-            };
-
-        if total < minimum {
-            return None;
         }
 
         Some(bun_ast::Source::init_path_string(
@@ -1332,6 +1316,22 @@ impl<'a> PackageInstall<'a> {
         root_node_modules_dir: &Dir,
         resolution_tag: resolution::Tag,
     ) -> bool {
+        // A read that returns less than was asked for is the end of the file, which spares the read
+        // that says so. A few file systems return less before the end: then the document is cut.
+        self.verify_installed_package_json(root_node_modules_dir, resolution_tag, false)
+            .or_else(|| {
+                self.verify_installed_package_json(root_node_modules_dir, resolution_tag, true)
+            })
+            .unwrap_or(false)
+    }
+
+    /// `None`: what was read is not a whole document.
+    fn verify_installed_package_json(
+        &mut self,
+        root_node_modules_dir: &Dir,
+        resolution_tag: resolution::Tag,
+        until_eof: bool,
+    ) -> Option<bool> {
         let mut body_pool = Npm::Registry::BodyPool::get();
         let mutable: &mut MutableString = &mut body_pool;
 
@@ -1341,26 +1341,41 @@ impl<'a> PackageInstall<'a> {
         // The longer the file stays open, the more likely it causes issues for
         // other processes on Windows.
         let Some(source) =
-            self.get_installed_package_json_source(root_node_modules_dir, mutable, resolution_tag)
+            self.get_installed_package_json_source(root_node_modules_dir, mutable, until_eof)
         else {
-            return false;
+            return Some(false);
         };
         let source = &source;
+
+        // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
+        let minimum =
+            if resolution_tag == resolution::Tag::Workspace && self.package_version.is_empty() {
+                // workspaces aren't required to have a version
+                br#"{"name":""}"#.len() + self.package_name.len()
+            } else {
+                br#"{"name":"","version":""}"#.len()
+                    + self.package_name.len()
+                    + self.package_version.len()
+            };
+
+        if source.contents().len() < minimum {
+            return None;
+        }
 
         let mut log = bun_ast::Log::init();
 
         initialize_store();
 
         let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &mut log);
-        if package_json_checker.parse().is_err() {
-            return false;
+        if package_json_checker.parse().is_err() || package_json_checker.has_errors() {
+            return None;
         }
-        if package_json_checker.has_errors() || !package_json_checker.has_found_name {
-            return false;
+        if !package_json_checker.has_found_name {
+            return Some(false);
         }
         // workspaces aren't required to have a version
         if !package_json_checker.has_found_version && resolution_tag != resolution::Tag::Workspace {
-            return false;
+            return Some(false);
         }
 
         let found_version = package_json_checker.found_version();
@@ -1388,17 +1403,19 @@ impl<'a> PackageInstall<'a> {
                 }
                 // If we didn't find any of these characters, there's no point in checking the version again.
                 // it will never match.
-                return false;
+                return Some(false);
             };
 
             if found_version[offset..] != *self.package_version {
-                return false;
+                return Some(false);
             }
         }
 
         // lastly, check the name.
-        package_json_checker.found_name()
-            == self.package_name.slice(&self.lockfile.buffers.string_bytes)
+        Some(
+            package_json_checker.found_name()
+                == self.package_name.slice(&self.lockfile.buffers.string_bytes),
+        )
     }
 }
 

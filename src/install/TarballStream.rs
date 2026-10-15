@@ -254,10 +254,7 @@ impl TarballStream {
             archive: None,
             phase: Phase::WantHeader,
             out: None,
-            write_strategy: lib::WriteStrategy {
-                holes: !npm_mode,
-                ..Default::default()
-            },
+            write_strategy: lib::WriteStrategy::default(),
             dest: None,
             tmpname: ZBox::from_bytes(b""),
             hasher,
@@ -722,12 +719,12 @@ impl TarballStream {
         Ok(())
     }
 
-    /// The entry's data ended; `end` is the length its header or sparse map claims.
+    /// The entry's data ended at `end`: the output file gets that length.
     fn finish_output_file(&mut self, end: i64) -> crate::Result<()> {
         let Some(mut out) = self.out.take() else {
             return Ok(());
         };
-        let result = out.finish(&self.write_strategy, end);
+        let result = out.finish(end);
         out.fd().close();
         result.map_err(|e| e.to_zig_err().into())
     }

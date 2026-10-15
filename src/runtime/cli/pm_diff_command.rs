@@ -16,6 +16,7 @@ use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::tree;
 use bun_install::npm::{self, PackageManifest};
+use bun_install::package_manager::options::Do;
 use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::{PackageManager, resolution};
 use bun_libarchive::lib::{ArchiveIterator, IteratorResult as ArchiveIterResult};
@@ -847,7 +848,7 @@ fn fetch_registry_tree(
         URL::parse(manifest_url),
         true,
         // The abbreviated packument has versions + dist, all this needs; full ones run to tens of MB.
-        b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+        Some(b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*"),
         Some((name, version)),
     )?;
 
@@ -966,14 +967,21 @@ fn fetch_registry_tree(
         Some(normalized) => (normalized, true),
         None => (tarball_url.into_boxed_slice(), false),
     };
-    let tarball = registry_get(
-        pm,
-        scope,
-        URL::parse(&tarball_url),
-        normalized,
-        b"application/octet-stream",
-        None,
-    )?;
+    let tarball = registry_get(pm, scope, URL::parse(&tarball_url), normalized, None, None)?;
+    // Checked as `bun install` checks a download.
+    if pm.options.do_.contains(Do::VERIFY_INTEGRITY) {
+        let locked = pm.lockfile.npm_integrity(name, found.version);
+        for expected in [Some(found.integrity()), locked].into_iter().flatten() {
+            if expected.tag.is_supported() && !expected.verify(tarball.list.as_slice()) {
+                Status::clear();
+                Output::err_generic(
+                    "Integrity check failed for tarball: {}",
+                    (BStr::new(&defang(&label)),),
+                );
+                Global::exit(1);
+            }
+        }
+    }
 
     let mut tree = Tree {
         label,
@@ -997,11 +1005,14 @@ fn registry_get(
     scope: &npm::registry::Scope,
     url: URL<'_>,
     normalized: bool,
-    accept: &[u8],
+    // `None`: the client's own, which is what `bun install` asks for a tarball with.
+    accept: Option<&[u8]>,
     for_error: Option<(&[u8], &[u8])>,
 ) -> Result<MutableString, crate::Error> {
     let mut headers = http::HeaderBuilder::default();
-    headers.count(b"Accept", accept);
+    if let Some(accept) = accept {
+        headers.count(b"Accept", accept);
+    }
     // The same rule as `bun install` decides which credentials, if any, follow the URL.
     let authorization = pm
         .options
@@ -1013,7 +1024,9 @@ fn registry_get(
         headers.count(b"npm-auth-type", b"legacy");
     }
     headers.allocate()?;
-    headers.append(b"Accept", accept);
+    if let Some(accept) = accept {
+        headers.append(b"Accept", accept);
+    }
     // Raw-byte append: a non-UTF-8 token through Display would grow past the reserved count.
     if let Some((scheme, value)) = authorization {
         headers.append_bytes_value(b"Authorization", scheme, value);

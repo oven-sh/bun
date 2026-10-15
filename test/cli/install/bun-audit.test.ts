@@ -2100,7 +2100,7 @@ describe("`bun audit fix`", () => {
     expect(lockfile).toContain('"no-deps@1.0.0"');
     expect(lockfile).toContain('"peer-deps-fixed@1.0.0"');
 
-    const { stdout, stderr, exitCode } = await auditFix(dir);
+    const { stdout, stderr, exitCode } = await auditFix(dir, "--verbose");
     expect(stdout).toContain("  ^ no-deps 1.0.0 -> 1.0.1");
     expect(stderr).not.toContain("incorrect peer dependency");
     expect(exitCode).toBe(0);
@@ -2959,7 +2959,6 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  // mismatched-peer-deps-lvl1's own dependency declares a peer the install warns about, so runBunInstall cannot be used.
   test.concurrent("a peer edge that rejects the fix is split off and labelled with the peer dependent", async () => {
     await using server = startRegistry({ "no-deps": [adv("<=1.0.1")] });
     const rootPkgJson = (noDeps: string) =>
@@ -3028,7 +3027,7 @@ describe("`bun audit fix`", () => {
     expect(blocked.exitCode).toBe(1);
     expect(await lock(dir)).toBe(lockBefore);
 
-    const { stdout, stderr, exitCode } = await auditFix(dir, "--latest");
+    const { stdout, stderr, exitCode } = await auditFix(dir, "--latest", "--verbose");
     expect(stdout).toContain("fixing:\n  ^ no-deps 1.0.1 -> 1.1.0\n    package.json: ~1.0.0 -> ~1.1.0\n");
     expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
     expect(stderr).not.toContain("incorrect peer dependency");
@@ -3036,7 +3035,6 @@ describe("`bun audit fix`", () => {
     expectClean(await audit(dir), 2);
   });
 
-  // The install warns about the peer, so runBunInstall cannot be used.
   test.concurrent("--dry-run counts a peer range that was already violated as the real run does", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.1.0")] });
     const rootPkgJson = (noDeps: string) =>
@@ -4723,8 +4721,10 @@ describe("`bun audit fix --latest`", () => {
       expect(normalizeBunSnapshot(dryRun.stdout)).toBe(plan + "Would fix 1 vulnerability in 1 package (checked 3)");
       expect(dryRun.exitCode).toBe(0);
 
-      const { stdout, stderr, exitCode } = await auditFix(dir, "--latest");
-      expect(normalizeBunSnapshot(stdout)).toBe(plan + "Fixed 1 vulnerability in 1 package (checked 3)");
+      const { stdout, stderr, exitCode } = await auditFix(dir, "--latest", "--verbose");
+      // --verbose lists the extracted files in between.
+      expect(normalizeBunSnapshot(stdout)).toStartWith(plan);
+      expect(normalizeBunSnapshot(stdout)).toEndWith("\nFixed 1 vulnerability in 1 package (checked 3)");
       expect(stderr).toContain('incorrect peer dependency "no-deps@2.0.0"');
       expect(exitCode).toBe(0);
       expect(await lock(dir)).not.toContain('"no-deps@1.1.0"');

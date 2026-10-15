@@ -224,8 +224,6 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
 /// What the literals `edit_after_resolve` wrote changed in the lockfile.
 #[derive(Default)]
 pub(crate) struct Synced {
-    /// `overrides` got other values (a `$name` follows).
-    pub(crate) overrides: bool,
     /// A row the registry resolved got a range that links a workspace, and is bound to it now.
     pub(crate) links: bool,
 }
@@ -589,10 +587,7 @@ fn sync_lockfile(
         *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
         builder.clamp();
     }
-    Ok(Synced {
-        overrides: overrides_changed,
-        links,
-    })
+    Ok(Synced { links })
 }
 
 fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {

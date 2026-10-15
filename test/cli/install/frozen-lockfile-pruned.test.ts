@@ -231,8 +231,7 @@ async function fails(dir: string, linker: Linker, cmd: string[], errors: string[
 const frozenInstall = ["install", "--frozen-lockfile"];
 const frozen = (dir: string, linker: Linker, notes: string[]) => passes(dir, linker, frozenInstall, notes);
 const frozenFails = (dir: string, linker: Linker, errors: string[]) => fails(dir, linker, frozenInstall, errors);
-const install = (dir: string, linker: Linker, notes: string[] = []) =>
-  passes(dir, linker, ["install"], [...notes, savedLockfile]);
+const install = (dir: string, linker: Linker) => passes(dir, linker, ["install"], [savedLockfile]);
 
 const lockText = (dir: string) => file(join(dir, "bun.lock")).text();
 
@@ -240,14 +239,14 @@ type Fixture = { fullDir: string; full: string };
 const fixtures = new Map<string, Promise<Fixture>>();
 
 // A full install of `tree`, done once per linker and shared by every test that starts from its bun.lock.
-function fullInstall(linker: Linker, tree: Tree, notes: string[] = []): Promise<Fixture> {
+function fullInstall(linker: Linker, tree: Tree): Promise<Fixture> {
   const key = JSON.stringify([linker, tree]);
   let fixture = fixtures.get(key);
   if (!fixture) {
     fixture = (async () => {
       const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
       await writeTree(packageDir, tree);
-      await install(packageDir, linker, notes);
+      await install(packageDir, linker);
       return { fullDir: packageDir, full: await lockText(packageDir) };
     })();
     fixtures.set(key, fixture);
@@ -268,9 +267,9 @@ function fullLockb(): Promise<Uint8Array<ArrayBuffer>> {
 }
 
 // A second checkout with only `keep` of `checkout`'s workspaces on disk and the full install's bun.lock copied verbatim.
-async function verbatimScenario(linker: Linker, tree: Tree, keep: string[], checkout = tree, notes?: string[]) {
+async function verbatimScenario(linker: Linker, tree: Tree, keep: string[], checkout = tree) {
   const [{ fullDir, full }, { packageDir }] = await Promise.all([
-    fullInstall(linker, tree, notes),
+    fullInstall(linker, tree),
     registry.createTestDir({ bunfigOpts: { linker } }),
   ]);
   await writeTree(packageDir, checkout, keep);
@@ -845,14 +844,7 @@ describe.each(linkers)("linker: %s", linker => {
       ["dependencies, as *,", { dependencies: { "no-deps": "*" } }],
     ] as [string, PackageJson][])("in a survivor's %s fails", async (_, app) => {
       const tree = linkedRangeTree({}, app);
-      const unmetPeer = (app.peerDependencies as Record<string, string> | undefined)?.["no-deps"] === "^2.0.0";
-      const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"], tree, [
-        ...(unmetPeer
-          ? [
-              'warn: incorrect peer dependency "no-deps@workspace:packages/no-deps": "app@workspace:packages/app" requires "no-deps@^2.0.0"',
-            ]
-          : []),
-      ]);
+      const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
       expect(full).toContain("no-deps@workspace:packages/no-deps");
       expect(full).not.toContain('"no-deps@1.');
 

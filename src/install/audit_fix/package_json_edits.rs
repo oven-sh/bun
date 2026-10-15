@@ -5,7 +5,7 @@ use bun_core::strings;
 use bun_semver::{PinnedVersion, Version};
 
 use crate::lockfile::CatalogMap;
-use crate::lockfile::override_map::OverrideRule;
+use crate::lockfile::override_map::{Field, OverrideRule};
 use crate::lockfile_real::override_selector::{
     PackageSelector, Selector, parse_package_segment, parse_selector,
 };
@@ -259,12 +259,11 @@ fn for_each_override_value(
     selector: &OverrideSelector,
     mut f: impl FnMut(&mut Option<Expr>),
 ) {
-    for (field, nested) in [(b"overrides".as_slice(), true), (b"resolutions", false)] {
-        let Some(mut rules) = root.get(field) else {
-            continue;
-        };
+    if let Some((field, rules)) = Field::of(root) {
+        let nested = field == Field::Overrides;
+        let mut rules = rules.expr;
         let Some(object) = rules.data.e_object_mut() else {
-            continue;
+            return;
         };
         for prop in object.properties.slice_mut() {
             let Some(key) = prop.key.as_ref().and_then(Expr::as_utf8_string_literal) else {

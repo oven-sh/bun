@@ -3116,8 +3116,10 @@ pub(crate) fn parse_into_binary_lockfile(
 /// deferral (`'resolve_from_workspace`): the version scan below picks an
 /// npm candidate for such an edge, but workspaces are root dependencies,
 /// so the isolated store's ancestor walk and the hoisted tree's dedupe
-/// both resolve the name through the root's workspace entry before the
-/// edge value is ever consulted.
+/// both resolve the name through the root's workspace entry.
+///
+/// The hoist only starts from this binding: an edge that gets no place of its own ends on the
+/// package its dependent finds in the tree (`Builder::bind_served_peers`).
 /// `is_candidate` restricts the scan for lockfiles holding packages a reload will not see.
 pub(crate) fn resolve_peer_dep_version_based(
     dep: &Dependency,

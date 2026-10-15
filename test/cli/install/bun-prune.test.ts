@@ -3631,6 +3631,43 @@ test.concurrent.each([["--omit=optional"], ["--os=aix"], ["--cpu=s390x"]])(
   },
 );
 
+// one-fixed-dep@2.0.0 needs no-deps@2.0.0, and one-dep needs no-deps@1.0.1. A full install comes to the
+// devDependencies first.
+test.concurrent("isolated: the fallback link of a removed version goes to the version that stays", async () => {
+  const dir = await setupWithLinker("isolated", {
+    name: "foo",
+    dependencies: { "one-dep": "1.0.0" },
+    devDependencies: { "one-fixed-dep": "2.0.0" },
+  });
+  const fallback = () => nodeModulesTree(dir, { storeBins: false })["node_modules/.bun/node_modules/no-deps"];
+  expect(fallback()).toBe("-> node_modules/.bun/no-deps@2.0.0/node_modules/no-deps");
+
+  const { exitCode } = await prune(dir, "--production", "--linker", "isolated");
+  expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.1", "one-dep@1.0.0"]);
+  expect(fallback()).toBe("-> node_modules/.bun/no-deps@1.0.1/node_modules/no-deps");
+  expect(nodeModulesTree(dir, { storeBins: false })).toEqual(await freshInstallTree(dir, "--production"));
+  expect(exitCode).toBe(0);
+  expect((await prune(dir, "--production", "--check", "--linker", "isolated")).exitCode).toBe(0);
+});
+
+// Of two packages with one command, the first by name has the link.
+test.concurrent.each(linkers)("%s: the command of a removed package goes to the package that stays", async linker => {
+  const dir = await setupWithLinker(linker, {
+    name: "foo",
+    dependencies: { "what-bin": "1.0.0" },
+    devDependencies: { "a-what-bin": "npm:what-bin@1.5.0" },
+  });
+  const nm = join(dir, "node_modules");
+  const target = () => readlinkSync(join(nm, ".bin", "what-bin")).replaceAll("\\", "/");
+  if (!isWindows) expect(target()).toBe("../a-what-bin/what-bin.js");
+
+  const { exitCode } = await prune(dir, "--production", "--linker", linker);
+  expect(existsSync(join(nm, "a-what-bin"))).toBeFalse();
+  expectBinInstalled(nm, "what-bin");
+  if (!isWindows) expect(target()).toBe("../what-bin/what-bin.js");
+  expect(exitCode).toBe(0);
+});
+
 // A dependency on a workspace package or a `file:` folder is a link out of the store.
 test.concurrent(
   "isolated: a link in a kept store entry to a folder outside the store stays while it resolves",
@@ -4142,7 +4179,7 @@ test.concurrent("hoisted: bun install says so when a copy left a workspace node_
   );
 
   const { stderr, exitCode } = await bun(dir, "install", "--linker", "hoisted");
-  expect(stderr).toContain(
+  expect(out(stderr)).toContain(
     "warn: packages/a/node_modules is a symlink, so stale copies in node_modules were not removed\n" +
       "note: remove the link and run 'bun install', then 'bun prune'",
   );

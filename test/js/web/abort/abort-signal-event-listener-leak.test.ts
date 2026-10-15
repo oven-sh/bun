@@ -222,6 +222,43 @@ describe("addEventListener({ signal }) lifetimes", () => {
     });
   });
 
+  // These two targets count their "message" listeners to hold the event loop open, so
+  // EventTarget::removeEventListener() tells them the event type after the listener is gone.
+  test("abort removes a message listener from the global scope and from a MessagePort", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const controller = new AbortController();
+          const { port1, port2 } = new MessageChannel();
+          let calls = 0;
+          const fn = () => calls++;
+          globalThis.addEventListener("message", fn, { signal: controller.signal });
+          port1.addEventListener("message", fn, { signal: controller.signal });
+          globalThis.dispatchEvent(new MessageEvent("message"));
+          port1.dispatchEvent(new MessageEvent("message"));
+          controller.abort();
+          globalThis.dispatchEvent(new MessageEvent("message"));
+          port1.dispatchEvent(new MessageEvent("message"));
+          port1.close();
+          port2.close();
+          console.log(JSON.stringify({ calls }));
+          // No process.exit(): the global scope's listener no longer holds the event loop open.
+        `,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({
+      stdout: JSON.stringify({ calls: 2 }),
+      exitCode: 0,
+      stderr,
+    });
+  });
+
   test("abort removes every listener before the signal's abort event", () => {
     const controller = new AbortController();
     const { signal } = controller;

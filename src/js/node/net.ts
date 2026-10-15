@@ -995,11 +995,14 @@ function finishSocketEnd(self) {
   }
 }
 
-// A native close strands the write that waits on the drain. It fails on the next tick, after the EOF, so that 'end'
-// and the destroy that a TLS handshake hangs on it come first and can settle it. Not for a chunk still in
-// _pendingData (the 'close' listener of _write reports it) or a write the TLS engine rejected (failRejectedWrite).
+// A native close strands the write that waits on the drain. Fail it on the next
+// tick, after the EOF reached the stream, so 'end' (and the destroy that a TLS
+// handshake hangs on it) come first, and a destroy in between can settle it. A
+// chunk still in _pendingData never reached the handle: _write's 'close'
+// listener reports it.
 function failPendingWriteAfterClose(self, err) {
   const pendingWrite = self[kwriteCallback];
+  // failRejectedWrite fails a write that the TLS engine rejected, with its own error.
   if (pendingWrite && self._pendingData == null && self[kRejectedWrite] === undefined) {
     process.nextTick(failPendingWriteNT, self, pendingWrite, err);
   }

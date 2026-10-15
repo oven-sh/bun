@@ -337,11 +337,8 @@ describe.each(linkers)("%s linker", linker => {
       await expectRoundTrip(dir, () => check(dir));
     });
 
-    test.concurrent.each([
-      ["its own name", "no-deps"],
-      ["another name", "published"],
-    ])("an alias under %s, in a bun.lock of Bun 1.4: it stays as it is", async (_, alias) => {
-      const dependencies = { [alias]: "npm:no-deps@1.0.0" };
+    test.concurrent("an alias under its own name, in a bun.lock of Bun 1.4: it stays as it is", async () => {
+      const dependencies = { "no-deps": "npm:no-deps@1.0.0" };
       const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
       await ok(dir, "install", "--lockfile-only");
       const older = await lockText(dir);

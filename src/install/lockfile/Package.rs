@@ -1324,13 +1324,14 @@ impl Diff {
         if is_root {
             summary.members_left_out = (to_deps!().iter().enumerate())
                 .filter(|(to_i, member)| {
-                    // What took the member's row then: a registry range on its name, also behind an
-                    // alias, that its version does not satisfy. One that it satisfies is no range here.
+                    // What took the member's row then: a registry range under its name and on it, that its
+                    // version does not satisfy. One that it satisfies is no range here.
                     member.behavior.is_workspace()
                         && !paired.is_set(*to_i)
                         && to_lockfile.workspace_versions.contains(&member.name_hash)
                         && (to_deps!().iter().enumerate()).any(|(own_i, own)| {
-                            paired.is_set(own_i)
+                            own.name_hash == member.name_hash
+                                && paired.is_set(own_i)
                                 && !own.behavior.is_workspace()
                                 && own.version.try_npm().is_some_and(|npm| {
                                     semver::string::Builder::string_hash(npm.name.slice(to_buf!()))

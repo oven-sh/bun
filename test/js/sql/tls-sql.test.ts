@@ -792,7 +792,12 @@ test.skipIf(!nodeExe()).each([
       for (let end; (end = output.indexOf("\n")) !== -1; output = output.slice(end + 1)) yield output.slice(0, end);
     }
   })();
-  const port = Number((await lines.next()).value);
+  async function nextLine() {
+    const { value, done } = await lines.next();
+    if (done) throw new Error(`the server exited with code ${await server.exited}`);
+    return value;
+  }
+  const port = Number(await nextLine());
 
   await using sql = new SQL(`${protocol}://user:secret@127.0.0.1:${port}/db`, {
     max: 1,
@@ -811,7 +816,7 @@ test.skipIf(!nodeExe()).each([
     );
   }
   server.stdin.end();
-  const received: string[] = JSON.parse((await lines.next()).value!);
+  const received: string[] = JSON.parse(await nextLine());
   // MySQL: the session is set up with a query of the client's own.
   expect({ rows, received: received.filter(name => !name.startsWith("SET ")) }).toEqual({
     rows: [1, 2, 3, 4],

@@ -73,7 +73,7 @@ A thread-safe function keeps the process running only for as long as the graph t
 
 `dispose()` settles no promise. An `import()` that had not finished may reject or may never settle: what its modules were waiting for, such as a timer or a request, went with the graph. A host that may dispose a graph while importing into it should race the import the same way as a call, as shown below.
 
-The garbage collector frees the graph's modules and objects once nothing references them. `dispose()` asks it for a full collection, which starts after the script that called `dispose()` returns. Drop your own references to the graph's exports in that script, so that this collection frees them. Bun does not collect once per graph: when a host disposes graphs in quick succession, the collector picks the time of the next collection.
+The garbage collector frees the graph's modules and objects once nothing references them. Bun collects periodically, and `dispose()` makes the next of those collections a full one, which is what frees objects that have been alive for a while. Drop your own references to the graph's exports when you dispose it, so that this collection frees them. Graphs disposed between two collections share one.
 
 ## Calling into a graph
 

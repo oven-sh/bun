@@ -1350,6 +1350,9 @@ impl VirtualMachine {
     ) -> SweepResult {
         // SAFETY: fn contract.
         let context = unsafe { context.as_ref() };
+        if reason == crate::StopReason::Disposed && !context.is_stopped() {
+            self.gc_controller.request_full_gc();
+        }
         let result = {
             // What stopping it makes its owners do (a connecting socket fails, a client drops
             // its queue) is done in its context: reported to nobody.

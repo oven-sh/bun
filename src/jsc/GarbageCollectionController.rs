@@ -24,6 +24,8 @@ pub struct GarbageCollectionController {
     /// nominal time (from tick intervals) since the JS heap last grew.
     idle_gc_at_ms: Cell<[u32; 3]>,
     idle_quiet_ms: Cell<u32>,
+    /// Much was just let go of at once (a `Bun.ModuleGraph` was disposed): the next `perform_gc` collects fully.
+    full_gc_requested: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -42,6 +44,7 @@ impl Default for GarbageCollectionController {
             disabled: Cell::new(false),
             idle_gc_at_ms: Cell::new([0; 3]),
             idle_quiet_ms: Cell::new(0),
+            full_gc_requested: Cell::new(false),
         }
     }
 }
@@ -176,15 +179,20 @@ impl GarbageCollectionController {
         );
     }
 
+    pub(crate) fn request_full_gc(&self) {
+        self.full_gc_requested.set(true);
+    }
+
     pub(crate) fn perform_gc(&self, idle_full: bool) {
         if self.disabled.get() {
             return;
         }
         let vm = VirtualMachine::get().jsc_vm();
+        let requested_full = self.full_gc_requested.take();
         if idle_full {
             vm.collect_async_idle();
         } else {
-            vm.collect_async(false);
+            vm.collect_async(requested_full);
         }
         self.gc_last_heap_size.set(vm.block_bytes_allocated());
     }
@@ -213,11 +221,13 @@ impl GarbageCollectionController {
         let vm_ref = unsafe { &*vm };
         let grew = vm_ref.jsc_vm().block_bytes_allocated() > prev_heap_size + idle_growth_slack;
         let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, interval);
+        let requested_full = !full && this.full_gc_requested.get();
         this.perform_gc(full);
         // Growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job. Where the
         // event loop cannot let an idle collection finish while parked (Windows: Bun__JSC_onBeforeWait), it proceeds at
         // this timer's ticks instead, fast ones for the next 30.
-        let needs_ticks_to_finish = full && cfg!(windows);
+        // A requested full collection is not an idle one, so that is the case for it everywhere.
+        let needs_ticks_to_finish = requested_full || (full && cfg!(windows));
         if !grew && !needs_ticks_to_finish {
             let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count

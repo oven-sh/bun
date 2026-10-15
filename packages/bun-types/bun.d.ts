@@ -5608,9 +5608,9 @@ declare module "bun" {
      * socket, a worker, a stream) no longer work, for the host either.
      *
      * The garbage collector frees the graph's modules and objects once
-     * nothing references them. `dispose()` asks it for a full collection,
-     * which starts after the calling script returns: drop your own
-     * references to the graph's exports in that script.
+     * nothing references them. `dispose()` makes the next of Bun's periodic
+     * collections a full one: drop your own references to the graph's
+     * exports when you dispose it.
      *
      * Not a sandbox: synchronous calls run to completion. Idempotent.
      *

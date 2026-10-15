@@ -122,7 +122,14 @@ export function getStdinStream(
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/bootstrap/switches/is_main_thread.js#L211-L275
     // `fdType` is "socket" for every kind of socket. The constructor makes a handle only for a FIFO or an AF_UNIX
     // stream socket, so a TCP or UDP stdin (inetd, systemd `StandardInput=socket`) takes the native stream below.
-    const stdin = new (require("node:net").Socket)({ fd, readable: true, writable: false, manualStart: true });
+    // `manualStart` is node's undocumented option: reading starts with the first consumer, not here.
+    const options = {
+      fd,
+      readable: true,
+      writable: false,
+      manualStart: true,
+    } as import("node:net").SocketConstructorOpts;
+    const stdin: any = new (require("node:net").Socket)(options);
     const handle = stdin._handle;
     if (handle) {
       // Make sure the stdin can't be `.end()`-ed
@@ -134,11 +141,10 @@ export function getStdinStream(
       stdin._readableState.reading = false;
       handle.readStop();
 
-      // After pause() the handle stops one tick later, when the stream has, so that the process can exit. A
-      // 'readable' listener still needs the handle: read() does not start it again.
+      // After pause() the handle stops one tick later, when the stream has, so that the process can exit.
       function onpause() {
         const handle = stdin._handle;
-        if (handle?.reading && !stdin.readableFlowing && stdin.listenerCount("readable") === 0) {
+        if (handle?.reading && !stdin.readableFlowing) {
           stdin._readableState.reading = false;
           handle.reading = false;
           handle.readStop();

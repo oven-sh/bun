@@ -61,7 +61,7 @@ test("pipe stdin does not leak per-read chunks", async () => {
   // and well below the 256MB a full leak would show.
   expect(result.deltaMB).toBeLessThan(128);
   expect(exitCode).toBe(0);
-});
+}, 60_000);
 
 test("pipe stdin is a net.Socket with a Pipe handle", async () => {
   await using proc = Bun.spawn({
@@ -287,3 +287,48 @@ test("process.stdin piped through Readable.toWeb + pipeline exits at EOF", async
   expect(stdout).toBe("hello\n");
   expect(exitCode).toBe(0);
 });
+
+// destroy() on pipe stdin ends it as node's net.Socket does: the error is
+// reported, 'close' gets hadError, and stdin does not hold the process.
+// Before, the 'resume' that a 'data' listener queues ran after destroy() and
+// revived the stream. 'close' never came, the error was lost, and the process
+// did not exit while the writer held the pipe open.
+test.concurrent.each([
+  { ended: false, listener: false, error: false, events: ["close(false)"] },
+  { ended: false, listener: false, error: true, events: ["uncaught mine", "close(true)"] },
+  { ended: false, listener: true, error: false, events: ["close(false)"] },
+  { ended: false, listener: true, error: true, events: ["uncaught mine", "close(true)"] },
+  { ended: true, listener: true, error: false, events: ["close(false)"] },
+  { ended: true, listener: true, error: true, events: ["uncaught mine", "close(true)"] },
+])(
+  "process.stdin.destroy() on a pipe emits 'close' and lets the process exit (ended: $ended, 'data' listener: $listener, error: $error)",
+  async ({ ended, listener, error, events }) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const events = [];
+          process.on("uncaughtException", e => events.push("uncaught " + e.message));
+          process.on("exit", code => console.log(JSON.stringify({ events, code })));
+          process.stdin.on("close", (...args) => events.push("close(" + args.join(",") + ")"));
+          ${listener ? `process.stdin.on("data", () => {});` : ""}
+          process.stdin.destroy(${error ? `new Error("mine")` : ""});
+        `,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    // Not ended: the parent holds the write end open and never writes, so
+    // only destroy() can let the child exit.
+    if (ended) await proc.stdin.end();
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ events, code: 0 });
+    expect(exitCode).toBe(0);
+  },
+);

@@ -205,9 +205,12 @@ test("net.Socket({ handle, onread }) holds the rest of a chunk after the callbac
   const started = handle.next();
   socket.resume();
   await started;
-  expect({ received, readStartCalls: handle.readStartCalls, reading: handle.reading, bytesRead: socket.bytesRead }).toEqual(
-    { received: ["0123", "4567", "89"], readStartCalls: 2, reading: true, bytesRead: 10 },
-  );
+  expect({
+    received,
+    readStartCalls: handle.readStartCalls,
+    reading: handle.reading,
+    bytesRead: socket.bytesRead,
+  }).toEqual({ received: ["0123", "4567", "89"], readStartCalls: 2, reading: true, bytesRead: 10 });
   socket.destroy();
 });
 

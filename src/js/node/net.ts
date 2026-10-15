@@ -2682,9 +2682,8 @@ function drainOnreadTailNT(socket) {
     socket[kOnreadPendingEnd] = false;
     finishSocketEnd(socket);
   } else if (fromRead || !socket.isPaused()) {
-    const handle = socket._handle;
-    resumeHandle(socket, handle, true);
-    restorePausedHold(socket, handle);
+    resumeHandle(socket, socket._handle, true);
+    restorePausedHold(socket, socket._handle);
   }
 }
 
@@ -2696,12 +2695,11 @@ Socket.prototype.resume = function resume() {
   // An ended readable side (EOF emitted, or `readable: false`) never restarts the handle: node reaches readStart only from _read.
   // An onread socket is the exception: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L830-L845
   if (this.readableEnded && this[kOnreadBuffer] === undefined) return ret;
-  const handle = this._handle;
   if (!this.connecting && !drainOnreadTail(this)) {
-    resumeHandle(this, handle, false);
+    resumeHandle(this, this._handle, false);
   }
   // Even while still connecting, so pause-then-resume stays symmetric.
-  restorePausedHold(this, handle);
+  restorePausedHold(this, this._handle);
   return ret;
 };
 
@@ -2749,9 +2747,8 @@ Socket.prototype[kUpgradeClientTLS] = function (connection, servername) {
 Socket.prototype.read = function read(size) {
   // See resume(): an ended readable side never restarts the handle.
   if ((!this.readableEnded || this[kOnreadBuffer] !== undefined) && !this.connecting && !drainOnreadTail(this, true)) {
-    const handle = this._handle;
-    resumeHandle(this, handle, false);
-    restorePausedHold(this, handle);
+    resumeHandle(this, this._handle, false);
+    restorePausedHold(this, this._handle);
   }
   return Duplex.prototype.read.$call(this, size);
 };

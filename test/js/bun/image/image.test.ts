@@ -1577,28 +1577,39 @@ describe("Bun.Image", () => {
       // Pixels of `back` that are not a palette entry nearest to the same
       // pixel of `rgba` (squared RGBA distance).
       const countNotNearest = (rgba: Uint8Array, palette: Rgba[], back: Uint8Array) => {
-        const distance = (buf: Uint8Array, i: number, e: ArrayLike<number>) =>
-          (buf[i] - e[0]) ** 2 + (buf[i + 1] - e[1]) ** 2 + (buf[i + 2] - e[2]) ** 2 + (buf[i + 3] - e[3]) ** 2;
+        // The least distance from a colour to the palette, found once per colour.
+        const least = new Map<number, number>();
         let count = 0;
         for (let i = 0; i < rgba.length; i += 4) {
-          let best = Infinity;
-          for (const e of palette) best = Math.min(best, distance(rgba, i, e));
-          if (distance(rgba, i, back.subarray(i, i + 4)) !== best) count++;
+          const [r, g, b, a] = [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]];
+          const key = r | (g << 8) | (b << 16) | (a << 24);
+          let best = least.get(key);
+          if (best === undefined) {
+            best = Infinity;
+            for (const e of palette) {
+              best = Math.min(best, (r - e[0]) ** 2 + (g - e[1]) ** 2 + (b - e[2]) ** 2 + (a - e[3]) ** 2);
+            }
+            least.set(key, best);
+          }
+          const got =
+            (r - back[i]) ** 2 + (g - back[i + 1]) ** 2 + (b - back[i + 2]) ** 2 + (a - back[i + 3]) ** 2;
+          if (got !== best) count++;
         }
         return count;
       };
 
       // [name, width, height, white pixels, distinct colours, colors]. The
-      // quantizer counts colours in a table while there are at most 1024 per
-      // palette entry (of at least 16) and at most half the pixel count, and
-      // sorts the pixels to count them otherwise. With the table and
-      // colors >= 16 the non-dither mapper looks each colour up in it.
-      // Otherwise it searches the palette.
+      // quantizer counts colours in a table and writes each pixel from it.
+      // The table takes 1024 colours per palette entry (of at least 16). Past
+      // that it takes a new colour while the colours so far cover 8 pixels
+      // each. It never takes more colours than half the pixel count. When it
+      // gives up, the pixels are sorted to count them and each run of equal
+      // pixels is searched in the palette.
       test.each([
-        ["counted and looked up in the table", 128, 128, 8192, 4000, 16],
-        ["counted in the table, palette too small for lookups", 128, 128, 8192, 4000, 8],
+        ["counted in the table", 128, 128, 8192, 4000, 16],
+        ["more than 1024 colours per entry, and they repeat", 400, 375, 130000, 17000, 16],
+        ["more than 1024 colours per entry, and they do not repeat", 256, 200, 25600, 20000, 16],
         ["more distinct colours than half the pixels", 64, 64, 1900, 2197, 16],
-        ["more distinct colours than 1024 per entry", 256, 200, 25600, 20000, 16],
       ] as const)("every pixel is written as a nearest entry: %s", async (_name, w, h, white, distinct, colors) => {
         const rgba = whiteThenDark(w * h, white, distinct);
         const out = await new Bun.Image(pngFromRgba(w, h, rgba)).png({ palette: true, colors }).bytes();
@@ -1607,6 +1618,27 @@ describe("Bun.Image", () => {
         // One colour per entry: white holds one entry, not several.
         expect(new Set(palette.map(e => e.join())).size).toBe(colors);
         expect(countNotNearest(rgba, palette, (await decode(out)).data)).toBe(0);
+      });
+
+      // The table's hash is fixed: the top bits of key * 0x9E3779B1. Every
+      // colour below hashes to the same few slots at every table size. A
+      // probe gives up after 256 slots and the colours are counted by
+      // sorting. Without that limit each colour walks all the others: about
+      // 2 billion steps for this image.
+      test("colours that collide in the table do not stall the encode", async () => {
+        // 0x9E3779B1 * inverse == 1 (mod 2^32)
+        let inverse = 1;
+        for (let i = 0; i < 5; i++) inverse = Math.imul(inverse, 2 - Math.imul(0x9e3779b1, inverse));
+        expect(Math.imul(0x9e3779b1, inverse) >>> 0).toBe(1);
+        const [w, h] = [512, 256];
+        const src = makePng(w, h, (x, y) => {
+          // Two pixels per colour: 65,536 colours, as many as the table takes.
+          const key = Math.imul(0x5a5a0000 | ((y * w + x) >> 1), inverse);
+          return [key & 255, (key >> 8) & 255, (key >> 16) & 255, key >>> 24];
+        });
+        const out = await new Bun.Image(src).png({ palette: true, colors: 64 }).bytes();
+        expect(pngPlte(out).entries).toHaveLength(64);
+        expect(await new Bun.Image(out).metadata()).toEqual({ width: w, height: h, format: "png" });
       });
     });
 

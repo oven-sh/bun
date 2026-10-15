@@ -69,20 +69,17 @@ pub(crate) fn quantize(
             if opts.dither {
                 drop(table);
                 map_floyd_steinberg(rgba, w, h, &palette, k, &mut indices)?;
-            } else {
-                match table {
-                    // A lookup per colour beats a search per colour from 16 entries.
-                    Some(mut slots) if k >= 16 => {
-                        for slot in slots.iter_mut().filter(|slot| slot.val != 0) {
-                            slot.val = u32::from(nearest(&palette, k, slot.key)) + 1;
-                        }
-                        map_runs(pixels, &mut indices, |key| {
-                            let slot = slot_for(&mut slots, key).expect("every colour was counted");
-                            u8::try_from(slot.val - 1).expect("int cast")
-                        });
-                    }
-                    _ => map_runs(pixels, &mut indices, |key| nearest(&palette, k, key)),
+            } else if let Some(mut slots) = table {
+                // One search per colour: each count becomes the index of the nearest entry, plus 1.
+                for slot in slots.iter_mut().filter(|slot| slot.val != 0) {
+                    slot.val = u32::from(nearest(&palette, k, slot.key)) + 1;
                 }
+                map_runs(pixels, &mut indices, |key| {
+                    let slot = slot_for(&mut slots, key).expect("every colour was counted");
+                    u8::try_from(slot.val - 1).expect("int cast")
+                });
+            } else {
+                map_runs(pixels, &mut indices, |key| nearest(&palette, k, key));
             }
             palette
         }
@@ -181,25 +178,33 @@ struct Bin {
     count: u32,
 }
 
-/// Table lookups measured faster than palette searches up to this many colours per entry.
+/// Colours per palette entry the count table takes before it asks whether they repeat.
 const TABLE_COLORS_PER_ENTRY: usize = 1024;
+/// Past that, it takes a new colour while the colours so far cover this many pixels each.
+const TABLE_PIXELS_PER_COLOR: usize = 8;
 
-/// Most colours the count table holds. Past it, or when colours do not repeat, pixels are sorted.
-fn table_room(pixels: usize, want: usize) -> usize {
-    (TABLE_COLORS_PER_ENTRY * want.max(16)).min(pixels / 2)
+/// Colours the count table takes whatever they are.
+fn table_room(want: usize) -> usize {
+    TABLE_COLORS_PER_ENTRY * want.max(16)
 }
 
-/// Pixel counts by colour, for at most `room` colours.
+/// Pixel counts by colour. A photo has too many colours for a table to pay: its pixels are sorted.
 struct Counts {
     /// Each `val` is the pixel count of `key`. At most half full.
     slots: Vec<Slot>,
     distinct: usize,
+    /// Pixels counted so far.
+    pixels: usize,
+    /// `table_room` of the palette size.
     room: usize,
+    /// Colours it takes at most.
+    most: usize,
 }
 
 impl Counts {
-    /// False when `key` is new and there is no room, or no slot within `MAX_PROBE`.
+    /// False when `key` is new and not taken, or has no slot within `MAX_PROBE`.
     fn add(&mut self, key: u32, count: u32) -> Result<bool, AllocError> {
+        self.pixels += count as usize;
         let Some(slot) = slot_for(&mut self.slots, key) else {
             return Ok(false);
         };
@@ -207,7 +212,8 @@ impl Counts {
             slot.val += count;
             return Ok(true);
         }
-        if self.distinct == self.room {
+        let repeat = self.pixels >= TABLE_PIXELS_PER_COLOR * self.distinct;
+        if self.distinct >= self.most || (self.distinct >= self.room && !repeat) {
             return Ok(false);
         }
         *slot = Slot { key, val: count };
@@ -234,16 +240,19 @@ fn count_colors(
     counted: &[u8],
     want: usize,
 ) -> Result<(Vec<Bin>, Option<Vec<Slot>>), AllocError> {
-    let room = table_room(pixels.len(), want);
+    // Never more than the room of a full palette, or one colour per two pixels.
+    let most = table_room(256).min(pixels.len() / 2);
     let (seen, _) = seen.as_chunks::<4>();
     // There are more colours than `seen`: they cannot all fit.
-    if seen.len() >= room {
+    if seen.len() >= most {
         return Ok((count_sorted(pixels)?, None));
     }
     let mut table = Counts {
         slots: try_filled(1024)?,
         distinct: 0,
-        room,
+        pixels: 0,
+        room: table_room(want),
+        most,
     };
 
     let mut counts = [0u32; 256];

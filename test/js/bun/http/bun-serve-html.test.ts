@@ -1098,10 +1098,9 @@ test.concurrent("server.reload() while an html route's first bundle is still in 
   });
 });
 
-// The dev server's HMR socket and the user's `websocket` handlers are two
-// different uWS websocket behaviors on one app. Each keeps its own context, so
-// an HMR client is not handed to the user's handlers, before or after a reload.
-test.concurrent("dev server HMR socket and the user websocket handlers stay separate across a reload", async () => {
+// The dev server's HMR socket and the user's `websocket` handlers are separate
+// uWS websocket behaviors on the same app, each with its own context.
+test.concurrent("HMR clients never reach the user's websocket handlers, before or after server.reload()", async () => {
   using dir = tempDir("bun-serve-html-hmr-and-user-websocket", {
     "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
     "app.ts": `console.log("app");`,
@@ -1124,8 +1123,8 @@ test.concurrent("dev server HMR socket and the user websocket handlers stay sepa
       });
       const server = Bun.serve(options(1));
 
-      // The HMR client's "set url" message ('n' + route pattern) is answered
-      // with 'n' + the route bundle index as a u32.
+      // The dev server replies to the HMR client's "set url" message ('n' + route
+      // pattern) with 'n' + the route bundle index as a u32.
       async function hmrRouteBundleIndex() {
         const url = new URL("/_bun/hmr", server.url);
         url.protocol = "ws:";
@@ -1133,9 +1132,9 @@ test.concurrent("dev server HMR socket and the user websocket handlers stay sepa
         ws.binaryType = "arraybuffer";
         const { promise, resolve, reject } = Promise.withResolvers();
         ws.onerror = reject;
-        ws.onclose = () => reject(new Error("hmr socket closed before answering"));
+        ws.onclose = () => reject(new Error("hmr socket closed before replying"));
         ws.onmessage = ({ data }) => {
-          if (typeof data === "string") return reject(new Error("hmr socket answered with " + data));
+          if (typeof data === "string") return reject(new Error("hmr socket replied with text: " + data));
           const view = new DataView(data);
           if (view.getUint8(0) === "n".charCodeAt(0)) resolve(view.getUint32(1, true));
         };
@@ -1154,7 +1153,7 @@ test.concurrent("dev server HMR socket and the user websocket handlers stay sepa
         const ws = new WebSocket(url);
         const { promise, resolve, reject } = Promise.withResolvers();
         ws.onerror = reject;
-        ws.onclose = () => reject(new Error("user socket closed before answering"));
+        ws.onclose = () => reject(new Error("user socket closed before replying"));
         ws.onmessage = ({ data }) => resolve(data);
         ws.onopen = () => ws.send(message);
         try {

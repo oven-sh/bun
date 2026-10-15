@@ -1783,21 +1783,21 @@ describe("Host header field values in request.url", () => {
     expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
   });
 
-  // The Host requirement is only relaxed for node:http, whose 'upgrade' and
-  // 'connect' events run before Node enforces it. Bun.serve has no such events:
-  // a Host-less request would reach fetch() with a relative req.url.
+  // Only node:http relaxes the Host requirement, because Node emits 'upgrade'
+  // and 'connect' before it checks for Host. Bun.serve has no such events, so a
+  // request without Host would reach fetch() with a relative req.url.
   test.each([
     ["Upgrade: websocket", "GET /index HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"],
     ["Upgrade: foo", "GET /index HTTP/1.1\r\nUpgrade: foo\r\n\r\n"],
     ["empty Upgrade", "GET /index HTTP/1.1\r\nUpgrade:\r\n\r\n"],
     ["CONNECT", "CONNECT example.com:443 HTTP/1.1\r\n\r\n"],
   ])("rejects an HTTP/1.1 request with no Host header even with %s", async (_name, payload) => {
-    let reached = false;
+    let fetchCalled = false;
     await using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
       fetch() {
-        reached = true;
+        fetchCalled = true;
         return new Response("OK");
       },
       websocket: {
@@ -1805,8 +1805,8 @@ describe("Host header field values in request.url", () => {
       },
     });
 
-    // Read the status line only: a server that wrongly serves the request keeps
-    // the connection open, so waiting for close would hang.
+    // Only read the status line. If the server wrongly serves the request it
+    // keeps the connection open, so waiting for close would hang.
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     const client = net.connect(server.port, "127.0.0.1", () => client.write(payload));
     client.on("error", reject);
@@ -1818,7 +1818,7 @@ describe("Host header field values in request.url", () => {
     try {
       const response = await promise;
       expect(response).toStartWith("HTTP/1.1 400");
-      expect(reached).toBe(false);
+      expect(fetchCalled).toBe(false);
     } finally {
       client.destroy();
     }

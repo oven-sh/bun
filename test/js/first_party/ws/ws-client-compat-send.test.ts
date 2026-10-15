@@ -1,14 +1,14 @@
-// send(), ping() and pong() of a `ws` client, against a raw TCP peer. See ws-raw-peer.ts.
+// Tests send(), ping() and pong() on a `ws` client against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir, tls } from "harness";
 import { openAsBlob } from "node:fs";
 import path from "node:path";
 import { constants, inflateRawSync } from "node:zlib";
 import {
-  attempt,
+  tryCall,
   closedPort,
-  dial,
-  event,
+  connectClient,
+  nextEvent,
   Frame,
   implementations,
   OP,
@@ -32,7 +32,7 @@ const invalidData = (received: string) =>
   `Array-like Object. Received ${received}" ERR_INVALID_ARG_TYPE`;
 
 const bytes = (...values: number[]) => new Uint8Array(values);
-// npm ws masks a SharedArrayBuffer in place, so each send() gets its own.
+// npm ws masks a SharedArrayBuffer in place, so each send() needs a fresh one.
 const shared = (...values: number[]) => {
   const buffer = new SharedArrayBuffer(values.length);
   new Uint8Array(buffer).set(values);
@@ -49,26 +49,29 @@ const detached = () => {
   return view;
 };
 
-/** Runs `act(callback)`. `returned` is `attempt()` of it, `callback` the line `callback(<arguments>)` once it has run. */
+/**
+ * Runs `act(callback)`. `returned` is its `tryCall()` result. `callback` resolves to `callback(<arguments>)` once the
+ * callback runs.
+ */
 function invoke(act: (callback: Callback) => unknown) {
   const { promise, resolve } = Promise.withResolvers<string>();
-  let inside = true;
+  let duringCall = true;
   let ran = false;
-  const returned = attempt(() =>
+  const returned = tryCall(() =>
     act((...args) => {
       ran = true;
-      resolve(`${inside ? "synchronous " : ""}callback(${args.map(show).join(", ")})`);
+      resolve(`${duringCall ? "synchronous " : ""}callback(${args.map(show).join(", ")})`);
     }),
   );
-  inside = false;
+  duringCall = false;
   return { returned, callback: promise, ran: () => ran };
 }
 
 /**
- * One call on an OPEN socket: `<frame>, callback(<arguments>)`, or `throws <error>`. The frames are all that went out
- * up to the end of a round trip, which also shows that the socket is still open.
+ * Makes one call on an OPEN socket and returns `<frame>, callback(<arguments>)` or `throws <error>`. Collects every
+ * frame sent before a round trip completes, which also proves the socket is still open.
  */
-async function wire({ conn }: Client, act: (callback: Callback) => unknown) {
+async function callOnOpenSocket({ conn }: Client, act: (callback: Callback) => unknown) {
   const call = invoke(act);
   if (call.returned === "undefined") {
     const callback = await call.callback;
@@ -77,36 +80,36 @@ async function wire({ conn }: Client, act: (callback: Callback) => unknown) {
   return [call.returned, ...(await conn.roundTrip()), ...(call.ran() ? ["the callback ran"] : [])].join(", ");
 }
 
-/** One call on a socket that is not open: what `invoke()` saw, and by how much `bufferedAmount` grew. */
-async function discard(ws: Client["ws"], act: (ws: any, callback: Callback) => unknown) {
+/** Makes one call on a socket that isn't open. Returns what `invoke()` saw and how much `bufferedAmount` grew. */
+async function callOnClosedSocket(ws: Client["ws"], act: (ws: any, callback: Callback) => unknown) {
   const before = ws.bufferedAmount;
   const call = invoke(callback => act(ws, callback));
-  const counted = ws.bufferedAmount - before;
-  return `${call.returned === "undefined" ? await call.callback : call.returned}, +${counted}`;
+  const bufferedBytes = ws.bufferedAmount - before;
+  return `${call.returned === "undefined" ? await call.callback : call.returned}, +${bufferedBytes}`;
 }
 
-/** `text`, `binary rsv1`, `continuation !fin`: a frame without its payload. */
-const head = (frame: Frame) =>
-  showFrame(new Frame(frame.fin, frame.rsv, frame.opcode, frame.wrongMask, Buffer.alloc(0), undefined));
+/** Formats a frame without its payload: `text`, `binary rsv1`, `continuation !fin`. */
+const showFrameHeader = (frame: Frame) =>
+  showFrame(new Frame(frame.fin, frame.rsv, frame.opcode, frame.hasWrongMask, Buffer.alloc(0), undefined));
 
-/** The compressed messages of a connection are one deflate stream: each is inflated behind those before it. */
+/** A connection's compressed messages form one deflate stream, so each one is inflated after all the earlier ones. */
 function inflater() {
   let stream = Buffer.alloc(0);
-  let done = 0;
+  let inflatedLength = 0;
   return (payload: Buffer) => {
     stream = Buffer.concat([stream, payload, Buffer.from([0x00, 0x00, 0xff, 0xff])]);
-    const all = inflateRawSync(stream, { finishFlush: constants.Z_SYNC_FLUSH });
-    const message = all.subarray(done);
-    done = all.length;
+    const inflated = inflateRawSync(stream, { finishFlush: constants.Z_SYNC_FLUSH });
+    const message = inflated.subarray(inflatedLength);
+    inflatedLength = inflated.length;
     return message;
   };
 }
 
 /**
- * Sends 1 MiB messages to a peer that has stopped reading until the client has to keep some of it, then two small
- * ones, which wait behind that. `results` gets `<index> null` or `<index> Error` from each callback.
+ * Sends 1 MiB messages to a peer that has stopped reading until the client has to buffer some, then two small ones
+ * that queue behind them. Each callback pushes `<index> null` or `<index> Error` to `results`.
  */
-async function fill({ ws, conn }: Client) {
+async function fillSendBuffer({ ws, conn }: Client) {
   const results: string[] = [];
   let sent = 0;
   let wake = () => {};
@@ -120,9 +123,9 @@ async function fill({ ws, conn }: Client) {
   conn.socket.pause();
   do {
     for (let i = 0; i < 4; i++) send(Buffer.alloc(MiB, sent));
-    // A message from the peer gives the client's event loop a turn, in which it writes what the kernel takes.
+    // Waiting for a message from the peer lets the client's event loop run and write as much as the kernel accepts.
     conn.text("turn");
-    await event(ws, "message");
+    await nextEvent(ws, "message");
   } while (ws.bufferedAmount === 0 && sent < 64);
   expect(ws.bufferedAmount).toBeGreaterThan(0);
   send("x");
@@ -130,7 +133,7 @@ async function fill({ ws, conn }: Client) {
   return {
     results,
     sent,
-    /** Every callback has run. */
+    /** Resolves once every callback has run. */
     async settled() {
       while (results.length < sent) await new Promise<void>(resolve => (wake = resolve));
     },
@@ -144,8 +147,8 @@ const expected = (rows: Row[]) =>
 const payloads: Row[] = [
   { label: "string", data: "hi", sent: 'text "hi"' },
   { label: "empty string", data: "", sent: "text" },
-  { label: "string of 8-bit characters", data: "café", sent: 'text "café"' },
-  { label: "string of 16-bit characters", data: "世 😶", sent: 'text "世 😶"' },
+  { label: "Latin-1 string", data: "café", sent: 'text "café"' },
+  { label: "UTF-16 string", data: "世 😶", sent: 'text "世 😶"' },
   { label: "string with a lone surrogate", data: "\ud800", sent: "text 0xefbfbd" },
   { label: "number", data: 42, sent: 'text "42"' },
   { label: "0", data: 0, sent: 'text "0"' },
@@ -184,7 +187,7 @@ const payloads: Row[] = [
   { label: "function", data: function fn() {}, thrown: invalidData("function fn") },
 ];
 
-// `sent` is the payload of the frame.
+// Here `sent` is only the frame's payload.
 const controlPayloads: Row[] = [
   { label: "undefined", data: undefined, sent: "" },
   { label: "null", data: null, sent: "" },
@@ -198,24 +201,25 @@ const controlPayloads: Row[] = [
   { label: "Blob", data: new Blob(["b"]), sent: '"b"' },
   { label: "array", data: [1, 2], sent: "0x0102" },
   { label: "object", data: {}, thrown: invalidData("an instance of Object") },
-  { label: "string of 125 bytes", data: a(125), sent: "125 bytes" },
-  { label: "string of 126 bytes", data: a(126), thrown: tooLong },
-  { label: "string of 63 characters, 126 bytes", data: Buffer.alloc(126, "é").toString(), thrown: tooLong },
-  { label: "Buffer of 126 bytes", data: Buffer.alloc(126), thrown: tooLong },
-  { label: "Blob of 126 bytes", data: new Blob([a(126)]), thrown: tooLong },
+  { label: "125-byte string", data: a(125), sent: "125 bytes" },
+  { label: "126-byte string", data: a(126), thrown: tooLong },
+  { label: "63-character, 126-byte string", data: Buffer.alloc(126, "é").toString(), thrown: tooLong },
+  { label: "126-byte Buffer", data: Buffer.alloc(126), thrown: tooLong },
+  { label: "126-byte Blob", data: new Blob([a(126)]), thrown: tooLong },
 ];
 
-// `shown` is the payload as `showFrame` prints it. The first five meet every value of `binary`, the rest true and false.
-const framed = [
+// `shown` is the payload as `showFrame` prints it. The first five rows run with every `binary` value, the rest only
+// with true and false.
+const binaryOptionPayloads = [
   { kind: "string", data: () => "hi", shown: '"hi"' },
   { kind: "Buffer", data: () => Buffer.from("hi"), shown: '"hi"' },
   { kind: "ArrayBuffer", data: () => bytes(104, 105).buffer, shown: '"hi"' },
   { kind: "Blob", data: () => new Blob(["hi"]), shown: '"hi"' },
-  { kind: "Buffer that is not UTF-8", data: () => Buffer.from([0xff, 0x68]), shown: "0xff68" },
-  { kind: "Buffer that ends inside a character", data: () => Buffer.from("世").subarray(0, 2), shown: "0xe4b8" },
+  { kind: "Buffer with invalid UTF-8", data: () => Buffer.from([0xff, 0x68]), shown: "0xff68" },
+  { kind: "Buffer truncated mid-character", data: () => Buffer.from("世").subarray(0, 2), shown: "0xe4b8" },
   { kind: "number", data: () => 12, shown: '"12"' },
-  { kind: "string of 8-bit characters", data: () => "café", shown: '"café"' },
-  { kind: "string of 16-bit characters", data: () => "世 😶", shown: '"世 😶"' },
+  { kind: "Latin-1 string", data: () => "café", shown: '"café"' },
+  { kind: "UTF-16 string", data: () => "世 😶", shown: '"世 😶"' },
   { kind: "Uint8Array with an offset", data: () => bytes(0xff, 104, 105, 0xff).subarray(1, 3), shown: '"hi"' },
   { kind: "Uint16Array", data: () => new Uint16Array(bytes(104, 105, 106, 107).buffer), shown: '"hijk"' },
   { kind: "Float64Array", data: () => new Float64Array([1]), shown: "0x000000000000f03f" },
@@ -231,7 +235,7 @@ const framed = [
   { kind: "empty ArrayBuffer", data: () => new ArrayBuffer(0), shown: "" },
   { kind: "empty Blob", data: () => new Blob([]), shown: "" },
 ];
-// A `binary` that is there decides, undefined too. Only its truth counts.
+// An explicit `binary` key overrides the default, even when it's undefined. Only its truthiness matters.
 const binaryValues = [
   { binary: true, type: "binary" },
   { binary: false, type: "text" },
@@ -244,7 +248,7 @@ const binaryValues = [
   { binary: "yes", type: "binary" },
   { binary: {}, type: "binary" },
 ];
-const binaryRows = framed.flatMap(({ kind, data, shown }, i) =>
+const binaryRows = binaryOptionPayloads.flatMap(({ kind, data, shown }, i) =>
   binaryValues.slice(0, i < 5 ? binaryValues.length : 2).map(({ binary, type }) => ({
     label: `${kind}, binary: ${show(binary)}`,
     data,
@@ -253,50 +257,65 @@ const binaryRows = framed.flatMap(({ kind, data, shown }, i) =>
   })),
 );
 
-// What a socket that is not open does with a call, and what it adds to `bufferedAmount`: the bytes of the payload.
-const discarded: { call: string; act(ws: any, callback: Callback): void; counted: number; thrown?: string }[] = [
-  { call: 'send("abcd")', act: (ws, cb) => ws.send("abcd", cb), counted: 4 },
-  { call: 'ping("abcd")', act: (ws, cb) => ws.ping("abcd", undefined, cb), counted: 4 },
-  { call: 'pong("abcd")', act: (ws, cb) => ws.pong("abcd", undefined, cb), counted: 4 },
-  { call: 'send("abcd", { binary: true })', act: (ws, cb) => ws.send("abcd", { binary: true }, cb), counted: 4 },
-  { call: 'send("é")', act: (ws, cb) => ws.send("é", cb), counted: 2 },
-  { call: "send(7)", act: (ws, cb) => ws.send(7, cb), counted: 1 },
-  { call: "send(0)", act: (ws, cb) => ws.send(0, cb), counted: 1 },
-  { call: "send(Buffer)", act: (ws, cb) => ws.send(Buffer.alloc(10), cb), counted: 10 },
+// Calls on a socket that isn't open. Each one adds its payload's byte length to `bufferedAmount`.
+const closedSocketCalls: {
+  call: string;
+  act(ws: any, callback: Callback): void;
+  bufferedBytes: number;
+  thrown?: string;
+}[] = [
+  { call: 'send("abcd")', act: (ws, cb) => ws.send("abcd", cb), bufferedBytes: 4 },
+  { call: 'ping("abcd")', act: (ws, cb) => ws.ping("abcd", undefined, cb), bufferedBytes: 4 },
+  { call: 'pong("abcd")', act: (ws, cb) => ws.pong("abcd", undefined, cb), bufferedBytes: 4 },
+  { call: 'send("abcd", { binary: true })', act: (ws, cb) => ws.send("abcd", { binary: true }, cb), bufferedBytes: 4 },
+  { call: 'send("é")', act: (ws, cb) => ws.send("é", cb), bufferedBytes: 2 },
+  { call: "send(7)", act: (ws, cb) => ws.send(7, cb), bufferedBytes: 1 },
+  { call: "send(0)", act: (ws, cb) => ws.send(0, cb), bufferedBytes: 1 },
+  { call: "send(Buffer)", act: (ws, cb) => ws.send(Buffer.alloc(10), cb), bufferedBytes: 10 },
   {
     call: "send(Buffer, { binary: false })",
     act: (ws, cb) => ws.send(Buffer.alloc(10), { binary: false }, cb),
-    counted: 10,
+    bufferedBytes: 10,
   },
-  { call: "send(ArrayBuffer)", act: (ws, cb) => ws.send(new ArrayBuffer(4), cb), counted: 4 },
-  { call: "send(DataView)", act: (ws, cb) => ws.send(new DataView(new ArrayBuffer(8), 2, 4), cb), counted: 4 },
-  { call: "send(SharedArrayBuffer)", act: (ws, cb) => ws.send(new SharedArrayBuffer(3), cb), counted: 3 },
-  { call: "send(Blob)", act: (ws, cb) => ws.send(new Blob(["12345"]), cb), counted: 5 },
-  { call: "send([1, 2])", act: (ws, cb) => ws.send([1, 2], cb), counted: 2 },
-  { call: 'send("")', act: (ws, cb) => ws.send("", cb), counted: 0 },
-  { call: "send(null)", act: (ws, cb) => ws.send(null, cb), counted: 0 },
-  { call: "ping()", act: (ws, cb) => ws.ping(cb), counted: 0 },
-  // There is no frame, so no limit.
-  { call: "ping(126 bytes)", act: (ws, cb) => ws.ping(a(126), cb), counted: 126 },
-  { call: "send({})", act: (ws, cb) => ws.send({}, cb), counted: 0, thrown: invalidData("an instance of Object") },
-  { call: "send(true)", act: (ws, cb) => ws.send(true, cb), counted: 0, thrown: invalidData("type boolean (true)") },
+  { call: "send(ArrayBuffer)", act: (ws, cb) => ws.send(new ArrayBuffer(4), cb), bufferedBytes: 4 },
+  { call: "send(DataView)", act: (ws, cb) => ws.send(new DataView(new ArrayBuffer(8), 2, 4), cb), bufferedBytes: 4 },
+  { call: "send(SharedArrayBuffer)", act: (ws, cb) => ws.send(new SharedArrayBuffer(3), cb), bufferedBytes: 3 },
+  { call: "send(Blob)", act: (ws, cb) => ws.send(new Blob(["12345"]), cb), bufferedBytes: 5 },
+  { call: "send([1, 2])", act: (ws, cb) => ws.send([1, 2], cb), bufferedBytes: 2 },
+  { call: 'send("")', act: (ws, cb) => ws.send("", cb), bufferedBytes: 0 },
+  { call: "send(null)", act: (ws, cb) => ws.send(null, cb), bufferedBytes: 0 },
+  { call: "ping()", act: (ws, cb) => ws.ping(cb), bufferedBytes: 0 },
+  // No frame is built, so the 125-byte limit isn't checked.
+  { call: "ping(126 bytes)", act: (ws, cb) => ws.ping(a(126), cb), bufferedBytes: 126 },
+  {
+    call: "send({})",
+    act: (ws, cb) => ws.send({}, cb),
+    bufferedBytes: 0,
+    thrown: invalidData("an instance of Object"),
+  },
+  {
+    call: "send(true)",
+    act: (ws, cb) => ws.send(true, cb),
+    bufferedBytes: 0,
+    thrown: invalidData("type boolean (true)"),
+  },
 ];
-const discardedTotal = discarded.reduce((sum, row) => sum + row.counted, 0);
+const totalBufferedBytes = closedSocketCalls.reduce((sum, row) => sum + row.bufferedBytes, 0);
 
-describe.each(implementations)("ws client, sending ($name)", ({ ws: implementation, builtin }) => {
+describe.each(implementations)("ws client send ($name)", ({ ws: implementation, builtin }) => {
   const { WebSocket } = implementation;
 
   describe("send(data)", () => {
-    test("the type of the data decides the frame type, and what is not a payload throws", async () => {
+    test("picks the frame type from the data type and throws on unsupported types", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const results: Record<string, string> = {};
       for (const { label, data } of payloads) {
-        results[label] = await wire(client, callback => client.ws.send(data as any, callback));
+        results[label] = await callOnOpenSocket(client, callback => client.ws.send(data as any, callback));
       }
       expect(results).toEqual(expected(payloads));
     });
 
-    test("a detached ArrayBuffer or view throws a TypeError, a detached Buffer is empty", async () => {
+    test("throws for a detached ArrayBuffer or view, sends an empty frame for a detached Buffer", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const { ws, conn } = client;
       expect(() => ws.send(detached().buffer)).toThrow(TypeError);
@@ -310,7 +329,7 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       expect(await conn.next()).toBe("binary");
     });
 
-    test.each([125, 126, 65535, 65536])("a payload of %d bytes", async length => {
+    test.each([125, 126, 65535, 65536])("sends a %d-byte payload", async length => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const { ws, conn } = client;
       const data = Buffer.alloc(length, "abc");
@@ -323,7 +342,7 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       }
     });
 
-    test("the caller's buffer is copied at the call and left as it is", async () => {
+    test("copies the caller's buffer synchronously and doesn't modify it", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const { ws, conn } = client;
       const buffer = Buffer.from("aaaa");
@@ -333,10 +352,10 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       expect([show(buffer), show(arrayBuffer)]).toEqual(['Buffer("aaaa")', "ArrayBuffer(0x01020304)"]);
       buffer.fill("b");
       new Uint8Array(arrayBuffer).fill(9);
-      expect(await conn.take(2)).toEqual(['binary "aaaa"', "binary 0x01020304"]);
+      expect(await conn.nextFrames(2)).toEqual(['binary "aaaa"', "binary 0x01020304"]);
     });
 
-    test("a Blob keeps its place among the other frames", async () => {
+    test("sends a Blob in order with the other frames", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const { conn } = client;
       const ws: any = client.ws;
@@ -348,13 +367,20 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       ws.ping("d", () => order.push("d"));
       ws.ping(new Blob(["e"]), () => order.push("e"));
       ws.send("f", () => last.resolve());
-      expect(await conn.take(6)).toEqual(['text "a"', 'binary "b"', 'text "c"', 'ping "d"', 'ping "e"', 'text "f"']);
+      expect(await conn.nextFrames(6)).toEqual([
+        'text "a"',
+        'binary "b"',
+        'text "c"',
+        'ping "d"',
+        'ping "e"',
+        'text "f"',
+      ]);
       await last.promise;
       expect(order).toEqual(["a", "b", "c", "d", "e"]);
     });
 
-    test("in the 'open' listener", async () => {
-      await using client = await dial(implementation);
+    test("works inside the 'open' listener", async () => {
+      await using client = await connectClient(implementation);
       const called = new Promise(resolve => client.ws.on("open", () => client.ws.send("first", resolve)));
       expect(await (await client.peer.connection()).next()).toBe('text "first"');
       expect(await called).toBeNull();
@@ -365,19 +391,21 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
     test.each([
       { transport: "TCP", secure: false },
       { transport: "TLS", secure: true },
-    ])("`binary` decides the frame type and the payload goes out as it is, over $transport", async ({ secure }) => {
+    ])("`binary` sets the frame type and the payload is sent unchanged over $transport", async ({ secure }) => {
       await using client = await openClient(implementation, { perMessageDeflate: false, ca: tls.cert }, { secure });
       const results: Record<string, string> = {};
       for (const { label, data, binary } of binaryRows) {
-        results[label] = await wire(client, callback => client.ws.send(data() as any, { binary } as {}, callback));
+        results[label] = await callOnOpenSocket(client, callback =>
+          client.ws.send(data() as any, { binary } as {}, callback),
+        );
       }
       expect(results).toEqual(expected(binaryRows));
     });
 
-    // The relay of the README: send(data, { binary: isBinary }) with the arguments of 'message'. In "fragments" mode a
-    // binary message is an array, which is not a payload.
+    // The echo pattern from the ws README: send(data, { binary: isBinary }) with the 'message' arguments. With
+    // binaryType "fragments" a binary message is an array of Buffers, which send() can't take, so only text is echoed.
     test.each(["nodebuffer", "arraybuffer", "blob", "fragments"] as const)(
-      "a message goes back with its frame type when binaryType is %s",
+      "echoes a message with the same frame type when binaryType is %s",
       async binaryType => {
         await using client = await openClient(implementation, { perMessageDeflate: false });
         const { ws, conn } = client;
@@ -399,15 +427,15 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
         ["b", { fin: false }],
         ["c", { fin: true }],
         ["d", undefined],
-        // The first fragment has the frame type. `binary` means nothing after it.
+        // Only the first fragment carries the frame type. `binary` is ignored on continuations.
         [Buffer.from("e"), { fin: false, binary: false }],
         [Buffer.from("f"), { fin: 0, binary: true }],
         ["g", undefined],
-        // As with `binary`: a `fin` that is there decides.
+        // Like `binary`, an explicit `fin: undefined` overrides the default.
         [Buffer.from("h"), { fin: undefined }],
         ["i", { fin: 1 }],
       ] as [string | Buffer, object | undefined][]) {
-        results.push(await wire(client, callback => client.ws.send(data, options as {}, callback)));
+        results.push(await callOnOpenSocket(client, callback => client.ws.send(data, options as {}, callback)));
       }
       expect(results).toEqual([
         'text "a" !fin, callback(null)',
@@ -422,15 +450,15 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       ]);
     });
 
-    test("a ping goes out between two fragments", async () => {
+    test("sends a ping between two fragments", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       client.ws.send("a", { fin: false });
       client.ws.ping("p");
       client.ws.send("b");
-      expect(await client.conn.take(3)).toEqual(['text "a" !fin', 'ping "p"', 'continuation "b"']);
+      expect(await client.conn.nextFrames(3)).toEqual(['text "a" !fin', 'ping "p"', 'continuation "b"']);
     });
 
-    test("options that are no object, and a missing callback, are ignored", async () => {
+    test("ignores non-object options and a missing callback", async () => {
       await using client = await openClient(implementation);
       const ws: any = client.ws;
       const results: Record<string, string> = {};
@@ -446,10 +474,10 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
         "send(Buffer, { compress: false })": () => ws.send(Buffer.from("h"), { compress: false }),
         "send(Buffer, { compress: false, binary: false, fin: true })": () =>
           ws.send(Buffer.from("i"), { compress: false, binary: false, fin: true }),
-        // The peer did not accept permessage-deflate.
+        // The peer didn't negotiate permessage-deflate.
         'send("j", { compress: true })': () => ws.send("j", { compress: true }),
       })) {
-        results[call] = [attempt(act), ...(await client.conn.roundTrip())].join(", ");
+        results[call] = [tryCall(act), ...(await client.conn.roundTrip())].join(", ");
       }
       expect(results).toEqual({
         "send()": "undefined, binary",
@@ -464,7 +492,7 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
         "send(Buffer, { compress: false, binary: false, fin: true })": 'undefined, text "i"',
         'send("j", { compress: true })': 'undefined, text "j"',
       });
-      expect(await wire(client, callback => ws.send("k", null, callback))).toBe('text "k", callback(null)');
+      expect(await callOnOpenSocket(client, callback => ws.send("k", null, callback))).toBe('text "k", callback(null)');
     });
   });
 
@@ -485,12 +513,12 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
         const frame = (await client.conn.nextFrame())!;
         const message = frame.rsv & 4 ? inflate(frame.payload) : frame.payload;
         const sent = data instanceof Blob ? await data.bytes() : Buffer.from(data as string);
-        results[label] = `${head(frame)}, ${message.equals(sent) ? "intact" : show(message)}`;
+        results[label] = `${showFrameHeader(frame)}, ${message.equals(sent) ? "intact" : show(message)}`;
       }
       return results;
     };
 
-    test("every message is compressed unless `compress` is false", async () => {
+    test("compresses every message unless `compress` is false", async () => {
       expect(
         await run("permessage-deflate", [
           { label: "2048 bytes", data: a(2048) },
@@ -520,7 +548,7 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       });
     });
 
-    test("with client_no_context_takeover only messages of 1024 bytes and more are compressed", async () => {
+    test("with client_no_context_takeover, only compresses messages of 1024 bytes or more", async () => {
       expect(
         await run("permessage-deflate; client_no_context_takeover", [
           { label: "1023 bytes", data: a(1023) },
@@ -548,26 +576,29 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       });
     });
 
-    // npm ws compresses the fragments, the native client does not. A receiver needs what is asserted here: RSV1 on the
-    // first frame at most, and one message.
-    // npm ws reads any Blob later. The built-in cannot read a file inside send(), and says so.
+    // npm ws reads every Blob asynchronously. The built-in can't read a file-backed Blob inside send(), so it throws.
     test.skipIf(!builtin).each([
       { blob: "Bun.file()", make: (file: string) => Bun.file(file) },
       { blob: "fs.openAsBlob()", make: (file: string) => openAsBlob(file) },
-    ])("send($blob, { fin: false }) throws, reports no success and leaves no fragment open", async ({ make }) => {
-      using dir = tempDir("ws-send-file", { "data.txt": "from a file" });
-      const blob = await make(path.join(String(dir), "data.txt"));
-      await using client = await openClient(implementation);
-      const { ws, conn: peer } = client;
-      const results: unknown[] = [];
-      expect(() => ws.send(blob as any, { fin: false }, error => results.push(error))).toThrow("file");
-      const sent = new Promise(resolve => ws.send("x", resolve));
-      expect(await peer.roundTrip()).toEqual(['text "x"']);
-      expect(await sent).toBeNull();
-      expect(results.filter(result => !(result instanceof Error))).toEqual([]);
-    });
+    ])(
+      "send($blob, { fin: false }) throws, never reports success and doesn't start a fragmented message",
+      async ({ make }) => {
+        using dir = tempDir("ws-send-file", { "data.txt": "from a file" });
+        const blob = await make(path.join(String(dir), "data.txt"));
+        await using client = await openClient(implementation);
+        const { ws, conn: peer } = client;
+        const results: unknown[] = [];
+        expect(() => ws.send(blob as any, { fin: false }, error => results.push(error))).toThrow("file");
+        const sent = new Promise(resolve => ws.send("x", resolve));
+        expect(await peer.roundTrip()).toEqual(['text "x"']);
+        expect(await sent).toBeNull();
+        expect(results.filter(result => !(result instanceof Error))).toEqual([]);
+      },
+    );
 
-    test("a fragmented message arrives whole", async () => {
+    // npm ws compresses fragments, the native client doesn't. Either way a receiver needs what's asserted here: RSV1 on
+    // the first frame only, and a single message.
+    test("the fragments of a message add up to the whole message", async () => {
       await using client = await openClient(
         implementation,
         {},
@@ -579,7 +610,7 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       ws.send(a(100));
       const frames = [(await conn.nextFrame())!, (await conn.nextFrame())!, (await conn.nextFrame())!];
       const compressed = (frames[0].rsv & 4) !== 0;
-      expect(frames.map(head)).toEqual([
+      expect(frames.map(showFrameHeader)).toEqual([
         compressed ? "text !fin rsv1" : "text !fin",
         "continuation !fin",
         "continuation",
@@ -590,7 +621,7 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
   });
 
   describe.each(["ping", "pong"] as const)("%s()", method => {
-    test("what is falsy is an empty payload, a payload has 125 bytes at most", async () => {
+    test("sends an empty payload for falsy data and throws above 125 bytes", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const rows = controlPayloads.map(row => ({
         ...row,
@@ -599,26 +630,26 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       }));
       const results: Record<string, string> = {};
       for (const { label, data } of rows) {
-        results[label] = await wire(client, callback => client.ws[method](data, undefined, callback));
+        results[label] = await callOnOpenSocket(client, callback => client.ws[method](data, undefined, callback));
       }
       expect(results).toEqual(expected(rows));
     });
 
-    test("the callback may be the first, the second or the third argument", async () => {
+    test("accepts the callback as the first, second or third argument", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const { conn } = client;
       const ws: any = client.ws;
       expect([
-        await wire(client, callback => ws[method](callback)),
-        await wire(client, callback => ws[method]("a", callback)),
-        await wire(client, callback => ws[method]("b", true, callback)),
+        await callOnOpenSocket(client, callback => ws[method](callback)),
+        await callOnOpenSocket(client, callback => ws[method]("a", callback)),
+        await callOnOpenSocket(client, callback => ws[method]("b", true, callback)),
       ]).toEqual([`${method}, callback(null)`, `${method} "a", callback(null)`, `${method} "b", callback(null)`]);
-      expect(attempt(() => ws[method]())).toBe("undefined");
+      expect(tryCall(() => ws[method]())).toBe("undefined");
       expect(await conn.next()).toBe(method);
     });
   });
 
-  test("a callback runs after the call has returned, once, with null, in the order of the calls", async () => {
+  test("callbacks fire asynchronously, once, with null, in call order", async () => {
     await using client = await openClient(implementation, { perMessageDeflate: false });
     const { ws, conn } = client;
     const order: string[] = [];
@@ -644,31 +675,31 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
     ]);
   });
 
-  // The peer decides how many Pings there are, so a flood of them must not fill the memory of the client.
-  // RFC 6455 5.5.3 lets a Pong answer only the latest Ping. npm ws queues an answer to each.
-  // Winsock takes all of it on loopback, so nothing ever waits there.
-  test.skipIf(!builtin || isWindows)("Pings are not answered while more than 16 MiB wait for the socket", async () => {
+  // A peer can send unlimited Pings, so a ping flood must not exhaust the client's memory. RFC 6455 5.5.3 allows
+  // answering only the latest Ping. npm ws queues a Pong for each one.
+  // Skipped on Windows because Winsock accepts everything on loopback, so nothing is ever buffered.
+  test.skipIf(!builtin || isWindows)("skips auto-pong while more than 16 MiB is buffered", async () => {
     await using client = await openClient(implementation, { perMessageDeflate: false });
     const { ws, conn } = client;
     conn.socket.pause();
     let sent = 1;
-    // Far more than the limit: the kernel has taken a part of it, and its buffers grow while the Pings arrive.
+    // Send far more than the limit. The kernel already took part of it, and its buffers grow while the Pings arrive.
     ws.send(Buffer.alloc(33 * MiB));
     for (; ws.bufferedAmount <= 32 * MiB && sent < 16; sent++) ws.send(Buffer.alloc(MiB));
     expect(ws.bufferedAmount).toBeGreaterThan(32 * MiB);
 
     const pings = 100;
-    const { promise: heard, resolve } = Promise.withResolvers<void>();
+    const { promise: allPingsReceived, resolve } = Promise.withResolvers<void>();
     let count = 0;
     ws.on("ping", () => ++count === pings && resolve());
     for (let i = 0; i < pings; i++) conn.ping("flood");
-    await heard;
+    await allPingsReceived;
 
     conn.socket.resume();
     const opcodes: (number | undefined)[] = [];
     while (opcodes.length < sent) opcodes.push((await conn.nextFrame())?.opcode);
     expect(opcodes).toEqual(opcodes.map(() => OP.binary));
-    // Nothing waits any more. The Pong of the round trip itself shows that Pings are answered again.
+    // The buffer has drained. The round trip's own Pong proves auto-pong is back on.
     expect(await conn.roundTrip()).toEqual([]);
   });
 
@@ -683,11 +714,11 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       expect(ws.bufferedAmount).toBe(0);
     });
 
-    test("while it is not 0 the callbacks of what waits do not run; they run when the peer reads", async () => {
+    test("callbacks of buffered sends don't fire until the peer reads", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const { ws, conn } = client;
-      const { results, sent, settled } = await fill(client);
-      // At least one large message and the two small ones.
+      const { results, sent, settled } = await fillSendBuffer(client);
+      // At least one large message and the two small ones are still buffered.
       expect(results.length).toBeLessThanOrEqual(sent - 3);
 
       conn.socket.resume();
@@ -702,9 +733,9 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       expect(results).toEqual(Array.from({ length: sent }, (_, index) => `${index} null`));
     });
 
-    test("terminate() gives an Error to the callbacks of what waits", async () => {
+    test("terminate() passes an Error to the callbacks of buffered sends", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
-      const { results, sent, settled } = await fill(client);
+      const { results, sent, settled } = await fillSendBuffer(client);
       const written = results.length;
       expect(written).toBeLessThanOrEqual(sent - 3);
       client.ws.terminate();
@@ -715,9 +746,9 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
     });
   });
 
-  describe("on a socket that is not open", () => {
-    test("CONNECTING: send(), ping() and pong() throw, whatever the arguments, and nothing is queued", async () => {
-      await using client = await dial(implementation, {}, { respond: () => null });
+  describe("on a socket that isn't open", () => {
+    test("CONNECTING: send(), ping() and pong() throw regardless of arguments and queue nothing", async () => {
+      await using client = await connectClient(implementation, {}, { respond: () => null });
       const ws: any = client.ws;
       const conn = await client.peer.connection();
       let called = 0;
@@ -734,7 +765,7 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
           () => ws.pong("x", undefined, callback),
           () => ws.pong({}),
           () => ws.pong(callback),
-        ].map(attempt),
+        ].map(tryCall),
       ).toEqual(new Array(10).fill(connecting));
       expect(ws.readyState).toBe(WebSocket.CONNECTING);
       expect(ws.bufferedAmount).toBe(0);
@@ -745,50 +776,52 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       expect(called).toBe(0);
     });
 
-    test("CLOSING and CLOSED: the callback gets an Error, nothing is sent, bufferedAmount counts the payload", async () => {
+    test("CLOSING and CLOSED: calls back with an Error, sends nothing, grows bufferedAmount", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const { ws, conn } = client;
       const run = async () => {
         const results: Record<string, string> = {};
-        for (const { call, act } of discarded) results[call] = await discard(ws, act);
+        for (const { call, act } of closedSocketCalls) results[call] = await callOnClosedSocket(ws, act);
         return results;
       };
-      const all = (callback: string) =>
-        Object.fromEntries(discarded.map(row => [row.call, `${row.thrown ?? callback}, +${row.counted}`]));
+      const expectedWith = (callback: string) =>
+        Object.fromEntries(
+          closedSocketCalls.map(row => [row.call, `${row.thrown ?? callback}, +${row.bufferedBytes}`]),
+        );
 
       ws.close();
       expect(await conn.next()).toBe("close");
-      expect(await run()).toEqual(all(closing));
-      expect(attempt(() => ws.send("abcd"))).toBe("undefined");
-      expect(ws.bufferedAmount).toBe(discardedTotal + 4);
+      expect(await run()).toEqual(expectedWith(closing));
+      expect(tryCall(() => ws.send("abcd"))).toBe("undefined");
+      expect(ws.bufferedAmount).toBe(totalBufferedBytes + 4);
 
       conn.close(1000);
       conn.end();
       await client.closed;
-      expect(await run()).toEqual(all(closed));
-      expect(attempt(() => ws.send("abcd"))).toBe("undefined");
-      expect(ws.bufferedAmount).toBe(2 * (discardedTotal + 4));
-      expect(await conn.rest()).toEqual([]);
+      expect(await run()).toEqual(expectedWith(closed));
+      expect(tryCall(() => ws.send("abcd"))).toBe("undefined");
+      expect(ws.bufferedAmount).toBe(2 * (totalBufferedBytes + 4));
+      expect(await conn.remainingFrames()).toEqual([]);
     });
 
     test("after terminate()", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const { ws, conn } = client;
       ws.terminate();
-      expect(await discard(ws, (ws, callback) => ws.send("abcd", callback))).toBe(`${closing}, +4`);
+      expect(await callOnClosedSocket(ws, (ws, callback) => ws.send("abcd", callback))).toBe(`${closing}, +4`);
       await client.closed;
-      expect(await discard(ws, (ws, callback) => ws.ping("abcd", callback))).toBe(`${closed}, +4`);
-      expect(await conn.rest()).toEqual([]);
+      expect(await callOnClosedSocket(ws, (ws, callback) => ws.ping("abcd", callback))).toBe(`${closed}, +4`);
+      expect(await conn.remainingFrames()).toEqual([]);
     });
 
-    test("after a connection that failed", async () => {
+    test("after a failed connection", async () => {
       const ws = new WebSocket("ws://127.0.0.1:" + (await closedPort()));
       ws.on("error", () => {});
-      await event(ws, "close");
+      await nextEvent(ws, "close");
       expect([
-        await discard(ws, (ws, callback) => ws.send("x", callback)),
-        await discard(ws, (ws, callback) => ws.ping("x", callback)),
-        await discard(ws, (ws, callback) => ws.pong("x", callback)),
+        await callOnClosedSocket(ws, (ws, callback) => ws.send("x", callback)),
+        await callOnClosedSocket(ws, (ws, callback) => ws.ping("x", callback)),
+        await callOnClosedSocket(ws, (ws, callback) => ws.pong("x", callback)),
       ]).toEqual([`${closed}, +1`, `${closed}, +1`, `${closed}, +1`]);
       expect(ws.bufferedAmount).toBe(3);
     });

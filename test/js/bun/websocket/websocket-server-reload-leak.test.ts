@@ -64,10 +64,10 @@ test("server.reload() with websocket config lacking open/message does not leak p
   expect(exitCode).toBe(0);
 });
 
-// Each route that can be upgraded (and the fallback) used to get a uWS WebSocketContext of its own on every
-// reload, and contexts are only freed with the app. 400 reloads of 12 routes kept 5 MiB (release) or 8 MiB (ASAN);
-// the same reloads without `websocket` grow by 0.5 and 1.5 MiB. The 7800 route registrations take 4 to 5 s on ASAN.
-test("server.reload() does not keep a WebSocketContext per route and reload", async () => {
+// Every reload used to create a new uWS WebSocketContext for each upgradable route and for the fallback, and
+// contexts are only freed with the app. 400 reloads of 12 routes leaked 5 MiB (release) or 8 MiB (ASAN). The same
+// reloads without `websocket` grow by 0.5 and 1.5 MiB. The 7800 route registrations take 4 to 5 s on ASAN.
+test("server.reload() doesn't leak a WebSocketContext per route", async () => {
   await expectRssDeltaBelow([join(import.meta.dir, "websocket-server-reload-context-fixture.ts")], {
     release: 2.5,
     debug: 4.5,
@@ -82,7 +82,7 @@ function connect(url: URL | string) {
   return promise;
 }
 
-// The answer to `message`, or how the connection closed instead.
+// Sends `message` and resolves with the reply, or with the close code if the connection closes first.
 function ask(ws: WebSocket, message: string) {
   const { promise, resolve } = Promise.withResolvers<string>();
   ws.onmessage = event => resolve(String(event.data));
@@ -91,8 +91,8 @@ function ask(ws: WebSocket, message: string) {
   return promise;
 }
 
-// The handlers of the latest reload already applied to sockets that were open before it.
-test("server.reload() applies the new maxPayloadLength to sockets opened before it", async () => {
+// Reloaded handlers already applied to sockets that were open before the reload. The limits should too.
+test("server.reload() applies the new maxPayloadLength to already-open sockets", async () => {
   const config = (maxPayloadLength: number) => ({
     port: 0,
     fetch(req: Request, server: Bun.Server<undefined>) {
@@ -119,7 +119,7 @@ test("server.reload() applies the new maxPayloadLength to sockets opened before 
   expect(await Promise.all([ask(before, big), ask(after, big)])).toEqual(["closed 1009", "closed 1009"]);
 });
 
-test("server.reload() from inside a websocket handler", async () => {
+test("server.reload() works from inside a websocket handler", async () => {
   const config = (version: number) => ({
     port: 0,
     fetch(req: Request, server: Bun.Server<undefined>) {
@@ -145,8 +145,8 @@ test("server.reload() from inside a websocket handler", async () => {
   ws.close();
 });
 
-// Which route matched and its params belong to the HTTP route, not to the context the routes share.
-test.each([true, false])("routes upgrade with their own data across a reload (fallback: %p)", async withFallback => {
+// All routes share one WebSocketContext, so the matched route and its params have to come from the HTTP route.
+test.each([true, false])("each route upgrades with its own data across a reload (fallback: %p)", async withFallback => {
   const config = (version: number) => ({
     port: 0,
     routes: {
@@ -169,10 +169,10 @@ test.each([true, false])("routes upgrade with their own data across a reload (fa
 
   async function echo(path: string) {
     const ws = await connect(new URL(path, server.url));
-    const answer = await ask(ws, "hi");
+    const reply = await ask(ws, "hi");
     ws.onclose = null;
     ws.close();
-    return answer;
+    return reply;
   }
 
   const paths = withFallback ? ["/a/x", "/b/y", "/other"] : ["/a/x", "/b/y"];

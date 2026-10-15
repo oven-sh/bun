@@ -99,7 +99,7 @@ private:
     void* m_ptr { nullptr };
 };
 
-// The second argument of `new WebSocket(url, options)`, converted. JSWebSocket.cpp fills it.
+// The parsed `options` argument of `new WebSocket(url, options)`. Filled in by JSWebSocket.cpp.
 struct WebSocketOptions {
     Vector<String> protocols;
     std::optional<FetchHeaders::Init> headers;
@@ -107,14 +107,14 @@ struct WebSocketOptions {
     std::optional<FetchHeaders::Init> proxyHeaders;
     WebSocketSSLConfigPtr sslConfig;
     std::optional<bool> rejectUnauthorized;
-    // The caller of create() sets it on the wrapper; the options argument keeps it alive until then.
+    // create()'s caller stores this on the wrapper. Until then the JS options object keeps it alive.
     JSC::JSValue checkServerIdentity;
-    // The Sec-WebSocket-Extensions request header: a permessage-deflate offer. Null: no header.
+    // Value of the Sec-WebSocket-Extensions request header (the permessage-deflate offer). Null omits the header.
     String extensions { "permessage-deflate; client_max_window_bits"_s };
     WebSocketConnectedOptions connected { 128 * 1024 * 1024, true, false, false, false };
 };
 
-// A connection whose handshake is done and whose bytes travel over a stream that lives in JS. For the `ws` module.
+// Options for createOverStream(): the handshake is already done and a JS stream is the transport. Used by the `ws` module.
 struct WebSocketStreamOptions {
     String url;
     String protocol;
@@ -135,7 +135,7 @@ public:
     static ASCIILiteral subprotocolSeparator();
 
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, WebSocketOptions&& = {});
-    // OPEN from the start.
+    // The returned socket is already OPEN.
     static Ref<WebSocket> createOverStream(ScriptExecutionContext&, WebSocketStreamOptions&&);
     ~WebSocket();
 
@@ -170,41 +170,41 @@ public:
         Stream // createOverStream()
     };
 
-    // The write flags of the native client.
+    // Flags passed to the native client's write functions.
     enum FrameFlags : uint8_t {
         Fin = 1 << 0,
-        CompressIfWorthIt = 1 << 1,
+        CompressIfLargeEnough = 1 << 1,
         Compress = 1 << 2,
     };
 
-    // The bytes are borrowed for the call. A String goes out as UTF-8.
+    // The span only has to stay valid during the call. A String is sent as UTF-8.
     using Payload = std::variant<std::span<const uint8_t>, String>;
-    // send(), ping() and pong(). Throws while CONNECTING; once CLOSING, a data frame only counts in bufferedAmount.
-    ExceptionOr<void> sendFrame(Opcode, const Payload&, uint8_t flags = Fin | CompressIfWorthIt);
+    // Implements send(), ping() and pong(). Throws while CONNECTING. Once CLOSING, data frames are dropped but still added to bufferedAmount.
+    ExceptionOr<void> sendFrame(Opcode, const Payload&, uint8_t flags = Fin | CompressIfLargeEnough);
 
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
     void terminate();
     // Receive-side flow control (non-standard; mirrors Bun.Socket). pause()
     // stops kernel reads so TCP backpressure reaches the peer; frames already
     // decoded still dispatch. Before OPEN it latches and applies on connect,
-    // and holds back the body of a response that is not a 101.
+    // and also pauses the body of a non-101 response.
     bool pause();
     bool resume();
     bool isPaused() const { return m_paused && canPause(); }
 
-    // For `_socket` of the `ws` module.
-    // Whether the connection keeps the process alive. An unref() while CONNECTING holds once connected.
+    // setRef() and remoteAddress() back the `ws` module's `_socket`.
+    // Sets whether the connection keeps the process alive. An unref while CONNECTING is applied once connected.
     void setRef(bool);
     struct RemoteAddress {
         String address;
         uint16_t port;
         bool isIPv6;
     };
-    // nullopt unless connected, and for a unix socket. Through a proxy it is the proxy's.
+    // Returns nullopt if not connected or if connected over a unix socket. Behind a proxy, this is the proxy's address.
     std::optional<RemoteAddress> remoteAddress() const;
-    // Only after createOverStream(). The bytes read from the stream, borrowed for the call: the handlers run inside it.
+    // createOverStream() only. Parses bytes read from the stream. Handlers run before this returns, so the span must stay valid throughout.
     void feed(std::span<const uint8_t>);
-    // The stream is gone.
+    // createOverStream() only. The stream was closed.
     void streamClosed();
 
     void setProtocol(const String& protocol);
@@ -222,14 +222,14 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const final;
     void dispatchEvent(Event&) final;
 
-    // Both return the connected client, or null if `open` already dropped it.
+    // Both return the connected native client, or null if it was already dropped (e.g. an `open` listener closed it).
     void* didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx, std::span<const uint8_t> verifiedHostname);
     void* didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
-    // The peer's Close frame arrived: 1005 for one without a code. The `ws` module hears of it: handlers.conclude(code, reason).
+    // The peer's Close frame arrived. `code` is 1005 if the frame had none. In ws mode this calls handlers.conclude(code, reason).
     void didStartClosingHandshake(unsigned short code, String&& reason);
     void didClose(unsigned short code, String&& reason, bool wasClean, size_t bufferedAmount);
     void didFail(Bun::WebSocketErrorCode, size_t bufferedAmount, String&& systemCode, String&& detail);
-    // The `ws` module's open connection failed: handlers.error now. The native client stays until the connection is closed, then didClose().
+    // ws mode only: an open connection failed. Calls handlers.error right away. The native client stays alive until the connection closes, then calls didClose().
     void didError(Bun::WebSocketErrorCode, String&& detail);
     void didDrain();
     void streamWrite(std::span<const uint8_t>);
@@ -249,10 +249,10 @@ public:
         FfiSlice value;
     };
     void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, bool isUpgrade, std::span<const uint8_t> body);
-    // Made by the `ws` module: nothing is dispatched as an Event, the wrapper's handler table is called.
+    // True for sockets created by the `ws` module. They call the wrapper's handler table instead of dispatching Events.
     bool isWsMode() const { return m_connectedOptions.ws_mode; }
-    // It gets the decoded body of a response that is not a 101: handlers.body(chunk), then
-    // handlers.body(null, aborted, reset). That response is the outcome, so neither handlers.error nor handlers.close follows.
+    // ws mode only: the decoded body of a non-101 response. Calls handlers.body(chunk) per chunk, then
+    // handlers.body(null, aborted, reset) at the end. handlers.error and handlers.close aren't called after that.
     void didReceiveResponseBody(std::span<const uint8_t> chunk);
     void didEndResponseBody(bool aborted, bool reset);
 
@@ -268,7 +268,7 @@ public:
     // onMessage gets text frames only — binary frames are dropped (the
     // only current consumer speaks JSON). If a consumer needs binary,
     // add onBinary alongside. onClose fires for both clean and abrupt
-    // close, from the task that would fire the close event.
+    // close, from the same task that would otherwise fire the close event.
     struct NativeCallbacks {
         void* ctx = nullptr;
         void (*onOpen)(void* ctx) = nullptr;
@@ -277,11 +277,11 @@ public:
     };
     void setNativeCallbacks(NativeCallbacks cb) { m_native = cb; }
 
-    // For the native-callback consumer: there is no JS caller to surface an exception to.
+    // For NativeCallbacks consumers. Doesn't return an exception because there's no JS caller to throw it to.
     void sendTextNative(const String& message)
     {
         if (m_state != OPEN) return;
-        sendWebSocketString(message, Opcode::Text, Fin | CompressIfWorthIt);
+        sendWebSocketString(message, Opcode::Text, Fin | CompressIfLargeEnough);
     }
 
     bool rejectUnauthorized() const
@@ -297,7 +297,7 @@ public:
         m_checkServerIdentity.set(vm, wrapper, callback);
     }
 
-    // The async context of the constructor call. Every trusted event is dispatched in it.
+    // The async context captured by the constructor. Trusted events are dispatched inside it.
     const JSValueInWrappedObject& asyncContext() const { return m_asyncContext; }
     void setAsyncContext(JSC::VM& vm, const JSC::JSCell* wrapper, JSC::JSValue context)
     {
@@ -324,10 +324,10 @@ private:
         String detail;
     };
 
-    // ActiveDOMObject. Read from the GC thread; a stale answer keeps or drops the wrapper one
-    // cycle early or late, as upstream tolerates.
+    // ActiveDOMObject. Read from the GC thread. A stale value only keeps or collects the wrapper
+    // one GC cycle late or early, which upstream WebKit also tolerates.
     void stop() final;
-    // A stream lives in JS: it is what keeps its WebSocket alive.
+    // On the stream transport, the JS stream keeps the WebSocket alive instead.
     bool virtualHasPendingActivity() const final { return m_state != CLOSED && m_connectionType != ConnectionType::Stream; }
 
     explicit WebSocket(ScriptExecutionContext&);
@@ -339,19 +339,20 @@ private:
 
     ExceptionOr<void> connect(const String& url, WebSocketOptions&&);
     void* didConnect();
-    // `error`, then `close` with 1006.
+    // Fires `error`, then `close` with code 1006.
     void failConnection(ASCIILiteral text, size_t bufferedAmount = 0, String&& code = {}, String&& detail = {});
-    // The native clients are gone. CLOSING now; one task sets CLOSED and fires the events (over a stream: at once).
+    // Clears the native client pointers, which are no longer valid. Sets CLOSING, then queues a task that sets CLOSED and fires the events.
+    // On the stream transport that happens synchronously.
     void finish(size_t bufferedAmount, unsigned short code, String&& reason, bool wasClean, std::optional<Failure>&&);
     void reportFailure(const Failure&);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
 
-    // handlers[name].call(owner, ...arguments). What it throws is reported as an uncaught exception.
+    // handlers[name].call(owner, ...arguments). Anything it throws is reported as an uncaught exception.
     void callHandler(const JSC::Identifier& name, const JSC::ArgList&);
     void callHandlerWithBuffer(const JSC::Identifier& name, std::span<const uint8_t>, JSC::JSValue secondArgument = {});
-    // The `ws` module hears frames until the peer's Close frame.
-    bool dispatchesFrames() const { return m_state == OPEN || (m_state == CLOSING && isWsMode()); }
-    bool canPause() const { return m_state == CONNECTING || dispatchesFrames(); }
+    // After close(), a WHATWG socket drops incoming frames. The `ws` module keeps receiving them until the peer's Close frame.
+    bool shouldDispatchFrames() const { return m_state == OPEN || (m_state == CLOSING && isWsMode()); }
+    bool canPause() const { return m_state == CONNECTING || shouldDispatchFrames(); }
 
     void sendWebSocketString(const String& message, Opcode, uint8_t flags);
     void sendWebSocketData(std::span<const uint8_t>, Opcode, uint8_t flags);
@@ -360,7 +361,7 @@ private:
     State m_state { CONNECTING };
     URL m_url;
     String m_origin;
-    // Bytes that will never go out: what the native client still held when it went away, and send() since CLOSING.
+    // Bytes that will never be sent: whatever the native client still had buffered when the connection closed, plus send() calls since CLOSING.
     unsigned m_bufferedAmount { 0 };
     // In browsers, the default is Blob, however most applications
     // immediately change the default to ArrayBuffer.
@@ -372,11 +373,12 @@ private:
     String m_extensions;
     void* m_upgradeClient { nullptr };
     ConnectionType m_connectionType { ConnectionType::Plain };
-    // Drop the in-flight upgrade without a callback / the connected client, which answers with didClose().
+    // cancelUpgradeClient() drops the in-flight upgrade without a callback. cancelConnectedClient() drops the connection, and
+    // the native client then calls didClose().
     void cancelUpgradeClient();
     void cancelConnectedClient();
     bool applyPauseToConnectedClient();
-    // The bytes that came with the 101 wait while paused. They are parsed from a task, never inside resume() or close().
+    // Bytes that arrived with the 101 stay buffered while paused. Parse them from a task so listeners never run inside resume() or close().
     void queueInitialDataDelivery();
     bool m_rejectUnauthorized { false };
     bool m_paused { false };
@@ -384,8 +386,8 @@ private:
     WebSocketConnectedOptions m_connectedOptions {};
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
-    // connect()'s claim on the wrapper: held from connect() until finish() (or
-    // stop()). Posted event tasks keep it alive through queueTaskKeepingObjectAlive().
+    // Keeps the wrapper alive from connect() until finish() or stop(). Queued event tasks keep it
+    // alive on their own through queueTaskKeepingObjectAlive().
     RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
 
     // `tls.checkServerIdentity` and the async context, marked by JSWebSocket::visitChildren.

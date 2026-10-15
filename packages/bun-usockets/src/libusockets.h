@@ -366,9 +366,9 @@ struct us_socket_group_t *us_socket_group_next(us_socket_group_r group) nonnull_
 
 /* Move an open socket between groups / kinds, optionally resizing its ext.
  * Replaces us_socket_context_adopt_socket + us_create_child_socket_context.
- * Returns the (possibly relocated) socket, or NULL for a closed or shut down
- * one: s then keeps its group, kind and ext, and the caller must not write
- * its own type into that ext. */
+ * Returns the (possibly relocated) socket, or NULL if s is closed or shut down.
+ * On NULL, s keeps its group, kind and ext, so the caller must not write the
+ * new type into that ext. */
 struct us_socket_t *us_socket_adopt(us_socket_r s, us_socket_group_r group,
     unsigned char kind, int old_ext_size, int ext_size) nonnull_fn_decl;
 

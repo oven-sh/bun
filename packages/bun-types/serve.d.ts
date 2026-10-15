@@ -6,7 +6,7 @@ declare module "bun" {
    * - if **-1**, there is **backpressure** of messages.
    * - if **>0**, it represents the **number of bytes sent**.
    *
-   * An empty payload (`ws.send("")`, `ws.ping()`, `ws.pong()`) is sent and also returns **0**.
+   * Sending an empty payload (`ws.send("")`, `ws.ping()`, `ws.pong()`) succeeds but also returns **0**.
    *
    * @example
    * ```js
@@ -118,20 +118,20 @@ declare module "bun" {
      * - `3000` through `3999` are reserved for libraries and frameworks
      * - `4000` through `4999` are reserved for applications
      *
-     * Valid codes are `1000`-`1003`, `1007`-`1014` and `3000`-`4999`. `0`, `1005`, `1006` and `1015`
-     * never go on the wire: they send a Close frame without a code, so a code received in a `close`
-     * handler can be passed on as it is. Any other code throws a `RangeError`.
+     * Valid codes are `1000`-`1003`, `1007`-`1014` and `3000`-`4999`. Any other code throws a
+     * `RangeError`, except `0`, `1005`, `1006` and `1015`. Those send a Close frame with no code,
+     * so you can forward the code from a `close` handler unchanged.
      *
      * To close the connection abruptly, use `terminate()`.
      *
      * @param code The close code to send
-     * @param reason The close reason to send. Cut to 123 bytes of UTF-8, at a character boundary.
+     * @param reason The close reason to send. Truncated to 123 bytes of UTF-8, at a character boundary.
      */
     close(code?: number, reason?: string): void;
 
     /**
-     * Closes the connection abruptly, without a Close frame. Messages that
-     * `send()` and `publish()` already accepted are written first.
+     * Closes the connection abruptly, without sending a Close frame. Messages
+     * already queued by `send()` and `publish()` are flushed first.
      *
      * To close the connection gracefully, use `close()`.
      */
@@ -250,8 +250,8 @@ declare module "bun" {
      * you only need to call this if you are sending messages outside of those
      * callbacks or in async functions.
      *
-     * @param callback The callback to run. It also runs when the socket is closed.
-     * @returns What `callback` returns.
+     * @param callback The callback to run. It runs even if the socket is closed.
+     * @returns The return value of `callback`.
      * @example
      * ```ts
      * ws.cork((ctx) => {
@@ -344,8 +344,8 @@ declare module "bun" {
     data: T;
 
     /**
-     * The number of bytes that were accepted by `send()` or `publish()` and
-     * are not yet written to the socket.
+     * The number of bytes queued by `send()` or `publish()` that haven't been
+     * written to the socket yet.
      */
     getBufferedAmount(): number;
 
@@ -353,7 +353,7 @@ declare module "bun" {
      * Stops reading from the socket, so the client sees TCP backpressure. The
      * idle timeout is suspended until `resume()`. Sending still works.
      *
-     * Messages that were already read from the socket are still delivered.
+     * Messages already read from the socket are still delivered.
      *
      * @example
      * ```ts
@@ -373,7 +373,7 @@ declare module "bun" {
     resume(): void;
 
     /**
-     * Whether `pause()` was called without a `resume()` since. `false` on a closed socket.
+     * Whether the socket is paused. Always `false` on a closed socket.
      */
     readonly isPaused: boolean;
   }
@@ -511,8 +511,7 @@ declare module "bun" {
      * Called when one of the other handlers throws. Without it, the error is an
      * uncaught exception.
      *
-     * A rejected promise from an `async` handler does not come here: it is an
-     * unhandled rejection.
+     * Not called when an `async` handler rejects. That's an unhandled rejection.
      *
      * @param ws The websocket whose handler threw
      * @param error The value that was thrown
@@ -521,9 +520,9 @@ declare module "bun" {
 
     /**
      * Sets the maximum size of a received message, in bytes, after
-     * decompression. A client that sends a larger one is closed with code `1009`.
+     * decompression. Larger messages close the connection with code `1009`.
      *
-     * An integer from `0` to `4294967295`; larger values are clamped. With `0`
+     * An integer from `0` to `4294967295`. Larger values are clamped. `0` means
      * only empty messages are accepted.
      *
      * @default 1024 * 1024 * 16 // 16 MB
@@ -532,9 +531,9 @@ declare module "bun" {
 
     /**
      * Sets the maximum number of bytes that can be buffered on a single
-     * connection. Above it, `send()` drops the message and returns `0`.
+     * connection. Past the limit, `send()` drops the message and returns `0`.
      *
-     * An integer from `0` to `4294967295`; larger values are clamped. `0` means
+     * An integer from `0` to `4294967295`. Larger values are clamped. `0` means
      * no limit.
      *
      * @default 1024 * 1024 * 16 // 16 MB
@@ -552,8 +551,8 @@ declare module "bun" {
      * Sets the number of seconds to wait before timing out a connection
      * due to no messages or pings.
      *
-     * An integer from `0` to `960`. `0` disables the timeout, and with it the
-     * automatic pings of `sendPings`. `1` to `7` are rounded up to `8`.
+     * An integer from `0` to `960`. `0` disables the timeout and the automatic
+     * pings from `sendPings`. `1` to `7` round up to `8`.
      *
      * @default 120
      */
@@ -567,10 +566,10 @@ declare module "bun" {
     publishToSelf?: boolean;
 
     /**
-     * Whether the server pings a client shortly before its `idleTimeout` runs
-     * out, so that a live but quiet connection stays open.
+     * Whether the server pings a client shortly before `idleTimeout` expires,
+     * which keeps idle connections open as long as the client responds.
      *
-     * Pings from clients are always answered with a pong.
+     * The server always replies to client pings with a pong.
      *
      * @default true
      */
@@ -579,7 +578,7 @@ declare module "bun" {
     /**
      * Enables the permessage-deflate extension, for clients that support it.
      *
-     * `true` is `{ compress: "shared", decompress: "shared" }`.
+     * `true` is the same as `{ compress: "shared", decompress: "shared" }`.
      *
      * @default false
      */
@@ -590,12 +589,12 @@ declare module "bun" {
            * The compressor for messages the server sends.
            *
            * - `"shared"` or `true`: one compressor for all sockets, reset after each message.
-           * - `"dedicated"` or a size: one compressor per socket, which remembers earlier
-           *   messages. Better compression, and that much memory for every socket.
-           *   `"dedicated"` is `"256KB"`.
-           * - `"disable"` or `false`: the server never compresses, even when `send()` asks for it.
+           * - `"dedicated"` or a size: one compressor per socket that keeps context across
+           *   messages. Compresses better, but uses that much memory per socket.
+           *   `"dedicated"` is the same as `"256KB"`.
+           * - `"disable"` or `false`: never compress, even if `send()` passes `true`.
            *
-           * @default "shared" when `decompress` is on
+           * @default "shared" if `decompress` is enabled
            */
           compress?: WebSocketCompressor | boolean;
           /**
@@ -603,12 +602,12 @@ declare module "bun" {
            *
            * - `"shared"` or `true`: one decompressor for all sockets. Clients are told to
            *   reset their compressor after each message.
-           * - `"dedicated"` or a size: one decompressor per socket. The size is its window,
-           *   at most 32 KB: `"dedicated"` and `"64KB"` and above are `"32KB"`, `"3KB"` is 2 KB.
-           * - `"disable"` or `false`: no decompressor per socket. permessage-deflate cannot stop
-           *   a client from compressing, so with `compress` on this is `"shared"`.
+           * - `"dedicated"` or a size: one decompressor per socket. The size is the window size,
+           *   capped at 32 KB. `"dedicated"`, `"64KB"` and larger mean `"32KB"`. `"3KB"` means 2 KB.
+           * - `"disable"` or `false`: no per-socket decompressor. permessage-deflate can't stop a
+           *   client from compressing, so this falls back to `"shared"` if `compress` is enabled.
            *
-           * @default "shared" when `compress` is on
+           * @default "shared" if `compress` is enabled
            */
           decompress?: WebSocketCompressor | boolean;
         };
@@ -1165,7 +1164,7 @@ declare module "bun" {
      * @param topic The topic to publish to
      * @param data The data to send
      * @param compress Whether to compress the data. Defaults to `true`, unlike {@link ServerWebSocket.send} and
-     * {@link ServerWebSocket.publish}, which default to `false`. Ignored for subscribers that do not support compression.
+     * {@link ServerWebSocket.publish}, which default to `false`. Ignored for subscribers that don't support compression.
      *
      * @returns 0 if the message was dropped for any subscriber (or there were no subscribers), -1 if backpressure was applied for any subscriber, or the number of bytes sent.
      *

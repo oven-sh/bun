@@ -53,7 +53,8 @@ const Z_DEFAULT_COMPRESSION: c_int = 6;
 const Z_DEFAULT_STRATEGY: c_int = 0;
 const Z_DEFAULT_MEM_LEVEL: c_int = 8;
 
-/// Still decodable by an 8-bit peer: deflate's match distances stay <= 512 - MIN_LOOKAHEAD = 250.
+/// zlib rejects an 8-bit window for raw deflate. A peer that negotiated 8 bits can still decode
+/// 9-bit output, because match distances stay <= 512 - MIN_LOOKAHEAD = 250.
 const ZLIB_MIN_RAW_DEFLATE_WINDOW_BITS: u8 = 9;
 
 // Buffer size for compression/decompression operations
@@ -86,7 +87,8 @@ pub enum CompressError {
 }
 
 impl PerMessageDeflate {
-    /// RFC 7692 names each parameter after the side whose compressor it binds.
+    /// RFC 7692 names each parameter after the side whose compressor it limits: `server_*`
+    /// configures the server's compressor and the client's decompressor.
     pub(crate) fn init(params: Params, is_server: bool) -> Box<Self> {
         let server = (
             params.server_max_window_bits,
@@ -135,7 +137,7 @@ impl PerMessageDeflate {
         len < INFLATE_BUFFER_SIZE
     }
 
-    /// Inflate one message of at most `max_len` bytes onto `out`. `decompressor`
+    /// Inflate one message onto `out`, failing if it exceeds `max_len` bytes. `decompressor`
     /// is the thread's shared libdeflate handle (`None` when it could not be allocated).
     pub(crate) fn decompress(
         &mut self,

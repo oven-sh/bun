@@ -775,12 +775,12 @@ describe.concurrent("wss:// through a proxy: the end of the proxy connection", (
     describe.each(["inside the open event", "after the open event"] as const)("%s", when => {
       test.each([
         ["terminate()", [], (ws: WebSocket) => ws.terminate()],
-        // The client says why (a Text frame, then Close 1002) and does not wait for an answer.
+        // The client sends its Text frame, then Close 1002, and disconnects without waiting for a reply.
         ["an invalid frame from the server", [0x1, 0x8], (ws: WebSocket) => ws.send("go")],
-      ] as const)("%s closes it", async (_label, opcodes, act) => {
-        const fromClients: number[] = [];
+      ] as const)("%s closes the proxy connection", async (_label, opcodes, act) => {
+        const clientOpcodes: number[] = [];
         using origin = await startRawWssServer((socket, chunk) => {
-          fromClients.push(chunk[0] & 0x0f);
+          clientOpcodes.push(chunk[0] & 0x0f);
           if (socket.writable) socket.write(Buffer.from([0x83, 0x00]));
         });
         using recorded = await startRecordingProxy({ tls: scheme === "https" });
@@ -797,7 +797,7 @@ describe.concurrent("wss:// through a proxy: the end of the proxy connection", (
         expect(codes).toEqual([1006, 1006, 1006, 1006]);
         expect(await Promise.all(recorded.departures)).toHaveLength(4);
         await Promise.all(origin.departures);
-        expect(fromClients.sort()).toEqual([...opcodes, ...opcodes, ...opcodes, ...opcodes].sort());
+        expect(clientOpcodes.sort()).toEqual([...opcodes, ...opcodes, ...opcodes, ...opcodes].sort());
       });
     });
   });
@@ -805,22 +805,15 @@ describe.concurrent("wss:// through a proxy: the end of the proxy connection", (
   const CLOSE_1000 = Buffer.from([0x88, 0x02, 0x03, 0xe8]);
   test.each([
     ["terminate()", "terminate", undefined, false, "30", "1006 false\n"],
-    // The server ends the connection when it reads the client's close_notify.
-    ["close(), with a server that answers", "close", CLOSE_1000, false, "30", "1000 true\n"],
-    // uSockets sweeps its timeouts every 4 s, so a timeout of 1 s takes 4 to 8 s.
-    [
-      "close(), with a server that answers and never closes the connection",
-      "close",
-      CLOSE_1000,
-      true,
-      "1",
-      "1000 true\n",
-    ],
-    ["close(), with a server that never answers, at the close timeout", "close", undefined, false, "1", "1006 false\n"],
+    // The server closes the connection when it reads the client's close_notify.
+    ["close() when the server replies", "close", CLOSE_1000, false, "30", "1000 true\n"],
+    // uSockets checks timeouts every 4 s, so a 1 s timeout takes 4 to 8 s to fire.
+    ["close() when the server replies but never closes the connection", "close", CLOSE_1000, true, "1", "1000 true\n"],
+    ["close() when the server never replies (close timeout)", "close", undefined, false, "1", "1006 false\n"],
   ] as const)(
     "the process exits after %s",
-    async (_label, method, answer, allowHalfOpen, closeTimeout, output) => {
-      using origin = await startRawWssServer(socket => void (answer && socket.write(answer)), { allowHalfOpen });
+    async (_label, method, reply, allowHalfOpen, closeTimeout, output) => {
+      using origin = await startRawWssServer(socket => void (reply && socket.write(reply)), { allowHalfOpen });
       using recorded = await startRecordingProxy();
       await using client = Bun.spawn({
         cmd: [

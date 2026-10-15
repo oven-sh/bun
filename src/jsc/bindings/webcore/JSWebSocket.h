@@ -64,7 +64,8 @@ public:
         return static_cast<WebSocket&>(Base::wrapped());
     }
 
-    // Set for a socket of the `ws` module: its WebSocket object, `this` of every call, and the module's one table of functions.
+    // Only set for sockets created by the `ws` module. m_owner is the module's WebSocket object, passed as `this` to every handler.
+    // m_handlers is the module's table of handler functions, shared by all of its sockets.
     JSC::WriteBarrier<JSC::JSObject> m_owner;
     JSC::WriteBarrier<JSC::JSObject> m_handlers;
 
@@ -97,7 +98,8 @@ template<> struct JSDOMWrapperConverterTraits<WebSocket> {
 };
 
 JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject);
-// { createWebSocket, createWebSocketOverStream, sendFrame, setRef, remoteAddress, feed, streamClosed } for the built-in `ws` module.
+// Native binding for the built-in `ws` module:
+// { createWebSocket, createWebSocketOverStream, sendFrame, setRef, detach, remoteAddress, feed, streamClosed }
 JSC::JSValue createWebSocketBindingForWs(Zig::GlobalObject* globalObject);
 
 } // namespace WebCore

@@ -334,7 +334,7 @@ await server.stop();
 await server.stop(true);
 ```
 
-By default, `stop()` allows in-flight requests and WebSocket connections to complete. The server closes idle keep-alive connections immediately. Connections with a request in flight close once the server has sent their response. Pass `true` to immediately terminate all connections instead; open WebSockets are closed with code `1001`. The returned promise resolves once every connection has closed.
+By default, `stop()` allows in-flight requests and WebSocket connections to complete. The server closes idle keep-alive connections immediately. Connections with a request in flight close once the server has sent their response. Pass `true` to immediately terminate all connections instead. Open WebSockets close with code `1001`. The returned promise resolves once every connection has closed.
 
 ### `server.closeIdleConnections()`
 
@@ -600,7 +600,7 @@ export interface Post {
 interface Server extends Disposable {
   /**
    * Stop the server from accepting new connections.
-   * @param closeActiveConnections If true, immediately terminates all connections (WebSockets are closed with code 1001)
+   * @param closeActiveConnections If true, immediately terminates all connections (WebSockets close with code 1001)
    * @returns Promise that resolves when the server has stopped
    */
   stop(closeActiveConnections?: boolean): Promise<void>;
@@ -637,7 +637,7 @@ interface Server extends Disposable {
 
   /**
    * Publish a message to all WebSocket clients subscribed to a topic.
-   * @param compress Defaults to true (ws.send() and ws.publish() default to false); only applies to clients that negotiated perMessageDeflate
+   * @param compress Defaults to true, unlike ws.send() and ws.publish(). Only applies to clients that negotiated perMessageDeflate
    * @returns Bytes sent, 0 if dropped, -1 if backpressure applied
    */
   publish(

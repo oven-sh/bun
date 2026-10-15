@@ -2834,17 +2834,17 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
     }
   });
 
-  test("an http.Server of the host's: the connections `ws` upgrades on it are the host's, also when a graph was the first to call handleUpgrade()", async () => {
+  test("`ws` connections upgraded on the host's http.Server belong to the host, even when a graph called handleUpgrade() first", async () => {
     const graph = new ModuleGraph();
     const wss = new WebSocketServer({ noServer: true });
     const server = http.createServer();
     const clients: WebSocket[] = [];
     try {
-      const ranIn: (Graph | undefined)[] = [];
+      const messageGraphs: (Graph | undefined)[] = [];
       const accept = (...connection: Parameters<typeof wss.handleUpgrade> extends [...infer C, unknown] ? C : never) =>
         wss.handleUpgrade(...connection, ws =>
           ws.on("message", data => {
-            ranIn.push(ModuleGraph.current);
+            messageGraphs.push(ModuleGraph.current);
             ws.send(String(data));
           }),
         );
@@ -2864,15 +2864,15 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
           client.send(text);
         });
 
-      const throughTheGraph = await connect("/graph");
-      const theHosts = await connect("/host");
-      expect([await echo(throughTheGraph, "1"), await echo(theHosts, "2")]).toEqual(["1", "2"]);
-      expect(ranIn).toEqual([undefined, undefined]);
+      const graphClient = await connect("/graph");
+      const hostClient = await connect("/host");
+      expect([await echo(graphClient, "1"), await echo(hostClient, "2")]).toEqual(["1", "2"]);
+      expect(messageGraphs).toEqual([undefined, undefined]);
 
       graph.dispose();
       expect([
-        await echo(throughTheGraph, "3"),
-        await echo(theHosts, "4"),
+        await echo(graphClient, "3"),
+        await echo(hostClient, "4"),
         await echo(await connect("/host"), "5"),
       ]).toEqual(["3", "4", "5"]);
     } finally {

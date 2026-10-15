@@ -37,7 +37,7 @@ Bun.serve({
 
 ---
 
-`server.publish()` compresses by default. Pass `false` as the third parameter to publish a message uncompressed. Short messages grow when deflated, so pass `false` for those.
+`server.publish()` compresses by default. Pass `false` as the third parameter to publish a message uncompressed. Compression makes short messages larger, so pass `false` for those.
 
 ```ts server.ts icon="/icons/typescript.svg"
 const server = Bun.serve({

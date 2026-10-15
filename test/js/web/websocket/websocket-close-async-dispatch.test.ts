@@ -66,7 +66,7 @@ describe.concurrent.each(["close", "terminate"] as const)("ws.%s() while OPEN", 
     }
   });
 
-  test("send() between the call and the close event only counts its payload in bufferedAmount", async () => {
+  test("send() between the call and the close event only adds its payload to bufferedAmount", async () => {
     await using server = upgradeServer();
     const ws = await open(server);
 

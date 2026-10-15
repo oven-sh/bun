@@ -129,8 +129,8 @@ private:
     /* WebSocketContexts are of differing type, but we as owners and creators must delete them correctly */
     std::vector<MoveOnlyFunction<void()>> webSocketContextDeleters;
     std::vector<us_socket_group_t *> webSocketGroups;
-    /* A context lives as long as the app (an upgrade in flight holds a raw pointer to it), so ws() calls share
-     * one by key. A wsPackage context has no key: wsPackageContext() finds it by its options. */
+    /* Contexts can't be freed before the app because an in-flight upgrade holds a raw pointer to one, so ws() calls
+     * with the same key reuse a context. wsPackage contexts have a null key; wsPackageContext() matches them by options. */
     std::vector<std::pair<const void *, void *>> webSocketContexts;
 
 public:
@@ -365,7 +365,7 @@ public:
          * here without us holding raw pointers to them across loop ticks. */
         us_socket_group_close_all(httpContext->getSocketGroup());
         for (us_socket_group_t *g : webSocketGroups) {
-            /* A snapshot: end() runs the close handler, which can close any other socket of the group */
+            /* Snapshot the list first: end() runs the close handler, which can close other sockets in the group */
             std::vector<us_socket_t *> sockets;
             for (us_socket_t *s = g->head_sockets; s; s = s->next) {
                 sockets.push_back(s);
@@ -435,7 +435,7 @@ public:
     }
 
 private:
-    /* Takes the handlers of behavior, not its settings */
+    /* Moves the handlers out of behavior. Settings are applied by applyWebSocketSettings(). */
     template <typename UserData>
     WebSocketContext<SSL, true, UserData> *createWebSocketContext(const void *key, WebSocketBehavior<UserData> &behavior) {
         /* Don't compile if alignment rules cannot be satisfied */
@@ -557,8 +557,9 @@ private:
     }
 
 public:
-    /* The context of the `ws` package with these options (maxPayloadLength, compression, autoPong, skipUTF8Validation).
-     * It has no route: HttpResponse::upgradeRaw() takes it. The handlers must be the same in every call. */
+    /* Returns the `ws` package's context for these options (maxPayloadLength, compression, autoPong, skipUTF8Validation),
+     * creating it on first use. It isn't bound to a route; pass it to HttpResponse::upgradeRaw().
+     * Every call must pass the same handlers. */
     template <typename UserData>
     WebSocketContext<SSL, true, UserData> *wsPackageContext(WebSocketBehavior<UserData> &&behavior) {
         for (auto &[key, context] : webSocketContexts) {
@@ -570,7 +571,7 @@ public:
             }
         }
 
-        /* Node has none of these, and ws.ts has its own close timer */
+        /* Node has no equivalent of these, and ws.ts runs its own close timer */
         behavior.wsPackage = true;
         behavior.idleTimeout = 0;
         behavior.sendPingsAutomatically = false;
@@ -584,8 +585,8 @@ public:
         return webSocketContext;
     }
 
-    /* Every call with the same key must use the same UserData type and the same handlers (upgrade excepted): they
-     * share one context, which takes the handlers of the first call and the settings of the last one. */
+    /* Calls with the same key share one context, so they must use the same UserData type and the same handlers
+     * (except upgrade). The context keeps the first call's handlers and the last call's settings. */
     template <typename UserData>
     TemplatedApp &&ws(std::string_view pattern, WebSocketBehavior<UserData> &&behavior, const void *key) {
         if (!httpContext) {

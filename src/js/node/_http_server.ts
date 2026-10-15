@@ -931,7 +931,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // token; the server then consults shouldUpgradeCallback (default: an
         // 'upgrade' listener is installed) and otherwise dispatches the
         // request normally.
-        // Not when pipelined: a queued native response cannot upgrade.
+        // Pipelined requests never upgrade, because a queued native response can't.
         let is_upgrade = false;
         if (
           !isPipelined &&
@@ -1442,10 +1442,10 @@ function replyMissingHostHeader(socket) {
   socket.destroySoon();
 }
 
-// What bytesWritten was when the socket let go of its native handle.
+// Snapshot of bytesWritten, taken when the socket releases its native handle.
 const kBytesWritten = Symbol("kBytesWritten");
-// Raw socket.write() bytes of the connection, and what its current response counted: body bytes, the 101 of a WebSocket.
-function bytesWrittenThrough(handle) {
+// Raw socket.write() bytes plus the bytes the current response wrote (its body, or a WebSocket's 101).
+function handleBytesWritten(handle) {
   return handle.bytesWritten + (handle.response?.getBytesWritten() ?? 0);
 }
 const kEnableStreaming = Symbol("kEnableStreaming");
@@ -1725,8 +1725,8 @@ function getNodeHTTPServerSocket() {
 
     get bytesWritten() {
       const handle = this[kHandle];
-      let bytes = handle ? bytesWrittenThrough(handle) : this[kBytesWritten];
-      // Like net.Socket: a write that Writable still queues counts.
+      let bytes = handle ? handleBytesWritten(handle) : this[kBytesWritten];
+      // Like net.Socket, include writes still queued in the Writable.
       const queued = this.writableBuffer;
       for (let i = 0; i < queued.length; i++) bytes += queued[i].chunk.length;
       return bytes;
@@ -1794,7 +1794,7 @@ function getNodeHTTPServerSocket() {
       }
     }
     #closeHandle(handle, callback, err?: Error) {
-      this[kBytesWritten] = bytesWrittenThrough(handle);
+      this[kBytesWritten] = handleBytesWritten(handle);
       this[kHandle] = undefined;
       // Capture the in-flight response before detachSocket() can clear it: a
       // synchronous res.destroy() inside the request handler runs detachSocket()
@@ -1821,7 +1821,7 @@ function getNodeHTTPServerSocket() {
       releaseServerParserShim(this);
       this[kHandle] = null;
       if (closedHandle) {
-        this[kBytesWritten] = bytesWrittenThrough(closedHandle);
+        this[kBytesWritten] = handleBytesWritten(closedHandle);
         // Peer FIN: 'end' before 'close', like Node's net.Socket. read(0) emits it when nothing reads the socket.
         if (closedHandle.peerEnded) {
           this.push(null);

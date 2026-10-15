@@ -166,7 +166,7 @@ pub(crate) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
     NonNull::new(Bun__NativePromiseContext__take(cell).cast::<T>())
 }
 
-/// Empties the cell's `held` slot and returns what was in it (`JSValue::ZERO` for nothing).
+/// Clears the cell's `held` slot and returns its old value (`JSValue::ZERO` if it was empty).
 pub(crate) fn take_held(cell: JSValue) -> JSValue {
     Bun__NativePromiseContext__takeHeld(cell)
 }

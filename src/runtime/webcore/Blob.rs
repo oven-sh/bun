@@ -5654,7 +5654,8 @@ pub(crate) extern "C" fn Bun__Blob__getSizeForBindings(this: &mut Blob) -> u64 {
     this.get_size_for_bindings()
 }
 
-/// The bytes of an in-memory Blob, borrowed from `value`. `false` for a file- or S3-backed one, whose bytes need a read.
+/// Borrows the bytes of an in-memory Blob from `value`. Returns `false` for a file- or S3-backed
+/// Blob, which has to be read first.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__sharedView(
     value: JSValue,

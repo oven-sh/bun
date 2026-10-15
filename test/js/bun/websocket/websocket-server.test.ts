@@ -796,9 +796,9 @@ describe("Server", () => {
           done(new Error("backpressure not triggered"));
           return;
         }
-        // The limit is checked before a message is queued: the send over the limit was accepted, the next one closes.
+        // The limit is checked before queueing, so the send that crossed it was accepted and the next send closes.
         if (ws.readyState !== 1) {
-          done(new Error("closed by the send that built the backpressure"));
+          done(new Error("closed by the send that caused backpressure"));
           return;
         }
         ws.send(data);
@@ -1715,9 +1715,9 @@ async function connect(server: Server<unknown>, clientList: Subprocess[] = clien
   await promise;
 }
 
-// RFC 6455 caps the close reason at 123 bytes. A cut inside a multi-byte
-// character puts invalid UTF-8 on the wire and the peer fails with 1007.
-describe.concurrent("close() cuts a long reason on a character boundary", () => {
+// RFC 6455 caps the close reason at 123 bytes. Truncating in the middle of a
+// multi-byte character sends invalid UTF-8, and the peer fails with 1007.
+describe.concurrent("close() truncates a long reason on a character boundary", () => {
   it.each([
     // 40 emoji (160 bytes) -> 30 emoji (120 bytes): byte 123 is inside the 31st.
     ["emoji (4-byte)", Buffer.alloc(160, "😀").toString(), Buffer.alloc(120, "😀").toString()],
@@ -1923,7 +1923,7 @@ it("server.upgrade() does not blank the Request's url/headers read afterwards", 
   expect(captured!.headerCount).toBeGreaterThan(0);
 });
 
-it("ws.subscribe()/send() with an argument whose toPrimitive terminates the socket does not touch the dead socket", async () => {
+it("ws methods are safe when an argument's Symbol.toPrimitive terminates the socket", async () => {
   await using proc = spawn({
     cmd: [
       bunExe(),
@@ -2307,27 +2307,27 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
   });
 });
 
-// The `compress` argument is a per-call hint that only takes effect for
-// subscribers that negotiated permessage-deflate. ws.send() and ws.publish()
-// leave it off unless asked; server.publish() is the one method that compresses
-// unless told not to. Both defaults are documented, so pin them on the wire.
+// `compress` is a per-call hint that only applies to sockets that negotiated
+// permessage-deflate. It defaults to false for ws.send() and ws.publish(), and
+// to true for server.publish(). Both defaults are documented, so check the
+// frames on the wire.
 describe.concurrent("compress argument defaults", () => {
   type Frame = { text: string; compressed: boolean };
 
-  // Raw RFC 6455 client that records every text frame the server writes to it.
+  // Raw RFC 6455 client that records every text frame the server sends.
   // The server negotiates server_no_context_takeover, so each RSV1 payload
-  // inflates on its own.
+  // can be inflated independently.
   function connectRaw(port: number, pathname: string, offerDeflate: boolean) {
     type Raw = { negotiated: string; frames(count: number): Promise<Frame[]>; [Symbol.dispose](): void };
     const upgrade = Promise.withResolvers<Raw>();
     const frames: Frame[] = [];
-    const waiters: { count: number; settle: PromiseWithResolvers<Frame[]> }[] = [];
-    const settleWaiters = () => {
+    const waiters: { count: number; deferred: PromiseWithResolvers<Frame[]> }[] = [];
+    const resolveWaiters = () => {
       for (let i = waiters.length - 1; i >= 0; i--) {
-        const { count, settle } = waiters[i];
+        const { count, deferred } = waiters[i];
         if (frames.length < count) continue;
         waiters.splice(i, 1);
-        settle.resolve(frames.slice(0, count));
+        deferred.resolve(frames.slice(0, count));
       }
     };
     let failure: Error | undefined;
@@ -2349,7 +2349,7 @@ describe.concurrent("compress argument defaults", () => {
     const fail = (error: Error) => {
       failure ??= error;
       upgrade.reject(failure);
-      for (const { settle } of waiters.splice(0)) settle.reject(failure);
+      for (const { deferred } of waiters.splice(0)) deferred.reject(failure);
       socket.destroy();
     };
     socket.on("error", fail);
@@ -2367,10 +2367,10 @@ describe.concurrent("compress argument defaults", () => {
           negotiated: head.split("\r\n").find(line => /^sec-websocket-extensions:/i.test(line)) ?? "none",
           frames(count) {
             if (failure) return Promise.reject(failure);
-            const settle = Promise.withResolvers<Frame[]>();
-            waiters.push({ count, settle });
-            settleWaiters();
-            return settle.promise;
+            const deferred = Promise.withResolvers<Frame[]>();
+            waiters.push({ count, deferred });
+            resolveWaiters();
+            return deferred.promise;
           },
           [Symbol.dispose]() {
             socket.removeAllListeners("close");
@@ -2393,13 +2393,13 @@ describe.concurrent("compress argument defaults", () => {
           compressed,
         });
       }
-      settleWaiters();
+      resolveWaiters();
     });
 
     return upgrade.promise;
   }
 
-  it("server.publish() compresses unless told not to; ws.send() and ws.publish() only when asked", async () => {
+  it("server.publish() compresses by default; ws.send() and ws.publish() only with compress: true", async () => {
     const sockets: Record<string, ServerWebSocket<string>> = {};
     const opened = { deflate: Promise.withResolvers<void>(), plain: Promise.withResolvers<void>() };
     await using server = serve<string, {}>({
@@ -2432,14 +2432,14 @@ describe.concurrent("compress argument defaults", () => {
     server.publish("t", "server.publish(undefined)", undefined);
     server.publish("t", "server.publish(false)", false);
     server.publish("t", "server.publish(true)", true);
-    // ws.publish() skips the socket it is called on, so publish from the plain
-    // socket and observe the result on the deflating one.
+    // ws.publish() skips the publishing socket, so publish from the plain socket
+    // and check the frames on the deflate one.
     sockets.plain.publish("t", "ws.publish()");
     sockets.plain.publish("t", "ws.publish(true)", true);
     sockets.deflate.send("ws.send()");
     sockets.deflate.send("ws.send(true)", true);
     // Sent last, so once it arrives the plain socket has received everything
-    // that was ever going to reach it.
+    // it's going to get.
     sockets.plain.send("end");
 
     expect(await deflate.frames(8)).toEqual([
@@ -2452,8 +2452,8 @@ describe.concurrent("compress argument defaults", () => {
       { text: "ws.send()", compressed: false },
       { text: "ws.send(true)", compressed: true },
     ]);
-    // A subscriber that did not negotiate the extension gets plain frames
-    // whether the hint is defaulted or explicit.
+    // A subscriber that didn't negotiate the extension gets uncompressed frames
+    // regardless of `compress`.
     expect(await plain.frames(5)).toEqual([
       { text: "server.publish()", compressed: false },
       { text: "server.publish(undefined)", compressed: false },
@@ -2595,7 +2595,7 @@ describe("server.upgrade() validates the opening handshake", () => {
     // Upgrade token other than "websocket": not a WebSocket handshake.
     expect((await rawHandshake(["Upgrade: h2c", C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
 
-    // RFC 6455 §4.2.1 item 4: Connection must name "Upgrade".
+    // RFC 6455 §4.2.1 item 4: Connection must include "Upgrade".
     expect((await rawHandshake([U, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
     expect((await rawHandshake([U, "Connection: keep-alive", `Sec-WebSocket-Key: ${K}`, V])).status).toBe(400);
 
@@ -2623,22 +2623,22 @@ describe("server.upgrade() validates the opening handshake", () => {
     expect(opened).toBe(4);
   });
 
-  // `req.headers` is the only view of the request's headers the handler can
-  // read and change, so it is the handshake upgrade() validates and answers.
-  // upgrade() used to read the raw request line for every handshake header
-  // that view did not have: a header the handler deleted came back, and a
-  // repeated header meant one thing to the handler and another to upgrade().
+  // upgrade() validates and answers the handshake from `req.headers`, the only
+  // view of the headers the handler can read and modify. It used to fall back to
+  // the raw request for any handshake header missing from `req.headers`, so a
+  // header the handler deleted came back, and a repeated header had one value for
+  // the handler and another for upgrade().
   describe("reads the handshake headers from req.headers", () => {
     it.each([
-      ["the handler leaves req.headers alone", false],
+      ["the handler never touches req.headers", false],
       ["the handler reads req.headers", true],
-    ])("rejects a repeated Sec-WebSocket-Key when %s", async (_label, touch) => {
+    ])("rejects a repeated Sec-WebSocket-Key when %s", async (_label, readHeaders) => {
       opened = 0;
       server = serve({
         port: 0,
         hostname: "127.0.0.1",
         fetch(req, srv) {
-          if (touch) void req.headers.get("host");
+          if (readHeaders) void req.headers.get("host");
           if (srv.upgrade(req)) return;
           return new Response("no", { status: 400 });
         },
@@ -2650,62 +2650,61 @@ describe("server.upgrade() validates the opening handshake", () => {
         },
       });
 
-      // Two fields of the same name are one ", "-joined value, which is not a
-      // valid key (RFC 6455 §11.3.1: the header must not appear more than
-      // once). Reading the first field alone would accept the handshake and
-      // answer the first key.
+      // Repeated headers are joined with ", ", which isn't a valid key
+      // (RFC 6455 §11.3.1: the header must not appear more than once). Reading
+      // only the first one would accept the handshake.
       const dup = await rawHandshake([U, C, `Sec-WebSocket-Key: ${K}`, `Sec-WebSocket-Key: ${K}`, V]);
       expect(dup.status).toBe(400);
       expect(opened).toBe(0);
 
-      // Control: one field of that name still upgrades.
+      // Control: a single Sec-WebSocket-Key still upgrades.
       expect((await rawHandshake([U, C, `Sec-WebSocket-Key: ${K}`, V])).status).toBe(101);
       expect(opened).toBe(1);
     });
 
-    // The "after an await" row already behaved: the request is detached from
-    // the raw uWS request by then, so there was nothing to fall back to.
+    // The "after an await" case already worked. By then the request is detached
+    // from the raw uWS request, so there was nothing to fall back to.
     it.each(["before any await", "after an await"])(
-      "a handshake header deleted from req.headers stays deleted (%s)",
+      "upgrade() doesn't see a handshake header deleted from req.headers (%s)",
       async when => {
         server = serve({
           port: 0,
           hostname: "127.0.0.1",
           async fetch(req, srv) {
-            const del = req.headers.get("x-delete")!;
-            // setImmediate, not a microtask: leave the HTTP parser's stack so the
-            // request is detached from the raw uWS request before upgrade() runs.
+            const headerToDelete = req.headers.get("x-delete")!;
+            // Use setImmediate, not a microtask, to get off the HTTP parser's stack so
+            // the request is detached from the raw uWS request before upgrade() runs.
             if (when === "after an await") await new Promise(resolve => setImmediate(resolve));
-            req.headers.delete(del);
+            req.headers.delete(headerToDelete);
             if (srv.upgrade(req)) return;
             return new Response("no", { status: 400 });
           },
           websocket: { message() {} },
         });
-        const shake = (del: string) =>
+        const handshakeDeleting = (header: string) =>
           rawHandshake([
             U,
             C,
             `Sec-WebSocket-Key: ${K}`,
             V,
             "Sec-WebSocket-Protocol: chat, superchat",
-            `X-Delete: ${del}`,
+            `X-Delete: ${header}`,
           ]);
 
-        // Control: nothing relevant deleted, the first offered subprotocol is selected.
-        const control = await shake("x-unrelated");
+        // Control: with no handshake header deleted, the first offered subprotocol is selected.
+        const control = await handshakeDeleting("x-unrelated");
         expect(control.status).toBe(101);
         expect(control.headers.toLowerCase()).toContain("sec-websocket-protocol: chat");
 
-        const noProtocol = await shake("sec-websocket-protocol");
+        const noProtocol = await handshakeDeleting("sec-websocket-protocol");
         expect(noProtocol.status).toBe(101);
         expect(noProtocol.headers.toLowerCase()).not.toContain("sec-websocket-protocol");
 
-        // A deleted key or Upgrade token leaves no handshake to accept.
-        expect((await shake("sec-websocket-key")).status).toBe(400);
-        expect((await shake("upgrade")).status).toBe(400);
+        // Without the key or the Upgrade header it's no longer a WebSocket handshake.
+        expect((await handshakeDeleting("sec-websocket-key")).status).toBe(400);
+        expect((await handshakeDeleting("upgrade")).status).toBe(400);
 
-        const noVersion = await shake("sec-websocket-version");
+        const noVersion = await handshakeDeleting("sec-websocket-version");
         expect(noVersion.status).toBe(426);
         expect(noVersion.headers.toLowerCase()).toContain("sec-websocket-version: 13");
       },
@@ -2741,13 +2740,14 @@ describe("server.upgrade() validates the opening handshake", () => {
   });
 });
 
-// RFC 6455 §4.2.2 fixes the Upgrade, Connection and Sec-WebSocket-Accept lines
-// of the server's 101, and a 1xx carries no Content-Length or Transfer-Encoding
-// (RFC 9110 §8.6). upgrade() writes its own lines. The same names passed in
-// options.headers used to be written as well, so a client saw two
-// Sec-WebSocket-Accept values (or `Upgrade: h2c` next to `Upgrade: websocket`)
-// and failed the handshake after the server had already run open().
-describe.concurrent("server.upgrade() options.headers cannot duplicate the handshake's own fields", () => {
+// RFC 6455 §4.2.2 dictates the 101's Upgrade, Connection and
+// Sec-WebSocket-Accept headers, and a 1xx can't have Content-Length or
+// Transfer-Encoding (RFC 9110 §8.6). upgrade() writes the handshake headers
+// itself. It used to also write the ones passed in options.headers, so the client
+// saw two Sec-WebSocket-Accept values (or `Upgrade: h2c` next to
+// `Upgrade: websocket`) and failed the handshake after the server had already
+// called open().
+describe.concurrent("server.upgrade() ignores reserved handshake headers in options.headers", () => {
   const K = "dGhlIHNhbXBsZSBub25jZQ==";
   // RFC 6455 §1.3: the accept value for the sample nonce above.
   const ACCEPT = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
@@ -2786,8 +2786,8 @@ describe.concurrent("server.upgrade() options.headers cannot duplicate the hands
       sock.on("close", done);
     });
 
-  // Lower-cases the field name only, drops the Date line, and sorts, so the
-  // comparison does not depend on write order.
+  // Lowercases header names, drops Date, and sorts, so the comparison doesn't
+  // depend on write order.
   const fields = (lines: string[]) =>
     lines
       .slice(1)
@@ -2798,7 +2798,7 @@ describe.concurrent("server.upgrade() options.headers cannot duplicate the hands
       .filter(line => !line.startsWith("date:"))
       .sort();
 
-  const clientOpens = (url: string, protocols?: string[]) =>
+  const connectClient = (url: string, protocols?: string[]) =>
     new Promise<string>(resolve => {
       const ws = new WebSocket(url, protocols);
       ws.onopen = () => {
@@ -2852,11 +2852,11 @@ describe.concurrent("server.upgrade() options.headers cannot duplicate the hands
         "x-custom: yes",
       ].sort(),
     );
-    expect(await clientOpens(`ws://127.0.0.1:${server.port}/client`)).toBe("open protocol=");
+    expect(await connectClient(`ws://127.0.0.1:${server.port}/client`)).toBe("open protocol=");
     expect(opened).toEqual(["/ws", "/client"]);
   });
 
-  it("from a Headers object, which is left unmodified", async () => {
+  it("from a Headers object, without modifying it", async () => {
     const headers = new Headers({
       "Sec-WebSocket-Protocol": "chat",
       "Connection": "keep-alive",
@@ -2874,8 +2874,8 @@ describe.concurrent("server.upgrade() options.headers cannot duplicate the hands
 
     const lines = await rawHandshake(server.port, ["Sec-WebSocket-Protocol: superchat, chat"]);
     expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
-    // The Sec-WebSocket-Protocol in options.headers selects the subprotocol
-    // that upgrade() announces; it is written once, by upgrade().
+    // Sec-WebSocket-Protocol in options.headers picks the subprotocol.
+    // upgrade() writes it exactly once.
     expect(fields(lines)).toEqual(
       [
         "connection: Upgrade",
@@ -2885,7 +2885,7 @@ describe.concurrent("server.upgrade() options.headers cannot duplicate the hands
         "x-h: 1",
       ].sort(),
     );
-    expect(await clientOpens(`ws://127.0.0.1:${server.port}/`, ["superchat", "chat"])).toBe("open protocol=chat");
+    expect(await connectClient(`ws://127.0.0.1:${server.port}/`, ["superchat", "chat"])).toBe("open protocol=chat");
     expect([...headers]).toEqual([
       ["connection", "keep-alive"],
       ["sec-websocket-protocol", "chat"],
@@ -2898,7 +2898,7 @@ describe.concurrent("server.upgrade() options.headers cannot duplicate the hands
     ["{}", () => ({})],
     ["[]", () => []],
     ["new Headers()", () => new Headers()],
-  ])("accepts an empty headers: %s", async (_label, headers) => {
+  ])("accepts empty headers: %s", async (_label, headers) => {
     using server = serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -2913,7 +2913,7 @@ describe.concurrent("server.upgrade() options.headers cannot duplicate the hands
     expect(fields(lines)).toEqual(["connection: Upgrade", `sec-websocket-accept: ${ACCEPT}`, "upgrade: websocket"]);
   });
 
-  it("an empty Sec-WebSocket-Protocol declines the subprotocols the client offered", async () => {
+  it("an empty Sec-WebSocket-Protocol selects none of the offered subprotocols", async () => {
     using server = serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -2927,13 +2927,13 @@ describe.concurrent("server.upgrade() options.headers cannot duplicate the hands
     const lines = await rawHandshake(server.port, ["Sec-WebSocket-Protocol: superchat, chat"]);
     expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
     expect(fields(lines)).toEqual(["connection: Upgrade", `sec-websocket-accept: ${ACCEPT}`, "upgrade: websocket"]);
-    // Control: headers that say nothing about it leave the first offered one selected.
-    expect(await clientOpens(`ws://127.0.0.1:${server.port}/echo`, ["superchat", "chat"])).toBe(
+    // Control: without Sec-WebSocket-Protocol in options.headers, the first offered subprotocol is selected.
+    expect(await connectClient(`ws://127.0.0.1:${server.port}/echo`, ["superchat", "chat"])).toBe(
       "open protocol=superchat",
     );
   });
 
-  it("Sec-WebSocket-Extensions cannot negotiate what the client did not offer", async () => {
+  it("Sec-WebSocket-Extensions can't negotiate an extension the client didn't offer", async () => {
     using server = serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -3292,7 +3292,7 @@ describe.concurrent("request handlers run to completion before the callbacks the
   });
 });
 
-// A frame as a client sends it. The all-zero masking key leaves the payload as it is.
+// Builds a masked client frame. The all-zero masking key leaves the payload unchanged.
 function clientFrame(opcode: number, payload: string | Uint8Array = "") {
   const data = Buffer.from(payload);
   let header: Buffer;
@@ -3313,7 +3313,7 @@ function closePayload(code: number, reason = "") {
   return Buffer.concat([Buffer.from([code >> 8, code & 0xff]), Buffer.from(reason)]);
 }
 
-// A raw RFC 6455 client: resolves once the 101 arrived, then hands out the server's frames as they are on the wire.
+// Raw RFC 6455 client. Resolves once the 101 arrives, then returns the server's frames exactly as sent.
 function rawClient(port: number, { pathname = "/", secure = false } = {}) {
   type Frame = { opcode: number; payload: Buffer };
   const socket = secure
@@ -3327,7 +3327,7 @@ function rawClient(port: number, { pathname = "/", secure = false } = {}) {
   }>();
   const closed = Promise.withResolvers<void>();
   const frames: Frame[] = [];
-  let arrived = Promise.withResolvers<void>();
+  let frameArrived = Promise.withResolvers<void>();
   let buffer = Buffer.alloc(0);
   let upgraded = false;
   let isClosed = false;
@@ -3343,7 +3343,7 @@ function rawClient(port: number, { pathname = "/", secure = false } = {}) {
     isClosed = true;
     opened.reject(new Error("closed before the 101"));
     closed.resolve();
-    arrived.resolve();
+    frameArrived.resolve();
   });
   socket.on("data", chunk => {
     buffer = Buffer.concat([buffer, chunk]);
@@ -3357,11 +3357,11 @@ function rawClient(port: number, { pathname = "/", secure = false } = {}) {
       opened.resolve({
         socket,
         closed: closed.promise,
-        // The next frame, or undefined once the connection has closed.
+        // Resolves with the next frame, or undefined once the connection is closed.
         async frame() {
           while (frames.length === 0) {
             if (isClosed) return undefined;
-            await arrived.promise;
+            await frameArrived.promise;
           }
           return frames.shift();
         },
@@ -3370,23 +3370,23 @@ function rawClient(port: number, { pathname = "/", secure = false } = {}) {
         },
       });
     }
-    // Every frame these tests make the server send has a 7-bit length.
+    // The server only sends frames with a 7-bit length in these tests.
     while (buffer.length >= 2 && buffer.length >= 2 + (buffer[1] & 0x7f)) {
       const length = buffer[1] & 0x7f;
       frames.push({ opcode: buffer[0] & 0x0f, payload: buffer.subarray(2, 2 + length) });
       buffer = buffer.subarray(2 + length);
     }
-    arrived.resolve();
-    arrived = Promise.withResolvers();
+    frameArrived.resolve();
+    frameArrived = Promise.withResolvers();
   });
   return opened.promise;
 }
 
-// Once the server has accepted a Response for a request, the connection carries that response. An
-// upgrade() then used to write the handshake fields into the middle of the body and turn the socket
-// into a WebSocket under the stream that was still writing to it.
-describe.concurrent("server.upgrade() of a request that already got a Response", () => {
-  it.each(["direct", "default", "generator"])("returns false while its %s stream body is sent", async kind => {
+// Once fetch() has returned a Response, the connection is busy sending it. Calling upgrade() at that
+// point used to write the 101 into the middle of the body and turn the socket into a WebSocket while
+// the body stream was still writing to it.
+describe.concurrent("server.upgrade() after fetch() already returned a Response", () => {
+  it.each(["direct", "default", "generator"])("returns false while a %s stream body is being sent", async kind => {
     await using proc = spawn({
       cmd: [
         bunExe(),
@@ -3394,15 +3394,15 @@ describe.concurrent("server.upgrade() of a request that already got a Response",
         `
         const net = require("node:net");
         const upgraded = Promise.withResolvers();
-        // Leaves the dispatch of the request: the server has taken the Response by then.
-        const afterDispatch = () => new Promise(resolve => setImmediate(resolve));
+        // Waits until fetch() has returned, so the server already has the Response.
+        const nextMacrotask = () => new Promise(resolve => setImmediate(resolve));
         const bodies = {
           direct: (req, srv) => new ReadableStream({
             type: "direct",
             async pull(controller) {
               controller.write("chunk1");
               await controller.flush();
-              await afterDispatch();
+              await nextMacrotask();
               upgraded.resolve(srv.upgrade(req));
               controller.write("chunk2");
               controller.close();
@@ -3411,7 +3411,7 @@ describe.concurrent("server.upgrade() of a request that already got a Response",
           default: (req, srv) => new ReadableStream({
             async pull(controller) {
               controller.enqueue("chunk1");
-              await afterDispatch();
+              await nextMacrotask();
               upgraded.resolve(srv.upgrade(req));
               controller.enqueue("chunk2");
               controller.close();
@@ -3419,7 +3419,7 @@ describe.concurrent("server.upgrade() of a request that already got a Response",
           }),
           generator: (req, srv) => (async function* () {
             yield "chunk1";
-            await afterDispatch();
+            await nextMacrotask();
             upgraded.resolve(srv.upgrade(req));
             yield "chunk2";
           })(),
@@ -3474,11 +3474,11 @@ describe.concurrent("server.upgrade() of a request that already got a Response",
   });
 });
 
-// An upgrade made after an await runs outside the cork the HTTP parser holds, and every piece of the
-// 101 ("HTTP/1.1 ", "101 Switching Protocols", "\r\n", a name, ": ", ...) used to be a write of its
-// own: a syscall and a TCP segment each, and a TLS record each. TCP reads can merge segments, so
-// count the TLS records, which are the server's writes one to one.
-it("server.upgrade() after an await sends the 101 and what open() sends in one write", async () => {
+// upgrade() after an await runs outside the HTTP parser's cork, so every piece of the 101
+// ("HTTP/1.1 ", "101 Switching Protocols", "\r\n", a name, ": ", ...) used to be its own write: one
+// syscall, one TCP segment and one TLS record each. TCP reads can coalesce segments, so count TLS
+// records instead, which map one-to-one to the server's writes.
+it("server.upgrade() after an await sends the 101 and open()'s messages in a single write", async () => {
   using server = serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -3517,7 +3517,7 @@ it("server.upgrade() after an await sends the 101 and what open() sends in one w
 
   try {
     const received = Promise.withResolvers<string>();
-    // TLS 1.2: in 1.3 the end of the handshake and the session tickets are application data records too.
+    // Use TLS 1.2. In 1.3 the end of the handshake and the session tickets are also application data records.
     const client = tls.connect({
       port: (proxy.address() as net.AddressInfo).port,
       host: "127.0.0.1",
@@ -3546,7 +3546,7 @@ it("server.upgrade() after an await sends the 101 and what open() sends in one w
 });
 
 describe.concurrent("ServerWebSocket.close(code, reason)", () => {
-  // Calls ws.close(...args) in open() and reports what the call did, what went on the wire and what close() got.
+  // Calls ws.close(...args) in open(). Returns what it threw, the Close frame sent, and what close() received.
   async function closeWith(...args: unknown[]) {
     const handler = Promise.withResolvers<[number, string]>();
     let thrown: string | undefined;
@@ -3595,11 +3595,11 @@ describe.concurrent("ServerWebSocket.close(code, reason)", () => {
     [[1014, "bad gateway"], 1014, "bad gateway"],
     [[3000], 3000, ""],
     [[4999, "mine"], 4999, "mine"],
-  ] as const)("close(...%j) sends the code", async (args, code, reason) => {
+  ] as const)("close(...%j) sends the code and reason", async (args, code, reason) => {
     expect(await closeWith(...args)).toEqual({ thrown: undefined, wire: [code, reason], handler: [code, reason] });
   });
 
-  // What a close() handler reports when no code came over the wire. A relay passes these on to its other side.
+  // A close() handler gets these codes when the peer sent none, and a proxy forwards them to its other connection.
   it.each([[[0]], [[1005]], [[1006]], [[1015]], [[NaN]], [[1005, "reason"]], [[1006, "Connection ended"]]])(
     "close(...%j) sends an empty Close frame",
     async args => {
@@ -3607,7 +3607,7 @@ describe.concurrent("ServerWebSocket.close(code, reason)", () => {
     },
   );
 
-  // RFC 6455 §7.4: a peer answers any of these with 1002 and never sees the code.
+  // RFC 6455 §7.4: these are invalid on the wire. The peer would fail the connection with 1002 and ignore the code.
   it.each([[999], [1004], [1016], [2999], [5000], [-1], [66536], [1.5]])(
     "close(%p) throws a RangeError and leaves the socket open",
     async code => {
@@ -3620,7 +3620,7 @@ describe.concurrent("ServerWebSocket.close(code, reason)", () => {
   );
 });
 
-describe.concurrent("ServerWebSocket arguments are checked whatever the state of the socket", () => {
+describe.concurrent("ServerWebSocket validates arguments regardless of socket state", () => {
   async function openAndClosedSocket() {
     const sockets: ServerWebSocket<undefined>[] = [];
     const bothOpen = Promise.withResolvers<void>();
@@ -3657,7 +3657,7 @@ describe.concurrent("ServerWebSocket arguments are checked whatever the state of
     };
   }
 
-  const invalid: [string, (ws: any) => unknown, string][] = [
+  const invalidCalls: [string, (ws: any) => unknown, string][] = [
     ["send()", ws => ws.send(), "send requires at least 1 argument"],
     ["send(null)", ws => ws.send(null), "send requires a non-empty message"],
     ["send('x', 'y')", ws => ws.send("x", "y"), "send expects compress to be a boolean"],
@@ -3682,21 +3682,21 @@ describe.concurrent("ServerWebSocket arguments are checked whatever the state of
     ["cork(1)", ws => ws.cork(1), 'The "callback" argument must be of type function'],
   ];
 
-  it("invalid arguments throw on an open and on a closed socket alike", async () => {
+  it("invalid arguments throw on both open and closed sockets", async () => {
     using sockets = await openAndClosedSocket();
-    const messageOf = (call: () => unknown) => {
+    const getErrorMessage = (call: () => unknown) => {
       try {
         return `returned ${call()}`;
       } catch (e) {
         return (e as Error).message;
       }
     };
-    for (const [label, call, message] of invalid) {
-      expect({ label, open: messageOf(() => call(sockets.open)) }).toEqual({
+    for (const [label, call, message] of invalidCalls) {
+      expect({ label, open: getErrorMessage(() => call(sockets.open)) }).toEqual({
         label,
         open: expect.stringContaining(message),
       });
-      expect({ label, closed: messageOf(() => call(sockets.closed)) }).toEqual({
+      expect({ label, closed: getErrorMessage(() => call(sockets.closed)) }).toEqual({
         label,
         closed: expect.stringContaining(message),
       });
@@ -3704,14 +3704,14 @@ describe.concurrent("ServerWebSocket arguments are checked whatever the state of
     expect([sockets.open.readyState, sockets.closed.readyState]).toEqual([1, 3]);
   });
 
-  it('publishText("") publishes to nobody, where publish("") and publishBinary("") throw', async () => {
+  it('publishText("") returns 0 instead of throwing like publish("") and publishBinary("")', async () => {
     using sockets = await openAndClosedSocket();
     expect([sockets.open.publishText("", "x"), sockets.open.publishText("", "")]).toEqual([0, 0]);
-    // The message is still looked at.
+    // The message is still validated.
     expect(() => sockets.open.publishText("", 1 as any)).toThrow("publishText expects a string");
   });
 
-  it("valid calls on a closed socket do nothing", async () => {
+  it("valid calls on a closed socket are no-ops", async () => {
     using sockets = await openAndClosedSocket();
     const ws = sockets.closed;
     expect({
@@ -3728,7 +3728,7 @@ describe.concurrent("ServerWebSocket arguments are checked whatever the state of
       pause: ws.pause(),
       resume: ws.resume(),
       isPaused: ws.isPaused,
-      // The callback still runs: what it does besides sending must not depend on the peer.
+      // The callback still runs. Its side effects other than sending shouldn't depend on the peer being connected.
       cork: ws.cork(socket => [socket === ws, socket.send("x")]),
     }).toEqual({
       send: 0,
@@ -3748,8 +3748,8 @@ describe.concurrent("ServerWebSocket arguments are checked whatever the state of
     });
   });
 
-  // Unlike the methods of a ServerWebSocket, it converts: the topic and the message to strings, `compress` to a boolean.
-  it("server.publish() converts its arguments", async () => {
+  // Unlike the ServerWebSocket methods, it coerces the topic and the message to strings and `compress` to a boolean.
+  it("server.publish() coerces its arguments", async () => {
     const opened = Promise.withResolvers<void>();
     using server = serve({
       port: 0,
@@ -3797,7 +3797,7 @@ describe.concurrent("ServerWebSocket arguments are checked whatever the state of
         frame: { opcode: 1, payload: Buffer.from(text) },
       });
     }
-    expect(publish(10n, "nobody subscribed to 10")).toBe(0);
+    expect(publish(10n, "no subscribers")).toBe(0);
 
     const thrown: [unknown[], string][] = [
       [[], "Missing argument"],
@@ -3814,7 +3814,7 @@ describe.concurrent("ServerWebSocket arguments are checked whatever the state of
     for (const [args, message] of thrown) expect(() => publish(...args)).toThrow(message);
   });
 
-  it("server.publish() without a websocket handler returns 0, also for an empty topic", () => {
+  it("server.publish() without a websocket handler returns 0, even for an empty topic", () => {
     using server = serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("no") });
     const publish = server.publish.bind(server) as (...args: unknown[]) => number;
     expect([publish("t", "x"), publish("", "x"), publish(42, undefined, 1)]).toEqual([0, 0, 0]);
@@ -3823,8 +3823,8 @@ describe.concurrent("ServerWebSocket arguments are checked whatever the state of
   });
 });
 
-// The fd is closed before close() runs, so the address has to be asked for while the socket is open.
-describe.concurrent("ws.remoteAddress read in open() is still there in close()", () => {
+// The fd is closed before close() runs, so the address has to be read while the socket is still open.
+describe.concurrent("ws.remoteAddress read in open() is still available in close()", () => {
   it.each(["the client sends a Close frame", "the client drops the connection", "ws.close()", "ws.terminate()"])(
     "when %s",
     async how => {
@@ -3872,8 +3872,8 @@ describe.concurrent.each([
   ["ws", false],
   ["wss", true],
 ] as const)("ServerWebSocket.pause() and resume() (%s)", (_scheme, secure) => {
-  // One paused socket under test ("/paused") and one that echoes ("/echo"). A round trip on the
-  // second one proves that the server's event loop polled its sockets in the meantime.
+  // "/paused" is the socket under test and "/echo" just echoes. A round trip on "/echo" proves the
+  // server's event loop polled its sockets in the meantime.
   function pausedServer(onOpen: (ws: ServerWebSocket<string>) => void = () => {}) {
     const state = {
       messages: 0,
@@ -3918,7 +3918,7 @@ describe.concurrent.each([
     }
   }
 
-  it("a paused socket reads nothing, so the client's writes back up; resume() delivers all of it", async () => {
+  it("a paused socket stops reading, so the client hits backpressure; resume() delivers everything", async () => {
     const state = pausedServer();
     using _server = state.server;
     using client = await rawClient(state.server.port!, { pathname: "/paused", secure });
@@ -3926,8 +3926,8 @@ describe.concurrent.each([
     const ws = await state.opened.promise;
     expect(ws.isPaused).toBe(true);
 
-    // Fill the kernel's buffers on both sides: write until write() says false and no 'drain'
-    // follows while the server goes around its event loop.
+    // Fill the kernel buffers on both sides: write until write() returns false and no 'drain'
+    // fires while the server's event loop keeps running.
     const frame = clientFrame(2, Buffer.alloc(64 * 1024, "x"));
     let sent = 0;
     let drained = true;
@@ -3941,17 +3941,17 @@ describe.concurrent.each([
     expect(client.socket.writableLength).toBeGreaterThan(0);
     expect({ messages: state.messages, isPaused: ws.isPaused }).toEqual({ messages: 0, isPaused: true });
 
-    const all = Promise.withResolvers<void>();
+    const allReceived = Promise.withResolvers<void>();
     state.onMessage = () => {
-      if (state.messages === sent) all.resolve();
+      if (state.messages === sent) allReceived.resolve();
     };
     ws.resume();
     expect(ws.isPaused).toBe(false);
-    await all.promise;
+    await allReceived.promise;
     expect({ messages: state.messages, bytes: state.bytes }).toEqual({ messages: sent, bytes: sent * 64 * 1024 });
   });
 
-  it("pause() and resume() can be repeated, and a paused socket still sends", async () => {
+  it("pause() and resume() are idempotent, and a paused socket can still send", async () => {
     const state = pausedServer();
     using _server = state.server;
     using client = await rawClient(state.server.port!, { pathname: "/paused", secure });
@@ -3973,7 +3973,7 @@ describe.concurrent.each([
     expect({ messages: state.messages, isPaused: ws.isPaused }).toEqual({ messages: 1, isPaused: false });
   });
 
-  it("the client's messages and Close frame wait for resume()", async () => {
+  it("delivers the client's messages and Close frame only after resume()", async () => {
     const state = pausedServer();
     using _server = state.server;
     using client = await rawClient(state.server.port!, { pathname: "/paused", secure });
@@ -3998,7 +3998,7 @@ describe.concurrent.each([
     await client.closed;
   });
 
-  it("close() on a paused socket sends the Close frame and finishes when the client answers", async () => {
+  it("close() on a paused socket sends the Close frame and disconnects once the client echoes it", async () => {
     const state = pausedServer();
     using _server = state.server;
     using client = await rawClient(state.server.port!, { pathname: "/paused", secure });

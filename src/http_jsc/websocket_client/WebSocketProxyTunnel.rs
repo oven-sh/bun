@@ -30,7 +30,7 @@ use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
-use crate::websocket_client::{ErrorCode, HangUp, remote_address_of};
+use crate::websocket_client::{CloseMode, ErrorCode, remote_address_of};
 
 use bun_http::ssl_config::SslConfig;
 
@@ -401,7 +401,7 @@ impl WebSocketProxyTunnel {
     }
 
     /// Clear the connected WebSocket reference. Called before tunnel shutdown so the
-    /// tunnel's onClose callback does not reach a client that is done with it.
+    /// tunnel's onClose callback doesn't call into a client that already finished.
     ///
     /// Can be reached from inside an SSLWrapper callback while the driving
     /// frame holds `&SslWrapper`; the `Cell` write covers only this field.
@@ -536,8 +536,8 @@ impl WebSocketProxyTunnel {
         }
     }
 
-    /// Half-close TLS inside the tunnel: our close_notify goes out and reading goes on until
-    /// the peer's, which `on_close` reports. The proxy connection stays as it is.
+    /// Half-close the TLS session inside the tunnel. Sends our close_notify and keeps reading
+    /// until the peer's arrives, which fires `on_close`. The proxy connection stays open.
     ///
     /// Takes `ThisPtr<Self>` for the same reason as `shutdown()`.
     pub(crate) fn end(this: ThisPtr<Self>) {
@@ -547,7 +547,8 @@ impl WebSocketProxyTunnel {
         }
     }
 
-    /// False once the proxy connection is closed: what `write` takes from then on goes nowhere.
+    /// False once the proxy connection is closed. After that, `write` still accepts data but
+    /// never sends it.
     pub(crate) fn has_socket(&self) -> bool {
         !matches!(self.socket.get(), SocketUnion::None)
     }
@@ -595,10 +596,10 @@ impl WebSocketProxyTunnel {
     }
 
     /// Runs the upgrade client's `handle_close`, which drops its ref on the tunnel.
-    pub(crate) fn close_socket(&self, how: HangUp) {
+    pub(crate) fn close_socket(&self, mode: CloseMode) {
         match self.socket.replace(SocketUnion::None) {
-            SocketUnion::Tcp(s) => how.close(s),
-            SocketUnion::Ssl(s) => how.close(s),
+            SocketUnion::Tcp(s) => mode.close(s),
+            SocketUnion::Ssl(s) => mode.close(s),
             SocketUnion::None => {}
         }
     }

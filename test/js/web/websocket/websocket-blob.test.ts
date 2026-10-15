@@ -213,19 +213,19 @@ test("WebSocket should ping with Blob", async () => {
   await promise;
 });
 
-// Bun.file() and S3 blobs keep no bytes in memory. The client send paths are
-// synchronous, so (like ServerWebSocket) they must throw instead of putting an
-// empty frame on the wire in place of the payload.
+// Bun.file() and S3 blobs aren't in memory, and the client's send paths are
+// synchronous. So, like ServerWebSocket, they must throw instead of sending an
+// empty frame.
 describe("WebSocket client with a file- or S3-backed Blob", () => {
-  const rejection = (fn: string) => ({
+  const expectedError = (fn: string) => ({
     name: "Error",
     message: `${fn} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first`,
   });
 
   // Records every frame the server receives, so a test can prove that a rejected
-  // payload did not go out as an empty frame. The server closes the connection
+  // payload wasn't sent as an empty frame. The server closes the connection
   // once it receives the "done" text message.
-  function serveRecordingFrames() {
+  function startRecordingServer() {
     const received: string[] = [];
     const server = Bun.serve({
       port: 0,
@@ -288,43 +288,43 @@ describe("WebSocket client with a file- or S3-backed Blob", () => {
   test.concurrent.each(blobKinds)("%s: send(), ping() and pong() throw and send nothing", async (_, makeBlob) => {
     using dir = tempDir("ws-client-file-blob", { "payload.bin": "file-bytes" });
     const blob = makeBlob(String(dir));
-    const recording = serveRecordingFrames();
+    const recording = startRecordingServer();
     await using server = recording.server;
     const { ws, opened, closed } = connect(server);
     await opened;
 
     expect([thrownBy(() => ws.send(blob)), thrownBy(() => ws.ping(blob)), thrownBy(() => ws.pong(blob))]).toEqual([
-      rejection("send"),
-      rejection("ping"),
-      rejection("pong"),
+      expectedError("send"),
+      expectedError("ping"),
+      expectedError("pong"),
     ]);
 
-    // The connection is still usable, and nothing went out in place of the rejected payloads.
+    // The connection is still usable, and no frame was sent for the rejected payloads.
     expect(ws.readyState).toBe(WebSocket.OPEN);
     ws.send("done");
     await closed;
     expect(recording.received).toEqual(["text:done"]);
   });
 
-  // The argument is judged before the state is.
-  test.concurrent("they throw in every readyState", async () => {
+  // The argument is validated before readyState is checked.
+  test.concurrent("send(), ping() and pong() throw in every readyState", async () => {
     using dir = tempDir("ws-client-file-blob", { "payload.bin": "file-bytes" });
     const blob = Bun.file(path.join(String(dir), "payload.bin"));
-    const recording = serveRecordingFrames();
+    const recording = startRecordingServer();
     await using server = recording.server;
     const { ws, opened, closed } = connect(server);
-    const all = () => [thrownBy(() => ws.send(blob)), thrownBy(() => ws.ping(blob)), thrownBy(() => ws.pong(blob))];
-    const rejections = [rejection("send"), rejection("ping"), rejection("pong")];
+    const thrown = () => [thrownBy(() => ws.send(blob)), thrownBy(() => ws.ping(blob)), thrownBy(() => ws.pong(blob))];
+    const expectedErrors = [expectedError("send"), expectedError("ping"), expectedError("pong")];
 
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
-    expect(all()).toEqual(rejections);
+    expect(thrown()).toEqual(expectedErrors);
 
     await opened;
     ws.send("done");
     await closed;
 
     expect(ws.readyState).toBe(WebSocket.CLOSED);
-    expect(all()).toEqual(rejections);
+    expect(thrown()).toEqual(expectedErrors);
     expect(ws.bufferedAmount).toBe(0);
     expect(recording.received).toEqual(["text:done"]);
   });

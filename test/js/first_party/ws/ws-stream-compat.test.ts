@@ -1,11 +1,11 @@
-// createWebSocketStream(), against a raw TCP peer. See ws-raw-peer.ts.
+// Tests createWebSocketStream() against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { Duplex, pipeline } from "node:stream";
 import {
   closedPort,
   createServer,
-  dial,
-  event,
+  connectClient,
+  nextEvent,
   implementations,
   openClient,
   openServer,
@@ -15,7 +15,7 @@ import {
   showError,
 } from "./ws-raw-peer";
 
-/** Records 'end', 'finish', 'close' and `error <error>` as lines. Does not make the stream flow. */
+/** Records 'end', 'finish', 'close' and `error <error>` as lines. Doesn't switch the stream to flowing mode. */
 function watchStream(duplex: Duplex) {
   const events: string[] = [];
   for (const name of ["end", "finish", "close"]) duplex.on(name, () => events.push(name));
@@ -23,17 +23,17 @@ function watchStream(duplex: Duplex) {
   return events;
 }
 
-/** The next `count` chunks, through `show`. Makes the stream flow. */
-function chunks(duplex: Duplex, count: number) {
-  const seen: string[] = [];
+/** Resolves with the next `count` chunks, formatted with `show`. Switches the stream to flowing mode. */
+function readChunks(duplex: Duplex, count: number) {
+  const received: string[] = [];
   return new Promise<string[]>(resolve =>
     duplex.on("data", chunk => {
-      if (seen.push(show(chunk)) === count) resolve(seen);
+      if (received.push(show(chunk)) === count) resolve(received);
     }),
   );
 }
 
-/** `"written"`, or the error the callback of `write()` gets. */
+/** Resolves with `"written"`, or with the error passed to `write()`'s callback. */
 function write(duplex: Duplex, chunk: string) {
   return new Promise<string>(resolve => duplex.write(chunk, error => resolve(error ? showError(error) : "written")));
 }
@@ -44,7 +44,7 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
   test.each([
     { label: "without options", options: undefined },
     { label: "with objectMode and writableObjectMode", options: { objectMode: true, writableObjectMode: true } },
-  ])("$label: a Duplex that is not in object mode", async ({ options }) => {
+  ])("returns a non-object-mode Duplex $label", async ({ options }) => {
     await using client = await openClient(implementation);
     const duplex = createWebSocketStream(client.ws, options);
     expect(duplex).toBeInstanceOf(Duplex);
@@ -54,95 +54,99 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
   describe("reading", () => {
     test.each([
       {
-        label: "by default every message is a Buffer",
+        label: "emits every message as a Buffer by default",
         options: undefined,
         expected: ['Buffer("txt")', 'Buffer("bin")'],
       },
       {
-        label: "readableObjectMode: a text message is a string",
+        label: "readableObjectMode: emits text messages as strings",
         options: { readableObjectMode: true },
         expected: ['"txt"', 'Buffer("bin")'],
       },
-      { label: "encoding: every message is a string", options: { encoding: "utf8" }, expected: ['"txt"', '"bin"'] },
+      {
+        label: "encoding: emits every message as a string",
+        options: { encoding: "utf8" },
+        expected: ['"txt"', '"bin"'],
+      },
     ] as const)("$label", async ({ options, expected }) => {
       await using client = await openClient(implementation);
-      const seen = chunks(createWebSocketStream(client.ws, options), 2);
+      const received = readChunks(createWebSocketStream(client.ws, options), 2);
       client.conn.text("txt");
       client.conn.binary("bin");
-      expect(await seen).toEqual([...expected]);
+      expect(await received).toEqual([...expected]);
     });
 
-    test("a full buffer pauses the socket, read() resumes it", async () => {
+    test("pauses the socket when the readable buffer is full and resumes it on read()", async () => {
       await using client = await openClient(implementation);
       const { ws, conn } = client;
       const duplex = createWebSocketStream(ws, { highWaterMark: 16 });
       conn.binary(Buffer.alloc(64, "a"));
-      await event(ws, "message");
+      await nextEvent(ws, "message");
       expect(ws.isPaused).toBe(true);
       conn.binary("next");
 
       expect(show(duplex.read())).toBe("Buffer(64 bytes)");
       expect(ws.isPaused).toBe(false);
-      await event(ws, "message");
+      await nextEvent(ws, "message");
       expect(show(duplex.read())).toBe('Buffer("next")');
       expect(ws.isPaused).toBe(false);
     });
 
-    test("the peer closes: the data, then 'end', and the writable side stays open until end()", async () => {
+    test("when the peer closes, emits the data, then 'end', and stays writable until end()", async () => {
       await using client = await openClient(implementation);
       const { ws, conn } = client;
       const duplex = createWebSocketStream(ws);
       const events = watchStream(duplex);
-      const seen = chunks(duplex, 1);
+      const received = readChunks(duplex, 1);
       conn.text("bye");
       conn.close(1000);
       conn.end();
-      await event(duplex, "end");
-      expect(await seen).toEqual(['Buffer("bye")']);
+      await nextEvent(duplex, "end");
+      expect(await received).toEqual(['Buffer("bye")']);
       expect(ws.readyState).toBe(WebSocket.CLOSED);
       expect(duplex.destroyed).toBe(false);
 
       duplex.end();
-      await event(duplex, "close");
+      await nextEvent(duplex, "close");
       expect(events).toEqual(["end", "finish", "close"]);
       expect(duplex.destroyed).toBe(true);
     });
   });
 
   describe("writing", () => {
-    test("write() sends a binary frame, for a string too", async () => {
+    test("write() sends a binary frame, even for a string", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const duplex = createWebSocketStream(client.ws);
       expect(await write(duplex, "text")).toBe("written");
       duplex.write(Buffer.from([1, 2]));
-      expect(await client.conn.take(2)).toEqual(['binary "text"', "binary 0x0102"]);
+      expect(await client.conn.nextFrames(2)).toEqual(['binary "text"', "binary 0x0102"]);
     });
 
-    test("write() and end() while CONNECTING wait for 'open'", async () => {
-      await using client = await dial(implementation, { perMessageDeflate: false });
+    test("write() and end() while CONNECTING are deferred until 'open'", async () => {
+      await using client = await connectClient(implementation, { perMessageDeflate: false });
       const duplex = createWebSocketStream(client.ws);
       duplex.write("first");
       duplex.write("second");
       duplex.end("last");
       expect(client.ws.readyState).toBe(WebSocket.CONNECTING);
       const conn = await client.peer.connection();
-      expect(await conn.take(4)).toEqual(['binary "first"', 'binary "second"', 'binary "last"', "close"]);
+      expect(await conn.nextFrames(4)).toEqual(['binary "first"', 'binary "second"', 'binary "last"', "close"]);
     });
 
-    test("end() sends an empty Close frame; 'finish', 'end' and 'close' follow the closing handshake", async () => {
+    test("end() sends an empty Close frame; 'finish', 'end' and 'close' fire after the closing handshake", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const { ws, conn } = client;
       const duplex = createWebSocketStream(ws);
       const events = watchStream(duplex);
       duplex.resume();
       duplex.end("last");
-      expect(await conn.take(2)).toEqual(['binary "last"', "close"]);
+      expect(await conn.nextFrames(2)).toEqual(['binary "last"', "close"]);
       expect(ws.readyState).toBe(WebSocket.CLOSING);
       expect(events).toEqual([]);
 
       conn.close(1000);
       conn.end();
-      await event(duplex, "close");
+      await nextEvent(duplex, "close");
       expect(events).toEqual(["finish", "end", "close"]);
       expect(duplex.destroyed).toBe(true);
       expect(ws.readyState).toBe(WebSocket.CLOSED);
@@ -154,22 +158,22 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
       const duplex = createWebSocketStream(ws);
       const events = watchStream(duplex);
       ws.close();
-      const closed = event(duplex, "close");
+      const closed = nextEvent(duplex, "close");
       expect(await write(duplex, "x")).toBe('Error "WebSocket is not open: readyState 2 (CLOSING)"');
       await closed;
       expect(events).toEqual(['error Error "WebSocket is not open: readyState 2 (CLOSING)"', "close"]);
       expect(client.events.at(-1)).toBe("close 1006 Buffer() rs=3");
-      expect(await conn.rest()).toEqual(["close"]);
+      expect(await conn.remainingFrames()).toEqual(["close"]);
     });
 
-    test("write() on the stream of a CLOSED socket fails", async () => {
+    test("write() fails when the socket is CLOSED", async () => {
       await using client = await openClient(implementation);
       const duplex = createWebSocketStream(client.ws);
       const events = watchStream(duplex);
       client.conn.close(1000);
       client.conn.end();
       await client.closed;
-      const closed = event(duplex, "close");
+      const closed = nextEvent(duplex, "close");
       expect(await write(duplex, "too late")).toBe('Error "WebSocket is not open: readyState 3 (CLOSED)"');
       await closed;
       expect(events).toEqual(['error Error "WebSocket is not open: readyState 3 (CLOSED)"', "close"]);
@@ -177,47 +181,47 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
   });
 
   describe("destroy()", () => {
-    test("terminates the socket: CLOSING at once, FIN without a Close frame, then 'close' alone", async () => {
+    test("terminates the socket: CLOSING immediately, FIN without a Close frame, then only 'close'", async () => {
       await using client = await openClient(implementation);
       const { ws, conn } = client;
       const duplex = createWebSocketStream(ws);
       const events = watchStream(duplex);
       duplex.destroy();
       expect(ws.readyState).toBe(WebSocket.CLOSING);
-      await event(duplex, "close");
+      await nextEvent(duplex, "close");
       expect(events).toEqual(["close"]);
       expect(ws.readyState).toBe(WebSocket.CLOSED);
       expect(client.events.at(-1)).toBe("close 1006 Buffer() rs=3");
-      expect(await conn.rest()).toEqual([]);
-      expect(conn.tcp).toEqual(["end"]);
+      expect(await conn.remainingFrames()).toEqual([]);
+      expect(conn.socketEvents).toEqual(["end"]);
     });
 
-    test("with an error: 'error' with it once the socket is CLOSED, then 'close'", async () => {
+    test("with an error, emits it as 'error' once the socket is CLOSED, then 'close'", async () => {
       await using client = await openClient(implementation);
       const duplex = createWebSocketStream(client.ws);
       const events = watchStream(duplex);
       const states: number[] = [];
       duplex.on("error", () => states.push(client.ws.readyState));
       duplex.destroy(new Error("mine"));
-      await event(duplex, "close");
+      await nextEvent(duplex, "close");
       expect(events).toEqual(['error Error "mine"', "close"]);
       expect(states).toEqual([WebSocket.CLOSED]);
     });
   });
 
-  describe("an 'error' of the socket", () => {
-    test("a refused connection: 'error' with the socket's error, then 'close'", async () => {
+  describe("when the socket emits 'error'", () => {
+    test("a refused connection emits the socket's error as 'error', then 'close'", async () => {
       const ws = new WebSocket("ws://127.0.0.1:" + (await closedPort()));
       const duplex = createWebSocketStream(ws);
       const events = watchStream(duplex);
-      await event(duplex, "close");
+      await nextEvent(duplex, "close");
       expect(events).toEqual(['error Error "connect ECONNREFUSED 127.0.0.1:PORT" ECONNREFUSED', "close"]);
       expect(duplex.destroyed).toBe(true);
       expect(ws.readyState).toBe(WebSocket.CLOSED);
     });
 
     test.concurrent(
-      "without an 'error' listener on the stream it is thrown",
+      "the error is thrown when the stream has no 'error' listener",
       async () => {
         const script = `createWebSocketStream(new WebSocket(process.env.PEER_URL)).on("close", () => console.log("close"));`;
         const PEER_URL = "ws://127.0.0.1:" + (await closedPort());
@@ -230,11 +234,11 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
       scriptTimeout,
     );
 
-    test("a protocol error: the Close frame still goes out", async () => {
+    test("a protocol error still sends the Close frame", async () => {
       await using client = await openClient(implementation);
       const duplex = createWebSocketStream(client.ws);
       const events = watchStream(duplex);
-      const closed = event(duplex, "close");
+      const closed = nextEvent(duplex, "close");
       client.conn.send(3, "reserved");
       expect(await client.conn.next()).toBe("close 1002");
       client.conn.end();
@@ -250,43 +254,43 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
     test("reads and writes", async () => {
       await using server = await openServer(implementation);
       const duplex = createWebSocketStream(server.ws, { encoding: "utf8" });
-      const seen = chunks(duplex, 1);
+      const received = readChunks(duplex, 1);
       server.client.text("in");
-      expect(await seen).toEqual(['"in"']);
+      expect(await received).toEqual(['"in"']);
       duplex.write("out");
       expect(await server.client.next()).toBe('binary "out"');
     });
 
-    test("write() after the client is gone fails", async () => {
+    test("write() fails after the client disconnected", async () => {
       await using server = await openServer(implementation);
       const duplex = createWebSocketStream(server.ws);
       const events = watchStream(duplex);
       server.client.destroy();
       await server.closed;
-      const closed = event(duplex, "close");
+      const closed = nextEvent(duplex, "close");
       expect(await write(duplex, "too late")).toBe('Error "WebSocket is not open: readyState 3 (CLOSED)"');
       await closed;
       expect(events).toEqual(['error Error "WebSocket is not open: readyState 3 (CLOSED)"', "close"]);
     });
 
-    test("pipeline(duplex, duplex) echoes, and is done without an error when the client closes", async () => {
+    test("pipeline(duplex, duplex) echoes and finishes without an error when the client closes", async () => {
       await using server = await openServer(implementation);
       const { client } = server;
       const duplex = createWebSocketStream(server.ws);
       const done = new Promise<string>(resolve => pipeline(duplex, duplex, error => resolve(show(error))));
       client.text("a");
       client.binary("b");
-      expect(await client.take(2)).toEqual(['binary "a"', 'binary "b"']);
+      expect(await client.nextFrames(2)).toEqual(['binary "a"', 'binary "b"']);
       client.close();
       expect(await done).toBe("undefined");
-      expect(await client.rest()).toEqual(["close"]);
+      expect(await client.remainingFrames()).toEqual(["close"]);
       expect(server.events.at(-1)).toBe("close 1005 Buffer() rs=3");
     });
   });
 
   test("a client stream and a server stream, end to end", async () => {
     await using server = await createServer(implementation);
-    const served = new Promise<string>(resolve =>
+    const pipelineResult = new Promise<string>(resolve =>
       server.wss.on("connection", ws => {
         const duplex = createWebSocketStream(ws);
         pipeline(duplex, duplex, error => resolve(show(error)));
@@ -296,14 +300,14 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
     try {
       const duplex = createWebSocketStream(ws, { encoding: "utf8" });
       const events = watchStream(duplex);
-      const seen = chunks(duplex, 2);
+      const received = readChunks(duplex, 2);
       duplex.write("a");
       duplex.write("b");
-      expect(await seen).toEqual(['"a"', '"b"']);
+      expect(await received).toEqual(['"a"', '"b"']);
       duplex.end();
-      await event(duplex, "close");
+      await nextEvent(duplex, "close");
       expect(events).toEqual(["finish", "end", "close"]);
-      expect(await served).toBe("undefined");
+      expect(await pipelineResult).toBe("undefined");
     } finally {
       ws.on("error", () => {}).terminate();
     }

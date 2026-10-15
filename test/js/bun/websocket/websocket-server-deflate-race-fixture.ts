@@ -1,29 +1,30 @@
-// A Bun.serve WebSocket sends the same bytes with permessage-deflate on while
-// a worker rewrites them. MODE picks the memory another thread can write:
-// "sab" a SharedArrayBuffer view, "mmap" a MAP_SHARED Bun.mmap region over FILE.
+// A Bun.serve WebSocket with permessage-deflate sends the same buffer over and
+// over while a worker thread overwrites it. MODE picks the kind of shared
+// memory: "sab" is a SharedArrayBuffer view, "mmap" is a MAP_SHARED Bun.mmap of
+// FILE.
 //
-// A compressor that sizes a block in one pass over the input and emits it in a
-// second one writes past its output when the bytes change in between. The
-// worker flips the bytes between a pattern that costs little and a pattern
-// whose symbols are rare in the other pattern's Huffman code.
+// A two-pass compressor sizes a block in the first pass and emits it in the
+// second. If the input changes in between, it can write past the end of its
+// output buffer. The worker flips the buffer between a pattern that compresses
+// well and one whose bytes are rare in the first pattern's Huffman code.
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 
 const SIZE = 4000;
-// A sanitizer build of a compressor that overruns aborts within the first 30 sends.
+// With a compressor that overruns, a sanitizer build aborts within the first 30 sends.
 const SENDS = 500;
-// The main thread ends the process as soon as the sends finish. This bound
-// only stops the worker spinning forever if it ever outlives its parent.
+// The main thread exits the process as soon as the sends finish. This deadline
+// only keeps the worker from spinning forever if it outlives its parent.
 const FLIP_BUDGET_MS = 30_000;
 
-/** xorshift32, so both patterns are the same on every run. */
+/** Uses xorshift32 so both patterns are identical on every run. */
 function patterns(length: number) {
   let state = 88172645;
   const next = () => ((state ^= state << 13), (state ^= state >>> 17), (state ^= state << 5), state >>> 0);
 
-  // `cheap` holds bytes 0x00 to 0x7f, plus 16 single occurrences of the bytes
-  // `costly` is made of. Those 16 get the longest codewords in the code built
-  // from `cheap`, so re-emitting `length` `costly` bytes through that code
-  // needs about twice the space the cost pass reserved.
+  // `cheap` is bytes 0x00 to 0x7f, plus one of each of the 16 byte values
+  // `costly` uses. Those 16 get the longest codewords in `cheap`'s Huffman
+  // code, so emitting `length` bytes of `costly` with that code needs about
+  // twice the space the sizing pass reserved.
   const cheap = new Uint8Array(length);
   const costly = new Uint8Array(length);
   for (let i = 0; i < length; i++) {

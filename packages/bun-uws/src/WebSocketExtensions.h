@@ -26,9 +26,9 @@
 
 namespace uWS {
 
-/* Calls f with every part of s between separators, without surrounding whitespace, until f returns false */
+/* Splits s on separator and calls f with each whitespace-trimmed part. Stops and returns false once f returns false. */
 template <typename F>
-static inline bool everyPart(std::string_view s, char separator, F &&f) {
+static inline bool forEachPart(std::string_view s, char separator, F &&f) {
     for (size_t start = 0, end; start <= s.length(); start = end + 1) {
         end = std::min(s.find(separator, start), s.length());
         std::string_view part = s.substr(start, end - start);
@@ -45,7 +45,7 @@ static inline bool everyPart(std::string_view s, char separator, F &&f) {
     return true;
 }
 
-/* One offer of a Sec-WebSocket-Extensions request header */
+/* One permessage-deflate offer from a Sec-WebSocket-Extensions request header */
 struct PerMessageDeflateOffer {
     bool serverNoContextTakeover = false;
     bool clientNoContextTakeover = false;
@@ -53,7 +53,7 @@ struct PerMessageDeflateOffer {
     int serverMaxWindowBits = 0;
     int clientMaxWindowBits = 0;
 
-    /* 8..15 without leading zeros, else 0 */
+    /* Returns 8..15, or 0 if invalid. Leading zeros are invalid. */
     static int parseWindowBits(std::string_view value) {
         if (value.length() >= 2 && value.front() == '"' && value.back() == '"') {
             value = value.substr(1, value.length() - 2);
@@ -67,11 +67,11 @@ struct PerMessageDeflateOffer {
         return 0;
     }
 
-    /* False for any other extension, and for what RFC 7692 7.1 says to decline:
+    /* Returns false for other extensions, and for offers RFC 7692 7.1 says to decline:
      * an unknown or repeated parameter, or an invalid value */
     bool parse(std::string_view offer) {
         bool isName = true;
-        return everyPart(offer, ';', [&](std::string_view part) {
+        return forEachPart(offer, ';', [&](std::string_view part) {
             if (std::exchange(isName, false)) {
                 return part == "permessage-deflate";
             }
@@ -98,7 +98,7 @@ struct PerMessageDeflateOffer {
     }
 };
 
-/* Takes what we (the server) wants, returns what we got. A window of 0 is the shared (no context takeover) stream. */
+/* Takes what we (the server) wants, returns what we got. A window of 0 means the shared stream (no context takeover). */
 static inline std::tuple<bool, int, int, std::string> negotiateCompression(bool wantCompression, int wantedCompressionWindow, int wantedInflationWindow, std::string_view offers) {
 
     /* If we don't want compression then we are done here */
@@ -110,8 +110,8 @@ static inline std::tuple<bool, int, int, std::string> negotiateCompression(bool 
     int compressionWindow = 0;
     int inflationWindow = 0;
 
-    /* The offers come in order of preference (RFC 7692 5.1), the first one we can honour wins */
-    bool declinedAll = everyPart(offers, ',', [&](std::string_view part) {
+    /* Offers are listed in order of preference (RFC 7692 5.1). Accept the first one we can honor. */
+    bool declinedAll = forEachPart(offers, ',', [&](std::string_view part) {
         PerMessageDeflateOffer offer;
         if (!offer.parse(part)) {
             return true;
@@ -119,7 +119,7 @@ static inline std::tuple<bool, int, int, std::string> negotiateCompression(bool 
 
         compressionWindow = offer.serverNoContextTakeover ? 0 : wantedCompressionWindow;
         if (offer.serverMaxWindowBits) {
-            /* zlib cannot deflate with 8, and the shared compressor always uses 15 */
+            /* zlib can't deflate with windowBits 8, and the shared compressor always uses 15 */
             if (offer.serverMaxWindowBits == 8 || (!compressionWindow && offer.serverMaxWindowBits < 15)) {
                 return true;
             }
@@ -130,7 +130,7 @@ static inline std::tuple<bool, int, int, std::string> negotiateCompression(bool 
         if (offer.clientMaxWindowBits) {
             inflationWindow = std::min(inflationWindow, offer.clientMaxWindowBits);
         } else if (inflationWindow < 15) {
-            /* Only a client that offered client_max_window_bits may be told a window */
+            /* We may only send client_max_window_bits if the client offered it, so fall back to no context takeover */
             inflationWindow = 0;
         }
 
@@ -143,7 +143,7 @@ static inline std::tuple<bool, int, int, std::string> negotiateCompression(bool 
         if (!compressionWindow) {
             response += "; server_no_context_takeover";
         }
-        /* Accepting an offered server_max_window_bits means echoing it (RFC 7692 7.1.2.1) */
+        /* An accepted server_max_window_bits must be echoed in the response (RFC 7692 7.1.2.1) */
         if (offer.serverMaxWindowBits || (compressionWindow && compressionWindow < 15)) {
             response += "; server_max_window_bits=" + std::to_string(compressionWindow ? compressionWindow : 15);
         }

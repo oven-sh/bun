@@ -62,7 +62,7 @@ impl Opcode {
     }
 }
 
-/// RFC 6455 §7.4: the status codes a Close frame may carry.
+/// Status codes allowed in a Close frame (RFC 6455 §7.4).
 pub fn is_valid_close_code(code: u16) -> bool {
     matches!(code, 1000..=1003 | 1007..=1014 | 3000..=4999)
 }
@@ -176,7 +176,7 @@ impl WebsocketHeader {
         }
     }
 
-    /// `masked`: with the 4-byte masking key, as a client sends it.
+    /// `masked` adds the 4-byte masking key that client frames carry.
     pub const fn frame_size(byte_length: usize, masked: bool) -> usize {
         Self::HEADER_LENGTH
             + Self::length_byte_count(byte_length)

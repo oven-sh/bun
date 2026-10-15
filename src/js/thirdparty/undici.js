@@ -371,7 +371,7 @@ const pongChannel = dc.channel("undici:websocket:pong");
 
 function toBuffer(data) {
   if ($isTypedArrayView(data)) return data;
-  // The Blob of a received frame is in memory, so its promise is already fulfilled.
+  // A received frame's Blob is in memory, so arrayBuffer() returns an already-fulfilled promise.
   return Buffer.from(isArrayBuffer(data) ? data : $peekPromiseSettledValue(data.arrayBuffer()));
 }
 

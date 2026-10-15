@@ -290,7 +290,7 @@ import { expectType } from "./utilities";
   expectType<string>(options.tls.servername);
 }
 
-// Bun's own declaration, which lib.dom does not replace.
+// Bun.WebSocket is Bun's own declaration. lib.dom doesn't override it.
 {
   const ws = {} as Bun.WebSocket;
 
@@ -307,7 +307,7 @@ import { expectType } from "./utilities";
   ws.onerror = onError;
   ws.addEventListener("error", onError);
   ws.removeEventListener("error", onError);
-  // A listener written for the old declaration still fits.
+  // Listeners typed for the old declaration (plain Event) still type-check.
   ws.onerror = (event: Event) => {};
   ws.addEventListener("error", (event: Event) => {});
 
@@ -338,7 +338,7 @@ import { expectType } from "./utilities";
   ({ headers: [["a", "b"]] }) satisfies Bun.WebSocketOptions;
 }
 
-// cork() hands the callback this socket and returns what the callback returns.
+// cork() passes the socket to the callback and returns the callback's return value.
 {
   const ws = {} as Bun.ServerWebSocket<{ id: number }>;
   expectType(ws.cork(corked => corked.data.id)).is<number>();

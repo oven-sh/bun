@@ -5120,13 +5120,13 @@ declare module "bun" {
     message: globalThis.MessageEvent;
     open: Event;
     /**
-     * A Ping frame arrived. Bun has already answered it with a Pong. `data` is the
-     * payload, in the form `binaryType` selects. Not available in browsers.
+     * Fired when a Ping frame is received. Bun has already replied with a Pong.
+     * `data` is the payload, typed according to `binaryType`. Not available in browsers.
      */
     ping: globalThis.MessageEvent;
     /**
-     * A Pong frame arrived. `data` is the payload, in the form `binaryType` selects.
-     * Not available in browsers.
+     * Fired when a Pong frame is received. `data` is the payload, typed according
+     * to `binaryType`. Not available in browsers.
      */
     pong: globalThis.MessageEvent;
   }
@@ -5188,8 +5188,8 @@ declare module "bun" {
     readonly extensions: string;
 
     /**
-     * How binary `message`, `ping` and `pong` payloads are delivered: as a `Buffer`
-     * (`"nodebuffer"`, the default), an `ArrayBuffer` or a `Blob`.
+     * The type of `data` for binary `message`, `ping` and `pong` events: `Buffer`
+     * (`"nodebuffer"`, the default), `ArrayBuffer` or `Blob`.
      */
     binaryType: "arraybuffer" | "blob" | "nodebuffer";
 
@@ -5204,17 +5204,17 @@ declare module "bun" {
     onmessage: ((this: WebSocket, ev: globalThis.MessageEvent) => any) | null;
 
     /**
-     * Event handler for error event: the client failed the connection. A `close` event
-     * with code `1006` follows. `ev.message` says why. `ev.error` is an `Error` with,
-     * when there is one to give, a `code` such as `"ECONNREFUSED"`, `"ENOTFOUND"`,
+     * Event handler for error event. Fires when the connection fails, followed by a
+     * `close` event with code `1006`. `ev.message` describes the failure. `ev.error` is
+     * an `Error` that may have a `code`, such as `"ECONNREFUSED"`, `"ENOTFOUND"`,
      * `"SELF_SIGNED_CERT_IN_CHAIN"` or `"WS_ERR_INVALID_UTF8"`.
      */
     onerror: ((this: WebSocket, ev: ErrorEvent) => any) | null;
 
     /**
-     * Event handler for close event. It fires when the connection is closed. `code` and
-     * `reason` are those of the server's Close frame (`1005` if it had no code).
-     * `code` is `1006` when the connection ended without a Close frame.
+     * Event handler for close event. Fires once the connection closes. `code` and
+     * `reason` come from the server's Close frame (`1005` if the frame had no code).
+     * `code` is `1006` if the connection ended without a Close frame.
      */
     onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
 
@@ -5225,12 +5225,12 @@ declare module "bun" {
     send(data: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
-     * Starts the closing handshake: sends a Close frame and sets `readyState` to `CLOSING`.
-     * The `close` event fires when the connection is closed: the server answers with its own
-     * Close frame and closes it. After 30 seconds Bun closes it itself.
+     * Starts the closing handshake. Sends a Close frame and sets `readyState` to `CLOSING`.
+     * The `close` event fires once the server replies with its own Close frame and closes
+     * the connection. If the server hasn't done so after 30 seconds, Bun closes the connection.
      * @param code A close code an endpoint is allowed to send (RFC 6455): `1000`-`1014` except
      * the reserved `1004`-`1006`, or `3000`-`4999`. Any other code throws an `InvalidAccessError`.
-     * Without a code the Close frame is empty.
+     * If omitted, the Close frame has no code or reason.
      * @param reason A human-readable string explaining why the connection is closing. Throws a
      * `SyntaxError` if longer than 123 bytes of UTF-8
      */

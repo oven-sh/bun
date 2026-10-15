@@ -30,7 +30,7 @@ function frame(opcode: number, payload: Buffer, opts: { fin?: boolean; rsv1?: bo
   return Buffer.concat([head, mask, masked]);
 }
 
-// The Close frame a server writes (unmasked).
+// Builds the unmasked Close frame a server sends.
 function closeFrame(code: number, reason: string): Buffer {
   return Buffer.concat([Buffer.from([0x88, 2 + reason.length, code >> 8, code & 0xff]), Buffer.from(reason)]);
 }
@@ -140,7 +140,7 @@ async function connectRaw(options: {
     pings,
     negotiated: negotiated.replace(/^sec-websocket-extensions:\s*/i, ""),
     firstMessage: firstMessage.promise,
-    // Resolves with everything message() saw once it ran `count` times.
+    // Resolves with every received message once message() has run `count` times.
     messages(count: number): Promise<string[]> {
       if (received.length >= count) return Promise.resolve(received);
       const { promise, resolve } = Promise.withResolvers<string[]>();
@@ -175,7 +175,7 @@ describe.concurrent("permessage-deflate RSV1 frames", () => {
     try {
       expect(raw.negotiated).toContain("permessage-deflate");
     } catch (error) {
-      // The caller's `using` never binds when this throws, so release here.
+      // If this throws, the caller's `using` never binds, so dispose here.
       raw[Symbol.dispose]();
       throw error;
     }
@@ -284,16 +284,17 @@ describe.concurrent("permessage-deflate RSV1 frames", () => {
   });
 });
 
-// `perMessageDeflate: { compress, decompress }` configures each direction on its
-// own. RFC 7692 negotiates both at once: "compress off" means the server never
-// sets RSV1 on what it sends, "decompress off" means no per-socket inflater.
+// `perMessageDeflate: { compress, decompress }` configures each direction
+// separately, but RFC 7692 negotiates both at once. So "compress off" means the
+// server never sets RSV1 on outgoing frames, and "decompress off" means no
+// per-socket inflater.
 describe.concurrent("perMessageDeflate per-direction options", () => {
   // 320 repeated bytes deflate to a few bytes, so a compressed reply is short
   // and has RSV1 set, and a plain reply is 320 bytes with RSV1 clear.
   const reply = Buffer.alloc(320, "x");
   const plainReply = Buffer.concat([Buffer.from([0x82, 126, reply.length >> 8, reply.length & 0xff]), reply]);
   const inbound = Buffer.from("hello from the client");
-  const echoCompressed = (ws: ServerWebSocket<undefined>) => {
+  const sendCompressedReply = (ws: ServerWebSocket<undefined>) => {
     ws.send(reply, true);
   };
 
@@ -304,12 +305,12 @@ describe.concurrent("perMessageDeflate per-direction options", () => {
     [{ compress: "disable", decompress: "8KB" }, "client_max_window_bits=13; server_no_context_takeover"],
   ] as const) {
     it(`${JSON.stringify(perMessageDeflate)} inflates inbound messages and never compresses outbound ones`, async () => {
-      using raw = await connectRaw({ perMessageDeflate, onMessage: echoCompressed });
+      using raw = await connectRaw({ perMessageDeflate, onMessage: sendCompressedReply });
       expect(raw.negotiated).toBe(`permessage-deflate; ${negotiated}`);
       raw.socket.write(frame(0x1, pmdDeflate(inbound), { rsv1: true }));
       expect(await Promise.race([raw.firstMessage, raw.serverClose])).toBe(`message:${inbound.toString("hex")}`);
-      // A compressed reply is a few bytes with RSV1 set, so check the head
-      // as soon as it arrives rather than wait for 320 bytes that never come.
+      // A compressed reply is a few bytes with RSV1 set, so check the header as
+      // soon as it arrives instead of waiting for 320 bytes that would never arrive.
       expect(await Promise.race([raw.waitForFrameBytes(2), raw.closed])).toBe("server-sent-a-frame");
       expect(raw.frames()[0]).toBe(0x82);
       expect(await Promise.race([raw.waitForFrameBytes(plainReply.length), raw.closed])).toBe("server-sent-a-frame");
@@ -322,18 +323,18 @@ describe.concurrent("perMessageDeflate per-direction options", () => {
     [{ compress: "shared", decompress: "shared" }, "client_no_context_takeover; server_no_context_takeover"],
     [{ compress: "shared" }, "client_no_context_takeover; server_no_context_takeover"],
     [{ decompress: "shared" }, "client_no_context_takeover; server_no_context_takeover"],
-    // No decompressor of its own: the shared one inflates.
+    // With no dedicated decompressor, the shared one inflates.
     [{ compress: "shared", decompress: "disable" }, "client_no_context_takeover; server_no_context_takeover"],
     [{ compress: true, decompress: false }, "client_no_context_takeover; server_no_context_takeover"],
     [{ compress: "dedicated", decompress: false }, "client_no_context_takeover"],
-    // A size names the window of its own direction only.
+    // A size only sets the window for its own direction.
     [{ decompress: "16KB" }, "client_max_window_bits=14; server_no_context_takeover"],
     [{ compress: "16KB", decompress: "8KB" }, "client_max_window_bits=13; server_max_window_bits=11"],
     [{ compress: "shared", decompress: "256KB" }, "server_no_context_takeover"],
     [{ compress: "3KB", decompress: "3KB" }, "client_max_window_bits=11; server_max_window_bits=9"],
   ] as const) {
     it(`${JSON.stringify(perMessageDeflate)} inflates inbound and compresses outbound messages`, async () => {
-      using raw = await connectRaw({ perMessageDeflate, onMessage: echoCompressed });
+      using raw = await connectRaw({ perMessageDeflate, onMessage: sendCompressedReply });
       expect(raw.negotiated).toBe(`permessage-deflate; ${negotiated}`);
       raw.socket.write(frame(0x1, pmdDeflate(inbound), { rsv1: true }));
       expect(await Promise.race([raw.firstMessage, raw.serverClose])).toBe(`message:${inbound.toString("hex")}`);
@@ -352,7 +353,7 @@ describe.concurrent("perMessageDeflate per-direction options", () => {
     { compress: "disable" },
   ] as const) {
     it(`${JSON.stringify(perMessageDeflate)} does not negotiate the extension`, async () => {
-      using raw = await connectRaw({ perMessageDeflate, onMessage: echoCompressed });
+      using raw = await connectRaw({ perMessageDeflate, onMessage: sendCompressedReply });
       expect(raw.negotiated).toBe("");
       raw.socket.write(frame(0x1, inbound));
       expect(await Promise.race([raw.firstMessage, raw.serverClose])).toBe(`message:${inbound.toString("hex")}`);
@@ -362,33 +363,33 @@ describe.concurrent("perMessageDeflate per-direction options", () => {
   }
 });
 
-const inflaters = [
+const decompressors = [
   ["shared", { compress: "shared", decompress: "shared" }],
   ["dedicated", { compress: "shared", decompress: "dedicated" }],
 ] as const;
 
 // RFC 7692 7.2.3.4: a sender may end a message with a BFINAL=1 block. The
 // receiver decodes it, and the next message starts a new DEFLATE stream.
-describe.concurrent.each(inflaters)("inbound BFINAL=1 blocks (%s decompressor)", (_label, perMessageDeflate) => {
+describe.concurrent.each(decompressors)("inbound BFINAL=1 blocks (%s decompressor)", (_label, perMessageDeflate) => {
   const original = Buffer.alloc(750, "bfinal-interop-");
   const hex = (...payloads: Buffer[]) => payloads.map(payload => payload.toString("hex"));
-  // The RFC's own shape: the complete stream plus the 0x00 that is left of an
-  // empty stored block once its 0x00 0x00 0xff 0xff is removed.
+  // The form the RFC describes: the complete stream, then the 0x00 that remains
+  // of an empty stored block after stripping its 0x00 0x00 0xff 0xff.
   const padded = (payload: Buffer) => Buffer.concat([deflateRawSync(payload), Buffer.from([0x00])]);
 
-  it("a BFINAL=1 message is inflated and delivered", async () => {
+  it("inflates and delivers a BFINAL=1 message", async () => {
     using raw = await connectRaw({ perMessageDeflate });
     raw.socket.write(frame(0x2, deflateRawSync(original), { rsv1: true }));
     expect(await Promise.race([raw.messages(1), raw.serverClose])).toEqual(hex(original));
   });
 
-  it("a BFINAL=1 message padded with 0x00 is inflated and delivered", async () => {
+  it("inflates and delivers a BFINAL=1 message padded with 0x00", async () => {
     using raw = await connectRaw({ perMessageDeflate });
     raw.socket.write(frame(0x2, padded(original), { rsv1: true }));
     expect(await Promise.race([raw.messages(1), raw.serverClose])).toEqual(hex(original));
   });
 
-  it("a sync-flushed message after a BFINAL=1 message is inflated", async () => {
+  it("inflates a sync-flushed message after a BFINAL=1 message", async () => {
     using raw = await connectRaw({ perMessageDeflate });
     const followup = Buffer.alloc(200, "after-bfinal-");
     raw.socket.write(
@@ -400,7 +401,7 @@ describe.concurrent.each(inflaters)("inbound BFINAL=1 blocks (%s decompressor)",
     expect(await Promise.race([raw.messages(2), raw.serverClose])).toEqual(hex(original, followup));
   });
 
-  it("two BFINAL=1 messages in a row are inflated", async () => {
+  it("inflates two BFINAL=1 messages in a row", async () => {
     using raw = await connectRaw({ perMessageDeflate });
     const other = Buffer.alloc(300, "second-bfinal-");
     raw.socket.write(
@@ -409,7 +410,7 @@ describe.concurrent.each(inflaters)("inbound BFINAL=1 blocks (%s decompressor)",
     expect(await Promise.race([raw.messages(2), raw.serverClose])).toEqual(hex(original, other));
   });
 
-  it("a fragmented BFINAL=1 message is inflated", async () => {
+  it("inflates a fragmented BFINAL=1 message", async () => {
     using raw = await connectRaw({ perMessageDeflate });
     const compressed = deflateRawSync(original);
     raw.socket.write(
@@ -421,8 +422,8 @@ describe.concurrent.each(inflaters)("inbound BFINAL=1 blocks (%s decompressor)",
     expect(await Promise.race([raw.messages(1), raw.serverClose])).toEqual(hex(original));
   });
 
-  // 16384 is the inflate scratch buffer: an exact fit, one byte more, and more than one refill.
-  it.each([4096, 4097, 16384, 16385, 40000])("a BFINAL=1 message inflating to %d bytes is delivered", async size => {
+  // The inflate scratch buffer is 16384 bytes. Cover an exact fit, one byte over, and multiple refills.
+  it.each([4096, 4097, 16384, 16385, 40000])("delivers a BFINAL=1 message that inflates to %d bytes", async size => {
     using raw = await connectRaw({ perMessageDeflate });
     const payload = Buffer.alloc(size, "bfinal-boundary-");
     raw.socket.write(frame(0x2, deflateRawSync(payload), { rsv1: true }));
@@ -430,7 +431,7 @@ describe.concurrent.each(inflaters)("inbound BFINAL=1 blocks (%s decompressor)",
   });
 });
 
-describe.concurrent.each(inflaters)("inflate failures (%s decompressor)", (_label, perMessageDeflate) => {
+describe.concurrent.each(decompressors)("inflate failures (%s decompressor)", (_label, perMessageDeflate) => {
   it("a corrupt DEFLATE stream fails the connection with 1007", async () => {
     using raw = await connectRaw({ perMessageDeflate });
     // BTYPE=11 is reserved.
@@ -446,7 +447,7 @@ describe.concurrent.each(inflaters)("inflate failures (%s decompressor)", (_labe
     [1000, 40000],
     [16384, 16385],
     [20000, 20001],
-  ])("with maxPayloadLength %d a message inflating to %d bytes fails the connection with 1009", async (max, size) => {
+  ])("maxPayloadLength %d: a message that inflates to %d bytes fails the connection with 1009", async (max, size) => {
     using raw = await connectRaw({ perMessageDeflate, maxPayloadLength: max });
     raw.socket.write(frame(0x2, pmdDeflate(Buffer.alloc(size, "a")), { rsv1: true }));
     const reason = "Received too big message";
@@ -455,7 +456,7 @@ describe.concurrent.each(inflaters)("inflate failures (%s decompressor)", (_labe
     expect(raw.frames()).toEqual(closeFrame(1009, reason));
   });
 
-  it.each([1000, 16384, 20000])("a message inflating to exactly maxPayloadLength %d is delivered", async max => {
+  it.each([1000, 16384, 20000])("delivers a message that inflates to exactly maxPayloadLength (%d)", async max => {
     using raw = await connectRaw({ perMessageDeflate, maxPayloadLength: max });
     const payload = Buffer.alloc(max, "a");
     raw.socket.write(frame(0x2, pmdDeflate(payload), { rsv1: true }));

@@ -1,7 +1,7 @@
-// RFC 6455 7.1.7: a server that fails the connection sends a Close frame first,
+// RFC 6455 7.1.7: before failing the connection, the server sends a Close frame
 // with 1002 (protocol error), 1007 (invalid data) or 1009 (too big) and the
-// diagnostic as the reason. The close handler gets 1006 and the same diagnostic:
-// 1006 never comes from a peer, so it always means "the server gave up".
+// error message as the reason. The close handler gets 1006 with the same
+// message. A peer can't send 1006, so it always means the server aborted.
 import { describe, expect, test } from "bun:test";
 import { tls as cert } from "harness";
 import net from "node:net";
@@ -16,7 +16,7 @@ const PING = 0x9;
 
 type FrameOptions = { fin?: boolean; rsv?: number; mask?: boolean; declaredLength?: number };
 
-// A client frame. `rsv` is a bit mask: 4 = RSV1, 2 = RSV2, 1 = RSV3.
+// Builds a client frame. `rsv` is a bit mask: 4 = RSV1, 2 = RSV2, 1 = RSV3.
 function frame(opcode: number, payload: string | Buffer | number[] = "", options: FrameOptions = {}): Buffer {
   const { fin = true, rsv = 0, mask = true } = options;
   const body = Buffer.from(payload as string);
@@ -42,12 +42,12 @@ function closeBody(code: number, reason: string | number[] = ""): Buffer {
   return Buffer.concat([Buffer.from([code >> 8, code & 0xff]), Buffer.from(reason as string)]);
 }
 
-// A permessage-deflate payload: raw deflate, sync flush, without the 00 00 ff ff tail.
+// Compresses a permessage-deflate payload: raw deflate with a sync flush, minus the trailing 00 00 ff ff.
 function deflate(data: Buffer): Buffer {
   return zlib.deflateRawSync(data, { finishFlush: zlib.constants.Z_SYNC_FLUSH }).subarray(0, -4);
 }
 
-// What the server put on the wire, one entry per frame.
+// Formats the frames the server sent, one string per frame.
 function describeFrames(bytes: Buffer): string[] {
   const names: Record<number, string> = { 1: "TEXT", 2: "BINARY", 8: "CLOSE", 9: "PING", 10: "PONG" };
   const out: string[] = [];
@@ -153,15 +153,15 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
     ["opcode 15", frame(15, "hi"), 1002, "Received invalid opcode"],
     ["a ping without FIN", frame(PING, "hi", { fin: false }), 1002, "Received fragmented control frame"],
     ["a Close without FIN", frame(CLOSE, closeBody(1000), { fin: false }), 1002, "Received fragmented control frame"],
-    ["a ping of 126 bytes", frame(PING, Buffer.alloc(126, "a")), 1002, "Received too big control frame"],
+    ["a 126-byte ping", frame(PING, Buffer.alloc(126, "a")), 1002, "Received too big control frame"],
     [
-      "a Close of 126 bytes",
+      "a 126-byte Close",
       frame(CLOSE, closeBody(1000, Buffer.alloc(124, "a").toString())),
       1002,
       "Received too big control frame",
     ],
     [
-      "a continuation frame with no message open",
+      "a continuation frame outside a fragmented message",
       frame(CONT, "hi"),
       1002,
       "Received continuation frame outside a fragmented message",
@@ -199,13 +199,13 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
     ],
     ["a frame over maxPayloadLength", frame(BINARY, Buffer.alloc(1025)), 1009, "Received too big message"],
     [
-      "a header that declares 1 GiB",
+      "a frame header declaring 1 GiB",
       frame(BINARY, "", { declaredLength: 1024 * 1024 * 1024 }),
       1009,
       "Received too big message",
     ],
     [
-      "fragments that add up to more than maxPayloadLength",
+      "fragments totaling more than maxPayloadLength",
       Buffer.concat([frame(BINARY, Buffer.alloc(600), { fin: false }), frame(CONT, Buffer.alloc(600))]),
       1009,
       "Received too big message",
@@ -228,36 +228,39 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
     ],
   ];
 
-  // A server that lets the violation pass answers this instead of waiting for more.
-  const goodbye = frame(CLOSE, closeBody(1000));
+  // Sent after each invalid frame. A server that wrongly accepts the frame echoes this Close
+  // instead of leaving the test hanging.
+  const normalClose = frame(CLOSE, closeBody(1000));
 
-  test.each(violations)("%s", async (_name, bytes, code, diagnostic) => {
-    expect(await probe(Buffer.concat([bytes, goodbye]))).toEqual(failed(code, diagnostic));
+  test.each(violations)("rejects %s", async (_name, bytes, code, diagnostic) => {
+    expect(await probe(Buffer.concat([bytes, normalClose]))).toEqual(failed(code, diagnostic));
   });
 
-  test("a new message after a ping inside a fragmented message", async () => {
+  test("rejects a new message after a ping inside a fragmented message", async () => {
     expect(
-      await probe(Buffer.concat([frame(BINARY, "a", { fin: false }), frame(PING, "p"), frame(BINARY, "b"), goodbye])),
+      await probe(
+        Buffer.concat([frame(BINARY, "a", { fin: false }), frame(PING, "p"), frame(BINARY, "b"), normalClose]),
+      ),
     ).toEqual({
       wire: ['PONG "p"', `CLOSE 1002 ${JSON.stringify(interleaved)}`, "FIN"],
       events: [`close 1006 ${JSON.stringify(interleaved)}`],
     });
   });
 
-  test("the answer to a valid frame in the same read is sent before the Close frame", async () => {
+  test("replies to an earlier valid frame in the same read before sending the Close frame", async () => {
     expect(await probe(Buffer.concat([frame(TEXT, "Hello"), frame(TEXT, "hi", { rsv: 2 }), frame(PING)]))).toEqual({
       wire: ['TEXT "Hello"', 'CLOSE 1002 "Received unexpected RSV2 or RSV3 bit"', "FIN"],
       events: ['message "Hello"', 'close 1006 "Received unexpected RSV2 or RSV3 bit"'],
     });
   });
 
-  test("a compressed message that is not a deflate stream", async () => {
+  test("rejects a compressed message that isn't valid deflate data", async () => {
     expect(await probe(frame(TEXT, [0xff, 0xff, 0xff, 0xff, 0xff, 0xff], { rsv: 4 }), { deflate: true })).toEqual(
       failed(1007, "Received invalid compressed data"),
     );
   });
 
-  test("a compressed message that inflates to more than maxPayloadLength", async () => {
+  test("rejects a compressed message that inflates past maxPayloadLength", async () => {
     const compressed = deflate(Buffer.alloc(1025, "a"));
     expect(compressed.length).toBeLessThan(126);
     expect(await probe(frame(TEXT, compressed, { rsv: 4 }), { deflate: true })).toEqual(
@@ -265,7 +268,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
     );
   });
 
-  describe("valid frames are not refused", () => {
+  describe("accepts valid frames", () => {
     test("a message, then Close 1000", async () => {
       expect(await probe(Buffer.concat([frame(TEXT, "ok"), frame(CLOSE, closeBody(1000, "bye"))]))).toEqual({
         wire: ['TEXT "ok"', 'CLOSE 1000 "bye"', "FIN"],
@@ -289,7 +292,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
       });
     });
 
-    test("a compressed message of exactly maxPayloadLength", async () => {
+    test("a compressed message that inflates to exactly maxPayloadLength", async () => {
       const { events } = await probe(
         Buffer.concat([frame(TEXT, deflate(Buffer.alloc(1024, "a")), { rsv: 4 }), frame(CLOSE, closeBody(1000))]),
         { deflate: true },
@@ -297,8 +300,8 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
       expect(events).toEqual([`message ${JSON.stringify(Buffer.alloc(1024, "a").toString())}`, 'close 1000 ""']);
     });
 
-    // A control frame is not a message: its limit is the 125 bytes of RFC 6455 5.5.
-    test("a ping and a Close that are longer than maxPayloadLength", async () => {
+    // maxPayloadLength only applies to messages. RFC 6455 5.5 caps control frames at 125 bytes.
+    test("a ping and a Close longer than maxPayloadLength", async () => {
       const payload = Buffer.alloc(100, "p").toString();
       expect(
         await probe(
@@ -313,11 +316,11 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: failing the connection", s
       });
     });
 
-    test("an empty Close is answered with an empty Close", async () => {
+    test("echoes an empty Close as an empty Close", async () => {
       expect(await probe(frame(CLOSE))).toEqual({ wire: ['CLOSE ""', "FIN"], events: ['close 1005 ""'] });
     });
 
-    test.each([1000, 1001, 1003, 1007, 1014, 3000, 4999])("Close %d is echoed", async code => {
+    test.each([1000, 1001, 1003, 1007, 1014, 3000, 4999])("echoes Close %d", async code => {
       expect(await probe(frame(CLOSE, closeBody(code, "why")))).toEqual({
         wire: [`CLOSE ${code} "why"`, "FIN"],
         events: [`close ${code} "why"`],

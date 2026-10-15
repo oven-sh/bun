@@ -13,11 +13,11 @@ typedef struct {
 
 // This must match the layout of ConnectedOptions in src/http_jsc/websocket_client.rs
 typedef struct {
-    // Bytes of one message after reassembly and inflation. 0 = no limit.
+    // Max size of one message in bytes, after reassembly and decompression. 0 = no limit.
     size_t max_payload_length;
     bool auto_pong;
-    // The `ws` module owns this socket: text frames arrive through WebSocket__didReceiveBytes with opcode 1,
-    // WebSocket__didDrain is called, and the owner times the closing handshake.
+    // The `ws` module owns this socket. Text messages are delivered as bytes through WebSocket__didReceiveBytes with opcode 1,
+    // WebSocket__didDrain is called, and the module runs its own closing handshake timeout.
     bool ws_mode;
     bool skip_utf8_validation;
     bool is_server;

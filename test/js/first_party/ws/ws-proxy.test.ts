@@ -12,7 +12,7 @@ const { HttpsProxyAgent } = require("https-proxy-agent") as {
   HttpsProxyAgent: typeof HttpsProxyAgentType;
 };
 
-// Bun's `ws` also takes the `proxy` and `tls` options of Bun's own WebSocket. npm ws has neither.
+// Bun's `ws` also accepts the `proxy` and `tls` options of Bun's native WebSocket. npm ws has neither.
 type ClientOptions = WebSocket.ClientOptions & Bun.WebSocketOptionsProxy & Bun.WebSocketOptionsTLS;
 
 // The tests below pass an explicit `proxy:` option for 127.0.0.1 and assert on
@@ -46,7 +46,7 @@ afterAll(() => {
 
 type ClientEvent = string | { error: unknown; code?: string } | { close: unknown[] };
 
-/** Every message, the message and code of every Error, and the arguments of 'close', which ends the list. */
+/** Collects every message, each error's message and code, and the 'close' arguments. Resolves on 'close'. */
 function wsEvents(ws: WebSocket): Promise<ClientEvent[]> {
   const events: ClientEvent[] = [];
   const { promise, resolve } = Promise.withResolvers<ClientEvent[]>();
@@ -78,18 +78,18 @@ function wsFailingSession(ws: WebSocket): Promise<ClientEvent[]> {
   return wsEvents(ws);
 }
 
-/** The echo server greets first, echoes the message, then answers the client's Close frame. */
+/** The echo server sends a greeting, echoes the message, then replies to the client's Close frame. */
 function echoed(message: string): ClientEvent[] {
   return ["connected", message, { close: [1000, Buffer.alloc(0)] }];
 }
 
-/** A handshake that failed: one Error, then 'close'. */
+/** A failed handshake emits one error, then 'close'. */
 function failed(error: { error: unknown; code?: string }): ClientEvent[] {
   return [error, { close: [1006, Buffer.alloc(0)] }];
 }
 
-/** close() while CONNECTING emits 'error'. */
-function abandon(ws: WebSocket) {
+/** close() while CONNECTING emits 'error', so this adds a listener first. */
+function closeWhileConnecting(ws: WebSocket) {
   ws.on("error", () => {});
   ws.close();
 }
@@ -104,7 +104,7 @@ describe("ws package proxy API", () => {
       proxy: `http://127.0.0.1:${proxyPort}`,
     } as ClientOptions);
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
-    abandon(ws);
+    closeWhileConnecting(ws);
   });
 
   test("accepts proxy option as string (HTTPS proxy)", () => {
@@ -113,7 +113,7 @@ describe("ws package proxy API", () => {
       tls: { rejectUnauthorized: false },
     } as ClientOptions);
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
-    abandon(ws);
+    closeWhileConnecting(ws);
   });
 
   test("accepts proxy option with object containing url", () => {
@@ -121,7 +121,7 @@ describe("ws package proxy API", () => {
       proxy: { url: `http://127.0.0.1:${proxyPort}` },
     } as ClientOptions);
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
-    abandon(ws);
+    closeWhileConnecting(ws);
   });
 
   test("accepts proxy URL with credentials", () => {
@@ -129,7 +129,7 @@ describe("ws package proxy API", () => {
       proxy: `http://user:pass@127.0.0.1:${proxyPort}`,
     } as ClientOptions);
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
-    abandon(ws);
+    closeWhileConnecting(ws);
   });
 
   test("can combine proxy with headers and protocols", () => {
@@ -138,7 +138,7 @@ describe("ws package proxy API", () => {
       headers: { Authorization: "Bearer token" },
     } as ClientOptions);
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
-    abandon(ws);
+    closeWhileConnecting(ws);
   });
 
   test("rejects invalid proxy URL", () => {
@@ -163,25 +163,25 @@ describe("ws package through HTTP CONNECT proxy", () => {
     gc();
   });
 
-  // Through a proxy the native client dials, so `signal` is not node:http's to look after. A signal may live much
-  // longer than the dials it was given to.
-  describe("the `signal` option", () => {
-    const refusing = () =>
+  // With a proxy the native client connects instead of node:http, so `ws` has to handle `signal` itself. A signal can
+  // outlive the connections it was passed to, so a listener left on it would leak.
+  describe("`signal` option", () => {
+    const serve503 = () =>
       Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("no", { status: 503 }) });
 
-    test("abort() while CONNECTING: an AbortError, then 'close' 1006", async () => {
+    test("abort() while CONNECTING emits an AbortError, then 'close' 1006", async () => {
       using recorded = await startRecordingProxy();
-      // Accepts the tunnel and never answers the upgrade request.
-      const silent = net.createServer(() => {}).listen(0, "127.0.0.1");
-      await once(silent, "listening");
+      // Accepts the tunneled connection but never answers the upgrade request.
+      const silentServer = net.createServer(() => {}).listen(0, "127.0.0.1");
+      await once(silentServer, "listening");
       try {
         const controller = new AbortController();
-        const ws = new WebSocket(`ws://127.0.0.1:${(silent.address() as net.AddressInfo).port}`, {
+        const ws = new WebSocket(`ws://127.0.0.1:${(silentServer.address() as net.AddressInfo).port}`, {
           proxy: `http://127.0.0.1:${recorded.port}`,
           signal: controller.signal,
         } as ClientOptions);
         const events = wsEvents(ws);
-        await once(silent, "connection");
+        await once(silentServer, "connection");
         controller.abort(new Error("why"));
         expect(await events).toEqual([
           { error: "The operation was aborted", code: "ABORT_ERR" },
@@ -189,23 +189,23 @@ describe("ws package through HTTP CONNECT proxy", () => {
         ]);
         expect(getEventListeners(controller.signal, "abort")).toEqual([]);
       } finally {
-        silent.close();
+        silentServer.close();
       }
     });
 
-    test.each(["'open'", "'unexpected-response'", "'error'", "a constructor that throws"])(
-      "nothing is left on the signal after %s",
+    test.each(["'open'", "'unexpected-response'", "'error'", "the constructor throws"])(
+      "removes the abort listener after %s",
       async outcome => {
         using recorded = await startRecordingProxy();
-        using target = refusing();
+        using target = serve503();
         const { signal } = new AbortController();
         const port = outcome === "'open'" ? wsPort : target.port;
         const options = {
           proxy: `http://127.0.0.1:${recorded.port}`,
           signal,
-          headers: outcome === "a constructor that throws" ? { "X-Bad": "a\r\nb" } : {},
+          headers: outcome === "the constructor throws" ? { "X-Bad": "a\r\nb" } : {},
         } as ClientOptions;
-        if (outcome === "a constructor that throws") {
+        if (outcome === "the constructor throws") {
           expect(() => new WebSocket(`ws://127.0.0.1:${port}`, options)).toThrow(TypeError);
         } else {
           const ws = new WebSocket(`ws://127.0.0.1:${port}`, options);
@@ -224,7 +224,7 @@ describe("ws package through HTTP CONNECT proxy", () => {
     );
   });
 
-  test("ws:// through HTTP proxy when finishRequest calls req.end() later", async () => {
+  test("ws:// through HTTP proxy when finishRequest calls req.end() asynchronously", async () => {
     using recorded = await startRecordingProxy();
     const upgrades: (string | null)[] = [];
     using target = Bun.serve({
@@ -371,7 +371,7 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
   });
 });
 
-// Bun does not call the agent. It reads the proxy URL, headers and options from it and sends its own CONNECT.
+// Bun doesn't call the agent. It reads the agent's proxy URL, headers and options and sends its own CONNECT.
 describe("ws package with HttpsProxyAgent", () => {
   test("ws:// through HttpsProxyAgent", async () => {
     using recorded = await startRecordingProxy();
@@ -387,7 +387,8 @@ describe("ws package with HttpsProxyAgent", () => {
     gc();
   });
 
-  // Not npm ws's behaviour: there the agent's own options reach the proxy only, and the target is refused.
+  // Differs from npm ws, where the agent's options only apply to the proxy connection and the target's certificate is
+  // rejected.
   test("wss:// through HttpsProxyAgent with rejectUnauthorized", async () => {
     using recorded = await startRecordingProxy();
     const agent = new HttpsProxyAgent(`http://127.0.0.1:${recorded.port}`, {

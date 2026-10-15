@@ -25,7 +25,7 @@ function write(socket: RawSocket, bytes: string | Uint8Array) {
   socket.flush();
 }
 
-/** The head of a 101 that answers `request`: the three fields it needs, then the `extra` lines. */
+/** Builds the 101 response head for `request`: the three required headers, then any `extra` header lines. */
 function head101(request: string, extra: string[] = []): string {
   const key = /^Sec-WebSocket-Key:\s*(\S+)/im.exec(request)![1];
   return [
@@ -39,8 +39,8 @@ function head101(request: string, extra: string[] = []): string {
 }
 
 /**
- * A raw TCP server that calls `respond` with each complete upgrade request, read as latin1.
- * It answers `GET /barrier` by itself, see `clientHasRead`.
+ * Raw TCP server. Calls `respond` with each complete upgrade request, decoded as latin1.
+ * `GET /barrier` is answered automatically, see `clientHasRead`.
  */
 function listen(respond: (socket: RawSocket, request: string) => unknown) {
   const server = Bun.listen<{ request: string }>({
@@ -66,7 +66,7 @@ function listen(respond: (socket: RawSocket, request: string) => unknown) {
   };
 }
 
-/** "open", or what the `error` event says after "failed: ". */
+/** Resolves to "open", or to the `error` event's message without the "... failed: " prefix. */
 function openOrFailure(ws: NativeWebSocket): Promise<string> {
   const { promise, resolve } = Promise.withResolvers<string>();
   ws.addEventListener("open", () => resolve("open"));
@@ -78,25 +78,25 @@ function openOrFailure(ws: NativeWebSocket): Promise<string> {
 }
 
 /**
- * Once this resolves, the client of `socket` has read what was written to it so far, so the next
- * write arrives in another read: those bytes were readable before this handshake began, and the
- * handshake takes several turns of the same event loop. A client that has failed by then ends the
- * test and the server with it, so the outcome of this handshake is not looked at.
+ * Resolves once `socket`'s client has read everything written so far, so the next write arrives in
+ * a separate read. It runs a second handshake on the same event loop. The earlier bytes were
+ * already readable when it started, and it takes several loop iterations to finish. Its result is
+ * ignored because a client that already failed ends the test and stops the server.
  */
 async function clientHasRead(socket: RawSocket) {
   await openOrFailure(new NativeWebSocket(`ws://127.0.0.1:${socket.localPort}/barrier`));
 }
 
-/** The client gets `bytes` in two reads, the first one of `firstRead` bytes. In one read without it. */
-async function writeInReads(socket: RawSocket, bytes: string, firstRead = bytes.length) {
+/** Sends `bytes` so the client gets them in two reads, split at `firstRead`. Defaults to a single read. */
+async function writeSplit(socket: RawSocket, bytes: string, firstRead = bytes.length) {
   write(socket, bytes.slice(0, firstRead));
   if (firstRead >= bytes.length) return;
   await clientHasRead(socket);
   write(socket, bytes.slice(firstRead));
 }
 
-/** Every `handshake` event, the native event under 'upgrade' and 'unexpected-response' of the ws package. */
-function handshakes(ws: NativeWebSocket) {
+/** Records every `handshake` event, the native event behind the ws package's 'upgrade' and 'unexpected-response'. */
+function recordHandshakes(ws: NativeWebSocket) {
   const seen: { statusCode: number; rawHeaders: string[] }[] = [];
   ws.addEventListener(
     "handshake" as any,
@@ -130,7 +130,7 @@ describe("WebSocket", () => {
         socket: {
           data(socket, data) {
             if (init) {
-              // The only frame the client sends is its Close.
+              // The client only ever sends a Close frame. Echo it and end the connection.
               socket.end(Uint8Array.from([0x88, 0]));
               return;
             }
@@ -213,9 +213,9 @@ describe("WebSocket", () => {
   });
 });
 
-describe("the size limit of a response head", () => {
-  // --max-http-header-size (16 KB by default) counts names, values and the status text, as in Node.
-  // The client bounds the raw bytes of the head, with 1 KB on top for the framing.
+describe("response header size limit", () => {
+  // --max-http-header-size (16 KB by default) counts header names, values and the status text, like Node.
+  // The client limits the raw bytes of the response head instead, with 1 KB extra for delimiters.
   const MAX_HEAD = 16384 + 1024;
   const TOO_LARGE = "Response headers too large";
 
@@ -224,27 +224,27 @@ describe("the size limit of a response head", () => {
     return head101(request, ["X-Pad: " + Buffer.alloc(padding, "a").toString()]);
   }
 
-  // The outcome depends on the size of the head and not on where a read ends.
+  // Only the total size of the head matters, not where the reads are split.
   test.each([
     [MAX_HEAD, MAX_HEAD, "open"],
     [MAX_HEAD + 1, MAX_HEAD + 1, TOO_LARGE],
     [100_000, 100_000, TOO_LARGE],
-    // Node opens this one too.
+    // Node accepts this one too.
     [16400, 16390, "open"],
     [MAX_HEAD, MAX_HEAD - 1, "open"],
     [MAX_HEAD + 1, MAX_HEAD, TOO_LARGE],
     [21000, 16000, TOO_LARGE],
     [21000, 20000, TOO_LARGE],
-  ])("a 101 head of %i bytes, %i of them in the first read: %s", async (size, firstRead, outcome) => {
+  ])("%i-byte 101 response with %i bytes in the first read: %s", async (size, firstRead, outcome) => {
     using server = listen((socket, request) => {
       const head = paddedHead(request, size);
       expect(head.length).toBe(size);
-      return writeInReads(socket, head, firstRead);
+      return writeSplit(socket, head, firstRead);
     });
     expect(await openOrFailure(new NativeWebSocket(server.url))).toBe(outcome);
   });
 
-  test("a head that never ends fails once it is over the limit", async () => {
+  test("fails an unterminated response once it exceeds the limit", async () => {
     using server = listen(socket => {
       write(socket, "HTTP/1.1 101 Switching Protocols\r\nX-Pad: " + Buffer.alloc(20000, "a").toString());
     });
@@ -252,14 +252,14 @@ describe("the size limit of a response head", () => {
   });
 
   test.each([
-    ["in the same read as the whole head", undefined],
-    ["in the same read as the end of the head", "HTTP/1.1 101 ".length],
-  ])("a frame larger than the limit does not count, %s", async (_, firstRead) => {
+    ["in the same read as the whole response head", undefined],
+    ["in the same read as the end of the response head", "HTTP/1.1 101 ".length],
+  ])("frame bytes don't count toward the limit when they arrive %s", async (_, firstRead) => {
     const payload = 20000;
     using server = listen((socket, request) => {
       // An unmasked binary frame with a 64-bit length.
       const frame = "\x82\x7f\0\0\0\0\0\0" + String.fromCharCode(payload >> 8, payload & 0xff);
-      return writeInReads(socket, head101(request) + frame + Buffer.alloc(payload).toString("latin1"), firstRead);
+      return writeSplit(socket, head101(request) + frame + Buffer.alloc(payload).toString("latin1"), firstRead);
     });
     const ws = new NativeWebSocket(server.url);
     ws.binaryType = "arraybuffer";
@@ -267,8 +267,8 @@ describe("the size limit of a response head", () => {
   });
 });
 
-describe("the number of fields in a response head", () => {
-  // 8 bytes a field keep 2100 of them under the size limit. Node has no limit on the count either.
+describe("response header count", () => {
+  // At about 8 bytes per header, 2100 of them fit under the size limit. Node doesn't limit the count either.
   const filler = (i: number) => `x: ${i.toString(36)}`;
   const fillers = (count: number) => Array.from({ length: count }, (_, i) => filler(i));
   const rawHeaders = (head: string) =>
@@ -277,35 +277,35 @@ describe("the number of fields in a response head", () => {
       .slice(1, -2)
       .flatMap(line => line.split(": "));
 
-  test.each([126, 1000, 2100])("a 101 with %i more fields opens and delivers each of them", async count => {
+  test.each([126, 1000, 2100])("opens on a 101 with %i extra headers and reports all of them", async count => {
     let head = "";
     using server = listen((socket, request) => {
       head = head101(request, fillers(count));
       write(socket, head + textFrame("hi"));
     });
     const ws = new NativeWebSocket(server.url);
-    const seen = handshakes(ws);
+    const seen = recordHandshakes(ws);
     expect({ message: await firstMessage(ws), seen }).toEqual({
       message: "hi",
       seen: [{ statusCode: 101, rawHeaders: rawHeaders(head) }],
     });
   });
 
-  test("a head cut inside field 201", async () => {
+  test("opens when the reads are split in the middle of header 201", async () => {
     let head = "";
     using server = listen((socket, request) => {
       head = head101(request, fillers(300));
-      return writeInReads(socket, head, head.indexOf(filler(200) + "\r\n") + 4);
+      return writeSplit(socket, head, head.indexOf(filler(200) + "\r\n") + 4);
     });
     const ws = new NativeWebSocket(server.url);
-    const seen = handshakes(ws);
+    const seen = recordHandshakes(ws);
     expect({ outcome: await openOrFailure(ws), seen }).toEqual({
       outcome: "open",
       seen: [{ statusCode: 101, rawHeaders: rawHeaders(head) }],
     });
   });
 
-  test("a 503 with 200 fields fails for its status", async () => {
+  test("a 503 with 200 headers fails with the status code error", async () => {
     using server = listen(socket => {
       write(socket, ["HTTP/1.1 503 Service Unavailable", ...fillers(200), "Content-Length: 0", "\r\n"].join("\r\n"));
     });
@@ -313,10 +313,10 @@ describe("the number of fields in a response head", () => {
   });
 });
 
-describe("the first bytes of the answer", () => {
-  // The server keeps the connection open, so nothing but these bytes can fail the handshake.
+describe("first bytes of the response", () => {
+  // The server keeps the connection open, so only these bytes can fail the handshake.
   test.each(["f", "foo\r\n", "foo\r\n\r\n", "HTTQ", "HTTP/2", "\r\nHTTP", "HTTP/1.1 100 Continue\r\n\r\nfoo"])(
-    "%j cannot become a response: fails at once",
+    "fails immediately on %j, which can't start a valid response",
     async bytes => {
       const read = Promise.withResolvers<string>();
       using server = listen(async socket => {
@@ -329,13 +329,13 @@ describe("the first bytes of the answer", () => {
     },
   );
 
-  test.each([1, 4, 7, 8])("a 101 whose first %i bytes come alone opens", async firstRead => {
-    using server = listen((socket, request) => writeInReads(socket, head101(request), firstRead));
+  test.each([1, 4, 7, 8])("opens when the first read only has %i bytes of the 101", async firstRead => {
+    using server = listen((socket, request) => writeSplit(socket, head101(request), firstRead));
     expect(await openOrFailure(new NativeWebSocket(server.url))).toBe("open");
   });
 });
 
-describe("interim responses before the final one", () => {
+describe("interim responses", () => {
   const CONTINUE = "HTTP/1.1 100 Continue\r\n\r\n";
   const EARLY_HINTS = "HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\n";
 
@@ -346,14 +346,14 @@ describe("interim responses before the final one", () => {
   ])("%s", (_, interim) => {
     test.each([
       ["in one read", undefined],
-      ["cut inside the interim response", 12],
-      ["cut after the interim response", interim.length],
-    ])("then a 101, %s", async (_, firstRead) => {
+      ["split inside the interim response", 12],
+      ["split after the interim response", interim.length],
+    ])("followed by a 101, %s", async (_, firstRead) => {
       using server = listen((socket, request) => {
-        return writeInReads(socket, interim + head101(request) + textFrame("hi"), firstRead);
+        return writeSplit(socket, interim + head101(request) + textFrame("hi"), firstRead);
       });
       const ws = new NativeWebSocket(server.url);
-      const seen = handshakes(ws);
+      const seen = recordHandshakes(ws);
       expect({ message: await firstMessage(ws), statusCodes: seen.map(({ statusCode }) => statusCode) }).toEqual({
         message: "hi",
         statusCodes: [101],
@@ -361,10 +361,10 @@ describe("interim responses before the final one", () => {
     });
   });
 
-  test("then a 404", async () => {
+  test("100 Continue followed by a 404 fails with the 404", async () => {
     using server = listen(socket => write(socket, CONTINUE + "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"));
     const ws = new NativeWebSocket(server.url);
-    const seen = handshakes(ws);
+    const seen = recordHandshakes(ws);
     expect({ outcome: await openOrFailure(ws), statusCodes: seen.map(({ statusCode }) => statusCode) }).toEqual({
       outcome: "Expected 101 status code: 404",
       statusCodes: [404],
@@ -427,31 +427,31 @@ describe("Sec-WebSocket-Extensions in the 101", () => {
     "permessage-deflate; client_max_window_bits=1_0",
     "permessage-deflate; client_max_window_bits=+9",
     "permessage-deflate; client_max_window_bits=9a",
-    // The characters after "9" in ASCII.
+    // The ASCII characters right after "9".
     "permessage-deflate; server_max_window_bits=:",
     "permessage-deflate; server_max_window_bits==",
     "permessage-deflate; client_max_window_bits=?",
     "permessage-deflate; client_no_context_takeover=1",
     "permessage-deflate; server_no_context_takeover; server_no_context_takeover",
     "permessage-deflate; client_max_window_bits=10; client_max_window_bits=10",
-  ])("refuses %j", async value => {
+  ])("rejects %j", async value => {
     expect(await negotiate([`Sec-WebSocket-Extensions: ${value}`])).toBe(UNSUPPORTED);
   });
 
-  test("refuses a second header line", async () => {
+  test("rejects a duplicate header", async () => {
     const line = "Sec-WebSocket-Extensions: permessage-deflate";
     expect(await negotiate([line, line])).toBe(UNSUPPORTED);
   });
 
-  test("refuses permessage-deflate when it was not offered", async () => {
+  test("rejects permessage-deflate when the client didn't offer it", async () => {
     const line = "Sec-WebSocket-Extensions: permessage-deflate";
     expect(await negotiate([line], { perMessageDeflate: false })).toBe(UNSUPPORTED);
   });
 });
 
-describe("the upgrade request", () => {
-  test("header values go out one byte per code unit, like fetch()", async () => {
-    // path.basename returns a 16-bit string here, though every code unit is below 0x100.
+describe("upgrade request", () => {
+  test("sends header values as latin1, like fetch()", async () => {
+    // path.basename returns a UTF-16 string here even though every code unit is below 0x100.
     const headers = { "X-Latin1": "vàlüé-ñ", "X-Utf16": basename("/tmp/café.txt"), "Host": "hôte" };
     let request = "";
     using server = listen((socket, received) => {
@@ -469,7 +469,7 @@ describe("the upgrade request", () => {
   });
 });
 
-describe("a connection that fails says why", () => {
+describe("the error event reports why the connection failed", () => {
   function failure(ws: NativeWebSocket) {
     const { promise, resolve, reject } = Promise.withResolvers<{ code: unknown; message: string }>();
     ws.addEventListener("open", () => reject(new Error("opened")));
@@ -480,7 +480,7 @@ describe("a connection that fails says why", () => {
     return promise.finally(() => ws.terminate());
   }
 
-  test("nobody listens on the port", async () => {
+  test("ECONNREFUSED when nothing is listening on the port", async () => {
     const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
     const { port } = server;
     server.stop(true);
@@ -490,8 +490,8 @@ describe("a connection that fails says why", () => {
     });
   });
 
-  test("the host name does not resolve", async () => {
-    // A DNS label of more than 63 bytes is refused by getaddrinfo without a query.
+  test("ENOTFOUND when the hostname doesn't resolve", async () => {
+    // getaddrinfo rejects DNS labels longer than 63 bytes without sending a query.
     const host = Buffer.alloc(64, "a").toString() + ".com";
     expect(await failure(new NativeWebSocket(`ws://${host}/`))).toEqual({
       code: "ENOTFOUND",
@@ -502,7 +502,7 @@ describe("a connection that fails says why", () => {
   test.each([
     ["a FIN", (socket: net.Socket) => void socket.end(), "Connection ended"],
     ["a reset", (socket: net.Socket) => void socket.resetAndDestroy(), "Connection ended: read ECONNRESET"],
-  ])("%s in place of an answer", async (_, drop, message) => {
+  ])("ECONNRESET when the server sends %s instead of a response", async (_, drop, message) => {
     const server = net.createServer(socket => socket.on("error", () => {}).once("data", () => drop(socket)));
     try {
       await once(server.listen(0, "127.0.0.1"), "listening");
@@ -513,8 +513,8 @@ describe("a connection that fails says why", () => {
     }
   });
 
-  // connect(2) fails inside the constructor here. Winsock leaves no errno.
-  test.skipIf(isWindows)("the unix socket does not exist", async () => {
+  // connect(2) fails synchronously inside the constructor. Skipped on Windows because Winsock doesn't set errno.
+  test.skipIf(isWindows)("ENOENT when the unix socket doesn't exist", async () => {
     using dir = tempDir("ws-missing-unix-socket", {});
     const ws = new NativeWebSocket(`ws+unix://${join(String(dir), "missing.sock")}`);
     expect(ws.readyState).toBe(NativeWebSocket.CONNECTING);
@@ -531,7 +531,7 @@ describe("a connection that fails says why", () => {
         websocket: { message() {} },
       });
 
-    test("the certificate is not trusted", async () => {
+    test("untrusted certificate", async () => {
       await using server = serve();
       expect(await failure(new NativeWebSocket(`wss://127.0.0.1:${server.port}/`))).toEqual({
         code: "DEPTH_ZERO_SELF_SIGNED_CERT",
@@ -539,7 +539,7 @@ describe("a connection that fails says why", () => {
       });
     });
 
-    test("the certificate is for another name", async () => {
+    test("certificate hostname mismatch", async () => {
       await using server = serve();
       const tls = { ca: tlsCert.cert, serverName: "evil.test" };
       expect(await failure(new NativeWebSocket(`wss://127.0.0.1:${server.port}/`, { tls }))).toEqual({
@@ -550,50 +550,50 @@ describe("a connection that fails says why", () => {
   });
 });
 
-describe("giving up while CONNECTING", () => {
-  test.each(["close", "terminate"] as const)("%s() ends the connection with a FIN, not a reset", async method => {
-    const requested = Promise.withResolvers<void>();
-    const gone = Promise.withResolvers<{ fin: boolean; error?: string }>();
+describe("aborting while CONNECTING", () => {
+  test.each(["close", "terminate"] as const)("%s() closes the connection with a FIN, not a reset", async method => {
+    const requestReceived = Promise.withResolvers<void>();
+    const socketClosed = Promise.withResolvers<{ fin: boolean; error?: string }>();
     const server = net.createServer(socket => {
       const seen: { fin: boolean; error?: string } = { fin: false };
-      socket.on("data", () => requested.resolve());
+      socket.on("data", () => requestReceived.resolve());
       socket.on("end", () => void (seen.fin = true));
       socket.on("error", (error: NodeJS.ErrnoException) => void (seen.error = error.code));
-      socket.on("close", () => gone.resolve(seen));
+      socket.on("close", () => socketClosed.resolve(seen));
     });
     try {
       await once(server.listen(0, "127.0.0.1"), "listening");
       const ws = new NativeWebSocket(`ws://127.0.0.1:${(server.address() as AddressInfo).port}/`);
       ws.addEventListener("error", () => {});
-      await requested.promise;
+      await requestReceived.promise;
       ws[method]();
-      expect(await gone.promise).toEqual({ fin: true });
+      expect(await socketClosed.promise).toEqual({ fin: true });
     } finally {
       server.close();
     }
   });
 });
 
-describe("reads while a handshake listener spins the event loop", () => {
-  // For a listener: the peer sends `bytes`, then this waits synchronously for `until`.
-  // `expect().resolves` is not awaited on purpose. It ticks the event loop until the promise settles.
+describe("data received while a handshake listener spins the event loop", () => {
+  // Call from a listener. Sends `bytes` from the peer, then blocks until `until` settles.
+  // `expect().resolves` is deliberately not awaited. It ticks the event loop until the promise settles.
   function sendAndWaitSynchronously(peer: RawSocket, bytes: string, until: Promise<void>) {
     write(peer, bytes);
     expect(until).resolves.toBeUndefined();
   }
 
-  test("a frame that arrives during the listener of a 101 is delivered after 'open'", async () => {
+  test("a frame received during a 101's handshake listener is delivered after 'open'", async () => {
     let peer!: RawSocket;
     using server = listen((socket, request) => {
       peer = socket;
       write(socket, head101(request));
     });
     const order: string[] = [];
-    const laterFrameRead = Promise.withResolvers<void>();
+    const frameDelivered = Promise.withResolvers<void>();
     const done = Promise.withResolvers<void>();
     const ws = new NativeWebSocket(server.url);
     const fail = (why: string) => {
-      laterFrameRead.reject(new Error(why));
+      frameDelivered.reject(new Error(why));
       done.reject(new Error(why));
     };
     ws.addEventListener("error", event => fail((event as ErrorEvent).message));
@@ -603,7 +603,7 @@ describe("reads while a handshake listener spins the event loop", () => {
       () => {
         order.push("handshake");
         try {
-          sendAndWaitSynchronously(peer, textFrame("after the 101"), laterFrameRead.promise);
+          sendAndWaitSynchronously(peer, textFrame("after the 101"), frameDelivered.promise);
           order.push("handshake returns");
           write(peer, textFrame("last"));
         } catch (error) {
@@ -615,7 +615,7 @@ describe("reads while a handshake listener spins the event loop", () => {
     ws.addEventListener("open", () => order.push("open"));
     ws.addEventListener("message", event => {
       order.push(`message ${event.data}`);
-      if (event.data === "after the 101") laterFrameRead.resolve();
+      if (event.data === "after the 101") frameDelivered.resolve();
       if (event.data === "last") done.resolve();
     });
     try {
@@ -626,7 +626,7 @@ describe("reads while a handshake listener spins the event loop", () => {
     }
   });
 
-  test("a response that is not a 101 fails for its status when the listener lets in more of the body", async () => {
+  test("a non-101 response still fails with its status code when more body arrives during the listener", async () => {
     let peer!: RawSocket;
     using server = listen(socket => {
       peer = socket;

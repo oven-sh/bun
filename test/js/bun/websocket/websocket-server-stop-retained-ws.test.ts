@@ -111,7 +111,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: server.stop(true)", scheme
 
   const goingAway = { code: 1001, reason: "Server closed" };
 
-  test("ends every WebSocket with 1001", async () => {
+  test("closes every WebSocket with 1001", async () => {
     const serverClosed = Promise.withResolvers<{ code: number; reason: string }>();
     const server = listen({
       message() {},
@@ -136,7 +136,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: server.stop(true)", scheme
     }
   });
 
-  test("delivers what send() and publish() accepted in the same tick, then the Close frame", async () => {
+  test("flushes same-tick send() and publish() messages before the Close frame", async () => {
     let results: number[] = [];
     const server = listen({
       open(ws) {
@@ -162,7 +162,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: server.stop(true)", scheme
     }
   });
 
-  test("after stop(), which leaves WebSockets open", async () => {
+  test("closes WebSockets that an earlier stop() left open", async () => {
     const echoed = Promise.withResolvers<void>();
     const server = listen({
       message(ws, message) {
@@ -184,7 +184,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: server.stop(true)", scheme
     }
   });
 
-  test("reaches every WebSocket when a close handler terminates the others and stops again", async () => {
+  test("closes every WebSocket when a close handler terminates the others and calls stop(true) again", async () => {
     const sockets: ServerWebSocket<undefined>[] = [];
     const codes: number[] = [];
     const server = listen({
@@ -213,7 +213,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: server.stop(true)", scheme
   });
 });
 
-test("http.Server#close() leaves the connections of a WebSocketServer open", async () => {
+test("http.Server#close() leaves WebSocketServer connections open", async () => {
   const server = http.createServer();
   const wss = new WebSocketServer({ server });
   wss.on("connection", ws => ws.on("message", message => ws.send("echo:" + message)));

@@ -556,10 +556,10 @@ impl NodeHTTPResponse {
         );
     }
 
-    /// What an upgrade needs from the response and its server. Ask before anything is written.
+    /// Whether this response can still be upgraded. Check before writing anything.
     ///
-    /// `server` is read last. Script can hold a response for longer than its server lives; the server
-    /// is there while the connection is open (`NewServer::is_drained`).
+    /// `server` must be read last. JS can hold a response after its server was freed, but the
+    /// server stays alive while the connection is open (`NewServer::is_drained`).
     pub(crate) fn can_upgrade(&self) -> bool {
         !self
             .flags
@@ -570,8 +570,9 @@ impl NodeHTTPResponse {
             && !self.get_server_socket_value().is_empty()
     }
 
-    /// The upgrade of the `ws` package, which negotiated and built `handshake` (the whole response head) itself.
-    /// Returns the `ServerWebSocket`, or `None` with nothing written.
+    /// Upgrades the connection for the `ws` package, which has already negotiated and built
+    /// `handshake` (the full response head). Returns the `ServerWebSocket`, or `None` if the
+    /// upgrade failed, in which case nothing was written.
     pub(crate) fn upgrade_for_ws_package(
         &self,
         global: &JSGlobalObject,
@@ -587,7 +588,7 @@ impl NodeHTTPResponse {
             return Ok(None);
         }
         let mut server = self.server;
-        server.keep_ws_package_handlers(global, handlers)?;
+        server.init_ws_package_handlers(global, handlers)?;
         self.resume_socket();
         if !self.can_upgrade() {
             return Ok(None);
@@ -605,7 +606,7 @@ impl NodeHTTPResponse {
         };
 
         let ws = ServerWebSocket::init_for_ws_package(handler.get(), websocket);
-        // SAFETY: `init` just made `ws`; its JS wrapper owns it.
+        // SAFETY: `init` just allocated `ws`, and its JS wrapper owns it.
         let ws_ref = unsafe { &*ws };
 
         let armed_reader = self.armed_this_value.get();
@@ -619,8 +620,8 @@ impl NodeHTTPResponse {
         // and will have its own lifecycle management
         let vm = self.server.global_this().bun_vm().as_mut();
         self.poll_ref.with_mut(|r| r.unref(vm));
-        // Inside the upgrade the connection has left HTTP and is not a WebSocket yet: without
-        // this, a stopped server whose last connection it is drains in between.
+        // During the upgrade the connection counts as neither HTTP nor WebSocket. Hold a pending
+        // request so a stopped server doesn't drain if this is its last connection.
         server.on_pending_request();
         let upgraded = !raw_response
             .upgrade_raw(

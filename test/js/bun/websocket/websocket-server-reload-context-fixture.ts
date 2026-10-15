@@ -1,4 +1,4 @@
-// Reloads a server with websocket handlers many times and prints how much the RSS grew after a warmup.
+// Reloads a server with websocket handlers many times and prints how much RSS grew after a warmup.
 const rss =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? Bun.unsafe.memoryFootprint

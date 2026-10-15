@@ -25,7 +25,7 @@ afterAll(() => {
   if (prevNoProxyLower !== undefined) process.env.no_proxy = prevNoProxyLower;
 });
 
-/** The first message (the echo server greets with "connected"), or what the `error` event says after "failed: ". */
+/** Resolves with the first message (the echo server greets with "connected"), or the error message after "failed: ". */
 function greetingOrFailure(ws: WebSocket): Promise<string> {
   const { promise, resolve } = Promise.withResolvers<string>();
   ws.addEventListener("message", event => resolve(String(event.data)));
@@ -37,19 +37,19 @@ function greetingOrFailure(ws: WebSocket): Promise<string> {
 }
 
 /**
- * A proxy that answers every CONNECT with `reply`. What the client sends after that goes to the port
- * it asked for, and back.
- * With `firstRead`, the client reads that many bytes of the reply before the proxy writes the rest:
- * they were readable before a whole handshake with the echo server began on the same event loop.
+ * A proxy that replies to every CONNECT with `reply`, then tunnels to the requested port.
+ * With `firstRead`, the reply is split into two writes. Between them the proxy completes a whole
+ * WebSocket handshake with the echo server on the same event loop, so the client is guaranteed to
+ * read the first `firstRead` bytes separately.
  */
 async function startFixedReplyProxy(reply: string, firstRead = reply.length) {
-  /** The head of each CONNECT request, read as latin1. */
+  /** Each CONNECT request's head, decoded as latin1. */
   const requests: string[] = [];
   const proxy = net.createServer(client => {
     let request = "";
     let targetPort = 0;
     let target: net.Socket | undefined;
-    // The client hangs up as soon as it refuses a reply, so a later write can fail.
+    // The client disconnects as soon as it rejects a reply, so a later write can fail.
     client.on("error", () => {});
     client.on("close", () => target?.destroy());
     client.on("data", async chunk => {
@@ -84,7 +84,7 @@ async function startFixedReplyProxy(reply: string, firstRead = reply.length) {
   };
 }
 
-describe("the reply to CONNECT", () => {
+describe("CONNECT reply", () => {
   describe.each([
     ["200", "HTTP/1.1 200 Connection established\r\n\r\n", "connected"],
     ["200 without a reason phrase", "HTTP/1.1 200\r\n\r\n", "connected"],
@@ -120,11 +120,11 @@ describe("the reply to CONNECT", () => {
       "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 503 Busy\r\n\r\n",
       "Proxy connection failed: 503 Busy",
     ],
-    ["a reply that is not HTTP", "SSH-2.0-OpenSSH_9.6\r\n", "Invalid response"],
+    ["non-HTTP reply", "SSH-2.0-OpenSSH_9.6\r\n", "Invalid response"],
   ])("%s", (_, reply, outcome) => {
     test.each([
       ["in one read", undefined],
-      ["in two reads, the first one 10 bytes long", 10],
+      ["in two reads (the first is 10 bytes)", 10],
     ])("%s", async (_, firstRead) => {
       using proxy = await startFixedReplyProxy(reply, firstRead);
       expect({
@@ -134,24 +134,24 @@ describe("the reply to CONNECT", () => {
     });
   });
 
-  test("has no limit on the number of fields", async () => {
-    const fields = Array.from({ length: 200 }, (_, i) => `x-${i}: v\r\n`).join("");
-    using proxy = await startFixedReplyProxy(`HTTP/1.1 200 OK\r\n${fields}\r\n`);
+  test("allows any number of headers", async () => {
+    const headers = Array.from({ length: 200 }, (_, i) => `x-${i}: v\r\n`).join("");
+    using proxy = await startFixedReplyProxy(`HTTP/1.1 200 OK\r\n${headers}\r\n`);
     expect(await greetingOrFailure(new WebSocket(echoUrl, { proxy: proxy.url }))).toBe("connected");
   });
 
   test.each([
     ["in one read", undefined],
-    ["in two reads, the first one under the limit", 16000],
-  ])("fails when its head is over the size limit, %s", async (_, firstRead) => {
+    ["in two reads (the first is under the limit)", 16000],
+  ])("fails when its headers exceed the size limit, %s", async (_, firstRead) => {
     const reply = `HTTP/1.1 200 OK\r\nX-Pad: ${Buffer.alloc(21000, "a").toString()}\r\n\r\n`;
     using proxy = await startFixedReplyProxy(reply, firstRead);
     expect(await greetingOrFailure(new WebSocket(echoUrl, { proxy: proxy.url }))).toBe("Response headers too large");
   });
 });
 
-describe("the 101 read out of a TLS tunnel", () => {
-  /** A wss:// server that answers the upgrade with a 101 that has the `extra` lines, then greets with "connected". */
+describe("101 response received through a TLS tunnel", () => {
+  /** A wss:// server that replies with `before101`, a 101 with the `extra` header lines, and a "connected" message. */
   async function startWssServer(before101: string, extra: string[]) {
     const server = tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert }, socket => {
       let request = "";
@@ -185,15 +185,20 @@ describe("the 101 read out of a TLS tunnel", () => {
   }
 
   test.each([
-    ["200 more fields", "", Array.from({ length: 200 }, (_, i) => `x-${i}: v`), "connected"],
+    ["200 extra headers", "", Array.from({ length: 200 }, (_, i) => `x-${i}: v`), "connected"],
     [
-      "an interim response before it",
+      "an interim response before the 101",
       "HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n",
       [],
       "connected",
     ],
-    ["a head over the size limit", "", ["X-Pad: " + Buffer.alloc(21000, "a").toString()], "Response headers too large"],
-    ["an extension that was not offered", "", ["Sec-WebSocket-Extensions: foo"], "Unsupported websocket extension"],
+    [
+      "headers over the size limit",
+      "",
+      ["X-Pad: " + Buffer.alloc(21000, "a").toString()],
+      "Response headers too large",
+    ],
+    ["an extension the client didn't offer", "", ["Sec-WebSocket-Extensions: foo"], "Unsupported websocket extension"],
   ])("%s", async (_, before101, extra, outcome) => {
     using server = await startWssServer(before101, extra);
     using proxy = await startFixedReplyProxy("HTTP/1.1 200 OK\r\n\r\n");
@@ -201,7 +206,7 @@ describe("the 101 read out of a TLS tunnel", () => {
     expect(await greetingOrFailure(ws)).toBe(outcome);
   });
 
-  test("a certificate that is not trusted is named in error.code", async () => {
+  test("sets error.code for an untrusted certificate", async () => {
     using server = await startWssServer("", []);
     using proxy = await startFixedReplyProxy("HTTP/1.1 200 OK\r\n\r\n");
     const ws = new WebSocket(server.url, { proxy: proxy.url });
@@ -214,8 +219,8 @@ describe("the 101 read out of a TLS tunnel", () => {
   });
 });
 
-describe("the CONNECT request", () => {
-  /** The lines of the CONNECT request `connect` makes through a proxy that refuses it. The header lines are sorted. */
+describe("CONNECT request", () => {
+  /** Returns the lines of the CONNECT request that `connect` sends to a proxy that rejects it. Headers are sorted. */
   async function connectRequest(connect: (proxy: { url: string; port: number }) => Promise<unknown>) {
     using proxy = await startFixedReplyProxy("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n");
     await connect(proxy);
@@ -224,7 +229,7 @@ describe("the CONNECT request", () => {
     return [requestLine, ...headers.sort()];
   }
 
-  // Both write it with one function.
+  // WebSocket and fetch() share the function that writes the CONNECT request.
   describe.each([
     [
       "WebSocket",
@@ -237,7 +242,7 @@ describe("the CONNECT request", () => {
         fetch("https://127.0.0.1:8443/", { proxy }).catch(() => {}),
     ],
   ])("%s", (_, connect) => {
-    test("without options", async () => {
+    test("no options", async () => {
       expect(await connectRequest(({ url }) => connect(url))).toEqual([
         "CONNECT 127.0.0.1:8443 HTTP/1.1",
         "Host: 127.0.0.1:8443",
@@ -254,7 +259,7 @@ describe("the CONNECT request", () => {
       ]);
     });
 
-    test("a Proxy-Authorization header beats credentials in the proxy URL", async () => {
+    test("a Proxy-Authorization header overrides credentials in the proxy URL", async () => {
       const headers = { "Proxy-Authorization": "Bearer token" };
       expect(
         await connectRequest(({ port }) => connect({ url: `http://user:pass@127.0.0.1:${port}`, headers })),
@@ -266,7 +271,7 @@ describe("the CONNECT request", () => {
       ]);
     });
 
-    test("a Host or Proxy-Connection header replaces the default one", async () => {
+    test("a Host or Proxy-Connection header overrides the default", async () => {
       const headers = { "Host": "other.test", "Proxy-Connection": "close" };
       expect(await connectRequest(({ url }) => connect({ url, headers }))).toEqual([
         "CONNECT 127.0.0.1:8443 HTTP/1.1",
@@ -275,7 +280,7 @@ describe("the CONNECT request", () => {
       ]);
     });
 
-    test("header values go out one byte per code unit", async () => {
+    test("header values are sent as latin1", async () => {
       const headers = { "X-Latin1": "café" };
       expect(await connectRequest(({ url }) => connect({ url, headers }))).toEqual([
         "CONNECT 127.0.0.1:8443 HTTP/1.1",

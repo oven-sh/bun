@@ -176,7 +176,8 @@ impl<const SSL: bool> Response<SSL> {
         us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>()).is_closed()
     }
 
-    /// `upgrade()` returns null for a closed socket and for one that sent its FIN or close_notify.
+    /// False if the socket is closed or already sent its FIN / close_notify. `upgrade()` returns
+    /// null for those.
     pub(crate) fn can_upgrade(&self) -> bool {
         let socket =
             us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>());
@@ -645,8 +646,9 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    /// `upgrade` for a caller that negotiated: `handshake` is the whole response head and goes out
-    /// byte for byte, `compress_options` are this socket's `CompressOptions` bits (0 = no permessage-deflate).
+    /// Like `upgrade`, but the caller already negotiated. `handshake` is the complete response head
+    /// and is written verbatim. `compress_options` are this socket's `CompressOptions` bits
+    /// (0 = no permessage-deflate).
     pub(crate) fn upgrade_raw<D>(
         &mut self,
         data: *mut D,
@@ -1120,7 +1122,8 @@ impl AnyResponse {
         }
     }
 
-    /// Null when the socket was refused: nothing was written and `data` is still the caller's.
+    /// Returns null if the socket can't be upgraded (see `can_upgrade`). Nothing was written and
+    /// the caller still owns `data`.
     pub fn upgrade<D>(
         self,
         data: *mut D,
@@ -1151,7 +1154,7 @@ impl AnyResponse {
         }
     }
 
-    /// See `Response::upgrade_raw`. Null as for `upgrade`.
+    /// See `Response::upgrade_raw`. Returns null in the same cases as `upgrade`.
     pub fn upgrade_raw<D>(
         self,
         data: *mut D,

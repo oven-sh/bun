@@ -366,19 +366,19 @@ public:
 
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
      * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use.
-     * Returns nullptr, with userData untouched, for a closed or shut down socket: nothing is written to it,
-     * unless it was the write of a 101 too long for the cork buffer that ended it. */
+     * Returns nullptr and leaves userData untouched if the socket is closed or shut down. Nothing was written in
+     * that case, unless the 101 overflowed the cork buffer and that write is what closed the socket. */
     template <typename UserData>
     us_socket_t *upgrade(UserData&& userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
             std::string_view secWebSocketExtensions,
             WebSocketContext<SSL, true, UserData> *webSocketContext) {
 
-        /* us_socket_adopt() refuses these, and by then HttpResponseData is destructed */
+        /* Check up front: us_socket_adopt() rejects these sockets, but by then HttpResponseData is already destructed */
         if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
             return nullptr;
         }
 
-        /* The 101 and what the open handler sends go out in one write */
+        /* Cork so the 101 and anything the open handler sends are flushed in one write */
         Super::cork();
 
         /* Extract needed parameters from WebSocketContextData */
@@ -452,8 +452,8 @@ public:
         return adoptWebSocket(std::forward<UserData>(userData), perMessageDeflate, compressOptions, webSocketContext);
     }
 
-    /* upgrade() with a response head made by the caller, who also negotiated: it is written as it is.
-     * compressOptions are those of this socket, DISABLED without permessage-deflate. */
+    /* Like upgrade(), but the caller already negotiated and built the 101 response head, which is written verbatim.
+     * compressOptions are this socket's negotiated options, or DISABLED if permessage-deflate wasn't negotiated. */
     template <typename UserData>
     us_socket_t *upgradeRaw(UserData&& userData, std::string_view handshake, CompressOptions compressOptions,
             WebSocketContext<SSL, true, UserData> *webSocketContext) {
@@ -469,12 +469,13 @@ public:
     }
 
 private:
-    /* The corked socket has its 101 and becomes a WebSocket of webSocketContext */
+    /* Moves the socket into webSocketContext. It must be corked, with the 101 already written. */
     template <typename UserData>
     us_socket_t *adoptWebSocket(UserData&& userData, bool perMessageDeflate, CompressOptions compressOptions,
             WebSocketContext<SSL, true, UserData> *webSocketContext) {
 
-        /* A send that TLS rejects ends the socket. It stays an HTTP socket, which the next writable event closes. */
+        /* If TLS rejected the 101 write, the socket is now closed or shut down. Leave it as an HTTP socket;
+         * the next writable event closes it. */
         if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
             return nullptr;
         }
@@ -574,7 +575,7 @@ private:
             webSocketContextData->openHandler(webSocket);
         }
 
-        /* Whoever corked the response (cork() above us, or nobody after an await) cannot uncork a WebSocket */
+        /* Uncork here. An enclosing HttpResponse::cork() can't uncork a WebSocket, and after an await there isn't one. */
         ((AsyncSocket<SSL> *) webSocket)->uncork();
 
         return usSocket;
@@ -1010,8 +1011,8 @@ public:
              * large data that triggered an internal uncork, (b) our empty slot
              * was stolen by another request during an await, or (c) we were
              * upgraded to a WebSocket (upgrade() uncorked it). In all cases
-             * our data (if any) was already flushed; nothing to do, and after
-             * an upgrade there is no HttpResponseData left to look at. */
+             * our data (if any) was already flushed; nothing to do. After an
+             * upgrade HttpResponseData is already destructed, so don't read it. */
             if (loopData->findCorkSlot(this) == LoopData::INVALID_CORK_SLOT) {
                 return this;
             }

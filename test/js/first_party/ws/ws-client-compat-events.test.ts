@@ -1,4 +1,4 @@
-// A `ws` client as an EventEmitter and as an EventTarget, against a raw TCP peer. See ws-raw-peer.ts.
+// EventEmitter and EventTarget behavior of a `ws` client, tested against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -7,9 +7,9 @@ import net from "node:net";
 import path from "node:path";
 import type { WebSocket as WsSocket } from "ws";
 import {
-  attempt,
+  tryCall,
   createPeer,
-  event,
+  nextEvent,
   implementations,
   OP,
   type PeerOptions,
@@ -22,29 +22,29 @@ import {
   type WsModule,
 } from "./ws-raw-peer";
 
-const silent: PeerOptions = { respond: () => null };
+const neverResponds: PeerOptions = { respond: () => null };
 const hangsUp: PeerOptions = { respond: connection => (connection.end(), null) };
 const notFound: PeerOptions = {
   respond: connection => (connection.socket.end("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"), null),
 };
 
-const hangUp = 'Error "socket hang up" ECONNRESET';
-const refused = 'Error "connect ECONNREFUSED 127.0.0.1:PORT" ECONNREFUSED';
+const socketHangUp = 'Error "socket hang up" ECONNRESET';
+const connectionRefused = 'Error "connect ECONNREFUSED 127.0.0.1:PORT" ECONNREFUSED';
 const unexpected404 = 'Error "Unexpected server response: 404"';
 const closedBeforeOpen = 'Error "WebSocket was closed before the connection was established"';
 const invalidOpcode = 'RangeError "Invalid WebSocket frame: invalid opcode 3" WS_ERR_INVALID_OPCODE';
 
 /**
- * A socket that has no listeners but those of the test. With the default peer it stays CONNECTING. `around` runs the
- * constructor call.
+ * A socket with no listeners except the ones the test adds. With the default peer it stays CONNECTING.
+ * `runConstructor` lets a test wrap the constructor call, e.g. in AsyncLocalStorage.run().
  */
-async function bare(
+async function bareClient(
   { WebSocket }: WsModule,
-  peerOptions = silent,
-  around = (construct: () => WsSocket) => construct(),
+  peerOptions = neverResponds,
+  runConstructor = (construct: () => WsSocket) => construct(),
 ) {
   const peer = await createPeer(peerOptions);
-  const ws = around(() => new WebSocket(peer.url));
+  const ws = runConstructor(() => new WebSocket(peer.url));
   return {
     peer,
     ws,
@@ -56,18 +56,18 @@ async function bare(
   };
 }
 
-/** The same, OPEN, with `conn`, the raw server's end of the connection. */
-async function bareOpen(implementation: WsModule) {
-  const client = await bare(implementation, {});
-  const opened = event(client.ws, "open");
+/** Like `bareClient()` but OPEN, plus `conn`, the raw server's end of the connection. */
+async function openBareClient(implementation: WsModule) {
+  const client = await bareClient(implementation, {});
+  const opened = nextEvent(client.ws, "open");
   const conn = await client.peer.connection();
   await opened;
   return { ...client, conn, [Symbol.asyncDispose]: client[Symbol.asyncDispose] };
 }
 
 /**
- * A URL that refuses connections. Its port is the client's end of a connection, so unlike a port that was closed it
- * cannot be given to a server of a test that runs at the same time.
+ * A URL that refuses connections. Its port is in use as the local port of an open client connection, so unlike a port
+ * that was just closed, the OS can't assign it to a server in a test that runs concurrently.
  */
 async function refusingUrl() {
   const accepted: net.Socket[] = [];
@@ -78,20 +78,20 @@ async function refusingUrl() {
   return {
     url: "ws://127.0.0.1:" + socket.localPort,
     async [Symbol.asyncDispose]() {
-      for (const each of [socket, ...accepted]) each.destroy();
+      for (const connection of [socket, ...accepted]) connection.destroy();
       await new Promise(resolve => server.close(resolve));
     },
   };
 }
 
-describe.each(implementations)("ws client, events ($name)", ({ ws: implementation, builtin, specifier }) => {
+describe.each(implementations)("ws client events ($name)", ({ ws: implementation, builtin, specifier }) => {
   const { WebSocket } = implementation;
 
   describe("on<event> attributes", () => {
     test.each(["open", "message", "error", "close"])(
-      "on%s holds one function, a listener of the emitter",
+      "on%s stores a single function and registers it as an emitter listener",
       async type => {
-        await using client = await bare(implementation);
+        await using client = await bareClient(implementation);
         const ws = client.ws as any;
         const attribute = "on" + type;
         const first = () => {};
@@ -114,7 +114,7 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       },
     );
 
-    test("they are enumerable, configurable accessors of the prototype", () => {
+    test("are enumerable, configurable accessors on the prototype", () => {
       for (const attribute of ["onopen", "onmessage", "onerror", "onclose"]) {
         expect(Object.getOwnPropertyDescriptor(WebSocket.prototype, attribute)).toEqual({
           get: expect.any(Function),
@@ -125,8 +125,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       }
     });
 
-    test("they do not show on() and addEventListener() listeners", async () => {
-      await using client = await bare(implementation);
+    test("don't return listeners added with on() or addEventListener()", async () => {
+      await using client = await bareClient(implementation);
       const { ws } = client;
       ws.on("message", () => {});
       expect(ws.onmessage).toBe(null);
@@ -134,8 +134,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       expect(ws.onmessage).toBe(null);
     });
 
-    test("one function can be the attribute and an addEventListener() listener", async () => {
-      await using client = await bare(implementation);
+    test("the same function can be both the attribute and an addEventListener() listener", async () => {
+      await using client = await bareClient(implementation);
       const { ws } = client;
       const listener = () => {};
       ws.onmessage = listener;
@@ -146,8 +146,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       expect(ws.onmessage).toBe(listener);
     });
 
-    test("a new value goes to the end of the listeners", async () => {
-      await using client = await bareOpen(implementation);
+    test("reassigning moves the handler to the end of the listener list", async () => {
+      await using client = await openBareClient(implementation);
       const { ws, conn } = client;
       const order: string[] = [];
       ws.onmessage = () => order.push("first value");
@@ -160,8 +160,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
   });
 
   describe("addEventListener()", () => {
-    test("adds a wrapper to the emitter, once for each listener", async () => {
-      await using client = await bare(implementation);
+    test("adds a wrapper to the emitter and ignores duplicate listeners", async () => {
+      await using client = await bareClient(implementation);
       const { ws } = client;
       const listener = () => {};
       ws.addEventListener("message", listener);
@@ -172,8 +172,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       expect(ws.listenerCount("message")).toBe(0);
     });
 
-    test("removeEventListener() leaves on() listeners, off() leaves addEventListener() listeners", async () => {
-      await using client = await bare(implementation);
+    test("removeEventListener() ignores on() listeners and off() ignores addEventListener() listeners", async () => {
+      await using client = await bareClient(implementation);
       const { ws } = client;
       const listener = () => {};
       ws.on("message", listener);
@@ -188,23 +188,23 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       expect(ws.listenerCount("message")).toBe(0);
     });
 
-    test("takes 'open', 'message', 'error' and 'close' only", async () => {
-      await using client = await bare(implementation);
+    test("only accepts 'open', 'message', 'error' and 'close'", async () => {
+      await using client = await bareClient(implementation);
       const ws = client.ws as any;
       for (const type of ["foo", "upgrade", "unexpected-response", "redirect"]) {
         ws.addEventListener(type, () => {});
         expect(ws.listenerCount(type)).toBe(0);
       }
       expect(ws.emit("foo")).toBe(false);
-      // Bun's `ws` has always taken these two as well.
+      // Bun's `ws` has always accepted these two as well.
       for (const type of ["ping", "pong"]) {
         ws.addEventListener(type, () => {});
         expect(ws.listenerCount(type)).toBe(builtin ? 1 : 0);
       }
     });
 
-    test.skipIf(!builtin)("'ping' and 'pong' listeners get the payload as `data`", async () => {
-      await using client = await bareOpen(implementation);
+    test.skipIf(!builtin)("'ping' and 'pong' listeners receive the payload as `event.data`", async () => {
+      await using client = await openBareClient(implementation);
       const { conn } = client;
       const ws = client.ws as any;
       const seen: string[] = [];
@@ -213,17 +213,17 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
           seen.push(`${event.type} ${show(event.data)} ${event.target === ws}`),
         );
       }
-      const pong = event(ws, "pong");
+      const pong = nextEvent(ws, "pong");
       conn.ping("a");
       conn.pong("b");
       await pong;
       expect(seen).toEqual(['ping Buffer("a") true', 'pong Buffer("b") true']);
     });
 
-    test("anything is taken for a listener", async () => {
-      await using client = await bare(implementation);
+    test("doesn't validate the listener", async () => {
+      await using client = await bareClient(implementation);
       const ws = client.ws as any;
-      expect([undefined, null, 5].map(listener => attempt(() => ws.addEventListener("message", listener)))).toEqual([
+      expect([undefined, null, 5].map(listener => tryCall(() => ws.addEventListener("message", listener)))).toEqual([
         "undefined",
         "undefined",
         "undefined",
@@ -231,8 +231,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       expect(ws.listenerCount("message")).toBe(3);
     });
 
-    test("{ once: true }, and an object with handleEvent()", async () => {
-      await using client = await bareOpen(implementation);
+    test("supports { once: true } and objects with handleEvent()", async () => {
+      await using client = await openBareClient(implementation);
       const { ws, conn } = client;
       const seen: unknown[] = [];
       ws.addEventListener("message", event => seen.push(["once", event.data]), { once: true });
@@ -258,8 +258,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       expect(seen).toEqual(expected);
     });
 
-    test("the `signal` option is ignored", async () => {
-      await using client = await bareOpen(implementation);
+    test("ignores the `signal` option", async () => {
+      await using client = await openBareClient(implementation);
       const { ws, conn } = client;
       const controller = new AbortController();
       let calls = 0;
@@ -273,7 +273,7 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     });
 
     test("`this` and `event.target` are the socket", async () => {
-      await using client = await bareOpen(implementation);
+      await using client = await openBareClient(implementation);
       const { ws, conn } = client;
       const seen: unknown[] = [];
       function listener(this: unknown, event: any) {
@@ -287,8 +287,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       expect(seen).toEqual([expected, expected]);
     });
 
-    test("the events are of ws's own small classes, not the global ones", async () => {
-      await using client = await bare(implementation, {});
+    test("events are instances of ws's own minimal classes, not the global ones", async () => {
+      await using client = await bareClient(implementation, {});
       const { ws } = client;
       const seen: unknown[] = [];
       for (const type of ["open", "message", "error", "close"] as const) {
@@ -308,7 +308,7 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       conn.text("1");
       conn.send(3, "x");
       conn.end();
-      await event(ws, "close");
+      await nextEvent(ws, "close");
 
       const common = { global: false, keys: [], rest: [undefined, undefined, undefined, undefined] };
       expect(seen).toEqual([
@@ -321,8 +321,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       expect(errorEvent.message).toBe(errorEvent.error.message);
     });
 
-    test("emit() reaches these listeners and the attributes", async () => {
-      await using client = await bare(implementation);
+    test("emit() calls addEventListener() listeners and on<event> attributes", async () => {
+      await using client = await bareClient(implementation);
       const { ws } = client;
       const seen: unknown[] = [];
       ws.addEventListener("message", event => seen.push(event.data));
@@ -332,8 +332,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     });
   });
 
-  test("listeners run in the order they were added, however they were added", async () => {
-    await using client = await bareOpen(implementation);
+  test("listeners run in insertion order regardless of how they were added", async () => {
+    await using client = await openBareClient(implementation);
     const { ws, conn } = client;
     const order: string[] = [];
     ws.on("message", () => order.push("on 1"));
@@ -348,8 +348,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
   });
 
   describe("once()", () => {
-    test("before on(): each event reaches each listener once", async () => {
-      await using client = await bare(implementation, {});
+    test("before on(): both listeners fire, once() only for the first event", async () => {
+      await using client = await bareClient(implementation, {});
       const { ws } = client;
       const calls: string[] = [];
       ws.once("open", () => calls.push("once open"));
@@ -363,12 +363,12 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       conn.text("2");
       conn.close(1000);
       conn.end();
-      await event(ws, "close");
+      await nextEvent(ws, "close");
       expect(calls).toEqual(["once open", "on open", "once 1", "on 1", "on 2", "once close", "on close"]);
     });
 
-    test("between two on()", async () => {
-      await using client = await bareOpen(implementation);
+    test("between two on() listeners", async () => {
+      await using client = await openBareClient(implementation);
       const { ws, conn } = client;
       const calls: string[] = [];
       ws.on("message", data => calls.push("first on " + data));
@@ -384,8 +384,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       { type: "message", opcode: OP.text },
       { type: "ping", opcode: OP.ping },
       { type: "pong", opcode: OP.pong },
-    ])("works again for '$type' after it has fired", async ({ type, opcode }) => {
-      await using client = await bareOpen(implementation);
+    ])("can be registered again for '$type' after it fires", async ({ type, opcode }) => {
+      await using client = await openBareClient(implementation);
       const { ws, conn } = client;
       const seen: string[] = [];
       for (const payload of ["1", "2", "3"]) {
@@ -397,8 +397,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       expect(seen).toEqual(["1", "2", "3"]);
     });
 
-    test("listeners() gives the function, rawListeners() its wrapper", async () => {
-      await using client = await bare(implementation);
+    test("listeners() returns the function, rawListeners() returns its wrapper", async () => {
+      await using client = await bareClient(implementation);
       const { ws } = client;
       const listener = () => {};
       ws.once("message", listener);
@@ -410,13 +410,13 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
 
   describe("node:events", () => {
     test("once(ws, 'open') resolves with no arguments and leaves no 'error' listener", async () => {
-      await using client = await bare(implementation, {});
+      await using client = await bareClient(implementation, {});
       expect(await once(client.ws, "open")).toEqual([]);
       expect(client.ws.listenerCount("error")).toBe(0);
     });
 
     test("on(ws, 'message') iterates over the messages", async () => {
-      await using client = await bareOpen(implementation);
+      await using client = await openBareClient(implementation);
       const { ws, conn } = client;
       conn.text("1");
       conn.text("2");
@@ -435,13 +435,13 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       expect(seen).toEqual(["1 false", "2 false"]);
     });
 
-    test("the socket is an EventEmitter", () => {
+    test("WebSocket extends EventEmitter", () => {
       expect(WebSocket.prototype).toBeInstanceOf(EventEmitter);
     });
   });
 
-  test("off() stops the delivery", async () => {
-    await using client = await bareOpen(implementation);
+  test("off() stops delivery", async () => {
+    await using client = await openBareClient(implementation);
     const { ws, conn } = client;
     let calls = 0;
     const listener = () => calls++;
@@ -455,8 +455,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     expect(ws.listenerCount("message")).toBe(0);
   });
 
-  test("a listener added after removeAllListeners() gets the messages", async () => {
-    await using client = await bareOpen(implementation);
+  test("a listener added after removeAllListeners() still receives messages", async () => {
+    await using client = await openBareClient(implementation);
     const { ws, conn } = client;
     const seen: string[] = [];
     ws.on("message", data => seen.push("removed " + data));
@@ -467,8 +467,8 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     expect(seen).toEqual(["added 1"]);
   });
 
-  test("'newListener' and eventNames() see every kind of listener", async () => {
-    await using client = await bare(implementation);
+  test("'newListener' and eventNames() report every kind of listener", async () => {
+    await using client = await bareClient(implementation);
     const { ws } = client;
     const seen: string[] = [];
     ws.on("newListener", (name, listener) => seen.push(`${String(name)} ${listener.name}`));
@@ -477,34 +477,34 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     ws.prependListener("close", function viaPrepend() {});
     ws.addEventListener("message", function viaAddEventListener() {});
     ws.onopen = function viaAttribute() {};
-    // The last two are the wrappers.
+    // The last two names belong to ws's wrapper functions.
     expect(seen).toEqual(["error viaOn", "open viaOnce", "close viaPrepend", "message onMessage", "open onOpen"]);
     expect(ws.eventNames()).toEqual(["newListener", "error", "open", "close", "message"]);
   });
 
-  test("on() throws for a listener that is not a function", async () => {
-    await using client = await bare(implementation);
-    expect(attempt(() => client.ws.on("message", undefined as any))).toBe(
+  test("on() throws if the listener isn't a function", async () => {
+    await using client = await bareClient(implementation);
+    expect(tryCall(() => client.ws.on("message", undefined as any))).toBe(
       'throws TypeError "The \\"listener\\" argument must be of type function. Received undefined" ERR_INVALID_ARG_TYPE',
     );
     expect(client.ws.listenerCount("message")).toBe(0);
   });
 
-  test("the 11th listener of an event gives a MaxListenersExceededWarning, however it was added", async () => {
-    await using client = await bare(implementation);
+  test("the 11th listener triggers MaxListenersExceededWarning regardless of how it was added", async () => {
+    await using client = await bareClient(implementation);
     const { ws } = client;
     const warnings: string[] = [];
-    const both = Promise.withResolvers<void>();
+    const bothWarnings = Promise.withResolvers<void>();
     const onWarning = (warning: any) => {
       if (warning.emitter !== ws) return;
       warnings.push(`${warning.name} ${warning.type} ${warning.count}`);
-      if (warnings.length === 2) both.resolve();
+      if (warnings.length === 2) bothWarnings.resolve();
     };
     process.on("warning", onWarning);
     try {
       for (let i = 0; i < 11; i++) ws.on("message", () => {});
       for (let i = 0; i < 11; i++) ws.addEventListener("close", () => {});
-      await both.promise;
+      await bothWarnings.promise;
     } finally {
       process.off("warning", onWarning);
     }
@@ -512,9 +512,9 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
   });
 
   describe("AsyncLocalStorage", () => {
-    test("every event runs in the context of the constructor call", async () => {
+    test("every event runs in the constructor call's async context", async () => {
       const storage = new AsyncLocalStorage<string>();
-      await using client = await bare(implementation, {}, construct => storage.run("constructor", construct));
+      await using client = await bareClient(implementation, {}, construct => storage.run("constructor", construct));
       const { ws } = client;
       const stores: string[] = [];
       for (const type of ["upgrade", "open", "message", "ping", "pong", "close"]) {
@@ -528,7 +528,7 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       conn.pong();
       conn.close(1000);
       conn.end();
-      await event(ws, "close");
+      await nextEvent(ws, "close");
       expect(stores).toEqual([
         "upgrade constructor",
         "open constructor",
@@ -541,145 +541,162 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       ]);
     });
 
-    test("so do 'error' and 'close' of a failed handshake", async () => {
+    test("so do 'error' and 'close' after a failed handshake", async () => {
       const storage = new AsyncLocalStorage<string>();
-      await using client = await bare(implementation, hangsUp, construct => storage.run("constructor", construct));
+      await using client = await bareClient(implementation, hangsUp, construct =>
+        storage.run("constructor", construct),
+      );
       const { ws } = client;
       const stores: string[] = [];
       for (const type of ["error", "close"]) ws.on(type, () => stores.push(`${type} ${storage.getStore()}`));
-      await event(ws, "close");
+      await nextEvent(ws, "close");
       expect(stores).toEqual(["error constructor", "close constructor"]);
     });
   });
 
   describe("'error' with a listener", () => {
-    type Hear = (as: string) => (value: any) => void;
-    const hearInto =
-      (lines: string[]): Hear =>
-      as =>
+    type Recorder = (label: string) => (value: any) => void;
+    const recordInto =
+      (lines: string[]): Recorder =>
+      label =>
       value => {
         const error =
           value instanceof Error ? showError(value) : `${value.constructor.name}(${showError(value.error)})`;
-        lines.push(`${as} ${error}`);
+        lines.push(`${label} ${error}`);
       };
-    const inEvent = `ErrorEvent(${hangUp})`;
+    const hangUpEvent = `ErrorEvent(${socketHangUp})`;
 
     test.each([
-      { name: "on()", arm: (ws, hear) => ws.on("error", hear("on")), heard: [`on ${hangUp}`], left: 1 },
-      { name: "once()", arm: (ws, hear) => ws.once("error", hear("once")), heard: [`once ${hangUp}`], left: 0 },
+      {
+        name: "on()",
+        listen: (ws, record) => ws.on("error", record("on")),
+        expected: [`on ${socketHangUp}`],
+        remaining: 1,
+      },
+      {
+        name: "once()",
+        listen: (ws, record) => ws.once("error", record("once")),
+        expected: [`once ${socketHangUp}`],
+        remaining: 0,
+      },
       {
         name: "once(), then on()",
-        arm: (ws, hear) => ws.once("error", hear("once")).on("error", hear("on")),
-        heard: [`once ${hangUp}`, `on ${hangUp}`],
-        left: 1,
+        listen: (ws, record) => ws.once("error", record("once")).on("error", record("on")),
+        expected: [`once ${socketHangUp}`, `on ${socketHangUp}`],
+        remaining: 1,
       },
       {
         name: "on(), then once()",
-        arm: (ws, hear) => ws.on("error", hear("on")).once("error", hear("once")),
-        heard: [`on ${hangUp}`, `once ${hangUp}`],
-        left: 1,
+        listen: (ws, record) => ws.on("error", record("on")).once("error", record("once")),
+        expected: [`on ${socketHangUp}`, `once ${socketHangUp}`],
+        remaining: 1,
       },
       {
         name: "once() twice",
-        arm: (ws, hear) => ws.once("error", hear("first")).once("error", hear("second")),
-        heard: [`first ${hangUp}`, `second ${hangUp}`],
-        left: 0,
+        listen: (ws, record) => ws.once("error", record("first")).once("error", record("second")),
+        expected: [`first ${socketHangUp}`, `second ${socketHangUp}`],
+        remaining: 0,
       },
       {
         name: "prependListener()",
-        arm: (ws, hear) => ws.prependListener("error", hear("prepend")),
-        heard: [`prepend ${hangUp}`],
-        left: 1,
+        listen: (ws, record) => ws.prependListener("error", record("prepend")),
+        expected: [`prepend ${socketHangUp}`],
+        remaining: 1,
       },
       {
         name: "prependOnceListener()",
-        arm: (ws, hear) => ws.prependOnceListener("error", hear("prepend")),
-        heard: [`prepend ${hangUp}`],
-        left: 0,
+        listen: (ws, record) => ws.prependOnceListener("error", record("prepend")),
+        expected: [`prepend ${socketHangUp}`],
+        remaining: 0,
       },
       {
         name: "on(), then on(errorMonitor)",
-        arm: (ws, hear) => ws.on("error", hear("on")).on(errorMonitor, hear("monitor")),
-        heard: [`monitor ${hangUp}`, `on ${hangUp}`],
-        left: 1,
+        listen: (ws, record) => ws.on("error", record("on")).on(errorMonitor, record("monitor")),
+        expected: [`monitor ${socketHangUp}`, `on ${socketHangUp}`],
+        remaining: 1,
       },
-      { name: "onerror", arm: (ws, hear) => (ws.onerror = hear("onerror")), heard: [`onerror ${inEvent}`], left: 1 },
+      {
+        name: "onerror",
+        listen: (ws, record) => (ws.onerror = record("onerror")),
+        expected: [`onerror ${hangUpEvent}`],
+        remaining: 1,
+      },
       {
         name: "addEventListener()",
-        arm: (ws, hear) => ws.addEventListener("error", hear("listener")),
-        heard: [`listener ${inEvent}`],
-        left: 1,
+        listen: (ws, record) => ws.addEventListener("error", record("listener")),
+        expected: [`listener ${hangUpEvent}`],
+        remaining: 1,
       },
       {
         name: "addEventListener() with handleEvent()",
-        arm: (ws, hear) => ws.addEventListener("error", { handleEvent: hear("handleEvent") } as any),
-        heard: [`handleEvent ${inEvent}`],
-        left: 1,
+        listen: (ws, record) => ws.addEventListener("error", { handleEvent: record("handleEvent") } as any),
+        expected: [`handleEvent ${hangUpEvent}`],
+        remaining: 1,
       },
       {
         name: "addEventListener() with { once: true }",
-        arm: (ws, hear) => ws.addEventListener("error", hear("listener"), { once: true }),
-        heard: [`listener ${inEvent}`],
-        left: 0,
+        listen: (ws, record) => ws.addEventListener("error", record("listener"), { once: true }),
+        expected: [`listener ${hangUpEvent}`],
+        remaining: 0,
       },
       {
         name: "addEventListener() with { capture: true, once: true }",
-        arm: (ws, hear) => ws.addEventListener("error", hear("listener"), { capture: true, once: true } as any),
-        heard: [`listener ${inEvent}`],
-        left: 0,
+        listen: (ws, record) => ws.addEventListener("error", record("listener"), { capture: true, once: true } as any),
+        expected: [`listener ${hangUpEvent}`],
+        remaining: 0,
       },
       {
         name: "onerror, then on(), then addEventListener()",
-        arm: (ws, hear) => {
-          ws.onerror = hear("onerror");
-          ws.on("error", hear("on"));
-          ws.addEventListener("error", hear("listener"));
+        listen: (ws, record) => {
+          ws.onerror = record("onerror");
+          ws.on("error", record("on"));
+          ws.addEventListener("error", record("listener"));
         },
-        heard: [`onerror ${inEvent}`, `on ${hangUp}`, `listener ${inEvent}`],
-        left: 3,
+        expected: [`onerror ${hangUpEvent}`, `on ${socketHangUp}`, `listener ${hangUpEvent}`],
+        remaining: 3,
       },
-    ] as { name: string; arm(ws: WsSocket, hear: Hear): unknown; heard: string[]; left: number }[])(
-      "$name: heard once, then 'close' 1006",
-      async ({ arm, heard, left }) => {
-        await using client = await bare(implementation, hangsUp);
+    ] as { name: string; listen(ws: WsSocket, record: Recorder): unknown; expected: string[]; remaining: number }[])(
+      "$name: each listener is called once, then 'close' 1006 is emitted",
+      async ({ listen, expected, remaining }) => {
+        await using client = await bareClient(implementation, hangsUp);
         const { ws } = client;
         const lines: string[] = [];
-        arm(ws, hearInto(lines));
+        listen(ws, recordInto(lines));
         ws.on("close", code => lines.push("close " + code));
-        await event(ws, "close");
-        expect(lines).toEqual([...heard, "close 1006"]);
-        expect(ws.listenerCount("error")).toBe(left);
+        await nextEvent(ws, "close");
+        expect(lines).toEqual([...expected, "close 1006"]);
+        expect(ws.listenerCount("error")).toBe(remaining);
       },
     );
 
     test.each([
-      { name: "onerror", arm: (ws, listener) => (ws.onerror = listener) },
-      { name: "addEventListener()", arm: (ws, listener) => ws.addEventListener("error", listener) },
-    ] as { name: string; arm(ws: WsSocket, listener: (event: any) => void): unknown }[])(
-      "$name alone handles a refused connection",
-      async ({ arm }) => {
+      { name: "onerror", listen: (ws, listener) => (ws.onerror = listener) },
+      { name: "addEventListener()", listen: (ws, listener) => ws.addEventListener("error", listener) },
+    ] as { name: string; listen(ws: WsSocket, listener: (event: any) => void): unknown }[])(
+      "$name alone is enough to handle a refused connection",
+      async ({ listen }) => {
         await using target = await refusingUrl();
         const ws = new WebSocket(target.url);
         const seen: string[] = [];
-        arm(ws, event => seen.push(`${event.constructor.name} ${showError(event.error)}`));
-        await event(ws, "close");
-        expect(seen).toEqual([`ErrorEvent ${refused}`]);
+        listen(ws, event => seen.push(`${event.constructor.name} ${showError(event.error)}`));
+        await nextEvent(ws, "close");
+        expect(seen).toEqual([`ErrorEvent ${connectionRefused}`]);
       },
     );
 
     test.each([
       { name: "with", upgrade: true },
       { name: "without", upgrade: false },
-    ])("a 404 is the same Error for every kind of listener, $name an 'upgrade' listener", async ({ upgrade }) => {
-      await using client = await bare(implementation, notFound);
+    ])("every kind of listener gets the same Error for a 404, $name an 'upgrade' listener", async ({ upgrade }) => {
+      await using client = await bareClient(implementation, notFound);
       const { ws } = client;
       const lines: string[] = [];
-      const hear = hearInto(lines);
+      const record = recordInto(lines);
       if (upgrade) ws.on("upgrade", () => lines.push("upgrade"));
-      ws.on("error", hear("on"));
-      ws.onerror = hear("onerror");
-      ws.addEventListener("error", hear("listener"));
-      await event(ws, "close");
+      ws.on("error", record("on"));
+      ws.onerror = record("onerror");
+      ws.addEventListener("error", record("listener"));
+      await nextEvent(ws, "close");
       expect(lines).toEqual([
         `on ${unexpected404}`,
         `onerror ErrorEvent(${unexpected404})`,
@@ -687,12 +704,12 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       ]);
     });
 
-    test("two bad frames and a reset give one 'error'", async () => {
-      await using client = await bareOpen(implementation);
+    test("two invalid frames and a reset emit only one 'error'", async () => {
+      await using client = await openBareClient(implementation);
       const { ws, conn } = client;
       const errors: string[] = [];
       ws.on("error", error => errors.push(showError(error)));
-      const closed = event(ws, "close");
+      const closed = nextEvent(ws, "close");
       conn.write(Buffer.concat([conn.frame(3, "x"), conn.frame(3, "y")]));
       expect(await conn.next()).toBe("close 1002");
       conn.reset();
@@ -701,15 +718,15 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     });
   });
 
-  test("a connection that is lost after 'open' is no 'error': nothing is thrown without a listener", async () => {
-    await using client = await bareOpen(implementation);
+  test("a connection dropped after 'open' doesn't emit 'error', so nothing throws without a listener", async () => {
+    await using client = await openBareClient(implementation);
     client.conn.end();
-    expect((await event(client.ws, "close")).map(show)).toEqual(["1006", "Buffer()"]);
+    expect((await nextEvent(client.ws, "close")).map(show)).toEqual(["1006", "Buffer()"]);
   });
 
-  // `WS_URL` is a raw server of this process, or for "refuses" a port on which nothing listens. `lines` is what the
-  // child printed and `exit <code>`.
-  async function child(script: string, target: PeerOptions | "refuses", drive?: (conn: RawSocket) => unknown) {
+  // Runs `script` in a child process. `WS_URL` points to a raw server in this process, or for "refuses" to a port
+  // nothing listens on. `lines` is the child's stdout followed by `exit <code>`.
+  async function runChild(script: string, target: PeerOptions | "refuses", drive?: (conn: RawSocket) => unknown) {
     await using peer = target === "refuses" ? undefined : await createPeer(target);
     await using refusing = peer ? undefined : await refusingUrl();
     const result = runScript({ specifier }, script, { WS_URL: (peer ?? refusing)!.url });
@@ -717,33 +734,33 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     const { lines, stderr, exitCode } = await result;
     return { lines: [...lines, "exit " + exitCode], stderr, handshakes: peer?.connections.length };
   }
-  const dial = "const ws = new WebSocket(process.env.WS_URL);";
+  const connect = "const ws = new WebSocket(process.env.WS_URL);";
 
-  // No child needs a timer or an exit() call: once the handshake has failed nothing keeps its event loop alive.
-  describe("'error' without a listener is thrown", () => {
+  // The children need no timer or exit() call. Once the handshake fails, nothing keeps their event loop alive.
+  describe("'error' without a listener throws", () => {
     test.concurrent.each([
-      { name: "no listener at all", script: dial },
+      { name: "no listener at all", script: connect },
       {
-        name: "'upgrade', 'open', 'message' and 'close' listeners: none is called, not even 'close'",
-        script: `${dial} for (const type of ["upgrade", "open", "message", "close"]) ws.on(type, () => console.log(type));`,
+        name: "'upgrade', 'open', 'message' and 'close' listeners, none of which are called",
+        script: `${connect} for (const type of ["upgrade", "open", "message", "close"]) ws.on(type, () => console.log(type));`,
       },
       {
-        name: "an 'error' listener that off() has removed",
-        script: `${dial} const listener = () => console.log("removed"); ws.on("error", listener); ws.off("error", listener);`,
+        name: "an 'error' listener removed with off()",
+        script: `${connect} const listener = () => console.log("removed"); ws.on("error", listener); ws.off("error", listener);`,
       },
       {
-        name: "an errorMonitor listener, which hears it first",
-        script: `${dial} ws.on(require("node:events").errorMonitor, error => console.log("monitor " + showError(error)));`,
-        heard: ["monitor " + hangUp],
+        name: "an errorMonitor listener, which is called first",
+        script: `${connect} ws.on(require("node:events").errorMonitor, error => console.log("monitor " + showError(error)));`,
+        printed: ["monitor " + socketHangUp],
       },
       {
         name: "onerror set, then set to null",
-        script: `${dial} ws.onerror = () => console.log("removed"); ws.onerror = null;`,
+        script: `${connect} ws.onerror = () => console.log("removed"); ws.onerror = null;`,
       },
-      { name: "onerror set to an object", script: `${dial} ws.onerror = {};` },
+      { name: "onerror set to an object", script: `${connect} ws.onerror = {};` },
       {
         name: "addEventListener(), then removeEventListener()",
-        script: `${dial} const listener = () => console.log("removed");
+        script: `${connect} const listener = () => console.log("removed");
           ws.addEventListener("error", listener); ws.removeEventListener("error", listener);`,
       },
       { name: "in a subclass", script: `new (class extends WebSocket {})(process.env.WS_URL);` },
@@ -752,59 +769,59 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
         script: `new WebSocket(process.env.WS_URL, { finishRequest: request => request.end() });`,
       },
       {
-        name: "from a socket that nothing refers to",
+        name: "from an unreferenced socket",
         script: `(() => void new WebSocket(process.env.WS_URL))(); Bun.gc(true);`,
       },
-    ] as { name: string; script: string; heard?: string[] }[])(
+    ] as { name: string; script: string; printed?: string[] }[])(
       "$name",
-      async ({ script, heard = [] }) => {
-        expect((await child(script, hangsUp)).lines).toEqual([...heard, "uncaught " + hangUp, "exit 0"]);
+      async ({ script, printed = [] }) => {
+        expect((await runChild(script, hangsUp)).lines).toEqual([...printed, "uncaught " + socketHangUp, "exit 0"]);
       },
       scriptTimeout,
     );
 
     const atExit = `process.on("exit", () => console.log("rs=" + ws.readyState));`;
     test.concurrent.each([
-      { name: "a refused connection", peer: "refuses", script: dial, lines: ["uncaught " + refused] },
-      { name: "a 404", peer: notFound, script: dial, lines: ["uncaught " + unexpected404] },
+      { name: "a refused connection", peer: "refuses", script: connect, lines: ["uncaught " + connectionRefused] },
+      { name: "a 404", peer: notFound, script: connect, lines: ["uncaught " + unexpected404] },
       {
         name: "a 404, with an 'upgrade' listener",
         peer: notFound,
-        script: `${dial} ws.on("upgrade", () => console.log("upgrade"));`,
+        script: `${connect} ws.on("upgrade", () => console.log("upgrade"));`,
         lines: ["uncaught " + unexpected404],
       },
       {
         name: "a wrong Sec-WebSocket-Accept",
         peer: { respond: connection => response101(connection, [], { "Sec-WebSocket-Accept": "AAAA" }) },
-        script: dial,
+        script: connect,
         lines: ['uncaught Error "Invalid Sec-WebSocket-Accept header"'],
       },
       {
-        name: "close() before the server has answered",
-        peer: silent,
-        script: `${dial} ${atExit} ws.close();`,
+        name: "close() before the server responds",
+        peer: neverResponds,
+        script: `${connect} ${atExit} ws.close();`,
         lines: ["uncaught " + closedBeforeOpen, "rs=2"],
       },
       {
-        name: "terminate() before the server has answered",
-        peer: silent,
-        script: `${dial} ${atExit} ws.terminate();`,
+        name: "terminate() before the server responds",
+        peer: neverResponds,
+        script: `${connect} ${atExit} ws.terminate();`,
         lines: ["uncaught " + closedBeforeOpen, "rs=2"],
       },
     ] as { name: string; peer: PeerOptions | "refuses"; script: string; lines: string[] }[])(
       "$name",
       async ({ peer, script, lines }) => {
-        expect((await child(script, peer)).lines).toEqual([...lines, "exit 0"]);
+        expect((await runChild(script, peer)).lines).toEqual([...lines, "exit 0"]);
       },
       scriptTimeout,
     );
 
     test.concurrent.skipIf(isWindows)(
-      "a unix socket that does not exist",
+      "a unix socket that doesn't exist",
       async () => {
         using dir = tempDir("ws-events", {});
         const socketPath = path.join(String(dir), "missing.sock");
-        const { lines, exitCode } = await runScript({ specifier }, dial, { WS_URL: "ws+unix:" + socketPath });
+        const { lines, exitCode } = await runScript({ specifier }, connect, { WS_URL: "ws+unix:" + socketPath });
         expect(lines.map(line => line.replace(socketPath, "<path>"))).toEqual([
           'uncaught Error "connect ENOENT <path>" ENOENT',
         ]);
@@ -814,15 +831,15 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     );
 
     test.concurrent(
-      "a protocol error after 'open': the Close frame goes out all the same, and 'close' comes",
+      "a protocol error after 'open' still sends the Close frame and emits 'close'",
       async () => {
-        const script = `${dial}
+        const script = `${connect}
         ws.on("open", () => console.log("open"));
         process.on("uncaughtException", () => console.log("rs=" + ws.readyState));
-        // The peer ends the connection when it has the Close frame. That ends the process.
+        // The peer closes the connection once it gets the Close frame, which lets the process exit.
         ws.on("close", (code, reason) => console.log("close " + code + " " + show(reason) + " rs=" + ws.readyState));`;
         let sent = "";
-        const { lines } = await child(script, {}, async conn => {
+        const { lines } = await runChild(script, {}, async conn => {
           conn.send(3, "x");
           sent = await conn.next();
           conn.end();
@@ -834,10 +851,10 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     );
 
     test.concurrent(
-      "an 'error' listener that throws: its exception, and no 'close'",
+      "when an 'error' listener throws, its exception propagates and 'close' isn't emitted",
       async () => {
-        const { lines } = await child(
-          `${dial}
+        const { lines } = await runChild(
+          `${connect}
         ws.on("error", () => { throw new Error("thrown by the listener"); });
         ws.on("close", () => console.log("close"));`,
           hangsUp,
@@ -847,7 +864,7 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
       scriptTimeout,
     );
 
-    // Here nothing listens for 'uncaughtException'.
+    // These remove the 'uncaughtException' listener that runScript() installs.
     test.concurrent.each([
       {
         name: "a refused connection, no listener",
@@ -856,7 +873,7 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
         error: "connect ECONNREFUSED 127.0.0.1:PORT",
       },
       {
-        name: "a connection that ends, 'open' and 'message' listeners",
+        name: "a hang-up, 'open' and 'message' listeners",
         peer: hangsUp,
         listeners: `ws.on("open", () => console.log("open")); ws.on("message", () => console.log("message"));`,
         error: "socket hang up",
@@ -868,10 +885,10 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
         error: "Unexpected server response: 404",
       },
     ] as { name: string; peer: PeerOptions | "refuses"; listeners: string; error: string }[])(
-      "$name: the process prints the Error and exits with 1",
+      "$name: the process prints the error and exits with code 1",
       async ({ peer, listeners, error }) => {
-        const { lines, stderr } = await child(
-          `process.removeAllListeners("uncaughtException"); ${dial} ${listeners}`,
+        const { lines, stderr } = await runChild(
+          `process.removeAllListeners("uncaughtException"); ${connect} ${listeners}`,
           peer,
         );
         const errors = stderr.split(/\r?\n/).filter(line => /^error: /i.test(line));
@@ -882,13 +899,13 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     );
 
     test.concurrent(
-      "in a Worker: the Worker fails with it",
+      "in a Worker, the error terminates the Worker",
       async () => {
-        const { lines } = await child(
+        const { lines } = await runChild(
           `const source = "new (require(process.env.WS_SPECIFIER).WebSocket)(process.env.WS_URL);";
         const worker = new Worker(URL.createObjectURL(new Blob([source])));
         worker.addEventListener("error", event => console.log(/^error: .*$/m.exec(event.message)[0]));
-        // The end of the Worker ends the process.
+        // The process exits once the Worker does.
         worker.addEventListener("close", event => console.log("close " + event.code));`,
           hangsUp,
         );
@@ -898,25 +915,25 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     );
   });
 
-  describe("nothing is thrown", () => {
+  describe("nothing throws", () => {
     test.concurrent(
-      "when events.once(ws, 'open') is all that listens to a refused connection",
+      "when events.once(ws, 'open') is the only listener on a refused connection",
       async () => {
-        const { lines } = await child(
-          `${dial} require("node:events").once(ws, "open").catch(error => console.log("rejected " + showError(error)));`,
+        const { lines } = await runChild(
+          `${connect} require("node:events").once(ws, "open").catch(error => console.log("rejected " + showError(error)));`,
           "refuses",
         );
-        expect(lines).toEqual(["rejected " + refused, "exit 0"]);
+        expect(lines).toEqual(["rejected " + connectionRefused, "exit 0"]);
       },
       scriptTimeout,
     );
 
     test.concurrent(
-      "when an 'unexpected-response' listener takes the 404",
+      "when an 'unexpected-response' listener handles the 404",
       async () => {
-        const { lines } = await child(
-          `${dial}
-        // The peer closes the connection after its answer. That ends the process.
+        const { lines } = await runChild(
+          `${connect}
+        // The peer closes the connection after responding, which lets the process exit.
         ws.on("unexpected-response", (request, response) => console.log("unexpected-response " + response.statusCode));`,
           notFound,
         );
@@ -926,7 +943,7 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     );
 
     test.concurrent(
-      "when the server terminates in 'connection': 'open', then 'close' 1006",
+      "when the server calls terminate() in 'connection': emits 'open', then 'close' 1006",
       async () => {
         const { lines, exitCode } = await runScript(
           { specifier },
@@ -935,7 +952,7 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
         wss.on("listening", () => {
           const ws = new WebSocket("ws://127.0.0.1:" + wss.address().port);
           ws.on("open", () => console.log("open"));
-          // Closing the server ends the process.
+          // Closing the server lets the process exit.
           ws.on("close", code => (console.log("close " + code), wss.close()));
         });`,
         );
@@ -946,9 +963,9 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
     );
 
     test.concurrent(
-      "when finishRequest ends the request later: one handshake, with what it added",
+      "when finishRequest ends the request asynchronously: sends one handshake, with the header it added",
       async () => {
-        const { lines, handshakes } = await child(
+        const { lines, handshakes } = await runChild(
           `const ws = new WebSocket(process.env.WS_URL, {
           finishRequest(request) {
             setImmediate(() => {
@@ -957,7 +974,7 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
             });
           },
         });
-        // terminate() ends the process.
+        // terminate() lets the process exit.
         ws.on("open", () => (console.log("open"), ws.terminate()));`,
           {
             respond: connection =>
@@ -974,13 +991,13 @@ describe.each(implementations)("ws client, events ($name)", ({ ws: implementatio
   });
 
   test.concurrent(
-    "an async listener that rejects is an unhandled rejection, not an 'error'",
+    "an async listener that rejects causes an unhandled rejection, not an 'error'",
     async () => {
-      const { lines } = await child(
-        `${dial}
+      const { lines } = await runChild(
+        `${connect}
       ws.on("error", error => console.log("error " + showError(error)));
       ws.on("message", async () => { throw new Error("async boom"); });
-      // terminate() ends the process.
+      // terminate() lets the process exit.
       process.on("unhandledRejection", error => (console.log("unhandledRejection " + showError(error)), ws.terminate()));`,
         {},
         conn => conn.text("1"),

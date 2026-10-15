@@ -160,12 +160,12 @@ describe("WebSocket", () => {
         done();
       });
     });
-    // The payload is optional: undefined and null mean "no payload", as in the `ws` package
-    // (unlike send(), whose required argument stringifies them).
-    for (const nothing of [undefined, null]) {
-      test(`(${nothing})`, (ws, done) => {
+    // The payload is optional. undefined and null mean "no payload", like in the `ws` package.
+    // send() is different: its argument is required, so it stringifies them.
+    for (const nullish of [undefined, null]) {
+      test(`(${nullish})`, (ws, done) => {
         ws.addEventListener("open", () => {
-          ws.ping(nothing as undefined);
+          ws.ping(nullish as undefined);
         });
         ws.addEventListener("ping", ({ data }: any) => {
           expect(data).toEqual(Buffer.alloc(0));
@@ -205,12 +205,12 @@ describe("WebSocket", () => {
         done();
       });
     });
-    // The payload is optional: undefined and null mean "no payload", as in the `ws` package
-    // (unlike send(), whose required argument stringifies them).
-    for (const nothing of [undefined, null]) {
-      test(`(${nothing})`, (ws, done) => {
+    // The payload is optional. undefined and null mean "no payload", like in the `ws` package.
+    // send() is different: its argument is required, so it stringifies them.
+    for (const nullish of [undefined, null]) {
+      test(`(${nullish})`, (ws, done) => {
         ws.addEventListener("open", () => {
-          ws.pong(nothing as undefined);
+          ws.pong(nullish as undefined);
         });
         ws.addEventListener("pong", ({ data }: any) => {
           expect(data).toEqual(Buffer.alloc(0));
@@ -294,8 +294,9 @@ describe("WebSocket", () => {
   });
 });
 
-// The answer to the first Close frame in `frames` (masked client frames with 7-bit lengths), once it is there whole.
-function echoOfCloseFrame(frames: Buffer) {
+// Builds the echo for the first Close frame in `frames` (masked client frames with 7-bit lengths).
+// Returns undefined until that frame has fully arrived.
+function closeFrameEcho(frames: Buffer) {
   for (let offset = 0; offset + 6 <= frames.length;) {
     const length = frames[offset + 1] & 0x7f;
     if (offset + 6 + length > frames.length) return;
@@ -309,7 +310,7 @@ function echoOfCloseFrame(frames: Buffer) {
 }
 
 describe.concurrent("WebSocket send(), ping() and pong() payloads", () => {
-  // Every frame the server gets, as [kind, bytes].
+  // `received` collects every frame the server gets, as [kind, bytes].
   async function withOpenSocket(fn: (ws: WebSocket, received: [string, number[]][]) => void | Promise<void>) {
     const received: [string, number[]][] = [];
     await using server = Bun.serve({
@@ -344,11 +345,11 @@ describe.concurrent("WebSocket send(), ping() and pong() payloads", () => {
     }
   }
 
-  // The server has handled everything sent before this.
+  // Resolves once the server has handled everything sent so far.
   function flush(ws: WebSocket) {
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     ws.onmessage = () => resolve();
-    ws.onclose = e => reject(new Error(`closed ${e.code} before the server answered`));
+    ws.onclose = e => reject(new Error(`closed ${e.code} before the server replied`));
     ws.send("flush");
     return promise;
   }
@@ -362,9 +363,9 @@ describe.concurrent("WebSocket send(), ping() and pong() payloads", () => {
     return value;
   }
 
-  // WebIDL "get a copy of the bytes held by the buffer source": the empty byte sequence. ServerWebSocket, Blob and
-  // Response do the same.
-  it("a detached buffer is an empty payload", async () => {
+  // WebIDL "get a copy of the bytes held by the buffer source" returns an empty byte sequence for a detached
+  // buffer. ServerWebSocket, Blob and Response do the same.
+  it("sends a detached buffer as an empty payload", async () => {
     await withOpenSocket(async (ws, received) => {
       for (const method of ["send", "ping", "pong"] as const) {
         ws[method](detach(buffer => new Uint8Array(buffer)));
@@ -380,7 +381,7 @@ describe.concurrent("WebSocket send(), ping() and pong() payloads", () => {
     });
   });
 
-  it("a view sends its own bytes, not its buffer's", async () => {
+  it("sends only the view's bytes, not the whole underlying buffer", async () => {
     await withOpenSocket(async (ws, received) => {
       const view = new Uint8Array(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]).buffer, 2, 4);
       ws.send(view);
@@ -410,7 +411,7 @@ describe.concurrent("WebSocket send(), ping() and pong() payloads", () => {
     });
   });
 
-  // The argument is judged before the state is: the same call does the same in every state.
+  // The argument is validated before readyState is checked, so an oversized payload throws in every state.
   it("ping() and pong() throw RangeError over 125 bytes in every readyState", async () => {
     const silent = createServer(() => {}).listen(0, "127.0.0.1");
     await once(silent, "listening");
@@ -443,7 +444,7 @@ describe.concurrent("WebSocket send(), ping() and pong() payloads", () => {
   });
 });
 
-// Completes the upgrade, then hands every client byte so far to `onFrames`.
+// Completes the upgrade, then calls `onFrames` with all the client bytes received so far.
 async function startRawServer(onFrames: (socket: net.Socket, frames: Buffer) => void = () => {}) {
   const sockets = new Set<net.Socket>();
   const server = createServer(socket => {
@@ -476,7 +477,7 @@ async function startRawServer(onFrames: (socket: net.Socket, frames: Buffer) => 
   };
 }
 
-function untilOpen(ws: WebSocket) {
+function waitForOpen(ws: WebSocket) {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
   ws.addEventListener("open", () => resolve(), { once: true });
   ws.addEventListener("error", e => reject((e as ErrorEvent).error), { once: true });
@@ -496,25 +497,25 @@ describe.concurrent("WebSocket closing handshake", () => {
   ] as const)("%s", async (_label, args, frame, event) => {
     const echoes: number[][] = [];
     using server = await startRawServer((socket, frames) => {
-      const echo = echoOfCloseFrame(frames);
+      const echo = closeFrameEcho(frames);
       if (!echo || !socket.writable) return;
       echoes.push([...echo]);
       socket.end(echo);
     });
     const ws = new WebSocket(server.url);
     const events = clientEvents(ws);
-    await untilOpen(ws);
+    await waitForOpen(ws);
     ws.close(...(args as readonly [number?, string?]));
     expect(ws.readyState).toBe(WebSocket.CLOSING);
     expect(await events).toEqual([event]);
     expect(echoes).toEqual([[...frame]]);
   });
 
-  it("terminate() ends a closing handshake that the peer does not answer", async () => {
+  it("terminate() ends a closing handshake the peer never completes", async () => {
     using server = await startRawServer();
     const ws = new WebSocket(server.url);
     const events = clientEvents(ws);
-    await untilOpen(ws);
+    await waitForOpen(ws);
     ws.close(1000);
     expect(ws.readyState).toBe(WebSocket.CLOSING);
     ws.terminate();
@@ -524,32 +525,32 @@ describe.concurrent("WebSocket closing handshake", () => {
     ws.terminate();
   });
 
-  it("pause() refuses, and isPaused is false, unless CONNECTING or OPEN", async () => {
+  it("pause() returns false and isPaused stays false unless CONNECTING or OPEN", async () => {
     using server = await startRawServer((socket, frames) => {
-      const echo = echoOfCloseFrame(frames);
+      const echo = closeFrameEcho(frames);
       if (echo && socket.writable) socket.end(echo);
     });
-    const flowControl = (ws: WebSocket) => ({ isPaused: ws.isPaused, pause: ws.pause(), stillPaused: ws.isPaused });
-    const refused = { isPaused: false, pause: false, stillPaused: false };
+    const tryPause = (ws: WebSocket) => ({ isPaused: ws.isPaused, pause: ws.pause(), isPausedAfter: ws.isPaused });
+    const notPausable = { isPaused: false, pause: false, isPausedAfter: false };
 
     const connecting = new WebSocket(server.url);
     const failed = clientEvents(connecting);
-    expect(flowControl(connecting)).toEqual({ isPaused: false, pause: true, stillPaused: true });
+    expect(tryPause(connecting)).toEqual({ isPaused: false, pause: true, isPausedAfter: true });
     connecting.terminate();
-    expect(flowControl(connecting)).toEqual(refused);
+    expect(tryPause(connecting)).toEqual(notPausable);
     expect(connecting.resume()).toBe(false);
     await failed;
-    expect(flowControl(connecting)).toEqual(refused);
+    expect(tryPause(connecting)).toEqual(notPausable);
 
     const ws = new WebSocket(server.url);
     const events = clientEvents(ws);
-    await untilOpen(ws);
-    expect(flowControl(ws)).toEqual({ isPaused: false, pause: true, stillPaused: true });
+    await waitForOpen(ws);
+    expect(tryPause(ws)).toEqual({ isPaused: false, pause: true, isPausedAfter: true });
     ws.close();
-    expect(flowControl(ws)).toEqual(refused);
-    // The handshake goes on: close() resumed the reads that see the peer's Close frame.
+    expect(tryPause(ws)).toEqual(notPausable);
+    // The closing handshake still completes: close() resumed reading, so the peer's Close frame is seen.
     expect(await events).toEqual([{ code: 1005, reason: "", wasClean: true }]);
-    expect(flowControl(ws)).toEqual(refused);
+    expect(tryPause(ws)).toEqual(notPausable);
     expect(ws.resume()).toBe(false);
   });
 });
@@ -579,7 +580,7 @@ describe.concurrent("WebSocket AsyncLocalStorage context", () => {
     });
   }
 
-  it("every event runs in the context of the constructor call, wherever its listener was added", async () => {
+  it("every event runs in the constructor's async context, regardless of where its listener was added", async () => {
     using server = startServer();
     const seen: Record<string, unknown> = {};
     const { promise, resolve, reject } = Promise.withResolvers<void>();
@@ -611,7 +612,7 @@ describe.concurrent("WebSocket AsyncLocalStorage context", () => {
     });
   });
 
-  it("an event that script dispatches runs in the context of the dispatchEvent() call", async () => {
+  it("a manually dispatched event runs in the dispatchEvent() caller's context", async () => {
     using server = startServer();
     const ws = als.run("constructor", () => new WebSocket(`ws://127.0.0.1:${server.port}`));
     try {
@@ -625,7 +626,7 @@ describe.concurrent("WebSocket AsyncLocalStorage context", () => {
     }
   });
 
-  it("error and close of a failed connection run in it too", async () => {
+  it("a failed connection's error and close events run in the constructor's context too", async () => {
     const tcpServer = createServer(socket => socket.destroy()).listen(0, "127.0.0.1");
     await once(tcpServer, "listening");
     try {
@@ -647,12 +648,12 @@ describe.concurrent("WebSocket AsyncLocalStorage context", () => {
     }
   });
 
-  it("a socket made inside a Bun.ModuleGraph runs in its store and its graph, and leaves neither behind", async () => {
+  it("a socket created inside a Bun.ModuleGraph fires events in its store and graph, and leaks neither", async () => {
     using server = startServer();
     const graph = new Bun.ModuleGraph();
-    // Made where there is no store: it finds whatever is current at the top of the event loop.
-    const atEventLoop: unknown[] = [];
-    const timer = setInterval(() => atEventLoop.push([als.getStore(), Bun.ModuleGraph.current]), 1);
+    // Created outside any store, so it observes whatever context is current at the top of the event loop.
+    const seenByTimer: unknown[] = [];
+    const timer = setInterval(() => seenByTimer.push([als.getStore(), Bun.ModuleGraph.current]), 1);
     try {
       const seen: Record<string, unknown> = {};
       const { promise, resolve, reject } = Promise.withResolvers<void>();
@@ -671,22 +672,22 @@ describe.concurrent("WebSocket AsyncLocalStorage context", () => {
       await promise;
       expect(seen).toEqual({ open: ["constructor", true], pong: ["constructor", true], close: ["constructor", true] });
 
-      const ticks = atEventLoop.length;
-      while (atEventLoop.length < ticks + 2) await new Promise(resolve => setImmediate(resolve));
-      expect(atEventLoop.filter(([store, current]: any) => store !== undefined || current !== undefined)).toEqual([]);
+      const ticks = seenByTimer.length;
+      while (seenByTimer.length < ticks + 2) await new Promise(resolve => setImmediate(resolve));
+      expect(seenByTimer.filter(([store, current]: any) => store !== undefined || current !== undefined)).toEqual([]);
     } finally {
       clearInterval(timer);
       graph.dispose();
     }
   });
 
-  it("the WebSocket keeps the context alive", async () => {
+  it("the WebSocket keeps its async context alive across GC", async () => {
     using server = startServer();
     const seen: Record<string, unknown> = {};
     const open = Promise.withResolvers<WebSocket>();
     const closed = Promise.withResolvers<void>();
 
-    // Once this returns, only the WebSocket refers to the context.
+    // Once this returns, only the WebSocket references the context.
     (function create() {
       als.run({ id: "constructor" }, () => {
         const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
@@ -941,7 +942,7 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
     try {
       await once(ws, "open");
 
-      // 125 is the boundary: cb invoked with no error, once the frame is written, as npm ws does.
+      // 125 is the boundary: cb is invoked with no error after the frame is written, like npm ws.
       let returned = false;
       const sent = new Promise(resolve => ws.ping(new Uint8Array(125), true, e => resolve({ error: e, returned })));
       returned = true;
@@ -1132,7 +1133,7 @@ describe("WebSocket handshake Connection header token list", () => {
 });
 
 // NO_PROXY applies to explicit proxies too. An ambient
-// NO_PROXY=localhost,127.0.0.1,... would bypass the proxy tests of the describe block that calls this.
+// NO_PROXY=localhost,127.0.0.1,... would bypass the proxy tests in the calling describe block.
 function ignoreAmbientNoProxy() {
   const prevNoProxy = process.env.NO_PROXY;
   const prevNoProxyLower = process.env.no_proxy;
@@ -1151,18 +1152,18 @@ function ignoreAmbientNoProxy() {
 describe.concurrent("WebSocket Proxy-Authorization", () => {
   ignoreAmbientNoProxy();
 
-  /** `sent`: the octets of the Basic credentials, one char each, or the value as it is. `null`: no header. */
+  /** `sent` is the decoded Basic credentials as latin1, or the raw value if it isn't Basic. `null` means no header. */
   type Row = [userinfo: string, sent: string | null];
 
-  // One proxy per row. Each records the CONNECT request and refuses it.
+  // One proxy per row. Each records the CONNECT request and rejects it.
   function proxyAuthorizationSent(rows: Row[], headers?: Record<string, string>): Promise<Row[]> {
     return Promise.all(
       rows.map(async ([userinfo]): Promise<Row> => {
-        using recorded = await startRecordingProxy({ requireAuth: true });
-        const url = `http://${userinfo}${userinfo ? "@" : ""}127.0.0.1:${recorded.port}`;
+        using proxy = await startRecordingProxy({ requireAuth: true });
+        const url = `http://${userinfo}${userinfo ? "@" : ""}127.0.0.1:${proxy.port}`;
         await failingSession(new WebSocket("ws://127.0.0.1:1/", { proxy: headers ? { url, headers } : url }));
-        if (recorded.requests.length !== 1) return [userinfo, `${recorded.requests.length} CONNECT requests`];
-        const value = recorded.requests[0].headers["proxy-authorization"];
+        if (proxy.requests.length !== 1) return [userinfo, `${proxy.requests.length} CONNECT requests`];
+        const value = proxy.requests[0].headers["proxy-authorization"];
         if (value === undefined) return [userinfo, null];
         if (!value.startsWith("Basic ")) return [userinfo, value];
         return [userinfo, Buffer.from(value.slice("Basic ".length), "base64").toString("latin1")];
@@ -1175,7 +1176,7 @@ describe.concurrent("WebSocket Proxy-Authorization", () => {
     ["user", "user:"],
     // A password with no user (RFC 7617 allows an empty user-id).
     [":pass", ":pass"],
-    // A percent-escape is one octet, UTF-8 or not, as in fetch() and curl.
+    // Each percent-escape decodes to one byte, valid UTF-8 or not, like fetch() and curl.
     ["user:p%C3%A9ss", "user:p\xc3\xa9ss"],
     ["user:p%E9ss", "user:p\xe9ss"],
     ["us%ffer:pass", "us\xffer:pass"],
@@ -1184,17 +1185,17 @@ describe.concurrent("WebSocket Proxy-Authorization", () => {
     ["", null],
   ];
 
-  it("is the octets that the userinfo of the proxy URL encodes", async () => {
+  it("is the percent-decoded userinfo from the proxy URL", async () => {
     expect(await proxyAuthorizationSent(rows)).toEqual(rows);
   });
 
-  it("from proxy.headers wins over the userinfo, as in fetch()", async () => {
+  it("from proxy.headers overrides the userinfo, like fetch()", async () => {
     expect(await proxyAuthorizationSent(rows, { "proxy-authorization": "Bearer from-headers" })).toEqual(
       rows.map(([userinfo]) => [userinfo, "Bearer from-headers"]),
     );
   });
 
-  it("is still the userinfo next to other proxy.headers", async () => {
+  it("still comes from the userinfo when proxy.headers has other headers", async () => {
     expect(await proxyAuthorizationSent(rows, { "X-Other": "1" })).toEqual(rows);
   });
 });
@@ -1203,7 +1204,8 @@ describe("WebSocket TLS server identity", () => {
   ignoreAmbientNoProxy();
 
   // A TLS server that records the SNI of every handshake, answers one
-  // WebSocket upgrade per connection, and after it echoes a Close frame and ends. The harness certificate has CN=server-bun
+  // WebSocket upgrade per connection, then echoes the client's Close frame and
+  // ends the connection. The harness certificate has CN=server-bun
   // and SAN DNS:localhost, IP:127.0.0.1, IP:::1. With `hold`, a handshake that
   // sends SNI stops at the ClientHello until `hold` resolves.
   function startSniServer({
@@ -1240,7 +1242,7 @@ describe("WebSocket TLS server identity", () => {
           applicationData += chunk.toString("latin1");
           if (frames) {
             frames = Buffer.concat([frames, chunk]);
-            const close = echoOfCloseFrame(frames);
+            const close = closeFrameEcho(frames);
             if (close && socket.writable) socket.end(close);
             return;
           }

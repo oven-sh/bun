@@ -45,8 +45,8 @@ test("ErrorEvent with no message", async () => {
 }`);
 });
 
-// What script sees of one connection, in order. `url` is replaced in the error's text.
-async function record(ws: WebSocket) {
+// Records the events one connection fires, in order. The URL in the error message is replaced with "<url>".
+async function recordEvents(ws: WebSocket) {
   const events: unknown[] = [`readyState ${ws.readyState}`];
   const { promise, resolve } = Promise.withResolvers<void>();
   ws.onopen = () => events.push("open");
@@ -66,7 +66,7 @@ async function record(ws: WebSocket) {
 
 const closed1006 = { readyState: WebSocket.CLOSED, code: 1006, reason: "", wasClean: false };
 
-async function refusedPort() {
+async function closedPort() {
   const server = net.createServer().listen(0, "127.0.0.1");
   await once(server, "listening");
   const { port } = server.address() as net.AddressInfo;
@@ -75,9 +75,9 @@ async function refusedPort() {
   return port;
 }
 
-describe.concurrent("a connection that fails before it opens", () => {
-  test("a refused connection", async () => {
-    expect(await record(new WebSocket(`ws://127.0.0.1:${await refusedPort()}/`))).toEqual([
+describe.concurrent("connection fails before open", () => {
+  test("connection refused", async () => {
+    expect(await recordEvents(new WebSocket(`ws://127.0.0.1:${await closedPort()}/`))).toEqual([
       "readyState 0",
       {
         readyState: WebSocket.CLOSED,
@@ -88,10 +88,10 @@ describe.concurrent("a connection that fails before it opens", () => {
     ]);
   });
 
-  // The native connect() finds this one out before the constructor returns.
-  test.skipIf(isWindows)("a unix socket that does not exist looks like a refused connection", async () => {
+  // The native connect() fails synchronously here, before the constructor returns.
+  test.skipIf(isWindows)("missing unix socket fires the same events as connection refused", async () => {
     using dir = tempDir("ws-missing-unix-socket", {});
-    expect(await record(new WebSocket(`ws+unix://${join(String(dir), "missing.sock")}`))).toEqual([
+    expect(await recordEvents(new WebSocket(`ws+unix://${join(String(dir), "missing.sock")}`))).toEqual([
       "readyState 0",
       {
         readyState: WebSocket.CLOSED,
@@ -103,20 +103,27 @@ describe.concurrent("a connection that fails before it opens", () => {
   });
 
   test.each([
-    ["ends during the handshake", (socket: net.Socket) => socket.end(), "Connection ended", "ECONNRESET"],
     [
-      "does not speak HTTP",
+      "closes the connection during the handshake",
+      (socket: net.Socket) => socket.end(),
+      "Connection ended",
+      "ECONNRESET",
+    ],
+    [
+      "doesn't speak HTTP",
       (socket: net.Socket) => socket.end("220 smtp ready\r\n\r\n"),
       "Invalid response",
       "HPE_INVALID_CONSTANT",
     ],
-  ])("a server that %s", async (_label, answer, text, code) => {
-    const server = net.createServer(socket => socket.on("error", () => {}).once("data", () => answer(socket)));
+  ])("server %s", async (_label, respond, reason, code) => {
+    const server = net.createServer(socket => socket.on("error", () => {}).once("data", () => respond(socket)));
     await once(server.listen(0, "127.0.0.1"), "listening");
     try {
-      expect(await record(new WebSocket(`ws://127.0.0.1:${(server.address() as net.AddressInfo).port}/`))).toEqual([
+      expect(
+        await recordEvents(new WebSocket(`ws://127.0.0.1:${(server.address() as net.AddressInfo).port}/`)),
+      ).toEqual([
         "readyState 0",
-        { readyState: WebSocket.CLOSED, message: `WebSocket connection to '<url>' failed: ${text}`, code },
+        { readyState: WebSocket.CLOSED, message: `WebSocket connection to '<url>' failed: ${reason}`, code },
         closed1006,
       ]);
     } finally {
@@ -124,9 +131,9 @@ describe.concurrent("a connection that fails before it opens", () => {
     }
   });
 
-  test("a response that is not a 101", async () => {
+  test("non-101 response", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("busy", { status: 503 }) });
-    expect(await record(new WebSocket(`ws://127.0.0.1:${server.port}/`))).toEqual([
+    expect(await recordEvents(new WebSocket(`ws://127.0.0.1:${server.port}/`))).toEqual([
       "readyState 0",
       {
         readyState: WebSocket.CLOSED,
@@ -137,7 +144,7 @@ describe.concurrent("a connection that fails before it opens", () => {
     ]);
   });
 
-  test("a certificate that is not trusted", async () => {
+  test("untrusted certificate", async () => {
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -145,7 +152,7 @@ describe.concurrent("a connection that fails before it opens", () => {
       fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("no", { status: 400 })),
       websocket: { message() {} },
     });
-    const events = await record(new WebSocket(`wss://127.0.0.1:${server.port}/`));
+    const events = await recordEvents(new WebSocket(`wss://127.0.0.1:${server.port}/`));
     expect(events).toEqual([
       "readyState 0",
       {
@@ -158,7 +165,7 @@ describe.concurrent("a connection that fails before it opens", () => {
   });
 });
 
-describe.concurrent("the URL's credentials stay out of", () => {
+describe.concurrent("URL credentials are stripped from", () => {
   test("ErrorEvent.message and ErrorEvent.error", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("no", { status: 404 }) });
     const ws = new WebSocket(`ws://alice:sekret-password@127.0.0.1:${server.port}/feed?token=tok`);
@@ -176,12 +183,12 @@ describe.concurrent("the URL's credentials stay out of", () => {
       "Wrong url scheme for WebSocket ftp://127.0.0.1/feed",
     ],
     ["fragment", "ws://alice:sekret-password@127.0.0.1/feed#x", "URL has fragment component ws://127.0.0.1/feed#x"],
-    ["a token as the user", "ws://sekret-token@127.0.0.1/feed#x", "URL has fragment component ws://127.0.0.1/feed#x"],
+    ["token as username", "ws://sekret-token@127.0.0.1/feed#x", "URL has fragment component ws://127.0.0.1/feed#x"],
   ])("the constructor's SyntaxError (%s)", (_, url, message) => {
     expect(() => new WebSocket(url)).toThrow(new SyntaxError(message));
   });
 
-  test("MessageEvent.origin, which is the origin of the URL", async () => {
+  test("MessageEvent.origin", async () => {
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",

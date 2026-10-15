@@ -95,8 +95,8 @@ public:
     bool sendPingsAutomatically;
     unsigned short maxLifetime;
 
-    /* The server side of the `ws` package: end() only sends the close frame, the close handler runs when the
-     * peer's close frame arrives or the connection is gone, and gets -WebSocketFailureKind for a failure. */
+    /* Server sockets of the `ws` package. end() only sends the close frame. The close handler runs when the peer's
+     * close frame arrives or the connection closes, and gets -WebSocketFailureKind as its code on a protocol error. */
     bool wsPackage = false;
     bool autoPong = true;
     bool skipUTF8Validation = false;

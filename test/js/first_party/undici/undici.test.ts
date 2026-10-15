@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import diagnosticsChannel from "node:diagnostics_channel";
 import { Readable } from "node:stream";
-// @ts-ignore the installed undici 5 types have no ping()
+// @ts-ignore undici 5's types don't declare ping()
 import { ping, request, fetch as undiciFetch, WebSocket as UndiciWebSocket } from "undici";
 
 import { createServer } from "../../../http-test-server";
@@ -417,8 +417,9 @@ describe.concurrent("WebSocket ping", () => {
     return promise;
   }
 
-  // The first message for `ws`. The channels are process-wide and these tests run at the same time.
-  async function published(name: "ping" | "pong", ws: EventTarget) {
+  // Resolves with the first message published for `ws`. Channels are process-wide and these tests
+  // run concurrently, so filter by socket.
+  async function firstPublished(name: "ping" | "pong", ws: EventTarget) {
     const { promise, resolve, reject } = Promise.withResolvers<{ payload: Buffer; websocket: unknown }>();
     const onMessage = (message: any) => {
       if (message.websocket === ws) resolve(message);
@@ -433,7 +434,7 @@ describe.concurrent("WebSocket ping", () => {
     }
   }
 
-  it("ping() sends a Ping frame and the Pong is published on undici:websocket:pong", async () => {
+  it("ping() sends a Ping frame and publishes the Pong on undici:websocket:pong", async () => {
     const received = Promise.withResolvers<Buffer>();
     await using server = serve({
       ping(ws, data) {
@@ -443,7 +444,7 @@ describe.concurrent("WebSocket ping", () => {
     });
     const ws = new UndiciWebSocket(`ws://127.0.0.1:${server.port}`);
     expect(ws).toBeInstanceOf(WebSocket);
-    const pong = published("pong", ws);
+    const pong = firstPublished("pong", ws);
     await once(ws, "open");
 
     ping(ws, Buffer.from("hello slack"));
@@ -464,7 +465,7 @@ describe.concurrent("WebSocket ping", () => {
       },
     });
     const ws = new UndiciWebSocket(`ws://127.0.0.1:${server.port}`);
-    const pong = published("pong", ws);
+    const pong = firstPublished("pong", ws);
     await once(ws, "open");
 
     ping(ws);
@@ -490,7 +491,7 @@ describe.concurrent("WebSocket ping", () => {
   });
 
   it.each(["nodebuffer", "arraybuffer", "blob"])(
-    "a Ping from the server is published as a Buffer when binaryType is %s",
+    "publishes a Ping from the server as a Buffer when binaryType is %s",
     async binaryType => {
       await using server = serve({
         open(ws) {
@@ -502,14 +503,14 @@ describe.concurrent("WebSocket ping", () => {
       ws.binaryType = binaryType as any;
       expect(ws.binaryType).toBe(binaryType as any);
 
-      const { payload, websocket } = await published("ping", ws);
+      const { payload, websocket } = await firstPublished("ping", ws);
       expect(payload).toBeInstanceOf(Buffer);
       expect(payload.toString()).toBe("from server");
       expect(websocket).toBe(ws);
     },
   );
 
-  it("ping() only sends while the socket is open", async () => {
+  it("ping() is a no-op unless the socket is OPEN", async () => {
     const pings: string[] = [];
     const serverClosed = Promise.withResolvers<void>();
     await using server = serve({

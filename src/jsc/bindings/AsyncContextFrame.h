@@ -54,7 +54,7 @@ public:
     }
 };
 
-// Makes `snapshot` the active async context for its lifetime. An empty, undefined or null snapshot changes nothing.
+// Makes `snapshot` the current async context for the scope's lifetime. No-op if `snapshot` is empty, undefined or null.
 class AsyncContextScope {
     WTF_MAKE_NONCOPYABLE(AsyncContextScope);
 

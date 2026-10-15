@@ -69,14 +69,14 @@ fn handshake_timeout_seconds() -> core::ffi::c_uint {
     )
 }
 
-/// `--max-http-header-size` counts names, values and the status text, as llhttp does. This bounds
-/// the raw bytes of a response head, so it leaves room for the framing.
+/// Max raw size of a response head. `--max-http-header-size` only counts header names, values and
+/// the status text (like llhttp), so allow 1 KiB extra for separators and line endings.
 #[inline]
 fn max_response_head_len() -> usize {
     bun_http::max_http_header_size().saturating_add(1024)
 }
 
-/// picohttpparser fills at most one slot per line.
+/// One slot per line is enough: picohttpparser never emits more than one header per line.
 fn header_slots(head: &[u8]) -> Vec<picohttp::Header> {
     vec![picohttp::Header::ZERO; strings::count_char(head, b'\n')]
 }
@@ -96,7 +96,7 @@ enum State {
 }
 
 enum HeadParse {
-    /// `full[..head_len]` is the head of the final response.
+    /// `full[..head_len]` is the response head, with interim 1xx responses already skipped.
     Done {
         full: Vec<u8>,
         head_len: usize,
@@ -105,22 +105,22 @@ enum HeadParse {
     NeedMore,
 }
 
-/// Whether node:http, and `ws` with it, takes `response` for the switch to another protocol: a 101 with
-/// a value in `Upgrade` and the `upgrade` option in `Connection`. ws.ts is told the answer.
+/// Matches node:http's (and so `ws`'s) definition of an upgrade response: status 101, a non-empty
+/// `Upgrade` header, and `upgrade` listed in `Connection`. The result is passed to ws.ts.
 fn is_upgrade(response: &picohttp::Response) -> bool {
-    let (mut upgrade, mut connection) = (false, false);
+    let (mut has_upgrade, mut connection_has_upgrade) = (false, false);
     for header in response.headers.list {
         if strings::eql_case_insensitive_ascii(header.name(), b"upgrade", true) {
-            upgrade |= !header.value().is_empty();
+            has_upgrade |= !header.value().is_empty();
         } else if strings::eql_case_insensitive_ascii(header.name(), b"connection", true) {
-            connection |= HeaderValueIterator::init(header.value())
+            connection_has_upgrade |= HeaderValueIterator::init(header.value())
                 .any(|option| strings::eql_case_insensitive_ascii(option, b"upgrade", true));
         }
     }
-    response.status_code == 101 && upgrade && connection
+    response.status_code == 101 && has_upgrade && connection_has_upgrade
 }
 
-/// What is left of the body of a response that is no upgrade (RFC 9112 §6.3).
+/// Remaining body of a non-upgrade response, framed per RFC 9112 §6.3.
 #[derive(Clone, Copy)]
 enum ResponseBody {
     Length(u64),
@@ -129,7 +129,7 @@ enum ResponseBody {
 }
 
 impl ResponseBody {
-    fn of(response: &picohttp::Response) -> Self {
+    fn from_response(response: &picohttp::Response) -> Self {
         if matches!(response.status_code, 101 | 204 | 304) {
             return Self::Length(0);
         }
@@ -156,22 +156,23 @@ impl ResponseBody {
         }
     }
 
-    /// Leaves in `data` the part of it that is body. True once the body is over.
+    /// Strips `data` down to body bytes, in place. Returns true once the body has ended.
     fn decode(&mut self, data: &mut Vec<u8>) -> bool {
         match self {
-            Self::Length(left) => {
-                data.truncate(usize::try_from(*left).unwrap_or(usize::MAX));
-                *left -= data.len() as u64;
-                *left == 0
+            Self::Length(remaining) => {
+                data.truncate(usize::try_from(*remaining).unwrap_or(usize::MAX));
+                *remaining -= data.len() as u64;
+                *remaining == 0
             }
             Self::Chunked(decoder) => {
                 let mut len = data.len();
-                // SAFETY: `data` is `len` initialized bytes, decoded in place; `len` comes back no larger.
+                // SAFETY: `data` holds `len` initialized bytes. Decoding is in place and never
+                // grows `len`.
                 let rc = unsafe {
                     picohttp::phr_decode_chunked(&raw mut *decoder, data.as_mut_ptr(), &raw mut len)
                 };
                 data.truncate(len);
-                // -2: the last chunk is still to come. -1: malformed, the body breaks off here.
+                // -2: needs more data. -1: malformed, so stop here and leave the body incomplete.
                 if rc >= 0 {
                     *self = Self::Length(0);
                 }
@@ -181,16 +182,17 @@ impl ResponseBody {
         }
     }
 
-    /// Whether a connection that the peer ends now, however it does, has delivered all of it.
+    /// Whether the body counts as fully received if the peer closes the connection now.
     fn is_complete(&self) -> bool {
         matches!(self, Self::Length(0) | Self::UntilClose)
     }
 }
 
-/// The `permessage-deflate` offer of the request.
+/// The `permessage-deflate` offer we sent in the request.
 #[derive(Clone, Copy)]
 struct DeflateOffer {
-    /// `None`: not in the offer, so not allowed in the answer. The maximum when it has no value.
+    /// `None` if not offered, so the server's response must not include it either.
+    /// `MAX_WINDOW_BITS` if offered without a value.
     client_max_window_bits: Option<u8>,
 }
 
@@ -215,13 +217,14 @@ pub struct HTTPClient<const SSL: bool> {
     // The unsent bytes are always a suffix of `input_body_buf`; stored here as
     // the suffix length so we don't hold a self-referential slice.
     to_send_len: Cell<usize>,
-    /// What was read since the last request went out and is not consumed yet.
+    /// Unconsumed bytes received since the last request (CONNECT or upgrade) was sent.
     body: JsCell<Vec<u8>>,
-    /// Made by the `ws` module: it times the handshake, and reads the body of a response that is no upgrade.
+    /// Created by the `ws` module, which runs its own handshake timer and reads the body of a
+    /// non-upgrade response.
     ws_mode: bool,
-    /// Set while that body is read.
+    /// `Some` while reading that body.
     response_body: Cell<Option<ResponseBody>>,
-    /// SNI and verified name: `tls.serverName`, else the dialed host. Empty when unset.
+    /// Hostname used for SNI and certificate verification: `tls.serverName`, or the URL's host. Empty when unset.
     hostname: JsCell<ZBox>,
     /// The context of the script that made the WebSocket. `checkServerIdentity` runs in it.
     context: bun_jsc::ContextId,
@@ -245,9 +248,9 @@ pub struct HTTPClient<const SSL: bool> {
     /// This is base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")).
     expected_accept: [u8; 28],
 
-    /// `None` (opt-out via `perMessageDeflate: false`): a server that responds
-    /// with a `Sec-WebSocket-Extensions` header anyway fails the handshake per
-    /// RFC 6455 §9.1 — matching upstream `ws`.
+    /// `None` when opted out via `perMessageDeflate: false`. If the server sends
+    /// a `Sec-WebSocket-Extensions` header anyway, the handshake fails per
+    /// RFC 6455 §9.1, matching upstream `ws`.
     deflate_offer: Option<DeflateOffer>,
 }
 
@@ -294,9 +297,9 @@ where
         target_authorization: Option<&BunString>,
         // Unix domain socket path for ws+unix:// / wss+unix:// (None for TCP)
         unix_socket_path: Option<&BunString>,
-        // The `Sec-WebSocket-Extensions` request header: a `permessage-deflate` offer, or none.
+        // `Sec-WebSocket-Extensions` request header value (a `permessage-deflate` offer), if any.
         extensions: Option<&BunString>,
-        // Written with `None`: `error.code`, when the cause has a name.
+        // Out param, only set when returning `None`: the errno name for `error.code`, if known.
         connect_error_code: &mut BunString,
     ) -> Option<*mut Self> {
         let vm = global.bun_vm().as_mut();
@@ -310,16 +313,15 @@ where
             .filter(|name| !name.is_empty())
             .map(Box::from);
 
-        // Decode the BunString inputs that are ASCII by construction (URL
-        // parts, tokens, base64) into UTF-8 slices: `String.to_utf8()` borrows
-        // the 8-bit ASCII backing (no allocation). All slices live until end
-        // of scope (Drop).
+        // These BunString inputs are always ASCII (URL parts, tokens, base64),
+        // so `String.to_utf8()` borrows the 8-bit backing without allocating.
+        // All slices live until end of scope (Drop).
 
         let host_slice = host.to_utf8();
         let pathname_slice = pathname.to_utf8();
         let client_protocol_slice = client_protocol.to_utf8();
 
-        let extra_headers = wire_headers(header_names, header_values);
+        let extra_headers = encode_headers(header_names, header_values);
 
         let proxy_host_slice: Option<Utf8Bytes> = proxy_host.map(|ph| ph.to_utf8());
         let target_authorization_slice: Option<Utf8Bytes> =
@@ -329,7 +331,7 @@ where
 
         let using_proxy = proxy_host.is_some();
 
-        // A `Sec-WebSocket-Protocol` header replaces the `protocols` argument.
+        // A user-supplied `Sec-WebSocket-Protocol` header overrides the `protocols` argument.
         let protocols: &[u8] = extra_headers
             .get(b"sec-websocket-protocol")
             .unwrap_or(&client_protocol_slice);
@@ -360,7 +362,7 @@ where
                 host_slice.slice(),
                 port.to_string().as_bytes(),
                 proxy_auth.as_ref().map(|s| s.slice()),
-                Some(&wire_headers(proxy_header_names, proxy_header_values)),
+                Some(&encode_headers(proxy_header_names, proxy_header_values)),
             );
 
             // Duplicate target_host (needed for SNI during TLS handshake).
@@ -566,7 +568,8 @@ where
         this.as_ptr()
     }
 
-    /// None for `ws`: `handshakeTimeout` is a timer of its own, and without it `ws` waits as long as TCP does.
+    /// Disabled for `ws`, which implements `handshakeTimeout` with its own timer and has no
+    /// handshake timeout by default.
     fn handshake_timeout(&self) -> core::ffi::c_uint {
         if self.ws_mode {
             0
@@ -635,7 +638,7 @@ where
         // `_guard` drops here, balancing the ref above. May free `this`.
     }
 
-    /// `system_code` becomes `error.code`, `detail` the end of `error.message`.
+    /// `system_code` becomes `error.code`; `detail` is appended to `error.message`.
     ///
     /// Takes `ThisPtr<Self>` because `did_fail` may run JS that re-enters via
     /// `cancel()`, and `tcp.close()` synchronously dispatches `handle_close`.
@@ -655,8 +658,8 @@ where
         tcp.close(uws::CloseCode::Normal);
     }
 
-    /// C++ hears of the end once. A response whose body is being read was the outcome: whatever
-    /// stops the reading only ends that body.
+    /// Notifies C++ at most once. If we're reading a non-upgrade response's body, that response was
+    /// already reported as the outcome, so this only ends the body instead of reporting a failure.
     fn report_failure(
         this: ThisPtr<Self>,
         code: ErrorCode,
@@ -666,7 +669,7 @@ where
         if let Some((ws, _cpp_ref)) = this.outgoing_websocket.replace(None) {
             match this.response_body.take() {
                 Some(body) => ws.did_end_response_body(
-                    // Our timer is not the peer: nobody ended the body.
+                    // Our own timeout always aborts, since the peer never ended the body.
                     code == ErrorCode::Timeout || !body.is_complete(),
                     !system_code.is_empty(),
                 ),
@@ -683,7 +686,8 @@ where
         bun_jsc::mark_binding!();
         this.clear_data();
         this.tcp.set(Socket::<SSL>::detached());
-        // Above the `CloseCode`s, `code` is the errno of the read that failed. A FIN comes through `handle_end`.
+        // Values above the `CloseCode` range are the errno of a failed read. A FIN goes through
+        // `handle_end` instead.
         let (system_code, detail) = match socket_errno_name(code).filter(|_| code > 2) {
             Some(name) => (
                 BunString::static_(name),
@@ -701,7 +705,7 @@ where
         // We cannot access the pointer after fail is called.
     }
 
-    /// `completed`: the handshake went through and `accepts_tls_peer` refused the peer.
+    /// `completed`: the TLS handshake succeeded but `accepts_tls_peer` rejected the peer.
     pub(crate) fn fail_tls(
         this: ThisPtr<Self>,
         ssl_error: uws::us_bun_verify_error_t,
@@ -864,8 +868,9 @@ where
         socket.get_native_handle() == self.tcp.get().get_native_handle()
     }
 
-    /// The answer depends on the bytes read so far, not on where the reads ended. `body` keeps a
-    /// complete head: a `handshake` listener can let the next read in behind it.
+    /// The result depends only on the bytes received so far, not on how they were split across
+    /// reads. A complete head stays in `body`: a `handshake` listener can spin the event loop, and
+    /// the next read then appends after it.
     fn buffer_and_parse_head(&self, data: &[u8]) -> HeadParse {
         self.body.with_mut(|b| b.extend_from_slice(data));
         let cap = max_response_head_len();
@@ -886,7 +891,7 @@ where
                 Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                     return HeadParse::Fail(ErrorCode::InvalidResponse);
                 }
-                // picohttpparser looks at nothing until it has 9 bytes.
+                // picohttpparser validates nothing until it has 9 bytes, so check the prefix here.
                 Err(picohttp::ParseResponseError::ShortRead)
                     if !b"HTTP/1.".starts_with(&window[..window.len().min(7)]) =>
                 {
@@ -1001,24 +1006,27 @@ where
         if let Some(ws) = this.cpp_websocket() {
             let vm = bun_jsc::virtual_machine::VirtualMachine::get();
             let is_101 = response.status_code == 101;
-            let reads_body = this.ws_mode && !is_upgrade(&response);
-            if reads_body {
-                this.response_body.set(Some(ResponseBody::of(&response)));
+            let should_read_body = this.ws_mode && !is_upgrade(&response);
+            if should_read_body {
+                this.response_body
+                    .set(Some(ResponseBody::from_response(&response)));
                 this.body.set(rest.to_vec());
-                // 'unexpected-response' and what came with the head share one checkpoint, as in
-                // node:http, whose parser finishes the chunk it holds.
+                // Emit 'unexpected-response' and any body bytes that arrived with the head before
+                // draining microtasks, like node:http, whose parser finishes its current chunk.
                 let _scope = vm.enter_event_loop_scope();
                 Self::dispatch_handshake(ws, &response, false, &[]);
                 return Self::handle_response_body(this, &[]);
             }
             {
-                // 'upgrade' and 'open' share the checkpoint that `did_connect` runs after 'open'.
+                // Don't drain microtasks between 'upgrade' and 'open'. `did_connect` drains them
+                // after 'open'.
                 let _scope = is_101.then(|| vm.enter_event_loop_scope_without_checkpoint());
                 let body: &[u8] = if is_101 { &[] } else { rest };
                 Self::dispatch_handshake(ws, &response, true, body);
             }
             if this.cpp_websocket().is_none() {
-                // The listener closed the WebSocket: its checkpoint is this one.
+                // The listener closed the WebSocket, so `did_connect` won't run. Drain microtasks
+                // here instead.
                 drop(vm.enter_event_loop_scope());
                 return;
             }
@@ -1035,7 +1043,7 @@ where
         chunk.extend_from_slice(data);
         let ended = body.decode(&mut chunk);
         this.response_body.set(Some(body));
-        // `ws` has no timer for the body: this is how long the peer has for the next piece.
+        // `ws` has no timeout for the body, so use ours as an idle timeout between chunks.
         if !ws.is_paused() {
             this.tcp.get().set_timeout(handshake_timeout_seconds());
         }
@@ -1047,11 +1055,12 @@ where
         }
     }
 
-    /// `pause()` / `resume()` while CONNECTING hold back the body of a response that is no upgrade, never
-    /// the handshake. What one read brought is still delivered. A reader that waits neither times the
-    /// peer out nor holds the process, as in node:http.
+    /// `pause()` / `resume()` while CONNECTING only apply to a non-upgrade response's body, never to
+    /// the handshake. Data that was already read is still delivered. While paused, the idle timeout
+    /// is off and the socket doesn't keep the process alive, like node:http.
     ///
-    /// Takes `ThisPtr<Self>` because a resume that the kernel refuses closes the socket; see `cancel`.
+    /// Takes `ThisPtr<Self>` because `resume_stream()` closes the socket if it can't re-register the
+    /// poll; see `cancel`.
     pub(crate) fn set_paused(this: ThisPtr<Self>, paused: bool) {
         if this.response_body.get().is_none() {
             return;
@@ -1233,7 +1242,7 @@ where
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         };
-        // A renegotiation that finished: the first report took the request.
+        // This is a TLS renegotiation. The request was already sent after the first handshake.
         if request_buf.is_empty() {
             return;
         }
@@ -1390,7 +1399,7 @@ where
                         header.name(),
                         b"Sec-WebSocket-Extensions",
                     ) {
-                        // RFC 6455 §9.1: only what the request offered, and once.
+                        // RFC 6455 §9.1: only extensions we offered are allowed, each at most once.
                         let offer = this.deflate_offer.filter(|_| deflate_params.is_none());
                         deflate_params = offer.and_then(|offer| offer.accept(header.value()));
                         if deflate_params.is_none() {
@@ -1486,7 +1495,8 @@ where
                 // Same order as the non-tunnel arm below, which detaches the socket
                 // before did_connect.
                 this.state.set(State::Done);
-                // This struct lives as long as the connection, and `Done` never reads the head.
+                // This struct stays alive for the whole connection and `Done` never reads `body`,
+                // so free it now.
                 this.body.set(Vec::new());
                 // The connected client holds its own.
                 this.poll_ref
@@ -1681,7 +1691,8 @@ impl<const SSL: bool> Drop for HTTPClient<SSL> {
     }
 }
 
-/// Windows: only a WSA code names a cause, and WSAENOTCONN is uSockets' recv() probe.
+/// On Windows, only WSA codes (>= 10000) are real socket errors, and WSAENOTCONN comes from
+/// uSockets' recv() probe, not from the actual failure. Both return `None`.
 fn socket_errno_name(errno: c_int) -> Option<&'static str> {
     if errno == 0 || (cfg!(windows) && (errno < 10000 || errno == 10057)) {
         return None;
@@ -1689,13 +1700,14 @@ fn socket_errno_name(errno: c_int) -> Option<&'static str> {
     bun_errno::SystemErrno::init(i64::from(errno)).map(Into::into)
 }
 
-/// For a `socket(2)` / `connect(2)` that failed at once and left its errno.
+/// Errno name after `socket(2)` / `connect(2)` failed synchronously.
 fn last_connect_error_code() -> BunString {
     socket_errno_name(bun_core::ffi::errno()).map_or(BunString::EMPTY, BunString::static_)
 }
 
-/// A header name or value as `fetch` puts it on the wire: one byte per code unit
-/// (<https://fetch.spec.whatwg.org/#concept-header-value>). C++ admits none above U+00FF.
+/// Encodes a header name or value the way `fetch` does: one byte per code unit
+/// (<https://fetch.spec.whatwg.org/#concept-header-value>). C++ has already rejected
+/// anything above U+00FF.
 fn isomorphic_encode(s: &BunString) -> Cow<'_, [u8]> {
     if !s.is_utf16() {
         return Cow::Borrowed(s.latin1());
@@ -1706,7 +1718,7 @@ fn isomorphic_encode(s: &BunString) -> Cow<'_, [u8]> {
         .collect()
 }
 
-fn wire_headers(names: &[BunString], values: &[BunString]) -> Headers {
+fn encode_headers(names: &[BunString], values: &[BunString]) -> Headers {
     debug_assert_eq!(names.len(), values.len());
     let mut headers = Headers::default();
     for (name, value) in names.iter().zip(values) {
@@ -1761,7 +1773,7 @@ fn build_request_body(
     // base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
     let expected_accept = compute_accept_value(key);
 
-    // Bytes only: a `Display` of header bytes would replace what is not UTF-8.
+    // Append raw bytes. Formatting header bytes with `Display` would replace invalid UTF-8.
     let mut body: Vec<u8> = Vec::new();
     body.extend_from_slice(b"GET ");
     body.extend_from_slice(pathname);
@@ -1826,7 +1838,7 @@ fn build_request_body(
     }
 }
 
-fn window_bits(value: &[u8]) -> Option<u8> {
+fn parse_window_bits(value: &[u8]) -> Option<u8> {
     use WebSocketDeflate::Params;
 
     let digits = value
@@ -1848,7 +1860,7 @@ impl DeflateOffer {
         let client_max_window_bits = strings::split(offer, b";")
             .map(|part| strings::trim(part, b" \t"))
             .find_map(|part| match strings::split_once_char(part, b'=') {
-                Some((b"client_max_window_bits", bits)) => window_bits(bits),
+                Some((b"client_max_window_bits", bits)) => parse_window_bits(bits),
                 None if part == b"client_max_window_bits" => {
                     Some(WebSocketDeflate::Params::MAX_WINDOW_BITS)
                 }
@@ -1859,11 +1871,11 @@ impl DeflateOffer {
         }
     }
 
-    /// RFC 7692 §7.1: what the answer to this offer agrees on. `None` for another extension, an
-    /// unknown or repeated parameter, a value that is missing or out of range, or a
-    /// `client_max_window_bits` that was not offered or is above the one offered.
-    fn accept(self, answer: &[u8]) -> Option<WebSocketDeflate::Params> {
-        let mut parts = strings::split(answer, b";").map(|part| strings::trim(part, b" \t"));
+    /// Validates the server's response to this offer (RFC 7692 §7.1) and returns the negotiated
+    /// params. `None` for a different extension, an unknown or repeated parameter, a missing or
+    /// out-of-range value, or a `client_max_window_bits` that wasn't offered or exceeds the offer.
+    fn accept(self, response: &[u8]) -> Option<WebSocketDeflate::Params> {
+        let mut parts = strings::split(response, b";").map(|part| strings::trim(part, b" \t"));
         if parts.next()? != b"permessage-deflate" {
             return None;
         }
@@ -1871,7 +1883,7 @@ impl DeflateOffer {
         let (mut server_bits, mut client_bits) = (None, None);
         for part in parts {
             let (key, bits) = match strings::split_once_char(part, b'=') {
-                Some((key, value)) => (key, Some(window_bits(value)?)),
+                Some((key, value)) => (key, Some(parse_window_bits(value)?)),
                 None => (part, None),
             };
             match (key, bits) {
@@ -1892,7 +1904,7 @@ impl DeflateOffer {
             }
         }
         params.server_max_window_bits = server_bits.unwrap_or(params.server_max_window_bits);
-        // Left out of the answer, the client's own limit stands, as in `ws`.
+        // If the server omits it, keep the limit we offered, like `ws`.
         params.client_max_window_bits = client_bits
             .or(self.client_max_window_bits)
             .unwrap_or(params.client_max_window_bits);
@@ -1915,7 +1927,7 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     result
 }
 
-/// The name to match: `hostname` (`tls.serverName`, else the dialed host), else the SNI.
+/// Returns the name the certificate must match: `hostname` (`tls.serverName` or the URL's host), falling back to the SNI.
 fn identity_name<'a>(
     hostname: &'a [u8],
     ssl: Option<&boringssl::c::SSL>,
@@ -1954,8 +1966,8 @@ fn identity_name<'a>(
 //   - `void* sslConfig` (ownership transferred, boxed by
 //     `Bun__WebSocket__parseSSLConfig`) → `Option<Box<SSLConfig>>`
 //     (null-pointer niche; Box matches the transferred ownership);
-//   - `BunString* connectErrorCode` (an empty string of the caller's, written
-//     with a null return) → `&mut BunString`.
+//   - `BunString* connectErrorCode` (out param: the caller passes an empty
+//     string, written only when returning null) → `&mut BunString`.
 // Keep these signatures in sync with headers.h if either side changes.
 // ──────────────────────────────────────────────────────────────────────────
 

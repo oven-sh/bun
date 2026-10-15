@@ -109,12 +109,12 @@ describe.concurrent("Server", () => {
     expect(received).toEqual(expected);
   });
 
-  // The socket, its topics and its lifetime would stay with the server that received the request,
-  // while the handlers and the accounting would be the other server's.
+  // Otherwise the socket, its topics and its lifetime would belong to the server that received the
+  // request, but it would use the other server's handlers and connection counters.
   test.each([
-    ["of the same kind", false],
-    ["of another kind (TLS)", true],
-  ])("upgrade() throws for a Request that another server %s received", async (_label, otherIsTLS) => {
+    ["an HTTP server", false],
+    ["an HTTPS server", true],
+  ])("upgrade() on %s throws for a Request received by a different server", async (_label, otherIsTLS) => {
     const events: string[] = [];
     const websocket = (name: string) => ({
       open(ws: ServerWebSocket) {
@@ -142,7 +142,7 @@ describe.concurrent("Server", () => {
           } catch (e) {
             result.otherUpgrade = (e as Error).message;
           }
-          // These two only act on the request's own connection: whichever server object is at hand will do.
+          // timeout() and requestIP() only touch the request's own connection, so any server object works.
           other.timeout(req, 10);
           result.otherRequestIP = typeof other.requestIP(req)?.address;
           result.ownUpgrade = String(server.upgrade(req));

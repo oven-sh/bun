@@ -32,7 +32,7 @@ namespace uWS {
 
 inline constexpr std::string_view ERR_WEBSOCKET_TIMEOUT("WebSocket timed out from inactivity");
 
-/* What a wsPackage context reports. serverFailures in src/js/thirdparty/ws.ts has the same order. */
+/* Passed (negated) to a wsPackage context's close handler. Keep in sync with serverFailures in src/js/thirdparty/ws.ts. */
 enum class WebSocketFailureKind : int {
     ExpectedMask = 1,
     UnexpectedRsv1,
@@ -47,10 +47,10 @@ enum class WebSocketFailureKind : int {
     InvalidCompressedData
 };
 
-/* Why we fail a connection (RFC 6455 7.1.7) */
+/* Reason for failing a connection (RFC 6455 7.1.7) */
 struct WebSocketFailure {
     WebSocketFailureKind kind;
-    /* RFC 6455 7.4.1: what the peer is told */
+    /* Status code sent to the peer (RFC 6455 7.4.1) */
     uint16_t closeCode;
     std::string_view diagnostic;
 };
@@ -153,7 +153,7 @@ static bool isValidUtf8(unsigned char *s, size_t length)
 struct CloseFrame {
     uint16_t code;
     std::string_view message;
-    /* Not null: the frame is invalid, and code is the detail of the failure */
+    /* Non-null if the frame is invalid. code then holds the detail for failConnection(). */
     const WebSocketFailure *failure;
 };
 
@@ -332,7 +332,7 @@ protected:
         }
         wState->state.lastFin = isFin(src);
 
-        /* A control frame is not a message. Its limit is 125 bytes, checked in consume(). */
+        /* maxPayloadLength doesn't apply to control frames. Their 125 byte limit is checked in consume(). */
         if (Impl::refusePayloadLength(payLength, wState, user) && getOpCode(src) < 8) {
             Impl::failConnection(wState, user, (uint64_t) payLength >> 53 ? FAIL_UNSUPPORTED_LENGTH : FAIL_TOO_BIG_MESSAGE);
             return true;

@@ -172,17 +172,16 @@ for (const via of ["data", "headers"] as const) {
   });
 }
 
-// uws marks the connection its parser is currently working on as "upgraded"
-// when server.upgrade() runs inside a request dispatch. That mark used to be
-// set for ANY upgrade performed during the dispatch, including one for a
-// request that arrived on a different connection (parked by fetch() and
-// upgraded later from another request's handler, or from a microtask drained
-// during it). The connection actually being parsed was then treated as gone:
-// the rest of its read buffer (pipelined requests) was dropped and its
-// post-parse bookkeeping skipped.
-test("server.upgrade() of a request parked by another connection leaves the connection being parsed intact", async () => {
-  let parked: { request: Request; resolve: (response: Response | undefined) => void } | undefined;
-  const requestParked = Promise.withResolvers<void>();
+// When server.upgrade() runs while uws is dispatching a request, uws flags the
+// connection it's parsing as upgraded. It used to set that flag for ANY upgrade
+// during the dispatch, including one for a request from a different connection
+// (left pending by fetch() and upgraded later from another request's handler, or
+// from a microtask drained during it). uws then treated the connection being
+// parsed as closed: it dropped the rest of the read buffer (pipelined requests)
+// and skipped the post-parse bookkeeping.
+test("server.upgrade() of another connection's pending request doesn't drop pipelined requests", async () => {
+  let pendingUpgrade: { request: Request; resolve: (response: Response | undefined) => void } | undefined;
+  const upgradeRequestReceived = Promise.withResolvers<void>();
   const websocketOpened = Promise.withResolvers<void>();
 
   using server = Bun.serve({
@@ -193,12 +192,12 @@ test("server.upgrade() of a request parked by another connection leaves the conn
       switch (pathname) {
         case "/ws":
           return new Promise<Response | undefined>(resolve => {
-            parked = { request, resolve };
-            requestParked.resolve();
+            pendingUpgrade = { request, resolve };
+            upgradeRequestReceived.resolve();
           });
         case "/approve": {
-          const upgraded = server.upgrade(parked!.request);
-          parked!.resolve(undefined);
+          const upgraded = server.upgrade(pendingUpgrade!.request);
+          pendingUpgrade!.resolve(undefined);
           return new Response(upgraded ? "approved" : "upgrade failed");
         }
         default:
@@ -216,17 +215,17 @@ test("server.upgrade() of a request parked by another connection leaves the conn
   const ws = new WebSocket(new URL("/ws", server.url).href.replace("http", "ws"));
   const websocketFailed = (event: Event) => {
     const error = new Error(`client WebSocket ${event.type}`);
-    requestParked.reject(error);
+    upgradeRequestReceived.reject(error);
     websocketOpened.reject(error);
   };
   ws.addEventListener("error", websocketFailed);
   ws.addEventListener("close", websocketFailed);
-  await requestParked.promise;
+  await upgradeRequestReceived.promise;
 
-  // Both requests in one write so the parser sees the second one in the same
-  // read as the one whose handler performs the upgrade. `Connection: close`
-  // on the second makes the server close the connection once it has been
-  // answered; a dropped second request leaves the connection open instead.
+  // Send both requests in one write so the parser gets the second one in the
+  // same read as the one whose handler calls upgrade(). `Connection: close` on
+  // the second makes the server close the connection after responding. If the
+  // second request is dropped, the connection stays open instead.
   const received: Buffer[] = [];
   const connectionClosed = Promise.withResolvers<void>();
   await Bun.connect({
@@ -261,10 +260,10 @@ test("server.upgrade() of a request parked by another connection leaves the conn
   ws.close();
 });
 
-// uSockets does not move a socket that sent its FIN to another owner. upgrade() used to find that out
-// after it had destructed the HTTP state, and went on to build a WebSocket in a socket that the HTTP
-// server still owned: its close then destructed the wrong type.
-test("an upgrade of a socket that was already ended is refused", async () => {
+// uSockets won't adopt a socket into another context once it has sent its FIN. upgrade() used to hit
+// that only after destroying the HTTP state, then constructed the WebSocket state in a socket the HTTP
+// context still owned, so closing it ran the wrong destructor.
+test("rejects an upgrade on a socket that was already ended", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

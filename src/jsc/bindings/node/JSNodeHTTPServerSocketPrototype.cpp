@@ -611,7 +611,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten, (JSC::JSGloba
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    // Like libuv's bytesWritten: what write() took, sent or not.
+    // Like Node's bytesWritten, this counts bytes still buffered as well as bytes already sent.
     return JSValue::encode(JSC::jsNumber(thisObject->streamBuffer.totalBytesWritten() + thisObject->streamBuffer.bufferedSize()));
 }
 

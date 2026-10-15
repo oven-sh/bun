@@ -143,7 +143,7 @@ const ALLOWED_ORIGINS = new Set(["https://my-app.example"]);
 
 Bun.serve({
   fetch(req, server) {
-    // browsers always send Origin: turn away pages of other sites
+    // browsers always send Origin, so reject requests from other sites
     const origin = req.headers.get("origin");
     if (origin && !ALLOWED_ORIGINS.has(origin)) {
       return new Response("Forbidden", { status: 403 });
@@ -199,7 +199,7 @@ socket.addEventListener("message", event => {
 
 The browser sends cookies set on the page along with the WebSocket upgrade request. They are available on `req.headers` in the `fetch` handler. Parse them to identify the connecting user and set `data` accordingly.
 
-The same-origin policy does not cover the WebSocket handshake. Depending on the cookie's `SameSite` attribute, a page on another site can open a socket that carries your user's cookies ([cross-site WebSocket hijacking](https://portswigger.net/web-security/websockets/cross-site-websocket-hijacking)). Check the `Origin` header against an allowlist before you call `server.upgrade()`.
+The same-origin policy doesn't apply to WebSocket handshakes. Depending on the cookie's `SameSite` attribute, a page on another site can open a socket that sends your user's cookies ([cross-site WebSocket hijacking](https://portswigger.net/web-security/websockets/cross-site-websocket-hijacking)). Check the `Origin` header against an allowlist before calling `server.upgrade()`.
 
 </Warning>
 
@@ -237,7 +237,7 @@ const server = Bun.serve({
       console.log(ws.subscriptions); // ["the-group-chat"]
     },
     close(ws) {
-      // a closed socket is already unsubscribed from every topic
+      // Bun unsubscribes closed sockets from all topics automatically
       const msg = `${ws.data.username} has left the chat`;
       server.publish("the-group-chat", msg);
     },
@@ -274,23 +274,23 @@ Bun.serve({
 });
 ```
 
-Bun then negotiates the extension with clients that support it. Each call decides whether its message is compressed. `ws.send()` and `ws.publish()` send it uncompressed unless you pass `true` as the last argument.
+Bun then negotiates compression with clients that support it. You choose per message whether to compress. `ws.send()` and `ws.publish()` don't compress unless you pass `true` as the last argument.
 
 ```ts
 ws.send("Hello world", true);
 ws.publish("the-group-chat", "Hello world", true);
 ```
 
-`server.publish()` is the exception: it compresses unless you pass `false`. Short messages grow when deflated, so pass `false` for those.
+`server.publish()` is the exception. It compresses unless you pass `false`. Compression makes short messages larger, so pass `false` for those.
 
 ```ts
 server.publish("the-group-chat", "Hello world"); // compressed
 server.publish("the-group-chat", "Hello world", false); // uncompressed
 ```
 
-A client that did not negotiate the extension always gets the message uncompressed.
+Clients that didn't negotiate compression always receive uncompressed messages.
 
-To configure each direction on its own, pass an object.
+To configure each direction separately, pass an object.
 
 ```ts server.ts icon="/icons/typescript.svg"
 Bun.serve({
@@ -304,30 +304,30 @@ Bun.serve({
 });
 ```
 
-| Value                 | `compress`                                                | `decompress`                                                  |
-| --------------------- | --------------------------------------------------------- | ------------------------------------------------------------- |
-| `"shared"`, `true`    | One compressor for all sockets, reset after each message  | One decompressor for all sockets                              |
-| `"3KB"` ... `"256KB"` | One compressor per socket that remembers earlier messages | One decompressor per socket with that window (32 KB at most)  |
-| `"dedicated"`         | `"256KB"`                                                 | `"32KB"`                                                      |
-| `"disable"`, `false`  | Never compress, even when `send()` asks for it            | No decompressor per socket: `"shared"` while `compress` is on |
+| Value                 | `compress`                                               | `decompress`                                                         |
+| --------------------- | -------------------------------------------------------- | -------------------------------------------------------------------- |
+| `"shared"`, `true`    | One compressor for all sockets, reset after each message | One decompressor for all sockets                                     |
+| `"3KB"` ... `"256KB"` | Per-socket compressor that keeps context across messages | Per-socket decompressor with that window size (max 32 KB)            |
+| `"dedicated"`         | Same as `"256KB"`                                        | Same as `"32KB"`                                                     |
+| `"disable"`, `false`  | Never compress, even if `send()` passes `true`           | No per-socket decompressor. Uses `"shared"` if `compress` is enabled |
 
-A per-socket compressor compresses better and costs the memory its name says for every connection. The extension is off when both directions are off.
+Per-socket compressors compress better, but each connection uses that much memory (`"16KB"` costs 16 KB per connection). Disabling both directions disables the extension.
 
 ### Backpressure
 
 The `.send(message)` method of `ServerWebSocket` returns a `number` indicating the result of the operation.
 
 - `-1` — The message was enqueued but there is backpressure
-- `0` — The message was dropped: the connection is closed, or it already buffers more than `backpressureLimit`
+- `0` — The message was dropped because the connection is closed or already has more than `backpressureLimit` bytes buffered
 - `1+` — The number of bytes sent
 
-An empty payload (`ws.send("")`, `ws.ping()`, `ws.pong()`) is sent and also returns `0`.
+Sending an empty payload (`ws.send("")`, `ws.ping()`, `ws.pong()`) succeeds but also returns `0`.
 
-After a `-1`, the `drain` handler runs once the buffered data has been written.
+After `-1`, Bun calls the `drain` handler once the buffered data has been written.
 
-Bun checks `backpressureLimit` before it queues a message, so a connection buffers at most the limit plus one message. `.publish()` copies the part of the message a subscriber's socket does not accept at once into that subscriber's own buffer, so keep messages to many subscribers small.
+Bun checks `backpressureLimit` before queueing a message, so a connection can buffer up to the limit plus one message. `.publish()` buffers unsent bytes separately for each subscriber, so keep messages small when a topic has many subscribers.
 
-For the other direction, `ws.pause()` stops reading from the socket, so a client that sends faster than you consume sees TCP backpressure. `ws.resume()` starts reading again, and `ws.isPaused` reports the state. The idle timeout is suspended while a socket is paused. Messages that were already read from the socket are still delivered.
+To slow down a client that sends faster than you can consume, call `ws.pause()`. Bun stops reading from the socket, so the client sees TCP backpressure. `ws.resume()` starts reading again, and `ws.isPaused` reports the current state. The idle timeout is suspended while a socket is paused. Messages already read from the socket are still delivered.
 
 ```ts
 Bun.serve({
@@ -345,7 +345,7 @@ Bun.serve({
 
 ### Closing connections
 
-`ws.close(code, reason)` sends a Close frame and then closes the connection. The `close` handler gets the same code and reason.
+`ws.close(code, reason)` sends a Close frame and then closes the connection. The `close` handler receives the same code and reason.
 
 ```ts
 ws.close(); // 1000
@@ -354,16 +354,16 @@ ws.terminate(); // no Close frame
 ```
 
 - Valid codes are `1000`-`1003`, `1007`-`1014` and `3000`-`4999`. Any other code throws a `RangeError`.
-- `0`, `1005`, `1006` and `1015` do not throw. They send a Close frame without a code, so a code from a `close` handler can be passed on to another socket.
-- The reason is cut to 123 bytes of UTF-8.
+- `0`, `1005`, `1006` and `1015` don't throw. They send a Close frame with no code, so you can forward the code from a `close` handler to another socket.
+- The reason is truncated to 123 bytes of UTF-8.
 
-When the client breaks the protocol, Bun sends a Close frame with `1002` (protocol error), `1007` (invalid UTF-8 or compressed data) or `1009` (message too big). The `close` handler gets `1006` and a description of the problem as the reason.
+When the client violates the protocol, Bun sends a Close frame with `1002` (protocol error), `1007` (invalid UTF-8 or compressed data) or `1009` (message too big). The `close` handler receives `1006`, with a description of the problem as the reason.
 
-`server.stop()` leaves open WebSockets alone. `server.stop(true)` closes each one with `1001`.
+`server.stop()` doesn't close open WebSockets. `server.stop(true)` closes each one with `1001`.
 
 ### Errors
 
-When a handler throws, Bun calls the `error` handler with the socket and the error. Without an `error` handler it is an uncaught exception. A socket whose `open` handler throws is closed.
+When a handler throws, Bun calls the `error` handler with the socket and the error. Without an `error` handler, the error is an uncaught exception. If the `open` handler throws, Bun closes the socket.
 
 ```ts
 Bun.serve({
@@ -380,11 +380,11 @@ Bun.serve({
 });
 ```
 
-A rejected promise from an `async` handler is an unhandled rejection. It does not reach `error`.
+Bun doesn't call `error` when an `async` handler rejects. That's an unhandled rejection.
 
 ### Timeouts and limits
 
-By default, Bun closes a WebSocket connection that has been idle for 120 seconds. Configure this with the `idleTimeout` parameter: a whole number of seconds from `0` to `960`. Values from `1` to `7` are rounded up to `8`.
+By default, Bun closes a WebSocket connection that has been idle for 120 seconds. Configure this with the `idleTimeout` parameter, an integer number of seconds from `0` to `960`. Values from `1` to `7` round up to `8`.
 
 ```ts
 Bun.serve({
@@ -395,9 +395,9 @@ Bun.serve({
 });
 ```
 
-Shortly before the timeout, Bun pings the client, and the pong keeps a quiet connection open. Set `sendPings: false` to turn that off. `idleTimeout: 0` disables the timeout and the automatic pings.
+Bun pings the client shortly before the timeout, and the client's pong keeps an idle connection open. Set `sendPings: false` to disable this. `idleTimeout: 0` disables both the timeout and the automatic pings.
 
-Bun also closes a WebSocket connection, with code `1009`, if it receives a message larger than 16 MB. Configure this with the `maxPayloadLength` parameter. For a compressed message the limit applies to the decompressed size.
+Bun also closes a WebSocket connection, with code `1009`, if it receives a message larger than 16 MB. Configure this with the `maxPayloadLength` parameter. For compressed messages, the limit applies to the decompressed size.
 
 ```ts
 Bun.serve({
@@ -437,7 +437,7 @@ const socket = new WebSocket("wss://localhost:3000", {
   protocols: ["soap", "wamp"], // subprotocols to offer
   tls: { ca: Bun.file("./ca.pem") }, // TLS options, as in fetch()
   proxy: "http://proxy.example.com:8080", // HTTP or HTTPS proxy
-  perMessageDeflate: false, // do not offer compression (default: true)
+  perMessageDeflate: false, // don't offer compression (default: true)
 });
 ```
 
@@ -459,7 +459,7 @@ socket.addEventListener("close", event => {});
 socket.addEventListener("error", event => {});
 ```
 
-`socket.close(code, reason)` sends a Close frame and sets `readyState` to `CLOSING`. The `close` event fires when the connection is closed. Its `code` and `reason` are those of the server's Close frame (`1005` if it had no code), or `1006` if the connection ended without one. If the server has not closed the connection after 30 seconds ([`BUN_CONFIG_WS_CLOSE_TIMEOUT`](/runtime/environment-variables)), Bun closes it. `socket.terminate()` closes it at once.
+`socket.close(code, reason)` sends a Close frame and sets `readyState` to `CLOSING`. The `close` event fires once the connection closes. Its `code` and `reason` come from the server's Close frame (`1005` if the frame had no code). If the connection ended without a Close frame, `code` is `1006`. If the server hasn't closed the connection after 30 seconds ([`BUN_CONFIG_WS_CLOSE_TIMEOUT`](/runtime/environment-variables)), Bun closes it. `socket.terminate()` closes it immediately.
 
 ### Backpressure
 
@@ -479,7 +479,7 @@ socket.addEventListener("message", event => {
 
 `pause()` and `resume()` return `true` when they took effect (or will, once a connecting socket opens) and `false` when there is no socket to act on; `socket.isPaused` reports the current state. Messages already decoded when `pause()` is called may still be delivered. The `ws` package's `pause()`, `resume()`, and `isPaused` map to the same methods.
 
-A paused client reads nothing from the socket: it does not answer pings, and it does not see a Close frame or the end of the connection until `resume()`. `send()`, `ping()`, and `pong()` still work. If a pause can outlast the server's idle timeout (120 seconds by default in `Bun.serve`), send a frame on a timer.
+A paused client doesn't read from the socket, so until `resume()` it doesn't reply to pings or notice a Close frame or a disconnect. `send()`, `ping()`, and `pong()` still work. If a pause can outlast the server's idle timeout (120 seconds by default in `Bun.serve`), send a frame on a timer.
 
 ```ts
 socket.pause();

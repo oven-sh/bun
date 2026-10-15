@@ -1,5 +1,5 @@
 // A forced close of a Bun.serve WebSocket (terminate(), or a frame that fails
-// the connection) runs the close handler at once and reports 1006.
+// the connection) runs the close handler immediately and reports 1006.
 // Over TLS it must not wait for the peer's close_notify: a peer that does not
 // read never answers.
 import type { ServerWebSocket, WebSocketHandler } from "bun";
@@ -27,8 +27,8 @@ function maskedText(text: string): Buffer {
   return Buffer.from([0x81, 0x80 | text.length, ...mask, ...Array.from(Buffer.from(text), (b, i) => b ^ mask[i & 3])]);
 }
 
-// Upgrades over a raw socket. `ended` resolves when the connection is gone, with the status line
-// ("" if there was none) and every frame the server sent.
+// Upgrades over a raw socket. `ended` resolves when the connection closes, with the HTTP status
+// line ("" if none arrived) and every frame the server sent.
 function rawClient(port: number, secure: boolean) {
   const socket = secure
     ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
@@ -38,7 +38,7 @@ function rawClient(port: number, secure: boolean) {
   socket.on("data", chunk => {
     received = Buffer.concat([received, chunk]);
   });
-  // "close" follows.
+  // Ignore errors. "close" always fires afterwards.
   socket.on("error", () => {});
   socket.on("close", () => {
     const headEnd = received.indexOf("\r\n\r\n");
@@ -204,8 +204,8 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: forced close with a peer t
 });
 
 // publish() queues small messages per subscriber until the end of the tick, and send() inside a
-// handler lands in the cork buffer until the handler returns.
-describe.concurrent.each(["ws", "wss"] as const)("%s: what send() and publish() accepted is delivered", scheme => {
+// handler stays in the cork buffer until the handler returns.
+describe.concurrent.each(["ws", "wss"] as const)("%s: flushes accepted send() and publish() messages", scheme => {
   const secure = scheme === "wss";
 
   test("before terminate() closes the socket", async () => {
@@ -240,7 +240,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: what send() and publish() 
     }
   });
 
-  // server.upgrade() has returned true by then, whether the 101 is still corked or not.
+  // server.upgrade() already returned true, so the 101 has to be sent whether or not it's still corked.
   test.each(["synchronous", "asynchronous"])("when open() throws after a %s upgrade", async kind => {
     await using server = serve(
       secure,
@@ -267,14 +267,14 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: what send() and publish() 
   });
 });
 
-// The loop does not tick again after the last turn, so nothing else writes these out.
-// On Windows the exit resets the connection, and the reset can discard what the client has not read yet.
+// The event loop doesn't run again after this tick, so exiting has to flush these messages.
+// Skipped on Windows: exiting resets the connection, and the reset can discard data the client hasn't read yet.
 describe.concurrent.each([
   { from: "a timer", exit: "server.unref()" },
   { from: "a timer", exit: "process.exit(0)" },
   { from: "the message handler", exit: "process.exit(0)" },
-])("send() and publish(), then $exit from $from", ({ from, exit }) => {
-  test.skipIf(isWindows)("are delivered before the process exits", async () => {
+])("$exit from $from after send() and publish()", ({ from, exit }) => {
+  test.skipIf(isWindows)("flushes the messages before the process exits", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -291,11 +291,11 @@ describe.concurrent.each([
                 ws.subscribe("room");
               },
               message(ws) {
-                function act() {
+                function sendThenExit() {
                   console.log(JSON.stringify([ws.send("sent"), ...[0, 1, 2].map(i => server.publish("room", "bye" + i))]));
                   ${exit};
                 }
-                ${from === "a timer" ? "setTimeout(act, 0)" : "act()"};
+                ${from === "a timer" ? "setTimeout(sendThenExit, 0)" : "sendThenExit()"};
               },
             },
           });
@@ -330,7 +330,7 @@ describe.concurrent.each([
         proc.stderr.text(),
         proc.exited,
       ]);
-      // A build that tears the VM down at exit (ASAN, to find leaks) also stops the server, which says goodbye.
+      // ASAN builds tear down the VM at exit to find leaks. That stops the server, which sends a 1001 Close frame.
       if (frames.at(-1) === 'CLOSE 1001 "Server closed"') frames.pop();
       expect({ results, frames, stderr }).toEqual({
         results: "[4,4,4,4]",
@@ -344,10 +344,10 @@ describe.concurrent.each([
   });
 });
 
-// uws batches the 101 in a 128 KB buffer. Headers that fill it make server.upgrade() write in the middle of the
-// 101, and over TLS a write that the kernel rejects ends the socket: it cannot become a WebSocket any more.
-// The sizes go over the edge of the buffer in steps smaller than what uws itself adds to the 101.
-test.concurrent("a client that resets a TLS connection while server.upgrade() writes a long 101", async () => {
+// uws corks the 101 in a 128 KB buffer. Headers that overflow it make server.upgrade() flush partway through the
+// 101. Over TLS a failed write closes the socket, so it can't be upgraded to a WebSocket.
+// The header sizes step across the buffer boundary in increments smaller than what uws itself adds to the 101.
+test.concurrent("server.upgrade() returns false when a TLS client resets during a large 101", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -356,7 +356,7 @@ test.concurrent("a client that resets a TLS connection while server.upgrade() wr
         const tls = require("node:tls");
 
         let client;
-        let last = 10700;
+        let lastHeaderSize = 10700;
         const results = new Set();
         const server = Bun.serve({
           port: 0,
@@ -366,14 +366,14 @@ test.concurrent("a client that resets a TLS connection while server.upgrade() wr
             client.resetAndDestroy();
             const headers = {};
             for (let i = 0; i < 8; i++) headers["x-long-" + i] = Buffer.alloc(15000, "a").toString();
-            headers["x-long-8"] = Buffer.alloc(last, "a").toString();
+            headers["x-long-8"] = Buffer.alloc(lastHeaderSize, "a").toString();
             results.add(server.upgrade(req, { headers }));
           },
           websocket: { message() {} },
         });
 
         function next() {
-          if ((last += 50) > 11000) {
+          if ((lastHeaderSize += 50) > 11000) {
             console.log(JSON.stringify([...results].sort()));
             return server.stop(true);
           }
@@ -393,36 +393,36 @@ test.concurrent("a client that resets a TLS connection while server.upgrade() wr
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // true while the whole 101 fits the buffer, false once a write came before the socket was adopted.
+  // true while the whole 101 fits in the buffer, false once it overflows and the write fails before the upgrade.
   expect({ stdout, stderr }).toEqual({ stdout: "[false,true]\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
 
-// uws runs timeouts on a 4 second tick. With idleTimeout: 8 (the smallest) it pings after one idle
-// tick and closes one tick later. What the server itself sends in between says nothing about the peer.
+// uws checks timeouts on a 4 second tick. With idleTimeout: 8 (the minimum) it pings after one idle
+// tick and closes one tick later. The server's own sends must not reset the idle timer.
 test.concurrent(
-  "a ping the client does not answer closes the connection while the server keeps sending",
+  "idleTimeout closes a client that never answers the ping, even while the server keeps sending",
   async () => {
     const closed = Promise.withResolvers<{ code: number; reason: string }>();
-    let pusher: ReturnType<typeof setInterval> | undefined;
+    let sendInterval: ReturnType<typeof setInterval> | undefined;
     await using server = serve(false, {
       idleTimeout: 8,
       open(ws) {
-        pusher = setInterval(() => ws.send("tick"), 100);
+        sendInterval = setInterval(() => ws.send("tick"), 100);
       },
       message() {},
       close(ws, code, reason) {
-        clearInterval(pusher);
+        clearInterval(sendInterval);
         closed.resolve({ code, reason });
       },
     });
 
-    // Fails at the next tick instead of never, if the server pings again.
+    // If the server pings again instead of closing, fail right away rather than time out.
     const secondPing = Promise.withResolvers<never>();
     let pings = 0;
     const client = rawClient(server.port!, false);
     client.socket.on("data", chunk => {
-      // Every frame of this server is "tick" or an empty ping, and 0x89 is in neither payload.
+      // The server only sends "tick" messages and empty pings, so 0x89 can only be a ping header.
       for (const byte of chunk) {
         if (byte === 0x89 && ++pings === 2) secondPing.reject(new Error("the server pinged again instead of closing"));
       }
@@ -434,7 +434,7 @@ test.concurrent(
       });
       expect(pings).toBe(1);
     } finally {
-      clearInterval(pusher);
+      clearInterval(sendInterval);
       client.socket.destroy();
     }
   },

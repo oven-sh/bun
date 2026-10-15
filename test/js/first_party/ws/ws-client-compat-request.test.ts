@@ -1,22 +1,22 @@
-// The `http.ClientRequest` a `ws` client hands to user code: the argument of `finishRequest` and the first argument of
-// 'unexpected-response', with what end(), destroy() and abort() on it do to the socket. See ws-raw-peer.ts.
+// Tests the `http.ClientRequest` that a `ws` client passes to `finishRequest` and to 'unexpected-response' listeners,
+// and how calling end(), destroy() or abort() on it affects the socket. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir, tls } from "harness";
 import type { ClientRequest } from "node:http";
 import path from "node:path";
 import {
-  attempt,
+  tryCall,
   closedPort,
   createPeer,
-  dial,
-  event,
+  connectClient,
+  nextEvent,
   implementations,
   response101,
   type ClientOptions,
   type PeerOptions,
 } from "./ws-raw-peer";
 
-const opening = ["upgrade 101 rs=0", "open rs=1"];
+const openEvents = ["upgrade 101 rs=0", "open rs=1"];
 const closedBeforeOpen = [
   'error Error "WebSocket was closed before the connection was established" rs=2',
   "close 1006 Buffer() rs=3",
@@ -26,11 +26,11 @@ const boom = ['error Error "boom" rs=2', "close 1006 Buffer() rs=3"];
 const forbidden = "HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\n\r\nno";
 
 type Peer = Awaited<ReturnType<typeof createPeer>>;
-type Act = (req: ClientRequest) => unknown;
+type RequestAction = (req: ClientRequest) => unknown;
 
 const flags = (req: ClientRequest) => ({ destroyed: req.destroyed, aborted: req.aborted });
 
-/** Records 'abort' and 'close' of a request. `closed` is its 'close' event. */
+/** Records a request's 'abort' and 'close' events. `closed` resolves on 'close'. */
 function watchRequest(req: ClientRequest) {
   const events: string[] = [];
   req.on("abort", () => events.push("abort"));
@@ -38,12 +38,12 @@ function watchRequest(req: ClientRequest) {
   return { events, closed };
 }
 
-describe.each(implementations)("ws client, the handshake request ($name)", ({ ws: implementation }) => {
+describe.each(implementations)("ws client handshake request ($name)", ({ ws: implementation }) => {
   const { WebSocket } = implementation;
 
   /**
-   * The request line of every request `peer` has read, after a control client has dialed it and its request has
-   * arrived: whatever an earlier client was going to send is there too.
+   * Returns the request line of every request `peer` has received. Connects a control client first and waits for its
+   * request, so anything an earlier client was going to send has arrived too.
    */
   async function requestLines(peer: Peer) {
     const control = new WebSocket(peer.url + "/control");
@@ -57,10 +57,10 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
   }
   const onlyControl = ["GET /control HTTP/1.1"];
 
-  /** `dial()` with a `finishRequest` that only keeps the request. */
-  async function dialHeld(options: ClientOptions = {}, peerOptions?: PeerOptions) {
+  /** `connectClient()` with a `finishRequest` that saves the request without ending it. */
+  async function connectWithPendingRequest(options: ClientOptions = {}, peerOptions?: PeerOptions) {
     let req!: ClientRequest;
-    const client = await dial(
+    const client = await connectClient(
       implementation,
       { ...options, finishRequest: request => void (req = request) },
       peerOptions,
@@ -69,9 +69,9 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
   }
 
   describe("finishRequest", () => {
-    test("gets the request and the WebSocket, and a header it sets is sent", async () => {
+    test("receives the request and the WebSocket, and can set a header", async () => {
       const calls: unknown[][] = [];
-      await using client = await dial(implementation, {
+      await using client = await connectClient(implementation, {
         finishRequest(...args) {
           calls.push(args);
           args[0].setHeader("Cookie", "foo=bar");
@@ -85,10 +85,10 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
       expect(calls[0][1]).toBe(client.ws);
       expect(conn.header("cookie")).toBe("foo=bar");
       await client.opened;
-      expect(client.events).toEqual(opening);
+      expect(client.events).toEqual(openEvents);
     });
 
-    const later: { when: string; defer(fn: () => void): unknown }[] = [
+    const deferrals: { when: string; defer(fn: () => void): unknown }[] = [
       { when: "in a microtask", defer: fn => queueMicrotask(fn) },
       { when: "in a later task", defer: fn => setImmediate(fn) },
       { when: "after an await", defer: async fn => (await null, fn()) },
@@ -100,51 +100,54 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
           req.setHeader("Authorization", "token");
           req.end();
         });
-    // Refuses a request that was sent before `finishRequest` released it.
-    const wantsAuthorization: PeerOptions = {
+    // Responds with a 401 if the request was sent before `finishRequest` set Authorization.
+    const requiresAuthorization: PeerOptions = {
       respond: conn =>
         conn.header("authorization") ? response101(conn) : "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n",
     };
 
-    test.each(later)("req.end() $when: one request, with the headers set until then", async ({ defer }) => {
-      await using client = await dial(
+    test.each(deferrals)("req.end() $when sends one request with every header set so far", async ({ defer }) => {
+      await using client = await connectClient(
         implementation,
         { headers: { a: "1" }, finishRequest: authorizeLater(defer) },
-        wantsAuthorization,
+        requiresAuthorization,
       );
       expect(client.ws.readyState).toBe(WebSocket.CONNECTING);
       await client.opened;
-      expect(client.events).toEqual(opening);
+      expect(client.events).toEqual(openEvents);
       expect(client.peer.connections.map(conn => [conn.header("a"), conn.header("authorization")])).toEqual([
         ["1", "token"],
       ]);
     });
 
-    test("a late req.end() over TLS", async () => {
-      await using client = await dial(
+    test("a deferred req.end() works over TLS", async () => {
+      await using client = await connectClient(
         implementation,
         { ca: tls.cert, finishRequest: authorizeLater(setImmediate) },
-        { ...wantsAuthorization, secure: true },
+        { ...requiresAuthorization, secure: true },
       );
       await client.opened;
-      expect(client.events).toEqual(opening);
+      expect(client.events).toEqual(openEvents);
       expect(client.peer.connections).toHaveLength(1);
     });
 
-    test.skipIf(isWindows)("a late req.end() over a unix socket", async () => {
+    test.skipIf(isWindows)("a deferred req.end() works over a unix socket", async () => {
       using dir = tempDir("ws-finish-request", {});
-      await using client = await dial(
+      await using client = await connectClient(
         implementation,
         { finishRequest: authorizeLater(setImmediate) },
-        { ...wantsAuthorization, path: path.join(String(dir), "ws.sock") },
+        { ...requiresAuthorization, path: path.join(String(dir), "ws.sock") },
       );
       await client.opened;
-      expect(client.events).toEqual(opening);
+      expect(client.events).toEqual(openEvents);
       expect(client.peer.connections).toHaveLength(1);
     });
 
-    test("every kind of listener added before req.end() gets the events of the connection", async () => {
-      await using client = await dialHeld({ protocols: ["a", "b"] }, { headers: ["Sec-WebSocket-Protocol: a"] });
+    test("every listener style added before req.end() gets the connection's events", async () => {
+      await using client = await connectWithPendingRequest(
+        { protocols: ["a", "b"] },
+        { headers: ["Sec-WebSocket-Protocol: a"] },
+      );
       const { ws, req } = client;
       const seen: string[] = [];
       ws.on("upgrade", response => seen.push("on upgrade " + response.statusCode));
@@ -159,7 +162,7 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
       req.end();
       const conn = await client.peer.connection();
       conn.text("hi");
-      await event(ws, "message");
+      await nextEvent(ws, "message");
       expect({ readyState: ws.readyState, protocol: ws.protocol }).toEqual({ readyState: 1, protocol: "a" });
       expect(seen).toEqual([
         "on upgrade 101",
@@ -172,8 +175,8 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
       ]);
     });
 
-    test("without req.end() nothing is sent and the socket stays CONNECTING", async () => {
-      await using client = await dialHeld({ headers: { authorization: "secret" } });
+    test("without req.end(), sends nothing and stays CONNECTING", async () => {
+      await using client = await connectWithPendingRequest({ headers: { authorization: "secret" } });
       const { ws, events, peer } = client;
       expect(await requestLines(peer)).toEqual(onlyControl);
       expect(events).toEqual([]);
@@ -185,8 +188,8 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
       expect(events).toEqual(closedBeforeOpen);
     });
 
-    test("handshakeTimeout also runs out for a request that is never ended", async () => {
-      await using client = await dialHeld({ handshakeTimeout: 20 });
+    test("handshakeTimeout still fires when req.end() is never called", async () => {
+      await using client = await connectWithPendingRequest({ handshakeTimeout: 20 });
       await client.closed;
       expect(client.events).toEqual(['error Error "Opening handshake has timed out" rs=2', "close 1006 Buffer() rs=3"]);
       expect(flags(client.req)).toEqual({ destroyed: true, aborted: true });
@@ -197,24 +200,27 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
       { call: "close()", act: ws => ws.close() },
       { call: "terminate()", act: ws => ws.terminate() },
     ] as { call: string; act(ws: InstanceType<typeof WebSocket>): void }[])(
-      "$call before req.end() fails the socket, and req.end() sends nothing after it",
+      "$call before req.end() fails the socket, and a later req.end() sends nothing",
       async ({ act }) => {
-        await using client = await dialHeld();
+        await using client = await connectWithPendingRequest();
         const { ws, req, events, peer } = client;
         act(ws);
         expect(ws.readyState).toBe(WebSocket.CLOSING);
         expect(flags(req)).toEqual({ destroyed: true, aborted: true });
         await client.closed;
-        expect(attempt(() => req.end() === req)).toBe("true");
+        expect(tryCall(() => req.end() === req)).toBe("true");
         expect(await requestLines(peer)).toEqual(onlyControl);
         expect(events).toEqual(closedBeforeOpen);
       },
     );
 
-    test("what changes in the arguments after the constructor does not reach the request", async () => {
+    test("mutating the constructor's arguments afterwards doesn't change the request", async () => {
       const protocols = ["a"];
       const headers: Record<string, string> = { "X-One": "1" };
-      await using client = await dialHeld({ protocols, headers }, { headers: ["Sec-WebSocket-Protocol: a"] });
+      await using client = await connectWithPendingRequest(
+        { protocols, headers },
+        { headers: ["Sec-WebSocket-Protocol: a"] },
+      );
       protocols.push("a", "b");
       headers["X-One"] = "2";
       headers["X-Two"] = "2";
@@ -229,19 +235,19 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
       expect(client.ws.protocol).toBe("a");
     });
 
-    test("a second req.end() does nothing", async () => {
-      await using client = await dialHeld();
+    test("a second req.end() is a no-op", async () => {
+      await using client = await connectWithPendingRequest();
       const { req, peer } = client;
       expect([req.end() === req, req.end() === req]).toEqual([true, true]);
       await client.opened;
       expect(req.end()).toBe(req);
       expect(await requestLines(peer)).toEqual(["GET / HTTP/1.1", ...onlyControl]);
-      expect(client.events).toEqual(opening);
+      expect(client.events).toEqual(openEvents);
     });
 
-    test("the request emits 'socket', and req.end() may wait for it", async () => {
+    test("the request emits 'socket', and req.end() can be called from its listener", async () => {
       let socket: any;
-      await using client = await dial(implementation, {
+      await using client = await connectClient(implementation, {
         finishRequest(req) {
           req.on("socket", value => {
             socket = value;
@@ -251,26 +257,26 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
       });
       await client.opened;
       expect(typeof socket.on).toBe("function");
-      expect(client.events).toEqual(opening);
+      expect(client.events).toEqual(openEvents);
       expect(client.peer.connections).toHaveLength(1);
     });
 
-    test("what it throws comes out of the constructor, and nothing is sent", async () => {
+    test("an exception from finishRequest propagates out of the constructor, and nothing is sent", async () => {
       await using peer = await createPeer();
       const error = new Error("from finishRequest");
-      let made: InstanceType<typeof WebSocket> | undefined;
+      let created: InstanceType<typeof WebSocket> | undefined;
       try {
         expect(() => {
           new WebSocket(peer.url, {
             finishRequest(_, ws) {
-              made = ws;
+              created = ws;
               throw error;
             },
           });
         }).toThrow(error);
         expect(await requestLines(peer)).toEqual(onlyControl);
       } finally {
-        made?.on("error", () => {}).terminate();
+        created?.on("error", () => {}).terminate();
       }
     });
 
@@ -288,19 +294,19 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
         thrown: 'TypeError "Header name must be a valid HTTP token [\\"bad name\\"]" ERR_INVALID_HTTP_TOKEN',
       },
     ] as { what: string; address?: string; suffix?: string; protocols?: string[]; headers?: {}; thrown: string }[])(
-      "the constructor throws for $what before it calls finishRequest",
+      "the constructor throws for $what before calling finishRequest",
       async ({ address, suffix = "", protocols = [], headers, thrown }) => {
         address ??= `ws://127.0.0.1:${await closedPort()}${suffix}`;
         let calls = 0;
-        const made = attempt(() =>
+        const result = tryCall(() =>
           new WebSocket(address, protocols, { headers, finishRequest: () => void calls++ }).on("error", () => {}),
         );
-        expect(made).toBe("throws " + thrown);
+        expect(result).toBe("throws " + thrown);
         expect(calls).toBe(0);
       },
     );
 
-    test("a client that only its pending req.end() refers to connects after a collection", async () => {
+    test("a client referenced only by its pending req.end() survives GC and connects", async () => {
       await using peer = await createPeer();
       const total = 5;
       let ended = 0;
@@ -327,9 +333,9 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
     });
   });
 
-  describe("the headers of the request", () => {
-    test("the handshake headers can be read, and are what is sent", async () => {
-      await using client = await dialHeld({
+  describe("request headers", () => {
+    test("the handshake headers are readable and match what is sent", async () => {
+      await using client = await connectWithPendingRequest({
         path: "/p?q=1",
         protocols: ["a"],
         origin: "http://example.com",
@@ -370,16 +376,16 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
       expect(conn.header("sec-websocket-key")).toBe(key as string);
     });
 
-    // One header line whatever the case of the two names, spelled as the last setHeader() spelled it.
+    // Header names are case-insensitive, so only one line is sent. It uses the case of the last setHeader().
     test.each([
       { call: 'setHeader("X-Mode", "1")', act: req => req.setHeader("X-Mode", "1"), lines: ["X-Mode: 1"] },
       { call: 'setHeader("x-mode", "1")', act: req => req.setHeader("x-mode", "1"), lines: ["x-mode: 1"] },
       { call: 'setHeader("x-mode", 1)', act: req => req.setHeader("x-mode", 1), lines: ["x-mode: 1"] },
       { call: 'removeHeader("x-MODE")', act: req => req.removeHeader("x-MODE"), lines: [] },
-    ] as { call: string; act: Act; lines: string[] }[])(
-      "$call replaces the X-Mode of options.headers",
+    ] as { call: string; act: RequestAction; lines: string[] }[])(
+      "$call overrides X-Mode from options.headers",
       async ({ act, lines }) => {
-        await using client = await dialHeld({ headers: { "X-Mode": "0" } });
+        await using client = await connectWithPendingRequest({ headers: { "X-Mode": "0" } });
         act(client.req);
         client.req.end();
         const conn = await client.peer.connection();
@@ -387,15 +393,15 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
       },
     );
 
-    test("setHeader() returns the request and throws for what node:http refuses", async () => {
-      await using client = await dialHeld();
+    test("setHeader() returns the request and throws for input that node:http rejects", async () => {
+      await using client = await connectWithPendingRequest();
       const { req } = client;
       expect(req.setHeader("X-Good", "1")).toBe(req);
       expect([
-        attempt(() => req.setHeader("bad name", "1")),
-        attempt(() => req.setHeader("x-bad", "a\r\nx-injected: 1")),
-        attempt(() => req.setHeader("x-bad", undefined as any)),
-        attempt(() =>
+        tryCall(() => req.setHeader("bad name", "1")),
+        tryCall(() => req.setHeader("x-bad", "a\r\nx-injected: 1")),
+        tryCall(() => req.setHeader("x-bad", undefined as any)),
+        tryCall(() =>
           req.setHeader("x-bad", {
             toString() {
               throw new Error("from toString");
@@ -414,14 +420,14 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
       await client.opened;
     });
 
-    test("after req.end() the headers cannot change", async () => {
-      await using client = await dialHeld({ headers: { "X-One": "1" } });
+    test("headers can't be changed after req.end()", async () => {
+      await using client = await connectWithPendingRequest({ headers: { "X-One": "1" } });
       const { req } = client;
       const state = () => ({ finished: req.finished, writableEnded: req.writableEnded, headersSent: req.headersSent });
       expect(state()).toEqual({ finished: false, writableEnded: false, headersSent: false });
       req.end();
       expect(state()).toEqual({ finished: true, writableEnded: true, headersSent: true });
-      expect([attempt(() => req.setHeader("X-Late", "1")), attempt(() => req.removeHeader("X-One"))]).toEqual([
+      expect([tryCall(() => req.setHeader("X-Late", "1")), tryCall(() => req.removeHeader("X-One"))]).toEqual([
         'throws Error "Cannot set headers after they are sent to the client" ERR_HTTP_HEADERS_SENT',
         'throws Error "Cannot remove headers after they are sent to the client" ERR_HTTP_HEADERS_SENT',
       ]);
@@ -431,28 +437,40 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
     });
   });
 
-  describe("destroy() and abort() in finishRequest", () => {
+  describe("destroy() and abort() inside finishRequest", () => {
     const error = new Error("boom");
 
     test.each([
-      { call: "req.destroy()", act: req => req.destroy(), aborted: false, request: ["close"], events: hangUp },
-      { call: "req.destroy(error)", act: req => req.destroy(error), aborted: false, request: ["close"], events: boom },
+      { call: "req.destroy()", act: req => req.destroy(), aborted: false, requestEvents: ["close"], events: hangUp },
+      {
+        call: "req.destroy(error)",
+        act: req => req.destroy(error),
+        aborted: false,
+        requestEvents: ["close"],
+        events: boom,
+      },
       {
         call: "req.destroy() and req.end()",
         act: req => (req.destroy(), req.end()),
         aborted: false,
-        request: ["close"],
+        requestEvents: ["close"],
         events: hangUp,
       },
-      // An aborted request reports no error, so the socket never learns of it.
-      { call: "req.abort()", act: req => void req.abort(), aborted: true, request: ["abort", "close"], events: [] },
-    ] as { call: string; act: Act; aborted: boolean; request: string[]; events: string[] }[])(
-      "$call: nothing is sent",
-      async ({ act, aborted, request, events }) => {
+      // An aborted request emits no 'error', so the socket is never notified.
+      {
+        call: "req.abort()",
+        act: req => void req.abort(),
+        aborted: true,
+        requestEvents: ["abort", "close"],
+        events: [],
+      },
+    ] as { call: string; act: RequestAction; aborted: boolean; requestEvents: string[]; events: string[] }[])(
+      "$call sends nothing",
+      async ({ act, aborted, requestEvents, events }) => {
         let watched!: ReturnType<typeof watchRequest>;
         let result: unknown;
         let req!: ClientRequest;
-        await using client = await dial(implementation, {
+        await using client = await connectClient(implementation, {
           finishRequest(request) {
             req = request;
             watched = watchRequest(req);
@@ -464,27 +482,32 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
         await watched.closed;
         if (events.length) await client.closed;
         expect(await requestLines(client.peer)).toEqual(onlyControl);
-        expect(watched.events).toEqual(request);
+        expect(watched.events).toEqual(requestEvents);
         expect(client.events).toEqual(events);
         expect(client.ws.readyState).toBe(events.length ? WebSocket.CLOSED : WebSocket.CONNECTING);
       },
     );
 
-    test("'error' gets the very error of req.destroy(error)", async () => {
-      await using client = await dial(implementation, { finishRequest: req => void req.destroy(error) });
-      expect((await event(client.ws, "error"))[0]).toBe(error);
+    test("'error' receives the same error object that was passed to req.destroy(error)", async () => {
+      await using client = await connectClient(implementation, { finishRequest: req => void req.destroy(error) });
+      expect((await nextEvent(client.ws, "error"))[0]).toBe(error);
     });
   });
 
-  describe("destroy() and abort() while the server has not answered", () => {
+  describe("destroy() and abort() before the server responds", () => {
     test.each([
-      { call: "req.destroy()", act: req => req.destroy(), request: ["close"], events: hangUp },
-      { call: "req.destroy(error)", act: req => req.destroy(new Error("boom")), request: ["close"], events: boom },
-      { call: "req.abort()", act: req => req.abort(), request: ["abort", "close"], events: hangUp },
-    ] as { call: string; act: Act; request: string[]; events: string[] }[])(
-      "$call drops the connection and fails the socket",
-      async ({ act, request, events }) => {
-        await using client = await dialHeld({}, { respond: () => null });
+      { call: "req.destroy()", act: req => req.destroy(), requestEvents: ["close"], events: hangUp },
+      {
+        call: "req.destroy(error)",
+        act: req => req.destroy(new Error("boom")),
+        requestEvents: ["close"],
+        events: boom,
+      },
+      { call: "req.abort()", act: req => req.abort(), requestEvents: ["abort", "close"], events: hangUp },
+    ] as { call: string; act: RequestAction; requestEvents: string[]; events: string[] }[])(
+      "$call closes the connection and fails the socket",
+      async ({ act, requestEvents, events }) => {
+        await using client = await connectWithPendingRequest({}, { respond: () => null });
         const { ws, req } = client;
         req.end();
         const conn = await client.peer.connection();
@@ -492,8 +515,8 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
         act(req);
         expect(ws.readyState).toBe(WebSocket.CONNECTING);
         await Promise.all([watched.closed, client.closed]);
-        expect(await conn.rest()).toEqual([]);
-        expect(watched.events).toEqual(request);
+        expect(await conn.remainingFrames()).toEqual([]);
+        expect(watched.events).toEqual(requestEvents);
         expect(client.events).toEqual(events);
       },
     );
@@ -502,13 +525,13 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
       { call: "terminate()", act: ws => ws.terminate() },
       { call: "close()", act: ws => ws.close() },
     ] as { call: string; act(ws: InstanceType<typeof WebSocket>): void }[])(
-      "ws._req.destroy(), then $call at once: the error is the one of $call",
+      "ws._req.destroy() immediately followed by $call reports $call's error",
       async ({ act }) => {
-        await using client = await dial(implementation, {}, { respond: () => null });
+        await using client = await connectClient(implementation, {}, { respond: () => null });
         const { ws } = client;
         await client.peer.connection();
         (ws as any)._req.destroy();
-        expect(attempt(() => act(ws))).toBe("undefined");
+        expect(tryCall(() => act(ws))).toBe("undefined");
         expect(ws.readyState).toBe(WebSocket.CLOSING);
         await client.closed;
         expect(client.events).toEqual(closedBeforeOpen);
@@ -516,12 +539,12 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
     );
   });
 
-  describe("the request of 'unexpected-response'", () => {
-    /** A client whose 'unexpected-response' has fired, with the request of that event. */
-    async function refused(options: ClientOptions = {}) {
-      const client = await dial(implementation, options, { respond: () => forbidden });
+  describe("the 'unexpected-response' request", () => {
+    /** A client that has already emitted 'unexpected-response', plus that event's request. */
+    async function rejectedClient(options: ClientOptions = {}) {
+      const client = await connectClient(implementation, options, { respond: () => forbidden });
       try {
-        const [req] = (await event(client.ws, "unexpected-response")) as [ClientRequest];
+        const [req] = (await nextEvent(client.ws, "unexpected-response")) as [ClientRequest];
         return { ...client, req, [Symbol.asyncDispose]: client[Symbol.asyncDispose] };
       } catch (error) {
         await client[Symbol.asyncDispose]();
@@ -530,7 +553,7 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
     }
 
     test("is the request that was sent", async () => {
-      await using client = await refused({ path: "/p?q=1", headers: { "X-One": "1" } });
+      await using client = await rejectedClient({ path: "/p?q=1", headers: { "X-One": "1" } });
       const { req } = client;
       const conn = await client.peer.connection();
       expect({
@@ -557,41 +580,46 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
       });
     });
 
-    test("is the request finishRequest got", async () => {
-      let first: ClientRequest | undefined;
-      await using client = await refused({ finishRequest: req => void (first = req).end() });
-      expect(client.req).toBe(first!);
+    test("is the same request that finishRequest received", async () => {
+      let fromFinishRequest: ClientRequest | undefined;
+      await using client = await rejectedClient({ finishRequest: req => void (fromFinishRequest = req).end() });
+      expect(client.req).toBe(fromFinishRequest!);
     });
 
-    // The response was handed over, so the socket takes no further interest: only an error reaches it.
+    // The listener owns the response now, so the socket ignores the request unless it emits 'error'.
     test.each([
-      { call: "req.destroy()", act: req => req.destroy(), aborted: false, request: ["close"] },
-      { call: "req.destroy() twice", act: req => (req.destroy(), req.destroy()), aborted: false, request: ["close"] },
-      { call: "req.abort()", act: req => void req.abort(), aborted: true, request: ["abort", "close"] },
-    ] as { call: string; act: Act; aborted: boolean; request: string[] }[])(
-      "$call: the socket stays CONNECTING and emits nothing",
-      async ({ act, aborted, request }) => {
-        await using client = await refused();
+      { call: "req.destroy()", act: req => req.destroy(), aborted: false, requestEvents: ["close"] },
+      {
+        call: "req.destroy() twice",
+        act: req => (req.destroy(), req.destroy()),
+        aborted: false,
+        requestEvents: ["close"],
+      },
+      { call: "req.abort()", act: req => void req.abort(), aborted: true, requestEvents: ["abort", "close"] },
+    ] as { call: string; act: RequestAction; aborted: boolean; requestEvents: string[] }[])(
+      "$call leaves the socket CONNECTING and emits nothing",
+      async ({ act, aborted, requestEvents }) => {
+        await using client = await rejectedClient();
         const { ws, req } = client;
         const watched = watchRequest(req);
         expect(act(req)).toBe(aborted ? undefined : req);
         expect(flags(req)).toEqual({ destroyed: true, aborted });
         await watched.closed;
-        expect(watched.events).toEqual(request);
+        expect(watched.events).toEqual(requestEvents);
         expect(client.events).toEqual([]);
         expect(ws.readyState).toBe(WebSocket.CONNECTING);
       },
     );
 
-    test("req.destroy(error): 'error' with that error, then 'close' 1006", async () => {
-      await using client = await refused();
+    test("req.destroy(error) emits 'error' with that error, then 'close' 1006", async () => {
+      await using client = await rejectedClient();
       const { ws, req } = client;
       const error = new Error("boom");
       const watched = watchRequest(req);
-      const emitted = event(ws, "error");
+      const errorEvent = nextEvent(ws, "error");
       expect(req.destroy(error)).toBe(req);
       expect(ws.readyState).toBe(WebSocket.CONNECTING);
-      expect((await emitted)[0]).toBe(error);
+      expect((await errorEvent)[0]).toBe(error);
       await Promise.all([client.closed, watched.closed]);
       expect(client.events).toEqual(boom);
       expect(watched.events).toEqual(["close"]);

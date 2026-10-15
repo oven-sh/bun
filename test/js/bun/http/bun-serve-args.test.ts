@@ -232,7 +232,7 @@ describe("Bun.serve websocket options", () => {
       ).toThrow("websocket expects idleTimeout to be 960 or less");
     }
 
-    // The boundary value is still accepted.
+    // 960 itself is still accepted.
     using server = serve({
       port: 0,
       websocket: { message() {}, idleTimeout: 960 },
@@ -327,7 +327,7 @@ describe("Bun.serve websocket options", () => {
     ["{ perMessageDeflate: true }", { perMessageDeflate: true }],
     ["{ idleTimeout: 30 }", { idleTimeout: 30 }],
     ["{ error() {} }", { error() {} }],
-  ])("websocket: %s needs no handler", async (_label, websocket) => {
+  ])("websocket: %s works without a message handler", async (_label, websocket) => {
     using server = serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -343,7 +343,7 @@ describe("Bun.serve websocket options", () => {
     const { promise, resolve, reject } = Promise.withResolvers<number>();
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
     ws.onopen = () => {
-      ws.send("nobody listens");
+      ws.send("ignored");
       ws.close(1000);
     };
     ws.onerror = () => reject(new Error("websocket errored"));
@@ -351,7 +351,7 @@ describe("Bun.serve websocket options", () => {
     expect(await promise).toBe(1000);
   });
 
-  test.each(["compress", "decompress"])("an invalid perMessageDeflate.%s throws", key => {
+  test.each(["compress", "decompress"])("throws on an invalid perMessageDeflate.%s", key => {
     for (const value of ["1KB", "Shared", 1, {}]) {
       expect(() =>
         serve({
@@ -368,14 +368,14 @@ describe("Bun.serve websocket options", () => {
   test.each(["open", "message", "ping", "pong", "close"])(
     "websocket.error is called with (ws, error) when %s throws",
     async name => {
-      let thrower: unknown;
+      let handlerSocket: unknown;
       const { promise, resolve } = Promise.withResolvers<unknown[]>();
       using server = serve({
         port: 0,
         hostname: "127.0.0.1",
         websocket: {
           [name](ws: unknown) {
-            thrower = ws;
+            handlerSocket = ws;
             throw new Error(`thrown by ${name}`);
           },
           error(...args: unknown[]) {
@@ -398,8 +398,8 @@ describe("Bun.serve websocket options", () => {
         ws.close();
       };
       const args = await promise;
-      expect(args).toEqual([thrower, new Error(`thrown by ${name}`)]);
-      expect(args[0]).toBe(thrower);
+      expect(args).toEqual([handlerSocket, new Error(`thrown by ${name}`)]);
+      expect(args[0]).toBe(handlerSocket);
     },
   );
 });

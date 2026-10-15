@@ -59,8 +59,8 @@ namespace uWS {
         /* Same as 256kb */
         DEDICATED_COMPRESSOR = 15 << 4 | 8,
 
-        /* With a dedicated compressor: it is reset after every message (server_no_context_takeover with
-         * a window that the shared compressor, which always uses 32kb, does not have) */
+        /* Reset a dedicated compressor after every message. This is server_no_context_takeover with a
+         * custom window size; the shared compressor also resets but always uses a 32kb window. */
         COMPRESSOR_NO_CONTEXT_TAKEOVER = 1 << 12
     };
 }
@@ -227,7 +227,7 @@ struct InflationStream {
 
             err = ::inflate(&inflationStream, Z_SYNC_FLUSH);
             if (err == Z_STREAM_END) {
-                /* RFC 7692 7.2.3.4: a message may end in a BFINAL=1 block. The next one starts a new stream. */
+                /* RFC 7692 7.2.3.4: a message may end with a BFINAL=1 block. The next message starts a new stream. */
                 inflateReset(&inflationStream);
                 inflationStream.avail_in = 0;
                 err = Z_OK;

@@ -102,7 +102,7 @@ describe.concurrent("WebSocket", () => {
     Bun.gc(true);
     // wait to make sure all connections are closed/freed
     await Bun.sleep(10);
-    // 300 TLS handshakes: 2 s alone on a debug build, 6 s next to the rest of this concurrent group.
+    // 300 TLS handshakes take 2 s alone on a debug build, 6 s alongside the rest of this concurrent group.
   }, 90_000);
 
   it("rejectUnauthorized should reject self-sign certs when true/default", async () => {
@@ -824,7 +824,7 @@ it.concurrent("#16995", async () => {
   }
 });
 
-// 1000 connections one after the other: 2.5 s alone on a debug build.
+// 1000 sequential connections take 2.5 s alone on a debug build.
 it.serial("instances should be finalized when GC'd", { timeout: 90_000 }, async () => {
   let current_websocket_count = 0;
   let initial_websocket_count = 0;
@@ -884,7 +884,7 @@ it.serial("instances should be finalized when GC'd", { timeout: 90_000 }, async 
   expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(50);
 });
 
-// Every case throws from the constructor, before anything is dialed.
+// Every case throws from the constructor, before it connects.
 describe("WebSocket constructor rejects", () => {
   const url = "ws://127.0.0.1:1/";
   const invalidCA = { class: "TypeError", message: expect.stringContaining("TLSOptions.ca") };
@@ -901,7 +901,7 @@ describe("WebSocket constructor rejects", () => {
       { class: "SyntaxError", message: "Invalid url for WebSocket not a url" },
     ],
     [
-      "a URL scheme that is not ws, wss, http, https, ws+unix or wss+unix",
+      "an unsupported URL scheme",
       ["ftp://127.0.0.1:1/"],
       { class: "SyntaxError", message: "Wrong url scheme for WebSocket ftp://127.0.0.1:1/" },
     ],
@@ -941,7 +941,7 @@ describe("WebSocket constructor rejects", () => {
       { class: "SyntaxError", message: "Invalid proxy URL: not a url" },
     ],
     [
-      "a proxy protocol that is not http or https",
+      "an unsupported proxy protocol",
       [url, { proxy: "socks5://127.0.0.1:1" }],
       { class: "SyntaxError", message: 'Unsupported proxy protocol "socks5" (expected "http" or "https")' },
     ],
@@ -975,7 +975,7 @@ describe("WebSocket constructor rejects", () => {
     ],
     ["an invalid tls option", ["wss://127.0.0.1:1/", { tls: { ca: 123 } }], invalidCA],
 
-    // When two inputs are invalid, the error names the one that is checked first.
+    // When two inputs are invalid, the error is for the one validated first.
     [
       "the URL before the subprotocols",
       [url + "#frag", ["a", "a"]],
@@ -1181,7 +1181,7 @@ describe("WebSocket CloseEvent reports the received close code", () => {
   });
 
   // RFC6455 §7.4.1: codes < 1000, the reserved 1004-1006 range, and 1016-2999
-  // are not legal on the wire; a server that sends one makes a protocol error.
+  // are not legal on the wire, so receiving one is a protocol error.
   describe.each([999, 1004, 1005, 1006, 1016, 2999])("reserved/invalid code %i", code => {
     it("fails the connection", async () => {
       const server = await rawWsServer(sock => sock.write(closeFrame(code)));
@@ -1191,17 +1191,17 @@ describe("WebSocket CloseEvent reports the received close code", () => {
     });
   });
 
-  // Whatever makes the client fail the connection: `error`, whose `error.code` is the one npm ws gives, then 1006.
+  // Every protocol error fires `error` with the same `error.code` as npm ws, then `close` with 1006.
   it.each([
     ["a masked frame", [0x81, 0x80, 0, 0, 0, 0], "WS_ERR_UNEXPECTED_MASK"],
     ["a reserved opcode", [0x83, 0x00], "WS_ERR_INVALID_OPCODE"],
-    ["a continuation of nothing", [0x80, 0x00], "WS_ERR_INVALID_OPCODE"],
+    ["a continuation frame with nothing to continue", [0x80, 0x00], "WS_ERR_INVALID_OPCODE"],
     ["RSV1 without an extension", [0xc1, 0x00], "WS_ERR_UNEXPECTED_RSV_1"],
     ["RSV2", [0xa1, 0x00], "WS_ERR_UNEXPECTED_RSV_2_3"],
     ["a fragmented ping", [0x09, 0x00], "WS_ERR_EXPECTED_FIN"],
-    ["a ping of 126 bytes", [0x89, 0x7e, 0x00, 0x7e], "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH"],
-    ["a Close frame of one byte", [0x88, 0x01, 0x03], "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH"],
-    ["text that is not UTF-8", [0x81, 0x01, 0xff], "WS_ERR_INVALID_UTF8"],
+    ["a 126-byte ping", [0x89, 0x7e, 0x00, 0x7e], "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH"],
+    ["a Close frame with a 1-byte payload", [0x88, 0x01, 0x03], "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH"],
+    ["invalid UTF-8 text", [0x81, 0x01, 0xff], "WS_ERR_INVALID_UTF8"],
   ])("%s fails the connection", async (_label, bytes, code) => {
     const server = await rawWsServer(sock => sock.write(Buffer.from(bytes)));
     const errors = [];
@@ -1250,7 +1250,7 @@ describe("WebSocket message handler re-entrancy during a multi-frame read", () =
     return payload.toString();
   }
 
-  // The unmasked payload of the first masked client->server Close frame, if it has arrived whole.
+  // Returns the unmasked payload of the client's first Close frame, or undefined if it hasn't fully arrived.
   function findClientCloseFrame(buf) {
     for (let offset = 0; offset + 6 <= buf.length;) {
       const len = buf[offset + 1] & 0x7f;
@@ -1402,12 +1402,12 @@ describe.concurrent("WebSocket subprotocol options", () => {
     ["protocols string", { protocols: "chat" }, "chat"],
     ["protocols array", { protocols: ["chat", "v2"] }, "chat, v2"],
     ["protocol string", { protocol: "chat" }, "chat"],
-    ["protocols wins over protocol", { protocols: ["a"], protocol: "b" }, "a"],
+    ["protocols overrides protocol", { protocols: ["a"], protocol: "b" }, "a"],
     ["protocol when protocols is undefined", { protocols: undefined, protocol: "b" }, "b"],
     ["protocol when protocols is null", { protocols: null, protocol: "b" }, "b"],
     ["no protocol", {}, null],
     ["protocols null", { protocols: null }, null],
-    // WebIDL (DOMString or sequence<DOMString>): what is not an object becomes a string.
+    // WebIDL (DOMString or sequence<DOMString>): non-objects are converted to strings.
     ["protocols number", { protocols: 5 }, "5"],
     ["positional number", 5, "5"],
     ["positional boolean", true, "true"],
@@ -1432,7 +1432,7 @@ describe("WebSocket url", () => {
     ["HTTPS://user:pass@LOCALHOST:1/a/../b", "wss://user:pass@localhost:1/b"],
     ["ws://127.0.0.1:80/", "ws://127.0.0.1/"],
     ["wss://127.0.0.1:1/", "wss://127.0.0.1:1/"],
-  ])("%s is %s", (input, url) => {
+  ])("%s is normalized to %s", (input, url) => {
     const ws = new WebSocket(input);
     ws.onerror = () => {};
     ws.terminate();

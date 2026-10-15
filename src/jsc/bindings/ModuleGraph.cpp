@@ -370,38 +370,38 @@ JSValue asyncContextWithoutModuleGraphs(Zig::GlobalObject* globalObject, JSValue
 
     VM& vm = globalObject->vm();
     auto& names = WebCore::builtinNames(vm);
-    auto entersOrLeavesGraph = [&](JSObject* frame) {
+    auto isModuleGraphFrame = [&](JSObject* frame) {
         JSValue storage = frame->getDirect(vm, names.storagePublicName());
         return storage && (storage == globalObject || dynamicDowncast<JSModuleGraph>(storage));
     };
 
-    // Alive through `asyncContext`. The frames below the deepest one that is dropped are shared, those above are copied.
+    // `asyncContext` keeps every frame alive. Frames older than the oldest graph frame are reused as-is. Newer ones are copied.
     Vector<JSObject*, 16> frames;
-    size_t dropped = 0;
+    size_t framesToRebuild = 0;
     for (JSObject* frame = asyncContext.getObject(); frame;) {
         frames.append(frame);
-        if (entersOrLeavesGraph(frame))
-            dropped = frames.size();
+        if (isModuleGraphFrame(frame))
+            framesToRebuild = frames.size();
         JSValue previous = frame->getDirect(vm, names.prevPublicName());
         frame = previous ? previous.getObject() : nullptr;
     }
-    if (!dropped)
+    if (!framesToRebuild)
         return asyncContext;
 
-    auto field = [&](JSObject* frame, const Identifier& name) {
+    auto getField = [&](JSObject* frame, const Identifier& name) {
         JSValue value = frame->getDirect(vm, name);
         return value ? value : jsUndefined();
     };
-    JSValue result = field(frames[dropped - 1], names.prevPublicName());
-    for (size_t i = dropped - 1; i--;) {
+    JSValue result = getField(frames[framesToRebuild - 1], names.prevPublicName());
+    for (size_t i = framesToRebuild - 1; i--;) {
         JSObject* frame = frames[i];
-        if (entersOrLeavesGraph(frame))
+        if (isModuleGraphFrame(frame))
             continue;
         JSObject* copy = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
-        copy->putDirectOffset(vm, FrameStorage, field(frame, names.storagePublicName()));
-        copy->putDirectOffset(vm, FrameValue, field(frame, vm.propertyNames->value));
+        copy->putDirectOffset(vm, FrameStorage, getField(frame, names.storagePublicName()));
+        copy->putDirectOffset(vm, FrameValue, getField(frame, vm.propertyNames->value));
         copy->putDirectOffset(vm, FramePrev, result);
-        copy->putDirectOffset(vm, FrameMasked, field(frame, names.maskedPublicName()));
+        copy->putDirectOffset(vm, FrameMasked, getField(frame, names.maskedPublicName()));
         result = copy;
     }
     return result;

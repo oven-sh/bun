@@ -1,6 +1,6 @@
 //! `node:http` native binding — `getBunServerAllClosedPromise` /
-//! `getBunServerOpenCount` / `{get,set}MaxHTTPHeaderSize`, and the server transport of the `ws`
-//! package: `upgradeNodeHTTPResponseToWebSocket` / `sendWebSocketFrame`.
+//! `getBunServerOpenCount` / `{get,set}MaxHTTPHeaderSize`, and the `ws` package's native server
+//! transport: `upgradeNodeHTTPResponseToWebSocket` / `sendWebSocketFrame`.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws_sys::Opcode;
@@ -78,10 +78,11 @@ pub(crate) fn get_bun_server_open_count(
     Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
 }
 
-/// uWS `CompressOptions` that zlib can be set up with: a compressor (`window << 4 | memLevel`) in the low byte
-/// and a decompressor (its window) in bits 8-11, or 1 in either place for the one the event loop shares.
-/// Bit 12 (`COMPRESSOR_NO_CONTEXT_TAKEOVER`) goes with a compressor of its own.
-fn is_compress_options(options: i32) -> bool {
+/// Whether `options` is a uWS `CompressOptions` value that zlib accepts. The low byte is the
+/// compressor (`window << 4 | memLevel`) and bits 8-11 are the decompressor's window. 1 in either
+/// field selects the event loop's shared one. Bit 12 (`COMPRESSOR_NO_CONTEXT_TAKEOVER`) is only
+/// valid with a dedicated compressor.
+fn is_valid_compress_options(options: i32) -> bool {
     let (compressor, decompressor) = (options & 0xFF, (options >> 8) & 0xF);
     options & !0x1FFF == 0
         && (if compressor == 1 {
@@ -92,9 +93,10 @@ fn is_compress_options(options: i32) -> bool {
         && (decompressor == 1 || (8..=15).contains(&decompressor))
 }
 
-/// `(response, websocket, handlers, handshake, maxPayload, flags, compression)`: makes the connection of
-/// `response` a WebSocket that answers with `handshake`. Returns its `ServerWebSocket`, or `undefined` with
-/// nothing written when `response` is not a native response or can no longer be upgraded.
+/// `(response, websocket, handlers, handshake, maxPayload, flags, compression)`: upgrades
+/// `response`'s connection to a WebSocket and writes `handshake` as the response head. Returns the
+/// `ServerWebSocket`. Returns `undefined` without writing anything if `response` isn't a native
+/// response or can no longer be upgraded.
 pub(crate) fn upgrade_node_http_response_to_web_socket(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -115,7 +117,7 @@ pub(crate) fn upgrade_node_http_response_to_web_socket(
         return Ok(JSValue::UNDEFINED);
     };
 
-    // As `socket.write(string)` sends it, in npm ws and over a stream.
+    // Encode as UTF-8, like `socket.write(string)` does in npm ws and on the stream transport.
     let handshake = handshake.to_js_string_view(global)?;
     let handshake = handshake.to_utf8();
     let handshake: &[u8] = handshake.slice();
@@ -130,9 +132,9 @@ pub(crate) fn upgrade_node_http_response_to_web_socket(
     };
     let flags = flags.coerce_to_i32(global)?;
     let compression = compression.coerce_to_i32(global)?;
-    if compression != 0 && !is_compress_options(compression) {
+    if compression != 0 && !is_valid_compress_options(compression) {
         return Err(global.throw_invalid_arguments(format_args!(
-            "compression must be 0 or the uWS CompressOptions of a compressor and a decompressor"
+            "compression must be 0 or valid uWS CompressOptions"
         )));
     }
 
@@ -150,8 +152,8 @@ pub(crate) fn upgrade_node_http_response_to_web_socket(
         .unwrap_or(JSValue::UNDEFINED))
 }
 
-/// `(handle, data, opcode, fin, compress)`: one frame on a `ServerWebSocket`. `opcode` is 1, 2, or 0 to continue
-/// a message. Returns what `ServerWebSocket.send` returns.
+/// `(handle, data, opcode, fin, compress)`: sends one frame on a `ServerWebSocket`. `opcode` is
+/// 1 (text), 2 (binary) or 0 (continuation). Returns the same status as `ServerWebSocket.send`.
 pub(crate) fn send_web_socket_frame(
     global: &JSGlobalObject,
     frame: &CallFrame,

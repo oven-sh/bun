@@ -1,5 +1,5 @@
-// A `ws` socket whose connection is a plain JS stream: handleUpgrade() with any Duplex, a client with
-// `createConnection`. The other end of the stream is a raw peer, or a second `ws` socket. See ws-raw-peer.ts.
+// Tests `ws` sockets that run over a plain JS stream: handleUpgrade() with an arbitrary Duplex, or a client with
+// `createConnection`. The other end of the stream is either a raw peer or a second `ws` socket. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { openAsBlob } from "node:fs";
@@ -13,7 +13,7 @@ import {
   type ClientOptions,
   closePayload,
   encodeFrame,
-  event,
+  nextEvent,
   type FrameOptions,
   HttpClient,
   implementations,
@@ -26,29 +26,29 @@ import {
   show,
   showFrame,
   upgradeRequest,
-  watch,
+  recordEvents,
   type WsModule,
 } from "./ws-raw-peer";
 
 const MiB = 1024 * 1024;
-const lost = "close 1006 Buffer() rs=3";
+const abnormalClose = "close 1006 Buffer() rs=3";
 const tooBig = 'RangeError "Max payload size exceeded" WS_ERR_UNSUPPORTED_MESSAGE_LENGTH';
-const invalid = (what: string, code: string) => `RangeError "Invalid WebSocket frame: ${what}" ${code}`;
+const invalidFrame = (what: string, code: string) => `RangeError "Invalid WebSocket frame: ${what}" ${code}`;
 const invalidUTF8 = 'Error "Invalid WebSocket frame: invalid UTF-8 sequence" WS_ERR_INVALID_UTF8';
-const destroyed = 'Error "Cannot call write after a stream was destroyed" ERR_STREAM_DESTROYED';
-const a = (count: number) => Buffer.alloc(count, "a").toString();
+const writeAfterDestroy = 'Error "Cannot call write after a stream was destroyed" ERR_STREAM_DESTROYED';
+const repeatA = (count: number) => Buffer.alloc(count, "a").toString();
 
 type Role = "client" | "server";
 const roles: Role[] = ["client", "server"];
 type Pair = [Duplex, Duplex];
-// `closeTimeout` is newer than the installed @types/ws.
+// The installed @types/ws predates `closeTimeout`.
 type Options = ClientOptions & ServerOptions & { closeTimeout?: number };
 type Setup = {
-  /** The peer's Sec-WebSocket-Extensions: its offer to a server, its answer to a client. */
+  /** The peer's Sec-WebSocket-Extensions header: its offer to a server, or its response to a client. */
   extensions?: string;
-  /** Bytes that come with the handshake: the `head` of handleUpgrade(), what follows the 101 in its packet. */
+  /** Bytes that arrive with the handshake: handleUpgrade()'s `head`, or bytes after the 101 in the same packet. */
   head?: Buffer;
-  /** The socket gets the first stream, the peer the second. */
+  /** The socket uses the first stream and the peer uses the second. */
   pair?: Pair;
 };
 
@@ -63,7 +63,7 @@ function parseRequest(head: string) {
   return { method: line.split(" ")[0], url: line.split(" ")[1], headers } as IncomingMessage;
 }
 
-/** Calls `onRequest` with the head of the request that arrives on `stream`. */
+/** Reads an HTTP request from `stream` and calls `onRequest` with its head. */
 function readRequest(stream: Duplex, onRequest: (head: string) => void) {
   let pending = Buffer.alloc(0);
   stream.on("data", function read(chunk: Buffer) {
@@ -84,8 +84,8 @@ function dispose(sockets: WebSocket[], streams: Duplex[]) {
 }
 
 /**
- * An OPEN `ws` socket in `role` on `stream`, and `peer`, the raw end of the other stream of the pair. `events` is
- * `watch(ws)` from after 'open'. `closed` is the 'close' event and resolves with its `wasClean`.
+ * Opens a `ws` socket as `role` on `stream`. `peer` is a raw socket on the other stream of the pair. `events` is
+ * `watch(ws)`, started after 'open'. `closed` resolves with the 'close' event's `wasClean`.
  */
 async function open(implementation: WsModule, role: Role, options: Options = {}, setup: Setup = {}) {
   const { extensions, head = Buffer.alloc(0), pair = duplexPair() } = setup;
@@ -98,8 +98,8 @@ async function open(implementation: WsModule, role: Role, options: Options = {},
     const client = (peer = new HttpClient(far));
     const request = parseRequest(upgradeRequest({ headers: { "Sec-WebSocket-Extensions": extensions ?? null } }));
     const wss = new implementation.WebSocketServer({ noServer: true, ...options });
-    wss.handleUpgrade(request, stream, head, socket => void watch((ws = socket), events));
-    await client.answer();
+    wss.handleUpgrade(request, stream, head, socket => void recordEvents((ws = socket), events));
+    await client.nextResponse();
   } else {
     const server = (peer = new RawSocket(far as Socket, false));
     readRequest(far, request => {
@@ -109,8 +109,8 @@ async function open(implementation: WsModule, role: Role, options: Options = {},
       far.write(Buffer.concat([Buffer.from(response101(server, headers)), head]));
     });
     ws = new implementation.WebSocket("ws://localhost/", { createConnection: () => stream, ...options });
-    ws.on("open", () => void watch(ws, events));
-    await event(ws, "open");
+    ws.on("open", () => void recordEvents(ws, events));
+    await nextEvent(ws, "open");
   }
 
   const closed = new Promise<boolean>(resolve => ws.addEventListener("close", event => resolve(event.wasClean)));
@@ -118,7 +118,7 @@ async function open(implementation: WsModule, role: Role, options: Options = {},
 }
 type Connection = Awaited<ReturnType<typeof open>>;
 
-/** A `ws` client and a `ws` server socket, both OPEN, one on each stream of `pair`. */
+/** Opens a `ws` client and a `ws` server socket, one on each stream of `pair`. */
 async function openBoth(
   implementation: WsModule,
   clientOptions: Options = {},
@@ -131,15 +131,15 @@ async function openBoth(
     readRequest(far, head => wss.handleUpgrade(parseRequest(head), far, Buffer.alloc(0), resolve)),
   );
   const client = new implementation.WebSocket("ws://localhost/", { createConnection: () => near, ...clientOptions });
-  const opened = event(client, "open");
+  const opened = nextEvent(client, "open");
   const server = await accepted;
   await opened;
   return { client, server, near, far, [Symbol.asyncDispose]: async () => dispose([client, server], pair) };
 }
 
 /**
- * Like duplexPair(), but the other side's 'data' listeners run inside write(), also when that write() is made from
- * such a listener.
+ * Like duplexPair(), but write() runs the other side's 'data' listeners synchronously, even when it's called from
+ * inside one of those listeners.
  */
 function synchronousPair(): Pair {
   const pair: Duplex[] = [0, 1].map(
@@ -159,7 +159,7 @@ function synchronousPair(): Pair {
   return pair as Pair;
 }
 
-/** For runScript(): `connect()` resolves with a client and a server socket, both OPEN, on a duplexPair(). */
+/** Prelude for runScript(). `connect()` resolves with an OPEN client and server socket joined by a duplexPair(). */
 const connectScript = `
   const { duplexPair } = require("node:stream");
   ${parseRequest}
@@ -176,18 +176,18 @@ const connectScript = `
   }
 `;
 
-/** The socket fails the connection: 'error' while CLOSING, a Close frame with `code`, the end of its side, 'close'. */
+/** Expects the socket to fail the connection: 'error' while CLOSING, a Close frame with `code`, end(), 'close'. */
 async function expectFailure({ peer, events, closed }: Connection, error: string, code: number) {
-  expect(await peer.rest()).toEqual([`close ${code}`]);
-  expect(peer.tcp).toEqual(["end"]);
+  expect(await peer.remainingFrames()).toEqual([`close ${code}`]);
+  expect(peer.socketEvents).toEqual(["end"]);
   expect(events).toEqual([`error ${error} rs=2`]);
   peer.end();
   expect(await closed).toBe(false);
-  expect(events.slice(1)).toEqual([lost]);
+  expect(events.slice(1)).toEqual([abnormalClose]);
 }
 
-/** `callback(label)` records what it is called with as `<label> null` or `<label> <error>`. */
-function callbacks() {
+/** `callback(label)` returns a callback that records its arguments as `<label> null` or `<label> <error>`. */
+function callbackRecorder() {
   const results: string[] = [];
   let wake = () => {};
   return {
@@ -198,39 +198,39 @@ function callbacks() {
         results.push([label, ...args.map(show)].join(" "));
         wake();
       },
-    /** `results`, once `count` callbacks have run. */
-    async after(count: number) {
+    /** Resolves with `results` once `count` callbacks have run. */
+    async resultsAfter(count: number) {
       while (results.length < count) await new Promise<void>(resolve => (wake = resolve));
       return results;
     },
   };
 }
 
-/** `frame`, which has a 7-bit length, with that length written in 64 bits. */
-function widen(frame: Buffer) {
+/** Re-encodes a frame that has a 7-bit length to use the 64-bit length field. */
+function widenLength(frame: Buffer) {
   const length = Buffer.alloc(8);
   length[7] = frame[1] & 127;
   return Buffer.concat([Buffer.from([frame[0], frame[1] | 127]), length, frame.subarray(2)]);
 }
 
-/** 2000 bytes in which nothing repeats, so they do not compress. */
+/** 2000 pseudo-random bytes with no repeated sequences, so they don't compress. */
 const noise = Buffer.alloc(2000);
 for (let i = 0, x = 1; i < noise.length; i++) noise[i] = (x = (x * 1103515245 + 12345) % 2147483648) >> 16;
 
-/** Inflates the payloads of compressed messages that share one window. */
-function inflater() {
+/** Returns a function that inflates the payloads of compressed messages sharing one window. */
+function createInflater() {
   let stream = Buffer.alloc(0);
-  let done = 0;
+  let inflated = 0;
   return (payload: Buffer) => {
     stream = Buffer.concat([stream, payload, Buffer.from([0x00, 0x00, 0xff, 0xff])]);
-    const all = zlib.inflateRawSync(stream, { finishFlush: zlib.constants.Z_SYNC_FLUSH });
-    const message = all.subarray(done);
-    done = all.length;
+    const output = zlib.inflateRawSync(stream, { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+    const message = output.subarray(inflated);
+    inflated = output.length;
     return message;
   };
 }
 
-/** The payloads of compressed messages that share one window: a later one refers to the bytes of an earlier one. */
+/** Deflates `messages` with one shared window, so later payloads can back-reference bytes from earlier ones. */
 async function deflateWithContext(messages: Buffer[], windowBits: number) {
   const stream = zlib.createDeflateRaw({ windowBits });
   const chunks: Buffer[] = [];
@@ -247,7 +247,7 @@ async function deflateWithContext(messages: Buffer[], windowBits: number) {
 
 describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementation, builtin, specifier }) => {
   describe.each(roles)("%s", role => {
-    // The peer of a server is a client, which masks.
+    // A server's peer is a client, and clients mask their frames.
     const mask = role === "server";
     const frame = (opcode: number, payload?: Payload, options?: FrameOptions) =>
       encodeFrame(opcode, payload, { mask, ...options });
@@ -264,7 +264,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       expect(events).toEqual(['message Buffer("to the socket") text rs=1']);
     });
 
-    test("bytes that come with the handshake are frames", async () => {
+    test("parses bytes that arrive with the handshake as frames", async () => {
       const split = frame(OP.text, "split");
       await using connection = await open(
         implementation,
@@ -282,17 +282,17 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       ]);
     });
 
-    describe("frames in pieces", () => {
+    describe("frames split across chunks", () => {
       test.each([
-        { length: "7 bits", bytes: frame(OP.text, "hello"), message: 'Buffer("hello")' },
-        { length: "16 bits", bytes: frame(OP.text, a(130)), message: "Buffer(130 bytes)" },
-        { length: "64 bits", bytes: widen(frame(OP.text, "hello")), message: 'Buffer("hello")' },
-      ])("one byte at a time, the length in $length", async ({ bytes, message }) => {
+        { length: "7-bit", bytes: frame(OP.text, "hello"), message: 'Buffer("hello")' },
+        { length: "16-bit", bytes: frame(OP.text, repeatA(130)), message: "Buffer(130 bytes)" },
+        { length: "64-bit", bytes: widenLength(frame(OP.text, "hello")), message: 'Buffer("hello")' },
+      ])("one byte at a time, with a $length length", async ({ bytes, message }) => {
         await using connection = await open(implementation, role);
         const { ws, stream, peer, events } = connection;
         let chunks = 0;
         stream.prependListener("data", () => chunks++);
-        const received = event(ws, "message");
+        const received = nextEvent(ws, "message");
         for (const byte of bytes) peer.write(Buffer.from([byte]));
         await received;
         expect(chunks).toBe(bytes.length);
@@ -309,7 +309,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         ]);
         for (const byte of bytes) peer.write(Buffer.from([byte]));
         peer.end();
-        expect(await peer.rest()).toEqual(['pong "0123456789"', 'close 4000 "a reason"']);
+        expect(await peer.remainingFrames()).toEqual(['pong "0123456789"', 'close 4000 "a reason"']);
         expect(await closed).toBe(true);
         expect(events).toEqual([
           'ping Buffer("0123456789") rs=1',
@@ -339,13 +339,13 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         expect(events).toEqual([`message Buffer("${payload}") text rs=1`, 'message Buffer("next") text rs=1']);
       });
 
-      test("64 KiB in pieces of 1021 bytes", async () => {
+      test("64 KiB in 1021-byte chunks", async () => {
         await using connection = await open(implementation, role);
         const { ws, peer } = connection;
         const payload = Buffer.alloc(65536);
         for (let i = 0; i < payload.length; i += noise.length) noise.copy(payload, i);
         const bytes = frame(OP.binary, payload);
-        const received = event(ws, "message");
+        const received = nextEvent(ws, "message");
         for (let i = 0; i < bytes.length; i += 1021) peer.write(bytes.subarray(i, i + 1021));
         const [data, isBinary] = await received;
         expect(isBinary).toBe(true);
@@ -353,7 +353,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       });
 
       test.each([{ chunks: "one chunk" }, { chunks: "three chunks" }])(
-        "a Ping between two fragments, in $chunks",
+        "a ping between two fragments, in $chunks",
         async ({ chunks }) => {
           await using connection = await open(implementation, role);
           const { peer, events } = connection;
@@ -368,26 +368,26 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         },
       );
 
-      test("50 frames in one chunk, each answered from inside 'message'", async () => {
+      test("50 frames in one chunk, each echoed from the 'message' listener", async () => {
         await using connection = await open(implementation, role);
         const { ws, peer } = connection;
         const numbers = Array.from({ length: 50 }, (_, i) => `${i}`);
         ws.on("message", data => ws.send(`echo ${data}`));
         peer.write(Buffer.concat(numbers.map(number => frame(OP.text, number))));
-        expect(await peer.take(50)).toEqual(numbers.map(number => `text "echo ${number}"`));
+        expect(await peer.nextFrames(50)).toEqual(numbers.map(number => `text "echo ${number}"`));
       });
 
-      test("half a frame, then the end of the stream", async () => {
+      test("a truncated frame followed by the end of the stream", async () => {
         await using connection = await open(implementation, role);
         const { peer, events, closed } = connection;
         peer.write(frame(OP.text, "never complete").subarray(0, 9));
         peer.end();
-        expect(await peer.rest()).toEqual([]);
+        expect(await peer.remainingFrames()).toEqual([]);
         expect(await closed).toBe(false);
-        expect(events).toEqual([lost]);
+        expect(events).toEqual([abnormalClose]);
       });
 
-      test("frames without a payload", async () => {
+      test("frames with an empty payload", async () => {
         await using connection = await open(implementation, role);
         const { peer, events } = connection;
         peer.text("");
@@ -404,7 +404,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       });
     });
 
-    test("what a listener schedules runs after the stream's 'data' event", async () => {
+    test("ticks and microtasks scheduled by a listener run after the stream's 'data' event", async () => {
       await using connection = await open(implementation, role);
       const { ws, stream, peer } = connection;
       const order: string[] = [];
@@ -421,7 +421,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       expect(order.slice(3).sort()).toEqual(["promise reaction", "tick"]);
     });
 
-    test(`every frame it sends is ${mask ? "unmasked" : "masked"}`, async () => {
+    test(`sends every frame ${mask ? "unmasked" : "masked"}`, async () => {
       await using connection = await open(implementation, role);
       const { ws, peer } = connection;
       ws.send("text");
@@ -429,16 +429,16 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       ws.send("");
       ws.send("frag", { fin: false });
       ws.send("ments", { fin: true });
-      ws.send(a(126));
-      ws.send(a(65536));
+      ws.send(repeatA(126));
+      ws.send(repeatA(65536));
       ws.ping("ping");
       ws.pong("pong");
-      const sent = await peer.take(9);
+      const sent = await peer.nextFrames(9);
       peer.ping("answer me");
       sent.push(await peer.next());
       ws.close(1000, "bye");
       sent.push(await peer.next());
-      // showFrame() would say "masked" or "unmasked" for a frame with the wrong bit.
+      // showFrame() appends "masked" or "unmasked" to a frame with the wrong mask bit.
       expect(sent).toEqual([
         'text "text"',
         "binary 0x0102",
@@ -455,82 +455,82 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       expect(peer.frames.map(frame => frame.masked)).toEqual(Array(11).fill(!mask));
     });
 
-    describe("the connection fails", () => {
+    describe("fails the connection on", () => {
       test.each([
         mask
           ? {
               label: "an unmasked frame",
               bytes: encodeFrame(OP.text, "x"),
-              error: invalid("MASK must be set", "WS_ERR_EXPECTED_MASK"),
+              error: invalidFrame("MASK must be set", "WS_ERR_EXPECTED_MASK"),
               code: 1002,
             }
           : {
               label: "a masked frame",
               bytes: encodeFrame(OP.text, "x", { mask: true }),
-              error: invalid("MASK must be clear", "WS_ERR_UNEXPECTED_MASK"),
+              error: invalidFrame("MASK must be clear", "WS_ERR_UNEXPECTED_MASK"),
               code: 1002,
             },
         {
           label: "opcode 3",
           bytes: frame(3, "x"),
-          error: invalid("invalid opcode 3", "WS_ERR_INVALID_OPCODE"),
+          error: invalidFrame("invalid opcode 3", "WS_ERR_INVALID_OPCODE"),
           code: 1002,
         },
         {
           label: "RSV1 without an extension",
           bytes: frame(OP.text, "x", { rsv1: true }),
-          error: invalid("RSV1 must be clear", "WS_ERR_UNEXPECTED_RSV_1"),
+          error: invalidFrame("RSV1 must be clear", "WS_ERR_UNEXPECTED_RSV_1"),
           code: 1002,
         },
         {
-          label: "a Ping without FIN",
+          label: "a ping without FIN",
           bytes: frame(OP.ping, "x", { fin: false }),
-          error: invalid("FIN must be set", "WS_ERR_EXPECTED_FIN"),
+          error: invalidFrame("FIN must be set", "WS_ERR_EXPECTED_FIN"),
           code: 1002,
         },
         {
           label: "a Close frame with code 1005",
           bytes: frame(OP.close, closePayload(1005)),
-          error: invalid("invalid status code 1005", "WS_ERR_INVALID_CLOSE_CODE"),
+          error: invalidFrame("invalid status code 1005", "WS_ERR_INVALID_CLOSE_CODE"),
           code: 1002,
         },
         {
-          label: "text that is not UTF-8",
+          label: "invalid UTF-8 text",
           bytes: frame(OP.text, Buffer.from([0xc3, 0x28])),
           error: invalidUTF8,
           code: 1007,
         },
       ])("$label", async ({ bytes, error, code }) => {
         await using connection = await open(implementation, role);
-        // What follows is not read any more.
+        // Frames after the invalid one must be ignored.
         connection.peer.write(Buffer.concat([bytes, frame(OP.text, "same chunk")]));
         connection.peer.text("next chunk");
         await expectFailure(connection, error, code);
       });
 
       test.each([
-        { label: "a Ping of 126 bytes", opcode: OP.ping, length: 126 },
-        { label: "a Close frame of 1 byte", opcode: OP.close, length: 1 },
-      ])("the first two bytes of $label are enough", async ({ opcode, length }) => {
+        { label: "a 126-byte ping", opcode: OP.ping, length: 126 },
+        { label: "a 1-byte Close frame", opcode: OP.close, length: 1 },
+      ])("just the first two bytes of $label", async ({ opcode, length }) => {
         await using connection = await open(implementation, role);
         connection.peer.write(Buffer.from([0x80 | opcode, (mask ? 0x80 : 0) | length]));
-        const error = invalid(`invalid payload length ${length}`, "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH");
+        const error = invalidFrame(`invalid payload length ${length}`, "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH");
         await expectFailure(connection, error, 1002);
       });
     });
 
     describe("permessage-deflate", () => {
-      // The second message repeats bytes from 2000 bytes back, the third from 500 bytes back. A sender whose window
-      // reaches that far sends a reference to them, which is short.
+      // The second message repeats bytes from 2000 bytes back and the third from 500 bytes back. A sender whose window
+      // reaches that far emits a back-reference, which makes the frame short.
       const messages = [noise, noise, noise.subarray(-500)];
       const windows = {
         "32 KiB": { windowBits: 15, sizes: ["long", "short", "short"] },
         "1 KiB": { windowBits: 10, sizes: ["long", "long", "short"] },
-        "not kept": { windowBits: 0, sizes: ["long", "long", "long"] },
+        "no context takeover": { windowBits: 0, sizes: ["long", "long", "long"] },
       };
 
       test.each([
-        { parameters: "server_no_context_takeover", client: "32 KiB", server: "not kept" },
+        { parameters: "server_no_context_takeover", client: "32 KiB", server: "no context takeover" },
         { parameters: "client_max_window_bits=10", client: "1 KiB", server: "32 KiB" },
       ] as const)("$parameters", async row => {
         await using connection = await open(
@@ -545,18 +545,18 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
           role === "server" ? `permessage-deflate; ${row.parameters}` : "permessage-deflate; client_max_window_bits",
         );
 
-        const mine = windows[row[role]];
-        let inflate = inflater();
+        const ownWindow = windows[row[role]];
+        let inflate = createInflater();
         for (const message of messages) ws.send(message);
         const sizes: string[] = [];
         for (const message of messages) {
           const sent = (await peer.nextFrame())!;
           expect(sent.rsv).toBe(4);
-          if (!mine.windowBits) inflate = inflater();
+          if (!ownWindow.windowBits) inflate = createInflater();
           expect(inflate(sent.payload).equals(message)).toBe(true);
           sizes.push(sent.length < 100 ? "short" : "long");
         }
-        expect(sizes).toEqual(mine.sizes);
+        expect(sizes).toEqual(ownWindow.sizes);
 
         const { windowBits } = windows[row[role === "server" ? "client" : "server"]];
         const payloads = windowBits
@@ -569,7 +569,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         expect(received.map((data, i) => data.equals(messages[i]))).toEqual([true, true, true]);
       });
 
-      test("a compressed message in fragments, in pieces, with a Ping in between", async () => {
+      test("a fragmented compressed message, split across chunks, with a ping in between", async () => {
         await using connection = await open(
           implementation,
           role,
@@ -585,7 +585,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
           frame(OP.continuation, payload.subarray(1000, 1001), { fin: false }),
           frame(OP.continuation, payload.subarray(1001)),
         ]);
-        const received = event(ws, "message");
+        const received = nextEvent(ws, "message");
         for (let i = 0; i < bytes.length; i += 333) peer.write(bytes.subarray(i, i + 333));
         const [data, isBinary] = await received;
         expect(isBinary).toBe(true);
@@ -593,7 +593,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         expect(await peer.next()).toBe('pong "between"');
       });
 
-      test("maxPayload counts the inflated bytes", async () => {
+      test("maxPayload applies to the inflated size", async () => {
         await using connection = await open(
           implementation,
           role,
@@ -611,21 +611,21 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
     });
 
     describe("the closing handshake", () => {
-      test("close(): its side of the stream ends after the peer's Close frame, 'close' comes after the peer's end", async () => {
+      test("close() ends the stream after the peer's Close frame and emits 'close' after the peer's end", async () => {
         await using connection = await open(implementation, role);
         const { ws, stream, peer, events, closed } = connection;
         ws.close(1000, "mine");
         expect(await peer.next()).toBe('close 1000 "mine"');
 
-        const received = event(ws, "message");
+        const received = nextEvent(ws, "message");
         peer.text("still read");
         await received;
         expect(events).toEqual(['message Buffer("still read") text rs=2']);
         expect(stream.writableEnded).toBe(false);
 
         peer.close(4001, "theirs");
-        expect(await peer.rest()).toEqual([]);
-        expect(peer.tcp).toEqual(["end"]);
+        expect(await peer.remainingFrames()).toEqual([]);
+        expect(peer.socketEvents).toEqual(["end"]);
         expect(events.slice(1)).toEqual([]);
         expect(ws.readyState).toBe(ws.CLOSING);
 
@@ -644,12 +644,12 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         },
         { label: "with a code", args: [1001], echo: "close 1001", close: "close 1001 Buffer() rs=3" },
         { label: "without a code", args: [], echo: "close", close: "close 1005 Buffer() rs=3" },
-      ])("a Close frame $label is echoed, then its side of the stream ends", async ({ args, echo, close }) => {
+      ])("echoes a Close frame $label, then ends the stream", async ({ args, echo, close }) => {
         await using connection = await open(implementation, role);
         const { ws, peer, events, closed } = connection;
         peer.close(...(args as [number, string]));
-        expect(await peer.rest()).toEqual([echo]);
-        expect(peer.tcp).toEqual(["end"]);
+        expect(await peer.remainingFrames()).toEqual([echo]);
+        expect(peer.socketEvents).toEqual(["end"]);
         expect(events).toEqual([]);
         expect(ws.readyState).toBe(ws.CLOSING);
         peer.end();
@@ -657,43 +657,43 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         expect(events).toEqual([close]);
       });
 
-      test("what follows the peer's Close frame is not read", async () => {
+      test("ignores data after the peer's Close frame", async () => {
         await using connection = await open(implementation, role);
         const { peer, events, closed } = connection;
         peer.write(Buffer.concat([frame(OP.close, closePayload(1000)), frame(OP.text, "same chunk"), frame(OP.ping)]));
         peer.text("next chunk");
         peer.end();
-        expect(await peer.rest()).toEqual(["close 1000"]);
+        expect(await peer.remainingFrames()).toEqual(["close 1000"]);
         expect(await closed).toBe(true);
         expect(events).toEqual(["close 1000 Buffer() rs=3"]);
       });
 
-      test("close() from inside 'ping': the Pong goes first", async () => {
+      test("close() from a 'ping' listener sends the pong first", async () => {
         await using connection = await open(implementation, role);
         const { ws, peer, closed } = connection;
         ws.on("ping", () => ws.close(1000));
         peer.ping("x");
-        expect(await peer.take(2)).toEqual(['pong "x"', "close 1000"]);
+        expect(await peer.nextFrames(2)).toEqual(['pong "x"', "close 1000"]);
         peer.close(1000);
         peer.end();
         expect(await closed).toBe(true);
       });
 
-      test("the Close frame waits behind what the stream has not taken yet", async () => {
+      test("the Close frame is queued behind data the stream hasn't flushed yet", async () => {
         await using connection = await open(implementation, role, {}, { pair: duplexPair({ highWaterMark: 1024 }) });
         const { ws, peer, closed } = connection;
         peer.socket.pause();
-        ws.send(a(2000));
-        ws.send(a(3000));
+        ws.send(repeatA(2000));
+        ws.send(repeatA(3000));
         ws.close(1000, "last");
         peer.socket.resume();
-        expect(await peer.take(3)).toEqual(["text 2000 bytes", "text 3000 bytes", 'close 1000 "last"']);
+        expect(await peer.nextFrames(3)).toEqual(["text 2000 bytes", "text 3000 bytes", 'close 1000 "last"']);
         peer.close(1000, "last");
         peer.end();
         expect(await closed).toBe(true);
       });
 
-      test("a Close frame that is still in the buffer of a destroyed stream counts", async () => {
+      test("parses a Close frame that is still buffered in a destroyed stream", async () => {
         await using connection = await open(implementation, role);
         const { ws, stream, peer, events, closed } = connection;
         ws.pause();
@@ -704,13 +704,13 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         expect(events).toEqual(['message Buffer("held back") text rs=2', 'close 4000 Buffer("held back") rs=3']);
       });
 
-      test("both sides close at once: one Close frame each", async () => {
+      test("when both sides close at once, each sends one Close frame", async () => {
         await using connection = await open(implementation, role);
         const { ws, peer, events, closed } = connection;
         ws.close(1000, "mine");
         peer.close(1001, "theirs");
         peer.end();
-        expect(await peer.rest()).toEqual(['close 1000 "mine"']);
+        expect(await peer.remainingFrames()).toEqual(['close 1000 "mine"']);
         expect(await closed).toBe(true);
         expect(events).toEqual(['close 1001 Buffer("theirs") rs=3']);
       });
@@ -719,20 +719,20 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         await using connection = await open(implementation, role);
         const { stream, peer, events, closed } = connection;
         peer.end();
-        expect(await peer.rest()).toEqual([]);
+        expect(await peer.remainingFrames()).toEqual([]);
         expect(await closed).toBe(false);
-        expect(events).toEqual([lost]);
+        expect(events).toEqual([abnormalClose]);
         expect(stream.destroyed).toBe(true);
       });
 
-      test("the peer answers close() with the end of the stream", async () => {
+      test("the peer answers close() by ending the stream", async () => {
         await using connection = await open(implementation, role);
         const { ws, peer, events, closed } = connection;
         ws.close(1000);
         peer.end();
-        expect(await peer.rest()).toEqual(["close 1000"]);
+        expect(await peer.remainingFrames()).toEqual(["close 1000"]);
         expect(await closed).toBe(false);
-        expect(events).toEqual([lost]);
+        expect(events).toEqual([abnormalClose]);
       });
 
       test.each([
@@ -746,10 +746,10 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         expect(stream.destroyed).toBe(true);
         expect(ws.readyState).toBe(ws.CLOSING);
         expect(await closed).toBe(false);
-        expect(events).toEqual([lost]);
+        expect(events).toEqual([abnormalClose]);
       });
 
-      test("terminate() after both Close frames, with a peer that has not ended the stream", async () => {
+      test("terminate() after both Close frames, before the peer has ended the stream", async () => {
         await using connection = await open(implementation, role);
         const { ws, stream, peer, events, closed } = connection;
         ws.close(1000);
@@ -762,18 +762,18 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         expect(events).toEqual(["close 1000 Buffer() rs=3"]);
       });
 
-      test("terminate() from inside 'message'", async () => {
+      test("terminate() from a 'message' listener", async () => {
         await using connection = await open(implementation, role);
         const { ws, stream, peer, events, closed } = connection;
         ws.on("message", () => ws.terminate());
         peer.text("go");
         expect(await closed).toBe(false);
-        expect(events).toEqual(['message Buffer("go") text rs=1', lost]);
+        expect(events).toEqual(['message Buffer("go") text rs=1', abnormalClose]);
         expect(stream.destroyed).toBe(true);
         expect(peer.frames).toEqual([]);
       });
 
-      test("close() from inside 'message'", async () => {
+      test("close() from a 'message' listener", async () => {
         await using connection = await open(implementation, role);
         const { ws, peer, events, closed } = connection;
         ws.on("message", () => ws.close(1000, "done"));
@@ -785,18 +785,18 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         expect(events).toEqual(['message Buffer("go") text rs=1', 'close 1000 Buffer("done") rs=3']);
       });
 
-      // `closeTimeout` is newer than the installed package, where the time is a constant 30 s.
-      describe.skipIf(!builtin)("a peer that does not end the stream, with `closeTimeout`", () => {
+      // The installed npm ws predates `closeTimeout` and hardcodes 30 s.
+      describe.skipIf(!builtin)("`closeTimeout` destroys the stream when the peer never ends it", () => {
         test.each([
           {
-            label: "close(), never answered",
+            label: "an unanswered close()",
             start: ({ ws }) => ws.close(1000),
             sent: ["close 1000"],
-            events: [lost],
+            events: [abnormalClose],
             clean: false,
           },
           {
-            label: "close(), answered",
+            label: "an answered close()",
             start: ({ ws, peer }) => (ws.close(1000), peer.close(1000)),
             sent: ["close 1000"],
             events: ["close 1000 Buffer() rs=3"],
@@ -813,7 +813,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
             label: "a protocol error",
             start: ({ peer }) => peer.send(3),
             sent: ["close 1002"],
-            events: [`error ${invalid("invalid opcode 3", "WS_ERR_INVALID_OPCODE")} rs=2`, lost],
+            events: [`error ${invalidFrame("invalid opcode 3", "WS_ERR_INVALID_OPCODE")} rs=2`, abnormalClose],
             clean: false,
           },
         ] as {
@@ -822,7 +822,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
           sent: string[];
           events: string[];
           clean: boolean;
-        }[])("$label", async ({ start, sent, events, clean }) => {
+        }[])("after $label", async ({ start, sent, events, clean }) => {
           await using connection = await open(implementation, role, { closeTimeout: 20 });
           start(connection);
           expect(await connection.closed).toBe(clean);
@@ -833,38 +833,38 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       });
     });
 
-    describe("the stream fails", () => {
-      test("destroy(error): 'close' with 1006 and no 'error'", async () => {
+    describe("when the stream fails", () => {
+      test("destroy(error) emits 'close' with 1006 and no 'error'", async () => {
         await using connection = await open(implementation, role);
         const { stream, events, closed } = connection;
         stream.destroy(new Error("boom"));
         expect(await closed).toBe(false);
-        expect(events).toEqual([lost]);
+        expect(events).toEqual([abnormalClose]);
       });
 
-      test("an 'error' event destroys it", async () => {
+      test("an 'error' event destroys the stream", async () => {
         await using connection = await open(implementation, role);
         const { ws, stream, events, closed } = connection;
         stream.emit("error", new Error("boom"));
         expect(stream.destroyed).toBe(true);
         expect(ws.readyState).toBe(ws.CLOSING);
         expect(await closed).toBe(false);
-        expect(events).toEqual([lost]);
+        expect(events).toEqual([abnormalClose]);
       });
     });
 
     describe("send callbacks", () => {
-      test("run in the order of the calls, with null", async () => {
+      test("fire in call order with null", async () => {
         await using connection = await open(implementation, role);
         const { ws, peer } = connection;
-        const { callback, after } = callbacks();
+        const { callback, resultsAfter } = callbackRecorder();
         ws.send("a", callback("send"));
         ws.ping("b", undefined, callback("ping"));
         ws.send(Buffer.alloc(70000), callback("send 70000"));
         ws.pong("c", undefined, callback("pong"));
         ws.send("", { fin: false }, callback("fragment"));
         ws.send("", callback("last"));
-        expect(await after(6)).toEqual([
+        expect(await resultsAfter(6)).toEqual([
           "send null",
           "ping null",
           "send 70000 null",
@@ -872,7 +872,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
           "fragment null",
           "last null",
         ]);
-        expect(await peer.take(6)).toEqual([
+        expect(await peer.nextFrames(6)).toEqual([
           'text "a"',
           'ping "b"',
           "binary 70000 bytes",
@@ -882,25 +882,29 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         ]);
       });
 
-      // npm ws reads any Blob later. The built-in cannot read a file inside send(), and says so.
+      // npm ws reads every Blob asynchronously. The built-in can't read a file-backed Blob synchronously in send(), so
+      // it throws.
       test.skipIf(!builtin).each([
         { blob: "Bun.file()", make: (file: string) => Bun.file(file) },
         { blob: "fs.openAsBlob()", make: (file: string) => openAsBlob(file) },
-      ])("send($blob, { fin: false }) throws, reports no success and leaves no fragment open", async ({ make }) => {
-        using dir = tempDir("ws-send-file", { "data.txt": "from a file" });
-        const blob = await make(path.join(String(dir), "data.txt"));
-        await using connection = await open(implementation, role);
-        const { ws, peer } = connection;
-        const results: unknown[] = [];
-        expect(() => ws.send(blob as any, { fin: false }, error => results.push(error))).toThrow("file");
-        const sent = new Promise(resolve => ws.send("x", resolve));
-        expect(await peer.roundTrip()).toEqual(['text "x"']);
-        expect(await sent).toBeNull();
-        expect(results.filter(result => !(result instanceof Error))).toEqual([]);
-      });
+      ])(
+        "send($blob, { fin: false }) throws, never reports success and doesn't start a fragmented message",
+        async ({ make }) => {
+          using dir = tempDir("ws-send-file", { "data.txt": "from a file" });
+          const blob = await make(path.join(String(dir), "data.txt"));
+          await using connection = await open(implementation, role);
+          const { ws, peer } = connection;
+          const results: unknown[] = [];
+          expect(() => ws.send(blob as any, { fin: false }, error => results.push(error))).toThrow("file");
+          const sent = new Promise(resolve => ws.send("x", resolve));
+          expect(await peer.roundTrip()).toEqual(['text "x"']);
+          expect(await sent).toBeNull();
+          expect(results.filter(result => !(result instanceof Error))).toEqual([]);
+        },
+      );
 
       test.skipIf(!builtin).each(["ping", "pong"] as const)(
-        "%s(Bun.file()) throws, and its callback does not run for the next frame",
+        "%s(Bun.file()) throws and its callback isn't reused for the next frame",
         async method => {
           using dir = tempDir("ws-ping-file", { "data.txt": "file" });
           await using connection = await open(implementation, role);
@@ -908,60 +912,64 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
           const results: unknown[] = [];
           const file = Bun.file(path.join(String(dir), "data.txt"));
           expect(() => ws[method](file, undefined, error => results.push(error))).toThrow("file");
-          // A frame that the engine writes by itself would take a callback that was left.
+          // A frame the engine writes on its own would pick up a stale callback if one was left behind.
           ws.close(1000);
-          expect(await peer.take(1)).toEqual(["close 1000"]);
-          // The callbacks of a stream run in the order of its writes.
+          expect(await peer.nextFrames(1)).toEqual(["close 1000"]);
+          // Stream write callbacks run in write order, so this one runs after the Close frame's.
           await new Promise(resolve => stream.write(Buffer.alloc(0), resolve));
           expect(results).toEqual([]);
         },
       );
 
-      test("a Blob keeps its place", async () => {
+      test("a Blob keeps its position in the send order", async () => {
         await using connection = await open(implementation, role);
         const { ws, peer } = connection;
-        const { callback, after } = callbacks();
+        const { callback, resultsAfter } = callbackRecorder();
         ws.send("before", callback("before"));
         ws.send(new Blob(["a ", "Blob"]) as any, callback("Blob"));
         ws.send("after", callback("after"));
         ws.ping(new Blob(["ping"]), undefined, callback("ping"));
-        expect(await after(4)).toEqual(["before null", "Blob null", "after null", "ping null"]);
-        expect(await peer.take(4)).toEqual(['text "before"', 'binary "a Blob"', 'text "after"', 'ping "ping"']);
+        expect(await resultsAfter(4)).toEqual(["before null", "Blob null", "after null", "ping null"]);
+        expect(await peer.nextFrames(4)).toEqual(['text "before"', 'binary "a Blob"', 'text "after"', 'ping "ping"']);
       });
 
-      test("get an Error for what is sent after the stream was destroyed", async () => {
+      test("get an Error for sends after the stream was destroyed", async () => {
         await using connection = await open(implementation, role);
         const { ws, stream, events, closed } = connection;
-        const { callback, after } = callbacks();
+        const { callback, resultsAfter } = callbackRecorder();
         stream.destroy();
         expect(ws.readyState).toBe(ws.OPEN);
         ws.send("a", callback("send"));
         ws.ping("b", undefined, callback("ping"));
         ws.pong("c", undefined, callback("pong"));
-        expect(await after(3)).toEqual([`send ${destroyed}`, `ping ${destroyed}`, `pong ${destroyed}`]);
+        expect(await resultsAfter(3)).toEqual([
+          `send ${writeAfterDestroy}`,
+          `ping ${writeAfterDestroy}`,
+          `pong ${writeAfterDestroy}`,
+        ]);
         await closed;
-        expect(events).toEqual([lost]);
+        expect(events).toEqual([abnormalClose]);
       });
 
-      test("get an Error for what was queued when the stream was destroyed", async () => {
+      test("get an Error for sends still queued when the stream was destroyed", async () => {
         await using connection = await open(implementation, role);
         const { ws, stream, events, closed } = connection;
-        const { callback, after } = callbacks();
-        // The stream is busy with the first write until the next tick. The others wait behind it.
+        const { callback, resultsAfter } = callbackRecorder();
+        // The stream is busy with the first write until the next tick, so the others are queued behind it.
         ws.send("first");
         ws.send("a", callback("send"));
         ws.ping("b", undefined, callback("ping"));
         expect(stream.writableLength).toBeGreaterThan(0);
         stream.destroy();
-        expect(await after(2)).toEqual([`send ${destroyed}`, `ping ${destroyed}`]);
+        expect(await resultsAfter(2)).toEqual([`send ${writeAfterDestroy}`, `ping ${writeAfterDestroy}`]);
         await closed;
-        expect(events).toEqual([lost]);
+        expect(events).toEqual([abnormalClose]);
       });
 
-      test("wait, and bufferedAmount grows, while the stream does not drain", async () => {
+      test("are deferred, and bufferedAmount grows, while the stream isn't draining", async () => {
         await using connection = await open(implementation, role, {}, { pair: duplexPair({ highWaterMark: 1024 }) });
         const { ws, peer } = connection;
-        const { results, callback, after } = callbacks();
+        const { results, callback, resultsAfter } = callbackRecorder();
         peer.socket.pause();
         const size = 2000 + (mask ? 4 : 8);
         const amounts: number[] = [];
@@ -971,25 +979,25 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         }
         expect(amounts).toEqual([size, 2 * size, 3 * size]);
 
-        // Once the other side holds more than it wants, it asks for nothing until somebody reads.
+        // Once the other side's readable buffer is over its highWaterMark, it stops pulling until something reads it.
         while (peer.socket.readableLength < 1024) await new Promise(setImmediate);
         expect(results).toEqual([]);
         expect(ws.bufferedAmount).toBeGreaterThanOrEqual(3 * size - 8);
 
         peer.socket.resume();
-        expect(await after(3)).toEqual(["a null", "b null", "c null"]);
+        expect(await resultsAfter(3)).toEqual(["a null", "b null", "c null"]);
         expect(ws.bufferedAmount).toBe(0);
-        expect(await peer.take(3)).toEqual(["binary 2000 bytes", "binary 2000 bytes", "binary 2000 bytes"]);
+        expect(await peer.nextFrames(3)).toEqual(["binary 2000 bytes", "binary 2000 bytes", "binary 2000 bytes"]);
       });
     });
 
-    test("pause() holds everything back until resume()", async () => {
+    test("pause() buffers everything until resume()", async () => {
       await using connection = await open(implementation, role);
       const { ws, stream, peer, events } = connection;
       ws.pause();
       expect(ws.isPaused).toBe(true);
       const bytes = Buffer.concat([frame(OP.text, "one"), frame(OP.ping, "two"), frame(OP.binary, "three")]);
-      // The callback runs when the socket's stream has taken the bytes and asks for more.
+      // The callback runs once the socket's stream has buffered the bytes and asks for more.
       await new Promise(resolve => peer.socket.write(bytes, resolve));
       expect(stream.readableLength).toBe(bytes.length);
       expect(events).toEqual([]);
@@ -1005,7 +1013,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       ]);
     });
 
-    test("1 MiB messages, text and binary, both ways", async () => {
+    test("1 MiB text and binary messages in both directions", async () => {
       await using connection = await open(implementation, role);
       const { ws, peer } = connection;
       const binary = Buffer.alloc(MiB);
@@ -1034,12 +1042,12 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
 
     describe("maxPayload: 10", () => {
       test.each([
-        { label: "10 bytes", frames: [frame(OP.text, a(10))] },
+        { label: "10 bytes", frames: [frame(OP.text, repeatA(10))] },
         {
           label: "fragments of 5 and 5 bytes",
-          frames: [frame(OP.text, a(5), { fin: false }), frame(OP.continuation, a(5))],
+          frames: [frame(OP.text, repeatA(5), { fin: false }), frame(OP.continuation, repeatA(5))],
         },
-      ])("$label are delivered", async ({ frames }) => {
+      ])("delivers $label", async ({ frames }) => {
         await using connection = await open(implementation, role, { maxPayload: 10 });
         const { peer, events } = connection;
         for (const bytes of frames) peer.write(bytes);
@@ -1048,20 +1056,20 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       });
 
       test.each([
-        { label: "11 bytes", frames: [frame(OP.text, a(11))] },
-        { label: "the head of a frame of 11 bytes", frames: [frame(OP.text, a(11)).subarray(0, 2)] },
+        { label: "11 bytes", frames: [frame(OP.text, repeatA(11))] },
+        { label: "the header of an 11-byte frame", frames: [frame(OP.text, repeatA(11)).subarray(0, 2)] },
         {
           label: "fragments of 5 and 6 bytes",
-          frames: [frame(OP.text, a(5), { fin: false }), frame(OP.continuation, a(6))],
+          frames: [frame(OP.text, repeatA(5), { fin: false }), frame(OP.continuation, repeatA(6))],
         },
-      ])("$label fail the connection", async ({ frames }) => {
+      ])("fails the connection on $label", async ({ frames }) => {
         await using connection = await open(implementation, role, { maxPayload: 10 });
         for (const bytes of frames) connection.peer.write(bytes);
         await expectFailure(connection, tooBig, 1009);
       });
     });
 
-    test("skipUTF8Validation: text that is not UTF-8 is delivered", async () => {
+    test("skipUTF8Validation delivers invalid UTF-8 text", async () => {
       await using connection = await open(implementation, role, { skipUTF8Validation: true });
       const { peer, events } = connection;
       peer.text(Buffer.from([0xc3, 0x28]));
@@ -1069,7 +1077,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       expect(events).toEqual(["message Buffer(0xc328) text rs=1"]);
     });
 
-    test("autoPong: false leaves the Pong to the 'ping' listener", async () => {
+    test("autoPong: false doesn't send a pong automatically", async () => {
       await using connection = await open(implementation, role, { autoPong: false });
       const { ws, peer, events } = connection;
       ws.on("message", () => ws.send("after the ping"));
@@ -1083,25 +1091,25 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
   describe.each([
     { kind: "duplexPair()", pair: () => duplexPair() },
     { kind: "a synchronous pair", pair: synchronousPair },
-  ])("both ends, on $kind", ({ pair }) => {
+  ])("ws client and ws server on $kind", ({ pair }) => {
     test("echo, ping and pong, close", async () => {
       await using both = await openBoth(implementation, {}, {}, pair());
       const { client, server, near, far } = both;
-      const events = { client: watch(client), server: watch(server) };
-      const closed = Promise.all([event(client, "close"), event(server, "close")]);
+      const events = { client: recordEvents(client), server: recordEvents(server) };
+      const closed = Promise.all([nextEvent(client, "close"), nextEvent(server, "close")]);
       server.on("message", (data, isBinary) => server.send(data, { binary: isBinary }));
 
-      let echoed = event(client, "message");
+      let echoed = nextEvent(client, "message");
       client.send("text");
       await echoed;
-      echoed = event(client, "message");
+      echoed = nextEvent(client, "message");
       client.send(Buffer.from([1, 2, 3]));
       await echoed;
 
-      let answered = event(client, "pong");
+      let answered = nextEvent(client, "pong");
       client.ping("from the client");
       await answered;
-      answered = event(server, "pong");
+      answered = nextEvent(server, "pong");
       server.ping("from the server");
       await answered;
 
@@ -1126,11 +1134,11 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       expect([near.destroyed, far.destroyed]).toEqual([true, true]);
     });
 
-    test("the server closes", async () => {
+    test("server-initiated close", async () => {
       await using both = await openBoth(implementation, {}, {}, pair());
       const { client, server } = both;
-      const events = { client: watch(client), server: watch(server) };
-      const closed = Promise.all([event(client, "close"), event(server, "close")]);
+      const events = { client: recordEvents(client), server: recordEvents(server) };
+      const closed = Promise.all([nextEvent(client, "close"), nextEvent(server, "close")]);
       server.close(4000, "go away");
       await closed;
       expect(events).toEqual({
@@ -1172,19 +1180,19 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       for (const message of messages) client.send(message);
       await done.promise;
       expect(echoed.map((data, i) => data.equals(messages[i]))).toEqual([true, true, true, true, true]);
-      // 100 000 bytes went each way as a few hundred.
+      // The 100,000-byte message compresses to a few hundred bytes in each direction.
       expect(bytes).toBeLessThan(20_000);
     });
   });
 
-  describe("both ends", () => {
+  describe("ws client and ws server", () => {
     test.each([
-      { starter: "client", with: "no extension", perMessageDeflate: false },
-      { starter: "server", with: "no extension", perMessageDeflate: false },
-      { starter: "client", with: "permessage-deflate", perMessageDeflate: true },
-      { starter: "server", with: "permessage-deflate", perMessageDeflate: true },
+      { starter: "client", extension: "no extension", perMessageDeflate: false },
+      { starter: "server", extension: "no extension", perMessageDeflate: false },
+      { starter: "client", extension: "permessage-deflate", perMessageDeflate: true },
+      { starter: "server", extension: "permessage-deflate", perMessageDeflate: true },
     ] as const)(
-      "100 echoes from inside 'message' on a synchronous pair, started by the $starter, with $with",
+      "100 nested echoes from 'message' listeners on a synchronous pair, started by the $starter, with $extension",
       async ({ starter, perMessageDeflate }) => {
         await using both = await openBoth(
           implementation,
@@ -1194,33 +1202,33 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
         );
         const first = both[starter];
         const second = both[starter === "client" ? "server" : "client"];
-        const seen: string[] = [];
+        const received: string[] = [];
         const done = Promise.withResolvers<void>();
         second.on("message", data => second.send(`${data}`));
         first.on("message", data => {
-          seen.push(`${data}`);
-          if (seen.length < 100) first.send(`${seen.length}`);
+          received.push(`${data}`);
+          if (received.length < 100) first.send(`${received.length}`);
           else done.resolve();
         });
         first.send("0");
-        // Without zlib in between, all of it happens inside that send().
-        if (!perMessageDeflate) expect(seen).toHaveLength(100);
+        // Without zlib's async step, the whole exchange runs synchronously inside that send().
+        if (!perMessageDeflate) expect(received).toHaveLength(100);
         await done.promise;
-        expect(seen).toEqual(Array.from({ length: 100 }, (_, i) => `${i}`));
+        expect(received).toEqual(Array.from({ length: 100 }, (_, i) => `${i}`));
       },
     );
 
-    test("createWebSocketStream() on each", async () => {
+    test("createWebSocketStream() on both sockets", async () => {
       await using both = await openBoth(implementation);
       const client = implementation.createWebSocketStream(both.client);
       const server = implementation.createWebSocketStream(both.server);
-      const closed = Promise.all([event(client, "close"), event(server, "close")]);
+      const closed = Promise.all([nextEvent(client, "close"), nextEvent(server, "close")]);
       const received = { client: [] as Buffer[], server: [] as Buffer[] };
       client.on("data", chunk => received.client.push(chunk));
       server.on("data", chunk => received.server.push(chunk));
       server.on("end", () => server.end());
 
-      const answered = event(client, "data");
+      const answered = nextEvent(client, "data");
       server.once("data", () => server.write("an answer"));
       client.write("a question");
       await answered;
@@ -1234,7 +1242,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
     });
 
     test.concurrent(
-      "open sockets do not keep the process alive",
+      "open sockets don't keep the process alive",
       async () => {
         const { lines, exitCode } = await runScript(
           { specifier },
@@ -1250,9 +1258,9 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
       scriptTimeout,
     );
 
-    // The other end answers the Close frame while close() is still running.
+    // The other end replies to the Close frame while close() is still running.
     test.concurrent(
-      "closed sockets do not keep the process alive",
+      "closed sockets don't keep the process alive",
       async () => {
         const { lines, exitCode } = await runScript(
           { specifier },
@@ -1278,7 +1286,7 @@ describe.each(implementations)("ws over a JS stream ($name)", ({ ws: implementat
     );
 
     test.concurrent(
-      "open sockets that nobody holds are collected with their streams",
+      "unreferenced open sockets are garbage collected along with their streams",
       async () => {
         const { lines, exitCode } = await runScript(
           { specifier },

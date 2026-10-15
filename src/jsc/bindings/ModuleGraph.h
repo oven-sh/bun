@@ -175,13 +175,13 @@ private:
 // be called: it was handed over inside the context of a graph that has since been disposed.
 bool shouldDropCallbackOfStoppedModuleGraph(Zig::GlobalObject*, JSC::JSValue asyncContext);
 
-// `asyncContext` without the frames that enter or leave a graph's context: the AsyncLocalStorage stores alone.
-// For what outlives the script that made it and must not keep that script's graph alive (an open WebSocket):
-// its callbacks enter the graph's context with a ModuleGraphContextScope, on top of this.
+// Returns `asyncContext` with the frames that enter or leave a graph's context removed, leaving only the
+// AsyncLocalStorage stores. Use it for long-lived objects (e.g. an open WebSocket) that save an async context but
+// must not keep the graph alive. Their callbacks restore this context, then use a ModuleGraphContextScope.
 JSC::JSValue asyncContextWithoutModuleGraphs(Zig::GlobalObject*, JSC::JSValue asyncContext);
 
-// Native code made `asyncContext` current, or put it back. From the top of the event loop that is what
-// moduleGraphAsyncContextAtEventLoop() answers from now on; with script on the stack this does nothing.
+// Call after native code sets or restores the current async context. With no script on the stack, `asyncContext`
+// becomes what moduleGraphAsyncContextAtEventLoop() returns. No-op while script is on the stack.
 void noteEnteredFromEventLoop(Zig::GlobalObject*, JSC::JSValue asyncContext);
 
 // What GlobalObject::drainMicrotasks resets the async context to when no script is on the stack:

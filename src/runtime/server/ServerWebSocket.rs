@@ -103,7 +103,7 @@ impl Flags {
             self.0 &= !Self::CLOSED_BIT;
         }
     }
-    /// A socket of the `ws` package ([`WsPackageSocket`]).
+    /// Set on sockets that belong to the `ws` package ([`WsPackageSocket`]).
     #[inline]
     pub(crate) fn ws_package(self) -> bool {
         self.0 & Self::WS_PACKAGE_BIT != 0
@@ -195,20 +195,21 @@ pub(super) fn send_status_to_js(status: SendStatus, len: usize, op: &'static str
     }
 }
 
-/// What a method takes as its message.
+/// Which message types a send or publish method accepts.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Accept {
-    /// A BufferSource or Blob is binary. Anything else but `undefined` and `null` is converted to a string.
+    /// BufferSource and Blob are sent as binary. Everything else is stringified, except
+    /// `undefined` and `null`, which throw.
     Any,
-    /// `server.publish()`: as `Any`, and `undefined` and `null` are converted too.
+    /// Like `Any`, but `undefined` and `null` are stringified too. Used by `server.publish()`.
     AnyOrNullish,
     Text,
     Binary,
-    /// A string, BufferSource, Blob, or nothing.
+    /// Ping/pong payload: a string, BufferSource, Blob, or nothing.
     Control,
 }
 
-/// A message argument, converted. Holds what keeps its bytes alive.
+/// A converted message argument. Keeps the JS value that owns the bytes alive.
 pub(super) enum Payload<'a> {
     Buffer(ArrayBuffer),
     Bytes {
@@ -238,7 +239,7 @@ impl Payload<'_> {
 }
 
 /// Converting an argument can run user JS that closes the socket or stops the
-/// server: every method converts all of its arguments, then reads native state.
+/// server, so every method converts all of its arguments before it reads native state.
 #[inline]
 pub(super) fn payload_from_js<'a>(
     global_this: &'a JSGlobalObject,
@@ -291,7 +292,8 @@ pub(super) fn payload_from_js<'a>(
     Ok(Payload::Text(value.to_js_string_view(global_this)?))
 }
 
-/// A topic is a non-empty string. `publishText("")` has always published to nobody, where the others throw.
+/// Topics must be non-empty strings. Exception: `publishText("")` returns 0 instead of throwing,
+/// for backwards compatibility.
 #[inline]
 fn topic_from_js<'a>(
     global_this: &'a JSGlobalObject,
@@ -303,7 +305,7 @@ fn topic_from_js<'a>(
         return Err(global_this.throw_invalid_argument_type_value(b"topic", b"string", value));
     }
     let topic = value.to_js_string_view(global_this)?;
-    if topic.is_empty() && matches!(empty, EmptyTopic::Throws) {
+    if topic.is_empty() && matches!(empty, EmptyTopic::Reject) {
         return Err(global_this.throw(format_args!("{fn_name} requires a non-empty topic name")));
     }
     Ok(topic)
@@ -311,8 +313,8 @@ fn topic_from_js<'a>(
 
 #[derive(Clone, Copy)]
 enum EmptyTopic {
-    Throws,
-    IsNobody,
+    Reject,
+    Allow,
 }
 
 #[inline]
@@ -330,8 +332,9 @@ fn compress_from_js(
     Ok(value.to_boolean())
 }
 
-/// RFC 6455 §5.5.1: a Close payload is a 2-byte code and the reason.
-fn clamp_close_reason(reason: &[u8]) -> &[u8] {
+/// Truncates `reason` at a UTF-8 character boundary so it fits in a Close frame.
+/// RFC 6455 §5.5.1: the payload is a 2-byte code followed by the reason.
+fn truncate_close_reason(reason: &[u8]) -> &[u8] {
     const MAX: usize = MAX_CONTROL_FRAME_PAYLOAD - 2;
     if reason.len() <= MAX {
         return reason;
@@ -404,7 +407,8 @@ impl ServerWebSocket {
         ))
     }
 
-    /// `sendWebSocketFrame` of the `ws` package: the caller picks the opcode (0 continues a message) and `fin`.
+    /// Backs the `ws` package's `sendWebSocketFrame`. The caller picks the opcode (0 is a
+    /// continuation frame) and `fin`.
     pub(crate) fn send_frame(
         &self,
         global_this: &JSGlobalObject,
@@ -452,8 +456,8 @@ impl ServerWebSocket {
         ))
     }
 
-    /// `publish` / `publishText` / `publishBinary`. A closed socket, or one of a
-    /// `publishToSelf` server, publishes through the app.
+    /// `publish` / `publishText` / `publishBinary`. Publishes through the app if the socket
+    /// is closed or the server set `publishToSelf`.
     #[inline]
     fn publish_message(
         &self,
@@ -467,9 +471,9 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("{fn_name} requires at least 1 argument")));
         }
         let empty = if matches!(accept, Accept::Text) {
-            EmptyTopic::IsNobody
+            EmptyTopic::Allow
         } else {
-            EmptyTopic::Throws
+            EmptyTopic::Reject
         };
         let topic_view = topic_from_js(global_this, fn_name, topic_value, empty)?;
         let topic = topic_view.to_utf8();
@@ -518,7 +522,7 @@ impl ServerWebSocket {
             global_this,
             fn_name,
             callframe.argument(0),
-            EmptyTopic::Throws,
+            EmptyTopic::Reject,
         )?;
 
         if self.is_closed() {
@@ -556,7 +560,7 @@ impl ServerWebSocket {
             .this_value
             .set(JsRef::init_strong(this_value, global_object));
         js::data_set_cached(this_value, global_object, data_value);
-        // Both callers refuse when `handler.server.is_none()`,
+        // Both callers bail out when `handler.server.is_none()`,
         // so this is normally `Some`; keep the `and_then` as
         // defense-in-depth (option getters between that guard and here can
         // re-enter JS and `stop(true)`, and `js_value_for_dispatch` returns
@@ -568,23 +572,25 @@ impl ServerWebSocket {
         this
     }
 
-    /// `init` for a socket of the `ws` package: `handler` holds that package's callbacks, `websocket` is their `this`.
+    /// `init` for a `ws` package socket. `handler` holds the package's callbacks, which are
+    /// called with `websocket` as `this`.
     pub(crate) fn init_for_ws_package(
         handler: &WebSocketServerHandler,
         websocket: JSValue,
     ) -> *mut ServerWebSocket {
         let this = Self::init(handler, websocket, None);
-        // SAFETY: `init` just made it; see there.
+        // SAFETY: `init` just allocated it. See the SAFETY comments there.
         unsafe { &*this }.update_flags(Flags::set_ws_package);
         this
     }
 
-    /// The JS wrapper, while the socket is open or something else keeps it alive.
+    /// The JS wrapper. `None` once the socket has closed and the wrapper was collected.
     pub(crate) fn js_value(&self) -> Option<JSValue> {
         self.this_value.get().try_get()
     }
 
-    /// Undoes `init` for a socket uWS refused to upgrade: neither `on_open` nor `on_close` runs for it.
+    /// Undoes `init` when uWS rejects the upgrade. Neither `on_open` nor `on_close` runs for
+    /// such a socket.
     pub(crate) fn discard_unopened(&self) {
         self.update_flags(|f| f.set_closed(true));
         if let Some(signal) = self.signal.take() {
@@ -602,7 +608,7 @@ impl ServerWebSocket {
         self.websocket().memory_cost() + mem::size_of::<ServerWebSocket>()
     }
 
-    /// Learns the uWS socket and counts it.
+    /// Stores the uWS socket pointer and increments the server's open WebSocket count.
     fn attach(&self, ws: AnyWebSocket) {
         self.update_flags(|f| {
             f.set_packed_websocket_ptr(ws.raw() as usize as u64);
@@ -1208,9 +1214,10 @@ impl ServerWebSocket {
         };
         let (code, reason): (i32, &[u8]) =
             if u16::try_from(code).is_ok_and(bun_http::websocket::is_valid_close_code) {
-                (code, clamp_close_reason(reason.slice()))
+                (code, truncate_close_reason(reason.slice()))
             } else if matches!(code, 0 | 1005 | 1006 | 1015) {
-                // What a `close` handler reports when no code came over the wire: an empty Close frame.
+                // `close` handlers report these codes when no code was received. Passing one
+                // back in sends an empty Close frame.
                 (1005, [].as_slice())
             } else {
                 let err = global_this.create_range_error_instance(format_args!(
@@ -1224,7 +1231,7 @@ impl ServerWebSocket {
         }
 
         if self.flags.get().ws_package() {
-            // Only the Close frame goes out. The socket stays open until `on_close`.
+            // Only send the Close frame. The socket stays open until `on_close`.
             self.websocket().end(code, reason);
             return Ok(JSValue::UNDEFINED);
         }
@@ -1489,8 +1496,9 @@ impl WebSocketHandler for ServerWebSocket {
     }
 }
 
-/// The uWS callbacks of a socket of the `ws` package. The `data` value (the package's WebSocket) is
-/// `this` of every handler, payloads are Buffers, and there is no `open` handler: the upgrade returns the socket.
+/// uWS callbacks for a `ws` package socket. Handlers are called with the `data` value (the
+/// package's WebSocket) as `this`, and payloads are Buffers. There's no `open` handler because
+/// the upgrade call returns the socket.
 #[repr(transparent)]
 pub(crate) struct WsPackageSocket(ServerWebSocket);
 
@@ -1509,7 +1517,7 @@ impl WsPackageSocket {
         )
     }
 
-    /// What `callback` throws is an uncaught exception.
+    /// Anything `callback` throws becomes an uncaught exception.
     fn call<const N: usize>(
         &self,
         callback: JSValue,
@@ -1548,8 +1556,9 @@ impl WsPackageSocket {
         Ok(())
     }
 
-    /// `code`: the peer's (1005 for an empty Close frame), 1006 when the connection ended without one,
-    /// or a negated `uWS::WebSocketFailureKind` with its detail in `message`.
+    /// `code` is the peer's close code (1005 for an empty Close frame), 1006 if the connection
+    /// ended without a Close frame, or a negated `uWS::WebSocketFailureKind` with details in
+    /// `message`.
     fn on_close(&self, code: i32, message: &[u8]) -> JsResult<()> {
         let socket = &self.0;
         let handler = socket.handler();
@@ -1572,30 +1581,31 @@ impl WsPackageSocket {
         if socket.this_value.get().is_not_empty() {
             socket.this_value.with_mut(|v| v.downgrade());
         }
-        // `terminate()` set the flag and does its own accounting.
+        // If `terminate()` already set the flag, it does its own accounting.
         if !was_closed && let Some(server) = server {
             server.on_websocket_closed();
         }
         result
     }
 
-    /// The landing frame of a uWS callback: what a handler left pending is folded here.
+    /// Entry point for every uWS callback. Folds any exception the handler left pending.
     ///
-    /// Entered: the context of the script that made the server, as for every other event of an `http.Server`'s
-    /// connections. Not the handlers' own: they are one set per server, given by whoever upgraded first.
+    /// Runs in the context of the script that created the server, like every other `http.Server`
+    /// connection event. It doesn't use the handlers' own context, because each server has one
+    /// set of handlers and they come from the first upgrade.
     ///
     /// # Safety
-    /// `this` is the live user-data slot of the socket.
+    /// `this` is the socket's live user-data slot.
     #[inline(always)]
-    unsafe fn land(this: *mut Self, deliver: impl FnOnce(&Self) -> JsResult<()>) {
-        // SAFETY: per the contract of this function.
+    unsafe fn dispatch(this: *mut Self, callback: impl FnOnce(&Self) -> JsResult<()>) {
+        // SAFETY: per this function's contract.
         let this = unsafe { &*this };
         let handler = this.0.handler();
-        // An open socket keeps its server from draining, which is what clears `server`.
+        // `server` is only cleared when the server drains, and an open socket prevents that.
         let _context = handler
             .server
             .map(|server| handler.vm().enter_context(server.context_id()));
-        crate::dispatch::fold(deliver(this));
+        crate::dispatch::fold(callback(this));
     }
 }
 
@@ -1609,7 +1619,7 @@ impl WebSocketHandler for WsPackageSocket {
     unsafe fn on_message(this: *mut Self, _ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         // SAFETY: per trait contract.
         unsafe {
-            Self::land(this, |this| {
+            Self::dispatch(this, |this| {
                 this.call(this.0.handler().on_message, |global| {
                     Ok([
                         ArrayBuffer::create_buffer(global, message)?,
@@ -1623,7 +1633,7 @@ impl WebSocketHandler for WsPackageSocket {
     unsafe fn on_drain(this: *mut Self, _ws: AnyWebSocket) {
         // SAFETY: per trait contract.
         unsafe {
-            Self::land(this, |this| {
+            Self::dispatch(this, |this| {
                 this.call(this.0.handler().on_drain, |_| Ok([]))
             })
         };
@@ -1632,7 +1642,7 @@ impl WebSocketHandler for WsPackageSocket {
     unsafe fn on_ping(this: *mut Self, _ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
         unsafe {
-            Self::land(this, |this| {
+            Self::dispatch(this, |this| {
                 this.call(this.0.handler().on_ping, |global| {
                     Ok([ArrayBuffer::create_buffer(global, message)?])
                 })
@@ -1643,7 +1653,7 @@ impl WebSocketHandler for WsPackageSocket {
     unsafe fn on_pong(this: *mut Self, _ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
         unsafe {
-            Self::land(this, |this| {
+            Self::dispatch(this, |this| {
                 this.call(this.0.handler().on_pong, |global| {
                     Ok([ArrayBuffer::create_buffer(global, message)?])
                 })
@@ -1653,7 +1663,7 @@ impl WebSocketHandler for WsPackageSocket {
     #[inline(always)]
     unsafe fn on_close(this: *mut Self, _ws: AnyWebSocket, code: i32, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe { Self::land(this, |this| this.on_close(code, message)) };
+        unsafe { Self::dispatch(this, |this| this.on_close(code, message)) };
     }
 }
 

@@ -477,7 +477,7 @@ fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
             .all(|&c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
 }
 
-/// Whether a comma-separated header value names `token`, in any case.
+/// Whether a comma-separated header value contains `token` (case-insensitive).
 fn has_token(list: &[u8], token: &[u8]) -> bool {
     http::HeaderValueIterator::init(list)
         .any(|item| strings::eql_case_insensitive_ascii(item, token, true))
@@ -1199,13 +1199,15 @@ fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     Ok(JSValue::UNDEFINED)
 }
 
-/// The `options` of `server.upgrade(request, options)`, each read once.
+/// The `options` argument of `server.upgrade(request, options)`. Each property is read once.
 struct UpgradeOptions {
     data: JSValue,
     headers: Option<NonNull<FetchHeaders>>,
-    /// `Sec-WebSocket-Protocol` in `headers`. Empty declines what the client offered.
+    /// `Sec-WebSocket-Protocol` from `headers`. An empty value rejects every protocol the
+    /// client offered.
     protocol: Option<bun_core::Utf8Bytes<'static>>,
-    /// `headers` belongs to the caller's `Headers` object, or to the conversion of its HeadersInit.
+    /// These keep `headers` alive. It points into either the caller's `Headers` object or the
+    /// `FetchHeaders` converted from the caller's HeadersInit.
     _headers_object: jsc::EnsureStillAlive,
     _headers_converted: Option<HeadersRef>,
 }
@@ -1754,8 +1756,8 @@ where
             unsafe { (*p).deref() }
         });
 
-        // The handshake is what `request.headers` says, never the raw uWS request.
-        // Copied, because the option getters below can change it.
+        // Validate the handshake against `request.headers`, never the raw uWS request.
+        // Copy the values, because the option getters below can modify the headers.
         let Some(head) = request.get_fetch_headers_unless_empty() else {
             return Ok(JSValue::FALSE);
         };
@@ -1770,9 +1772,9 @@ where
         let sec_websocket_extensions = header(HTTPHeaderName::SecWebSocketExtensions);
         let offered_protocols = header(HTTPHeaderName::SecWebSocketProtocol);
 
-        // RFC 6455 §4.2.1: a request without "websocket" in |Upgrade|, "Upgrade"
-        // in |Connection|, or base64 of 16 bytes as |Sec-WebSocket-Key| is not a
-        // WebSocket handshake; fall through so the caller's fetch() can respond.
+        // RFC 6455 §4.2.1: a WebSocket handshake needs "websocket" in |Upgrade|,
+        // "Upgrade" in |Connection|, and 16 base64-encoded bytes in |Sec-WebSocket-Key|.
+        // Otherwise fall through so the caller's fetch() can respond.
         if !has_token(&upgrade_header, b"websocket")
             || !has_token(&connection_header, b"upgrade")
             || !is_valid_sec_websocket_key(&sec_websocket_key)
@@ -1793,7 +1795,7 @@ where
         let options = UpgradeOptions::from_js(global, optional)?;
         let sec_websocket_protocol = options.protocol.as_deref().unwrap_or(&offered_protocols);
 
-        // The option getters may have upgraded, answered or closed the request.
+        // The option getters may have already upgraded, responded to, or closed the request.
         if upgrader.is_aborted_or_ended()
             || !matches!(upgrader.upgrade_context.get(), UpgradeState::Pending(_))
             || !resp.can_upgrade()
@@ -1805,7 +1807,8 @@ where
         let mut cookies_to_write = upgrader.cookies.replace(None);
 
         let mut upgraded: JsResult<bool> = Ok(false);
-        // One cork for the whole 101. `HttpResponse::upgrade()` hands it to the WebSocket and releases it.
+        // Cork once for the whole 101 response. `HttpResponse::upgrade()` transfers the cork to
+        // the WebSocket and then releases it.
         resp.corked(|| {
             if options.headers.is_some() || cookies_to_write.is_some() {
                 resp.write_status(b"101 Switching Protocols");
@@ -1879,7 +1882,7 @@ where
                 )
                 .is_null()
             {
-                // SAFETY: `init` just made `ws`; its JS wrapper owns it and uWS never saw it.
+                // SAFETY: `init` just allocated `ws`. Its JS wrapper owns it, and uWS never stored it.
                 unsafe { &*ws }.discard_unopened();
                 return;
             }

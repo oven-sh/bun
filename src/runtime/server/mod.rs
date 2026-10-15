@@ -323,8 +323,9 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub(crate) inspector_server_id: jsc::DebuggerId,
 
-    /// The callbacks of the `ws` package's sockets, kept at its first upgrade on this server. Boxed:
-    /// every such `ServerWebSocket` points at it. The wrapper's `wsPackageHandlers` slot roots them.
+    /// Callbacks for the `ws` package's sockets, set by its first upgrade on this server. Boxed
+    /// because every such `ServerWebSocket` points at it. The wrapper's `wsPackageHandlers` slot
+    /// keeps the callbacks alive.
     pub(crate) ws_package_handler: Option<Box<WebSocketServerHandler>>,
 }
 
@@ -3382,9 +3383,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ws_package_handlers_set_cached
     );
 
-    /// Reads `handlers` (`{ message, ping, pong, drain, close }`, an object of `ws.ts` that nothing
-    /// else can reach or change) the first time. Later calls ignore it.
-    fn keep_ws_package_handlers(
+    /// Stores `handlers` (`{ message, ping, pong, drain, close }`) on the first call. Later calls
+    /// are no-ops. The object is private to `ws.ts`, so user code can't modify it.
+    fn init_ws_package_handlers(
         &mut self,
         global: &JSGlobalObject,
         handlers: JSValue,
@@ -3411,7 +3412,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Ok(())
     }
 
-    /// The uWS context for `ws` sockets with these options. The app makes it on first use and owns it.
+    /// The uWS context for `ws` sockets with these options. The app creates it on first use and owns it.
     fn ws_package_context(
         &mut self,
         max_payload_length: u32,
@@ -4042,16 +4043,17 @@ impl AnyServer {
         any_server_dispatch!(self, |s| s.js_value_for_dispatch())
     }
 
-    /// See [`NewServer::keep_ws_package_handlers`].
-    pub(crate) fn keep_ws_package_handlers(
+    /// See [`NewServer::init_ws_package_handlers`].
+    pub(crate) fn init_ws_package_handlers(
         &mut self,
         global: &jsc::JSGlobalObject,
         handlers: JSValue,
     ) -> jsc::JsResult<()> {
-        any_server_dispatch_mut!(self, |s| s.keep_ws_package_handlers(global, handlers))
+        any_server_dispatch_mut!(self, |s| s.init_ws_package_handlers(global, handlers))
     }
 
-    /// `None` before `keep_ws_package_handlers`, and once the server has drained: it no longer counts WebSockets.
+    /// `None` before `init_ws_package_handlers`, and after the server has drained, because it no
+    /// longer counts open WebSockets.
     pub(crate) fn ws_package_handler(&self) -> Option<bun_ptr::BackRef<WebSocketServerHandler>> {
         any_server_dispatch!(self, |s| s
             .ws_package_handler

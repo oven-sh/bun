@@ -33,7 +33,7 @@ const kHeaders = Symbol("kHeaders");
 const kReqShouldKeepAlive = Symbol("kReqShouldKeepAlive");
 const kHeadersDistinct = Symbol("kHeadersDistinct");
 const kHeadersCount = Symbol("kHeadersCount");
-// Lazy req.rawHeaders: cache slot. The bytes live on kHeaderSource
+// Cache slot for the lazy req.rawHeaders. The bytes live on kHeaderSource
 // (never cleared - unlike kHandle - so post-_destroy access still works).
 const kRawHeaders = Symbol("kRawHeaders");
 const kTrailers = Symbol("kTrailers");

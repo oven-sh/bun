@@ -73,10 +73,11 @@ impl Handler {
         self.vm.get()
     }
 
-    /// Route an error a websocket handler produced to the `error` handler as
-    /// `error(ws, error)` (a top-level call: what it throws is reported and the
-    /// handler goes on), or — with none — to the uncaught-exception path. `Err`
-    /// is only a termination pending from the preceding callback.
+    /// Routes an error thrown by a websocket handler to the `error` handler as
+    /// `error(ws, error)`, or to the uncaught-exception path if there's no `error`
+    /// handler. `error` runs as a top-level call, so anything it throws is reported
+    /// and dispatch continues. `Err` only means a termination is still pending from
+    /// the preceding callback.
     ///
     /// `on_error` must be copied to a stack local by the caller before any
     /// user JS runs: a re-entrant `ws.close()` on the last socket of a stopped
@@ -197,7 +198,7 @@ bun_core::comptime_string_map! {
         b"disable" => 0,
         b"shared" => uws::SHARED_DECOMPRESSOR,
         b"dedicated" => uws::DEDICATED_DECOMPRESSOR,
-        // The size is the inflate window, which stops at 32KB.
+        // The size is the inflate window, which maxes out at 32KB.
         b"3KB" => uws::DEDICATED_DECOMPRESSOR_2KB,
         b"4KB" => uws::DEDICATED_DECOMPRESSOR_4KB,
         b"8KB" => uws::DEDICATED_DECOMPRESSOR_8KB,
@@ -209,7 +210,7 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// `None` when `key` is not set, `Some(0)` for `false` or `"disable"`.
+/// Returns `None` if `key` isn't set, and `Some(0)` for `false` or `"disable"`.
 fn deflate_option(
     global_object: &JSGlobalObject,
     per_message_deflate: JSValue,
@@ -288,7 +289,7 @@ pub(crate) fn on_create(
                 uws::SHARED_DECOMPRESSOR,
             )?;
             if compress.unwrap_or(0) != 0 || decompress.unwrap_or(0) != 0 {
-                // The client may compress whenever the extension is on, so there is always an inflater.
+                // Once the extension is negotiated the client may compress, so always set up an inflater.
                 server.compression = compress.unwrap_or(uws::SHARED_COMPRESSOR)
                     | decompress
                         .filter(|&bits| bits != 0)

@@ -1322,8 +1322,8 @@ fn write_proxy_connect(writer: &mut Vec<u8>, client: &HTTPClient) -> crate::Resu
     Ok(())
 }
 
-/// The CONNECT request of `fetch` and of the WebSocket client. A `Host` or
-/// `Proxy-Connection` in `proxy_headers` replaces the default one.
+/// Writes the proxy CONNECT request. Shared by `fetch` and the WebSocket client.
+/// A `Host` or `Proxy-Connection` in `proxy_headers` overrides the default.
 pub fn write_connect_request(
     writer: &mut Vec<u8>,
     hostname: &[u8],

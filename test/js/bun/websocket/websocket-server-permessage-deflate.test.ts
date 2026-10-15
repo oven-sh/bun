@@ -1,5 +1,5 @@
-// RFC 7692 negotiation and the dedicated compressor sizes of Bun.serve's
-// `perMessageDeflate`, observed from a raw TCP peer that does its own framing.
+// Tests RFC 7692 negotiation and the dedicated compressor sizes of Bun.serve's
+// `perMessageDeflate`. The client is a raw TCP socket that does its own framing.
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
@@ -9,8 +9,8 @@ import { constants, inflateRawSync } from "node:zlib";
 
 type Compress = "shared" | "dedicated" | "3KB" | "32KB" | "256KB";
 
-// Deterministic pseudo-random text. Two calls with the same `n` return the same
-// text, and `n` is the LZ77 distance a second copy needs to back-reference the first.
+// Deterministic pseudo-random text: the same `n` always returns the same text.
+// When it's sent twice, the second copy needs an LZ77 distance of `n` to back-reference the first.
 function pseudoRandomText(n: number): string {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   let state = 777;
@@ -24,25 +24,25 @@ function pseudoRandomText(n: number): string {
 
 function maskedTextFrame(text: string): Buffer {
   const payload = Buffer.from(text);
-  if (payload.length > 125) throw new Error("the peer only sends short frames");
+  if (payload.length > 125) throw new Error("maskedTextFrame() only supports payloads up to 125 bytes");
   const mask = Buffer.from([0x12, 0x34, 0x56, 0x78]);
   const masked = Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4]));
   return Buffer.concat([Buffer.from([0x81, 0x80 | payload.length]), mask, masked]);
 }
 
-// Inflates one permessage-deflate payload with no prior context. Throws when the
-// payload back-references bytes of an earlier message.
-function inflateFresh(payload: Buffer): Buffer {
+// Inflates one permessage-deflate payload with no prior context. Throws if the
+// payload back-references an earlier message.
+function inflateWithoutContext(payload: Buffer): Buffer {
   return inflateRawSync(Buffer.concat([payload, Buffer.from([0x00, 0x00, 0xff, 0xff])]), {
     finishFlush: constants.Z_SYNC_FLUSH,
   });
 }
 
-// Inflates one payload and tells whether the stream ended, which only a BFINAL=1 block does.
-function blocksOf(payload: Buffer): { text: string; ended: boolean } {
+// Inflates one payload and reports whether the deflate stream ended. Only a BFINAL=1 block ends it.
+function inflateAndCheckEnd(payload: Buffer): { text: string; ended: boolean } {
   const input = Buffer.concat([payload, Buffer.from([0x00, 0x00, 0xff, 0xff])]);
   const { buffer, engine } = inflateRawSync(input, { finishFlush: constants.Z_SYNC_FLUSH, info: true });
-  // zlib stops reading at the end of the stream, so the tail stays unread.
+  // zlib stops reading at the end of the stream, so it leaves the trailing bytes unread.
   return { text: buffer.toString(), ended: engine.bytesWritten < input.length };
 }
 
@@ -53,7 +53,7 @@ interface Frame {
 
 interface Peer {
   extensions: string | undefined;
-  // Asks the server to send pseudoRandomText(n) compressed, returns the frame.
+  // Asks the server to send pseudoRandomText(n) compressed and returns the frame.
   request(n: number): Promise<Frame>;
   // Asks the server to publish pseudoRandomText(n) compressed to every peer.
   publish(n: number): void;
@@ -61,8 +61,8 @@ interface Peer {
   close(): void;
 }
 
-// The server sends pseudoRandomText(n) (compressed) on the message "n", and
-// publishes it to every subscriber on the message "publish n".
+// On the message "n" the server replies with pseudoRandomText(n), compressed.
+// On "publish n" it publishes that text to every subscriber.
 function startServer(perMessageDeflate: boolean | { compress: Compress; decompress: boolean }) {
   const server = serve({
     port: 0,
@@ -186,8 +186,8 @@ async function connect(server: ReturnType<typeof startServer>, offer: string): P
   };
 }
 
-// The second copy of an `n` byte text only compresses well when the compressor
-// kept the first copy in its window, which needs windowBits w with 2^w - 262 >= n.
+// The second copy of an `n`-byte text only compresses well if the first copy is
+// still in the compressor's window. That needs windowBits w where 2^w - 262 >= n.
 async function secondCopySize(peer: Peer, n: number): Promise<number> {
   const first = await peer.request(n);
   expect(first.rsv1).toBe(true);
@@ -199,12 +199,12 @@ async function secondCopySize(peer: Peer, n: number): Promise<number> {
 describe.concurrent("Bun.serve perMessageDeflate", () => {
   describe("dedicated compressor sizes", () => {
     test.each([
-      // [compress option, window header, n that fits the window, n that does not]
+      // [compress option, window header, n that fits in the window, n that doesn't]
       ["dedicated", undefined, 5000, 40000],
       ["256KB", undefined, 5000, 40000],
       ["32KB", "server_max_window_bits=12", 3000, 5000],
       ["3KB", "server_max_window_bits=9", 200, 300],
-    ] as const)("compress: %p uses the window it announces", async (compress, window, fits, tooFar) => {
+    ] as const)("compress: %p uses the window size it negotiates", async (compress, window, fits, tooFar) => {
       await using server = startServer({ compress, decompress: true });
       const peer = await connect(server, "permessage-deflate");
       try {
@@ -220,21 +220,21 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
   });
 
   describe("negotiation with a dedicated compressor", () => {
-    test("server_no_context_takeover is echoed and honoured", async () => {
+    test("echoes and honors server_no_context_takeover", async () => {
       await using server = startServer({ compress: "dedicated", decompress: true });
       const peer = await connect(server, "permessage-deflate; server_no_context_takeover");
       try {
         expect(peer.extensions).toBe("permessage-deflate; client_no_context_takeover; server_no_context_takeover");
         const first = await peer.request(600);
         const second = await peer.request(600);
-        expect(inflateFresh(first.payload).toString()).toBe(pseudoRandomText(600));
-        expect(inflateFresh(second.payload).toString()).toBe(pseudoRandomText(600));
+        expect(inflateWithoutContext(first.payload).toString()).toBe(pseudoRandomText(600));
+        expect(inflateWithoutContext(second.payload).toString()).toBe(pseudoRandomText(600));
       } finally {
         peer.close();
       }
     });
 
-    test("server_max_window_bits lowers the window and is echoed", async () => {
+    test("echoes server_max_window_bits and shrinks the window", async () => {
       await using server = startServer({ compress: "dedicated", decompress: true });
       const peer = await connect(server, "permessage-deflate; server_max_window_bits=10");
       try {
@@ -246,7 +246,7 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
       }
     });
 
-    test("server_max_window_bits=15 is echoed", async () => {
+    test("echoes server_max_window_bits=15", async () => {
       await using server = startServer({ compress: "dedicated", decompress: true });
       const peer = await connect(server, "permessage-deflate; server_max_window_bits=15");
       try {
@@ -256,7 +256,7 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
       }
     });
 
-    test("parameters of another extension after the comma are not ours", async () => {
+    test("ignores another extension's parameters after the comma", async () => {
       await using server = startServer({ compress: "dedicated", decompress: true });
       const peer = await connect(server, "permessage-deflate; client_max_window_bits, x-other; foo=1");
       try {
@@ -297,20 +297,20 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
   });
 
   describe("negotiation with the shared compressor", () => {
-    test("server_max_window_bits=15 is echoed next to server_no_context_takeover", async () => {
+    test("echoes server_max_window_bits=15 alongside server_no_context_takeover", async () => {
       await using server = startServer(true);
       const peer = await connect(server, "permessage-deflate; server_max_window_bits=15");
       try {
         expect(peer.extensions).toBe(
           "permessage-deflate; client_no_context_takeover; server_no_context_takeover; server_max_window_bits=15",
         );
-        expect(inflateFresh((await peer.request(5000)).payload).toString()).toBe(pseudoRandomText(5000));
+        expect(inflateWithoutContext((await peer.request(5000)).payload).toString()).toBe(pseudoRandomText(5000));
       } finally {
         peer.close();
       }
     });
 
-    test("a lower server_max_window_bits is declined", async () => {
+    test("declines a lower server_max_window_bits", async () => {
       await using server = startServer(true);
       const peer = await connect(server, "permessage-deflate; server_max_window_bits=10");
       try {
@@ -321,7 +321,7 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
     });
   });
 
-  describe("several offers", () => {
+  describe("multiple offers", () => {
     test.each([
       // [compress, offers, response]
       [
@@ -344,20 +344,20 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
         "x-other; foo=1, permessage-deflate; server_max_window_bits=11",
         "permessage-deflate; client_no_context_takeover; server_max_window_bits=11",
       ],
-      // The first acceptable offer wins, not the last.
+      // The first valid offer wins, not the last.
       [
         "dedicated",
         "permessage-deflate; server_max_window_bits=10, permessage-deflate",
         "permessage-deflate; client_no_context_takeover; server_max_window_bits=10",
       ],
-    ] as const)("compress: %p takes the first acceptable one of %p", async (compress, offers, response) => {
+    ] as const)("compress: %p accepts the first valid offer in %p", async (compress, offers, response) => {
       await using server = startServer({ compress, decompress: true });
       const peer = await connect(server, offers);
       try {
         expect(peer.extensions).toBe(response);
         const frame = await peer.request(600);
         expect(frame.rsv1).toBe(true);
-        expect(inflateFresh(frame.payload).toString()).toBe(pseudoRandomText(600));
+        expect(inflateWithoutContext(frame.payload).toString()).toBe(pseudoRandomText(600));
       } finally {
         peer.close();
       }
@@ -365,7 +365,7 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
   });
 
   test.each([
-    // Same characters, other order.
+    // Same characters in a different order.
     "deflate-permessage",
     "permessage-deflate; takeover_context_no_server",
     "permessage-deflate; server_max_bits_window=10",
@@ -378,10 +378,10 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
     "permessage-deflate; client_max_window_bits=",
     "permessage-deflate;",
     "permessage-deflate; ; client_max_window_bits",
-    // A per-frame extension of old Safari versions, not permessage-deflate.
+    // Old Safari's per-frame extension, which isn't permessage-deflate.
     "x-webkit-deflate-frame",
     "x-webkit-deflate-frame; no_context_takeover",
-  ])("the offer %p is not accepted", async offer => {
+  ])("declines the offer %p", async offer => {
     await using server = startServer(true);
     const peer = await connect(server, offer);
     try {
@@ -394,7 +394,7 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
     }
   });
 
-  test("whitespace around separators and a quoted value are accepted", async () => {
+  test("accepts whitespace around separators and a quoted value", async () => {
     await using server = startServer({ compress: "dedicated", decompress: true });
     const peer = await connect(
       server,
@@ -407,19 +407,19 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
     }
   });
 
-  // Safari fails the connection on the message after one that ends in a BFINAL=1 block.
+  // If a message ends in a BFINAL=1 block, Safari fails the connection on the next message.
   describe.each([true, { compress: "dedicated", decompress: true }] as const)(
     "perMessageDeflate: %j never sets BFINAL",
     perMessageDeflate => {
-      test.each([1, 20, 600, 4000, 5000, 40000])("in a message of %d bytes", async n => {
+      test.each([1, 20, 600, 4000, 5000, 40000])("in a %d-byte message", async n => {
         await using server = startServer(perMessageDeflate);
         for (const send of [(peer: Peer) => peer.request(n), (peer: Peer) => (peer.publish(n), peer.readFrame())]) {
-          // A new peer each time: blocksOf() has no context of an earlier message.
+          // Use a new peer each time. inflateAndCheckEnd() has no context from earlier messages.
           const peer = await connect(server, "permessage-deflate");
           try {
             const frame = await send(peer);
             expect(frame.rsv1).toBe(true);
-            expect(blocksOf(frame.payload)).toEqual({ text: pseudoRandomText(n), ended: false });
+            expect(inflateAndCheckEnd(frame.payload)).toEqual({ text: pseudoRandomText(n), ended: false });
           } finally {
             peer.close();
           }
@@ -428,7 +428,7 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
     },
   );
 
-  test("publish compresses for each subscriber with its own negotiated state", async () => {
+  test("publish() compresses with each subscriber's own negotiated parameters", async () => {
     await using server = startServer({ compress: "dedicated", decompress: true });
     const peers: Peer[] = [];
     try {
@@ -444,9 +444,9 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
       for (let i = 0; i < 2; i++) {
         withTakeover.publish(600);
         const [a, b] = await Promise.all([withTakeover.readFrame(), withoutTakeover.readFrame()]);
-        expect(inflateFresh(b.payload).toString()).toBe(text);
+        expect(inflateWithoutContext(b.payload).toString()).toBe(text);
         if (i === 0) {
-          expect(inflateFresh(a.payload).toString()).toBe(text);
+          expect(inflateWithoutContext(a.payload).toString()).toBe(text);
         } else {
           // The dedicated compressor back-references the first publish.
           expect(a.payload.length).toBeLessThan(60);
@@ -458,11 +458,12 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
   });
 });
 
-// The fixture explains the race. Only a sanitizer sees the stray write. "mmap" is a
-// plain Uint8Array over a MAP_SHARED region: a SharedArrayBuffer is not the only racing input.
-describe.concurrent.each(["sab", "mmap"])("ws.send() of %s memory a writer races", mode => {
+// See the fixture for how the race works. Only a sanitizer catches the out-of-bounds write.
+// "mmap" is a plain Uint8Array over a MAP_SHARED region, so a SharedArrayBuffer isn't the only
+// input another thread can modify.
+describe.concurrent.each(["sab", "mmap"])("ws.send() of %s memory while another thread writes to it", mode => {
   test.skipIf(!isASAN)(
-    "does not overrun the deflate buffer",
+    "doesn't overrun the deflate buffer",
     async () => {
       using dir = tempDir("ws-deflate-race", { "bytes.bin": Buffer.alloc(4000) });
       await using proc = Bun.spawn({
@@ -471,7 +472,7 @@ describe.concurrent.each(["sab", "mmap"])("ws.send() of %s memory a writer races
           ...bunEnv,
           MODE: mode,
           FILE: path.join(String(dir), "bytes.bin"),
-          // symbolize=0: symbolizing a sanitizer report takes longer than the test may run.
+          // symbolize=0: symbolizing a sanitizer report takes longer than the test timeout.
           ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
         },
         stdout: "pipe",
@@ -481,7 +482,7 @@ describe.concurrent.each(["sab", "mmap"])("ws.send() of %s memory a writer races
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
     },
-    // A debug sanitizer build needs about 3s to boot the worker, before the race starts.
+    // A debug ASAN build takes about 3s just to start the worker.
     20_000,
   );
 });

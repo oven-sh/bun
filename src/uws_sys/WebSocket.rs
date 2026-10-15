@@ -297,14 +297,14 @@ impl Default for WebSocketBehavior {
     }
 }
 
-/// `uws_ws_package_behavior_t`: a context for sockets of the `ws` package. It has no route.
+/// `uws_ws_package_behavior_t`: settings for a `ws` package socket context. It isn't bound to a route.
 #[repr(C)]
 pub struct WsPackageBehavior {
-    /// Bytes. 0 = no limit.
+    /// In bytes. 0 = no limit.
     pub max_payload_length: c_uint,
     pub auto_pong: bool,
     pub skip_utf8_validation: bool,
-    /// Whether sockets of this context use permessage-deflate.
+    /// Whether this context's sockets use permessage-deflate.
     pub compression: bool,
     pub open: uws_websocket_handler,
     pub message: uws_websocket_message_handler,
@@ -467,7 +467,7 @@ where
         unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
     }
 
-    /// No route and so no `Server`: use `Wrap::<(), T, SSL>`.
+    /// These contexts aren't bound to a route, so `Server` is unused. Call it as `Wrap::<(), T, SSL>`.
     pub fn ws_package(
         max_payload_length: c_uint,
         auto_pong: bool,

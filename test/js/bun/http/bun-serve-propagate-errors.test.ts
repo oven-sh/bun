@@ -42,7 +42,7 @@ test("Bun.serve() propagates errors to the parent", async () => {
 test("Bun.serve() propagates an error thrown after server.upgrade() to the parent", async () => {
   const code = `import { test } from "bun:test";
 
-test("a handler that throws after server.upgrade()", async () => {
+test("fetch() throws after server.upgrade()", async () => {
   const server = Bun.serve({
     development: false,
     port: 0,
@@ -84,18 +84,18 @@ test("a handler that throws after server.upgrade()", async () => {
   expect(exitCode).toBe(1);
 });
 
-// After server.upgrade() there is no response left to send, but the handler is still running. What
-// it throws, or rejects with when the server had subscribed to its promise before the upgrade, used
-// to vanish. It goes where any error of a handler goes: to error() (whose Response is dropped), or
-// to stderr, and the server keeps serving. (For a handler that upgrades before it returns a promise,
-// see websocket-server.test.ts.)
-describe.concurrent("a handler that fails after server.upgrade()", () => {
+// After server.upgrade() there's no response left to send, but the handler keeps running. Errors it
+// threw, or rejected with once the server had subscribed to its promise, used to be silently dropped.
+// Now they're reported like any other handler error: passed to error() (its Response is ignored) or
+// printed to stderr, and the server keeps serving. Handlers that upgrade before returning a promise
+// are covered in websocket-server.test.ts.
+describe.concurrent("handler errors after server.upgrade()", () => {
   const listeners = `
     process.on("uncaughtException", e => console.log("uncaughtException:", String(e?.message ?? e)));
     process.on("unhandledRejection", e => console.log("unhandledRejection:", String(e?.message ?? e)));`;
-  const errorHook = `error(e) { console.log("error() saw:", e.message); return new Response("dropped"); },`;
-  // The macrotask keeps the promise pending past the dispatch, so the server subscribes to it.
-  const afterDispatch = `const afterDispatch = () => new Promise(resolve => setImmediate(resolve));`;
+  const errorHandler = `error(e) { console.log("error() saw:", e.message); return new Response("dropped"); },`;
+  // Keeps the promise pending after fetch() returns, so the server has to subscribe to it.
+  const nextMacrotask = `const nextMacrotask = () => new Promise(resolve => setImmediate(resolve));`;
 
   async function runChild(source: string) {
     await using proc = spawn({
@@ -108,36 +108,36 @@ describe.concurrent("a handler that fails after server.upgrade()", () => {
     return { stdoutLines: stdout.trim().split("\n").sort(), stderr, exitCode };
   }
 
-  function upgradeChild(handlers: string, development = false) {
+  function runUpgradeChild(handlers: string, development = false) {
     return runChild(
       `${listeners}
-       ${afterDispatch}
+       ${nextMacrotask}
        const server = Bun.serve({
          port: 0,
          development: ${development},
          ${handlers}
          websocket: {
-           // The client answers, and only then closes: by then the handler has failed.
+           // Close only after the client replies, so the handler has already failed by then.
            open(ws) { ws.send("hi"); },
            message(ws) { ws.close(); },
          },
        });
        const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
        ws.onerror = () => { console.log("ws error"); process.exit(1); };
-       ws.onmessage = async e => { await afterDispatch(); await afterDispatch(); console.log("ws got:", e.data); ws.send("bye"); };
+       ws.onmessage = async e => { await nextMacrotask(); await nextMacrotask(); console.log("ws got:", e.data); ws.send("bye"); };
        ws.onclose = () => { console.log("pendingRequests:", server.pendingRequests); server.stop(true); };`,
     );
   }
 
   const syncThrow = `fetch(req, srv) { srv.upgrade(req); throw new Error("E"); },`;
-  const rejectionAfterAwait = `async fetch(req, srv) { await afterDispatch(); srv.upgrade(req); throw new Error("E"); },`;
+  const asyncThrow = `async fetch(req, srv) { await nextMacrotask(); srv.upgrade(req); throw new Error("E"); },`;
 
   test.each([
     ["fetch() throws", syncThrow],
     ["a route throws", `routes: { "/": (req, srv) => { srv.upgrade(req); throw new Error("E"); } },`],
-    ["fetch() awaits, upgrades and throws", rejectionAfterAwait],
+    ["fetch() awaits, upgrades, then throws", asyncThrow],
     [
-      "fetch() returns a promise that rejects, then upgrades in the same task",
+      "fetch()'s promise rejects right before upgrade() in the same task",
       `fetch(req, srv) {
          return new Promise((resolve, reject) => {
            setImmediate(() => { reject(new Error("E")); srv.upgrade(req); });
@@ -145,15 +145,15 @@ describe.concurrent("a handler that fails after server.upgrade()", () => {
        },`,
     ],
     [
-      "fetch() awaits, upgrades and throws, and the program catches the same promise",
+      "fetch() awaits, upgrades, then throws, and user code also catches the promise",
       `fetch(req, srv) {
-         const promise = (async () => { await afterDispatch(); srv.upgrade(req); throw new Error("E"); })();
+         const promise = (async () => { await nextMacrotask(); srv.upgrade(req); throw new Error("E"); })();
          promise.catch(() => {});
          return promise;
        },`,
     ],
-  ])("error() gets it when %s", async (_, handlers) => {
-    expect(await upgradeChild(handlers + errorHook)).toEqual({
+  ])("calls error() when %s", async (_, handlers) => {
+    expect(await runUpgradeChild(handlers + errorHandler)).toEqual({
       stdoutLines: ["error() saw: E", "pendingRequests: 0", "ws got: hi"],
       stderr: "",
       exitCode: 0,
@@ -161,46 +161,46 @@ describe.concurrent("a handler that fails after server.upgrade()", () => {
   });
 
   test.each([
-    ["fetch() throws and there is no error()", syncThrow, false],
-    ["fetch() throws and there is no error(), in development", syncThrow, true],
-    ["fetch() awaits, upgrades and throws and there is no error()", rejectionAfterAwait, false],
-    ["fetch() awaits, upgrades and throws and there is no error(), in development", rejectionAfterAwait, true],
+    ["fetch() throws with no error() handler", syncThrow, false],
+    ["fetch() throws with no error() handler, in development mode", syncThrow, true],
+    ["fetch() awaits, upgrades, then throws with no error() handler", asyncThrow, false],
+    ["fetch() awaits, upgrades, then throws with no error() handler, in development mode", asyncThrow, true],
     [
-      "error() upgrades and throws",
+      "error() upgrades, then throws",
       `fetch(req) { throw Object.assign(new Error("boom"), { req }); },
        error(err) { server.upgrade(err.req); throw new Error("E"); },`,
       false,
     ],
     [
-      "error() awaits, upgrades and throws",
+      "error() awaits, upgrades, then throws",
       `fetch(req) { throw Object.assign(new Error("boom"), { req }); },
-       async error(err) { await afterDispatch(); server.upgrade(err.req); throw new Error("E"); },`,
+       async error(err) { await nextMacrotask(); server.upgrade(err.req); throw new Error("E"); },`,
       false,
     ],
-  ])("it is printed and the server keeps serving when %s", async (_, handlers, development) => {
-    const { stdoutLines, stderr, exitCode } = await upgradeChild(handlers, development);
+  ])("prints the error and keeps serving when %s", async (_, handlers, development) => {
+    const { stdoutLines, stderr, exitCode } = await runUpgradeChild(handlers, development);
     expect(stderr).toContain("error: E\n");
-    // The process runs to its natural end. Its exit code is then 1, as after any error of a handler that was printed.
+    // The process exits on its own, with code 1 like after any printed handler error.
     expect({ stdoutLines, exitCode }).toEqual({ stdoutLines: ["pendingRequests: 0", "ws got: hi"], exitCode: 1 });
   });
 
-  test("nothing is reported when the handler returns a Response after the upgrade", async () => {
-    const handlers = `async fetch(req, srv) { await afterDispatch(); srv.upgrade(req); return new Response("unused"); },`;
-    expect(await upgradeChild(handlers + errorHook)).toEqual({
+  test("reports nothing when the handler returns a Response after upgrading", async () => {
+    const handlers = `async fetch(req, srv) { await nextMacrotask(); srv.upgrade(req); return new Response("unused"); },`;
+    expect(await runUpgradeChild(handlers + errorHandler)).toEqual({
       stdoutLines: ["pendingRequests: 0", "ws got: hi"],
       stderr: "",
       exitCode: 0,
     });
   });
 
-  test("a rejection that follows a client abort stays dropped", async () => {
+  test("still drops a rejection after a client abort", async () => {
     const result = await runChild(
       `${listeners}
        const received = Promise.withResolvers();
        const aborted = Promise.withResolvers();
        const server = Bun.serve({
          port: 0,
-         ${errorHook}
+         ${errorHandler}
          async fetch(req) {
            req.signal.addEventListener("abort", aborted.resolve);
            received.resolve();
@@ -221,14 +221,14 @@ describe.concurrent("a handler that fails after server.upgrade()", () => {
     expect(result).toEqual({ stdoutLines: ["client: AbortError", "done"], stderr: "", exitCode: 0 });
   });
 
-  // server.upgrade() answers an unsupported Sec-WebSocket-Version itself and returns false.
-  test("a throw that follows a 426 from server.upgrade() stays dropped", async () => {
+  // server.upgrade() responds to an unsupported Sec-WebSocket-Version with a 426 and returns false.
+  test("still drops an error thrown after server.upgrade() responded with 426", async () => {
     const result = await runChild(
       `${listeners}
        const server = Bun.serve({
          port: 0,
          hostname: "127.0.0.1",
-         ${errorHook}
+         ${errorHandler}
          fetch(req, srv) {
            if (srv.upgrade(req)) return;
            throw new Error("E");

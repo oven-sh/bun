@@ -404,8 +404,8 @@ impl<const SSL: bool> App<SSL> {
         c::uws_filter(Self::SSL_FLAG, self.as_raw(), Some(handler), user_data)
     }
 
-    /// Calls with the same `context_key` share one uWS WebSocketContext: it keeps the callbacks
-    /// of the first call and takes the settings of the last one. The key is only compared.
+    /// Calls with the same `context_key` share one uWS WebSocketContext. It keeps the first
+    /// call's callbacks and the last call's settings. The key is only compared, never dereferenced.
     pub fn ws(
         &mut self,
         pattern: &[u8],
@@ -430,8 +430,8 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
-    /// The app's context for `ws` package sockets with these options, created on first use.
-    /// Lives as long as the app. The callbacks must be the same in every call.
+    /// Returns the app's context for `ws` package sockets with these options, creating it on
+    /// first use. It lives as long as the app. Every call must pass the same callbacks.
     pub fn ws_package_context(
         &mut self,
         behavior: &WsPackageBehavior,

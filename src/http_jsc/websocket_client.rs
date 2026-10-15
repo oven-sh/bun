@@ -52,14 +52,15 @@ const STACK_FRAME_SIZE: usize = 1024;
 const MIN_COMPRESS_SIZE: usize = 860;
 /// RFC 6455 §5.5: a control frame's payload is at most 125 bytes.
 const MAX_CONTROL_PAYLOAD: usize = 125;
-/// The longest frame `ws` and undici take: a length that a JS number holds exactly.
+/// Largest frame length `ws` and undici accept: `Number.MAX_SAFE_INTEGER`.
 const MAX_PAYLOAD_LENGTH: u64 = (1 << 53) - 1;
 const MAX_CONTROL_FRAME_SIZE: usize = WebsocketHeader::frame_size(MAX_CONTROL_PAYLOAD, true);
-/// The peer decides how many Pings there are, so their answers have a limit, which the messages of the
-/// application do not have. RFC 6455 5.5.3 lets a Pong answer only the latest Ping.
-const MAX_UNSENT_FOR_A_PONG: usize = 16 * 1024 * 1024;
+/// Skip auto-pongs while more than this many bytes are unsent. A peer can send unlimited Pings,
+/// so unbounded replies would let it exhaust our memory. App sends aren't capped.
+/// RFC 6455 §5.5.3 allows answering only the most recent Ping.
+const AUTO_PONG_BACKPRESSURE_LIMIT: usize = 16 * 1024 * 1024;
 
-/// Seconds from our Close frame until the connection is dropped (`closeTimeout` of the `ws` package).
+/// Seconds to wait after sending our Close frame before dropping the connection (`closeTimeout` in `ws`).
 #[inline]
 fn close_timeout_seconds() -> core::ffi::c_uint {
     bun_http::normalize_idle_timeout_seconds(
@@ -73,31 +74,32 @@ fn close_timeout_seconds() -> core::ffi::c_uint {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ConnectedOptions {
-    /// Bytes of one message after reassembly and inflation. 0 = no limit.
+    /// Max size of one message in bytes, after reassembly and decompression. 0 = no limit.
     pub max_payload_length: usize,
     pub auto_pong: bool,
-    /// The `ws` module owns the socket. Text messages are validated and handed over as UTF-8
-    /// bytes, it hears of a drained send queue, and it times the closing handshakes it starts.
+    /// This client backs a `ws` module WebSocket. Text messages are validated and delivered as
+    /// UTF-8 bytes, `did_drain` fires when the send queue empties, and `ws` runs the close timer.
     pub ws_mode: bool,
-    /// With `ws_mode`: text messages and close reasons are taken as they come.
+    /// Only with `ws_mode`: don't validate UTF-8 in text messages and close reasons.
     pub skip_utf8_validation: bool,
-    /// The server's end of a connection: it expects masked frames and sends unmasked ones.
+    /// Act as the server side: expect masked frames and send unmasked ones.
     pub is_server: bool,
 }
 
-/// What carries the frames.
+/// The underlying connection that frames are sent and received on.
 enum Transport {
-    /// `tcp`, which is detached once the connection is gone, whatever carried it.
+    /// `self.tcp`. Every transport is reset to this once the connection closes, with `tcp` detached.
     Socket,
-    /// wss:// through an HTTP proxy: the tunnel does TLS, so this is used with ssl=false.
+    /// wss:// through an HTTP proxy. The tunnel handles TLS, so this is only used with SSL=false.
     /// Holds one ref, released in `clear_data`.
     Tunnel(RefPtr<WebSocketProxyTunnel>),
-    /// A stream that lives in JS. Bytes go out through C++, which takes all of them,
-    /// and come in through `feed`. Nothing but C++ holds a ref on such a client.
+    /// A JS stream. Writes go through C++, which always accepts the whole buffer.
+    /// Reads arrive through `feed`. C++ holds the only ref on this client.
     Stream,
 }
 
-/// [`Transport`] by value: no borrow of the cell spans a write, which can replace it.
+/// A copy of [`Transport`], so no borrow of the cell is held across a write.
+/// A write can re-enter and replace the transport.
 #[derive(Clone, Copy)]
 enum Io {
     Socket,
@@ -105,15 +107,15 @@ enum Io {
     Stream,
 }
 
-/// A server's view of the frame it is reading.
+/// Unmasking state for the frame being read. Server only.
 #[derive(Clone, Copy)]
 struct Unmask {
-    /// The masking key, rotated so that its first byte belongs to the next payload byte.
+    /// The masking key, rotated so `key[0]` applies to the next payload byte.
     key: [u8; 4],
     /// Bytes of `key` read so far.
     key_len: u8,
-    /// The state that reads the payload.
-    then: ReceiveState,
+    /// State to enter once the key is complete.
+    payload_state: ReceiveState,
 }
 
 impl Unmask {
@@ -123,30 +125,31 @@ impl Unmask {
     }
 }
 
-/// How the client lets go of a connection it has no more use for.
+/// How to close the underlying socket.
 #[derive(Clone, Copy)]
-pub(crate) enum HangUp {
-    /// As `socket.destroy()` in Node: what the kernel holds is still sent.
+pub(crate) enum CloseMode {
+    /// Like Node's `socket.destroy()`: data already in the kernel's send buffer is still sent.
     Fin,
-    /// Nobody is left to care: the JS object was collected, or its context is going away.
+    /// Send a RST and drop unsent data. For when the JS object was collected or its context is
+    /// being torn down.
     Reset,
 }
 
-impl HangUp {
+impl CloseMode {
     pub(crate) fn close<const SSL: bool>(self, socket: Socket<SSL>) {
         match self {
-            HangUp::Fin => socket.close_now(),
-            HangUp::Reset => socket.close(uws::CloseKind::Failure),
+            CloseMode::Fin => socket.close_now(),
+            CloseMode::Reset => socket.close(uws::CloseKind::Failure),
         }
     }
 }
 
 /// How a connection ended; see [`WebSocket::finish`].
 enum Outcome {
-    /// It is closed, or is now: by the peer, the close timeout or `terminate()`.
+    /// Closed by the peer, the close timeout or `terminate()`.
     Closed,
-    /// The client failed it (RFC 6455 §7.1.7) and does not wait for the peer.
-    /// The string goes into the error's message.
+    /// We failed the connection (RFC 6455 §7.1.7) and won't wait for the peer.
+    /// The string is appended to the error message.
     Failed(ErrorCode, BunString),
 }
 
@@ -167,19 +170,19 @@ pub struct WebSocket<const SSL: bool> {
     // we need to start with final so we validate the first frame
     pub(crate) receiving_is_final: Cell<bool>,
 
-    /// The payload of the control frame that is being read.
+    /// Payload of the control frame being read.
     control_payload: Cell<[u8; MAX_CONTROL_PAYLOAD]>,
     control_payload_len: Cell<u8>,
-    /// A Ping/Pong/Close payload is mid-accumulation in `control_payload`.
+    /// A Ping/Pong/Close payload is partially buffered in `control_payload`.
     pub(crate) control_frame_started: Cell<bool>,
-    /// Only a server uses it.
+    /// Server only.
     unmask: Cell<Unmask>,
-    /// Our Close frame is written or queued: no frame may follow it (RFC 6455 §5.5.1).
+    /// We wrote or queued our Close frame. No frame may follow it (RFC 6455 §5.5.1).
     close_sent: Cell<bool>,
-    /// Code and reason of the peer's Close frame, which the `close` event reports (RFC 6455 §7.1.5).
+    /// Code and reason from the peer's Close frame, reported by the `close` event (RFC 6455 §7.1.5).
     close_received: RefCell<Option<(u16, BunString)>>,
-    /// Our Close frame is written, nothing more is read, and the peer was told so with a half-close.
-    ended_our_side: Cell<bool>,
+    /// We flushed our Close frame, stopped reading and half-closed the connection.
+    sent_fin: Cell<bool>,
 
     pub(crate) receive_body_remain: Cell<usize>,
     pub(crate) receive_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
@@ -194,11 +197,11 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) payload_length_frame_bytes: Cell<[u8; 8]>,
     pub(crate) payload_length_frame_len: Cell<u8>,
 
-    /// Bytes that wait to be parsed. Those that arrived with the 101: until after `open`, or
-    /// after `resume()` when `open` left the socket paused. Those a `feed` brought while
-    /// another one was `parsing`: until that one is through.
+    /// Bytes not parsed yet. Either bytes that arrived with the 101, held until after `open`
+    /// (or until `resume()` if an `open` listener paused the socket), or bytes from a
+    /// re-entrant `feed`, held until the outer `feed` finishes.
     initial_data: Cell<Option<Box<InitialData>>>,
-    /// A `feed` is on the stack.
+    /// A `feed` call is on the stack.
     parsing: Cell<bool>,
     options: ConnectedOptions,
     pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,
@@ -301,9 +304,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// `terminate()`. For `ws` it is the loss of the connection: `handle_close` and
-    /// `handle_tunnel_close` still parse what the client holds, with nowhere to send an answer.
-    /// A listener they call can get here again, with the connection gone: they go on.
+    /// Implements `terminate()`. In `ws_mode` this only closes the socket, so `handle_close` /
+    /// `handle_tunnel_close` still parse `initial_data`, though replies can no longer be sent.
+    /// A listener fired from that parse can call `terminate()` again. The socket is already
+    /// closed by then, so the nested call is a no-op.
     pub(crate) fn cancel(this: ThisPtr<Self>) {
         log!("cancel");
         let _guard = RefPtr::from_this(this);
@@ -322,20 +326,20 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// The caller holds a ref guard. In tunnel mode the socket is the upgrade client's and only the tunnel reaches it.
-    /// A JS stream is told by `finish`, the one caller that may run JS.
-    fn drop_connection(&self, how: HangUp) {
+    /// Doesn't destroy a JS stream. `finish` does that, as the only caller allowed to run JS.
+    fn drop_connection(&self, mode: CloseMode) {
         let tunnel = self.tunnel().map(RefPtr::from_this);
         self.receive_state.set(ReceiveState::Closed);
         self.clear_data();
         match tunnel {
-            Some(tunnel) => tunnel.close_socket(how),
-            None => how.close(self.tcp.get()),
+            Some(tunnel) => tunnel.close_socket(mode),
+            None => mode.close(self.tcp.get()),
         }
     }
 
-    /// The one exit: drops the connection if it is still there, tells C++ how it
-    /// ended and forgets C++. The closing handshake was clean (RFC 6455 §7.1.4)
-    /// if both Close frames were exchanged, however the connection ended after that.
+    /// The single teardown path. Closes the connection if it's still open, reports the
+    /// outcome to C++ and releases the C++ ref. The close is clean (RFC 6455 §7.1.4) if both
+    /// Close frames were exchanged, no matter how the connection ended afterwards.
     ///
     /// Every caller holds a ref guard (the uws dispatcher, a C++ entry point,
     /// or the tunnel callback), so `self` outlives the releases below.
@@ -346,9 +350,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         jsc::mark_binding!();
         let buffered_amount = self.buffered_amount();
         let received = self.close_received.take();
-        let over_stream = matches!(self.io(), Io::Stream);
-        self.drop_connection(HangUp::Fin);
-        if over_stream {
+        let is_stream = matches!(self.io(), Io::Stream);
+        self.drop_connection(CloseMode::Fin);
+        if is_stream {
             ws.stream_destroy();
         }
         match outcome {
@@ -356,14 +360,14 @@ impl<const SSL: bool> WebSocket<SSL> {
                 ws.did_fail(code, buffered_amount, BunString::EMPTY, detail);
             }
             Outcome::Closed => {
-                let was_clean = received.is_some() && self.ended_our_side.get();
+                let was_clean = received.is_some() && self.sent_fin.get();
                 let (code, reason) = received.unwrap_or((1006, BunString::EMPTY));
                 ws.did_close(code, reason, was_clean, buffered_amount);
             }
         }
     }
 
-    /// RFC 6455 §5.5.1: what follows a Close frame is not a frame. Nor is what follows a failure.
+    /// Ignore everything received after a Close frame (RFC 6455 §5.5.1) or after a failure.
     fn stop_reading(&self) {
         self.receive_state.set(ReceiveState::Closed);
         self.clear_receive_buffers(true);
@@ -373,8 +377,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.fail_with_detail(code, BunString::EMPTY);
     }
 
-    /// RFC 6455 §7.1.7: tell the peer why, best effort, and do not wait for its answer.
-    /// `ws` reports the error now and, as after a closing handshake, the close when the connection closes.
+    /// Fail the connection (RFC 6455 §7.1.7): send a best-effort Close frame with the reason and
+    /// don't wait for a reply. In `ws_mode`, emit `error` now and `close` once the connection
+    /// actually closes, same as after a normal closing handshake.
     fn fail_with_detail(&self, code: ErrorCode, detail: BunString) {
         let Some(ws) = self.cpp_websocket() else {
             return;
@@ -389,7 +394,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         self.stop_reading();
         ws.did_error(code, detail);
-        self.end_our_side_if_done();
+        self.send_fin_if_done();
     }
 
     /// Only a TLS renegotiation reaches this: the upgrade client handles the first handshake.
@@ -646,7 +651,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.handle_data_loop(data);
     }
 
-    /// `message` events fire from here, so this never runs under a JS call into the WebSocket.
+    /// Fires `message` events, so never call this from inside a JS call into the WebSocket.
     pub(crate) fn deliver_initial_data(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
         if this.cpp_websocket().is_some_and(|ws| !ws.is_paused()) {
@@ -674,7 +679,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
 
         loop {
-            // By an earlier read, or by this one: its last frame, or a listener.
+            // `stop_reading` may have run before this call, on the previous frame, or in a listener.
             if self.receive_state.get() == ReceiveState::Closed {
                 return;
             }
@@ -716,9 +721,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         Step::Terminated
     }
 
-    /// `offender` is the opcode, length or status code the error's message names.
-    fn recv_failed_on(&self, code: ErrorCode, offender: usize) -> Step {
-        self.fail_with_detail(code, BunString::create_format(format_args!("{offender}")));
+    /// `value` is the invalid opcode, length or status code. It's appended to the error message.
+    fn recv_failed_with_value(&self, code: ErrorCode, value: usize) -> Step {
+        self.fail_with_detail(code, BunString::create_format(format_args!("{value}")));
         Step::Terminated
     }
 
@@ -747,7 +752,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let header = match parse_websocket_header(header_bytes, self.options.is_server) {
             Ok(header) => header,
             Err(code @ ErrorCode::UnsupportedControlFrame) => {
-                return self.recv_failed_on(code, (header_bytes[0] & 0x0F) as usize);
+                return self.recv_failed_with_value(code, (header_bytes[0] & 0x0F) as usize);
             }
             Err(code) => return self.recv_failed(code),
         };
@@ -761,8 +766,10 @@ impl<const SSL: bool> WebSocket<SSL> {
                 if self.receiving_is_final.get() {
                     // nothing to continue here
                     // Per Autobahn test case 5.9: "The connection is failed immediately, since there is no message to continue."
-                    return self
-                        .recv_failed_on(ErrorCode::UnexpectedOpcode, header.opcode as usize);
+                    return self.recv_failed_with_value(
+                        ErrorCode::UnexpectedOpcode,
+                        header.opcode as usize,
+                    );
                 }
                 // only update final if is a valid continue
                 self.receiving_is_final.set(header.is_final);
@@ -770,8 +777,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             Opcode::Text | Opcode::Binary => {
                 // if the last one is not final this is invalid because we are waiting a continue
                 if !self.receiving_is_final.get() {
-                    return self
-                        .recv_failed_on(ErrorCode::UnexpectedOpcode, header.opcode as usize);
+                    return self.recv_failed_with_value(
+                        ErrorCode::UnexpectedOpcode,
+                        header.opcode as usize,
+                    );
                 }
                 // for text and binary frames we need to keep track of final and type
                 self.receiving_is_final.set(header.is_final);
@@ -785,7 +794,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         // RFC 7692 §6.1: RSV1 marks the start of a compressed message, so only
-        // the first frame of a data message may ever set it, once negotiated.
+        // the first frame of a data message may set it, and only if deflate was negotiated.
         if header.compressed
             && (!matches!(header.opcode, Opcode::Text | Opcode::Binary)
                 || self.deflate.borrow().is_none())
@@ -805,7 +814,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             _ => {}
         }
 
-        if let Step::Terminated = self.recv_length(cursor) {
+        if let Step::Terminated = self.validate_payload_length(cursor) {
             return Step::Terminated;
         }
 
@@ -868,12 +877,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.payload_length_frame_len.set(0);
 
         cursor.state = ReceiveState::NeedBody;
-        self.recv_length(cursor)
+        self.validate_payload_length(cursor)
     }
 
-    /// The header is read, unless `cursor.state` says that its length is still to come.
-    /// A length that cannot be fails here, before the masking key and the payload arrive.
-    fn recv_length(&self, cursor: &mut RecvCursor<'_>) -> Step {
+    /// Reject an invalid payload length as soon as it's known, before the masking key and
+    /// payload arrive. Does nothing while `cursor.state` still expects the extended length.
+    fn validate_payload_length(&self, cursor: &mut RecvCursor<'_>) -> Step {
         let length = cursor.body_remain;
         match cursor.state {
             ReceiveState::NeedBody => {
@@ -883,11 +892,11 @@ impl<const SSL: bool> WebSocket<SSL> {
                 }
             }
             ReceiveState::Ping | ReceiveState::Pong | ReceiveState::Close => {
-                // A status code has two bytes.
+                // A Close payload is either empty or starts with a 2-byte status code.
                 if length > MAX_CONTROL_PAYLOAD
                     || (length == 1 && cursor.state == ReceiveState::Close)
                 {
-                    return self.recv_failed_on(ErrorCode::InvalidControlFrame, length);
+                    return self.recv_failed_with_value(ErrorCode::InvalidControlFrame, length);
                 }
             }
             _ => {}
@@ -898,9 +907,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         Step::Continue
     }
 
-    /// The masking key sits between the frame's length and its payload, which `next` reads.
+    /// The masking key comes after the length and before the payload, so read it before `next`.
     fn expect_mask_key(&self, next: ReceiveState) -> ReceiveState {
-        let then = match next {
+        let payload_state = match next {
             ReceiveState::ExtendedPayloadLength16 | ReceiveState::ExtendedPayloadLength64 => {
                 return next;
             }
@@ -910,7 +919,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.unmask.set(Unmask {
             key: [0; 4],
             key_len: 0,
-            then,
+            payload_state,
         });
         ReceiveState::MaskKey
     }
@@ -929,12 +938,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         if (unmask.key_len as usize) < unmask.key.len() {
             return Step::NeedMoreData;
         }
-        // Also without more data: the payload may be empty.
-        cursor.state = unmask.then;
+        // Continue even if `data` is empty, because the payload may be empty too.
+        cursor.state = unmask.payload_state;
         Step::Continue
     }
 
-    /// [`Self::recv_body`] of a server: the payload is unmasked on its way into `receive_buffer`.
+    /// Server version of [`Self::recv_body`]. Unmasks the payload while copying it into `receive_buffer`.
     fn recv_masked_body(&self, cursor: &mut RecvCursor<'_>) -> Step {
         let (chunk, rest) = cursor
             .data
@@ -1006,10 +1015,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         let Some((payload, payload_len)) = self.buffer_control_payload(cursor) else {
             return Step::NeedMoreData;
         };
-        // Before the event: a `ping` listener that closes must not get a Pong behind its Close frame.
+        // Send the Pong before dispatching `ping`. If a listener calls close(), the Pong must not
+        // follow the Close frame.
         if opcode == Opcode::Ping
             && self.options.auto_pong
-            && self.buffered_amount() <= MAX_UNSENT_FOR_A_PONG
+            && self.buffered_amount() <= AUTO_PONG_BACKPRESSURE_LIMIT
         {
             // we need to send all pongs to pass autobahn tests
             self.send_pong(&payload[..payload_len]);
@@ -1048,7 +1058,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         Step::Continue
     }
 
-    /// Record the peer's Close frame, echo it unless ours is already out, and
+    /// Record the peer's Close frame, echo it unless we already sent ours, and
     /// stop reading: a received Close always terminates the parse loop.
     fn recv_close(&self, cursor: &mut RecvCursor<'_>) -> Step {
         let Some((payload, payload_len)) = self.buffer_control_payload(cursor) else {
@@ -1062,7 +1072,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             Some((code, reason)) => {
                 let code = u16::from_be_bytes(*code);
                 if !is_valid_close_code(code) {
-                    return self.recv_failed_on(ErrorCode::InvalidCloseCode, code as usize);
+                    return self.recv_failed_with_value(ErrorCode::InvalidCloseCode, code as usize);
                 }
                 if !self.options.skip_utf8_validation && !strings::is_valid_utf8(reason) {
                     return self.recv_failed(ErrorCode::InvalidUtf8);
@@ -1077,11 +1087,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         if let Some(ws) = self.cpp_websocket() {
             ws.did_start_closing_handshake(code, reason);
         }
-        self.end_our_side_if_done();
+        self.send_fin_if_done();
         Step::Terminated
     }
 
-    /// Send an encoded frame behind what is still queued.
+    /// Send an encoded frame, after anything already queued.
     fn enqueue_encoded_bytes(&self, bytes: &[u8]) {
         if self.has_backpressure() {
             // A tunnel flushes the queue from `handle_tunnel_writable`.
@@ -1099,7 +1109,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// How many of `bytes` the transport took; `None` when it is broken.
+    /// Returns how many bytes were written, or `None` if the write failed.
     fn write_to_transport(&self, bytes: &[u8]) -> Option<usize> {
         match self.io() {
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
@@ -1123,7 +1133,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // Small messages aren't worth the deflate overhead (or the transcode below).
         let (_, content_byte_len) = bytes.frame_and_content_len(kind.masked);
-        if kind.deflate == Deflate::IfWorthIt && content_byte_len < MIN_COMPRESS_SIZE {
+        if kind.deflate == Deflate::IfLargeEnough && content_byte_len < MIN_COMPRESS_SIZE {
             return self.send_data_uncompressed(bytes, do_write, kind);
         }
 
@@ -1200,7 +1210,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// In debug builds, assert that the underlying socket can still be written
-    /// to (the other transports do not write to `tcp`).
+    /// to (the other transports don't use `tcp`).
     fn debug_assert_socket_writable(&self) {
         #[cfg(debug_assertions)]
         if matches!(self.io(), Io::Socket) {
@@ -1220,7 +1230,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             debug_assert!(!out_buf.is_empty());
             let slice_len = out_buf.len();
             let wrote = self.write_to_transport(out_buf);
-            // A wrapped queue continues at offset 0. A writable handler gets no second event.
+            // When the ring buffer wraps, `readable_slice` only returns the first part. Loop to
+            // write the rest, because no second writable event will fire for it.
             match wrote {
                 Some(wrote) if wrote == slice_len && wrote < buf.readable_length() => {
                     buf.discard(wrote);
@@ -1241,10 +1252,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// Our half of the closing handshake. `payload` is the status code and the
-    /// reason, or empty. The frame goes behind what is unsent. From now the
-    /// connection has `close_timeout_seconds` to close; `ws` has a timer of its own
-    /// for that, which ends in `terminate()`, and a socket it paused stays paused.
+    /// Send our Close frame, after anything already queued. `payload` is the status code
+    /// plus reason, or empty. The connection then has `close_timeout_seconds` to close.
+    /// In `ws_mode`, `ws` runs its own timer that calls `terminate()`, and a paused socket
+    /// stays paused.
     fn send_close(&self, payload: &[u8]) {
         if !self.can_send() {
             return;
@@ -1252,7 +1263,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         log!("Sending close ({} bytes)", payload.len());
         self.close_sent.set(true);
         if !self.options.ws_mode {
-            // Only a read sees the peer's Close frame and its FIN.
+            // Resume reading, or we'd never see the peer's Close frame or FIN.
             self.resume();
             match self.io() {
                 Io::Socket => self.tcp.get().set_timeout(close_timeout_seconds()),
@@ -1281,17 +1292,17 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.enqueue_encoded_bytes(&frame[..frame_size]);
     }
 
-    /// After the last frame in each direction: half-close, and wait for the peer to close
-    /// the connection (RFC 6455 §7.1.1), which is what `finish` reports.
-    fn end_our_side_if_done(&self) {
-        if self.ended_our_side.get()
+    /// Once our Close frame is flushed and we've stopped reading, half-close and wait for the
+    /// peer to close the connection (RFC 6455 §7.1.1). `finish` runs when it does.
+    fn send_fin_if_done(&self) {
+        if self.sent_fin.get()
             || !self.close_sent.get()
             || self.has_backpressure()
             || self.receive_state.get() != ReceiveState::Closed
         {
             return;
         }
-        self.ended_our_side.set(true);
+        self.sent_fin.set(true);
         match self.io() {
             Io::Socket => self.tcp.get().shutdown(),
             Io::Tunnel(tunnel) => WebSocketProxyTunnel::end(tunnel),
@@ -1316,7 +1327,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 ws.did_drain();
             }
         }
-        self.end_our_side_if_done();
+        self.send_fin_if_done();
     }
 
     pub(crate) fn is_same_socket(&self, socket: &Socket<SSL>) -> bool {
@@ -1328,7 +1339,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.flush_send_queue();
     }
 
-    /// Only `send_close` arms one.
+    /// Only `send_close` sets a timeout.
     pub fn handle_timeout(&self, _socket: Socket<SSL>) {
         self.finish(Outcome::Closed);
     }
@@ -1345,9 +1356,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             + self.tunnel().map_or(0, |t| t.buffered_amount())
     }
 
-    /// Whether the connection holds the process. Nothing takes the ref again by itself.
+    /// Set whether this connection keeps the process alive. Nothing re-refs it automatically.
     pub(crate) fn set_ref(&self, keep_alive: bool) {
-        // A JS stream holds the process by itself.
+        // A JS stream keeps the process alive on its own.
         if self.cpp_websocket().is_none() || matches!(self.io(), Io::Stream) {
             return;
         }
@@ -1361,7 +1372,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.poll_ref.set(poll_ref);
     }
 
-    /// In tunnel mode, the proxy's.
+    /// In tunnel mode this is the proxy's address.
     pub(crate) fn remote_address(&self) -> Option<(IpAddr, u16)> {
         match self.tunnel() {
             Some(tunnel) => tunnel.remote_address(),
@@ -1490,7 +1501,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         );
     }
 
-    /// `code` 1005 ("no status received") asks for a Close frame without a payload.
+    /// `code` 1005 ("no status received") sends a Close frame with an empty payload.
     pub(crate) fn close(this: ThisPtr<Self>, code: u16, reason: Option<&EncodedSlice>) {
         // See write_binary_data() — tunnel.write() can re-enter finish().
         let _guard = RefPtr::from_this(this);
@@ -1532,11 +1543,11 @@ impl<const SSL: bool> WebSocket<SSL> {
             unmask: Cell::new(Unmask {
                 key: [0; 4],
                 key_len: 0,
-                then: ReceiveState::NeedHeader,
+                payload_state: ReceiveState::NeedHeader,
             }),
             close_sent: Cell::new(false),
             close_received: RefCell::new(None),
-            ended_our_side: Cell::new(false),
+            sent_fin: Cell::new(false),
             receive_body_remain: Cell::new(0),
             receive_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             send_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
@@ -1629,8 +1640,8 @@ impl<const SSL: bool> WebSocket<SSL> {
             ws.as_ptr(),
             |_, sock| this.tcp.set(sock),
         ) {
-            // Still the upgrade client's, which forgets it when this returns.
-            HangUp::Fin.close(Socket::<SSL>::from(input_socket));
+            // The upgrade client still owns the socket but forgets it when this returns, so close it here.
+            CloseMode::Fin.close(Socket::<SSL>::from(input_socket));
             return core::ptr::null_mut();
         }
 
@@ -1668,8 +1679,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         Self::finish_init(ws, outgoing, global_this, buffered_data)
     }
 
-    /// A client (or, with `options.is_server`, the server's end) whose bytes travel on a stream
-    /// that lives in JS. The stream keeps the process alive, not this.
+    /// Create a client (or the server side, with `options.is_server`) that reads and writes
+    /// through a JS stream. The stream keeps the process alive, so this takes no keep-alive ref.
     pub(crate) fn init_over_stream(
         outgoing: &CppWebSocket,
         global_this: &JSGlobalObject,
@@ -1690,34 +1701,35 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.as_ptr()
     }
 
-    /// Bytes read from the JS stream. A listener can make the stream deliver more while
-    /// these are parsed (an in-memory pair whose other end answers at once): those take their turn.
+    /// Parse bytes read from the JS stream. A listener can re-enter `feed` while we're parsing
+    /// (e.g. an in-memory duplex pair whose other end replies synchronously). Re-entrant bytes
+    /// are queued and parsed in order.
     pub(crate) fn feed(this: ThisPtr<Self>, data: &[u8]) {
         if data.is_empty() {
             return;
         }
         let _guard = RefPtr::from_this(this);
         if this.parsing.get() {
-            let mut waiting = this
+            let mut pending = this
                 .initial_data
                 .take()
                 .unwrap_or_else(|| Box::new(InitialData(Vec::new())));
-            waiting.0.extend_from_slice(data);
-            this.initial_data.set(Some(waiting));
+            pending.0.extend_from_slice(data);
+            this.initial_data.set(Some(pending));
             return;
         }
 
         this.parsing.set(true);
         cpp_websocket::without_checkpoint(|| {
             this.handle_data_loop(data);
-            while let Some(waiting) = this.initial_data.take() {
-                this.handle_data_loop(&waiting.0);
+            while let Some(pending) = this.initial_data.take() {
+                this.handle_data_loop(&pending.0);
             }
         });
         this.parsing.set(false);
     }
 
-    /// The JS stream is gone.
+    /// The JS stream was closed or destroyed.
     pub(crate) fn stream_closed(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
         if matches!(this.io(), Io::Stream) {
@@ -1733,11 +1745,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         Self::handle_data(this, data);
     }
 
-    /// Called by the WebSocketProxyTunnel when TLS inside the tunnel, or the proxy connection under it, ended.
+    /// Called by the WebSocketProxyTunnel when its TLS session or the underlying proxy connection closes.
     pub(crate) fn handle_tunnel_close(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
         if let Some(tunnel) = this.tunnel() {
-            tunnel.close_socket(HangUp::Fin);
+            tunnel.close_socket(CloseMode::Fin);
         }
         this.parse_initial_data();
         this.finish(Outcome::Closed);
@@ -1762,7 +1774,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // This is only called by outgoing_websocket.
         this.release_cpp_ref();
-        this.drop_connection(HangUp::Reset);
+        this.drop_connection(CloseMode::Reset);
     }
 
     /// The owning C++ WebSocket's context is being torn down: forget it (nothing
@@ -1773,7 +1785,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let _guard = RefPtr::from_this(this);
 
         let _cpp_ref = this.outgoing_websocket.replace(None);
-        this.drop_connection(HangUp::Reset);
+        this.drop_connection(CloseMode::Reset);
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -1794,7 +1806,7 @@ impl<const SSL: bool> Drop for WebSocket<SSL> {
     }
 }
 
-/// `None` for a unix socket, and once the socket is gone.
+/// `None` for a unix socket or a closed socket.
 pub(crate) fn remote_address_of<const SSL: bool>(socket: Socket<SSL>) -> Option<(IpAddr, u16)> {
     let mut buf = [0u8; 64];
     let bytes = socket.remote_address(&mut buf)?;
@@ -1805,7 +1817,8 @@ pub(crate) fn remote_address_of<const SSL: bool>(socket: Socket<SSL>) -> Option<
     Some((ip, socket.remote_port()?))
 }
 
-/// The C++ shape of [`WebSocket::remote_address`]: false leaves the outputs alone.
+/// FFI form of [`WebSocket::remote_address`]. Returns false and leaves the out-params untouched
+/// when there's no address.
 fn write_remote_address(
     remote: Option<(IpAddr, u16)>,
     address: &mut BunString,
@@ -1821,7 +1834,7 @@ fn write_remote_address(
     true
 }
 
-/// Transcode a close reason to UTF-8 into `buf`; `None` when it does not fit.
+/// Transcode a close reason to UTF-8 into `buf`. Returns `None` if it doesn't fit.
 fn encode_close_reason(reason: &EncodedSlice, buf: &mut [u8]) -> Option<usize> {
     use std::io::Write;
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
@@ -2153,7 +2166,8 @@ pub enum ErrorCode {
 }
 
 impl ErrorCode {
-    /// The status code that tells the peer why the client fails an open connection.
+    /// Close code to send to the peer when this error fails an open connection.
+    /// `None` means drop the connection without a Close frame.
     fn close_code(self) -> Option<u16> {
         match self {
             ErrorCode::UnexpectedMaskFromServer
@@ -2221,10 +2235,11 @@ pub enum ReceiveState {
     Ping,
     Pong,
     Close,
-    /// A server only, as the next one.
+    /// Server only.
     MaskKey,
+    /// Server only.
     MaskedBody,
-    /// Nothing more is read: see `stop_reading`.
+    /// Reading has stopped. See `stop_reading`.
     Closed,
 }
 
@@ -2289,7 +2304,7 @@ fn parse_websocket_header(bytes: [u8; 2], is_server: bool) -> Result<ParsedHeade
         return Err(ErrorCode::UnexpectedRsv2Or3);
     }
 
-    // RFC 6455 §5.1: a client masks every frame it sends, a server none.
+    // RFC 6455 §5.1: a client must mask every frame, a server must not mask any.
     if header.mask() != is_server {
         return Err(if is_server {
             ErrorCode::ExpectedMask
@@ -2334,24 +2349,24 @@ enum Copy<'a> {
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum Deflate {
     Never,
-    /// From `MIN_COMPRESS_SIZE` bytes on.
-    IfWorthIt,
+    /// Only if the payload is at least `MIN_COMPRESS_SIZE` bytes.
+    IfLargeEnough,
     Always,
 }
 
-/// What C++ asks of one outgoing frame.
+/// Header fields and compression mode of one outgoing frame.
 #[derive(Copy, Clone)]
 struct FrameKind {
     opcode: Opcode,
     fin: bool,
     deflate: Deflate,
-    /// A client's frames are, a server's are not.
+    /// True for a client, false for a server.
     masked: bool,
 }
 
 impl FrameKind {
-    /// `flags`: bit 0 = FIN, bit 1 = compress if worth it, bit 2 = compress whatever the size.
-    /// Only a whole message in one frame is ever compressed.
+    /// `flags`: bit 0 = FIN, bit 1 = compress if large enough, bit 2 = always compress.
+    /// Fragmented messages are never compressed.
     fn from_ffi(op: u8, flags: u8, masked: bool) -> Self {
         let opcode = Opcode::from_raw(op & 0x0F);
         let fin = flags & 0b001 != 0;
@@ -2360,7 +2375,7 @@ impl FrameKind {
         } else if flags & 0b100 != 0 {
             Deflate::Always
         } else if flags & 0b010 != 0 {
-            Deflate::IfWorthIt
+            Deflate::IfLargeEnough
         } else {
             Deflate::Never
         };

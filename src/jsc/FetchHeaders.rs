@@ -164,7 +164,7 @@ impl FetchHeaders {
         WebCore__FetchHeaders__toUWSResponse(self, kind, uws_response)
     }
 
-    /// For the 101 of an HTTP/1 WebSocket upgrade: skips the fields `upgrade()` writes itself.
+    /// For the 101 response of an HTTP/1 WebSocket upgrade. Skips headers that `upgrade()` writes.
     pub fn to_uws_response_for_websocket_upgrade(&mut self, ssl: bool, uws_response: *mut c_void) {
         WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(self, ssl, uws_response)
     }

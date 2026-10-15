@@ -1,25 +1,25 @@
-// The surface of a `ws` server socket: its properties, `_socket`, the 'connection' handler, the EventEmitter and the
-// EventTarget interface. The client is a raw TCP socket. See ws-raw-peer.ts.
+// Tests the API surface of a `ws` server socket: properties, `_socket`, the 'connection' handler, and the EventEmitter
+// and EventTarget interfaces. The client is a raw TCP socket. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { EventEmitter, once } from "node:events";
-import { attempt, createServer, event, implementations, openServer, show } from "./ws-raw-peer";
+import { tryCall, createServer, nextEvent, implementations, openServer, show } from "./ws-raw-peer";
 
 type Server = Awaited<ReturnType<typeof openServer>>;
 
-// An event as plain data: its class, every property that `for in` reads, and whether `target` is the socket.
+// Converts an event to plain data: its class name, every enumerable property, and whether `target` is the socket.
 function describeEvent(event: any, ws: unknown) {
-  const described: Record<string, unknown> = { class: event.constructor.name };
+  const result: Record<string, unknown> = { class: event.constructor.name };
   for (const key in event) {
     const value = event[key];
-    described[key] = key === "target" ? value === ws : typeof value === "object" ? show(value) : value;
+    result[key] = key === "target" ? value === ws : typeof value === "object" ? show(value) : value;
   }
-  return described;
+  return result;
 }
 
-describe.each(implementations)("ws server socket ($name)", ({ ws: implementation, builtin }) => {
+describe.each(implementations)("ws server events ($name)", ({ ws: implementation, builtin }) => {
   const { WebSocket } = implementation;
 
-  test("the 'connection' handler gets (ws, req), the server as `this`, and a socket that is OPEN", async () => {
+  test("the 'connection' handler gets (ws, req) with the server as `this`, and the socket is OPEN", async () => {
     await using server = await createServer(implementation);
     const seen: unknown[] = [];
     server.wss.on("connection", function (this: unknown, ws) {
@@ -28,18 +28,18 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
         this === server.wss,
         arguments.length,
         ws.readyState,
-        attempt(() => ws.send("hello")),
-        attempt(() => ws.ping()),
+        tryCall(() => ws.send("hello")),
+        tryCall(() => ws.ping()),
       );
     });
     const client = server.connect();
-    expect(await client.take(2)).toEqual(['text "hello"', "ping"]);
+    expect(await client.nextFrames(2)).toEqual(['text "hello"', "ping"]);
     expect(await client.roundTrip()).toEqual([]);
-    // No 'open': the socket was open before anybody could listen.
+    // No 'open' event: the socket was already open before a listener could be added.
     expect(seen).toEqual([true, 2, WebSocket.OPEN, "undefined", "undefined"]);
   });
 
-  test("the properties of a fresh socket and of its request", async () => {
+  test("initial properties of a new socket and its request", async () => {
     await using server = await openServer(
       implementation,
       {},
@@ -75,7 +75,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
     });
   });
 
-  test("_socket is the socket of the request", async () => {
+  test("_socket is the request's socket", async () => {
     await using server = await openServer(implementation);
     const ws: any = server.ws;
     const socket = ws._socket;
@@ -100,7 +100,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
     });
   });
 
-  test("req.socket is live after the upgrade, and destroying it closes the WebSocket with 1006", async () => {
+  test("req.socket is still usable after the upgrade, and destroying it closes the WebSocket with 1006", async () => {
     await using server = await openServer(implementation);
     const { remoteAddress, destroyed, readable, writable } = server.req.socket;
     expect({ remoteAddress, destroyed, readable, writable }).toEqual({
@@ -112,28 +112,28 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
     server.req.socket.destroy();
     await server.closed;
     expect(server.events).toEqual(["close 1006 Buffer() rs=3"]);
-    expect(await server.client.rest()).toEqual([]);
+    expect(await server.client.remainingFrames()).toEqual([]);
   });
 
-  test("the `WebSocket` option is the class of the server's sockets", async () => {
-    class Mine extends WebSocket {
+  test("the `WebSocket` option sets the class of the server's sockets", async () => {
+    class CustomWebSocket extends WebSocket {
       hello() {
         return "hi";
       }
     }
-    await using server = await openServer(implementation, { WebSocket: Mine });
-    expect(server.ws).toBeInstanceOf(Mine);
-    expect((server.ws as Mine).hello()).toBe("hi");
+    await using server = await openServer(implementation, { WebSocket: CustomWebSocket });
+    expect(server.ws).toBeInstanceOf(CustomWebSocket);
+    expect((server.ws as CustomWebSocket).hello()).toBe("hi");
   });
 
-  test("new WebSocket(null, undefined, {}) is a CONNECTING socket with setSocket()", () => {
+  test("new WebSocket(null, undefined, {}) creates a CONNECTING socket with setSocket()", () => {
     const ws: any = new WebSocket(null as any, undefined, {});
     expect(ws).toBeInstanceOf(WebSocket);
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
     expect(ws.setSocket).toBeFunction();
   });
 
-  test("a fresh socket has one listener, the server's for 'close', and is a plain EventEmitter", async () => {
+  test("a new socket has only the server's 'close' listener, and works as a plain EventEmitter", async () => {
     await using server = await createServer(implementation);
     const connection = once(server.wss, "connection");
     const client = server.connect();
@@ -145,7 +145,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
     ws.once("message", (data: unknown) => calls.push("once " + show(data)));
     ws.prependListener("message", (data: unknown) => calls.push("prepended " + show(data)));
     client.text("1");
-    await event(ws, "message");
+    await nextEvent(ws, "message");
     expect(calls).toEqual(['prepended Buffer("1")', 'once Buffer("1")']);
     expect(ws.listenerCount("message")).toBe(1);
     ws.removeAllListeners("message");
@@ -153,7 +153,8 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
   });
 
   describe("EventTarget interface", () => {
-    // `args` is what the socket emits for the event. A server socket emits no 'open', so these tests emit by hand.
+    // `args` are the arguments the socket emits with the event. A server socket never emits 'open', so these tests call
+    // emit() themselves.
     const eventTypes = [
       { type: "open", args: [], event: { class: "Event", target: true, type: "open" } },
       {
@@ -164,7 +165,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
       {
         type: "close",
         args: [4000, Buffer.from("bye")],
-        // The socket is open: no Close frame went either way.
+        // The socket is still open, so no Close frame was sent or received.
         event: { class: "CloseEvent", code: 4000, reason: "bye", wasClean: false, target: true, type: "close" },
       },
       {
@@ -177,16 +178,16 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
     describe.each(eventTypes)("$type", ({ type, args, event }) => {
       const attribute = `on${type}`;
 
-      // `count()` leaves out the listeners of the server and of the helper.
+      // `count()` excludes the listeners added by the server and by openServer().
       async function open() {
         const server = await openServer(implementation);
         const ws: any = server.ws;
-        const others = ws.listenerCount(type);
-        const count = () => ws.listenerCount(type) - others;
-        return { ws, others, count, [Symbol.asyncDispose]: server[Symbol.asyncDispose] };
+        const existing = ws.listenerCount(type);
+        const count = () => ws.listenerCount(type) - existing;
+        return { ws, existing, count, [Symbol.asyncDispose]: server[Symbol.asyncDispose] };
       }
 
-      test(`${attribute} holds one handler, and only a function sets it`, async () => {
+      test(`${attribute} keeps a single handler, and assigning a non-function resets it to null`, async () => {
         await using socket = await open();
         const { ws, count } = socket;
         const state = () => ({ handler: ws[attribute], listeners: count() });
@@ -212,24 +213,24 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
         expect(ws[attribute]).toBeNull();
       });
 
-      test("a listener gets one event object", async () => {
+      test("listeners are called with a single event object", async () => {
         await using socket = await open();
         const { ws } = socket;
         const received: unknown[] = [];
-        const record = (face: string, expectedThis: () => unknown) =>
+        const record = (kind: string, expectedThis: () => unknown) =>
           function (this: unknown, ...args: unknown[]) {
             received.push({
-              face,
+              kind,
               arguments: args.length,
               this: this === expectedThis(),
               event: describeEvent(args[0], ws),
             });
           };
-        // `handleEvent` is read when the event is dispatched, and only from an object.
+        // `handleEvent` is looked up at dispatch time, and only on non-function objects.
         const object: { handleEvent?: Function } = {};
         const functionWithHandleEvent = Object.assign(
           record("function", () => ws),
-          { handleEvent: record("handleEvent of a function", () => functionWithHandleEvent) },
+          { handleEvent: record("function.handleEvent", () => functionWithHandleEvent) },
         );
 
         ws[attribute] = record(attribute, () => ws);
@@ -243,8 +244,8 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
         ws.emit(type, ...args);
 
         expect(received).toEqual(
-          [attribute, "addEventListener", "handleEvent", "function"].map(face => ({
-            face,
+          [attribute, "addEventListener", "handleEvent", "function"].map(kind => ({
+            kind,
             arguments: 1,
             this: true,
             event,
@@ -252,7 +253,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
         );
       });
 
-      test("addEventListener() adds a listener once, and { once: true } removes it before it runs", async () => {
+      test("addEventListener() ignores duplicates, and { once: true } removes a listener before it runs", async () => {
         await using socket = await open();
         const { ws, count } = socket;
         const calls: [string, number][] = [];
@@ -274,7 +275,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
         ]);
       });
 
-      test("removeEventListener() removes what addEventListener() added, and nothing else", async () => {
+      test("removeEventListener() only removes listeners added with addEventListener()", async () => {
         await using socket = await open();
         const { ws, count } = socket;
         const calls: string[] = [];
@@ -283,7 +284,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
         const object = { handleEvent: () => calls.push("object") };
         const viaOn = () => calls.push("on");
 
-        // The same function as the attribute and as a listener counts twice.
+        // The same function set as the attribute and added as a listener counts as two listeners.
         ws[attribute] = shared;
         ws.addEventListener(type, shared);
         ws.addEventListener(type, onceListener, { once: true });
@@ -302,15 +303,15 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
         expect(calls).toEqual(["shared", "on"]);
       });
 
-      test("off() and listeners() see an adapter, not the function", async () => {
+      test("off() and listeners() see a wrapper, not the original function", async () => {
         await using socket = await open();
-        const { ws, others, count } = socket;
+        const { ws, existing, count } = socket;
         let calls = 0;
         const listener = () => calls++;
 
         ws.addEventListener(type, listener);
         ws.off(type, listener);
-        const added = ws.listeners(type).slice(others);
+        const added = ws.listeners(type).slice(existing);
         expect(added).toEqual([expect.any(Function)]);
         expect(added[0]).not.toBe(listener);
 
@@ -320,7 +321,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
         expect(calls).toBe(0);
       });
 
-      test("a listener keeps its place in the list of the EventEmitter", async () => {
+      test("on<event>, addEventListener() and on() listeners share one ordered listener list", async () => {
         await using socket = await open();
         const { ws } = socket;
         const calls: string[] = [];
@@ -343,7 +344,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
             ws.addEventListener(type, f);
             ws[attribute] = f;
           }),
-          // A new handler of the attribute goes to the end.
+          // Reassigning the attribute moves its handler to the end.
           run(() => {
             ws[attribute] = a;
             ws.on(type, named("b"));
@@ -373,7 +374,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
       });
     });
 
-    test("each event has one class, the same for every socket", async () => {
+    test("every socket uses the same class for each event type", async () => {
       await using first = await openServer(implementation);
       await using second = await openServer(implementation);
       const classes: Record<string, Function[]> = {};
@@ -404,7 +405,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
       ]);
     });
 
-    test("its six members are enumerable properties of the prototype", async () => {
+    test("its six members are enumerable prototype properties", async () => {
       await using server = await openServer(implementation);
       const prototype = Object.getPrototypeOf(server.ws);
       const describeProperty = (name: string) => {
@@ -418,7 +419,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
       ).toEqual([accessor, accessor, accessor, accessor, method, method]);
     });
 
-    test("addEventListener() ignores a type that is not one of its events", async () => {
+    test("addEventListener() ignores unsupported event types", async () => {
       await using server = await openServer(implementation);
       const ws: any = server.ws;
       const types = ["upgrade", "unexpected-response", "redirect", "foo"];
@@ -427,7 +428,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
       expect(types.map(type => ws.listenerCount(type))).toEqual(before);
     });
 
-    // npm ws ignores these two as well. Bun's `ws` has always taken them, and heartbeats are written with them.
+    // npm ws ignores these two as well. Bun's `ws` has always supported them, and heartbeat code relies on that.
     test.skipIf(!builtin)("addEventListener('ping' | 'pong') works", async () => {
       await using server = await openServer(implementation);
       const { client } = server;
@@ -438,11 +439,11 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
       ws.addEventListener("pong", listener);
       ws.addEventListener("pong", listener);
       ws.addEventListener("pong", () => seen.push("once"), { once: true });
-      const last = new Promise<void>(resolve => ws.on("pong", (data: Buffer) => String(data) === "c" && resolve()));
+      const lastPong = new Promise<void>(resolve => ws.on("pong", (data: Buffer) => String(data) === "c" && resolve()));
       client.ping("a");
       client.pong("b");
       client.pong("c");
-      await last;
+      await lastPong;
       expect(seen).toEqual(['ping Buffer("a") true', 'pong Buffer("b") true', "once", 'pong Buffer("c") true']);
 
       ws.removeEventListener("ping", listener);
@@ -452,11 +453,11 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
       expect(seen).toHaveLength(4);
     });
 
-    // A listener that on() added adapts no function, which is what `undefined` matches.
-    test("removeEventListener(type, undefined) removes the first listener that on() added", async () => {
+    // Listeners added with on() aren't wrappers, so their wrapped function is `undefined`, which matches.
+    test("removeEventListener(type, undefined) removes the first listener added with on()", async () => {
       await using server = await openServer(implementation);
       const { ws, wss, client, events } = server;
-      // The helper's recorder, and the listener that takes the socket out of `wss.clients`.
+      // Removes watch()'s 'message' listener, and the 'close' listener that deletes the socket from `wss.clients`.
       ws.removeEventListener("message", undefined as any);
       ws.removeEventListener("close", undefined as any);
       client.text("text");
@@ -476,7 +477,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
       expect(ws.onmessage).toBeNull();
     });
 
-    test("with captureRejections, only the promise of an on() listener reaches 'error'", async () => {
+    test("with captureRejections, only a rejection from an on() listener is emitted as 'error'", async () => {
       const rejects = (name: string) => {
         const promise = Promise.reject(new Error(name));
         promise.catch(() => {});
@@ -487,7 +488,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
         await using server = await openServer(implementation);
         const { ws } = server;
         const errors: string[] = [];
-        const control = new Promise<void>(resolve =>
+        const errorEmitted = new Promise<void>(resolve =>
           ws.on("error", error => {
             errors.push(error.message);
             if (error.message === "on()") resolve();
@@ -498,20 +499,20 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
         ws.addEventListener("message", { handleEvent: rejects("handleEvent()") } as any);
         ws.on("message", rejects("on()"));
         ws.emit("message", Buffer.from("text"), false);
-        await control;
+        await errorEmitted;
         expect(errors).toEqual(["on()"]);
       } finally {
         EventEmitter.captureRejections = false;
       }
     });
 
-    // binaryType is the shape of a binary message only.
+    // binaryType only affects binary messages.
     test.each([
       { binaryType: "nodebuffer", binary: "Buffer(0x010203)" },
       { binaryType: "arraybuffer", binary: "ArrayBuffer(0x010203)" },
       { binaryType: "fragments", binary: "[Buffer(0x010203)]" },
       { binaryType: "blob", binary: "Blob(3)" },
-    ])("MessageEvent.data with binaryType $binaryType: a string for text, $binary for binary", async row => {
+    ])("with binaryType $binaryType, MessageEvent.data is a string for text and $binary for binary", async row => {
       await using server = await openServer(implementation);
       const { ws, client } = server;
       const seen: unknown[] = [];
@@ -529,7 +530,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
       );
     });
 
-    test("onmessage = null drops the handler, and the next message is delivered to the others", async () => {
+    test("onmessage = null removes the handler, and other listeners still get the next message", async () => {
       await using server = await openServer(implementation);
       const { ws, client, events } = server;
       let calls = 0;
@@ -542,29 +543,29 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
       expect(events).toEqual(['message Buffer("x") text rs=1']);
     });
 
-    test("listeners of every kind get the messages of the peer", async () => {
+    test("every kind of listener receives the peer's messages", async () => {
       await using server = await openServer(implementation);
       const { ws, client } = server;
-      const others = ws.listenerCount("message");
+      const existing = ws.listenerCount("message");
       const seen: string[] = [];
       const record = (name: string) => (event: { data: unknown }) => seen.push(`${name} ${event.data}`);
       const listener = record("listener");
       ws.addEventListener("message", listener);
       ws.addEventListener("message", listener);
-      expect(ws.listenerCount("message") - others).toBe(1);
+      expect(ws.listenerCount("message") - existing).toBe(1);
       ws.addEventListener("message", record("once"), { once: true });
       ws.addEventListener("message", { handleEvent: record("handleEvent") } as any);
       client.text("a");
       client.text("b");
       expect(await client.roundTrip()).toEqual([]);
       ws.removeEventListener("message", listener);
-      expect(ws.listenerCount("message") - others).toBe(1);
+      expect(ws.listenerCount("message") - existing).toBe(1);
       client.text("c");
       expect(await client.roundTrip()).toEqual([]);
       expect(seen).toEqual(["listener a", "once a", "handleEvent a", "listener b", "handleEvent b", "handleEvent c"]);
     });
 
-    // wasClean: a Close frame went out and one came in.
+    // wasClean is true when a Close frame was both sent and received.
     test.each([
       {
         how: "the peer closes with 4002",
@@ -582,7 +583,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
         event: { code: 1006, reason: "", wasClean: false },
       },
       {
-        how: "close(4001) and the peer answers",
+        how: "close(4001) and the peer echoes it",
         end: ({ ws, client }) => (ws.close(4001, "srv"), client.close(4001, "srv")),
         event: { code: 4001, reason: "srv", wasClean: true },
       },
@@ -612,7 +613,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
       },
     );
 
-    test("a protocol error: ErrorEvent, then a CloseEvent that is not clean", async () => {
+    test("a protocol error dispatches an ErrorEvent, then a CloseEvent with wasClean false", async () => {
       await using server = await openServer(implementation);
       const { ws, client } = server;
       const seen: unknown[] = [];
@@ -630,7 +631,7 @@ describe.each(implementations)("ws server socket ($name)", ({ ws: implementation
         },
         { class: "CloseEvent", type: "close", code: 1006, reason: "", wasClean: false, target: true },
       ]);
-      expect(await client.rest()).toEqual(["close 1002"]);
+      expect(await client.remainingFrames()).toEqual(["close 1002"]);
     });
   });
 });

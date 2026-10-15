@@ -2930,10 +2930,10 @@ pub mod asan {
         #[cfg(not(bun_asan))]
         let _ = ptr;
     }
-    /// Exclude everything the calling thread allocates from now on from leak
-    /// reports. For a thread that is never joined and never frees its state.
+    /// Exclude all future allocations on the calling thread from leak reports.
+    /// For threads that are never joined and never free their state.
     #[inline]
-    pub fn ignore_allocations_of_this_thread() {
+    pub fn disable_leak_checks_on_current_thread() {
         #[cfg(bun_asan)]
         __lsan_disable();
     }

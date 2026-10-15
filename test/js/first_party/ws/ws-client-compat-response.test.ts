@@ -1,5 +1,5 @@
-// What a `ws` client reads out of the server's answer beyond its head: the body of a response that is not a 101, and
-// what the answer to a `perMessageDeflate` offer with parameters means for the frames it sends. See ws-raw-peer.ts.
+// Tests how a `ws` client reads the body of a non-101 response, and how the server's response to a `perMessageDeflate`
+// offer with parameters affects the frames the client sends. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { tls as harnessTls, isWindows } from "harness";
 import crypto from "node:crypto";
@@ -7,8 +7,8 @@ import type { IncomingMessage } from "node:http";
 import zlib from "node:zlib";
 import {
   createPeer,
-  dial,
-  event,
+  connectClient,
+  nextEvent,
   implementations,
   openClient,
   type RawSocket,
@@ -28,8 +28,8 @@ async function readAll(response: IncomingMessage) {
 }
 
 /**
- * Writes each piece after the event loop has polled its sockets, so that the client reads them one by one. The
- * outcome does not depend on it: pieces that arrive together only test less.
+ * Writes each piece after the event loop has polled its sockets, so the client reads them one at a time. The tests
+ * still pass if pieces arrive together. They just cover less.
  */
 async function writeInPieces(conn: RawSocket, pieces: readonly string[]) {
   conn.socket.setNoDelay(true);
@@ -40,44 +40,44 @@ async function writeInPieces(conn: RawSocket, pieces: readonly string[]) {
   }
 }
 
-describe.each(implementations)("ws client, the server's answer ($name)", row => {
+describe.each(implementations)("ws client handshake response ($name)", row => {
   const { ws: implementation, builtin, specifier } = row;
 
-  describe("the body of a response that is not a 101, after 'unexpected-response'", () => {
-    /** The response of 'unexpected-response' to `head`, and the server's end of the connection. */
-    async function unexpected(head: string, secure = false) {
+  describe("body of a non-101 response from 'unexpected-response'", () => {
+    /** Responds with `head`. Returns the response from 'unexpected-response' and the server's end of the connection. */
+    async function unexpectedResponse(head: string, secure = false) {
       const respond = (conn: RawSocket) => (conn.socket.write(head, "latin1"), null);
-      const client = await dial(implementation, { ca: harnessTls.cert }, { respond, secure });
-      const [, response] = (await event(client.ws, "unexpected-response")) as [unknown, IncomingMessage];
+      const client = await connectClient(implementation, { ca: harnessTls.cert }, { respond, secure });
+      const [, response] = (await nextEvent(client.ws, "unexpected-response")) as [unknown, IncomingMessage];
       return { client, response, conn: await client.peer.connection() };
     }
 
-    const chunked = "HTTP/1.1 403 Forbidden\r\nTransfer-Encoding: chunked\r\n\r\n";
+    const chunkedHead = "HTTP/1.1 403 Forbidden\r\nTransfer-Encoding: chunked\r\n\r\n";
 
     describe.each([
       { transport: "ws:", secure: false },
       { transport: "wss:", secure: true },
     ])("$transport", ({ secure }) => {
       test.each([
-        { how: "whole", pieces: ["2\r\nno\r\n4\r\n way\r\n0\r\n\r\n"] },
-        { how: "chunk by chunk", pieces: ["2\r\nno\r\n", "4\r\n way\r\n", "0\r\n\r\n"] },
+        { how: "in one write", pieces: ["2\r\nno\r\n4\r\n way\r\n0\r\n\r\n"] },
+        { how: "one chunk per write", pieces: ["2\r\nno\r\n", "4\r\n way\r\n", "0\r\n\r\n"] },
         {
-          how: "cut inside a size, the data and a line end",
+          how: "split inside a size, the data and a CRLF",
           pieces: ["2", "\r\nn", "o\r", "\n4\r\n wa", "y\r\n0\r", "\n\r\n"],
         },
-        { how: "byte by byte", pieces: [..."2\r\nno\r\n4\r\n way\r\n0\r\n\r\n"] },
+        { how: "one byte per write", pieces: [..."2\r\nno\r\n4\r\n way\r\n0\r\n\r\n"] },
         { how: "with a chunk extension and a trailer", pieces: ["6;a=b\r\nno way\r\n0\r\n", "X-Trailer: 1\r\n\r\n"] },
-      ])("in chunks, $how: ends with the last chunk", async ({ pieces }) => {
-        const { client, response, conn } = await unexpected(chunked, secure);
+      ])("chunked, $how: ends at the last chunk", async ({ pieces }) => {
+        const { client, response, conn } = await unexpectedResponse(chunkedHead, secure);
         await using _ = client;
         const [body] = await Promise.all([readAll(response), writeInPieces(conn, pieces)]);
         expect(body).toBe("no way");
-        // What becomes of the socket is up to the listener.
+        // The listener decides what happens to the socket, so it emits nothing on its own.
         expect(client.events).toEqual([]);
       });
 
-      test("with a Content-Length: ends with its last byte", async () => {
-        const { client, response, conn } = await unexpected(
+      test("with Content-Length: ends at the last byte", async () => {
+        const { client, response, conn } = await unexpectedResponse(
           "HTTP/1.1 403 Forbidden\r\nContent-Length: 6\r\n\r\n",
           secure,
         );
@@ -87,8 +87,8 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
         expect(client.events).toEqual([]);
       });
 
-      test("with neither: ends with the connection", async () => {
-        const { client, response, conn } = await unexpected("HTTP/1.1 503 Service Unavailable\r\n\r\n", secure);
+      test("with neither: ends when the connection closes", async () => {
+        const { client, response, conn } = await unexpectedResponse("HTTP/1.1 503 Service Unavailable\r\n\r\n", secure);
         await using _ = client;
         const written = writeInPieces(conn, ["part 1, ", "part 2"]).then(() => conn.end());
         const [body] = await Promise.all([readAll(response), written]);
@@ -96,11 +96,11 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
         expect(client.events).toEqual([]);
       });
 
-      test("while nobody reads it, it waits in the server", async () => {
-        const { client, response, conn } = await unexpected("HTTP/1.1 503 Service Unavailable\r\n\r\n", secure);
+      test("applies backpressure to the server while the body isn't being read", async () => {
+        const { client, response, conn } = await unexpectedResponse("HTTP/1.1 503 Service Unavailable\r\n\r\n", secure);
         await using _ = client;
         const piece = Buffer.alloc(65536, "abcdefgh");
-        // More than the kernel keeps for one connection. Winsock keeps all of it on loopback.
+        // More than the kernel buffers for one connection. Winsock buffers all of it on loopback.
         const limit = 1024 * piece.length;
         let sent = 0;
         let stop = false;
@@ -111,15 +111,15 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
           }
           conn.end();
         })();
-        // The server is stuck once it got nowhere while the event loop polled its sockets this often. To stop
-        // sooner only tests less.
-        for (let last = -1, idle = 0; idle < 50 && sent < limit; idle++) {
+        // Treat the server as blocked once it makes no progress for 50 event loop iterations. Stopping too early only
+        // weakens the test.
+        for (let lastSent = -1, idle = 0; idle < 50 && sent < limit; idle++) {
           await new Promise<void>(resolve => setImmediate(resolve));
-          if (sent !== last) idle = 0;
-          last = sent;
+          if (sent !== lastSent) idle = 0;
+          lastSent = sent;
         }
         if (!isWindows) expect(sent).toBeLessThan(limit);
-        // The high water mark and what one read of the socket brought.
+        // At most the high water mark plus one socket read.
         expect(response.readableLength).toBeLessThan(2 * 1024 * 1024);
 
         stop = true;
@@ -130,46 +130,48 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
       });
     });
 
-    test("a 204 has none, whatever its headers say", async () => {
-      const { client, response } = await unexpected("HTTP/1.1 204 No Content\r\nContent-Length: 6\r\n\r\n");
+    test("a 204 has no body, regardless of its headers", async () => {
+      const { client, response } = await unexpectedResponse("HTTP/1.1 204 No Content\r\nContent-Length: 6\r\n\r\n");
       await using _ = client;
       expect(await readAll(response)).toBe("");
     });
 
-    // node:http takes a 101 for an upgrade only with a value in Upgrade and the "upgrade" option in Connection. See
-    // ws-upgrade-events.test.ts for what such a response is. These are the heads that are easy to take for an upgrade.
+    // node:http only treats a 101 as an upgrade if Upgrade has a value and Connection has the "upgrade" token. See
+    // ws-upgrade-events.test.ts for how any other 101 is handled. These heads are easy to mistake for an upgrade.
     test.each([
-      { what: "Upgrade has no value", headers: ["Upgrade:", "Connection: Upgrade"] },
-      { what: "two Upgrade lines have no value", headers: ["Upgrade:", "Upgrade:", "Connection: Upgrade"] },
+      { what: "Upgrade is empty", headers: ["Upgrade:", "Connection: Upgrade"] },
+      { what: "both Upgrade lines are empty", headers: ["Upgrade:", "Upgrade:", "Connection: Upgrade"] },
       {
-        what: "Connection has another option that ends in it",
+        what: 'Connection has a different token that ends in "upgrade"',
         headers: ["Upgrade: websocket", "Connection: xupgrade"],
       },
-      { what: "a space is in the option", headers: ["Upgrade: websocket", "Connection: close upgrade"] },
-      { what: "a no-break space follows the option", headers: ["Upgrade: websocket", "Connection: upgrade\xa0"] },
-      { what: "a no-break space precedes the option", headers: ["Upgrade: websocket", "Connection: a,\xa0upgrade"] },
-    ])("a 101 is a response without a body when $what", async ({ headers }) => {
+      { what: "the Connection token contains a space", headers: ["Upgrade: websocket", "Connection: close upgrade"] },
+      { what: "a no-break space follows the token", headers: ["Upgrade: websocket", "Connection: upgrade\xa0"] },
+      { what: "a no-break space precedes the token", headers: ["Upgrade: websocket", "Connection: a,\xa0upgrade"] },
+    ])("treats a 101 as a response without a body when $what", async ({ headers }) => {
       const head = ["HTTP/1.1 101 Switching Protocols", ...headers, "Content-Length: 2", "", "no"].join("\r\n");
-      const { client, response } = await unexpected(head);
+      const { client, response } = await unexpectedResponse(head);
       await using _ = client;
       expect(await readAll(response)).toBe("");
       expect(response.complete).toBe(true);
       expect(client.events).toEqual([]);
     });
 
-    // Node keeps the connection for the agent's next request, without a hold on the process. The built-in has no
-    // agent and ends it.
-    test("the connection after a body that the server did not end it for", async () => {
-      const { client, response, conn } = await unexpected("HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\n\r\nno");
+    // Node keeps the connection open, unref'd, for the agent's next request. The built-in has no agent, so it closes
+    // the connection.
+    test("the connection after the body of a keep-alive response", async () => {
+      const { client, response, conn } = await unexpectedResponse(
+        "HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\n\r\nno",
+      );
       await using _ = client;
       expect(await readAll(response)).toBe("no");
       if (builtin) await conn.ended;
       else await writeInPieces(conn, [""]);
-      expect(conn.tcp).toEqual(builtin ? ["end"] : []);
+      expect(conn.socketEvents).toEqual(builtin ? ["end"] : []);
     });
 
-    test("1 MB in chunks", async () => {
-      const { client, response, conn } = await unexpected(chunked);
+    test("a 1 MiB chunked body", async () => {
+      const { client, response, conn } = await unexpectedResponse(chunkedHead);
       await using _ = client;
       const chunk = Buffer.alloc(65536, "abcdefgh").toString();
       for (let i = 0; i < 16; i++) conn.write(`10000\r\n${chunk}\r\n`);
@@ -179,20 +181,20 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
       expect(body === Buffer.alloc(16 * 65536, "abcdefgh").toString()).toBe(true);
     });
 
-    describe("a reader that waits", () => {
+    describe("a paused reader", () => {
       const piece = Buffer.alloc(65536, "abcdefgh");
-      /** Answers with `head`, then writes `pieces` of the body as fast as the client takes them. */
+      /** Responds with `head`, then writes `pieces` pieces of the body as fast as the client reads them. */
       const pump = (head: string, pieces: number) => (conn: RawSocket) => {
-        const more = () => {
+        const writeMore = () => {
           while (pieces-- > 0 && conn.socket.write(piece));
         };
-        conn.socket.on("drain", more);
+        conn.socket.on("drain", writeMore);
         conn.socket.write(head);
-        more();
+        writeMore();
         return null;
       };
-      /** `response` and its `events`, once more of the body has come than it wants to hold. */
-      const held = `
+      /** Script setup: defines `response`, logs its events, and waits until its buffer reaches the high water mark. */
+      const pausedReaderSetup = `
         const ws = new WebSocket(process.env.PEER_URL);
         ws.on("error", error => console.log("ws error", showError(error)));
         const [, response] = await new Promise(resolve => ws.on("unexpected-response", (...args) => resolve(args)));
@@ -201,14 +203,14 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
       `;
 
       test.concurrent(
-        "does not hold the process",
+        "doesn't keep the process alive",
         async () => {
           await using peer = await createPeer({ respond: pump("HTTP/1.1 503 Service Unavailable\r\n\r\n", Infinity) });
           const script = `(async () => {
-            ${held}
+            ${pausedReaderSetup}
             process.on("exit", () => console.log("exit, complete", response.complete));
           })();`;
-          // The timer of the next test would end the body of a client that has not stopped it.
+          // If the client left the stall timer from the next test running, it would abort the body after 1 s.
           const env = { PEER_URL: peer.url, BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "1" };
           expect(await runScript({ specifier }, script, env)).toEqual({
             lines: ["exit, complete false"],
@@ -219,17 +221,17 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
         scriptTimeout,
       );
 
-      // Only the built-in gives up on a server that stops in the middle of a body. The global WebSocket is the clock:
-      // made later, with the same time to live.
+      // Only the built-in times out a server that stalls mid-body. The global WebSocket serves as the clock: it's
+      // created later and has the same timeout.
       test.concurrent.skipIf(!builtin)(
-        "is not taken for a server that has stopped",
+        "isn't mistaken for a stalled server",
         async () => {
           const head = `HTTP/1.1 503 Service Unavailable\r\nContent-Length: ${64 * piece.length}\r\n\r\n`;
           await using peer = await createPeer({
             respond: conn => (conn.headLines[0].startsWith("GET /clock ") ? null : pump(head, 64)(conn)),
           });
           const script = `(async () => {
-            ${held}
+            ${pausedReaderSetup}
             await new Promise(resolve => (new globalThis.WebSocket(process.env.PEER_URL + "/clock").onclose = resolve));
             console.log("the global WebSocket gave up");
             let length = 0;
@@ -248,14 +250,14 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
     });
 
     test.concurrent.skipIf(!builtin).each([
-      { kind: "that ends with the connection", headers: "" },
-      { kind: "with a Content-Length", headers: "Content-Length: 6\r\n" },
-      { kind: "in chunks", headers: "Transfer-Encoding: chunked\r\n", first: "2\r\nno\r\n" },
+      { kind: "no length", headers: "" },
+      { kind: "Content-Length", headers: "Content-Length: 6\r\n" },
+      { kind: "chunked", headers: "Transfer-Encoding: chunked\r\n", partialBody: "2\r\nno\r\n" },
     ])(
-      "a server that stops in the middle of a body $kind: the body is cut off, not over",
-      async ({ headers, first = "no" }) => {
+      "a server that stalls mid-body ($kind) aborts the response instead of ending it",
+      async ({ headers, partialBody = "no" }) => {
         await using peer = await createPeer({
-          respond: () => `HTTP/1.1 503 Service Unavailable\r\n${headers}\r\n${first}`,
+          respond: () => `HTTP/1.1 503 Service Unavailable\r\n${headers}\r\n${partialBody}`,
         });
         const script = `
           const ws = new WebSocket(process.env.PEER_URL);
@@ -279,13 +281,13 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
       scriptTimeout,
     );
 
-    test("terminate() while it is still coming closes the connection", async () => {
-      const { client, response, conn } = await unexpected(chunked);
+    test("terminate() mid-body closes the connection", async () => {
+      const { client, response, conn } = await unexpectedResponse(chunkedHead);
       await using _ = client;
-      // On Node the response fails with ECONNRESET then.
+      // On Node this makes the response emit an ECONNRESET 'error'.
       response.on("error", () => {});
       conn.write("2\r\nno\r\n");
-      expect(String((await event(response, "data"))[0])).toBe("no");
+      expect(String((await nextEvent(response, "data"))[0])).toBe("no");
       client.ws.terminate();
       await Promise.all([conn.ended, client.closed]);
       expect(client.events).toEqual(closedBeforeOpen);
@@ -293,11 +295,11 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
   });
 
   describe("perMessageDeflate with parameters", () => {
-    // 300 bytes come back 2300 bytes later: within a window of 2^15 bytes, far outside one of 2^9.
+    // 300 bytes repeat 2300 bytes later. That's inside a 2^15-byte window but far outside a 2^9-byte one.
     const repeated = crypto.randomBytes(150).toString("hex");
     const message = repeated + crypto.randomBytes(1000).toString("hex") + repeated;
 
-    /** The small chunkSize makes zlib look up a distance in its window and not in its output. */
+    /** The small chunkSize forces zlib to resolve back-references from its window instead of its output buffer. */
     const inflate = (payload: Buffer, windowBits: number) =>
       zlib
         .inflateRawSync(Buffer.concat([payload, Buffer.from([0, 0, 0xff, 0xff])]), {
@@ -308,13 +310,13 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
         .toString();
 
     test.each([
-      { answer: "permessage-deflate; client_max_window_bits=9", says: "repeats" },
-      { answer: "permessage-deflate", says: "leaves out" },
-    ])("the client keeps to clientMaxWindowBits when the answer $says it", async ({ answer }) => {
+      { response: "permessage-deflate; client_max_window_bits=9", verb: "echoes" },
+      { response: "permessage-deflate", verb: "omits" },
+    ])("honors clientMaxWindowBits when the response $verb it", async ({ response }) => {
       await using client = await openClient(
         implementation,
         { perMessageDeflate: { clientMaxWindowBits: 9 } },
-        { headers: [`Sec-WebSocket-Extensions: ${answer}`] },
+        { headers: [`Sec-WebSocket-Extensions: ${response}`] },
       );
       expect(client.conn.header("sec-websocket-extensions")).toBe("permessage-deflate; client_max_window_bits=9");
       client.ws.send(message);
@@ -323,7 +325,7 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
       expect(inflate(frame.payload, 9)).toBe(message);
     });
 
-    test("that message does need the smaller window", async () => {
+    test("sanity check: without clientMaxWindowBits that message needs a larger window", async () => {
       await using client = await openClient(
         implementation,
         {},
@@ -340,11 +342,11 @@ describe.each(implementations)("ws client, the server's answer ($name)", row => 
       expect(client.conn.header("sec-websocket-extensions")).toBeUndefined();
     });
 
-    test("a value that cannot go into a header throws", async () => {
+    test("throws for a parameter value that isn't valid in a header", async () => {
       await using peer = await createPeer();
       const perMessageDeflate = { serverMaxWindowBits: "10\r\nX-Injected: 1" as any };
       expect(() => {
-        // Should it not throw, its 'error' must not be the next test's.
+        // If it doesn't throw, swallow its 'error' so it can't fail the next test.
         new implementation.WebSocket(peer.url, { perMessageDeflate }).on("error", () => {}).terminate();
       }).toThrow(expect.objectContaining({ code: "ERR_INVALID_CHAR" }));
       expect(peer.connections).toEqual([]);

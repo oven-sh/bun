@@ -209,7 +209,7 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
     await once(server, "listening");
     try {
       const errors: (string | undefined)[] = [];
-      // The harness certificate names localhost. The server drops the client whose handshake succeeds.
+      // The harness certificate is for localhost. The server disconnects the client whose handshake succeeds.
       for (const [host, serverName] of [
         ["evil.test", "localhost"],
         ["localhost", "evil.test"],

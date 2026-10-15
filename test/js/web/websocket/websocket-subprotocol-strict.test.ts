@@ -64,13 +64,13 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     };
   }
 
-  /** The connection fails: an 'error' event that says why, then 'close' with 1006. */
-  async function expectConnectionFailure(port: number, protocols: string[], why = "Mismatch client protocol") {
+  /** Expects the connection to fail: an 'error' event whose message ends with `reason`, then 'close' with 1006. */
+  async function expectConnectionFailure(port: number, protocols: string[], reason = "Mismatch client protocol") {
     const { promise: closePromise, resolve: resolveClose, reject } = Promise.withResolvers<void>();
 
     const ws = new WebSocket(`ws://localhost:${port}`, protocols);
     ws.onopen = () => {
-      reject(new Error(`the connection opened with the protocol "${ws.protocol}"`));
+      reject(new Error(`connection opened with protocol "${ws.protocol}"`));
       ws.terminate();
     };
 
@@ -83,7 +83,7 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
 
     await closePromise;
     expect(events).toEqual([
-      `error: WebSocket connection to 'ws://localhost:${port}/' failed: ${why}`,
+      `error: WebSocket connection to 'ws://localhost:${port}/' failed: ${reason}`,
       `close: 1006 "", wasClean false`,
     ]);
   }
@@ -218,30 +218,31 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
   });
 });
 
-describe("WebSocket constructor: the subprotocol list", () => {
+describe("WebSocket constructor subprotocol validation", () => {
   function thrown(run: () => void): Error {
     try {
       run();
     } catch (error) {
       return error as Error;
     }
-    throw new Error("the call did not throw");
+    throw new Error("expected the call to throw");
   }
 
-  it("names a duplicate", () => {
+  it("names the duplicate protocol in the SyntaxError", () => {
     expect(() => new WebSocket("ws://127.0.0.1:1/", ["a", "a"])).toThrow(
       new SyntaxError("WebSocket protocols contain duplicates: 'a'"),
     );
   });
 
-  it("compares the names without regard to ASCII case", () => {
+  it("detects duplicates ASCII case-insensitively", () => {
     expect(() => new WebSocket("ws://127.0.0.1:1/", ["chat", "Chat"])).toThrow(
       new SyntaxError("WebSocket protocols contain duplicates: 'Chat'"),
     );
   });
 
-  // One code unit becomes six characters in the message: 358 M of them used to overflow a string and abort.
-  it("quotes at most about 1024 characters of an invalid name", () => {
+  // Each code unit is escaped to six characters in the message, so a name of 358 M code units used to
+  // overflow the maximum string length and abort.
+  it("truncates an invalid protocol to about 1024 characters in the error message", () => {
     const error = thrown(() => new WebSocket("ws://127.0.0.1:1/", [Buffer.alloc(200_000, 0xff).toString("latin1")]));
     expect(error.name).toBe("SyntaxError");
     expect(error.message).toStartWith("Wrong protocol for WebSocket '\\u00FF\\u00FF");
@@ -249,7 +250,7 @@ describe("WebSocket constructor: the subprotocol list", () => {
     expect(error.message.length).toBeLessThan(1200);
   });
 
-  it("quotes at most about 1024 characters of a duplicate", () => {
+  it("truncates a duplicate protocol to about 1024 characters in the error message", () => {
     const long = Buffer.alloc(200_000, 0x61).toString("latin1");
     const error = thrown(() => new WebSocket("ws://127.0.0.1:1/", [long, long]));
     expect(error.name).toBe("SyntaxError");

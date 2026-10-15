@@ -73,7 +73,7 @@ private:
         return true;
     }
 
-    /* Out of line: a dozen cold branches of the parser end here */
+    /* noinline: called from a dozen cold branches in the parser */
     __attribute__((noinline)) static void failConnection(WebSocketState<isServer> */*wState*/, void *s, const WebSocketFailure &failure, unsigned int detail = 0) {
         ((WebSocket<SSL, isServer, USERDATA> *) s)->failConnection(failure, detail);
     }
@@ -87,8 +87,9 @@ private:
         }
     }
 
-    /* The peer decides how many Pings there are, so their answers have a limit also where maxBackpressure is 0 and
-     * the application's own messages have none. RFC 6455 5.5.3 lets a Pong answer only the latest Ping. */
+    /* Skip auto-pongs above 16 MiB of backpressure. The peer can send unlimited pings, so unbounded replies would let
+     * it exhaust our memory. This applies even when maxBackpressure is 0 and app sends aren't capped.
+     * RFC 6455 5.5.3 allows answering only the most recent ping. */
     static void sendAutomaticPong(WebSocket<SSL, isServer, USERDATA> *webSocket, std::string_view payload) {
         WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) webSocket);
         if (!getExtS((us_socket_t *) webSocket)->autoPong || webSocketData->closeFrameSent || webSocket->getBufferedAmount() > 16 * 1024 * 1024) {
@@ -97,7 +98,7 @@ private:
         webSocket->send(payload, OpCode::PONG);
     }
 
-    /* Returns false after failing the connection */
+    /* On error, fails the connection and returns false */
     static bool inflateMessage(void *s, char *&data, size_t &length) {
         WebSocketContextData<SSL, USERDATA> *webSocketContextData = getExtS((us_socket_t *) s);
         WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) s);
@@ -151,8 +152,8 @@ private:
                     }
                 }
             } else {
-                /* Allocate fragment buffer up front first time. The length is only what the header claims, so
-                 * beyond this much the buffer grows with the bytes that really arrive. */
+                /* Allocate fragment buffer up front first time, but at most 16 MiB. The length comes from the
+                 * frame header, which the peer controls, so don't trust it for large allocations. */
                 if (!webSocketData->fragmentBuffer.length()) {
                     webSocketData->fragmentBuffer.reserve(std::min<size_t>(length + remainingBytes, 16 * 1024 * 1024));
                 }
@@ -317,7 +318,7 @@ private:
         auto *asyncSocket = (AsyncSocket<SSL> *) s;
 
         /* Every time we get data and not in shutdown state we simply reset the timeout.
-         * A pause does not take back what was already read (the rest of a TLS read). */
+         * We can still get data while paused (the rest of a TLS read); keep the timeout disabled then. */
         if (!s->flags.is_paused) {
             asyncSocket->timeout(webSocketContextData->idleTimeoutComponents.first);
         }
@@ -373,10 +374,10 @@ private:
                 /* Now perform the actual TCP/TLS shutdown which was postponed due to backpressure */
                 asyncSocket->shutdown();
             }
-        } else if (backpressure > asyncSocket->getBufferedAmount() || (!backpressure && webSocketData->drainOwed)) {
-            /* Only call drain if we actually drained backpressure, or a later send() did. A socket also polls
-             * for writable after pause() and resume(). */
-            webSocketData->drainOwed = asyncSocket->getBufferedAmount() != 0;
+        } else if (backpressure > asyncSocket->getBufferedAmount() || (!backpressure && webSocketData->needsDrainEvent)) {
+            /* Only call drain if we actually drained backpressure, or a later send() already did. Coming here with
+             * 0 backpressure isn't enough: pause() and resume() also make the socket poll for writable. */
+            webSocketData->needsDrainEvent = asyncSocket->getBufferedAmount() != 0;
             auto *webSocketContextData = getExtS(s);
             if (webSocketContextData->drainHandler) {
                 webSocketContextData->drainHandler((WebSocket<SSL, isServer, USERDATA> *) s);
@@ -414,7 +415,7 @@ private:
             return s;
         }
 
-        /* The peer is presumed gone, so no close frame. The reason length doubles as the close code. */
+        /* Assume the peer is unreachable and skip the close frame. The reason length doubles as the close code. */
         us_socket_close(s, (int) ERR_WEBSOCKET_TIMEOUT.length(), (void *) ERR_WEBSOCKET_TIMEOUT.data());
 
         return s;

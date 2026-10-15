@@ -1,5 +1,5 @@
-// Which connections a `ws` WebSocketServer can upgrade, what node:http does around an upgraded socket, and what
-// frameworks do with a server socket. The client is a raw TCP socket. See ws-raw-peer.ts.
+// Tests which kinds of connection a `ws` WebSocketServer can upgrade, how node:http treats upgraded sockets, and how
+// frameworks use server sockets. The client is a raw TCP socket. See ws-raw-peer.ts.
 import fastifyWebsocket from "@fastify/websocket";
 import { describe, expect, test } from "bun:test";
 import Fastify from "fastify";
@@ -17,7 +17,7 @@ import {
   closePayload,
   createServer,
   encodeFrame,
-  event,
+  nextEvent,
   HttpClient,
   implementations,
   KEY,
@@ -28,11 +28,11 @@ import {
   show,
   showError,
   upgradeRequest,
-  watch,
+  recordEvents,
 } from "./ws-raw-peer";
 
-const switching = "HTTP/1.1 101 Switching Protocols";
-const get = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+const switchingProtocols = "HTTP/1.1 101 Switching Protocols";
+const getRequest = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
 const engineIoPath = "/socket.io/?EIO=4&transport=websocket";
 
 function echo(wss: WebSocketServer) {
@@ -41,12 +41,12 @@ function echo(wss: WebSocketServer) {
 }
 
 async function expectEcho(client: RawClient) {
-  expect((await client.response).status).toBe(switching);
+  expect((await client.response).status).toBe(switchingProtocols);
   client.text("hi");
   expect(await client.next()).toBe('text "echo:hi"');
 }
 
-// Hides what `ws` and node:http keep on the socket under symbols.
+// Hides the symbol-keyed properties that `ws` and node:http store on the socket.
 const hideSymbols = (socket: Duplex) =>
   new Proxy(socket, {
     get(target, property, receiver) {
@@ -57,12 +57,12 @@ const hideSymbols = (socket: Duplex) =>
     has: (target, property) => typeof property !== "symbol" && Reflect.has(target, property),
   });
 
-describe.each(implementations)("ws server, transports ($name)", ({ ws: implementation, builtin }) => {
+describe.each(implementations)("ws server transports ($name)", ({ ws: implementation, builtin }) => {
   const { WebSocketServer } = implementation;
   const emitConnection = (wss: WebSocketServer, req: http.IncomingMessage) => (ws: WebSocket) =>
     wss.emit("connection", ws, req);
 
-  test("https.Server: verifyClient() sees `secure: true`", async () => {
+  test("https.Server: verifyClient() receives `secure: true`", async () => {
     const server = https.createServer(certificate);
     const secure: boolean[] = [];
     echo(new WebSocketServer({ server, verifyClient: info => secure.push(info.secure) > 0 }));
@@ -71,7 +71,7 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
     expect(secure).toEqual([true]);
   });
 
-  test.skipIf(isWindows)("http.Server on a unix socket: address() is the path", async () => {
+  test.skipIf(isWindows)("http.Server on a unix socket: address() returns the path", async () => {
     using dir = tempDir("ws-server-unix", {});
     const socketPath = path.join(String(dir), "ws.sock");
     const server = http.createServer();
@@ -81,7 +81,7 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
     await expectEcho(listening.connect());
   });
 
-  test("a request listener next to the WebSocketServer still gets the plain requests", async () => {
+  test("the http.Server's request listener still handles non-upgrade requests", async () => {
     const server = http.createServer((req, res) => res.setHeader("X-App", "1").end("plain"));
     echo(new WebSocketServer({ server, path: "/ws" }));
     await using listening = await serve(server);
@@ -106,8 +106,8 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
     expect(await callbacks).toHaveLength(50);
   });
 
-  describe("handleUpgrade() with arguments that a framework wrapped", () => {
-    test("the socket in a Proxy that hides symbols", async () => {
+  describe("handleUpgrade() with framework-wrapped arguments", () => {
+    test("accepts a socket wrapped in a Proxy that hides symbols", async () => {
       const server = http.createServer();
       const wss = echo(new WebSocketServer({ noServer: true }));
       server.on("upgrade", (req, socket, head) =>
@@ -117,36 +117,36 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
       await expectEcho(listening.connect());
     });
 
-    describe("the socket behind a Duplex of the framework's own", () => {
-      /** An OPEN server socket on a Duplex that passes everything on to the socket of the request, and counts. */
-      async function openBehindDuplex() {
+    describe("with the socket wrapped in a custom Duplex", () => {
+      /** Opens a server socket on a Duplex that forwards everything to the request's socket and counts the bytes. */
+      async function openOnWrapper() {
         const listening = await serve(http.createServer());
         const wss = new WebSocketServer({ noServer: true });
-        const passed = { in: 0, out: 0, ended: false };
+        const forwarded = { in: 0, out: 0, ended: false };
         let wrapper!: Duplex;
         listening.server.on("upgrade", (req, socket, head) => {
           wrapper = new Duplex({
             read: () => void socket.resume(),
-            write: (chunk, encoding, callback) => ((passed.out += chunk.length), void socket.write(chunk, callback)),
-            final: callback => ((passed.ended = true), void socket.end(callback)),
+            write: (chunk, encoding, callback) => ((forwarded.out += chunk.length), void socket.write(chunk, callback)),
+            final: callback => ((forwarded.ended = true), void socket.end(callback)),
             destroy: (error, callback) => (socket.destroy(), callback(error)),
           });
-          socket.on("data", chunk => ((passed.in += chunk.length), wrapper.push(chunk) || socket.pause()));
+          socket.on("data", chunk => ((forwarded.in += chunk.length), wrapper.push(chunk) || socket.pause()));
           socket.on("end", () => wrapper.push(null));
           socket.on("close", () => wrapper.destroy());
           wss.handleUpgrade(req, wrapper, head, emitConnection(wss, req));
         });
         const connection = await listening.open(wss);
-        return { ...connection, wrapper, passed, [Symbol.asyncDispose]: () => listening[Symbol.asyncDispose]() };
+        return { ...connection, wrapper, forwarded, [Symbol.asyncDispose]: () => listening[Symbol.asyncDispose]() };
       }
 
-      test("every byte goes through it, the 101 too, and it is `_socket`", async () => {
-        await using server = await openBehindDuplex();
-        const { ws, req, client, events, wrapper, passed } = server;
+      test("every byte, including the 101, goes through the wrapper, and `_socket` is the wrapper", async () => {
+        await using server = await openOnWrapper();
+        const { ws, req, client, events, wrapper, forwarded } = server;
         expect((ws as any)._socket).toBe(wrapper);
         expect(wrapper).not.toBe(req.socket);
-        const request = client.socket.bytesWritten;
-        expect(passed).toEqual({ in: 0, out: client.head.length + 4, ended: false });
+        const requestBytes = client.socket.bytesWritten;
+        expect(forwarded).toEqual({ in: 0, out: client.head.length + 4, ended: false });
 
         client.text("up");
         client.ping("p");
@@ -155,27 +155,27 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
         ws.send(Buffer.alloc(70_000));
         expect(await client.roundTrip()).toEqual(['text "down"', "binary 70000 bytes"]);
         expect(events).toEqual(['message Buffer("up") text rs=1', 'ping Buffer("p") rs=1']);
-        expect(passed).toEqual({
-          in: client.socket.bytesWritten - request,
+        expect(forwarded).toEqual({
+          in: client.socket.bytesWritten - requestBytes,
           out: client.socket.bytesRead,
           ended: false,
         });
       });
 
-      test("a closing handshake ends it", async () => {
-        await using server = await openBehindDuplex();
-        const { ws, client, events, wrapper, passed } = server;
+      test("the closing handshake ends the wrapper", async () => {
+        await using server = await openOnWrapper();
+        const { ws, client, events, wrapper, forwarded } = server;
         ws.close(1000, "bye");
         expect(await client.next()).toBe('close 1000 "bye"');
         client.close(1000, "bye");
         await server.closed;
         expect(events).toEqual(['close 1000 Buffer("bye") rs=3']);
         expect(await client.next()).toBe("EOF");
-        expect({ ended: passed.ended, destroyed: wrapper.destroyed }).toEqual({ ended: true, destroyed: true });
+        expect({ ended: forwarded.ended, destroyed: wrapper.destroyed }).toEqual({ ended: true, destroyed: true });
       });
 
-      test("terminate() destroys it", async () => {
-        await using server = await openBehindDuplex();
+      test("terminate() destroys the wrapper", async () => {
+        await using server = await openOnWrapper();
         server.ws.terminate();
         expect(server.wrapper.destroyed).toBe(true);
         await server.closed;
@@ -184,7 +184,7 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
       });
     });
 
-    test("the socket in a Proxy that hides symbols, refused by verifyClient()", async () => {
+    test("sends the 401 when verifyClient() rejects a socket wrapped in a Proxy that hides symbols", async () => {
       const server = http.createServer();
       const wss = new WebSocketServer({ noServer: true, verifyClient: () => false });
       server.on("upgrade", (req, socket, head) => wss.handleUpgrade(req, hideSymbols(socket), head, () => {}));
@@ -199,7 +199,7 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
       { request: "new Proxy(req, {})", wrap: req => new Proxy(req, {}) },
       { request: "a plain object", wrap: req => ({ method: req.method, url: req.url, headers: { ...req.headers } }) },
       {
-        request: "an IncomingMessage of its own",
+        request: "a new IncomingMessage",
         wrap: (req, socket) =>
           Object.assign(new http.IncomingMessage(socket as net.Socket), {
             method: req.method,
@@ -208,7 +208,7 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
           }),
       },
     ] as { request: string; wrap(req: http.IncomingMessage, socket: Duplex): http.IncomingMessage }[])(
-      "the request is $request",
+      "accepts $request as the request",
       async ({ wrap }) => {
         const server = http.createServer();
         const wss = echo(new WebSocketServer({ noServer: true }));
@@ -222,47 +222,51 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
     );
   });
 
-  describe("a connection that node:http does not serve natively", () => {
-    // The WebSocket of the first connection, watched from the start.
-    function first(wss: WebSocketServer) {
+  describe("connections that node:http doesn't handle natively", () => {
+    // `upgraded` resolves with the first connection's WebSocket. `events` records its events from the start.
+    function firstConnection(wss: WebSocketServer) {
       const events: string[] = [];
-      const upgraded = new Promise<WebSocket>(resolve => wss.on("connection", ws => (watch(ws, events), resolve(ws))));
+      const upgraded = new Promise<WebSocket>(resolve =>
+        wss.on("connection", ws => (recordEvents(ws, events), resolve(ws))),
+      );
       return { events, upgraded };
     }
 
-    // `socket` is the server's end of the connection of `client`, `ws` the WebSocket on it. `early` arrives with the
-    // request.
+    // `socket` is the server end of `client`'s connection and `ws` is the WebSocket on it. `early` is sent in the same
+    // packet as the request.
     const kinds = [
       {
         kind: "http2.createSecureServer({ allowHTTP1: true })",
         async open(early?: Buffer) {
           const server = http2.createSecureServer({ ...certificate, allowHTTP1: true });
-          const { events, upgraded } = first(new WebSocketServer({ server: server as unknown as http.Server }));
+          const { events, upgraded } = firstConnection(
+            new WebSocketServer({ server: server as unknown as http.Server }),
+          );
           const accepted = once(server, "secureConnection") as Promise<[Duplex]>;
           const listening = await serve(server);
-          const client = listening.connect({ secure: true, alpn: ["http/1.1"], afterRequest: early });
+          const client = listening.connect({ secure: true, alpn: ["http/1.1"], trailingBytes: early });
           const [[socket], ws, { status }] = await Promise.all([accepted, upgraded, client.response]);
           return { ws, events, socket, client, status, [Symbol.asyncDispose]: listening[Symbol.asyncDispose] };
         },
       },
       {
-        kind: 'a net.Server in front that calls server.emit("connection", socket)',
+        kind: 'a net.Server that forwards sockets with server.emit("connection", socket)',
         async open(early?: Buffer) {
           const server = http.createServer();
-          const { events, upgraded } = first(new WebSocketServer({ server }));
+          const { events, upgraded } = firstConnection(new WebSocketServer({ server }));
           const front = net.createServer(socket => void server.emit("connection", socket));
           const accepted = once(front, "connection") as Promise<[Duplex]>;
           const listening = await serve(front);
-          const client = listening.connect({ afterRequest: early });
+          const client = listening.connect({ trailingBytes: early });
           const [[socket], ws, { status }] = await Promise.all([accepted, upgraded, client.response]);
           return { ws, events, socket, client, status, [Symbol.asyncDispose]: listening[Symbol.asyncDispose] };
         },
       },
       {
-        kind: "any Duplex",
+        kind: "a plain Duplex",
         async open(early = Buffer.alloc(0)) {
           const wss = new WebSocketServer({ noServer: true });
-          const { events, upgraded } = first(wss);
+          const { events, upgraded } = firstConnection(wss);
           const [near, socket] = duplexPair();
           const client = new HttpClient(near);
           const headers = {
@@ -273,7 +277,7 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
           };
           const request = { method: "GET", url: "/", headers } as http.IncomingMessage;
           wss.handleUpgrade(request, socket, early, emitConnection(wss, request));
-          const [ws, [status]] = await Promise.all([upgraded, client.answer()]);
+          const [ws, [status]] = await Promise.all([upgraded, client.nextResponse()]);
           const dispose = async () => void (near.destroy(), socket.destroy());
           return { ws, events, socket, client, status, [Symbol.asyncDispose]: dispose };
         },
@@ -281,17 +285,17 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
     ];
 
     describe.each(kinds)("$kind", ({ open }) => {
-      test("the socket is `_socket`, and messages, Ping and Pong go both ways", async () => {
+      test("`_socket` is the socket, and messages, pings and pongs work in both directions", async () => {
         await using opened = await open();
         const { ws, events, socket, client, status } = opened;
-        expect(status).toBe(switching);
+        expect(status).toBe(switchingProtocols);
         expect(ws.readyState).toBe(ws.OPEN);
         expect((ws as any)._socket).toBe(socket);
 
         ws.send("down");
         ws.send(Buffer.from([1, 2]));
         ws.ping("from the server");
-        expect(await client.take(3)).toEqual(['text "down"', "binary 0x0102", 'ping "from the server"']);
+        expect(await client.nextFrames(3)).toEqual(['text "down"', "binary 0x0102", 'ping "from the server"']);
         client.pong("from the server");
         client.text("up");
         client.binary(Buffer.from([3, 4]));
@@ -305,18 +309,18 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
         ]);
       });
 
-      test("a message and a half in the packet of the request", async () => {
-        const half = encodeFrame(OP.text, "in two halves", { mask: true });
+      test("handles one and a half messages sent in the same packet as the request", async () => {
+        const split = encodeFrame(OP.text, "in two halves", { mask: true });
         await using opened = await open(
-          Buffer.concat([encodeFrame(OP.text, "early", { mask: true }), half.subarray(0, 9)]),
+          Buffer.concat([encodeFrame(OP.text, "early", { mask: true }), split.subarray(0, 9)]),
         );
         const { events, client } = opened;
-        client.write(half.subarray(9));
+        client.write(split.subarray(9));
         expect(await client.roundTrip()).toEqual([]);
         expect(events).toEqual(['message Buffer("early") text rs=1', 'message Buffer("in two halves") text rs=1']);
       });
 
-      test("close(): the Close frame, the client's, then FIN and 'close'", async () => {
+      test("close() sends a Close frame, waits for the client's, then sends FIN and emits 'close'", async () => {
         await using opened = await open();
         const { ws, events, socket, client } = opened;
         ws.close(4000, "bye");
@@ -324,20 +328,20 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
         expect(ws.readyState).toBe(ws.CLOSING);
         client.close(4000, "bye");
         client.end();
-        await event(ws, "close");
+        await nextEvent(ws, "close");
         expect(events).toEqual(['close 4000 Buffer("bye") rs=3']);
         expect(await client.next()).toBe("EOF");
         expect(socket.destroyed).toBe(true);
       });
 
-      test("a Close frame from the client is echoed, then FIN and 'close'", async () => {
+      test("echoes the client's Close frame, then sends FIN and emits 'close'", async () => {
         await using opened = await open();
         const { ws, events, socket, client } = opened;
         client.close(1000, "done");
         client.end();
-        await event(ws, "close");
+        await nextEvent(ws, "close");
         expect(events).toEqual(['close 1000 Buffer("done") rs=3']);
-        expect(await client.rest()).toEqual(['close 1000 "done"']);
+        expect(await client.remainingFrames()).toEqual(['close 1000 "done"']);
         expect(socket.destroyed).toBe(true);
       });
 
@@ -346,62 +350,62 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
         const { ws, events, socket, client } = opened;
         ws.terminate();
         expect(socket.destroyed).toBe(true);
-        await event(ws, "close");
+        await nextEvent(ws, "close");
         expect(events).toEqual(["close 1006 Buffer() rs=3"]);
-        expect(await client.rest()).toEqual([]);
+        expect(await client.remainingFrames()).toEqual([]);
       });
     });
   });
 
-  describe("more than one request on the connection", () => {
+  describe("several requests on one connection", () => {
     const app = () => http.createServer((req, res) => res.end("ok"));
 
-    test("a request, then the handshake", async () => {
+    test("upgrades after a plain request", async () => {
       const server = app();
       echo(new WebSocketServer({ server }));
       await using listening = await serve(server);
       const client = listening.connectHttp();
-      client.write(get);
-      expect(await client.answer()).toEqual(["HTTP/1.1 200 OK", "ok"]);
+      client.write(getRequest);
+      expect(await client.nextResponse()).toEqual(["HTTP/1.1 200 OK", "ok"]);
       client.write(upgradeRequest());
-      expect(await client.answer()).toEqual([switching, ""]);
+      expect(await client.nextResponse()).toEqual([switchingProtocols, ""]);
       client.text("x");
       expect(await client.next()).toBe('text "echo:x"');
     });
 
-    test("a request and the handshake in one packet", async () => {
+    test("upgrades when a plain request and the handshake arrive in one packet", async () => {
       const server = app();
       echo(new WebSocketServer({ server }));
       await using listening = await serve(server);
       const client = listening.connectHttp();
-      client.write(get + upgradeRequest());
-      expect(await client.answer()).toEqual(["HTTP/1.1 200 OK", "ok"]);
-      expect(await client.answer()).toEqual([switching, ""]);
+      client.write(getRequest + upgradeRequest());
+      expect(await client.nextResponse()).toEqual(["HTTP/1.1 200 OK", "ok"]);
+      expect(await client.nextResponse()).toEqual([switchingProtocols, ""]);
       client.text("x");
       expect(await client.next()).toBe('text "echo:x"');
     });
 
-    test("a request and a handshake that is refused in one packet", async () => {
+    test("rejects an invalid handshake that arrives in the same packet as a plain request", async () => {
       const server = app();
       new WebSocketServer({ server });
       await using listening = await serve(server);
       const client = listening.connectHttp();
-      client.write(get + upgradeRequest({ headers: { "Sec-WebSocket-Key": null } }));
-      expect(await client.answer()).toEqual(["HTTP/1.1 200 OK", "ok"]);
-      expect(await client.answer()).toEqual([
+      client.write(getRequest + upgradeRequest({ headers: { "Sec-WebSocket-Key": null } }));
+      expect(await client.nextResponse()).toEqual(["HTTP/1.1 200 OK", "ok"]);
+      expect(await client.nextResponse()).toEqual([
         "HTTP/1.1 400 Bad Request",
         "Missing or invalid Sec-WebSocket-Key header",
       ]);
-      expect(await client.answer()).toBe("EOF");
+      expect(await client.nextResponse()).toBe("EOF");
     });
   });
 
   describe("frames that arrive before handleUpgrade() runs", () => {
-    type Early = {
+    type EarlyFramesCase = {
       bytes: Buffer;
-      /** Written after the 'upgrade' event, not in the packet of the request. */
+      /** Write `bytes` after the 'upgrade' event instead of in the same packet as the request. */
       late?: boolean;
-      /** handleUpgrade() runs only when the server has had the time to read `bytes`. */
+      /** Delay handleUpgrade() until the server has had time to read `bytes`. */
       defer?: boolean;
       /** Written after the 101. */
       tail?: Buffer;
@@ -412,37 +416,37 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
     const split = frame(OP.text, "split-frame");
     const earlyAndLater = ['message Buffer("early") text rs=1', 'message Buffer("later") text rs=1'];
 
-    const early =
-      ({ bytes, late = false, defer = false, tail, events: expected, sent = [] }: Early) =>
+    const testEarlyFrames =
+      ({ bytes, late = false, defer = false, tail, events: expected, sent = [] }: EarlyFramesCase) =>
       async () => {
         const server = http.createServer((req, res) => res.end());
         const wss = new WebSocketServer({ noServer: true });
         const upgrade = Promise.withResolvers<Buffer>();
-        const go = Promise.withResolvers<void>();
+        const proceed = Promise.withResolvers<void>();
         const closed = Promise.withResolvers<void>();
         const events: string[] = [];
         server.on("upgrade", async (req, socket, head) => {
           upgrade.resolve(head);
-          if (defer) await go.promise;
+          if (defer) await proceed.promise;
           wss.handleUpgrade(req, socket, head, ws => {
-            watch(ws, events);
+            recordEvents(ws, events);
             ws.on("close", () => closed.resolve());
           });
         });
         await using listening = await serve(server);
 
-        const client = listening.connect(late ? {} : { afterRequest: bytes });
+        const client = listening.connect(late ? {} : { trailingBytes: bytes });
         expect((await upgrade.promise).length > 0).toBe(!late);
         if (late) client.write(bytes);
         if (defer) {
-          // Once a later connection has its answer, the server has seen what the first one sent before.
-          await listening.connect({ raw: get }).response;
-          go.resolve();
+          // Once a later connection gets its response, the server must have received what the first one sent earlier.
+          await listening.connect({ raw: getRequest }).response;
+          proceed.resolve();
         }
-        expect((await client.response).status).toBe(switching);
+        expect((await client.response).status).toBe(switchingProtocols);
 
         if (bytes[0] === (0x80 | OP.close)) {
-          expect(await client.rest()).toEqual(sent);
+          expect(await client.remainingFrames()).toEqual(sent);
           await closed.promise;
         } else {
           if (tail) client.write(tail);
@@ -452,60 +456,67 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
         expect(events).toEqual(expected);
       };
 
-    test("a message in the packet of the request", early({ bytes: frame(OP.text, "early"), events: earlyAndLater }));
     test(
-      "half a message in the packet of the request",
-      early({
+      "a message in the same packet as the request",
+      testEarlyFrames({ bytes: frame(OP.text, "early"), events: earlyAndLater }),
+    );
+    test(
+      "half a message in the same packet as the request",
+      testEarlyFrames({
         bytes: split.subarray(0, 9),
         tail: split.subarray(9),
         events: ['message Buffer("split-frame") text rs=1', 'message Buffer("later") text rs=1'],
       }),
     );
     test(
-      "a Ping in the packet of the request",
-      early({
+      "a ping in the same packet as the request",
+      testEarlyFrames({
         bytes: frame(OP.ping, "p"),
         events: ['ping Buffer("p") rs=1', 'message Buffer("later") text rs=1'],
         sent: ['pong "p"'],
       }),
     );
     test(
-      "a Close frame in the packet of the request",
-      early({ bytes: frame(OP.close, closePayload(1000)), events: ["close 1000 Buffer() rs=3"], sent: ["close 1000"] }),
+      "a Close frame in the same packet as the request",
+      testEarlyFrames({
+        bytes: frame(OP.close, closePayload(1000)),
+        events: ["close 1000 Buffer() rs=3"],
+        sent: ["close 1000"],
+      }),
     );
     test(
-      "a message in the packet of the request, handleUpgrade() in a later task",
-      early({ bytes: frame(OP.text, "early"), defer: true, events: earlyAndLater }),
+      "a message in the same packet as the request, with handleUpgrade() deferred to a later task",
+      testEarlyFrames({ bytes: frame(OP.text, "early"), defer: true, events: earlyAndLater }),
     );
     test(
-      "a message after the request, handleUpgrade() in a later task",
-      early({ bytes: frame(OP.text, "early"), late: true, defer: true, events: earlyAndLater }),
+      "a message sent after the request, with handleUpgrade() deferred to a later task",
+      testEarlyFrames({ bytes: frame(OP.text, "early"), late: true, defer: true, events: earlyAndLater }),
     );
   });
 
   describe("http.Server#close()", () => {
-    test("drops an idle connection: a handshake on it gets no answer", async () => {
+    test("closes idle connections, so a later handshake on one gets no response", async () => {
       const server = http.createServer((req, res) => res.end("ok"));
       new WebSocketServer({ server });
       await using listening = await serve(server);
       const client = listening.connectHttp();
-      client.write(get);
-      expect(await client.answer()).toEqual(["HTTP/1.1 200 OK", "ok"]);
+      client.write(getRequest);
+      expect(await client.nextResponse()).toEqual(["HTTP/1.1 200 OK", "ok"]);
       server.close();
       client.write(upgradeRequest());
-      expect(await client.answer()).toBe("EOF");
+      expect(await client.nextResponse()).toBe("EOF");
     });
 
-    // close() leaves a connection with a request in flight open, and it can still upgrade.
-    async function closeAroundRequest(server: http.Server, listening: Awaited<ReturnType<typeof serve>>) {
-      const held = once(server, "request") as Promise<[http.IncomingMessage, http.ServerResponse]>;
+    // close() keeps a connection open while it has a request in flight, and that connection can still upgrade.
+    async function closeDuringRequest(server: http.Server, listening: Awaited<ReturnType<typeof serve>>) {
+      const pendingRequest = once(server, "request") as Promise<[http.IncomingMessage, http.ServerResponse]>;
       const client = listening.connectHttp();
-      client.write(get);
-      const [, res] = await held;
+      client.write(getRequest);
+      const [, res] = await pendingRequest;
       let isClosed = false;
       const closed = new Promise<void>(resolve => server.close(() => ((isClosed = true), resolve())));
       res.end("drained");
-      expect(await client.answer()).toEqual(["HTTP/1.1 200 OK", "drained"]);
+      expect(await client.nextResponse()).toEqual(["HTTP/1.1 200 OK", "drained"]);
       return { client, closed, isClosed: () => isClosed };
     }
 
@@ -514,39 +525,39 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
       const wss = new WebSocketServer({ noServer: true });
       attach(server, wss);
       await using listening = await serve(server);
-      const { client, closed, isClosed } = await closeAroundRequest(server, listening);
+      const { client, closed, isClosed } = await closeDuringRequest(server, listening);
 
       const connection = once(wss, "connection");
       client.write(upgradeRequest());
-      expect(await client.answer()).toEqual([switching, ""]);
+      expect(await client.nextResponse()).toEqual([switchingProtocols, ""]);
       const [ws] = (await connection) as [WebSocket];
-      const events = watch(ws);
+      const events = recordEvents(ws);
 
-      // The callback of close() waits for the WebSocket.
+      // close()'s callback doesn't fire until the WebSocket closes.
       expect(await client.roundTrip()).toEqual([]);
       expect({ clients: wss.clients.size, isClosed: isClosed() }).toEqual({ clients: 1, isClosed: false });
       client.close(1000);
-      await Promise.all([closed, event(ws, "close")]);
+      await Promise.all([closed, nextEvent(ws, "close")]);
       expect(events).toEqual(["close 1000 Buffer() rs=3"]);
     };
 
     test(
-      "a connection it left open upgrades in the 'upgrade' event",
+      "a connection that survived close() can upgrade from the 'upgrade' event",
       upgradesAfterClose((server, wss) =>
         server.on("upgrade", (req, socket, head) => wss.handleUpgrade(req, socket, head, emitConnection(wss, req))),
       ),
     );
     test(
-      "a connection it left open upgrades in a later task",
+      "a connection that survived close() can upgrade from a later task",
       upgradesAfterClose((server, wss) =>
         server.on("upgrade", (req, socket, head) =>
           setImmediate(() => wss.handleUpgrade(req, socket, head, emitConnection(wss, req))),
         ),
       ),
     );
-    // On Bun the socket of a 'request' event does not carry the frames of the real package.
+    // On Bun, npm ws can't send or receive frames through the socket of a 'request' event.
     test.skipIf(!builtin)(
-      "a connection it left open upgrades in a 'request' listener",
+      "a connection that survived close() can upgrade from a 'request' listener",
       upgradesAfterClose((server, wss) =>
         server.on("request", req => {
           if (req.headers.upgrade) wss.handleUpgrade(req, req.socket, Buffer.alloc(0), emitConnection(wss, req));
@@ -554,38 +565,38 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
       ),
     );
 
-    test("a connection it left open upgrades after the server listens again", async () => {
+    test("a connection that survived close() can upgrade after the server listens again", async () => {
       const server = http.createServer();
       const wss = echo(new WebSocketServer({ server }));
       await using listening = await serve(server);
-      const { client: old } = await closeAroundRequest(server, listening);
+      const { client: old } = await closeDuringRequest(server, listening);
       await once(server.listen(0, "127.0.0.1"), "listening");
       const fresh = listening.connectHttp();
       for (const client of [old, fresh]) {
         client.write(upgradeRequest());
-        expect(await client.answer()).toEqual([switching, ""]);
+        expect(await client.nextResponse()).toEqual([switchingProtocols, ""]);
         client.text("x");
         expect(await client.next()).toBe('text "echo:x"');
       }
       expect(wss.clients.size).toBe(2);
     });
 
-    test("completes once the client of a WebSocket is gone", async () => {
+    test("completes once a WebSocket's client has disconnected", async () => {
       const server = http.createServer();
       const wss = new WebSocketServer({ server });
       const connection = once(wss, "connection");
       await using listening = await serve(server);
       const client = listening.connect();
       const [ws] = (await connection) as [WebSocket];
-      const events = watch(ws);
+      const events = recordEvents(ws);
       client.destroy();
-      await event(ws, "close");
+      await nextEvent(ws, "close");
       expect(events).toEqual(["close 1006 Buffer() rs=3"]);
       await new Promise(resolve => server.close(resolve));
     });
   });
 
-  test("http.Server#getConnections() counts a WebSocket", async () => {
+  test("http.Server#getConnections() counts WebSockets", async () => {
     const server = http.createServer();
     new WebSocketServer({ server });
     await using listening = await serve(server);
@@ -593,8 +604,8 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
     expect(await new Promise(resolve => server.getConnections((error, count) => resolve(count)))).toBe(1);
   });
 
-  test("the timeouts of http.Server do not reach an upgraded socket", async () => {
-    // Plain requests are never answered.
+  test("http.Server timeouts don't apply to an upgraded socket", async () => {
+    // Never respond to plain requests.
     const server = http.createServer(() => {});
     server.setTimeout(100);
     server.keepAliveTimeout = 25;
@@ -614,13 +625,13 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
     upgraded = req.socket;
     expect(req.socket.timeout).toBe(0);
 
-    // This request came later. When its time is up, so would be the WebSocket's.
-    expect((await listening.connect({ raw: get }).response).status).toBe("no response");
+    // This request started later, so by the time it times out the WebSocket would have timed out too.
+    expect((await listening.connect({ raw: getRequest }).response).status).toBe("no response");
     expect(timeouts).toEqual(["the request"]);
     expect(await client.roundTrip()).toEqual([]);
   });
 
-  test("the upgrade request: complete, not aborted, not destroyed, with its headers", async () => {
+  test("the upgrade request is complete, not aborted, not destroyed, and keeps its headers", async () => {
     await using server = await openServer(
       implementation,
       {},
@@ -646,7 +657,7 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
     });
   });
 
-  test("req.socket after a closing handshake: the 'close' of the WebSocket, then its own", async () => {
+  test("after a closing handshake, the WebSocket's 'close' fires before req.socket's 'close'", async () => {
     await using server = await openServer(implementation);
     const { ws, req, client } = server;
     const order: string[] = [];
@@ -655,16 +666,16 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
     req.on("close", () => order.push("req 'close'"));
     ws.on("close", () => order.push("ws 'close'"));
     client.close(1000);
-    await event(req.socket, "close");
-    // The built-in reads the connection natively: this socket sees no 'end'.
+    await nextEvent(req.socket, "close");
+    // The built-in reads the connection natively, so req.socket never emits 'end'.
     expect(order).toEqual([...(builtin ? [] : ["socket 'end'"]), "ws 'close'", "socket 'close'"]);
     expect(req.socket.destroyed).toBe(true);
   });
 
-  // engine.io ends every upgraded socket on its http.Server to which, by this measure, nobody has written.
-  // The real package writes through the raw socket of node:http, so there the count says nothing about `ws`.
-  // Only the 101 is counted. The frames behind it are not.
-  test.skipIf(!builtin)("req.socket.bytesWritten is not 0 after the upgrade", async () => {
+  // engine.io destroys any upgraded socket on its http.Server whose bytesWritten is still 0. npm ws writes through the
+  // raw node:http socket, so there the count doesn't depend on `ws`. The built-in only counts the 101, not the frames
+  // after it.
+  test.skipIf(!builtin)("req.socket.bytesWritten is non-zero after the upgrade", async () => {
     await using server = await openServer(implementation);
     const { ws, req, client } = server;
     ws.send("hmr connected");
@@ -675,37 +686,37 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
     });
   });
 
-  test("the heartbeat of the README: ping(), 'pong' with the socket as `this`, terminate()", async () => {
+  test("the README's heartbeat example: ping(), 'pong' with `this` as the socket, terminate()", async () => {
     await using server = await openServer(implementation);
     const { wss, ws, client, events } = server;
     const alive = new Map<unknown, boolean>([[ws, true]]);
     ws.on("pong", function (this: WebSocket) {
       alive.set(this, true);
     });
-    const beat = () =>
+    const heartbeat = () =>
       wss.clients.forEach(ws => {
         if (!alive.get(ws)) return ws.terminate();
         alive.set(ws, false);
         ws.ping();
       });
 
-    beat();
+    heartbeat();
     expect(await client.next()).toBe("ping");
     client.pong();
-    await event(ws, "pong");
+    await nextEvent(ws, "pong");
     expect([...alive]).toEqual([[ws, true]]);
 
-    beat();
+    heartbeat();
     expect(await client.next()).toBe("ping");
-    // No Pong this time.
-    beat();
+    // No pong this time.
+    heartbeat();
     expect(await client.next()).toBe("EOF");
     await server.closed;
     expect(events).toEqual(["pong Buffer() rs=1", "close 1006 Buffer() rs=3"]);
     expect(wss.clients.size).toBe(0);
   });
 
-  test("as y-websocket does: binaryType 'arraybuffer', send(Uint8Array, {}, callback)", async () => {
+  test("y-websocket's usage: binaryType 'arraybuffer' and send(Uint8Array, {}, callback)", async () => {
     const server = http.createServer();
     const wss = new WebSocketServer({ noServer: true });
     server.on("upgrade", (req, socket, head) => wss.handleUpgrade(req, socket, head, emitConnection(wss, req)));
@@ -730,7 +741,7 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
     expect(log).toEqual(["message ArrayBuffer(0x0708)", "callback null"]);
   });
 
-  test("as graphql-ws does: handleProtocols() that returns false, close(44xx, reason)", async () => {
+  test("graphql-ws's usage: handleProtocols() returning false and close(44xx, reason)", async () => {
     await using server = await createServer(implementation, {
       handleProtocols: protocols => (protocols.has("graphql-transport-ws") ? "graphql-transport-ws" : false),
     });
@@ -768,7 +779,7 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
   });
 });
 
-test("http.Server#close() waits for a raw upgraded socket whose client is gone, closeAllConnections() skips it", async () => {
+test("http.Server#close() waits for a half-open raw upgraded socket and closeAllConnections() skips it", async () => {
   const server = http.createServer();
   const upgrade = once(server, "upgrade") as Promise<[http.IncomingMessage, Duplex]>;
   await using listening = await serve(server);
@@ -777,7 +788,7 @@ test("http.Server#close() waits for a raw upgraded socket whose client is gone, 
   socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n");
   await client.response;
 
-  // The server's half stays open: nothing here ends it.
+  // The server's half stays open because nothing here ends it.
   client.destroy();
   socket.resume();
   await once(socket, "end");
@@ -790,11 +801,11 @@ test("http.Server#close() waits for a raw upgraded socket whose client is gone, 
   await closed;
 });
 
-// These load "ws" themselves, which on Bun is the built-in.
-describe("packages on top of the ws server (built-in)", () => {
+// These packages import "ws" themselves, which resolves to the built-in on Bun.
+describe("packages built on the ws server (built-in)", () => {
   const { WebSocketServer } = implementations[0].ws;
 
-  test("engine.io leaves the WebSocket of another server on its http.Server alone", async () => {
+  test("engine.io doesn't destroy another WebSocketServer's socket on the same http.Server", async () => {
     const server = http.createServer();
     const io = new SocketIO(server, { destroyUpgradeTimeout: 20 });
     const wss = new WebSocketServer({ noServer: true });
@@ -804,18 +815,19 @@ describe("packages on top of the ws server (built-in)", () => {
     await using listening = await serve(server);
     try {
       const client = listening.connect({ path: "/hmr", headers: { "Sec-WebSocket-Protocol": "vite-hmr" } });
-      expect((await client.response).status).toBe(switching);
+      expect((await client.response).status).toBe(switchingProtocols);
       expect(await client.next()).toBe('text "hmr connected"');
 
-      // Nobody takes this one, so engine.io ends it after `destroyUpgradeTimeout`. The timer of the first ran before.
-      expect((await listening.connect({ path: "/nobody" }).response).status).toBe("no response");
+      // Nothing handles this upgrade, so engine.io destroys it after `destroyUpgradeTimeout`. By then the first
+      // socket's timer has already fired.
+      expect((await listening.connect({ path: "/unhandled" }).response).status).toBe("no response");
       expect(await client.roundTrip()).toEqual([]);
     } finally {
       io.close();
     }
   });
 
-  test("engine.io's 'headers' event adds to the 101", async () => {
+  test("engine.io's 'headers' event can add headers to the 101", async () => {
     const server = http.createServer();
     const io = new SocketIO(server);
     io.engine.on("headers", headers => (headers["X-Custom"] = "yes"));
@@ -823,7 +835,7 @@ describe("packages on top of the ws server (built-in)", () => {
     try {
       const client = listening.connect({ path: engineIoPath });
       const { status, headers } = await client.response;
-      expect(status).toBe(switching);
+      expect(status).toBe(switchingProtocols);
       expect(headers).toContain("X-Custom: yes");
       expect((await client.nextFrame())!.payload.toString()).toStartWith('0{"sid":"');
     } finally {
@@ -831,7 +843,7 @@ describe("packages on top of the ws server (built-in)", () => {
     }
   });
 
-  test("socket.io's maxHttpBufferSize: a larger packet gets Close 1009 and 'transport error'", async () => {
+  test("socket.io's maxHttpBufferSize: an oversized packet gets Close 1009 and 'transport error'", async () => {
     const server = http.createServer();
     const io = new SocketIO(server, { maxHttpBufferSize: 1000 });
     const received: number[] = [];
@@ -849,7 +861,7 @@ describe("packages on top of the ws server (built-in)", () => {
       client.text("40");
       expect((await client.nextFrame())!.payload.toString()).toStartWith('40{"sid":"');
       client.text(`42["big","${Buffer.alloc(5000, "x")}"]`);
-      expect(await client.rest()).toEqual(["close 1009"]);
+      expect(await client.remainingFrames()).toEqual(["close 1009"]);
       expect(await disconnected).toBe("transport error");
       expect(received).toEqual([]);
     } finally {
@@ -866,37 +878,37 @@ describe("packages on top of the ws server (built-in)", () => {
     return { fastify, [Symbol.asyncDispose]: () => fastify.close() };
   }
 
-  test("@fastify/websocket: a websocket route, and 404 for a handshake on no route", async () => {
+  test("@fastify/websocket: a websocket route echoes, and a handshake on an unknown route gets a 404", async () => {
     await using app = await fastifyApp();
     const { fastify } = app;
     await fastify.listen({ port: 0, host: "127.0.0.1" });
     const { port } = fastify.server.address() as net.AddressInfo;
     const client = new RawClient(port, { path: "/ws" });
-    const lost = new RawClient(port, { path: "/nope" });
+    const notFound = new RawClient(port, { path: "/nope" });
     try {
       await expectEcho(client);
-      expect((await lost.response).status).toBe("HTTP/1.1 404 Not Found");
+      expect((await notFound.response).status).toBe("HTTP/1.1 404 Not Found");
     } finally {
       client.destroy();
-      lost.destroy();
+      notFound.destroy();
     }
   });
 
-  // It upgrades over a Duplex and makes its client with `new WebSocket(null)` and setSocket().
+  // injectWS() upgrades over a Duplex and builds its client with `new WebSocket(null)` and setSocket().
   test("@fastify/websocket: injectWS()", async () => {
     await using app = await fastifyApp();
     const { fastify } = app;
     await fastify.ready();
     const ws = await fastify.injectWS("/ws");
     try {
-      const events = watch(ws);
+      const events = recordEvents(ws);
       expect(ws.readyState).toBe(ws.OPEN);
       ws.send("hi");
-      await event(ws, "message");
+      await nextEvent(ws, "message");
       ws.ping("p");
-      await event(ws, "pong");
+      await nextEvent(ws, "pong");
       ws.terminate();
-      await event(ws, "close");
+      await nextEvent(ws, "close");
       expect(events).toEqual([
         'message Buffer("echo:hi") text rs=1',
         'pong Buffer("p") rs=1',
@@ -907,7 +919,7 @@ describe("packages on top of the ws server (built-in)", () => {
     }
   });
 
-  test("@fastify/websocket: injectWS() of no route rejects with the status", async () => {
+  test("@fastify/websocket: injectWS() on an unknown route rejects with the status code", async () => {
     await using app = await fastifyApp();
     const { fastify } = app;
     await fastify.ready();

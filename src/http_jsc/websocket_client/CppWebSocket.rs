@@ -152,9 +152,10 @@ unsafe extern "C" {
     safe fn SSL_total_renegotiations(ssl: &boringssl::c::SSL) -> core::ffi::c_int;
 }
 
-/// For an entry point that JS calls (a client over a JS stream has no other): the wrappers
-/// below that `f` reaches are nested in the caller's frame, so what its listeners queue
-/// (`process.nextTick`, promise reactions) waits until that frame has returned.
+/// Wraps entry points that are called from JS (the only kind a stream-backed client has).
+/// The `did_*` wrappers below that `f` calls then see a nested `enter()`, so their `exit()`
+/// doesn't drain `process.nextTick` callbacks and microtasks. Those run after the calling
+/// JS frame returns.
 pub(crate) fn without_checkpoint(f: impl FnOnce()) {
     VirtualMachine::get().event_loop_mut().enter();
     f();
@@ -177,8 +178,8 @@ impl CppWebSocket {
         unsafe { &*WebSocket__bunContext(self).cast::<bun_jsc::ScriptExecutionContext>() }
     }
 
-    /// The client failed the connection and has dropped it: `error`, then `close` with 1006.
-    /// `system_code` becomes `error.code`; `detail` is appended to the message.
+    /// The client failed the connection and already closed it. Emits `error`, then `close`
+    /// with 1006. `system_code` becomes `error.code`; `detail` is appended to the message.
     pub(crate) fn did_fail(
         &self,
         reason: ErrorCode,
@@ -214,12 +215,12 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    /// Made by the `ws` module. A field read on the C++ side: no JS runs.
+    /// True if the `ws` module created this WebSocket. A field read on the C++ side: no JS runs.
     pub(crate) fn is_ws_mode(&self) -> bool {
         WebSocket__isWsMode(self)
     }
 
-    /// A decoded piece of the body of a response that is not a 101.
+    /// A decoded body chunk of a non-101 response.
     pub(crate) fn did_receive_response_body(&self, chunk: &[u8]) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
@@ -227,8 +228,8 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    /// `aborted`: the connection was over before that body. `reset`: a read failed. C++ has let go
-    /// of the upgrade client.
+    /// `aborted`: the connection closed before the body was complete. `reset`: a read failed.
+    /// C++ drops its pointer to the upgrade client.
     pub(crate) fn did_end_response_body(&self, aborted: bool, reset: bool) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
@@ -236,7 +237,8 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    /// The connection is over without a failure. `code` and `reason` are the peer's.
+    /// The connection closed without an error. `code` and `reason` come from the peer's Close
+    /// frame, or are 1006 and empty if it never sent one.
     pub(crate) fn did_close(
         &self,
         code: u16,
@@ -250,8 +252,8 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    /// The peer's Close frame is in and ours is written or queued: `readyState` becomes CLOSING,
-    /// and `ws` hears of it. `code` is 1005 for a frame without a payload.
+    /// We received the peer's Close frame and wrote or queued ours. Sets `readyState` to CLOSING
+    /// and notifies `ws`. `code` is 1005 if the frame had no payload.
     pub(crate) fn did_start_closing_handshake(&self, code: u16, reason: BunString) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
@@ -259,7 +261,7 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    /// `ws` only: the `error` of a failed connection, whose `did_close` follows when it has closed.
+    /// `ws` only: emits `error` for a failed connection. `did_close` follows once it closes.
     pub(crate) fn did_error(&self, reason: ErrorCode, detail: BunString) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
@@ -288,15 +290,15 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    // The three below call the JS owner of a stream. Every entry point of a client over a
-    // stream is itself a call from JS, so these are nested calls: see `without_checkpoint`.
+    // The next three call into the JS code that owns the stream. A stream-backed client is only
+    // ever entered from JS, so these are nested calls. See `without_checkpoint`.
 
-    /// C++ copies `bytes`. The callee can re-enter the client.
+    /// C++ copies `bytes`. The JS callback can re-enter the client.
     pub(crate) fn stream_write(&self, bytes: &[u8]) {
         WebSocket__streamWrite(self, bytes.into());
     }
 
-    /// Nothing more will be written: half-close the stream.
+    /// Half-close the stream. Nothing more will be written.
     pub(crate) fn stream_end(&self) {
         WebSocket__streamEnd(self);
     }
@@ -382,8 +384,8 @@ impl CppWebSocket {
         }
     }
 
-    /// `connect` dispatches `open` and returns the connected client, or null if `open` dropped it.
-    /// The bytes that came with the 101 are parsed after the microtasks of `open`.
+    /// `connect` dispatches `open` and returns the connected client, or null if an `open`
+    /// listener closed it. Bytes that arrived with the 101 are parsed after `open`'s microtasks.
     fn open_then_deliver_initial_data<const SSL: bool>(
         connect: impl FnOnce() -> *mut core::ffi::c_void,
     ) {

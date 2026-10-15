@@ -52,7 +52,7 @@ const buffers = [
 
 const messages = [...strings, ...buffers] as const;
 
-// `type` is the shape of a binary message. Ping and pong payloads are a Buffer in every mode.
+// `type` is the class a binary message arrives as. Ping and pong payloads are always Buffers.
 const binaryTypes = [
   {
     label: "nodebuffer",
@@ -126,8 +126,7 @@ describe("WebSocket", () => {
         ws.binaryType = label as WebSocket["binaryType"];
         const seen: Record<string, string> = {};
         // The echo server answers the message, pings back when pinged and pongs back when
-        // ponged. It also pongs the client's ping by itself, so the first pong is the one that
-        // gets recorded.
+        // ponged. It also auto-pongs the client's ping, so only the first pong is recorded.
         function record(event: string, data: unknown) {
           seen[event] ??= shapeOf(data);
           if (!(seen.message && seen.ping && seen.pong)) return;
@@ -164,7 +163,7 @@ describe("WebSocket", () => {
         ws.on("open", () => {
           ws.send(message);
         });
-        // The echo server gets a Buffer for every message and sends that back.
+        // The echo server receives every message as a Buffer and sends that back, so the echo is always binary.
         ws.on("message", (data, isBinary) => {
           expect(data).toEqual(Buffer.from(bytes));
           expect(isBinary).toBeTrue();
@@ -475,7 +474,7 @@ describe("WebSocketServer", () => {
   });
 });
 
-// Bun extra: npm ws has `Server` on its CommonJS export only.
+// Bun-only: npm ws has `Server` only on its CommonJS export.
 it("Server is a named export", () => {
   expect(Server).toBe(WebSocketServer);
 });
@@ -508,7 +507,7 @@ it("isBinary", async () => {
   await promise;
 });
 
-// send(data, { binary }) overrides the frame type that would otherwise be picked from the type of data.
+// send(data, { binary }) overrides the frame type that's otherwise picked from the data type.
 describe("send() with { binary }", () => {
   const sends = [
     { data: Buffer.from("sent as text"), opts: { binary: false } },
@@ -1377,7 +1376,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     wss.close();
   });
 
-  // Bun extra: npm ws writes /other's 400 into the connection that /chat upgraded.
+  // Bun-only: npm ws writes /other's 400 to the connection that /chat already upgraded.
   it("leaves a connection alone that another WebSocketServer on the same http.Server took", async () => {
     const server = createServer();
     const chat = new WebSocketServer({ server, path: "/chat" });
@@ -1482,7 +1481,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       wss.close();
     });
 
-    it("are delivered when they arrive in a read of their own before handleUpgrade()", async () => {
+    it("are delivered when they arrive in a separate read before handleUpgrade()", async () => {
       const wss = new WebSocketServer({ noServer: true });
       const messages = messagesOf(wss);
 
@@ -1513,7 +1512,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
 });
 
 describe("module loading", () => {
-  // Bun extra: npm ws requires "http" at the top of lib/websocket.js.
+  // Bun-only: npm ws requires "http" at the top of lib/websocket.js.
   it("require('ws') does not load node:http eagerly", async () => {
     // Loading node:http materializes the HTTPParser binding; requiring only
     // the ws client must not pay that cost.
@@ -1627,8 +1626,8 @@ describe("client TLS options", () => {
       });
     });
 
-    // The real package fails this one on Bun only: Bun's tls.connect() throws for `dhparam: "auto"`.
-    it("an option that only a TLS server reads is ignored", async () => {
+    // npm ws fails this test when run on Bun, because Bun's tls.connect() throws for `dhparam: "auto"`.
+    it("ignores server-only TLS options", async () => {
       using server = await serve();
       expect(await dial(server.url, { agent: new https.Agent({ ca, dhparam: "auto" }) })).toBe(anonymous);
     });
@@ -1643,8 +1642,8 @@ describe("client TLS options", () => {
       expect(await dial(server.url, Object.create({ rejectUnauthorized: false }))).toBe("refused");
     });
 
-    // Bun is stricter than npm ws: Node's Agent reads its inherited `options` and connects.
-    it("the inherited options of an agent do not disable verification", async () => {
+    // Bun is stricter than npm ws here. Node's Agent reads its inherited `options`, so npm ws connects.
+    it("an agent's inherited options don't disable verification", async () => {
       using server = await serve();
       const inherited = Object.create(new https.Agent({ rejectUnauthorized: false }));
       expect(await dial(server.url, { agent: inherited })).toBe("refused");
@@ -1731,8 +1730,8 @@ describe("client TLS options", () => {
       });
     });
 
-    // The real package fails this one on Bun only: BoringSSL has no @SECLEVEL and Bun's tls.connect() throws.
-    it("ciphers with OpenSSL's @SECLEVEL", async () => {
+    // npm ws fails this test when run on Bun, because BoringSSL has no @SECLEVEL and Bun's tls.connect() throws.
+    it("accepts ciphers with OpenSSL's @SECLEVEL", async () => {
       using server = await serveNegotiated();
       using tls12 = await serveNegotiated({ maxVersion: "TLSv1.2" });
       const aes256 = "ECDHE-RSA-AES256-GCM-SHA384";
@@ -1806,7 +1805,7 @@ describe("client TLS options", () => {
       }
     });
 
-    // Bun extra: npm ws has no `tls` option.
+    // Bun-only: npm ws has no `tls` option.
     it("an explicit tls option replaces the agent's and the top-level options", async () => {
       using server = await serve();
       const off = { rejectUnauthorized: false };
@@ -1831,8 +1830,8 @@ describe("client TLS options", () => {
       expect(await dial(server.url, { ca: [ca1], pfx: [{ buf: pfxWithServerCa, passphrase: "sample" }] })).toBe(identified); // prettier-ignore
     });
 
-    // Not npm ws's behaviour: Node adds the CA to the default store too. The native `ca` can only replace that store.
-    it("does not add the CA to the default store", async () => {
+    // Differs from npm ws: Node also adds the CA to the default store. The native `ca` can only replace that store.
+    it("doesn't add the CA to the default store", async () => {
       using server = await serve();
       expect(await dial(server.url, { pfx: pfxWithServerCa, passphrase: "sample" })).toBe("refused");
     });
@@ -1920,38 +1919,39 @@ describe("client TLS options", () => {
       expect(await dial(server.url, { checkServerIdentity: accept })).toBe("refused");
     });
 
-    // Some options are only for `http.request()`, which knows no `tls` option.
-    it("the `tls` option counts whichever way the client dials", async () => {
+    // Options like `finishRequest`, `family` and `lookup` make the client connect through http.request(), which has no
+    // `tls` option of its own.
+    it("the `tls` option applies whether the client connects natively or through node:http", async () => {
       using server = await serve(agent1);
       const refuse = () => new Error("not the pinned certificate");
-      const ways: Record<string, object> = {
+      const connectPaths: Record<string, object> = {
         native: {},
         finishRequest: { finishRequest: (req: { end(): void }) => req.end() },
         family: { family: 4 },
-        // Its options win over those of the request, but not over `tls`.
+        // The agent's options override the request's options, but not `tls`.
         agent: { agent: new https.Agent({ rejectUnauthorized: false }) },
         agentAndFamily: { agent: new https.Agent({ rejectUnauthorized: false, servername: "other" }), family: 4 },
         lookup: { lookup: (_host: string, _options: object, done: Function) => done(null, [{ address: "127.0.0.1", family: 4 }]) }, // prettier-ignore
       };
       const results = await Promise.all(
-        Object.entries(ways).map(async ([way, only]) => {
-          // It replaces the options beside it, which trust everybody.
-          const options = { ...only, rejectUnauthorized: false };
+        Object.entries(connectPaths).map(async ([name, pathOptions]) => {
+          // `tls` replaces the top-level options, which would otherwise skip verification.
+          const options = { ...pathOptions, rejectUnauthorized: false };
           const outcomes = await Promise.all([
-            // `serverName` is Bun's name for it and comes first.
+            // `serverName` is Bun's spelling and takes precedence over `servername`.
             dial(server.url, { ...options, tls: { ca: ca1, serverName: "agent1", servername: "other" } }),
             dial(server.url, { ...options, tls: { ca: ca1, serverName: "agent1", checkServerIdentity: refuse } }),
             dial(server.url, { ...options, tls: { ca: ca1 } }),
             dial(server.url, { ...options, tls: {} }),
           ]);
-          return [way, outcomes] as [string, string[]];
+          return [name, outcomes] as [string, string[]];
         }),
       );
       const expected = [anonymous, "refused", "refused", "refused"];
-      expect(results).toEqual(Object.keys(ways).map((way): [string, string[]] => [way, expected]));
+      expect(results).toEqual(Object.keys(connectPaths).map((name): [string, string[]] => [name, expected]));
     });
 
-    it("no option is read from Object.prototype", async () => {
+    it("ignores options set on Object.prototype", async () => {
       using server = await serve();
       const plain = new WebSocketServer({ port: 0, host: "127.0.0.1" });
       plain.on("connection", (ws, req) => ws.send(`x-polluted: ${req.headers["x-polluted"]}`));
@@ -1963,7 +1963,7 @@ describe("client TLS options", () => {
             "-e",
             `
             const WebSocket = require("ws");
-            const dial = (url, ...options) => new Promise(resolve => {
+            const connect = (url, ...options) => new Promise(resolve => {
               const ws = new WebSocket(url, ...options);
               ws.on("message", data => { resolve(String(data)); ws.terminate(); });
               ws.on("error", error => resolve("refused " + error.code));
@@ -1973,8 +1973,8 @@ describe("client TLS options", () => {
             Object.prototype.tls = { rejectUnauthorized: false };
             Object.prototype.proxy = "http://127.0.0.1:9";
             Object.prototype["x-polluted"] = "yes";
-            for (const options of [[], [{}], [{ agent: agents[0] }]]) console.log(await dial(TEST_URL, ...options));
-            for (const options of [[], [{}], [{ agent: agents[1] }], [{ headers: { a: "b" } }]]) console.log(await dial(TEST_PLAIN_URL, ...options));
+            for (const options of [[], [{}], [{ agent: agents[0] }]]) console.log(await connect(TEST_URL, ...options));
+            for (const options of [[], [{}], [{ agent: agents[1] }], [{ headers: { a: "b" } }]]) console.log(await connect(TEST_PLAIN_URL, ...options));
             `,
           ],
           env: {

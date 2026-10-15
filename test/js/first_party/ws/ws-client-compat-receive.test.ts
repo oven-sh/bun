@@ -1,4 +1,4 @@
-// What a `ws` client does with the frames it receives, against a raw TCP peer. See ws-raw-peer.ts.
+// Tests how a `ws` client handles the frames it receives from a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { on, once } from "node:events";
 import zlib from "node:zlib";
@@ -7,7 +7,7 @@ import {
   closePayload,
   createPeer,
   encodeFrame,
-  event,
+  nextEvent,
   type FrameOptions,
   implementations,
   OP,
@@ -20,18 +20,18 @@ import {
   showFrame,
 } from "./ws-raw-peer";
 
-const opening = ["upgrade 101 rs=0", "open rs=1"];
-const lost = "close 1006 Buffer() rs=3";
+const openEvents = ["upgrade 101 rs=0", "open rs=1"];
+const abnormalClose = "close 1006 Buffer() rs=3";
 const bytes = (...values: number[]) => Buffer.from(values);
-const a = (count: number) => Buffer.alloc(count, "a");
+const repeatA = (count: number) => Buffer.alloc(count, "a");
 
-// The server accepts permessage-deflate.
-const deflate: PeerOptions = { headers: ["Sec-WebSocket-Extensions: permessage-deflate"] };
-// The payload of a compressed message: raw deflate with a sync flush, without the 00 00 ff ff at its end.
+// Peer options for a server that accepts permessage-deflate.
+const withDeflate: PeerOptions = { headers: ["Sec-WebSocket-Extensions: permessage-deflate"] };
+// Compresses a payload the way permessage-deflate does: raw deflate, sync flush, trailing 00 00 ff ff removed.
 const compress = (data: Payload, options: zlib.ZlibOptions = {}) =>
   zlib.deflateRawSync(data, { finishFlush: zlib.constants.Z_SYNC_FLUSH, ...options }).subarray(0, -4);
 
-// @types/ws knows neither "blob" nor `autoPong`.
+// @types/ws is missing "blob" and `autoPong`.
 const blob = "blob" as any;
 const noAutoPong = { autoPong: false } as ClientOptions;
 
@@ -42,20 +42,20 @@ const binaryTypes = [
   { binaryType: blob, binary: "Blob(3)", empty: "Blob(0)" },
 ] as const;
 
-describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementation, builtin, specifier }) => {
-  // `binaryType` chooses the shape of a binary message and of nothing else.
+describe.each(implementations)("ws client receive ($name)", ({ ws: implementation, builtin, specifier }) => {
+  // `binaryType` only changes the type of binary messages.
   describe.each(binaryTypes)("binaryType $binaryType", ({ binaryType, binary, empty }) => {
-    test(`a text message is a Buffer, a binary message ${binary}`, async () => {
+    test(`delivers text as a Buffer and binary as ${binary}`, async () => {
       await using client = await openClient(implementation);
       const { ws, conn, events } = client;
       ws.binaryType = binaryType;
       conn.text("hi");
       conn.binary(bytes(1, 2, 3));
       expect(await conn.roundTrip()).toEqual([]);
-      expect(events).toEqual([...opening, 'message Buffer("hi") text rs=1', `message ${binary} binary rs=1`]);
+      expect(events).toEqual([...openEvents, 'message Buffer("hi") text rs=1', `message ${binary} binary rs=1`]);
     });
 
-    test(`an empty text message is an empty Buffer, an empty binary message ${empty}`, async () => {
+    test(`delivers empty text as an empty Buffer and empty binary as ${empty}`, async () => {
       await using client = await openClient(implementation);
       const { ws, conn, events } = client;
       ws.binaryType = binaryType;
@@ -65,25 +65,25 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       conn.send(OP.continuation, "");
       expect(await conn.roundTrip()).toEqual([]);
       expect(events).toEqual([
-        ...opening,
+        ...openEvents,
         "message Buffer() text rs=1",
         `message ${empty} binary rs=1`,
         `message ${empty} binary rs=1`,
       ]);
     });
 
-    test("the fragments of a text message are joined", async () => {
+    test("joins the fragments of a text message", async () => {
       await using client = await openClient(implementation);
       const { ws, conn, events } = client;
       ws.binaryType = binaryType;
       conn.text("a", { fin: false });
       conn.send(OP.continuation, "b");
       expect(await conn.roundTrip()).toEqual([]);
-      expect(events).toEqual([...opening, 'message Buffer("ab") text rs=1']);
+      expect(events).toEqual([...openEvents, 'message Buffer("ab") text rs=1']);
     });
 
-    // In "fragments" mode npm ws gives one Buffer per frame, the built-in one Buffer.
-    test.skipIf(binaryType === "fragments")("the fragments of a binary message are joined", async () => {
+    // In "fragments" mode npm ws delivers one Buffer per frame. The built-in delivers a single Buffer.
+    test.skipIf(binaryType === "fragments")("joins the fragments of a binary message", async () => {
       await using client = await openClient(implementation);
       const { ws, conn, events } = client;
       ws.binaryType = binaryType;
@@ -91,24 +91,24 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       conn.send(OP.continuation, bytes(2), { fin: false });
       conn.send(OP.continuation, bytes(3));
       expect(await conn.roundTrip()).toEqual([]);
-      expect(events).toEqual([...opening, `message ${binary} binary rs=1`]);
+      expect(events).toEqual([...openEvents, `message ${binary} binary rs=1`]);
     });
 
-    test("compressed messages have the same shapes", async () => {
-      await using client = await openClient(implementation, {}, deflate);
+    test("delivers compressed messages as the same types", async () => {
+      await using client = await openClient(implementation, {}, withDeflate);
       const { ws, conn, events } = client;
       ws.binaryType = binaryType;
       conn.text(compress("compressed-😶"), { rsv1: true });
       conn.binary(compress(bytes(1, 2, 3)), { rsv1: true });
       expect(await conn.roundTrip()).toEqual([]);
       expect(events).toEqual([
-        ...opening,
+        ...openEvents,
         'message Buffer("compressed-😶") text rs=1',
         `message ${binary} binary rs=1`,
       ]);
     });
 
-    test(`MessageEvent.data is a string for a text message, ${binary} for a binary one`, async () => {
+    test(`MessageEvent.data is a string for text and ${binary} for binary`, async () => {
       await using client = await openClient(implementation);
       const { ws, conn } = client;
       ws.binaryType = binaryType;
@@ -128,43 +128,43 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       ]);
     });
 
-    test("the payloads of 'ping' and 'pong' are Buffers", async () => {
+    test("'ping' and 'pong' payloads are Buffers", async () => {
       await using client = await openClient(implementation);
       const { ws, conn, events } = client;
       ws.binaryType = binaryType;
       conn.ping("p");
       conn.pong("q");
       expect(await conn.roundTrip()).toEqual(['pong "p"']);
-      expect(events).toEqual([...opening, 'ping Buffer("p") rs=1', 'pong Buffer("q") rs=1']);
+      expect(events).toEqual([...openEvents, 'ping Buffer("p") rs=1', 'pong Buffer("q") rs=1']);
     });
   });
 
   describe("messages", () => {
-    test("a Blob has the bytes of the message and no type", async () => {
+    test("a Blob message has the right bytes and an empty type", async () => {
       await using client = await openClient(implementation);
       client.ws.binaryType = blob;
       client.conn.binary(bytes(1, 2, 3));
-      const [data] = await event(client.ws, "message");
+      const [data] = await nextEvent(client.ws, "message");
       expect(data).toBeInstanceOf(Blob);
       expect(data.type).toBe("");
       expect(Buffer.from(await data.arrayBuffer())).toEqual(bytes(1, 2, 3));
     });
 
-    test("binaryType set in a 'message' listener applies to the next binary message of the same packet", async () => {
+    test("binaryType set in a 'message' listener applies to the next binary message in the same packet", async () => {
       await using client = await openClient(implementation);
       const { ws, conn, events } = client;
-      const next = ["arraybuffer", blob, "nodebuffer"] as const;
+      const nextTypes = ["arraybuffer", blob, "nodebuffer"] as const;
       let changes = 0;
       ws.binaryType = "fragments";
       ws.on("message", (_, isBinary) => {
-        if (isBinary && changes < next.length) ws.binaryType = next[changes++];
+        if (isBinary && changes < nextTypes.length) ws.binaryType = nextTypes[changes++];
       });
       conn.write(
         Buffer.concat([1, 2, 3, 4].flatMap(n => [conn.frame(OP.text, "text " + n), conn.frame(OP.binary, bytes(n))])),
       );
       expect(await conn.roundTrip()).toEqual([]);
       expect(events).toEqual([
-        ...opening,
+        ...openEvents,
         'message Buffer("text 1") text rs=1',
         "message [Buffer(0x01)] binary rs=1",
         'message Buffer("text 2") text rs=1',
@@ -176,7 +176,7 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       ]);
     });
 
-    test("a text message is a Buffer however the listener was added", async () => {
+    test("a text message is a Buffer no matter how the listener was added", async () => {
       await using client = await openClient(implementation);
       const { ws, conn } = client;
       ws.binaryType = "arraybuffer";
@@ -190,8 +190,8 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       ws.prependListener("message", listener("prependListener"));
       ws.once("message", listener("once"));
       ws.prependOnceListener("message", listener("prependOnceListener"));
-      const first = once(ws, "message").then(([data, isBinary]) => listener("events.once")(data, isBinary));
-      const both = (async () => {
+      const viaOnce = once(ws, "message").then(([data, isBinary]) => listener("events.once")(data, isBinary));
+      const viaOn = (async () => {
         const push = listener("events.on");
         for await (const [data, isBinary] of on(ws, "message")) {
           push(data, isBinary);
@@ -200,28 +200,28 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       })();
       conn.text("1");
       conn.text("2");
-      await Promise.all([first, both]);
-      const one = ['Buffer("1") false'];
-      const two = ['Buffer("1") false', 'Buffer("2") false'];
+      await Promise.all([viaOnce, viaOn]);
+      const firstOnly = ['Buffer("1") false'];
+      const bothMessages = ['Buffer("1") false', 'Buffer("2") false'];
       expect(seen).toEqual({
-        on: two,
-        addListener: two,
-        prependListener: two,
-        once: one,
-        prependOnceListener: one,
-        "events.once": one,
-        "events.on": two,
+        on: bothMessages,
+        addListener: bothMessages,
+        prependListener: bothMessages,
+        once: firstOnly,
+        prependOnceListener: firstOnly,
+        "events.once": firstOnly,
+        "events.on": bothMessages,
       });
     });
 
-    test("text arrives byte for byte: a BOM and a NUL are kept", async () => {
+    test("delivers text unmodified, including a BOM and a NUL", async () => {
       await using client = await openClient(implementation);
       const { conn, events } = client;
       conn.text(bytes(0xef, 0xbb, 0xbf, 0x68, 0x00, 0x69));
       for (const text of ["latin1-©", "bmp-€", "é😀"]) conn.text(text);
       expect(await conn.roundTrip()).toEqual([]);
       expect(events).toEqual([
-        ...opening,
+        ...openEvents,
         "message Buffer(0xefbbbf680069) text rs=1",
         'message Buffer("latin1-©") text rs=1',
         'message Buffer("bmp-€") text rs=1',
@@ -229,60 +229,60 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       ]);
     });
 
-    test("a character may be split over two fragments", async () => {
+    test("accepts a UTF-8 character split across two fragments", async () => {
       await using client = await openClient(implementation);
       const { conn, events } = client;
       const character = Buffer.from("😀");
       conn.text(character.subarray(0, 2), { fin: false });
       conn.send(OP.continuation, character.subarray(2));
       expect(await conn.roundTrip()).toEqual([]);
-      expect(events).toEqual([...opening, 'message Buffer("😀") text rs=1']);
+      expect(events).toEqual([...openEvents, 'message Buffer("😀") text rs=1']);
     });
 
-    test("a binary message does not have to be UTF-8", async () => {
+    test("doesn't validate binary messages as UTF-8", async () => {
       await using client = await openClient(implementation);
       client.conn.binary(bytes(0xff, 0xfe));
       expect(await client.conn.roundTrip()).toEqual([]);
-      expect(client.events).toEqual([...opening, "message Buffer(0xfffe) binary rs=1"]);
+      expect(client.events).toEqual([...openEvents, "message Buffer(0xfffe) binary rs=1"]);
     });
 
-    // 125 is the last length that fits the second byte of the header, 65535 the last that fits 16 bits.
-    test.each([125, 126, 65535, 65536])("a message of %d bytes", async length => {
+    // 125 is the largest length that fits in the 7-bit field, 65535 the largest that fits in 16 bits.
+    test.each([125, 126, 65535, 65536])("receives a %d-byte message", async length => {
       await using client = await openClient(implementation);
       const { ws, conn } = client;
       const seen: unknown[] = [];
       ws.on("message", (data, isBinary) => seen.push(data, isBinary));
-      conn.binary(a(length));
-      conn.text(a(length));
+      conn.binary(repeatA(length));
+      conn.text(repeatA(length));
       expect(await conn.roundTrip()).toEqual([]);
-      expect(seen).toEqual([a(length), true, a(length), false]);
+      expect(seen).toEqual([repeatA(length), true, repeatA(length), false]);
     });
 
     test.each([
       { label: "a text frame", frame: encodeFrame(OP.text, "hé"), line: 'message Buffer("hé") text rs=1' },
       {
         label: "a frame with a 16-bit length",
-        frame: encodeFrame(OP.binary, a(126)),
+        frame: encodeFrame(OP.binary, repeatA(126)),
         line: "message Buffer(126 bytes) binary rs=1",
       },
       {
         label: "a frame with a 64-bit length",
-        frame: encodeFrame(OP.binary, a(65536)),
+        frame: encodeFrame(OP.binary, repeatA(65536)),
         line: "message Buffer(65536 bytes) binary rs=1",
       },
       { label: "a Pong", frame: encodeFrame(OP.pong, "pp"), line: 'pong Buffer("pp") rs=1' },
-    ])("$label that arrives in two pieces, cut after each of its first bytes", async ({ frame, line }) => {
+    ])("parses $label split across two writes, at every offset in its first 12 bytes", async ({ frame, line }) => {
       await using client = await openClient(implementation);
       const { conn, events } = client;
-      const cuts = Math.min(frame.length, 12) - 1;
-      for (let cut = 1; cut <= cuts; cut++) {
-        // The Pong shows that the client has read the first piece before the second one is sent.
-        conn.write(Buffer.concat([conn.frame(OP.ping, "cut"), frame.subarray(0, cut)]));
+      const splits = Math.min(frame.length, 12) - 1;
+      for (let split = 1; split <= splits; split++) {
+        // Wait for the Pong so the client has read the first part before the second part is sent.
+        conn.write(Buffer.concat([conn.frame(OP.ping, "cut"), frame.subarray(0, split)]));
         expect(await conn.next()).toBe('pong "cut"');
-        conn.write(frame.subarray(cut));
+        conn.write(frame.subarray(split));
       }
       expect(await conn.roundTrip()).toEqual([]);
-      expect(events.slice(2).filter(event => !event.startsWith("ping"))).toEqual(Array(cuts).fill(line));
+      expect(events.slice(2).filter(event => !event.startsWith("ping"))).toEqual(Array(splits).fill(line));
     });
 
     test.each([
@@ -294,14 +294,14 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       },
       { label: "0 in 16 bits", sent: bytes(0x81, 126, 0, 0), line: "message Buffer() text rs=1" },
       { label: "0 in 64 bits", sent: bytes(0x82, 127, 0, 0, 0, 0, 0, 0, 0, 0), line: "message Buffer() binary rs=1" },
-    ])("a length may be written in more bytes than it needs: $label", async ({ sent, line }) => {
+    ])("accepts a non-minimal length encoding: $label", async ({ sent, line }) => {
       await using client = await openClient(implementation);
       client.conn.write(sent);
       expect(await client.conn.roundTrip()).toEqual([]);
-      expect(client.events).toEqual([...opening, line]);
+      expect(client.events).toEqual([...openEvents, line]);
     });
 
-    test("the messages of one packet arrive in order", async () => {
+    test("delivers the messages in one packet in order", async () => {
       await using client = await openClient(implementation);
       const { ws, conn } = client;
       const names = Array.from({ length: 50 }, (_, i) => "m" + i);
@@ -312,7 +312,7 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       expect(seen).toEqual(names);
     });
 
-    test("writing to the Buffer of one message leaves the next one alone", async () => {
+    test("mutating one message's Buffer doesn't affect the next message", async () => {
       await using client = await openClient(implementation);
       const { ws, conn } = client;
       const seen: Buffer[] = [];
@@ -324,9 +324,9 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       expect(seen.map(show)).toEqual(["Buffer(0x0902)", "Buffer(0x0304)"]);
     });
 
-    // After the exception npm ws's receiver never reads on. Bun's goes on.
+    // npm ws's receiver stops reading after the exception. Bun's keeps going.
     test.concurrent.skipIf(!builtin)(
-      "a 'message' listener that throws does not stop later messages",
+      "still delivers later messages after a 'message' listener throws",
       async () => {
         await using peer = await createPeer();
         const script = runScript(
@@ -359,59 +359,59 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       { payload: "hello", pong: 'pong "hello"', event: 'ping Buffer("hello") rs=1' },
       { payload: "", pong: "pong", event: "ping Buffer() rs=1" },
       { payload: bytes(0xff, 0x00), pong: "pong 0xff00", event: "ping Buffer(0xff00) rs=1" },
-      { payload: a(125), pong: "pong 125 bytes", event: "ping Buffer(125 bytes) rs=1" },
-    ])("a Ping is answered with $pong", async ({ payload, pong, event }) => {
+      { payload: repeatA(125), pong: "pong 125 bytes", event: "ping Buffer(125 bytes) rs=1" },
+    ])("replies to a Ping with $pong", async ({ payload, pong, event }) => {
       await using client = await openClient(implementation);
       client.conn.ping(payload);
       const sent = (await client.conn.nextFrame())!;
       expect(showFrame(sent)).toBe(pong);
       expect(sent.payload).toEqual(Buffer.from(payload));
       expect(await client.conn.roundTrip()).toEqual([]);
-      expect(client.events).toEqual([...opening, event]);
+      expect(client.events).toEqual([...openEvents, event]);
     });
 
-    test("the Pong goes out before anything the 'ping' listener sends", async () => {
+    test("sends the Pong before anything the 'ping' listener sends", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       client.ws.on("ping", () => client.ws.send("from the listener"));
       client.conn.ping("hello");
-      expect(await client.conn.take(2)).toEqual(['pong "hello"', 'text "from the listener"']);
+      expect(await client.conn.nextFrames(2)).toEqual(['pong "hello"', 'text "from the listener"']);
     });
 
-    test("autoPong: false emits 'ping' and sends nothing", async () => {
+    test("autoPong: false emits 'ping' without sending a Pong", async () => {
       await using client = await openClient(implementation, noAutoPong);
       const { conn, events } = client;
       conn.ping("hello");
       conn.close(1000);
       conn.end();
       await client.closed;
-      expect(events).toEqual([...opening, 'ping Buffer("hello") rs=1', "close 1000 Buffer() rs=3"]);
-      expect(await conn.rest()).toEqual(["close 1000"]);
+      expect(events).toEqual([...openEvents, 'ping Buffer("hello") rs=1', "close 1000 Buffer() rs=3"]);
+      expect(await conn.remainingFrames()).toEqual(["close 1000"]);
     });
 
-    test("autoPong: false leaves the Pong to the 'ping' listener", async () => {
+    test("autoPong: false lets the 'ping' listener send the Pong", async () => {
       await using client = await openClient(implementation, noAutoPong);
       const { ws, conn } = client;
       ws.on("ping", data => ws.pong(data));
       conn.ping("hello");
       conn.close(1000);
-      expect(await conn.rest()).toEqual(['pong "hello"', "close 1000"]);
+      expect(await conn.remainingFrames()).toEqual(['pong "hello"', "close 1000"]);
     });
 
-    test("a Pong nobody asked for emits 'pong' and is not answered", async () => {
+    test("an unsolicited Pong emits 'pong' and gets no reply", async () => {
       await using client = await openClient(implementation);
       client.conn.pong("q");
       client.conn.pong();
       expect(await client.conn.roundTrip()).toEqual([]);
-      expect(client.events).toEqual([...opening, 'pong Buffer("q") rs=1', "pong Buffer() rs=1"]);
+      expect(client.events).toEqual([...openEvents, 'pong Buffer("q") rs=1', "pong Buffer() rs=1"]);
     });
 
-    test("a Ping between two fragments is handled at once", async () => {
+    test("handles a Ping between two fragments immediately", async () => {
       await using client = await openClient(implementation);
       const { conn, events } = client;
       conn.text("a", { fin: false });
       conn.ping("mid");
       expect(await conn.next()).toBe('pong "mid"');
-      expect(events).toEqual([...opening, 'ping Buffer("mid") rs=1']);
+      expect(events).toEqual([...openEvents, 'ping Buffer("mid") rs=1']);
       conn.send(OP.continuation, "b");
       expect(await conn.roundTrip()).toEqual([]);
       expect(events.slice(3)).toEqual(['message Buffer("ab") text rs=1']);
@@ -420,37 +420,37 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
 
   describe("permessage-deflate", () => {
     test.each([
-      { answer: "no extension", headers: [], extensions: "" },
-      { answer: "permessage-deflate", headers: deflate.headers!, extensions: "permessage-deflate" },
+      { response: "no extension", headers: [], extensions: "" },
+      { response: "permessage-deflate", headers: withDeflate.headers!, extensions: "permessage-deflate" },
       {
-        answer: "permessage-deflate with parameters",
+        response: "permessage-deflate with parameters",
         headers: [
           "Sec-WebSocket-Extensions: permessage-deflate; server_no_context_takeover; client_max_window_bits=10",
         ],
         extensions: "permessage-deflate",
       },
-    ])("`extensions` when the server answers with $answer", async ({ headers, extensions }) => {
+    ])("`extensions` when the server responds with $response", async ({ headers, extensions }) => {
       await using client = await openClient(implementation, {}, { headers: [...headers] });
       expect(client.ws.extensions).toBe(extensions);
     });
 
-    test("compressed and plain messages may alternate", async () => {
-      await using client = await openClient(implementation, {}, deflate);
+    test("accepts a mix of compressed and uncompressed messages", async () => {
+      await using client = await openClient(implementation, {}, withDeflate);
       const { conn, events } = client;
       conn.text("plain");
       conn.text(compress("compressed hello"), { rsv1: true });
       conn.text("plain again");
       expect(await conn.roundTrip()).toEqual([]);
       expect(events).toEqual([
-        ...opening,
+        ...openEvents,
         'message Buffer("plain") text rs=1',
         'message Buffer("compressed hello") text rs=1',
         'message Buffer("plain again") text rs=1',
       ]);
     });
 
-    test("a compressed message in fragments, with a Ping between them", async () => {
-      await using client = await openClient(implementation, {}, deflate);
+    test("inflates a fragmented message with a Ping between its fragments", async () => {
+      await using client = await openClient(implementation, {}, withDeflate);
       const { conn, events } = client;
       const payload = compress("fragmented and compressed");
       conn.text(payload.subarray(0, 5), { fin: false, rsv1: true });
@@ -459,27 +459,27 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       conn.send(OP.continuation, payload.subarray(9));
       expect(await conn.roundTrip()).toEqual(['pong "mid"']);
       expect(events).toEqual([
-        ...opening,
+        ...openEvents,
         'ping Buffer("mid") rs=1',
         'message Buffer("fragmented and compressed") text rs=1',
       ]);
     });
 
-    test("an empty compressed message, with and without its empty block", async () => {
-      await using client = await openClient(implementation, {}, deflate);
+    test("inflates an empty message, with and without its empty deflate block", async () => {
+      await using client = await openClient(implementation, {}, withDeflate);
       const { conn, events } = client;
       expect(compress("")).toEqual(bytes(0));
       conn.text(compress(""), { rsv1: true });
       conn.text("", { rsv1: true });
       expect(await conn.roundTrip()).toEqual([]);
-      expect(events).toEqual([...opening, "message Buffer() text rs=1", "message Buffer() text rs=1"]);
+      expect(events).toEqual([...openEvents, "message Buffer() text rs=1", "message Buffer() text rs=1"]);
     });
 
-    test("a message may refer back to the one before it", async () => {
-      await using client = await openClient(implementation, {}, deflate);
+    test("keeps the inflate window between messages (context takeover)", async () => {
+      await using client = await openClient(implementation, {}, withDeflate);
       const { conn, events } = client;
       const text = "the same words again";
-      // With the first message as the dictionary, the second one is what a compressor that keeps its window writes.
+      // Using the first message as the dictionary produces what a compressor with context takeover would send next.
       const first = compress(text);
       const second = compress(text, { dictionary: Buffer.from(text) });
       expect(second.length).toBeLessThan(first.length / 2);
@@ -487,20 +487,20 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       conn.text(second, { rsv1: true });
       expect(await conn.roundTrip()).toEqual([]);
       expect(events).toEqual([
-        ...opening,
+        ...openEvents,
         `message Buffer("${text}") text rs=1`,
         `message Buffer("${text}") text rs=1`,
       ]);
     });
 
-    test("a message whose last block is marked final, then another message", async () => {
-      await using client = await openClient(implementation, {}, deflate);
+    test("inflates the message after one whose last deflate block has BFINAL set", async () => {
+      await using client = await openClient(implementation, {}, withDeflate);
       const { conn, events } = client;
       conn.text(zlib.deflateRawSync("final block"), { rsv1: true });
       conn.text(compress("next"), { rsv1: true });
       expect(await conn.roundTrip()).toEqual([]);
       expect(events).toEqual([
-        ...opening,
+        ...openEvents,
         'message Buffer("final block") text rs=1',
         'message Buffer("next") text rs=1',
       ]);
@@ -508,72 +508,73 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
   });
 
   describe("maxPayload", () => {
-    test("a message of exactly that size passes: in one frame, in fragments, inflated", async () => {
-      await using client = await openClient(implementation, { maxPayload: 100 }, deflate);
+    test("accepts a message of exactly maxPayload bytes: unfragmented, fragmented or compressed", async () => {
+      await using client = await openClient(implementation, { maxPayload: 100 }, withDeflate);
       const { conn, events } = client;
-      conn.binary(a(100));
-      conn.binary(a(60), { fin: false });
-      conn.send(OP.continuation, a(40));
-      conn.binary(compress(a(100)), { rsv1: true });
+      conn.binary(repeatA(100));
+      conn.binary(repeatA(60), { fin: false });
+      conn.send(OP.continuation, repeatA(40));
+      conn.binary(compress(repeatA(100)), { rsv1: true });
       expect(await conn.roundTrip()).toEqual([]);
       const message = "message Buffer(100 bytes) binary rs=1";
-      expect(events).toEqual([...opening, message, message, message]);
+      expect(events).toEqual([...openEvents, message, message, message]);
     });
 
-    test("control frames do not count", async () => {
+    test("doesn't apply to control frames", async () => {
       await using client = await openClient(implementation, { maxPayload: 2 });
       client.conn.ping("hello");
       expect(await client.conn.roundTrip()).toEqual(['pong "hello"']);
-      expect(client.events).toEqual([...opening, 'ping Buffer("hello") rs=1']);
+      expect(client.events).toEqual([...openEvents, 'ping Buffer("hello") rs=1']);
     });
 
-    test("0 is no limit", async () => {
+    test("0 means no limit", async () => {
       await using client = await openClient(implementation, { maxPayload: 0 });
-      client.conn.binary(a(70000));
+      client.conn.binary(repeatA(70000));
       expect(await client.conn.roundTrip()).toEqual([]);
-      expect(client.events).toEqual([...opening, "message Buffer(70000 bytes) binary rs=1"]);
+      expect(client.events).toEqual([...openEvents, "message Buffer(70000 bytes) binary rs=1"]);
     });
   });
 
   describe("skipUTF8Validation", () => {
-    test("a text message that is not UTF-8 is delivered as it is", async () => {
+    test("delivers invalid UTF-8 text unmodified", async () => {
       await using client = await openClient(implementation, { skipUTF8Validation: true });
       const { ws, conn, events } = client;
       const data: unknown[] = [];
       ws.onmessage = event => data.push(event.data);
       conn.text(bytes(0x61, 0xff));
       expect(await conn.roundTrip()).toEqual([]);
-      expect(events).toEqual([...opening, "message Buffer(0x61ff) text rs=1"]);
+      expect(events).toEqual([...openEvents, "message Buffer(0x61ff) text rs=1"]);
       expect(data).toEqual(["a\ufffd"]);
 
       conn.close(1000);
-      expect(await conn.rest()).toEqual(["close 1000"]);
+      expect(await conn.remainingFrames()).toEqual(["close 1000"]);
     });
   });
 
   describe("protocol errors", () => {
-    // What 'error' gets, and the Close frame that tells the peer.
-    const invalid = (text: string, code: string) => ({
+    // The expected 'error', and the Close frame the client sends to the peer.
+    const invalidFrame = (text: string, code: string) => ({
       error: `RangeError "Invalid WebSocket frame: ${text}" ${code}`,
       close: "close 1002",
     });
-    const opcode = (value: number) => invalid(`invalid opcode ${value}`, "WS_ERR_INVALID_OPCODE");
-    const masked = invalid("MASK must be clear", "WS_ERR_UNEXPECTED_MASK");
-    const rsv1 = invalid("RSV1 must be clear", "WS_ERR_UNEXPECTED_RSV_1");
-    const rsv23 = invalid("RSV2 and RSV3 must be clear", "WS_ERR_UNEXPECTED_RSV_2_3");
-    const noFin = invalid("FIN must be set", "WS_ERR_EXPECTED_FIN");
-    const length = (value: number) =>
-      invalid(`invalid payload length ${value}`, "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH");
-    const status = (value: number) => invalid(`invalid status code ${value}`, "WS_ERR_INVALID_CLOSE_CODE");
-    const utf8 = {
+    const invalidOpcode = (value: number) => invalidFrame(`invalid opcode ${value}`, "WS_ERR_INVALID_OPCODE");
+    const unexpectedMask = invalidFrame("MASK must be clear", "WS_ERR_UNEXPECTED_MASK");
+    const unexpectedRsv1 = invalidFrame("RSV1 must be clear", "WS_ERR_UNEXPECTED_RSV_1");
+    const unexpectedRsv23 = invalidFrame("RSV2 and RSV3 must be clear", "WS_ERR_UNEXPECTED_RSV_2_3");
+    const expectedFin = invalidFrame("FIN must be set", "WS_ERR_EXPECTED_FIN");
+    const invalidControlLength = (value: number) =>
+      invalidFrame(`invalid payload length ${value}`, "WS_ERR_INVALID_CONTROL_PAYLOAD_LENGTH");
+    const invalidCloseCode = (value: number) =>
+      invalidFrame(`invalid status code ${value}`, "WS_ERR_INVALID_CLOSE_CODE");
+    const invalidUtf8 = {
       error: 'Error "Invalid WebSocket frame: invalid UTF-8 sequence" WS_ERR_INVALID_UTF8',
       close: "close 1007",
     };
-    const tooBig = {
+    const payloadTooBig = {
       error: 'RangeError "Max payload size exceeded" WS_ERR_UNSUPPORTED_MESSAGE_LENGTH',
       close: "close 1009",
     };
-    const over53Bits = {
+    const lengthOver53Bits = {
       error:
         'RangeError "Unsupported WebSocket frame: payload length > 2^53 - 1" WS_ERR_UNSUPPORTED_DATA_PAYLOAD_LENGTH',
       close: "close 1009",
@@ -594,143 +595,166 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       peer?: PeerOptions;
     };
     const rows: Row[] = [
-      { label: "opcode 3", sent: [frame(3, "x")], ...opcode(3) },
-      { label: "opcode 11", sent: [frame(11, "x")], ...opcode(11) },
-      { label: "a continuation frame with nothing to continue", sent: [continuation("x")], ...opcode(0) },
-      { label: "a new message inside a fragmented one", sent: [text("a", { fin: false }), text("b")], ...opcode(1) },
-      { label: "a masked frame", sent: [text("hi", { mask: true })], ...masked },
-      { label: "RSV1 when the server did not accept permessage-deflate", sent: [text("hi", { rsv1: true })], ...rsv1 },
+      { label: "opcode 3", sent: [frame(3, "x")], ...invalidOpcode(3) },
+      { label: "opcode 11", sent: [frame(11, "x")], ...invalidOpcode(11) },
+      { label: "a continuation frame with no message in progress", sent: [continuation("x")], ...invalidOpcode(0) },
+      {
+        label: "a new message in the middle of a fragmented one",
+        sent: [text("a", { fin: false }), text("b")],
+        ...invalidOpcode(1),
+      },
+      { label: "a masked frame", sent: [text("hi", { mask: true })], ...unexpectedMask },
+      {
+        label: "RSV1 when permessage-deflate wasn't negotiated",
+        sent: [text("hi", { rsv1: true })],
+        ...unexpectedRsv1,
+      },
       {
         label: "RSV1 with perMessageDeflate: false",
         sent: [text("hi", { rsv1: true })],
         options: { perMessageDeflate: false },
-        ...rsv1,
+        ...unexpectedRsv1,
       },
       {
         label: "RSV1 on a continuation frame",
         sent: [text(compress("ab"), { fin: false, rsv1: true }), continuation("x", { rsv1: true })],
-        peer: deflate,
-        ...rsv1,
+        peer: withDeflate,
+        ...unexpectedRsv1,
       },
-      { label: "RSV1 on a Ping", sent: [frame(OP.ping, "x", { rsv1: true })], peer: deflate, ...rsv1 },
-      { label: "RSV2", sent: [text("hi", { rsv2: true })], ...rsv23 },
-      { label: "RSV3", sent: [text("hi", { rsv3: true })], ...rsv23 },
-      { label: "a fragmented Ping", sent: [frame(OP.ping, "x", { fin: false })], ...noFin },
-      { label: "a fragmented Close frame", sent: [frame(OP.close, closePayload(1000), { fin: false })], ...noFin },
-      { label: "a Ping of 126 bytes", sent: [frame(OP.ping, a(126))], ...length(126) },
-      { label: "a Pong of 126 bytes", sent: [frame(OP.pong, a(126))], ...length(126) },
-      { label: "a Close frame of 126 bytes", sent: [frame(OP.close, closePayload(1000, a(124)))], ...length(126) },
-      { label: "a Close frame of one byte", sent: [frame(OP.close, bytes(3))], ...length(1) },
+      { label: "RSV1 on a Ping", sent: [frame(OP.ping, "x", { rsv1: true })], peer: withDeflate, ...unexpectedRsv1 },
+      { label: "RSV2", sent: [text("hi", { rsv2: true })], ...unexpectedRsv23 },
+      { label: "RSV3", sent: [text("hi", { rsv3: true })], ...unexpectedRsv23 },
+      { label: "a fragmented Ping", sent: [frame(OP.ping, "x", { fin: false })], ...expectedFin },
+      {
+        label: "a fragmented Close frame",
+        sent: [frame(OP.close, closePayload(1000), { fin: false })],
+        ...expectedFin,
+      },
+      { label: "a 126-byte Ping", sent: [frame(OP.ping, repeatA(126))], ...invalidControlLength(126) },
+      { label: "a 126-byte Pong", sent: [frame(OP.pong, repeatA(126))], ...invalidControlLength(126) },
+      {
+        label: "a 126-byte Close frame",
+        sent: [frame(OP.close, closePayload(1000, repeatA(124)))],
+        ...invalidControlLength(126),
+      },
+      { label: "a 1-byte Close frame", sent: [frame(OP.close, bytes(3))], ...invalidControlLength(1) },
       ...[0, 999, 1004, 1005, 1006, 1015, 1016, 2999, 5000, 65535].map(code => ({
-        label: `a Close frame with the code ${code}`,
+        label: `a Close frame with code ${code}`,
         sent: [frame(OP.close, closePayload(code))],
-        ...status(code),
+        ...invalidCloseCode(code),
       })),
 
       {
-        label: "a Close frame whose reason is not UTF-8",
+        label: "a Close frame with an invalid UTF-8 reason",
         sent: [frame(OP.close, closePayload(1000, bytes(0xff)))],
-        ...utf8,
+        ...invalidUtf8,
       },
-      { label: "a text message that is not UTF-8", sent: [text(bytes(0xff, 0xfe))], ...utf8 },
-      { label: "a text message that ends inside a character", sent: [text(Buffer.from("😀").subarray(0, 3))], ...utf8 },
-      { label: "a text message with a surrogate", sent: [text(bytes(0xed, 0xa0, 0x80))], ...utf8 },
-      { label: "a text message with an overlong NUL", sent: [text(bytes(0xc0, 0x80))], ...utf8 },
+      { label: "a text message with invalid UTF-8", sent: [text(bytes(0xff, 0xfe))], ...invalidUtf8 },
       {
-        label: "a text message whose second fragment is not UTF-8",
+        label: "a text message truncated mid-character",
+        sent: [text(Buffer.from("😀").subarray(0, 3))],
+        ...invalidUtf8,
+      },
+      { label: "a text message with an encoded surrogate", sent: [text(bytes(0xed, 0xa0, 0x80))], ...invalidUtf8 },
+      { label: "a text message with an overlong NUL", sent: [text(bytes(0xc0, 0x80))], ...invalidUtf8 },
+      {
+        label: "a text message with invalid UTF-8 in its second fragment",
         sent: [text("a", { fin: false }), continuation(bytes(0xff))],
-        ...utf8,
+        ...invalidUtf8,
       },
       {
-        label: "a compressed text message that is not UTF-8",
+        label: "a compressed text message with invalid UTF-8",
         sent: [text(compress(bytes(0xff, 0xfe)), { rsv1: true })],
-        peer: deflate,
-        ...utf8,
+        peer: withDeflate,
+        ...invalidUtf8,
       },
 
-      { label: "a message of maxPayload + 1 bytes", sent: [binary(a(101))], options: max100, ...tooBig },
+      { label: "a message of maxPayload + 1 bytes", sent: [binary(repeatA(101))], options: max100, ...payloadTooBig },
       {
-        label: "the header of a message over maxPayload, before any of its payload",
-        sent: [binary(a(200)).subarray(0, 4)],
+        label: "a frame header over maxPayload, before any payload arrives",
+        sent: [binary(repeatA(200)).subarray(0, 4)],
         options: max100,
-        ...tooBig,
+        ...payloadTooBig,
       },
       {
         label: "fragments that add up to more than maxPayload",
-        sent: [binary(a(60), { fin: false }), continuation(a(60))],
+        sent: [binary(repeatA(60), { fin: false }), continuation(repeatA(60))],
         options: max100,
-        ...tooBig,
+        ...payloadTooBig,
       },
       {
         label: "a compressed message that inflates to more than maxPayload",
-        sent: [binary(compress(a(200)), { rsv1: true })],
+        sent: [binary(compress(repeatA(200)), { rsv1: true })],
         options: max100,
-        peer: deflate,
-        ...tooBig,
+        peer: withDeflate,
+        ...payloadTooBig,
       },
       // The default maxPayload is 100 MiB.
-      { label: "a length of 256 MiB", sent: [bytes(0x82, 127, 0, 0, 0, 0, 0x10, 0, 0, 0)], ...tooBig },
-      { label: "a length of 2^53", sent: [bytes(0x82, 127, 0, 0x20, 0, 0, 0, 0, 0, 0)], ...over53Bits },
+      { label: "a length of 256 MiB", sent: [bytes(0x82, 127, 0, 0, 0, 0, 0x10, 0, 0, 0)], ...payloadTooBig },
+      { label: "a length of 2^53", sent: [bytes(0x82, 127, 0, 0x20, 0, 0, 0, 0, 0, 0)], ...lengthOver53Bits },
       {
         label: "a length of 2^64 - 1",
         sent: [bytes(0x82, 127, 255, 255, 255, 255, 255, 255, 255, 255)],
-        ...over53Bits,
+        ...lengthOver53Bits,
       },
     ];
 
-    test.each(rows)("$label: 'error', $close and FIN, 'close' 1006", async ({ sent, error, close, options, peer }) => {
-      await using client = await openClient(implementation, options, peer);
-      const { conn, events } = client;
-      conn.write(Buffer.concat(sent));
-      expect(await conn.rest()).toEqual([close]);
-      expect(conn.tcp).toEqual(["end"]);
-      conn.end();
-      await client.closed;
-      expect(events).toEqual([...opening, `error ${error} rs=2`, lost]);
-    });
+    test.each(rows)(
+      "$label: emits 'error', sends $close and FIN, then emits 'close' 1006",
+      async ({ sent, error, close, options, peer }) => {
+        await using client = await openClient(implementation, options, peer);
+        const { conn, events } = client;
+        conn.write(Buffer.concat(sent));
+        expect(await conn.remainingFrames()).toEqual([close]);
+        expect(conn.socketEvents).toEqual(["end"]);
+        conn.end();
+        await client.closed;
+        expect(events).toEqual([...openEvents, `error ${error} rs=2`, abnormalClose]);
+      },
+    );
 
-    // npm ws passes zlib's own error on ("invalid block type"), so the text is not compared.
-    test("a compressed message that does not inflate: 'error' Z_DATA_ERROR, close 1007 and FIN, 'close' 1006", async () => {
-      await using client = await openClient(implementation, {}, deflate);
+    // npm ws forwards zlib's own error ("invalid block type"), so the message isn't compared.
+    test("corrupt compressed data: emits Z_DATA_ERROR, sends close 1007 and FIN, then emits 'close' 1006", async () => {
+      await using client = await openClient(implementation, {}, withDeflate);
       const { ws, conn, events } = client;
-      const failed = event(ws, "error");
+      const errorEvent = nextEvent(ws, "error");
       conn.text(bytes(0xff, 0xff, 0xff, 0xff, 0xff), { rsv1: true });
-      const [error] = await failed;
+      const [error] = await errorEvent;
       expect({ class: error.constructor.name, code: error.code }).toEqual({ class: "Error", code: "Z_DATA_ERROR" });
-      expect(await conn.rest()).toEqual(["close 1007"]);
-      expect(conn.tcp).toEqual(["end"]);
+      expect(await conn.remainingFrames()).toEqual(["close 1007"]);
+      expect(conn.socketEvents).toEqual(["end"]);
       conn.end();
       await client.closed;
       expect(events).toHaveLength(4);
-      expect(events[3]).toBe(lost);
+      expect(events[3]).toBe(abnormalClose);
     });
 
-    test("after the 'error' the socket is CLOSING, and 'close' waits for the server's FIN", async () => {
+    test("stays CLOSING after 'error' until the server sends FIN", async () => {
       await using client = await openClient(implementation);
       const { ws, conn, events } = client;
       conn.send(3, "x");
       await conn.ended;
       expect(ws.readyState).toBe(implementation.CLOSING);
-      expect(events).toEqual([...opening, `error ${opcode(3).error} rs=2`]);
+      expect(events).toEqual([...openEvents, `error ${invalidOpcode(3).error} rs=2`]);
       conn.end();
       await client.closed;
-      expect(events.slice(3)).toEqual([lost]);
+      expect(events.slice(3)).toEqual([abnormalClose]);
     });
 
-    // `closeTimeout` is an option of ws 8.19 and later. The package in node_modules has a constant 30 s.
-    test.skipIf(!builtin)("after the 'error', a server that never ends the connection: `closeTimeout`", async () => {
+    // ws added the `closeTimeout` option in 8.19. The version in node_modules hardcodes 30 s.
+    test.skipIf(!builtin)("`closeTimeout` applies after 'error' if the server never sends FIN", async () => {
       await using client = await openClient(implementation, { closeTimeout: 50 } as {});
       const { conn, events } = client;
       conn.send(3, "x");
       await client.closed;
-      expect(events).toEqual([...opening, `error ${opcode(3).error} rs=2`, lost]);
-      expect(await conn.rest()).toEqual(["close 1002"]);
+      expect(events).toEqual([...openEvents, `error ${invalidOpcode(3).error} rs=2`, abnormalClose]);
+      expect(await conn.remainingFrames()).toEqual(["close 1002"]);
     });
 
-    test("the error has the status code of the Close frame under Symbol(status-code)", async () => {
+    test("the error stores the Close frame's status code under Symbol(status-code)", async () => {
       await using client = await openClient(implementation);
       client.conn.send(3, "x");
-      const [error] = await event(client.ws, "error");
+      const [error] = await nextEvent(client.ws, "error");
       expect(error).toBeInstanceOf(RangeError);
       expect(error.name).toBe("RangeError");
       expect(Object.keys(error)).toEqual(["code"]);
@@ -739,7 +763,7 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       ]);
     });
 
-    test("what came before the bad frame is delivered, what comes after it is not read", async () => {
+    test("delivers frames before the invalid frame and ignores frames after it", async () => {
       await using client = await openClient(implementation);
       const { conn, events } = client;
       conn.write(
@@ -751,34 +775,39 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
           conn.frame(OP.ping, "after"),
         ]),
       );
-      expect(await conn.rest()).toEqual(["close 1002"]);
+      expect(await conn.remainingFrames()).toEqual(["close 1002"]);
       conn.end();
       await client.closed;
-      expect(events).toEqual([...opening, 'message Buffer("before") text rs=1', `error ${opcode(3).error} rs=2`, lost]);
+      expect(events).toEqual([
+        ...openEvents,
+        'message Buffer("before") text rs=1',
+        `error ${invalidOpcode(3).error} rs=2`,
+        abnormalClose,
+      ]);
     });
 
-    test("the peer's answer to the Close frame is not read either: 'close' is 1006", async () => {
+    test("ignores the peer's reply to the Close frame, so 'close' is 1006", async () => {
       await using client = await openClient(implementation);
       const { conn, events } = client;
       conn.send(3, "x");
-      expect(await conn.rest()).toEqual(["close 1002"]);
+      expect(await conn.remainingFrames()).toEqual(["close 1002"]);
       conn.close(1002, "echo");
       conn.end();
       await client.closed;
-      expect(events).toEqual([...opening, `error ${opcode(3).error} rs=2`, lost]);
+      expect(events).toEqual([...openEvents, `error ${invalidOpcode(3).error} rs=2`, abnormalClose]);
     });
 
-    test("a bad frame after close(): 'error', no second Close frame, FIN, 'close' 1006", async () => {
+    test("an invalid frame after close() emits 'error' and 'close' 1006 without a second Close frame", async () => {
       await using client = await openClient(implementation);
       const { ws, conn, events } = client;
       ws.close(1000);
       expect(await conn.next()).toBe("close 1000");
       conn.send(3, "x");
-      expect(await conn.rest()).toEqual([]);
-      expect(conn.tcp).toEqual(["end"]);
+      expect(await conn.remainingFrames()).toEqual([]);
+      expect(conn.socketEvents).toEqual(["end"]);
       conn.end();
       await client.closed;
-      expect(events).toEqual([...opening, `error ${opcode(3).error} rs=2`, lost]);
+      expect(events).toEqual([...openEvents, `error ${invalidOpcode(3).error} rs=2`, abnormalClose]);
     });
   });
 });

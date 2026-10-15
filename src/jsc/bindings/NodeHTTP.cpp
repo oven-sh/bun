@@ -497,8 +497,9 @@ static bool connectionValueHasClose(const WTF::String& value)
     return false;
 }
 
-// HttpResponse::upgrade() writes these itself (RFC 6455 4.2.2), or a 1xx must not carry them (RFC 9110 8.6).
-static bool isWebSocketHandshakeOwnedHeader(WebCore::HTTPHeaderName name)
+// Headers that user code can't set on a 101 response. HttpResponse::upgrade() writes the handshake headers itself
+// (RFC 6455 4.2.2), and a 1xx response must not have Content-Length or Transfer-Encoding (RFC 9110 8.6).
+static bool isReservedWebSocketUpgradeHeader(WebCore::HTTPHeaderName name)
 {
     switch (name) {
     case WebCore::HTTPHeaderName::Upgrade:
@@ -530,7 +531,7 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
 
     for (const auto& header : internalHeaders.commonHeaders()) {
         if constexpr (forWebSocketUpgrade) {
-            if (isWebSocketHandshakeOwnedHeader(header.key))
+            if (isReservedWebSocketUpgradeHeader(header.key))
                 continue;
         }
 

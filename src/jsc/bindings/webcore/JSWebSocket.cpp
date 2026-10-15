@@ -180,7 +180,7 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     const auto& builtinNames = WebCore::builtinNames(vm);
-    // Inherited properties count, those of Object.prototype do not. undefined when there is none.
+    // Reads own and inherited properties but ignores Object.prototype. Returns undefined if the property is missing.
     auto get = [&](JSObject* from, const PropertyName& name) {
         return Bun::getIfPropertyExistsPrototypePollutionMitigation(vm, globalObject, from, name);
     };
@@ -214,7 +214,7 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
         options.sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tlsValue)) };
         RETURN_IF_EXCEPTION(throwScope, );
 
-        // As in fetch(): a value that cannot run must not pass for a pin.
+        // Throw on a non-callable value, same as fetch(). Ignoring it would silently skip the check the user asked for.
         JSValue checkServerIdentityValue = get(tls, Identifier::fromString(vm, "checkServerIdentity"_s));
         RETURN_IF_EXCEPTION(throwScope, );
         if (!checkServerIdentityValue.isUndefinedOrNull()) {
@@ -234,7 +234,7 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
     if (JSValue::encode(perMessageDeflateValue) != JSValue::ValueDeleted && !perMessageDeflateValue.toBoolean(lexicalGlobalObject))
         options.extensions = String();
 
-    // A string, a URL or { url, headers }
+    // `proxy` is a string, a URL or { url, headers }.
     JSValue proxyValue = get(object, Identifier::fromString(vm, "proxy"_s));
     RETURN_IF_EXCEPTION(throwScope, );
     if (proxyValue.isString()) {
@@ -266,7 +266,7 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
     }
 }
 
-// Makes the wrapper and gives it what it keeps alive for its WebSocket. `owner` and `handlers`: JSWebSocket::m_owner.
+// Creates the wrapper and stores the JS values it keeps alive for its WebSocket. See JSWebSocket::m_owner for `owner` and `handlers`.
 static JSC::EncodedJSValue wrapNewWebSocket(JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject& globalObject, ScriptExecutionContext& context, Structure* structure, ExceptionOr<Ref<WebSocket>>&& socket, JSValue checkServerIdentity = {}, JSObject* owner = nullptr, JSObject* handlers = nullptr)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -278,7 +278,7 @@ static JSC::EncodedJSValue wrapNewWebSocket(JSGlobalObject* lexicalGlobalObject,
     auto* wrapper = uncheckedDowncast<JSWebSocket>(asObject(jsValue));
     if (checkServerIdentity)
         wrapper->wrapped().setCheckServerIdentity(vm, wrapper, checkServerIdentity);
-    // The frame of a Bun.ModuleGraph would keep alive the graph whose collection closes this socket.
+    // Strip Bun.ModuleGraph frames. They'd keep the graph alive, and collecting the graph is what closes this socket.
     auto* contextGlobalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
     JSValue asyncContext = Bun::asyncContextWithoutModuleGraphs(contextGlobalObject, contextGlobalObject->m_asyncContextData.get()->getInternalField(0));
     if (!asyncContext.isUndefined())
@@ -642,8 +642,8 @@ JSC_DEFINE_CUSTOM_SETTER(setJSWebSocket_binaryType, (JSGlobalObject * lexicalGlo
     return IDLAttribute<JSWebSocket>::set<setJSWebSocket_binaryTypeSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
 
-// (ArrayBufferView or ArrayBuffer or Blob or USVString). The bytes are borrowed from `value`; a detached buffer has none.
-// nullopt when it throws. `ws` takes shared and resizable memory, which Web IDL refuses.
+// Converts (ArrayBufferView or ArrayBuffer or Blob or USVString). The returned span points into `value` and is empty for a detached buffer.
+// Returns nullopt after throwing. Web IDL rejects shared and resizable buffers, but the `ws` module accepts them.
 static std::optional<WebSocket::Payload> convertPayload(JSGlobalObject& lexicalGlobalObject, JSValue value, ASCIILiteral functionName, bool allowSharedAndResizable = false)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
@@ -720,7 +720,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_close, (JSGlobalObject * l
     return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_closeBody>(*lexicalGlobalObject, *callFrame, "close");
 }
 
-// ping() and pong(): undefined and null are no payload.
+// Implements ping() and pong(). undefined and null mean an empty payload.
 static JSC::EncodedJSValue sendControlFrame(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSWebSocket* castedThis, WebSocket::Opcode opcode, ASCIILiteral functionName)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -906,7 +906,7 @@ JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
     return WebCore::JSWebSocket::getConstructor(globalObject->vm(), globalObject);
 }
 
-// The options of the `ws` module that both of its ways to make a WebSocket read.
+// Parses the `ws` module options shared by createWebSocket() and createWebSocketOverStream().
 static void convertConnectedOptionsForWs(JSGlobalObject* lexicalGlobalObject, JSObject* object, WebSocketConnectedOptions& options)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -927,7 +927,7 @@ static void convertConnectedOptionsForWs(JSGlobalObject* lexicalGlobalObject, JS
     options.skip_utf8_validation = skipUTF8Validation.toBoolean(lexicalGlobalObject);
 }
 
-// createWebSocket(url, options, owner, handlers): `new WebSocket(url, options)` that calls `handlers` instead of dispatching events.
+// createWebSocket(url, options, owner, handlers): like `new WebSocket(url, options)`, but calls `handlers` instead of dispatching events.
 JSC_DEFINE_HOST_FUNCTION(jsCreateWebSocketForWs, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -952,7 +952,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreateWebSocketForWs, (JSGlobalObject * lexicalGlobal
         convertConnectedOptionsForWs(lexicalGlobalObject, object, options.connected);
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        // The offer that the `ws` module made of its `perMessageDeflate` option. undefined: none.
+        // The Sec-WebSocket-Extensions offer that the `ws` module built from its `perMessageDeflate` option. undefined means no offer.
         JSValue extensions = Bun::getIfPropertyExistsPrototypePollutionMitigation(lexicalGlobalObject, object, Identifier::fromString(vm, "extensions"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         options.extensions = extensions.isUndefined() ? String() : extensions.toWTFString(lexicalGlobalObject);
@@ -965,7 +965,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreateWebSocketForWs, (JSGlobalObject * lexicalGlobal
     RELEASE_AND_RETURN(throwScope, wrapNewWebSocket(lexicalGlobalObject, *globalObject, *context, getDOMStructure<JSWebSocket>(vm, *globalObject), WebSocket::create(*context, url, WTF::move(options)), checkServerIdentity, owner, handlers));
 }
 
-// createWebSocketOverStream(options, owner, handlers): an OPEN WebSocket whose bytes come in through feed() and go out through handlers.write.
+// createWebSocketOverStream(options, owner, handlers): returns an OPEN WebSocket that receives bytes through feed() and sends them through handlers.write.
 JSC_DEFINE_HOST_FUNCTION(jsCreateWebSocketOverStreamForWs, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1042,7 +1042,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketFeedForWs, (JSGlobalObject * lexicalGlobalOb
     if (!view || view->isShared() || view->isResizableOrGrowableShared()) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope, "Expected a Uint8Array"_s);
 
-    // The handlers run while the parser still reads the chunk: they must not be able to detach it.
+    // Pin the buffer. Handlers run while the parser is still reading the chunk, so they must not be able to detach it.
     RefPtr buffer = view->unsharedBuffer();
     if (!buffer) [[unlikely]]
         return JSValue::encode(jsUndefined());
@@ -1066,7 +1066,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketStreamClosedForWs, (JSGlobalObject * lexical
     return JSValue::encode(jsUndefined());
 }
 
-// sendFrame(ws, data, opcode, fin, compress). Does nothing unless `ws` is OPEN. `compress` is the caller's decision: no size threshold.
+// sendFrame(ws, data, opcode, fin, compress). No-op unless `ws` is OPEN. `compress` is honored as-is, with no minimum size.
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketSendFrameForWs, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1103,7 +1103,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketSetRefForWs, (JSGlobalObject * lexicalGlobal
     return JSValue::encode(jsUndefined());
 }
 
-// detach(ws): no handler is called for `ws` any more
+// detach(ws): stops calling handlers for `ws`.
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketDetachForWs, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

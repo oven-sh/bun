@@ -1,13 +1,13 @@
-// The opening handshake of a `ws` WebSocketServer, seen by a raw TCP client. See ws-raw-peer.ts.
+// Tests the opening handshake of a `ws` WebSocketServer, using a raw TCP client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import http from "node:http";
 import type { Duplex } from "node:stream";
 import type { ServerOptions } from "ws";
 import {
-  attempt,
+  tryCall,
   createServer,
-  event,
+  nextEvent,
   implementations,
   listen,
   openServer,
@@ -18,14 +18,14 @@ import {
   showError,
 } from "./ws-raw-peer";
 
-const switching = [
+const switchingProtocols = [
   "HTTP/1.1 101 Switching Protocols",
   "Upgrade: websocket",
   "Connection: Upgrade",
   "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=",
 ];
-// What `responseLines()` gives for the answer of abortHandshake().
-const refusal = (status: string, body: string, headers: string[] = []) => [
+// What `responseLines()` returns for an abortHandshake() response.
+const errorResponse = (status: string, body: string, headers: string[] = []) => [
   `HTTP/1.1 ${status}`,
   "Connection: close",
   "Content-Type: text/html",
@@ -34,60 +34,64 @@ const refusal = (status: string, body: string, headers: string[] = []) => [
   "",
   body,
 ];
-const badExtensions = refusal("400 Bad Request", "Invalid or unacceptable Sec-WebSocket-Extensions header");
-const badVersion = refusal("400 Bad Request", "Missing or invalid Sec-WebSocket-Version header", [
+const badExtensions = errorResponse("400 Bad Request", "Invalid or unacceptable Sec-WebSocket-Extensions header");
+const badVersion = errorResponse("400 Bad Request", "Missing or invalid Sec-WebSocket-Version header", [
   "Sec-WebSocket-Version: 13, 8",
 ]);
 const extensions = (value: string) => ({ headers: { "Sec-WebSocket-Extensions": value } });
 const protocols = (value: string) => ({ headers: { "Sec-WebSocket-Protocol": value } });
 
-type Refusal = {
+type RejectedRequest = {
   label: string;
   options?: ServerOptions;
   request?: RequestOptions;
   response: string[];
-  /** It does not go through 'wsClientError'. */
+  /** Rejected without emitting 'wsClientError'. */
   silent?: boolean;
 };
 
-const refusals: Refusal[] = [
+const rejectedRequests: RejectedRequest[] = [
   {
     label: "POST",
     request: { method: "POST" },
-    response: refusal("405 Method Not Allowed", "Invalid HTTP method"),
+    response: errorResponse("405 Method Not Allowed", "Invalid HTTP method"),
   },
   {
     label: "Upgrade: foo",
     request: { headers: { Upgrade: "foo" } },
-    response: refusal("400 Bad Request", "Invalid Upgrade header"),
+    response: errorResponse("400 Bad Request", "Invalid Upgrade header"),
   },
   {
-    label: "no Sec-WebSocket-Key",
+    label: "missing Sec-WebSocket-Key",
     request: { headers: { "Sec-WebSocket-Key": null } },
-    response: refusal("400 Bad Request", "Missing or invalid Sec-WebSocket-Key header"),
+    response: errorResponse("400 Bad Request", "Missing or invalid Sec-WebSocket-Key header"),
   },
   {
-    label: "a Sec-WebSocket-Key of 8 bytes",
+    label: "an 8-byte Sec-WebSocket-Key",
     request: { headers: { "Sec-WebSocket-Key": "P5l8BJcZwRc=" } },
-    response: refusal("400 Bad Request", "Missing or invalid Sec-WebSocket-Key header"),
+    response: errorResponse("400 Bad Request", "Missing or invalid Sec-WebSocket-Key header"),
   },
-  { label: "no Sec-WebSocket-Version", request: { headers: { "Sec-WebSocket-Version": null } }, response: badVersion },
+  {
+    label: "missing Sec-WebSocket-Version",
+    request: { headers: { "Sec-WebSocket-Version": null } },
+    response: badVersion,
+  },
   { label: "Sec-WebSocket-Version: 12", request: { headers: { "Sec-WebSocket-Version": "12" } }, response: badVersion },
   {
     label: "Sec-WebSocket-Protocol: foo;bar",
     request: protocols("foo;bar"),
-    response: refusal("400 Bad Request", "Invalid Sec-WebSocket-Protocol header"),
+    response: errorResponse("400 Bad Request", "Invalid Sec-WebSocket-Protocol header"),
   },
   {
     label: "Sec-WebSocket-Protocol: foo, foo",
     request: protocols("foo, foo"),
-    response: refusal("400 Bad Request", "Invalid Sec-WebSocket-Protocol header"),
+    response: errorResponse("400 Bad Request", "Invalid Sec-WebSocket-Protocol header"),
   },
   {
-    label: "a path other than options.path",
+    label: "a path that doesn't match options.path",
     options: { path: "/ws" },
     request: { path: "/other" },
-    response: refusal("400 Bad Request", "Bad Request"),
+    response: errorResponse("400 Bad Request", "Bad Request"),
     silent: true,
   },
   {
@@ -103,13 +107,13 @@ const refusals: Refusal[] = [
     response: badExtensions,
   },
   {
-    label: "a permessage-deflate parameter given twice",
+    label: "a duplicate permessage-deflate parameter",
     options: { perMessageDeflate: true },
     request: extensions("permessage-deflate; server_no_context_takeover; server_no_context_takeover"),
     response: badExtensions,
   },
   {
-    label: "a Sec-WebSocket-Extensions header that does not parse",
+    label: "a malformed Sec-WebSocket-Extensions header",
     options: { perMessageDeflate: true },
     request: extensions("permessage-deflate;"),
     response: badExtensions,
@@ -121,7 +125,7 @@ const refusals: Refusal[] = [
     response: badExtensions,
   },
   {
-    label: "no client_max_window_bits when clientMaxWindowBits is a number",
+    label: "missing client_max_window_bits when clientMaxWindowBits is a number",
     options: { perMessageDeflate: { clientMaxWindowBits: 10 } },
     request: extensions("permessage-deflate"),
     response: badExtensions,
@@ -129,37 +133,37 @@ const refusals: Refusal[] = [
   {
     label: "verifyClient(info) returns false",
     options: { verifyClient: () => false },
-    response: refusal("401 Unauthorized", "Unauthorized"),
+    response: errorResponse("401 Unauthorized", "Unauthorized"),
     silent: true,
   },
   {
-    label: "verifyClient calls back (false)",
+    label: "verifyClient calls callback(false)",
     options: { verifyClient: (_info, callback) => process.nextTick(callback, false) },
-    response: refusal("401 Unauthorized", "Unauthorized"),
+    response: errorResponse("401 Unauthorized", "Unauthorized"),
     silent: true,
   },
   {
-    label: "verifyClient calls back (false, 404)",
+    label: "verifyClient calls callback(false, 404)",
     options: { verifyClient: (_info, callback) => process.nextTick(callback, false, 404) },
-    response: refusal("404 Not Found", "Not Found"),
+    response: errorResponse("404 Not Found", "Not Found"),
     silent: true,
   },
   {
-    label: "verifyClient calls back (false, 503, message, headers)",
+    label: "verifyClient calls callback(false, 503, message, headers)",
     options: {
       verifyClient: (_info, callback) => process.nextTick(callback, false, 503, "Bad day", { "Retry-After": 120 }),
     },
-    response: refusal("503 Service Unavailable", "Bad day", ["Retry-After: 120"]),
+    response: errorResponse("503 Service Unavailable", "Bad day", ["Retry-After: 120"]),
     silent: true,
   },
 ];
 
-describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: implementation, builtin }) => {
+describe.each(implementations)("ws server opening handshake ($name)", ({ ws: implementation, builtin }) => {
   const { WebSocket, WebSocketServer } = implementation;
 
-  test("the 101 has four lines and no Date, and only frames follow it", async () => {
+  test("the 101 response has four lines and no Date header, and only frames follow it", async () => {
     await using server = await openServer(implementation);
-    expect(server.client.head).toBe(switching.join("\r\n"));
+    expect(server.client.head).toBe(switchingProtocols.join("\r\n"));
     expect(await server.client.roundTrip()).toEqual([]);
   });
 
@@ -167,13 +171,13 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
     { label: "Sec-WebSocket-Version: 8", request: { headers: { "Sec-WebSocket-Version": "8" } } },
     { label: "Upgrade: WebSocket", request: { headers: { Upgrade: "WebSocket" } } },
     { label: "options.path with a query string", options: { path: "/ws" }, request: { path: "/ws?token=1" } },
-  ])("$label is accepted", async ({ options, request }) => {
+  ])("accepts $label", async ({ options, request }) => {
     await using server = await openServer(implementation, options, request);
-    expect(await server.client.responseLines()).toEqual(switching);
+    expect(await server.client.responseLines()).toEqual(switchingProtocols);
     expect(server.req.url).toBe(request.path ?? "/");
   });
 
-  test("'headers' listeners get the lines of the 101, and what they add is sent", async () => {
+  test("'headers' listeners get the 101's header lines, and the lines they add are sent", async () => {
     await using server = await createServer(implementation);
     const seen: unknown[] = [];
     server.wss.on("headers", (headers, req) => {
@@ -182,23 +186,23 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
     });
     const client = server.connect({ path: "/x?y=1", ...protocols("a, b") });
     expect(await client.responseLines()).toEqual([
-      ...switching,
+      ...switchingProtocols,
       "Sec-WebSocket-Protocol: a",
       "X-Foo: bar",
       "Set-Cookie: io=abc; Path=/; HttpOnly",
       "Set-Cookie: b=2",
     ]);
-    expect(seen).toEqual([[...switching, "Sec-WebSocket-Protocol: a"], "/x?y=1"]);
+    expect(seen).toEqual([[...switchingProtocols, "Sec-WebSocket-Protocol: a"], "/x?y=1"]);
   });
 
-  // As `socket.write(string)` sends it, whatever the other lines hold.
+  // Same as `socket.write(string)`, regardless of what the other lines contain.
   test.each([
     { label: "alone", lines: ["X-Name: café"] },
-    { label: "next to a character beyond U+00FF", lines: ["X-Name: café", "X-Price: 5 €"] },
-  ])("a line of the 101 that is not ASCII goes out as UTF-8, $label", async ({ lines }) => {
+    { label: "alongside a character above U+00FF", lines: ["X-Name: café", "X-Price: 5 €"] },
+  ])("sends a non-ASCII 101 header line as UTF-8 ($label)", async ({ lines }) => {
     await using server = await createServer(implementation);
     server.wss.on("headers", headers => void headers.push(...lines));
-    const sent = (await server.connect().responseLines()).slice(switching.length);
+    const sent = (await server.connect().responseLines()).slice(switchingProtocols.length);
     expect(sent).toEqual(lines.map(line => Buffer.from(line).toString("latin1")));
   });
 
@@ -216,22 +220,33 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
 
   describe("subprotocols", () => {
     test.each<{ label: string; offer: string | null; returns?: string | false; calls: string[]; protocol: string }>([
-      { label: "without handleProtocols: the first one offered", offer: "foo, bar", calls: [], protocol: "foo" },
       {
-        label: "handleProtocols gets a Set and the request, and chooses",
+        label: "picks the first offered protocol without handleProtocols",
+        offer: "foo, bar",
+        calls: [],
+        protocol: "foo",
+      },
+      {
+        label: "handleProtocols gets a Set and the request, and its return value is used",
         offer: "foo, bar",
         returns: "bar",
         calls: ['Set("foo", "bar") /chat'],
         protocol: "bar",
       },
       {
-        label: "handleProtocols returns false: none",
+        label: "selects no protocol when handleProtocols returns false",
         offer: "foo, bar",
         returns: false,
         calls: ['Set("foo", "bar") /chat'],
         protocol: "",
       },
-      { label: "nothing offered: handleProtocols is not called", offer: null, returns: "x", calls: [], protocol: "" },
+      {
+        label: "doesn't call handleProtocols when the client offers none",
+        offer: null,
+        returns: "x",
+        calls: [],
+        protocol: "",
+      },
     ])("$label", async ({ offer, returns, calls, protocol }) => {
       const seen: string[] = [];
       const handleProtocols = (set: Set<string>, req: http.IncomingMessage) => (
@@ -243,7 +258,7 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
         headers: { "Sec-WebSocket-Protocol": offer },
       });
       expect(await server.client.responseLines()).toEqual(
-        protocol ? [...switching, `Sec-WebSocket-Protocol: ${protocol}`] : switching,
+        protocol ? [...switchingProtocols, `Sec-WebSocket-Protocol: ${protocol}`] : switchingProtocols,
       );
       expect(server.ws.protocol).toBe(protocol);
       expect(seen).toEqual(calls);
@@ -251,52 +266,52 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
   });
 
   describe("permessage-deflate", () => {
-    const usual = "permessage-deflate; client_max_window_bits";
-    const everything =
+    const typicalOffer = "permessage-deflate; client_max_window_bits";
+    const allParameters =
       "permessage-deflate; server_no_context_takeover; client_no_context_takeover; " +
       "server_max_window_bits=10; client_max_window_bits=11";
 
-    test.each<{ label: string; option?: ServerOptions["perMessageDeflate"]; offer: string; answer: string | null }>([
-      { label: "is off by default", offer: usual, answer: null },
-      { label: "off: the header is not even parsed", option: false, offer: "permessage-deflate;", answer: null },
-      { label: "true", option: true, offer: usual, answer: "permessage-deflate" },
-      { label: "true, every parameter offered: all are taken", option: true, offer: everything, answer: everything },
+    test.each<{ label: string; option?: ServerOptions["perMessageDeflate"]; offer: string; reply: string | null }>([
+      { label: "is off by default", offer: typicalOffer, reply: null },
+      { label: "false: doesn't even parse the header", option: false, offer: "permessage-deflate;", reply: null },
+      { label: "true: accepts the offer", option: true, offer: typicalOffer, reply: "permessage-deflate" },
+      { label: "true: accepts every offered parameter", option: true, offer: allParameters, reply: allParameters },
       {
-        label: "the server's own parameters",
+        label: "adds the server's configured parameters",
         option: { serverNoContextTakeover: true, clientNoContextTakeover: true, serverMaxWindowBits: 10 },
-        offer: usual,
-        answer: "permessage-deflate; server_no_context_takeover; client_no_context_takeover; server_max_window_bits=10",
+        offer: typicalOffer,
+        reply: "permessage-deflate; server_no_context_takeover; client_no_context_takeover; server_max_window_bits=10",
       },
       {
-        label: "clientMaxWindowBits answers client_max_window_bits",
+        label: "replies to client_max_window_bits with clientMaxWindowBits",
         option: { clientMaxWindowBits: 10 },
-        offer: usual,
-        answer: "permessage-deflate; client_max_window_bits=10",
+        offer: typicalOffer,
+        reply: "permessage-deflate; client_max_window_bits=10",
       },
       {
-        label: "the first acceptable offer wins",
+        label: "uses the first acceptable offer",
         option: { serverMaxWindowBits: false as any },
         offer: "permessage-deflate; server_max_window_bits=10, permessage-deflate; client_no_context_takeover",
-        answer: "permessage-deflate; client_no_context_takeover",
+        reply: "permessage-deflate; client_no_context_takeover",
       },
-      { label: "another extension is ignored", option: true, offer: "foo; bar", answer: null },
+      { label: "ignores an unknown extension", option: true, offer: "foo; bar", reply: null },
       {
-        label: "another extension next to it is ignored",
+        label: "ignores an unknown extension offered alongside it",
         option: true,
-        offer: "foo; bar, " + usual,
-        answer: "permessage-deflate",
+        offer: "foo; bar, " + typicalOffer,
+        reply: "permessage-deflate",
       },
-    ])("$label", async ({ option, offer, answer }) => {
+    ])("$label", async ({ option, offer, reply }) => {
       await using server = await openServer(implementation, { perMessageDeflate: option }, extensions(offer));
       expect(await server.client.responseLines()).toEqual(
-        answer === null ? switching : [...switching, `Sec-WebSocket-Extensions: ${answer}`],
+        reply === null ? switchingProtocols : [...switchingProtocols, `Sec-WebSocket-Extensions: ${reply}`],
       );
-      expect(server.ws.extensions).toBe(answer === null ? "" : "permessage-deflate");
+      expect(server.ws.extensions).toBe(reply === null ? "" : "permessage-deflate");
     });
   });
 
-  describe("refusals", () => {
-    test.each(refusals)("$label", async ({ options, request, response }) => {
+  describe("rejected requests", () => {
+    test.each(rejectedRequests)("$label", async ({ options, request, response }) => {
       await using server = await createServer(implementation, options);
       let connections = 0;
       server.wss.on("connection", () => connections++);
@@ -308,7 +323,7 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
       expect(server.wss.clients.size).toBe(0);
     });
 
-    test("a request that is not an upgrade gets 426", async () => {
+    test("a non-upgrade request gets 426", async () => {
       await using server = await createServer(implementation);
       const client = server.connect({ raw: "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n" });
       expect(await client.responseLines()).toEqual([
@@ -322,11 +337,11 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
     });
   });
 
-  // With a listener the answer is the listener's business.
+  // With a listener attached, ws sends nothing and the listener has to write the response.
   describe("'wsClientError'", () => {
     const teapot = ["HTTP/1.1 418 teapot", "Connection: close", "Content-Length: 0"];
 
-    async function refuse({ options, request }: Refusal) {
+    async function connectWithErrorListener({ options, request }: RejectedRequest) {
       await using server = await createServer(implementation, options);
       const seen: unknown[] = [];
       server.wss.on("wsClientError", (error, socket, req) => {
@@ -336,16 +351,22 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
       return { response: await server.connect(request).responseLines(), seen };
     }
 
-    test.each(refusals.filter(row => !row.silent))("$label", async row => {
-      expect(await refuse(row)).toEqual({
-        response: [...teapot, "", ""],
-        seen: [`Error ${JSON.stringify(row.response.at(-1))}`, true, row.request?.method ?? "GET"],
-      });
-    });
+    test.each(rejectedRequests.filter(row => !row.silent))(
+      "$label: emitted, and the listener writes the response",
+      async row => {
+        expect(await connectWithErrorListener(row)).toEqual({
+          response: [...teapot, "", ""],
+          seen: [`Error ${JSON.stringify(row.response.at(-1))}`, true, row.request?.method ?? "GET"],
+        });
+      },
+    );
 
-    test.each(refusals.filter(row => row.silent))("$label: not reported, refused as usual", async row => {
-      expect(await refuse(row)).toEqual({ response: row.response, seen: [] });
-    });
+    test.each(rejectedRequests.filter(row => row.silent))(
+      "$label: not emitted, sends the default response",
+      async row => {
+        expect(await connectWithErrorListener(row)).toEqual({ response: row.response, seen: [] });
+      },
+    );
   });
 
   describe("verifyClient", () => {
@@ -368,14 +389,14 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
         { verifyClient: info => seen.push(Object.keys(info), info.origin, info.secure, info.req.url) > 0 },
         { path: "/v", headers },
       );
-      expect(await server.client.responseLines()).toEqual(switching);
+      expect(await server.client.responseLines()).toEqual(switchingProtocols);
       expect(seen).toEqual([["origin", "secure", "req"], origin, false, "/v"]);
     });
 
-    test("with two parameters the handshake waits for the callback", async () => {
-      const asked = Promise.withResolvers<(result: boolean) => void>();
+    test("the handshake waits for the callback when verifyClient takes two parameters", async () => {
+      const verifyCall = Promise.withResolvers<(result: boolean) => void>();
       await using server = await createServer(implementation, {
-        verifyClient: (_info, callback) => asked.resolve(callback),
+        verifyClient: (_info, callback) => verifyCall.resolve(callback),
       });
       const states: number[] = [];
       server.wss.on("connection", ws => {
@@ -383,40 +404,40 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
         ws.send("hi");
       });
       const client = server.connect();
-      const accept = await asked.promise;
+      const accept = await verifyCall.promise;
       expect(states).toEqual([]);
       accept(true);
       expect(states).toEqual([WebSocket.OPEN]);
-      expect(await client.responseLines()).toEqual(switching);
+      expect(await client.responseLines()).toEqual(switchingProtocols);
       expect(await client.next()).toBe('text "hi"');
     });
 
-    // After a FIN the socket is half open until the late callback destroys it. A RST destroys it at once.
+    // After a FIN the socket stays half-open until the late callback destroys it. An RST destroys it immediately.
     test.each([
-      { how: "FIN", leave: (client: RawClient) => client.end(), sign: "end" },
-      { how: "RST", leave: (client: RawClient) => client.reset(), sign: "close" },
-    ])("the client is gone ($how) when the callback accepts it: no connection", async ({ leave, sign }) => {
-      type Question = { socket: Duplex; accept(result: boolean): void };
-      let asked = Promise.withResolvers<Question>();
+      { how: "FIN", disconnect: (client: RawClient) => client.end(), eventName: "end" },
+      { how: "RST", disconnect: (client: RawClient) => client.reset(), eventName: "close" },
+    ])("no 'connection' if the client disconnects ($how) before it's accepted", async ({ disconnect, eventName }) => {
+      type VerifyCall = { socket: Duplex; accept(result: boolean): void };
+      let verifyCall = Promise.withResolvers<VerifyCall>();
       await using server = await createServer(implementation, {
-        verifyClient: (info, accept) => asked.resolve({ socket: info.req.socket, accept }),
+        verifyClient: (info, accept) => verifyCall.resolve({ socket: info.req.socket, accept }),
       });
       const urls: unknown[] = [];
       server.wss.on("connection", (_ws, req) => urls.push(req.url));
 
       const client = server.connect({ path: "/gone" });
-      const { socket, accept } = await asked.promise;
-      const gone = event(socket, sign);
-      leave(client);
-      await gone;
-      expect(attempt(() => accept(true))).toBe("undefined");
+      const { socket, accept } = await verifyCall.promise;
+      const disconnected = nextEvent(socket, eventName);
+      disconnect(client);
+      await disconnected;
+      expect(tryCall(() => accept(true))).toBe("undefined");
       expect(socket.destroyed).toBe(true);
       expect(server.wss.clients.size).toBe(0);
 
-      asked = Promise.withResolvers();
+      verifyCall = Promise.withResolvers();
       const second = server.connect({ path: "/here" });
-      (await asked.promise).accept(true);
-      expect(await second.responseLines()).toEqual(switching);
+      (await verifyCall.promise).accept(true);
+      expect(await second.responseLines()).toEqual(switchingProtocols);
       expect(urls).toEqual(["/here"]);
     });
   });
@@ -424,8 +445,8 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
   describe("handleUpgrade()", () => {
     test.each([
       { when: "after a microtask", wait: () => Promise.resolve() },
-      { when: "in a later turn of the event loop", wait: () => new Promise(setImmediate) },
-    ])("$when", async ({ wait }) => {
+      { when: "on a later event loop tick", wait: () => new Promise(setImmediate) },
+    ])("works when called $when", async ({ wait }) => {
       await using web = await serve(http.createServer());
       const wss = new WebSocketServer({ noServer: true });
       const states: number[] = [];
@@ -437,21 +458,21 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
         });
       });
       const client = web.connect();
-      expect(await client.responseLines()).toEqual(switching);
+      expect(await client.responseLines()).toEqual(switchingProtocols);
       expect(await client.next()).toBe('text "late"');
       expect(states).toEqual([WebSocket.OPEN]);
     });
 
-    test("twice with one socket throws, and the connection stays", async () => {
+    test("throws when called twice with the same socket, and the connection stays open", async () => {
       await using web = await serve(http.createServer());
       const wss = new WebSocketServer({ noServer: true });
       const calls: string[] = [];
       web.server.on("upgrade", (req, socket, head) => {
         wss.handleUpgrade(req, socket, head, () => calls.push("first callback"));
-        calls.push(attempt(() => wss.handleUpgrade(req, socket, head, () => calls.push("second callback"))));
+        calls.push(tryCall(() => wss.handleUpgrade(req, socket, head, () => calls.push("second callback"))));
       });
       const client = web.connect();
-      expect(await client.responseLines()).toEqual(switching);
+      expect(await client.responseLines()).toEqual(switchingProtocols);
       expect(calls).toEqual([
         "first callback",
         'throws Error "server.handleUpgrade() was called more than once with the same socket, possibly due to a misconfiguration"',
@@ -459,7 +480,7 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
       expect(await client.roundTrip()).toEqual([]);
     });
 
-    test("after close(): 503", async () => {
+    test("responds with 503 after close()", async () => {
       await using web = await serve(http.createServer());
       const wss = new WebSocketServer({ noServer: true });
       let called = false;
@@ -467,11 +488,13 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
         wss.close();
         wss.handleUpgrade(req, socket, head, () => (called = true));
       });
-      expect(await web.connect().responseLines()).toEqual(refusal("503 Service Unavailable", "Service Unavailable"));
+      expect(await web.connect().responseLines()).toEqual(
+        errorResponse("503 Service Unavailable", "Service Unavailable"),
+      );
       expect(called).toBe(false);
     });
 
-    test("two noServer servers behind one 'upgrade' listener", async () => {
+    test("one 'upgrade' listener can route to two noServer servers", async () => {
       await using web = await serve(http.createServer());
       const a = new WebSocketServer({ noServer: true });
       const b = new WebSocketServer({ noServer: true });
@@ -484,7 +507,7 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
       });
       for (const name of ["a", "b"]) {
         const client = web.connect({ path: "/" + name });
-        expect(await client.responseLines()).toEqual(switching);
+        expect(await client.responseLines()).toEqual(switchingProtocols);
         expect(await client.next()).toBe(`text "from ${name}"`);
       }
       const client = web.connect({ path: "/c" });
@@ -493,7 +516,7 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
       expect([a.clients.size, b.clients.size]).toEqual([1, 1]);
     });
 
-    test("an 'upgrade' listener that writes its own 401 for some requests", async () => {
+    test("an 'upgrade' listener can write its own 401 for some requests", async () => {
       await using web = await serve(http.createServer());
       const wss = new WebSocketServer({ noServer: true });
       web.server.on("upgrade", (req, socket, head) => {
@@ -508,11 +531,11 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
         "",
         "",
       ]);
-      expect(await web.connect({ path: "/public" }).responseLines()).toEqual(switching);
+      expect(await web.connect({ path: "/public" }).responseLines()).toEqual(switchingProtocols);
     });
 
-    // What @fastify/websocket and express-ws do.
-    test("a ServerResponse made for the upgrade request answers, or steps aside", async () => {
+    // @fastify/websocket and express-ws do this.
+    test("a ServerResponse on the upgrade socket can respond, and doesn't break handleUpgrade()", async () => {
       await using web = await serve(http.createServer());
       const wss = new WebSocketServer({ noServer: true });
       web.server.on("upgrade", (req, socket, head) => {
@@ -525,7 +548,7 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
         wss.handleUpgrade(req, socket, head, ws => ws.on("message", data => ws.send("echo:" + data)));
       });
       const client = web.connect();
-      expect(await client.responseLines()).toEqual(switching);
+      expect(await client.responseLines()).toEqual(switchingProtocols);
       client.text("hi");
       expect(await client.next()).toBe('text "echo:hi"');
       expect(await web.connect({ path: "/deny" }).responseLines()).toEqual([
@@ -537,9 +560,9 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
       ]);
     });
 
-    // Without an 'upgrade' listener the request goes to 'request'. Bun's node:http does not hand that listener a raw
-    // socket, so the npm package gets its 101 out and then loses the connection.
-    test.skipIf(!builtin)("from a 'request' listener", async () => {
+    // Without an 'upgrade' listener the request is emitted as 'request'. Bun's node:http doesn't give that listener a
+    // raw socket, so npm ws sends its 101 and then loses the connection.
+    test.skipIf(!builtin)("works from a 'request' listener", async () => {
       const wss = new WebSocketServer({ noServer: true });
       const seen: unknown[] = [];
       await using web = await serve(
@@ -552,14 +575,14 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
         }),
       );
       const client = web.connect();
-      expect(await client.responseLines()).toEqual(switching);
+      expect(await client.responseLines()).toEqual(switchingProtocols);
       expect(seen).toEqual(["/", "websocket", WebSocket.OPEN]);
       client.text("hi");
       expect(await client.next()).toBe('text "echo:hi"');
     });
   });
 
-  // Each server answers every upgrade of the http.Server, so the first one refuses what is meant for the second.
+  // Each server handles every upgrade on the http.Server, so the first one rejects requests meant for the second.
   test("two servers with different paths on one http.Server: only the first one's path works", async () => {
     await using web = await serve(http.createServer());
     const a = new WebSocketServer({ server: web.server, path: "/a" });
@@ -567,15 +590,15 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
     a.on("connection", ws => ws.send("from a"));
     b.on("connection", ws => ws.send("from b"));
     const client = web.connect({ path: "/a" });
-    expect(await client.responseLines()).toEqual(switching);
+    expect(await client.responseLines()).toEqual(switchingProtocols);
     expect(await client.next()).toBe('text "from a"');
     const other = web.connect({ path: "/b" });
-    expect(await other.responseLines()).toEqual(refusal("400 Bad Request", "Bad Request"));
+    expect(await other.responseLines()).toEqual(errorResponse("400 Bad Request", "Bad Request"));
     await other.ended;
     expect(b.clients.size).toBe(0);
   });
 
-  describe("the constructor", () => {
+  describe("constructor", () => {
     test.each([
       { label: "", args: () => [] },
       { label: "{}", args: () => [{}] },
@@ -583,12 +606,12 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
       { label: "{ server, noServer }", args: () => [{ server: http.createServer(), noServer: true }] },
       { label: "{ port, server }", args: () => [{ port: 0, server: http.createServer() }] },
     ])("new WebSocketServer($label) throws", ({ args }) => {
-      expect(attempt(() => new WebSocketServer(...(args() as [])))).toBe(
+      expect(tryCall(() => new WebSocketServer(...(args() as [])))).toBe(
         String.raw`throws TypeError "One and only one of the \"port\", \"server\", or \"noServer\" options must be specified"`,
       );
     });
 
-    test("fills in the options", () => {
+    test("fills in default options", () => {
       const wss = new WebSocketServer({ noServer: true });
       expect(wss.options).toMatchObject({
         WebSocket,
@@ -615,10 +638,10 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
       ).toEqual(["_shouldEmitClose", "_state", "clients", "options"]);
     });
 
-    test("a port that is taken: 'error' EADDRINUSE", async () => {
+    test("emits 'error' EADDRINUSE when the port is in use", async () => {
       await using web = await serve(http.createServer());
       const wss = new WebSocketServer({ port: web.port, host: "127.0.0.1" });
-      const [error] = await event(wss, "error");
+      const [error] = await nextEvent(wss, "error");
       expect(error.code).toBe("EADDRINUSE");
     });
 
@@ -634,7 +657,7 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
   });
 
   describe("address()", () => {
-    test("port mode: the address while listening, null after close()", async () => {
+    test("port mode: returns the address while listening, null after close()", async () => {
       const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
       await once(wss, "listening");
       const address = wss.address();
@@ -643,7 +666,7 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
       expect(wss.address()).toBeNull();
     });
 
-    test("server mode: what the http.Server says, null after close()", async () => {
+    test("server mode: returns the http.Server's address, null after close()", async () => {
       const server = http.createServer();
       const wss = new WebSocketServer({ server });
       expect(wss.address()).toBeNull();
@@ -659,7 +682,7 @@ describe.each(implementations)("ws server, opening handshake ($name)", ({ ws: im
     });
 
     test("noServer mode: throws", () => {
-      expect(attempt(() => new WebSocketServer({ noServer: true }).address())).toBe(
+      expect(tryCall(() => new WebSocketServer({ noServer: true }).address())).toBe(
         String.raw`throws Error "The server is operating in \"noServer\" mode"`,
       );
     });

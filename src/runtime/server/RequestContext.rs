@@ -89,7 +89,7 @@ pub(crate) type RequestContextStackAllocator<
 
 #[derive(Clone, Copy)]
 pub(crate) enum UpgradeState {
-    /// Plain HTTP request, or a handshake that got an HTTP response.
+    /// Plain HTTP request, or a handshake that was answered with an HTTP response.
     None,
     /// WebSocket handshake waiting for `server.upgrade()`. uWS owns the
     /// context (one per `.ws()` route) and it outlives the request.
@@ -785,7 +785,11 @@ where
             if self.did_upgrade_web_socket()
                 && let Some(err) = result.to_error()
             {
-                Self::report_error_after_upgrade(global_this, self.error_hook_owner(), err);
+                Self::report_error_after_upgrade(
+                    global_this,
+                    self.server_js_for_error_handler(),
+                    err,
+                );
                 return;
             }
             Self::discard_response_body(global_this, result);
@@ -1040,9 +1044,10 @@ where
     fn create_promise_cell(&self, global: &JSGlobalObject) -> JSValue {
         debug_assert!(self.promise_cell.get().is_empty());
         self.ref_();
-        // `server.upgrade()` takes the claim back while the handler runs on: `on_reject` then reports through this.
+        // `server.upgrade()` reclaims the cell while the handler is still running. If the handler
+        // rejects after that, `on_reject` reports the error through this.
         let held = match self.upgrade_context.get() {
-            UpgradeState::Pending(_) => self.error_hook_owner(),
+            UpgradeState::Pending(_) => self.server_js_for_error_handler(),
             UpgradeState::None | UpgradeState::Upgraded => JSValue::ZERO,
         };
         let cell = NativePromiseContext::create(global, self.as_ctx_ptr(), held);
@@ -1074,8 +1079,8 @@ where
         }
     }
 
-    /// The server wrapper while its `error()` has not run for this request, else `undefined`.
-    fn error_hook_owner(&self) -> JSValue {
+    /// The server's JS wrapper, or `undefined` if `error()` already ran for this request.
+    fn server_js_for_error_handler(&self) -> JSValue {
         if self.flags.has_called_error_handler() {
             return JSValue::UNDEFINED;
         }
@@ -1085,13 +1090,14 @@ where
             .unwrap_or(JSValue::UNDEFINED)
     }
 
-    /// What a handler threw after `server.upgrade()` goes where any handler error goes: to `error()`
-    /// of `server_js` (there is no response left for what it returns), or it is printed.
+    /// Reports an error a handler threw after `server.upgrade()`, like any other handler error:
+    /// calls `server_js`'s `error()`, or falls back to the unhandled rejection path. `error()`'s
+    /// return value is discarded because there's no response left to send it on.
     fn report_error_after_upgrade(global: &JSGlobalObject, server_js: JSValue, value: JSValue) {
         if !global.bun_vm().script_allowed() {
             return;
         }
-        let mut unreported = value;
+        let mut unhandled = value;
         if server_js.is_cell()
             && let Some(on_error) = crate::server::server_js_cached!(
                 SSL_ENABLED,
@@ -1106,10 +1112,10 @@ where
                 Self::discard_response_body(global, result);
                 return;
             };
-            unreported = err;
+            unhandled = err;
         }
         let vm = global.bun_vm().as_mut();
-        (vm.on_unhandled_rejection)(vm, global, unreported);
+        (vm.on_unhandled_rejection)(vm, global, unhandled);
     }
 
     pub(crate) fn on_reject(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -1127,7 +1133,7 @@ where
         let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
             // A termination path (abort, end, upgrade) reclaimed the cell's
             // claim; the context may already be gone. Only an upgrade leaves
-            // the cell something to report through.
+            // the server wrapper in the cell to report the error through.
             let server_js = NativePromiseContext::take_held(arguments[1]);
             if !server_js.is_empty() {
                 Self::report_error_after_upgrade(global, server_js, err);
@@ -2424,7 +2430,7 @@ where
         matches!(self.upgrade_context.get(), UpgradeState::Upgraded)
     }
 
-    /// The connection now carries an HTTP response, so `server.upgrade()` can no longer take it.
+    /// An HTTP response has started on this connection, so `server.upgrade()` must now fail.
     fn forbid_upgrade(&self) {
         if let UpgradeState::Pending(_) = self.upgrade_context.get() {
             self.upgrade_context.set(UpgradeState::None);

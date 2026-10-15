@@ -82,7 +82,7 @@ static String urlForMessage(const URL& url)
 
 struct FailureDescription {
     ASCIILiteral text;
-    // `error.code`, when the native client sends none of its own.
+    // Default `error.code`, used when the native client doesn't provide one.
     ASCIILiteral code {};
 };
 
@@ -209,7 +209,7 @@ static bool isValidProtocolString(StringView protocol)
     return true;
 }
 
-// For an error message. One code unit can become six characters, so the output is what is bounded.
+// Escapes a protocol string for an error message. The cap is on the output length because one code unit can expand to six characters.
 static String encodeProtocolString(const String& protocol)
 {
     StringBuilder builder;
@@ -246,7 +246,8 @@ static unsigned saturateAdd(unsigned a, size_t b)
     return a + static_cast<unsigned>(b);
 }
 
-// https://url.spec.whatwg.org/#percent-decode. URL::user() and URL::password() give a null String for octets that are not UTF-8.
+// https://url.spec.whatwg.org/#percent-decode
+// URL::user() and URL::password() can't be used here. They return a null String when the decoded bytes aren't valid UTF-8.
 static void appendPercentDecoded(Vector<uint8_t, 128>& bytes, StringView encoded)
 {
     unsigned length = encoded.length();
@@ -341,7 +342,7 @@ static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl
         if (headersOrException.hasException())
             return headersOrException.releaseException();
         auto headers = headersOrException.releaseReturnValue();
-        // As in fetch(), the caller's header beats the URL's credentials.
+        // An explicit Proxy-Authorization header overrides the URL's credentials, same as fetch().
         if (headers->internalHeaders().contains(HTTPHeaderName::ProxyAuthorization))
             config.authorization = String();
         auto iterator = headers->createIterator(false);
@@ -379,7 +380,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 {
     auto socket = adoptRef(*new WebSocket(context));
     socket->suspendIfNeeded();
-    // Stopped at birth (its context's active objects were already stopped): stays a CLOSED socket.
+    // The context's active DOM objects were already stopped, so the socket starts out CLOSED.
     if (socket->m_state == CLOSED)
         return socket;
 
@@ -491,7 +492,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     // Here, we throw SyntaxError if the given protocols do not meet the latter criteria. This behavior does not
     // comply with WebSocket API specification, but it seems to be the only reasonable way to handle this conflict.
     //
-    // The `ws` module has applied npm ws's rules by now: the same tokens, duplicates compared with regard to case.
+    // The `ws` module has already validated the protocols with npm ws's rules: same token syntax, but the duplicate check is case-sensitive.
     if (!isWsMode()) {
         for (auto& protocol : protocols) {
             if (!isValidProtocolString(protocol))
@@ -608,8 +609,8 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         m_connectionType = is_secure ? ConnectionType::TLS : ConnectionType::Plain;
     }
 
-    // What script of a disposed Bun.ModuleGraph starts does not start: nothing is dialed, nothing
-    // keeps this alive, and it stays CONNECTING.
+    // Script from a disposed Bun.ModuleGraph can't open connections. The socket stays CONNECTING
+    // forever and nothing keeps it alive.
     if (auto* context = scriptExecutionContext(); context->isForModuleGraph() && context->isStopped())
         return {};
 
@@ -637,7 +638,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     BunString targetAuth = Bun::toString(targetAuthorization);
     BunString extensions = Bun::toString(options.extensions);
 
-    // The upgrade client takes ownership, also when it fails.
+    // The upgrade client takes ownership, even if connect() fails.
     void* sslConfig = options.sslConfig.release();
 
     // Use TLS client based on connection type:
@@ -645,7 +646,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     // - Plain/ProxyPlain: use plain socket
     bool useTLSClient = (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS);
 
-    // Written when connect() returns null and knows why: an errno name.
+    // Set to an errno name when connect() returns null and the cause is known.
     BunString connectErrorCode { BunStringTag::Empty };
 
     if (useTLSClient) {
@@ -676,7 +677,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
             &connectErrorCode);
     }
 
-    // Reported from a task, as a connection that is refused later is: the constructor returns a CONNECTING socket.
+    // Report the failure from a task, like an asynchronous connection failure, so the constructor still returns a CONNECTING socket.
     if (!m_upgradeClient) {
         queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [code = connectErrorCode.transferToWTFString()](WebSocket& ws) mutable {
             ws.didFail(Bun::WebSocketErrorCode::failed_to_connect, 0, WTF::move(code), {});
@@ -778,7 +779,7 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
         return {};
     }
 
-    // 1005 asks the native client for a Close frame with no body.
+    // 1005 tells the native client to send a Close frame with an empty payload.
     uint16_t code = optionalCode.value_or(reason.isEmpty() ? 1005 : 1000);
     const bool wasPaused = isPaused();
     m_state = CLOSING;
@@ -793,7 +794,7 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     case ConnectedWebSocketKind::None:
         break;
     }
-    // The `ws` module's socket stays paused, as npm ws's does.
+    // close() unpauses a WHATWG socket, so parse any bytes that arrived with the 101. A `ws` socket stays paused, like npm ws.
     if (wasPaused && !isPaused())
         queueInitialDataDelivery();
     return {};
@@ -826,7 +827,7 @@ bool WebSocket::resume()
         return false;
     const bool wasPaused = std::exchange(m_paused, false);
     const bool applied = applyPauseToConnectedClient();
-    if (wasPaused && dispatchesFrames())
+    if (wasPaused && shouldDispatchFrames())
         queueInitialDataDelivery();
     return applied;
 }
@@ -945,9 +946,9 @@ void WebSocket::cancelConnectedClient()
     }
 }
 
-// The context is being torn down: drop the connection now, without a closing handshake, without
-// dispatching anything and without running script (this runs inside stopActiveDOMObjects()). The
-// connected client is told to forget this object before it closes, so nothing calls back here.
+// The context is being torn down. Drop the connection immediately: no closing handshake, no events
+// and no script, because this runs inside stopActiveDOMObjects(). The native client is detached
+// from this object before it closes, so it can't call back into it.
 void WebSocket::stop()
 {
     m_state = CLOSED;
@@ -1130,7 +1131,7 @@ void WebSocket::didReceiveMessage(String&& message)
     // a CString. The callback reads the span, we drop it — no
     // MessageEvent, no dispatchEvent, no postTask.
     if (m_native.onMessage) {
-        // The client fails a message longer than max_payload_length (128 MiB), so the conversion cannot fail.
+        // The native client rejects messages over max_payload_length (128 MiB), so this conversion can't fail.
         if (auto view = Bun::UTF8View::tryCreate(message))
             m_native.onMessage(m_native.ctx, view->span());
         return;
@@ -1151,7 +1152,7 @@ void WebSocket::didReceiveMessage(String&& message)
 
 void WebSocket::didReceiveFrame(Opcode opcode, std::span<const uint8_t> payload)
 {
-    if (!dispatchesFrames())
+    if (!shouldDispatchFrames())
         return;
 
     auto& names = eventNames();
@@ -1265,7 +1266,7 @@ void WebSocket::streamDestroy()
 
 void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, bool isUpgrade, std::span<const uint8_t> body)
 {
-    // Only the `ws` module and tests want it; the browser-style path pays nothing.
+    // Only the `ws` module and tests use this. Skip the work for a plain WebSocket.
     if (!isWsMode() && !this->hasEventListeners(eventNames().handshakeEvent))
         return;
 
@@ -1396,7 +1397,7 @@ void WebSocket::finish(size_t bufferedAmount, unsigned short code, String&& reas
 
     m_bufferedAmount = saturateAdd(m_bufferedAmount, bufferedAmount);
     m_state = scriptExecutionContext() ? CLOSING : CLOSED;
-    auto report = [code, wasClean, reason = WTF::move(reason), failure = WTF::move(failure)](WebSocket& ws) {
+    auto fireCloseEvents = [code, wasClean, reason = WTF::move(reason), failure = WTF::move(failure)](WebSocket& ws) {
         if (ws.m_state == CLOSED)
             return;
         ws.m_state = CLOSED;
@@ -1418,17 +1419,17 @@ void WebSocket::finish(size_t bufferedAmount, unsigned short code, String&& reas
         ws.m_asyncContext.clear();
     };
 
-    // Script is on the stack of every call into a stream's engine, and the stream's own 'close', a tick after
-    // end() or destroy(), has to find the code.
+    // On the stream transport, fire the events synchronously. Every call into the native client comes from JS, so it's safe
+    // to run script here. The stream's own 'close' fires a tick after end() or destroy() and needs the close code by then.
     if (m_connectionType == ConnectionType::Stream) {
         Ref protectedThis { *this };
         m_pendingActivity = nullptr;
-        report(*this);
+        fireCloseEvents(*this);
         return;
     }
 
-    queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, WTF::move(report));
-    // The task holds its own claim. Without a context there is no task, and this may destroy `this`.
+    queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, WTF::move(fireCloseEvents));
+    // The queued task keeps `this` alive. Without a context no task was queued, so this may destroy `this`.
     m_pendingActivity = nullptr;
 }
 
@@ -1472,7 +1473,7 @@ void* WebSocket::didConnect(us_socket_t* socket, void* bufferedData, const PerMe
     void* client = useTLSSocket
         ? Bun__WebSocketClientTLS__init(reinterpret_cast<CppWebSocket*>(this), socket, globalObject, bufferedData, deflate_params, customSSLCtx, verifiedHostname.data(), verifiedHostname.size(), &m_connectedOptions)
         : Bun__WebSocketClient__init(reinterpret_cast<CppWebSocket*>(this), socket, globalObject, bufferedData, deflate_params, customSSLCtx, verifiedHostname.data(), verifiedHostname.size(), &m_connectedOptions);
-    // The socket was closed or shut down behind the 101.
+    // The socket was already closed or shut down by the time the 101 was parsed.
     if (!client) {
         didFail(Bun::WebSocketErrorCode::ended, 0, {}, {});
         return nullptr;
@@ -1622,8 +1623,8 @@ extern "C" bool WebSocket__isProxyTLS(WebCore::WebSocket* webSocket)
     return webSocket->isProxyTLS();
 }
 
-// The Rust half of the context of the script that made the WebSocket. Called from connect(),
-// which has the context.
+// Returns the Rust-side context of the script that created the WebSocket. Only called during
+// connect(), while the ScriptExecutionContext is known to be alive.
 extern "C" void* WebSocket__bunContext(WebCore::WebSocket* webSocket)
 {
     return webSocket->scriptExecutionContext()->bunContext();

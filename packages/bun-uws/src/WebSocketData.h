@@ -36,11 +36,11 @@ private:
     std::string fragmentBuffer;
     unsigned int controlTipLength = 0;
     bool isShuttingDown = 0;
-    /* Ahead of isShuttingDown only in a wsPackage context, which waits for the peer's close frame */
+    /* Set together with isShuttingDown, except in a wsPackage context: there isShuttingDown waits for the peer's close frame */
     bool closeFrameSent = false;
     bool hasTimedOut = false;
-    /* send() returned BACKPRESSURE, and the drain handler has not run with nothing buffered since */
-    bool drainOwed = false;
+    /* send() returned BACKPRESSURE and the drain handler hasn't run with an empty buffer since */
+    bool needsDrainEvent = false;
     
     enum CompressionStatus : char {
         DISABLED,

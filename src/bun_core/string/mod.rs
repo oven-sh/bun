@@ -1169,8 +1169,8 @@ impl core::fmt::Display for EncodedSlice<'_> {
 }
 
 // `EncodedSlice` pointer-tag scheme. Flag bits live in the pointer's high
-// byte; untagging truncates to 53 bits. Bit 62 is reserved: C++
-// `Zig::isTaggedExternalPtr` frees the buffer when it is set.
+// byte; untagging truncates to 53 bits. Never set bit 62: C++ would take
+// ownership of the buffer and free it (`Zig::isTaggedExternalPtr`).
 const TAG_UTF8_BIT: usize = 1usize << 61;
 const TAG_UTF16_BIT: usize = 1usize << 63;
 const UNTAG_MASK: usize = (1usize << 53) - 1;

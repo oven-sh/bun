@@ -2131,11 +2131,11 @@ test("a tunnel write that waits for a drain settles its callbacks when the clien
   }
 });
 
-describe("bytesWritten and bytesRead of a tunnel socket", () => {
+describe("tunnel socket bytesWritten and bytesRead", () => {
   describe.each(["http", "https"] as const)("%s", proto => {
-    // Differences, because Node also counts the HTTP bytes that came before the tunnel on this connection.
+    // Compares deltas, because Node also counts the HTTP bytes sent on this connection before the tunnel.
     test.each(["connect", "upgrade"] as const)(
-      "'%s': count the raw bytes and keep the count after 'close'",
+      "'%s': count raw bytes and keep the counts after 'close'",
       async event => {
         const server = proto === "https" ? https.createServer(tlsCert) : http.createServer();
         const reply =
@@ -2146,24 +2146,24 @@ describe("bytesWritten and bytesRead of a tunnel socket", () => {
         const closed = Promise.withResolvers<void>();
         server.on(event, (req, duplex, head) => {
           const socket = duplex as net.Socket;
-          const written = socket.bytesWritten;
-          const read = socket.bytesRead - head.length;
+          const writtenBefore = socket.bytesWritten;
+          const readBefore = socket.bytesRead - head.length;
           let received = head.length;
           socket.cork();
           socket.write(reply);
           socket.write("héllo");
-          seen.corked = socket.bytesWritten - written;
+          seen.corked = socket.bytesWritten - writtenBefore;
           socket.uncork();
-          seen.uncorked = socket.bytesWritten - written;
+          seen.uncorked = socket.bytesWritten - writtenBefore;
           socket.on("data", chunk => {
             received += chunk.length;
             if (received < 8) return;
-            seen.read = socket.bytesRead - read;
+            seen.read = socket.bytesRead - readBefore;
             socket.end("bye");
-            seen.ended = socket.bytesWritten - written;
+            seen.ended = socket.bytesWritten - writtenBefore;
           });
           socket.on("close", () => {
-            seen.closed = [socket.bytesWritten - written, socket.bytesRead - read];
+            seen.closed = [socket.bytesWritten - writtenBefore, socket.bytesRead - readBefore];
             closed.resolve();
           });
         });
@@ -2204,9 +2204,9 @@ describe("bytesWritten and bytesRead of a tunnel socket", () => {
     );
   });
 
-  test("bytesWritten counts a write that waits for a drain, and the one queued behind it", async () => {
+  test("bytesWritten includes a write waiting for drain and the write queued behind it", async () => {
     const server = http.createServer();
-    // Two of them are more than a loopback socket takes while nobody reads. Winsock takes them whole.
+    // Two chunks are more than a loopback socket buffers while the peer isn't reading. Winsock accepts them whole.
     const chunk = Buffer.alloc(16 * 1024 * 1024, "a");
     const seen = Promise.withResolvers<{ waiting: boolean; written: number }>();
     server.on("upgrade", (req, duplex) => {

@@ -91,8 +91,8 @@ describe.skipIf(!isDockerEnabled())("autobahn", () => {
     });
   }
 
-  // Many cases send a violation, which the client answers by failing the connection:
-  // an error event, then close. The fuzzing server gives the verdict either way.
+  // Many cases send a protocol violation on purpose, so the client fires "error" before
+  // "close". That isn't a test failure. The fuzzing server decides whether the case passed.
   function runTestCase(testID: number) {
     return new Promise(resolve => {
       const socket = new WebSocket(`${url}/runCase?case=${testID}&agent=${agent}`, wsOptions);

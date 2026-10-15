@@ -239,10 +239,10 @@ describe("BackPressure buffer", () => {
   });
 });
 
-// Whatever closes a server socket, the client has to end up with every frame
-// uws accepted, then the Close frame, then the FIN. readToEnd() measures how
-// long the FIN takes: uws's own fallback is the end() timer, 16 s at the
-// default idleTimeout, which is why these tests do not lower it.
+// However a server socket gets closed, the client must receive every frame uws
+// accepted, then the Close frame, then the FIN. readToEnd() times the FIN. If
+// end() doesn't send it, uws only closes when the end() timer fires, 16 s at
+// the default idleTimeout, so don't lower idleTimeout in these tests.
 describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
   type ServerWebSocket = import("bun").ServerWebSocket<unknown>;
   const secure = scheme === "wss";
@@ -265,8 +265,8 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
     ]);
   }
 
-  // Counts the intact 1 MiB frames at the front of what the client read and
-  // returns whatever follows them, so a failure shows where the stream ends.
+  // Counts the complete 1 MiB frames at the start of the stream and returns the
+  // trailing bytes, so a failure shows where the stream stopped.
   function splitStream(bytes: Buffer) {
     const perFrame = frameHeader.length + FRAME;
     let dataFrames = 0;
@@ -280,14 +280,14 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
     return { dataFrames, rest: rest.length <= 64 ? rest.toString("hex") : `${rest.length} bytes` };
   }
 
-  // The expected shape of { ...(await readToEnd()), closeEvent }.
+  // Expected value of { ...(await readToEnd()), closeEvent }.
   function delivered(dataFrames: number, code: number, reason: string, closeEvent = { code, reason }) {
     return { dataFrames, rest: closeFrame(code, reason).toString("hex"), finInTime: true, closeEvent };
   }
 
-  // Sends 1 MiB frames until uws reports a drop (0) and returns how many it
-  // accepted before that. Frames reported as sent (> 0) or buffered (-1) have
-  // to reach the client.
+  // Sends 1 MiB frames until uws drops one (returns 0). Returns how many it
+  // accepted. Every frame reported as sent (> 0) or buffered (-1) must reach
+  // the client.
   function fillPastLimit(ws: ServerWebSocket): number {
     const payload = Buffer.alloc(FRAME);
     let accepted = 0;
@@ -298,7 +298,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
     return accepted;
   }
 
-  // Lets the paused client read everything after the handshake, up to the server's FIN.
+  // Resumes the paused client and reads until the server's FIN.
   async function readToEnd(sock: net.Socket, initial: Buffer) {
     const chunks = [initial];
     const finished = new Promise<void>(resolve => {
@@ -317,9 +317,9 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
   function serve(options: {
     open?: (ws: ServerWebSocket) => void;
     drain?: (ws: ServerWebSocket) => void;
-    // Upgrade from a later task. open() then runs from uws's own cork()
-    // instead of inside the HTTP parser, which holds the cork of a
-    // synchronous upgrade and uncorks the socket itself afterwards.
+    // Upgrade from a later task, so open() runs inside uws's own cork(). On a
+    // synchronous upgrade it runs inside the HTTP parser, which already holds
+    // the cork and uncorks the socket afterwards.
     asyncUpgrade?: boolean;
   }) {
     const closed = Promise.withResolvers<{ code: number; reason: string }>();
@@ -345,11 +345,11 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
     return { server, closed: closed.promise };
   }
 
-  // Over backpressureLimit uws drops every further frame. The Close frame must
-  // not be one of them: it has to queue behind the buffered data, and the FIN
-  // has to wait until that data has drained.
+  // Once over backpressureLimit, uws drops new frames. It must not drop the
+  // Close frame. That has to queue behind the buffered data, and the FIN has to
+  // wait until the buffer drains.
   describe("while over backpressureLimit", () => {
-    it("ws.close() delivers the buffered frames and then the Close frame", async () => {
+    it("ws.close() flushes buffered frames before the Close frame", async () => {
       const opened = Promise.withResolvers<ServerWebSocket>();
       const { server, closed } = serve({ open: opened.resolve });
       await using _server = server;
@@ -364,7 +364,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
       );
     });
 
-    it("a Close frame from the client is answered behind the buffered frames", async () => {
+    it("echoes the client's Close frame after the buffered frames", async () => {
       const opened = Promise.withResolvers<ServerWebSocket>();
       const { server, closed } = serve({ open: opened.resolve });
       await using _server = server;
@@ -378,7 +378,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
       expect({ ...(await readToEnd(sock, initial)), closeEvent }).toEqual(delivered(accepted, 4001, "peer"));
     });
 
-    it("a frame that fails the connection is answered behind the buffered frames", async () => {
+    it("sends the 1002 Close frame for an invalid frame after the buffered frames", async () => {
       const opened = Promise.withResolvers<ServerWebSocket>();
       const { server, closed } = serve({ open: opened.resolve });
       await using _server = server;
@@ -393,8 +393,8 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
       );
     });
 
-    // The client cannot read anything before open() returns, so the socket is
-    // over the limit when close() runs.
+    // The client can't read anything before open() returns, so the socket is
+    // still over the limit when close() runs.
     it("ws.close() inside open() after a synchronous upgrade", async () => {
       const filled = Promise.withResolvers<number>();
       const { server, closed } = serve({
@@ -417,9 +417,9 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
     });
   });
 
-  // Bun runs every handler corked, so the Close frame only leaves the cork
-  // buffer when the handler returns. end() has to flush it and send the FIN
-  // itself: none of the places that uncork afterwards know about the close.
+  // Bun runs every handler corked, so the Close frame sits in the cork buffer
+  // until the handler returns. end() has to flush it and send the FIN itself,
+  // because the code that uncorks afterwards doesn't check for a pending close.
   describe("from a corked handler", () => {
     it("ws.close() inside open() after a synchronous upgrade", async () => {
       const { server, closed } = serve({ open: ws => ws.close(1000, "bye") });
@@ -466,8 +466,8 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
       );
     });
 
-    // uws answers a Close frame from inside its corked data handler.
-    it("a Close frame from the client is answered and followed by the FIN", async () => {
+    // uws echoes a Close frame from inside its corked data handler.
+    it("echoes the client's Close frame and then sends the FIN", async () => {
       const opened = Promise.withResolvers<ServerWebSocket>();
       const { server, closed } = serve({ open: opened.resolve });
       await using _server = server;
@@ -482,8 +482,9 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
 });
 
 // The socket polls for writable after the upgrade (TLS), after pause() and after resume().
+// None of those writable events should call drain().
 describe.concurrent.each(["ws", "wss"] as const)("%s: drain()", scheme => {
-  it("only follows backpressure", async () => {
+  it("doesn't fire without backpressure", async () => {
     let drains = 0;
     await using server = Bun.serve({
       port: 0,
@@ -520,7 +521,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: drain()", scheme => {
         client.onopen = resolve;
         client.onerror = reject;
       });
-      // Each answer takes the server through its event loop at least once more.
+      // Each round trip runs the server's event loop at least once more.
       expect([await echo("first"), await echo("pause"), await echo("resumed"), await echo("last")]).toEqual([
         "first",
         "pause",

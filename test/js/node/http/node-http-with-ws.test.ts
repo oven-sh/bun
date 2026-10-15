@@ -448,7 +448,7 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
   });
 });
 
-describe.concurrent("the node:http socket of a WebSocketServer connection", () => {
+describe.concurrent("node:http socket behind a WebSocketServer connection", () => {
   const endOfHead = Buffer.from("\r\n\r\n");
   function upgradeRequest(path: string) {
     return `GET ${path} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n`;
@@ -457,7 +457,7 @@ describe.concurrent("the node:http socket of a WebSocketServer connection", () =
   test.each([
     ["ws", WebSocketServer],
     ["npm ws", NpmWebSocketServer],
-  ] as const)("bytesWritten counts the 101 that %s sent", async (_name, ServerClass) => {
+  ] as const)("bytesWritten includes the 101 response sent by %s", async (_name, ServerClass) => {
     const server = http.createServer();
     const wss = new ServerClass({ noServer: true });
     const accepted = Promise.withResolvers<Socket>();
@@ -478,15 +478,15 @@ describe.concurrent("the node:http socket of a WebSocketServer connection", () =
     }
   });
 
-  // engine.io ends an upgraded socket that is not its own when, after destroyUpgradeTimeout, `socket.bytesWritten <= 0`.
-  test("socket.io on the same http.Server leaves it open", async () => {
+  // engine.io ends upgraded sockets it doesn't own if `socket.bytesWritten <= 0` after destroyUpgradeTimeout.
+  test("socket.io on the same http.Server doesn't close it", async () => {
     const server = http.createServer();
     const io = new SocketIOServer(server, { destroyUpgradeTimeout: 1 });
     const wss = new WebSocketServer({ noServer: true });
     const endedByEngine = Promise.withResolvers<boolean>();
     server.on("upgrade", (req, socket, head) => {
       wss.handleUpgrade(req, socket, head, ws => {
-        // engine.io's listener ran first, so its timer of the same delay fires first.
+        // engine.io's listener ran first, so its timer (same delay) fires before this one.
         setTimeout(() => {
           endedByEngine.resolve(socket.writableEnded);
           ws.send("still open");
@@ -532,7 +532,7 @@ describe.concurrent("the node:http socket of a WebSocketServer connection", () =
     }
   });
 
-  test("setTimeout(0) after the upgrade leaves no timer", async () => {
+  test("setTimeout(0) after the upgrade clears the timeout", async () => {
     const server = http.createServer();
     const wss = new WebSocketServer({ noServer: true });
     const timeouts: string[] = [];
@@ -543,7 +543,7 @@ describe.concurrent("the node:http socket of a WebSocketServer connection", () =
         timeouts.push(req.url!);
         control.resolve();
       });
-      // The control: it connects later and keeps its timer, so a timer of "/ws" would fire first.
+      // "/raw" is the control. It connects later and keeps its timer, so a leftover "/ws" timer would fire first.
       if (req.url === "/raw") return void socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n");
       wss.handleUpgrade(req, socket, head, () => socket.setTimeout(0));
     });
@@ -567,7 +567,7 @@ describe.concurrent("the node:http socket of a WebSocketServer connection", () =
   });
 
   // Bun.serve drops a send() beyond backpressureLimit (16 MiB by default). npm ws has no such limit.
-  test("send() in one burst of 24 MiB delivers each message once and in order", async () => {
+  test("a 24 MiB burst of send() calls delivers each message once, in order", async () => {
     const server = http.createServer();
     const wss = new WebSocketServer({ server });
     const count = 24;
@@ -1133,9 +1133,9 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
   });
 });
 
-// A handshake over 16 KB is written at once instead of being batched with the first frames. Over TLS a write
-// that the kernel rejects ends the socket, which then cannot become a WebSocket any more.
-test.concurrent("a client that resets a TLS connection while a long handshake is written", async () => {
+// A handshake response over 16 KB is written immediately instead of being batched with the first frames.
+// Over TLS, a write that the kernel rejects closes the socket, so it can no longer be upgraded to a WebSocket.
+test.concurrent("keeps serving after a client resets its TLS connection while a long 101 is written", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1146,13 +1146,13 @@ test.concurrent("a client that resets a TLS connection while a long handshake is
         const tls = require("node:tls");
         const { WebSocket, WebSocketServer } = require("ws");
 
-        let resetting;
+        let socketToReset;
         const server = https.createServer({ cert: process.env.TLS_CERT, key: process.env.TLS_KEY });
         const wss = new WebSocketServer({ server });
         wss.on("headers", headers => {
-          if (!resetting) return;
-          resetting.resetAndDestroy();
-          resetting = undefined;
+          if (!socketToReset) return;
+          socketToReset.resetAndDestroy();
+          socketToReset = undefined;
           headers.push("X-Long: " + Buffer.alloc(20000, "a"));
         });
         wss.on("connection", ws => {
@@ -1161,11 +1161,11 @@ test.concurrent("a client that resets a TLS connection while a long handshake is
         });
         server.listen(0, "127.0.0.1", () => {
           const { port } = server.address();
-          resetting = net.connect({ port, host: "127.0.0.1" });
-          const client = tls.connect({ socket: resetting, rejectUnauthorized: false });
+          socketToReset = net.connect({ port, host: "127.0.0.1" });
+          const client = tls.connect({ socket: socketToReset, rejectUnauthorized: false });
           client.on("error", () => {});
-          resetting.on("error", () => {});
-          resetting.on("close", () => {
+          socketToReset.on("error", () => {});
+          socketToReset.on("close", () => {
             const ws = new WebSocket("wss://127.0.0.1:" + port, { rejectUnauthorized: false });
             ws.on("open", () => ws.send("still serving"));
             ws.on("message", message => {
@@ -1190,9 +1190,9 @@ test.concurrent("a client that resets a TLS connection while a long handshake is
   expect(exitCode).toBe(0);
 });
 
-// The request outlives its connection and its server. Under ASAN the upgrade read the freed server.
-test.concurrent.each(["another stream", "its own socket, made to look open"])(
-  "handleUpgrade() with the request of a server that is gone, and %s",
+// The request outlives its connection and its server. The upgrade used to read the freed server, which ASAN catches.
+test.concurrent.each(["another stream", "its own destroyed socket, patched to look open"])(
+  "handleUpgrade() with a request from a closed server and %s",
   async stream => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1205,7 +1205,7 @@ test.concurrent.each(["another stream", "its own socket, made to look open"])(
           const { Duplex } = require("node:stream");
           const { WebSocketServer } = require("ws");
 
-          async function requestOfAServerThatClosed() {
+          async function requestFromClosedServer() {
             const server = http.createServer();
             const upgrade = once(server, "upgrade");
             await once(server.listen(0, "127.0.0.1"), "listening");
@@ -1221,7 +1221,7 @@ test.concurrent.each(["another stream", "its own socket, made to look open"])(
             return request;
           }
 
-          const request = await requestOfAServerThatClosed();
+          const request = await requestFromClosedServer();
           for (let i = 0; i < 10; i++) {
             Bun.gc(true);
             await new Promise(resolve => setImmediate(resolve));

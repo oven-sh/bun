@@ -21,11 +21,11 @@ using TLSWebSocket = uWS::WebSocket<true, true, void *>;
 using TCPWebSocket = uWS::WebSocket<false, true, void *>;
 
 typedef struct {
-    /* Bytes. 0 = no limit */
+    /* In bytes. 0 = no limit */
     unsigned int maxPayloadLength;
     bool autoPong;
     bool skipUTF8Validation;
-    /* Whether sockets of this context use permessage-deflate */
+    /* Whether this context's sockets use permessage-deflate */
     bool compression;
 
     uws_websocket_handler open;
@@ -41,7 +41,7 @@ static uws_socket_context_t *wsPackageContext(uws_app_t *app, const uws_ws_packa
 {
   auto generic_handler = typename uWS::TemplatedApp<SSL>::template WebSocketBehavior<void *>{
       .compression = behavior->compression ? (uWS::CompressOptions)(uWS::SHARED_COMPRESSOR | uWS::SHARED_DECOMPRESSOR) : uWS::DISABLED,
-      /* The frame parser counts in 32 bits */
+      /* The frame parser uses 32-bit lengths, so UINT32_MAX is effectively no limit */
       .maxPayloadLength = behavior->maxPayloadLength ? behavior->maxPayloadLength : UINT32_MAX,
       .autoPong = behavior->autoPong,
       .skipUTF8Validation = behavior->skipUTF8Validation,

@@ -102,17 +102,17 @@ describe("WebSocket upgrade with non-ASCII inputs", () => {
     const request = await gotRequest.promise;
     await wsDone.promise;
 
-    // Header values are ByteStrings: U+00E0 goes out as the single byte 0xE0,
+    // Header values are ByteStrings: U+00E0 is sent as the single byte 0xE0,
     // not the UTF-8 pair 0xC3 0xA0. This matches fetch(), Node and Deno.
     const lines = request.toString("latin1").split("\r\n");
-    const wire = (name: string) => {
+    const headerBytes = (name: string) => {
       const line = lines.find(l => l.startsWith(name + ":"));
       expect(line).toBeDefined();
       return Buffer.from(line!, "latin1").subarray(name.length + 2);
     };
-    expect(wire("X-Latin1")).toEqual(Buffer.from(latin1Value, "latin1"));
-    expect(wire("X-Latin1").toString("latin1")).toBe(latin1Value);
-    expect(wire("X-Utf16")).toEqual(Buffer.from(utf16BackedValue, "latin1"));
+    expect(headerBytes("X-Latin1")).toEqual(Buffer.from(latin1Value, "latin1"));
+    expect(headerBytes("X-Latin1").toString("latin1")).toBe(latin1Value);
+    expect(headerBytes("X-Utf16")).toEqual(Buffer.from(utf16BackedValue, "latin1"));
   });
 
   test("Latin1 header value round-trips through a Bun.serve upgrade handler", async () => {

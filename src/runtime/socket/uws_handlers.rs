@@ -225,7 +225,7 @@ where
 
 impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> {
     // No `on_open` / `on_connect_error` override — adoption of an already-connected socket.
-    // No `on_end` override — uSockets closes a socket that is not half-open right after it.
+    // No `on_end` override — the socket doesn't allow half-open, so uSockets closes it right after.
 
     fn on_data(this: ThisPtr<Self>, _s: NewSocketHandler<SSL>, data: &[u8]) -> JsResult<()> {
         Self::handle_data(this, data);

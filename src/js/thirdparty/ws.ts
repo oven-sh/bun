@@ -1,7 +1,7 @@
 // Hardcoded module "ws"
-// The API of https://github.com/websockets/ws on Bun's native WebSocket client and server sockets.
+// Implements the https://github.com/websockets/ws API on top of Bun's native WebSocket client and server sockets.
 // lib/websocket.js, websocket-server.js, event-target.js, stream.js, extension.js and subprotocol.js are
-// ported from ws 8.22.0 (MIT). What they do with Sender and Receiver is native here.
+// ported from ws 8.22.0 (MIT). Framing (upstream's Sender and Receiver) is native.
 
 const EventEmitter = require("node:events");
 
@@ -43,8 +43,6 @@ const kCallbacks = Symbol("kCallbacks");
 const kFirstFragment = Symbol("kFirstFragment");
 const kForOnEventAttribute = Symbol("kIsForOnEventAttribute");
 const kHandshake = Symbol("kHandshake");
-const kCallerCatches = Symbol("kCallerCatches");
-const kForgetSignal = Symbol("kForgetSignal");
 const kHandshakeTimer = Symbol("kHandshakeTimer");
 const kHeaders = Symbol("kHeaders");
 const kInternalSocketData = Symbol.for("::bunternal::");
@@ -52,9 +50,11 @@ const kListener = Symbol("kListener");
 const kNative = Symbol("kNative");
 const kNativeOptions = Symbol("kNativeOptions");
 const kOptions = Symbol("kOptions");
+const kRemoveAbortListener = Symbol("kRemoveAbortListener");
 const kRequest = Symbol("kRequest");
 const kResponse = Symbol("kResponse");
 const kStatusCode = Symbol("status-code");
+const kThrowSynchronously = Symbol("kThrowSynchronously");
 const kTransport = Symbol("kTransport");
 const kUrl = Symbol("kUrl");
 const kWebSocket = Symbol("websocket");
@@ -65,10 +65,10 @@ const OPEN = 1;
 const CLOSING = 2;
 const CLOSED = 3;
 
-// What `websocket[kNative]` is and who owns the connection.
-const DIALLED = 0; // The native client, which connected by itself. `_socket` is a ClientSocket.
-const UPGRADED = 1; // The native server socket, which took the connection of a node:http request over.
-const STREAM = 2; // The native client's engine. It reads from and writes to `_socket`, which can be any Duplex.
+// Transport kinds. They determine what `websocket[kNative]` is and who owns the connection.
+const NATIVE_CLIENT = 0; // The native client, which opened the connection itself. `_socket` is a ClientSocket.
+const NATIVE_SERVER = 1; // A native server socket that adopted a node:http request's connection.
+const STREAM = 2; // Only the native client's engine. It reads from and writes to `_socket`, which can be any Duplex.
 
 const protocolVersions = [8, 13];
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
@@ -77,13 +77,13 @@ const keyRegex = /^[+/0-9A-Za-z]{22}==$/;
 
 type BinaryType = "nodebuffer" | "arraybuffer" | "fragments" | "blob";
 type ReadyState = typeof CONNECTING | typeof OPEN | typeof CLOSING | typeof CLOSED;
-type Transport = typeof DIALLED | typeof UPGRADED | typeof STREAM;
+type Transport = typeof NATIVE_CLIENT | typeof NATIVE_SERVER | typeof STREAM;
 type Data = string | Buffer | ArrayBufferLike | Buffer[] | Blob;
 type SendCallback = (err?: Error | null) => void;
-// A literal with no prototype is written `{ __proto__: null as never }`: to TypeScript `__proto__` is one more key.
+// Null-prototype literals are written `{ __proto__: null as never }` because TypeScript treats `__proto__` as a key.
 type Dictionary<T> = { [key: string]: T };
 
-// node/http.ts has these two as `any`.
+// node/http.ts types these two as `any`.
 type HttpModule = Omit<typeof import("../node/http").default, "IncomingMessage" | "STATUS_CODES"> & {
   IncomingMessage: new (socket: null) => HandshakeResponse;
   STATUS_CODES: { [code: number]: string };
@@ -118,7 +118,7 @@ interface ListenerOptions {
   [kForOnEventAttribute]?: boolean;
 }
 
-// What `websocket.listeners()` holds: the wrappers of addEventListener() among the listeners of `on()`.
+// An entry in `websocket.listeners()`: a plain `on()` listener or an addEventListener() wrapper.
 interface EmitterListener {
   (this: WebSocket, ...args: any[]): void;
   [kForOnEventAttribute]?: boolean;
@@ -245,7 +245,7 @@ interface ClientHandlers extends Omit<ServerHandlers, "close"> {
   destroy(this: WebSocket): void;
 }
 
-// The socket of a node:http 'upgrade' event, of a server or of a client.
+// The socket from a node:http 'upgrade' event (server or client).
 interface ServerSocket extends NetSocket {
   authorized?: boolean;
   encrypted?: boolean;
@@ -267,7 +267,7 @@ interface SetSocketOptions {
   [kResponse]: unknown;
 }
 
-// An `http.Agent`, or one of the proxy agents, which keep where they connect to in these.
+// An `http.Agent` or a third-party proxy agent. Proxy agents store the proxy URL and headers in these fields.
 interface Agent extends HttpAgent {
   addRequest?: unknown;
   connectOpts?: AgentConnectOptions;
@@ -318,7 +318,7 @@ type ClientDefaults =
   | "skipUTF8Validation";
 type ResolvedClientOptions = ClientOptions & Required<Pick<ClientOptions, ClientDefaults>> & { __proto__: null };
 
-// The request of `http.request()`, for what the native client cannot dial.
+// A real `http.request()` request, used when the native client can't make the connection.
 interface HttpClientRequest extends NodeClientRequest {
   [kAborted]: boolean;
   [kOptions]: RequestState;
@@ -327,7 +327,7 @@ interface HttpClientRequest extends NodeClientRequest {
 
 type HandshakeRequest = ClientRequest | HttpClientRequest;
 
-// What a request keeps of the initAsClient() call that made it.
+// State from the initAsClient() call that created a request. Used to validate the response and follow redirects.
 interface RequestState {
   opts: ResolvedClientOptions;
   address: string | URL;
@@ -803,13 +803,14 @@ class PerMessageDeflate {
     return configurations as DeflateParams[];
   }
 
-  // The accepted parameters as uWS CompressOptions: window << 4 | memLevel for the compressor, window << 8 for
-  // the decompressor, 1 and 1 << 8 for the ones shared by the event loop. zlib has no 256 byte deflate window.
+  // Encodes the accepted parameters as uWS CompressOptions. Compressor: `window << 4 | memLevel`, or 1 for the one
+  // shared by the event loop. Decompressor: `window << 8`, or `1 << 8` for the shared one. The deflate window is at
+  // least 9 bits because zlib doesn't support a 256 byte one.
   get nativeOptions(): number {
     const params = this.params!;
     const deflateBits = Math.max(params.server_max_window_bits || 15, 9);
     const inflateBits = (params.client_max_window_bits as number) || 15;
-    // 1 is the stream that the event loop shares: no context takeover, a window of 15 bits.
+    // The shared compressor (1) has no context takeover and a 15-bit window.
     // 1 << 12 is uWS::COMPRESSOR_NO_CONTEXT_TAKEOVER.
     const dedicated = (deflateBits << 4) | (deflateBits - 7);
     const compressor = !params.server_no_context_takeover ? dedicated : deflateBits < 15 ? dedicated | (1 << 12) : 1;
@@ -978,7 +979,7 @@ function addEventListener(this: WebSocket, type: string, handler: Listener, opti
       callListener(handler, this, event);
     };
   } else if (type === "ping" || type === "pong") {
-    // Not in npm ws. Bun's `ws` has always taken these two.
+    // npm ws doesn't support these two, but Bun's `ws` always has.
     wrapper = function onControl(data: Buffer) {
       const event = new MessageEvent(type, { data });
 
@@ -1083,7 +1084,7 @@ class WebSocket extends EventEmitter {
     this[kNative] = null;
     this[kCallbacks] = null;
     this[kFirstFragment] = true;
-    this[kTransport] = DIALLED;
+    this[kTransport] = NATIVE_CLIENT;
     this[kWriteCallback] = undefined;
 
     if (address !== null) {
@@ -1146,14 +1147,14 @@ class WebSocket extends EventEmitter {
     return this._url;
   }
 
-  // Sends `options[kHandshake]` and makes `socket` the connection. False, with nothing sent, when `socket` is a
-  // connection of node:http that cannot be upgraded any more.
+  // Sends `options[kHandshake]` and attaches `socket`. Returns false without sending anything if `socket` is a
+  // node:http connection that can no longer be upgraded.
   setSocket(socket: ServerSocket, head: Buffer, options: SetSocketOptions): boolean {
     const perMessageDeflate = this._extensions[extensionName];
     const maxPayload = Math.max(options.maxPayload | 0, 0);
 
-    // The native server socket takes over what the connection receives from now on. Frames that node:http has
-    // read already, ahead of a `handleUpgrade()` that came late, are in `head` and in the buffer of `socket`.
+    // The native server socket only sees data received after it adopts the connection. If handleUpgrade() was called
+    // late, node:http may already have read frames into `head` or `socket`'s buffer, so use the stream transport.
     if (options[kResponse] && head.length === 0 && socket.readableLength === 0) {
       const native = upgradeWebSocket(
         options[kResponse],
@@ -1168,7 +1169,7 @@ class WebSocket extends EventEmitter {
       if (native === undefined) return false;
 
       this[kNative] = native;
-      this[kTransport] = UPGRADED;
+      this[kTransport] = NATIVE_SERVER;
     } else {
       const params = perMessageDeflate?.params;
 
@@ -1181,7 +1182,7 @@ class WebSocket extends EventEmitter {
           protocol: this._protocol,
           extensions: this.extensions,
           maxPayload,
-          // The `ping` handler answers: how much waits in a stream, only the stream knows.
+          // The `ping` handler sends the pong instead, because the engine can't see the stream's backpressure.
           autoPong: false,
           skipUTF8Validation: !!options.skipUTF8Validation,
           deflate: params
@@ -1255,20 +1256,20 @@ class WebSocket extends EventEmitter {
         }
         data = toBuffer(data).toString();
 
-        // What is not UTF-8 became U+FFFD, which takes three bytes.
+        // Invalid UTF-8 was replaced with U+FFFD, which is three bytes, so check the length again.
         if (Buffer.byteLength(data) > 123) {
           throw new RangeError("The message must not be greater than 123 bytes");
         }
       }
     }
 
-    // The peer's answer can arrive inside the call when `_socket` is a stream in memory.
+    // Update the state first. If `_socket` is an in-memory stream, the peer's reply can arrive during the call below.
     this._closeFrameSent = true;
     this._readyState = CLOSING;
     setCloseTimer(this);
 
-    // 1005 is the native spelling of a Close frame with no body.
-    if (this[kTransport] === UPGRADED) this[kNative]!.close(code === undefined ? 1005 : code, data);
+    // On the native server socket, 1005 means a Close frame with no body.
+    if (this[kTransport] === NATIVE_SERVER) this[kNative]!.close(code === undefined ? 1005 : code, data);
     else if (code === undefined) this[kNative]!.close();
     else this[kNative]!.close(code, data);
   }
@@ -1279,7 +1280,7 @@ class WebSocket extends EventEmitter {
     }
 
     this._paused = true;
-    if (this[kTransport] !== DIALLED) (this._socket as ServerSocket).pause();
+    if (this[kTransport] !== NATIVE_CLIENT) (this._socket as ServerSocket).pause();
     this[kNative]!.pause();
   }
 
@@ -1297,7 +1298,7 @@ class WebSocket extends EventEmitter {
     }
 
     this._paused = false;
-    if (this[kTransport] !== DIALLED) (this._socket as ServerSocket).resume();
+    if (this[kTransport] !== NATIVE_CLIENT) (this._socket as ServerSocket).resume();
     this[kNative]!.resume();
   }
 
@@ -1352,16 +1353,16 @@ class WebSocket extends EventEmitter {
 
     const transport = this[kTransport];
 
-    // Throws for a Blob that is a file. Nothing is sent then, so the message has not begun either.
-    if (transport === UPGRADED) {
+    // Sending a file-backed Blob throws. Nothing was sent in that case, so kFirstFragment must not change.
+    if (transport === NATIVE_SERVER) {
       const status = serverSendFrame(this[kNative] as NativeServer, data, opcode, !!fin, !!compress);
 
       this[kFirstFragment] = !!fin;
-      written(this, status === -1, cb);
-    } else if (transport === DIALLED) {
+      scheduleSendCallback(this, status === -1, cb);
+    } else if (transport === NATIVE_CLIENT) {
       clientSendFrame(this[kNative] as NativeClient, data, opcode, !!fin, !!compress);
       this[kFirstFragment] = !!fin;
-      written(this, (this[kNative] as NativeClient).bufferedAmount !== 0, cb);
+      scheduleSendCallback(this, (this[kNative] as NativeClient).bufferedAmount !== 0, cb);
     } else {
       this[kWriteCallback] = cb;
       try {
@@ -1371,7 +1372,7 @@ class WebSocket extends EventEmitter {
         throw err;
       }
       this[kFirstFragment] = !!fin;
-      writeCallbackNotTaken(this);
+      flushUnusedWriteCallback(this);
     }
   }
 
@@ -1387,15 +1388,16 @@ class WebSocket extends EventEmitter {
     if (native === null) return;
 
     this._readyState = CLOSING;
-    // Over a stream the engine goes on until socketOnClose(), which gives it what the socket still holds.
+    // On the stream transport, keep the engine alive until socketOnClose() so it can parse data buffered in the socket.
     if (this[kTransport] !== STREAM) {
       const closeFrameSent = this._closeFrameSent;
 
-      // What the native client still holds comes out of this call. A Close frame in it gets no answer.
+      // terminate() delivers the frames the native client has buffered. A Close frame among them isn't echoed, so
+      // restore `_closeFrameSent`.
       native.terminate();
       this._closeFrameSent = closeFrameSent;
     }
-    if (this[kTransport] !== DIALLED) this._socket!.destroy();
+    if (this[kTransport] !== NATIVE_CLIENT) this._socket!.destroy();
   }
 }
 
@@ -1474,7 +1476,7 @@ function sendControl(
   }
 
   const native = websocket[kNative]!;
-  const stream = websocket[kTransport] === STREAM;
+  const isStream = websocket[kTransport] === STREAM;
 
   if (!data) {
     data = undefined;
@@ -1488,51 +1490,51 @@ function sendControl(
     }
   }
 
-  if (stream) websocket[kWriteCallback] = cb;
+  if (isStream) websocket[kWriteCallback] = cb;
 
   try {
     if (opcode === 0x09) native.ping(data);
     else native.pong(data);
   } catch (err) {
-    // A Blob that is a file.
+    // File-backed Blobs throw.
     websocket[kWriteCallback] = undefined;
     throw err;
   }
 
-  if (stream) writeCallbackNotTaken(websocket);
-  else written(websocket, nativeBufferedAmount(websocket) !== 0, cb);
+  if (isStream) flushUnusedWriteCallback(websocket);
+  else scheduleSendCallback(websocket, nativeBufferedAmount(websocket) !== 0, cb);
 }
 
 function nativeBufferedAmount(websocket: WebSocket): number {
   switch (websocket[kTransport]) {
-    case DIALLED:
+    case NATIVE_CLIENT:
       return (websocket[kNative] as NativeClient).bufferedAmount;
-    case UPGRADED:
+    case NATIVE_SERVER:
       return (websocket[kNative] as NativeServer).getBufferedAmount();
     default:
       return (websocket._socket as ServerSocket).writableLength;
   }
 }
 
-// A callback runs once its frame has left for the kernel, like the callback of `socket.write()`.
-function written(websocket: WebSocket, buffered: boolean, cb: SendCallback | undefined): void {
+// A send callback runs once its frame has been written to the kernel, like a `socket.write()` callback.
+function scheduleSendCallback(websocket: WebSocket, buffered: boolean, cb: SendCallback | undefined): void {
   if (buffered) {
     if (cb) (websocket[kCallbacks] ??= []).push(cb);
     return;
   }
 
-  // Nothing waits any more, so the frames before this one have left too. Their callbacks come first.
-  const earlier = websocket[kCallbacks];
-  if (earlier !== null) {
+  // Nothing is buffered, so earlier frames were flushed too. Run their callbacks first.
+  const queued = websocket[kCallbacks];
+  if (queued !== null) {
     websocket[kCallbacks] = null;
-    for (let i = 0; i < earlier.length; i++) process.nextTick(earlier[i], null);
+    for (let i = 0; i < queued.length; i++) process.nextTick(queued[i], null);
   }
 
   if (cb) process.nextTick(cb, null);
 }
 
-// The engine has no frame to write any more: the `write` handler did not run.
-function writeCallbackNotTaken(websocket: WebSocket): void {
+// If the engine wrote nothing, the `write` handler never ran and the callback is still set. Fail it.
+function flushUnusedWriteCallback(websocket: WebSocket): void {
   const cb = websocket[kWriteCallback];
   if (cb === undefined) return;
 
@@ -1598,14 +1600,14 @@ function abortHandshake(websocket: WebSocket, req: HandshakeRequest, message: st
 
 function closeTimerOnTimeout(websocket: WebSocket): void {
   websocket[kNative]!.terminate();
-  if (websocket[kTransport] !== DIALLED) websocket._socket!.destroy();
+  if (websocket[kTransport] !== NATIVE_CLIENT) websocket._socket!.destroy();
 }
 
 function setCloseTimer(websocket: WebSocket): void {
   websocket._closeTimer = setTimeout(closeTimerOnTimeout, websocket._closeTimeout, websocket);
 }
 
-// [constructor, message, "Invalid WebSocket frame: " prefix, status code] of lib/receiver.js, by error code.
+// lib/receiver.js errors by code: [constructor, message, has "Invalid WebSocket frame: " prefix, status code].
 const receiverErrors = {
   __proto__: null,
   WS_ERR_EXPECTED_FIN: [RangeError, "FIN must be set", true, 1002],
@@ -1628,7 +1630,7 @@ const receiverErrors = {
 } as const;
 type ReceiverErrorCode = Exclude<keyof typeof receiverErrors, "__proto__">;
 
-// The order of uWS::WebSocketFailureKind.
+// Indexed by uWS::WebSocketFailureKind.
 const serverFailures: (ReceiverErrorCode | undefined)[] = [
   undefined,
   "WS_ERR_EXPECTED_MASK",
@@ -1655,7 +1657,7 @@ function createReceiverError(code: ReceiverErrorCode, detail: string | undefined
   return err;
 }
 
-// The native side has sent the Close frame with the status code of `err` and ends the connection.
+// The native side already sent a Close frame with `err`'s status code and is closing the connection.
 function receiverOnError(websocket: WebSocket, err: Error): void {
   websocket._closeFrameSent = true;
 
@@ -1683,7 +1685,7 @@ function binaryMessage(websocket: WebSocket, data: Buffer): Data {
   }
 }
 
-// The closing handshake is over, or (1006) the connection ended without one. `_socket` is about to close.
+// The closing handshake finished, or the connection ended without one (1006). `_socket` is about to close.
 function receiverOnConclude(websocket: WebSocket, code: number, reason: Buffer): void {
   if (code !== 1006) {
     websocket._closeFrameReceived = true;
@@ -1698,7 +1700,7 @@ function receiverOnConclude(websocket: WebSocket, code: number, reason: Buffer):
 }
 
 //
-// What the native sockets call. `this` is the WebSocket.
+// Callbacks invoked by the native sockets. `this` is the WebSocket.
 //
 
 const serverHandlers: ServerHandlers = {
@@ -1706,8 +1708,8 @@ const serverHandlers: ServerHandlers = {
     this.emit("message", isBinary ? binaryMessage(this, data) : data, isBinary);
   },
   ping(data) {
-    // The peer decides how many Pings there are, so their answers have a limit, which the messages of the application
-    // do not have. The native transports have the same one. RFC 6455 5.5.3 lets a Pong answer only the latest Ping.
+    // Cap auto-pongs. A peer can send unlimited pings, so unbounded replies would let it exhaust our memory. App sends
+    // aren't capped. The native transports have the same limit. RFC 6455 5.5.3 allows answering only the latest ping.
     if (this[kTransport] === STREAM && this._autoPong && nativeBufferedAmount(this) <= 16 * 1024 * 1024) {
       this.pong(data, NOOP);
     }
@@ -1719,9 +1721,10 @@ const serverHandlers: ServerHandlers = {
   drain() {
     if (nativeBufferedAmount(this) === 0) runCallbacks(this);
   },
-  // `code` is the status code of the peer's Close frame (1005 without one in it), which the native side has
-  // answered; 1006 when the connection ended with no Close frame; the negated uWS::WebSocketFailureKind, with its
-  // detail in `reason`, when the native side failed the connection.
+  // `code` is one of:
+  // - the status code of the peer's Close frame (1005 if it had none), which the native side already echoed
+  // - 1006 if the connection ended without a Close frame
+  // - a negated uWS::WebSocketFailureKind if the native side failed the connection, with the detail in `reason`
   close(code, reason) {
     if (code < 0) receiverOnError(this, createReceiverError(serverFailures[-code]!, reason.toString()));
     else receiverOnConclude(this, code, reason);
@@ -1733,16 +1736,17 @@ const clientHandlers: ClientHandlers = {
   ping: serverHandlers.ping,
   pong: serverHandlers.pong,
   drain: serverHandlers.drain,
-  // `req.on('response')` and `req.on('upgrade')` of initAsClient().
-  // `isUpgrade`: a 101 that llhttp takes for an upgrade, which needs an `Upgrade` header and `Connection: upgrade`.
+  // Upstream initAsClient()'s `req.on('response')` and `req.on('upgrade')` listeners.
+  // `isUpgrade` is true for a 101 that llhttp would treat as an upgrade: it needs an `Upgrade` header and
+  // `Connection: upgrade`.
   handshake(statusCode, statusMessage, rawHeaders, isUpgrade) {
     const req = this._req as ClientRequest;
 
     if (!isUpgrade) {
       if (followRedirect(this, req, statusCode, headerValue(rawHeaders, "location"))) return;
 
-      // All that the native socket still does is to read the body. What happens next is up to the listener, as
-      // with a real response.
+      // From here on the native socket only reads the body. The 'unexpected-response' listener decides what to do with
+      // it, as with a real response.
       clearTimeout(this[kHandshakeTimer]);
 
       const res = (req.res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders));
@@ -1770,8 +1774,8 @@ const clientHandlers: ClientHandlers = {
 
     validateUpgrade(this, req, rawHeaders, headerValue(rawHeaders, "upgrade"));
   },
-  // The body of a response that is no 101, then `null`. `aborted`: the connection ended before the body did.
-  // `reset`: it ended with an error, which fails the request too.
+  // Called with each body chunk of a non-101 response, then with `null`. `aborted` means the connection ended before
+  // the body was complete. `reset` means it ended with an error, which also fails the request.
   body(chunk, aborted, reset) {
     const req = this._req as ClientRequest | null;
     const res = req?.res;
@@ -1788,9 +1792,9 @@ const clientHandlers: ClientHandlers = {
     if (reset) {
       const err = connResetException("read ECONNRESET");
 
-      err.errno = -require("node:os").constants.errno.ECONNRESET;
+      err.errno = process.binding("uv").UV_ECONNRESET;
       err.syscall = "read";
-      requestOnDestroyed(req, err);
+      emitRequestError(req, err);
     }
   },
   open() {
@@ -1810,21 +1814,21 @@ const clientHandlers: ClientHandlers = {
       return;
     }
 
-    // What `req.on('error')` gets from node:http.
+    // Connecting failed. Emit the error that node:http would pass to `req.on('error')`.
     const native = this[kNative] as NativeClient;
 
     clearTimeout(this[kHandshakeTimer]);
-    forgetSignal(this._req!);
+    removeAbortListener(this._req!);
     detach(native);
     this[kNative] = null;
     this._req = null;
     emitErrorAndClose(this, connectError(native, error));
   },
-  // The peer's Close frame has arrived, and ours is out.
+  // The peer's Close frame was received and ours was sent.
   conclude(code, reason) {
     receiverOnConclude(this, code, Buffer.from(reason));
   },
-  // The connection is closed. That of a stream is `_socket`, whose 'close' event says so.
+  // The connection closed. On the stream transport, socketOnClose() handles this instead.
   close() {
     if (this[kTransport] === STREAM) return;
 
@@ -1858,7 +1862,7 @@ function socketOnClose(this: ServerSocket): void {
     this.removeListener("data", socketOnData);
     this.removeListener("end", socketOnEnd);
 
-    // The socket closed with data still in its buffer: it may hold the Close frame.
+    // The socket closed with unread data in its buffer, which may include the Close frame.
     const { readableLength } = this;
 
     if (!this.readableEnded && !websocket._closeFrameReceived && !websocket._errorEmitted && readableLength) {
@@ -1899,13 +1903,10 @@ function socketOnError(this: ServerSocket): void {
 }
 
 //
-// The handshake of a client.
-//
-//
-// The native client socket. `this` is the native WebSocket.
+// Client handshake
 //
 
-// `websocket._socket` of a client: the part of a `net.Socket` that people reach for there.
+// A native client's `websocket._socket`. Implements the subset of `net.Socket` that users commonly access.
 class ClientSocket {
   declare [kNative]: NativeClient;
 
@@ -1961,7 +1962,8 @@ function connectError(native: NativeClient, error: NativeError): Error {
   }
 
   const detail = error.$detail;
-  const errno = (require("node:os").constants.errno as Dictionary<number | undefined>)[code];
+  // Node reports libuv's errno, which differs from os.constants.errno on Windows.
+  const errno = (process.binding("uv") as unknown as Dictionary<number | undefined>)["UV_" + code];
   let err: ConnectError;
 
   if (detail) {
@@ -1983,7 +1985,6 @@ function connectError(native: NativeClient, error: NativeError): Error {
       err.syscall = "connect";
       err.address = path;
     } else {
-      // Not `ExceptionWithHostPort`, which takes the name from a number of libuv. All there is here is the name.
       const port = +url.port || (url.protocol === "wss:" ? 443 : 80);
       const host = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
       err = new Error(`connect ${code} ${host}:${port}`);
@@ -1993,12 +1994,12 @@ function connectError(native: NativeClient, error: NativeError): Error {
     }
   }
 
-  if (errno !== undefined) err.errno = -errno;
+  if (errno !== undefined) err.errno = errno;
   err.code = code;
   return err;
 }
 
-// `_read()` and `'close'` of a response whose body the native client reads.
+// `_read()` and the 'close' listener for a response whose body the native client reads.
 function responseRead(this: HandshakeResponse, n: number): void {
   lazyHttp().IncomingMessage.prototype._read.$call(this, n);
   this[kRequest]![kNative]?.resume();
@@ -2029,7 +2030,7 @@ function headerValue(rawHeaders: string[], name: string): string | undefined {
   return value;
 }
 
-// True when `req` got a redirect, which is followed or fails the handshake.
+// Returns true if the response was a redirect, which was either followed or failed the handshake.
 function followRedirect(
   websocket: WebSocket,
   req: HandshakeRequest,
@@ -2062,7 +2063,7 @@ function followRedirect(
   return true;
 }
 
-// The checks of `req.on('upgrade')`. False when they fail the handshake.
+// The validation from upstream's `req.on('upgrade')` listener. Returns false if it aborted the handshake.
 function validateUpgrade(
   websocket: WebSocket,
   req: HandshakeRequest,
@@ -2072,7 +2073,7 @@ function validateUpgrade(
   const { protocolSet, perMessageDeflate } = req[kOptions];
 
   websocket._req = null;
-  forgetSignal(req);
+  removeAbortListener(req);
 
   if (upgrade === undefined || upgrade.toLowerCase() !== "websocket") {
     abortHandshake(websocket, req, "Invalid Upgrade header");
@@ -2148,7 +2149,7 @@ function validateUpgrade(
   return true;
 }
 
-// The `signal` option of http.request(), which destroys the request, for as long as there is one.
+// Implements http.request()'s `signal` option: aborting the signal destroys the request.
 function abortOnSignal(req: ClientRequest, signal: AbortSignal): void {
   require("internal/validators").validateAbortSignal(signal, "options.signal");
 
@@ -2158,17 +2159,17 @@ function abortOnSignal(req: ClientRequest, signal: AbortSignal): void {
     process.nextTick(onAbort);
   } else {
     signal.addEventListener("abort", onAbort, { once: true });
-    req[kForgetSignal] = () => signal.removeEventListener("abort", onAbort);
+    req[kRemoveAbortListener] = () => signal.removeEventListener("abort", onAbort);
   }
 }
 
-// However the request has ended. A signal may live much longer.
-function forgetSignal(req: HandshakeRequest): void {
-  const forget = (req as ClientRequest)[kForgetSignal];
+// Call this whenever the request ends. The signal can outlive it, and the listener would leak.
+function removeAbortListener(req: HandshakeRequest): void {
+  const remove = (req as ClientRequest)[kRemoveAbortListener];
 
-  if (forget !== undefined) {
-    (req as ClientRequest)[kForgetSignal] = undefined;
-    forget();
+  if (remove !== undefined) {
+    (req as ClientRequest)[kRemoveAbortListener] = undefined;
+    remove();
   }
 }
 
@@ -2176,11 +2177,11 @@ function handshakeOnTimeout(websocket: WebSocket): void {
   abortHandshake(websocket, websocket._req!, "Opening handshake has timed out");
 }
 
-// `object[key]`, be it the object's own or of its class.
-function notFromObjectPrototype<T extends object, K extends keyof T>(object: T, key: K): T[K] | undefined {
-  for (let holder: object | null = object; holder !== null; holder = Object.getPrototypeOf(holder)) {
-    if (holder === Object.prototype) return undefined;
-    if (Object.hasOwn(holder, key)) return object[key];
+// Returns `object[key]` if it's an own property or inherited from a class, but not from Object.prototype.
+function getIgnoringObjectPrototype<T extends object, K extends keyof T>(object: T, key: K): T[K] | undefined {
+  for (let current: object | null = object; current !== null; current = Object.getPrototypeOf(current)) {
+    if (current === Object.prototype) return undefined;
+    if (Object.hasOwn(current, key)) return object[key];
   }
 }
 
@@ -2193,12 +2194,12 @@ function extractAgentOptions(agent: Agent): {
   if (!$isObject(connectOpts)) connectOpts = undefined;
   let proxy: ProxyOption | null = null;
 
-  // Only an HTTP proxy is something the native client can go through. The `proxy` of a SOCKS agent is no URL.
+  // The native client only supports HTTP(S) proxies. A SOCKS agent's `proxy` isn't a URL.
   const agentProxy =
-    (connectOpts && notFromObjectPrototype(connectOpts, "proxy")) || notFromObjectPrototype(agent, "proxy");
+    (connectOpts && getIgnoringObjectPrototype(connectOpts, "proxy")) || getIgnoringObjectPrototype(agent, "proxy");
   const proxyUrl = (agentProxy as URL)?.href || agentProxy;
   if (typeof proxyUrl === "string" && (proxyUrl.startsWith("http:") || proxyUrl.startsWith("https:"))) {
-    const headers = notFromObjectPrototype(agent, "proxyHeaders");
+    const headers = getIgnoringObjectPrototype(agent, "proxyHeaders");
     if (headers) {
       const proxyHeaders: HttpHeaders = $isCallable(headers) ? headers.$call(agent) : headers;
       proxy = { url: proxyUrl, headers: proxyHeaders };
@@ -2210,8 +2211,8 @@ function extractAgentOptions(agent: Agent): {
   return { connectOpts, proxy };
 }
 
-// Whether `agent` has its own way to make a connection.
-function connectsItself(agent: Agent): boolean {
+// Whether `agent` overrides how connections are made.
+function hasCustomConnect(agent: Agent): boolean {
   const { prototype } = lazyHttp().Agent as unknown as { prototype: Agent };
 
   return (
@@ -2222,8 +2223,8 @@ function connectsItself(agent: Agent): boolean {
   );
 }
 
-// The `http.ClientRequest` of a handshake that the native client makes, for `'redirect'`, `'unexpected-response'`
-// and `websocket._req`. `end()` dials.
+// A minimal `http.ClientRequest` for handshakes done by the native client. It's passed to 'redirect' and
+// 'unexpected-response' listeners and stored in `websocket._req`. `end()` starts the connection.
 class ClientRequest extends EventEmitter {
   declare aborted: boolean;
   declare destroyed: boolean;
@@ -2237,8 +2238,8 @@ class ClientRequest extends EventEmitter {
   declare reusedSocket: boolean;
   declare socket: null;
   declare [kAborted]: boolean;
-  declare [kCallerCatches]: boolean;
-  declare [kForgetSignal]: (() => void) | undefined;
+  declare [kThrowSynchronously]: boolean;
+  declare [kRemoveAbortListener]: (() => void) | undefined;
   declare [kHeaders]: Dictionary<[name: string, value: HeaderValue]>;
   declare [kNative]: NativeClient | null;
   declare [kNativeOptions]: NativeClientOptions;
@@ -2261,8 +2262,8 @@ class ClientRequest extends EventEmitter {
     this.reusedSocket = false;
     this.socket = null;
     this[kAborted] = false;
-    this[kCallerCatches] = false;
-    this[kForgetSignal] = undefined;
+    this[kThrowSynchronously] = false;
+    this[kRemoveAbortListener] = undefined;
     this[kHeaders] = { __proto__: null as never };
     this[kNative] = null;
     this[kNativeOptions] = nativeOptions;
@@ -2345,7 +2346,7 @@ class ClientRequest extends EventEmitter {
     try {
       native = createWebSocket(this[kUrl], nativeOptions, websocket, clientHandlers);
     } catch (err) {
-      if (this[kCallerCatches]) throw err;
+      if (this[kThrowSynchronously]) throw err;
 
       this.destroy(err as Error);
       return this;
@@ -2370,24 +2371,24 @@ class ClientRequest extends EventEmitter {
     this.destroyed = true;
 
     clearTimeout(this[kWebSocket][kHandshakeTimer]);
-    forgetSignal(this);
+    removeAbortListener(this);
 
     const { res } = this;
 
     if (res !== null && !res.complete) {
-      // What the native client has read along with the head is delivered when the 'unexpected-response' listeners
-      // return. The parser of node:http finishes the chunk it holds, too.
+      // Body bytes that the native client read together with the headers are delivered after the 'unexpected-response'
+      // listeners return, so release the client on the next tick. node:http's parser also finishes its current chunk.
       res.resume();
       process.nextTick(releaseNative, this);
     } else {
       releaseNative(this);
     }
 
-    // A request that its owner destroys fails the handshake, as `req.on('error')` would see it. One that got its
-    // response has nothing to report but `err`.
+    // Destroying a request before it got a response fails the handshake with "socket hang up", like node:http. After
+    // the response, only an explicit `err` is reported.
     if (!err && res === null) err = connResetException("socket hang up");
 
-    if (err) process.nextTick(requestOnDestroyed, this, err);
+    if (err) process.nextTick(emitRequestError, this, err);
 
     process.nextTick(emitRequestClose, this);
     return this;
@@ -2410,12 +2411,12 @@ function releaseNative(req: ClientRequest): void {
     if (websocket[kNative] === native) websocket[kNative] = null;
   }
 
-  // As the 'close' of the socket does in node:http.
+  // node:http does this in the socket's 'close' listener.
   if (res !== null && !res.complete) res.destroy(connResetException("aborted"));
 }
 
-// The 'error' event of a ClientRequest: the listener of initAsClient() comes first.
-function requestOnDestroyed(req: ClientRequest, err: Error): void {
+// Emits a ClientRequest's 'error' event. initAsClient()'s listener (requestFailed) runs before user listeners.
+function emitRequestError(req: ClientRequest, err: Error): void {
   const aborted = req[kAborted];
 
   requestFailed(req, err);
@@ -2423,7 +2424,7 @@ function requestOnDestroyed(req: ClientRequest, err: Error): void {
   if (!aborted && req.listenerCount("error") > 0) req.emit("error", err);
 }
 
-// `req.on('error')` of initAsClient().
+// Upstream initAsClient()'s `req.on('error')` listener.
 function requestFailed(req: HandshakeRequest, err: Error): void {
   const websocket = req[kWebSocket];
 
@@ -2446,7 +2447,7 @@ function emitRequestClose(req: ClientRequest): void {
 }
 
 //
-// The listeners of a request of `http.request()`.
+// Listeners for a real `http.request()` request.
 //
 
 function requestOnError(this: HttpClientRequest, err: Error): void {
@@ -2487,7 +2488,7 @@ function requestOnUpgrade(this: HttpClientRequest, res: IncomingMessage, socket:
   });
 }
 
-// `options` are those of the request, as `http.Agent` hands them to `createConnection()`.
+// The request's options, which `http.Agent` passes to `createConnection()`.
 type ConnectOptions = Omit<import("node:net").IpcNetConnectOpts & import("node:tls").ConnectionOptions, "path"> & {
   host: string;
   path: string | undefined;
@@ -2518,7 +2519,7 @@ function initAsClient(
   options: ClientOptions | undefined,
 ): void {
   const opts: ResolvedClientOptions = {
-    // `tls`, `proxy` and `agent` have no default here. Nobody sets them through Object.prototype.
+    // `tls`, `proxy` and `agent` have no default here, so without this they could be read from Object.prototype.
     __proto__: null,
     allowSynchronousEvents: true,
     autoPong: true,
@@ -2572,7 +2573,7 @@ function initAsClient(
 
   websocket._url = parsedUrl.href;
 
-  // "wss+unix:" is an addition of Bun.
+  // "wss+unix:" is a Bun extension.
   const isSecure = parsedUrl.protocol === "wss:" || parsedUrl.protocol === "wss+unix:";
   const isIpcUrl = parsedUrl.protocol === "ws+unix:" || parsedUrl.protocol === "wss+unix:";
   let invalidUrlMessage: string | undefined;
@@ -2705,7 +2706,8 @@ function initAsClient(
     proxy ||= agentOpts.proxy;
   }
 
-  // What only `http.request()` can do. The native engine takes its socket over after the 101.
+  // The native client doesn't support these options, so fall back to `http.request()`. The native engine adopts the
+  // request's socket after the 101.
   if (
     !proxy &&
     (opts.createConnection ||
@@ -2717,43 +2719,43 @@ function initAsClient(
       opts.finishRequest ||
       opts.signal ||
       opts.secureContext ||
-      ($isObject(agent) && connectsItself(agent)))
+      ($isObject(agent) && hasCustomConnect(agent)))
   ) {
     opts.createConnection = opts.createConnection || (isSecure ? tlsConnect : netConnect);
     opts.defaultPort = opts.defaultPort || defaultPort;
     opts.timeout = handshakeTimeout;
 
-    const given = opts.tls;
-    if ($isObject(given)) {
-      // It stands in for all that the other options say about TLS, as it does for the native client below.
-      const { serverName, ...tls }: Dictionary<unknown> = { __proto__: null as never, ...given };
-      const connect = opts as unknown as Dictionary<unknown>;
+    const tlsOption = opts.tls;
+    if ($isObject(tlsOption)) {
+      // `tls` overrides every other TLS option, same as on the native path below.
+      const { serverName, ...tls }: Dictionary<unknown> = { __proto__: null as never, ...tlsOption };
+      const requestOptions = opts as unknown as Dictionary<unknown>;
       const { nodeClientTlsKeys } = require("internal/tls");
 
-      // The options of an agent win over those of the request. One that only carries options is not needed to
-      // connect, so the rest of them go to the connection without it.
-      const fromAgent: Dictionary<unknown> | undefined =
-        $isObject(agent) && !connectsItself(agent) ? { __proto__: null as never, ...connectOpts } : undefined;
+      // The agent's options override the request's. An agent that only carries options isn't needed to connect, so
+      // drop it and pass its remaining options straight to the connection.
+      const agentOptions: Dictionary<unknown> | undefined =
+        $isObject(agent) && !hasCustomConnect(agent) ? { __proto__: null as never, ...connectOpts } : undefined;
 
-      // Deleted, not undefined: to tls.connect() a key that is there replaces its default.
-      for (const replaced of fromAgent ? [connect, fromAgent] : [connect]) {
-        for (let i = 0; i < nodeClientTlsKeys.length; i++) delete replaced[nodeClientTlsKeys[i]];
-        delete replaced.ALPNProtocols;
-        delete replaced.secureContext;
-        delete replaced.secureProtocol;
+      // Use `delete`, not `= undefined`. An own key set to undefined still overrides tls.connect()'s defaults.
+      for (const target of agentOptions ? [requestOptions, agentOptions] : [requestOptions]) {
+        for (let i = 0; i < nodeClientTlsKeys.length; i++) delete target[nodeClientTlsKeys[i]];
+        delete target.ALPNProtocols;
+        delete target.secureContext;
+        delete target.secureProtocol;
       }
-      delete connect.tls;
+      delete requestOptions.tls;
 
       for (const key of Object.keys(tls)) {
-        if (tls[key] !== undefined) connect[key] = tls[key];
+        if (tls[key] !== undefined) requestOptions[key] = tls[key];
       }
-      if (serverName !== undefined) connect.servername = serverName;
+      if (serverName !== undefined) requestOptions.servername = serverName;
 
-      if (fromAgent) {
+      if (agentOptions) {
         const createConnection = isSecure ? tlsConnect : netConnect;
 
         opts.agent = undefined;
-        opts.createConnection = args => createConnection({ ...args, ...fromAgent });
+        opts.createConnection = args => createConnection({ ...args, ...agentOptions });
       }
     }
 
@@ -2798,12 +2800,12 @@ function initAsClient(
   if ($isObject(tls)) {
     tls = require("internal/tls").unsealPfxForNative(tls);
   } else if (!tls && options) {
-    // The agent wins: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js#L305
+    // The agent's options take precedence: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js#L305
     tls = require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...options, ...connectOpts });
   }
   if (tls) nativeOptions.tls = tls;
 
-  // The credentials travel in the Authorization header below, an empty fragment nowhere.
+  // Strip the credentials, which are sent in the Authorization header below, and an empty fragment.
   let url = parsedUrl.href;
   if (username || password || url.endsWith("#")) {
     const bare = new URL(url);
@@ -2838,23 +2840,23 @@ function initAsClient(
   const { signal } = opts;
   if (signal) abortOnSignal(req, signal);
 
-  // It also runs for a request that `finishRequest` ends late or never.
+  // Start the timer now so it also covers a `finishRequest` that calls `req.end()` late or never.
   if (handshakeTimeout) {
     websocket[kHandshakeTimer] = setTimeout(handshakeOnTimeout, handshakeTimeout, websocket);
   }
 
-  // The dial throws for a header that cannot be sent. That is for the caller of the constructor, while there is one:
-  // not after a redirect, and not once `finishRequest` has returned.
-  req[kCallerCatches] = websocket._redirects === 0;
+  // Connecting throws on an invalid header. Let that propagate only while the constructor is still on the stack, i.e.
+  // not after a redirect and not once `finishRequest` has returned. Otherwise `end()` turns it into an 'error' event.
+  req[kThrowSynchronously] = websocket._redirects === 0;
   try {
     if (opts.finishRequest) opts.finishRequest(req, websocket);
     else req.end();
   } catch (err) {
     clearTimeout(websocket[kHandshakeTimer]);
-    forgetSignal(req);
+    removeAbortListener(req);
     throw err;
   } finally {
-    req[kCallerCatches] = false;
+    req[kThrowSynchronously] = false;
   }
 }
 
@@ -3193,13 +3195,13 @@ class WebSocketServer extends EventEmitter {
   }
 }
 
-// The native response of the connection, when `socket` is the connection itself and `req` came in on it. Through
-// anything that stands around it every byte has to go, as through any stream. A request that node:http did not make
-// (a framework's own object) stands for the one `socket` was handed over with.
+// Returns the connection's native response if `socket` is the node:http socket itself and `req` arrived on it.
+// Returns undefined for a wrapper around the socket, so the stream transport is used and the wrapper sees every byte.
+// A `req` that node:http didn't create (e.g. a framework's own request object) is assumed to belong to `socket`.
 function nativeResponse(req: ServerRequest, socket: ServerSocket): unknown {
   const response = socket[kInternalSocketData];
-  const ofRequest = req[(kHeaderSource ??= require("internal/http").kHeaderSource)];
-  return ofRequest === undefined || ofRequest === response ? response : undefined;
+  const headerSource = req[(kHeaderSource ??= require("internal/http").kHeaderSource)];
+  return headerSource === undefined || headerSource === response ? response : undefined;
 }
 
 function addListeners(server: HttpServer, map: Dictionary<(...args: any[]) => void>): () => void {
@@ -3231,7 +3233,7 @@ function abortServerHandshake(socket: ServerSocket, code: number, message?: stri
     ...headers,
   };
 
-  // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
+  // handleUpgrade() was called from a 'request' listener, so reply through its ServerResponse.
   const response = socket._httpMessage;
   if (response) {
     response.writeHead(code, headers);
@@ -3239,7 +3241,7 @@ function abortServerHandshake(socket: ServerSocket, code: number, message?: stri
     return;
   }
 
-  // Another WebSocketServer on the same http.Server has already taken this connection.
+  // Another WebSocketServer on the same http.Server has already upgraded this connection.
   if (socket[kWebSocket]) return;
 
   socket.once("finish", socket.destroy);
@@ -3316,8 +3318,8 @@ function createWebSocketStream(ws: WebSocket, options?: import("node:stream").Du
   ws.once("error", function error(err: Error) {
     if (duplex.destroyed) return;
 
-    // Prevent `ws.terminate()` from being called by `duplex._destroy()`: the connection is closing already, and
-    // a Close frame may be on its way to the other peer.
+    // Prevent `ws.terminate()` from being called by `duplex._destroy()`. The connection is already closing, and
+    // terminating it now could drop the Close frame being sent to the peer.
     terminateOnDestroy = false;
     duplex.destroy(err);
   });
@@ -3358,15 +3360,15 @@ function createWebSocketStream(ws: WebSocket, options?: import("node:stream").Du
       return;
     }
 
-    // The handshake of a client failed: wait for the `'error'` event that the websocket will emit.
+    // The client handshake failed. Wait for the `'error'` event that the websocket will emit.
     if (ws[kNative] === null) return;
 
     if (ws.readyState === ws.CLOSED) {
       callback();
       if (duplex._readableState.endEmitted) duplex.destroy();
     } else {
-      // The writable side is finished when the closing handshake is, ahead of the EOF signaling `null` chunk
-      // that the listener above pushes.
+      // Finish the writable side when the closing handshake completes. Prepend the listener so it runs before the
+      // 'close' listener above pushes the EOF signaling `null` chunk.
       ws.prependOnceListener("close", function close() {
         callback();
       });

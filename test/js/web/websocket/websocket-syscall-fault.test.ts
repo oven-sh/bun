@@ -427,11 +427,11 @@ describe.concurrent.skipIf(skip)("Bun.serve WebSocket server under injected sysc
 describe.concurrent.skipIf(skip)(
   "WebSocket client (wss:// via HTTP CONNECT proxy) under injected syscall faults",
   () => {
-    // A Close frame that has to wait behind queued frames leaves when handle_tunnel_writable()
-    // drains them. The wss endpoint answers it only when it has arrived whole.
-    test("send → short writes (1 byte): the Close frame arrives whole, behind the queued frames", async () => {
-      // The opcode of each frame the client sent, and the payload of its Close frame.
-      const fromClient: (number | string)[] = [];
+    // A Close frame queued behind other frames is sent once handle_tunnel_writable() drains
+    // them. The wss endpoint only replies once it has received the whole Close frame.
+    test("send → short writes (1 byte): the whole Close frame arrives after the queued frames", async () => {
+      // Each client frame's opcode, plus the Close frame's payload.
+      const clientFrames: (number | string)[] = [];
       const wss = tls.createServer({ cert: certs.cert, key: certs.key }, sock => {
         let buf = Buffer.alloc(0);
         let upgraded = false;
@@ -440,15 +440,17 @@ describe.concurrent.skipIf(skip)(
           while (upgraded && buf.length >= 4) {
             const extended = (buf[1] & 0x7f) === 126;
             const length = extended ? buf.readUInt16BE(2) : buf[1] & 0x7f;
-            const body = (extended ? 4 : 2) + 4;
-            if (buf.length < body + length) return;
-            fromClient.push(buf[0] & 0x0f);
+            const payloadOffset = (extended ? 4 : 2) + 4;
+            if (buf.length < payloadOffset + length) return;
+            clientFrames.push(buf[0] & 0x0f);
             if ((buf[0] & 0x0f) === 0x8) {
-              const payload = buf.subarray(body, body + length).map((byte, i) => byte ^ buf[body - 4 + (i & 3)]);
-              fromClient.push(`${Buffer.from(payload).readUInt16BE(0)} ${Buffer.from(payload).toString("utf8", 2)}`);
+              const payload = buf
+                .subarray(payloadOffset, payloadOffset + length)
+                .map((byte, i) => byte ^ buf[payloadOffset - 4 + (i & 3)]);
+              clientFrames.push(`${Buffer.from(payload).readUInt16BE(0)} ${Buffer.from(payload).toString("utf8", 2)}`);
               sock.end(Buffer.from([0x88, 0x02, 0x03, 0xe8]));
             }
-            buf = buf.subarray(body + length);
+            buf = buf.subarray(payloadOffset + length);
           }
           if (upgraded) return;
           const end = buf.indexOf("\r\n\r\n");
@@ -484,7 +486,7 @@ describe.concurrent.skipIf(skip)(
           // Arm only once the tunnel is up so CONNECT + TLS handshake stay fast.
           // Two sends before close(): the 1st short-writes into the tunnel's
           // write_buffer, so the 2nd queues in send_buffer under backpressure,
-          // and the Close frame behind it.
+          // and the Close frame queues behind it.
           ws.onopen = () => {
             fault.set(rule);
             ws.send(Buffer.alloc(256, 0x41));
@@ -496,7 +498,7 @@ describe.concurrent.skipIf(skip)(
         `,
         );
         expect(r).toMatchObject({ ok: true, code: 1000, signal: null, exitCode: 0 });
-        expect(fromClient).toEqual([0x2, 0x1, 0x8, "1000 bye"]);
+        expect(clientFrames).toEqual([0x2, 0x1, 0x8, "1000 bye"]);
       } finally {
         proxy.close();
         wss.close();

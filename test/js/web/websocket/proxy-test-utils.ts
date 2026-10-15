@@ -267,8 +267,8 @@ export async function startRawWssServer(
  * A TLS 1.2 wss:// server that renegotiates once: before it answers the upgrade,
  * when the upgrade client owns the connection, or on the client's first frame,
  * when the connected client does. After the client's first frame (and that
- * renegotiation) it sends "after renegotiation", and it answers what comes next,
- * the client's Close frame, with Close 1000. It runs in real node because a
+ * renegotiation) it sends "after renegotiation", then replies to the client's next
+ * frame (its Close frame) with Close 1000. It runs in real node because a
  * BoringSSL server cannot renegotiate, so skip the test when `nodeExe()` is null.
  */
 export async function startRenegotiatingWssServer(when: "before the 101" | "after the 101") {
@@ -397,8 +397,9 @@ export function echoed(message: string): ClientEvent[] {
 }
 
 /**
- * A connection the client failed: the proxy refused it, a TLS handshake failed. The error's
- * message starts with `reason`; what a TLS library has to add behind it is not pinned.
+ * Events of a connection that failed before it opened, e.g. the proxy rejected it or a TLS
+ * handshake failed. The error message is only matched up to `reason`, because TLS libraries
+ * append their own details.
  */
 export function failed(url: string, reason: string): ClientEvent[] {
   return [

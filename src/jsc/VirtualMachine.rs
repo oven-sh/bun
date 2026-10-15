@@ -2266,7 +2266,8 @@ impl VirtualMachine {
             self.is_inside_deferred_task_queue.set(false);
         }
 
-        // No tick follows. Not `uws_loop()`: inside spawnSync that loop has no uWS LoopData.
+        // The loop won't tick again, so flush now. Don't use `uws_loop()`: inside spawnSync it
+        // returns a loop that has no uWS LoopData.
         // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
         unsafe { (*uws::Loop::get()).flush_pending_writes() };
 

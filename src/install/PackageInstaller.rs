@@ -197,6 +197,24 @@ impl DeferredLinks {
     }
 }
 
+/// `join_z_buf` for every package of a warm install: nothing in these two is left to normalize.
+fn join_normalized_z<'b>(buf: &'b mut [u8], folder: &[u8], file_path: &[u8]) -> &'b ZStr {
+    // An alias has a `/` after its scope.
+    if cfg!(windows) {
+        return join_z_buf::<platform::Auto>(buf, &[folder, file_path]);
+    }
+    let mut len = 0;
+    if !folder.is_empty() {
+        buf[..folder.len()].copy_from_slice(folder);
+        buf[folder.len()] = SEP;
+        len = folder.len() + 1;
+    }
+    buf[len..len + file_path.len()].copy_from_slice(file_path);
+    len += file_path.len();
+    buf[len] = 0;
+    ZStr::from_buf(buf, len)
+}
+
 impl NodeModulesFolder {
     /// `file_path` in this folder, for a call on the root `node_modules`: from there, which spares the
     /// kernel the folders above it. The folder of an unlinked member is not below it.
@@ -210,7 +228,7 @@ impl NodeModulesFolder {
                     .or_else(|| rest.is_empty().then_some(rest))
             })
             .unwrap_or(self.path.as_slice());
-        join_z_buf::<platform::Auto>(buf, &[folder, file_path.as_bytes()])
+        join_normalized_z(buf, folder, file_path.as_bytes())
     }
 
     /// Since the stack size of these functions are rather large, let's not let them be inlined.
@@ -2336,8 +2354,7 @@ impl<'a> PackageInstaller<'a> {
         let alias = (lockfile.buffers.dependencies[dependency_id as usize].name)
             .slice(lockfile.buffers.string_bytes.as_slice());
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        let below =
-            join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &[alias, b"node_modules"]);
+        let below = join_normalized_z(path_buf.as_mut_slice(), alias, b"node_modules");
         if (self.node_modules).directory_exists_at(&self.root_node_modules_folder, below) {
             let path = [self.node_modules.path.as_slice(), &[SEP], below.as_bytes()].concat();
             copies.check_package(lockfile, tree_id, dependency_id, package_id, &path);

@@ -1650,14 +1650,20 @@ impl Places {
     }
 }
 
+/// Asked for every package of a warm install, and a name hash needs no second hash. Should two
+/// places share a key, one of them counts as having a tree, and nothing is looked for below it.
+fn place_key(tree_id: tree::Id, name_hash: PackageNameHash) -> u64 {
+    name_hash.wrapping_add(u64::from(tree_id))
+}
+
 /// The folders that hide a package from the one above them (`Places::hides`). They are what is left
 /// of a `node_modules` that was laid from another bun.lock, which only the disk knows about.
 /// The hoisted installer looks for them while `manager.lockfile` carries its tree.
 pub(crate) struct HidingCopies {
     places: Places,
     plan: Plan,
-    /// The places that have a tree below them.
-    with_tree: bun_collections::HashMap<(tree::Id, PackageNameHash), ()>,
+    /// The places that have a tree below them, by `place_key`.
+    with_tree: bun_collections::HashMap<u64, (), bun_collections::IdentityContext<u64>>,
     /// A path need not be the folder of one tree only. The installer follows a link at a member's
     /// `node_modules`, and nothing is removed through one; a link to a member can have a tree below.
     only_members: bool,
@@ -1684,7 +1690,7 @@ impl HidingCopies {
             }
             if !tree.is_unlinked_member(trees, rows, deps) {
                 let name_hash = deps[tree.dependency_id as usize].name_hash;
-                with_tree.insert((tree.parent, name_hash), ());
+                with_tree.insert(place_key(tree.parent, name_hash), ());
             }
         }
 
@@ -1786,7 +1792,7 @@ impl HidingCopies {
         !self.only_members
             && lockfile.packages.items_dependencies()[pkg_id as usize].len > 0
             && extracted(lockfile.packages.items_resolution()[pkg_id as usize].tag)
-            && !self.with_tree.contains_key(&(tree_id, name_hash))
+            && !self.with_tree.contains_key(&place_key(tree_id, name_hash))
             && !has_bundled_deps(lockfile, pkg_id)
             && !ships_above(lockfile, tree_id)
     }

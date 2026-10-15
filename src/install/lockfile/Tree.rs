@@ -99,6 +99,9 @@ impl Tree {
         hoisted_dependencies: &[DependencyID],
         deps: &[Dependency],
     ) -> bool {
+        if self.parent == INVALID_ID {
+            return false;
+        }
         (deps.get(self.dependency_id as usize)).is_some_and(|dep| dep.behavior.is_workspace())
             && !(trees[self.parent as usize].dependencies)
                 .get(hoisted_dependencies)
@@ -739,17 +742,53 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         bun_core::Global::crash();
     }
 
-    /// Whether this run leaves out the edge `dep_id` of `pkg_id`, a package that no tarball ships.
-    fn leaves_out(
-        &mut self,
-        manager: &PackageManager,
-        dep_id: DependencyID,
-        pkg_id: PackageID,
-    ) -> bool {
+    /// Fills `kept`.
+    pub(crate) fn keep_linked_rows(&mut self) {
+        let Some(manager) = self.manager else {
+            return;
+        };
         let lockfile_ref = self.lockfile;
-        let lockfile: &Lockfile = lockfile_ref.get();
-        let dependencies: &[Dependency] = self.dependencies;
-        let dep = &dependencies[dep_id as usize];
+        self.kept = LinkedRows {
+            manager,
+            lockfile: lockfile_ref.get(),
+            trees: self.list.items_tree(),
+            dependencies: self.dependencies,
+            resolutions: &*self.resolutions,
+            resolution_lists: self.resolution_lists,
+            workspace_filters: self.workspace_filters,
+            install_root_dependencies: self.install_root_dependencies,
+            packages_to_install: self.packages_to_install,
+            placed: &self.placed,
+            shipped_rows: &self.shipped_rows,
+            contested: &self.contested,
+            linked: &mut self.linked,
+        }
+        .walk();
+    }
+}
+
+/// What `Builder::keep_linked_rows` reads of a finished install tree.
+struct LinkedRows<'b> {
+    manager: &'b PackageManager,
+    lockfile: &'b Lockfile,
+    trees: &'b [Tree],
+    dependencies: &'b [Dependency],
+    resolutions: &'b [PackageID],
+    resolution_lists: &'b [DependencyIDSlice],
+    workspace_filters: &'b [WorkspaceFilter],
+    install_root_dependencies: bool,
+    packages_to_install: Option<&'b [PackageID]>,
+    placed: &'b bun_collections::HashMap<(Id, PackageNameHash), DependencyID>,
+    shipped_rows: &'b bun_collections::HashMap<(Id, DependencyID), ()>,
+    contested: &'b bun_collections::HashMap<(Id, PackageNameHash), ()>,
+    linked: &'b mut reachable::Linked,
+}
+
+impl LinkedRows<'_> {
+    /// Whether this run leaves out the edge `dep_id` of `pkg_id`, a package that no tarball ships.
+    fn leaves_out(&mut self, dep_id: DependencyID, pkg_id: PackageID) -> bool {
+        let (manager, lockfile) = (self.manager, self.lockfile);
+        let dep = &self.dependencies[dep_id as usize];
         let target = self.resolutions[dep_id as usize];
         if target == invalid_package_id {
             return true;
@@ -768,8 +807,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
                 self.install_root_dependencies,
                 manager,
                 lockfile,
-                &*self.resolutions,
-                &mut self.linked,
+                self.resolutions,
+                self.linked,
             ),
         };
         filtered
@@ -778,17 +817,29 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             )
     }
 
-    /// Fills `kept`: the rows this run's importers reach, each name looked up as node does.
+    /// The rows this run's importers reach, each name looked up as node does. `None`: all.
     /// A pass of its own: an edge the run follows can lead to a row that one it leaves out placed.
-    pub(crate) fn keep_linked_rows(&mut self) {
+    fn walk(&mut self) -> Option<bun_collections::HashMap<(Id, DependencyID), DependencyID>> {
         use bun_collections::HashMap;
 
-        let Some(manager) = self.manager else {
-            return;
-        };
-        let dependencies: &[Dependency] = self.dependencies;
-        let trees: Vec<Tree> = self.list.items_tree().to_vec();
-        let mut kept: HashMap<(Id, DependencyID), DependencyID> = HashMap::default();
+        let (dependencies, trees, lists) = (self.dependencies, self.trees, self.resolution_lists);
+
+        // By edge, which has one owner.
+        let mut left_out = vec![false; dependencies.len()];
+        let mut any_left_out = false;
+        for (pkg_id, list) in lists.iter().enumerate() {
+            for dep_id in list.begin()..list.end() {
+                let out = self.leaves_out(dep_id, pkg_id as PackageID);
+                left_out[dep_id as usize] = out;
+                any_left_out |= out && self.resolutions[dep_id as usize] != invalid_package_id;
+            }
+        }
+        if !any_left_out {
+            return None;
+        }
+
+        let mut kept: HashMap<(Id, DependencyID), DependencyID> =
+            HashMap::with_capacity(self.placed.len());
 
         // The `node_modules` of what an edge places in `parent`. Not by name: an unlinked member and
         // the losing group of a contested place have one too.
@@ -807,9 +858,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             'dep: for dep_id in list.begin()..list.end() {
                 let dep = &dependencies[dep_id as usize];
                 let target = self.resolutions[dep_id as usize];
-                if target == invalid_package_id
-                    || (!shipped && self.leaves_out(manager, dep_id, pkg_id))
-                {
+                if target == invalid_package_id || (!shipped && left_out[dep_id as usize]) {
                     continue;
                 }
 
@@ -852,7 +901,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
                 }
                 // A contested place goes to the group that placed the row, unless the run leaves it out.
                 let takes_over = self.resolutions[row as usize] != target && list.contains(row);
-                if takes_over && (shipped || !self.leaves_out(manager, row, pkg_id)) {
+                if takes_over && (shipped || !left_out[row as usize]) {
                     continue;
                 }
                 let filler = if takes_over { dep_id } else { row };
@@ -868,9 +917,11 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             }
         }
 
-        self.kept = Some(kept);
+        Some(kept)
     }
+}
 
+impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
     pub(crate) fn clean(&mut self) -> Result<CleanResult, AllocError> {
         let mut total: u32 = 0;

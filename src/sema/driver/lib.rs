@@ -3598,16 +3598,20 @@ struct ThroughLinks<'a, 's> {
 impl ThroughLinks<'_, '_> {
     /// The files whose real path is `real`, which no file of the program is at.
     fn at(&self, real: &[u8]) -> impl Iterator<Item = FileId> {
+        let is_case_sensitive = self.host.is_case_sensitive();
         let found = self.found.get_or_init(|| {
             let modules = self.program.files.modules.iter().enumerate();
             let modules = modules.filter(|(_, module)| !module.is_lib);
             let linked = modules.filter_map(|(index, module)| {
                 let real = self.host.realpath(module.file_name());
-                (real != module.file_name()).then_some((real, FileId(index as u32)))
+                let is_linked = !is_same_path(&real, module.file_name(), is_case_sensitive);
+                is_linked.then_some((real, FileId(index as u32)))
             });
             linked.collect()
         });
-        found.iter().filter(move |it| it.0 == real).map(|it| it.1)
+        let at = found.iter();
+        let at = at.filter(move |it| is_same_path(&it.0, real, is_case_sensitive));
+        at.map(|it| it.1)
     }
 }
 

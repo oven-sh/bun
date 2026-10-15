@@ -571,8 +571,7 @@ pub mod ast {
     }
 
     impl<'arena> Atom<'arena> {
-        /// Appends `right` to the word that `self` starts. A `~` in `right` is
-        /// then in the middle of the word, so it becomes text.
+        /// A `~` in `right` is in the middle of the word, so it becomes text.
         pub(crate) fn merge(
             self,
             right: &Atom<'arena>,
@@ -687,8 +686,7 @@ pub mod ast {
         BraceBegin,
         BraceEnd,
         Comma,
-        /// A tilde-prefix: expansion writes the home directory in its place.
-        /// `Parser::parse_atom` makes every other `~` a `Text`.
+        /// A tilde-prefix. `Parser::parse_atom` makes every other `~` a `Text`.
         Tilde,
         CmdSubst(CmdSubst<'arena>),
     }
@@ -1620,8 +1618,7 @@ impl<'bump> Parser<'bump> {
                                 if before_slash {
                                     atoms.push(ast::SimpleAtom::Text(&txt[1..]));
                                 }
-                                // `~/` that starts the word is a tilde-prefix. Any other `~`
-                                // waits for `certify_tildes`, when the word is complete.
+                                // Only `~/` at the start of the word is certain already.
                                 has_tentative_tilde |= !(starts_word && before_slash);
                             }
                         } else if txt.is_empty()
@@ -1708,9 +1705,7 @@ impl<'bump> Parser<'bump> {
         })
     }
 
-    /// Decides each tentative `Tilde` of a finished word: it stays only if it is a
-    /// tilde-prefix in every brace alternative that holds it. bash expands braces first,
-    /// so `{a,b}~` is `a~ b~`. Where the alternatives disagree (`{a,}~`) the `~` is text.
+    /// Keeps a `Tilde` only if it is a tilde-prefix in every brace alternative that holds it.
     #[cold]
     #[inline(never)]
     fn certify_tildes(&self, atoms: &mut [ast::SimpleAtom<'bump>], has_braces: bool) {
@@ -1725,8 +1720,7 @@ impl<'bump> Parser<'bump> {
             }
             return;
         }
-        // One byte per atom, so that the brace lexer of the expansion says which
-        // `{`, `,`, `}` form a group.
+        // One byte per atom: the expansion's brace lexer says which `{`, `,`, `}` form a group.
         let word: SmallVec<[u8; 32]> = atoms
             .iter()
             .map(|atom| match atom {
@@ -1746,9 +1740,7 @@ impl<'bump> Parser<'bump> {
         }
     }
 
-    /// Whether `atom` is text that starts with a `/` written unquoted in the script, the
-    /// only thing that may follow a tilde-prefix. The atom does not record its quoting;
-    /// the token that covers its slice of the strpool does.
+    /// Text that starts with an unquoted `/` of the script. The token has the quoting, not the atom.
     fn is_source_slash(&self, atom: &ast::SimpleAtom<'bump>) -> bool {
         let ast::SimpleAtom::Text(txt) = atom else {
             return false;
@@ -1774,9 +1766,7 @@ impl<'bump> Parser<'bump> {
         &self.strpool[range.start as usize..range.end as usize]
     }
 
-    /// Whether the strpool position holds a byte that is data, not shell syntax:
-    /// spliced in from an interpolated JS value (a `\x08__bunstr_N` ref), or a
-    /// backslash-escaped `~` or `/`.
+    /// Whether the strpool byte is data: from an interpolated JS value, or an escaped `~` or `/`.
     fn is_interpolated_position(&self, pos: u32) -> bool {
         // The lexer pushes the ranges in strpool order and they do not overlap.
         let i = self.js_string_ranges.partition_point(|r| r.end <= pos);
@@ -1973,23 +1963,17 @@ impl<'bump> Parser<'bump> {
     }
 }
 
-/// Whether `byte` ends a tilde-prefix: `/`, and on Windows also `\`, so that
-/// `~\\dir` stays a path under the home directory there.
+/// `/`, and on Windows also `\`: `~\\dir` is a path under the home directory there.
 fn ends_tilde_prefix(byte: u8) -> bool {
     byte == b'/' || (cfg!(windows) && byte == b'\\')
 }
 
-/// `tokens` are the brace tokens of a word spelled with one byte per atom: `{`, `,`, `}`,
-/// `~` for a tentative tilde, `/` for text that starts with an unquoted slash, `x` for any
-/// other atom. Says per atom whether a `~` there is a tilde-prefix in every brace
-/// alternative that holds it: nothing comes before it, and the end of the word or a `/`
-/// comes after it. One pass each way; no alternative is built.
+/// Per atom: is a `~` there a tilde-prefix in every brace alternative that holds it?
 fn tilde_prefixes(tokens: &[crate::braces::Token], atoms: usize) -> SmallVec<[bool; 32]> {
     use crate::braces::Token as BraceToken;
     let mut is_prefix: SmallVec<[bool; 32]> = smallvec::smallvec![false; atoms];
 
     // Forward: is the word empty up to here in every alternative?
-    // Per open group: the answer at its `{`, then over the ends of its alternatives so far.
     let mut groups: SmallVec<[(bool, bool); 8]> = SmallVec::new();
     let mut empty = true;
     let mut at = 0;
@@ -2021,7 +2005,6 @@ fn tilde_prefixes(tokens: &[crate::braces::Token], atoms: usize) -> SmallVec<[bo
     }
 
     // Backward: is everything that can come right after here the end of the word or a `/`?
-    // Per open group: the answer after its `}`, then over the starts of its alternatives so far.
     groups.clear();
     let mut ends = true;
     for token in tokens.iter().rev() {
@@ -2379,10 +2362,11 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     pub(crate) subshell_depth: u32,
     pub(crate) errors: bun_alloc::ArenaVec<'bump, LexError>,
 
-    /// Strpool ranges that hold data, not shell syntax: bytes spliced in from
-    /// interpolated JS values (`\x08__bunstr_N` refs), and a backslash-escaped
-    /// `~` or `/`. The parser must not reinterpret them (an `=` inside one must
-    /// not create an env assignment, a `~` is not a tilde). In strpool order.
+    /// Strpool ranges that hold bytes spliced in from interpolated JS values
+    /// (`\x08__bunstr_N` refs). Interpolated bytes are data, not shell
+    /// syntax, so the parser must not reinterpret them (e.g. an `=` inside
+    /// one must not create an env assignment).
+    /// A backslash-escaped `~` or `/` is data too. In strpool order, never overlapping.
     pub(crate) js_string_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
 
     /// Contains a list of strings we need to escape
@@ -3384,8 +3368,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
         let start = self.j;
         self.append_string_to_str_pool(bunstr)?;
-        // Interpolated values are data, not shell syntax. The range tells the
-        // parser so; the value stays coalesced with the text after it.
+        // Interpolated values are data, not shell syntax: the range tells the parser.
         self.js_string_ranges.push(TextRange { start, end: self.j });
         Ok(())
     }

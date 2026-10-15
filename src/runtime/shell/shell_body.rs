@@ -620,8 +620,7 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(true)
     }
 
-    /// A value pasted right after a `~` could end its tilde-prefix (`~${"/x"}`).
-    /// A string ref is data, so the `~` is text whatever the value is.
+    /// A value pasted after a `~` could end its tilde-prefix (`~${"/x"}`). A string ref is data.
     fn outbuf_ends_with_tilde(&self) -> bool {
         self.outbuf.last() == Some(&b'~')
     }

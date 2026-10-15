@@ -17,6 +17,7 @@ use super::sink::held;
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent};
 use crate::resolve::{ModuleKind, ScriptTarget};
+use crate::util::SharedSort;
 
 // `ExternalEmitHelpers`, except the two that are never requested.
 const REST: u32 = 1 << 0;
@@ -128,7 +129,7 @@ impl Checker<'_, '_> {
         self.check_external_emit_helpers_of_later_files(file);
         if self.emit_helpers_is_effective_external_module(file) {
             let mut requests = self.emit_helpers_requests(file, &checked);
-            requests.sort_by_key(|request| request.order);
+            requests.shared_sort_by_key(|request| request.order);
             self.emit_helpers_check_requests(file, requests);
         }
     }
@@ -150,7 +151,7 @@ impl Checker<'_, '_> {
     fn check_external_emit_helpers_of_later_files(&mut self, visited: FileId) {
         let elsewhere = std::mem::take(&mut self.emit_helpers_checked_elsewhere);
         let mut later: Vec<FileId> = elsewhere.iter().map(|it| it.0).collect();
-        later.sort_unstable();
+        later.shared_sort_unstable();
         later.dedup();
         for file in later {
             if !self.emit_helpers_is_effective_external_module(file)
@@ -167,7 +168,7 @@ impl Checker<'_, '_> {
             let mut requests: Vec<(usize, Request)> = requests
                 .filter_map(|request| Some((place(&request)?, request)))
                 .collect();
-            requests.sort_by_key(|it| (it.0, it.1.order));
+            requests.shared_sort_by_key(|it| (it.0, it.1.order));
             let from = self.reported.len();
             self.emit_helpers_check_requests(file, requests.into_iter().map(|it| it.1).collect());
             let rank = self.files().rank_of_file(visited);

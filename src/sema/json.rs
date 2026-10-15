@@ -8,10 +8,15 @@ use crate::hir::{
     Diagnostic, DiagnosticKind, ExprId, ExprKind, File, PropId, PropKind, StmtKind, UnOp,
     is_bigint_literal_at, is_parenthesized, is_private_name_at, start_of,
 };
-use crate::resolve::{Host, Options};
+use crate::resolve::Host;
 use crate::session::Session;
+use crate::util::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
+use std::collections::hash_map::Entry;
 
-#[derive(Debug, Clone, PartialEq)]
+/// A value can be nested as deep as memory allows: `JSON.parse` has no limit, and rules read files with it. So `drop`, `clone`
+/// and `==`, which can't report that the stack is full, keep their place in a list and never recurse.
+#[derive(Debug)]
 pub enum Json {
     Null,
     Bool(bool),
@@ -20,6 +25,123 @@ pub enum Json {
     Array(Vec<Json>),
     /// In source order: the order of `exports` conditions matters.
     Object(Vec<(Vec<u8>, Json)>),
+}
+
+impl Json {
+    fn children_mut(&mut self) -> impl Iterator<Item = &mut Json> {
+        let (items, entries) = match self {
+            Json::Array(items) => (&mut items[..], &mut [][..]),
+            Json::Object(entries) => (&mut [][..], &mut entries[..]),
+            _ => (&mut [][..], &mut [][..]),
+        };
+        let values = entries.iter_mut().map(|it| &mut it.1);
+        items.iter_mut().chain(values)
+    }
+
+    fn children(&self) -> impl Iterator<Item = &Json> {
+        let items = self.as_array().unwrap_or_default();
+        let entries = self.as_object().unwrap_or_default();
+        items.iter().chain(entries.iter().map(|it| &it.1))
+    }
+
+    fn has_children(&self) -> bool {
+        match self {
+            Json::Array(items) => !items.is_empty(),
+            Json::Object(entries) => !entries.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Moves the arrays and objects directly inside `self` to `nested`.
+    fn unnest(&mut self, nested: &mut Vec<Json>) {
+        let inner = self.children_mut().filter(|it| it.has_children());
+        nested.extend(inner.map(|it| std::mem::replace(it, Json::Null)));
+    }
+
+    /// `self` without what is inside its arrays and objects, which are `null` in the copy.
+    fn clone_one_level(&self) -> Json {
+        match self {
+            Json::Null => Json::Null,
+            Json::Bool(it) => Json::Bool(*it),
+            Json::Number(it) => Json::Number(*it),
+            Json::String(it) => Json::String(it.clone()),
+            Json::Array(items) => Json::Array(items.iter().map(|_| Json::Null).collect()),
+            Json::Object(entries) => {
+                let names = entries.iter().map(|it| (it.0.clone(), Json::Null));
+                Json::Object(names.collect())
+            }
+        }
+    }
+
+    /// Whether `self` and `other` are equal if what is inside their arrays and objects is.
+    fn eq_one_level(&self, other: &Json) -> bool {
+        match (self, other) {
+            (Json::Null, Json::Null) => true,
+            (Json::Bool(a), Json::Bool(b)) => a == b,
+            (Json::Number(a), Json::Number(b)) => a == b,
+            (Json::String(a), Json::String(b)) => a == b,
+            (Json::Array(a), Json::Array(b)) => a.len() == b.len(),
+            (Json::Object(a), Json::Object(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.0 == b.0)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Drop for Json {
+    fn drop(&mut self) {
+        if !self.has_children() {
+            return;
+        }
+        let mut nested = Vec::new();
+        self.unnest(&mut nested);
+        while let Some(mut next) = nested.pop() {
+            next.unnest(&mut nested);
+        }
+    }
+}
+
+impl Clone for Json {
+    fn clone(&self) -> Json {
+        let mut copy = self.clone_one_level();
+        if !self.has_children() {
+            return copy;
+        }
+        let mut unfinished = vec![(self, &mut copy)];
+        while let Some((from, to)) = unfinished.pop() {
+            for (from, to) in from.children().zip(to.children_mut()) {
+                *to = from.clone_one_level();
+                if from.has_children() {
+                    unfinished.push((from, to));
+                }
+            }
+        }
+        copy
+    }
+}
+
+impl PartialEq for Json {
+    fn eq(&self, other: &Json) -> bool {
+        if !self.eq_one_level(other) {
+            return false;
+        }
+        if !self.has_children() {
+            return true;
+        }
+        let mut unfinished = vec![(self, other)];
+        while let Some((a, b)) = unfinished.pop() {
+            for (a, b) in a.children().zip(b.children()) {
+                if !a.eq_one_level(b) {
+                    return false;
+                }
+                if a.has_children() {
+                    unfinished.push((a, b));
+                }
+            }
+        }
+        true
+    }
 }
 
 /// `jsonwire.AppendQuote` under `AllowInvalidUTF8`, without `EscapeForHTML` and `EscapeForJS`.
@@ -49,6 +171,17 @@ fn append_quote(out: &mut Vec<u8>, text: &[u8]) {
 }
 
 impl Json {
+    /// `Boolean(value)`
+    pub fn is_truthy(&self) -> bool {
+        match self {
+            Json::Null => false,
+            Json::Bool(value) => *value,
+            Json::Number(value) => *value != 0.0 && !value.is_nan(),
+            Json::String(value) => !value.is_empty(),
+            Json::Array(_) | Json::Object(_) => true,
+        }
+    }
+
     /// `core.StringifyJson` without indentation.
     pub fn stringify(&self, out: &mut Vec<u8>) {
         match self {
@@ -86,9 +219,40 @@ impl Json {
         }
     }
 
+    /// An object with `entries` as a text has them. A key that is written more than once is there once, at its first place and
+    /// with its last value: what `JSON.parse` makes of it, and an object to which each entry is assigned in turn. Everything that
+    /// reads a text makes its objects with this, so whoever walks the entries sees what [`Json::get`] finds.
+    pub fn object(entries: Vec<(Vec<u8>, Json)>) -> Json {
+        // Comparing all pairs is faster than hashing for the few keys that most objects have.
+        let has_repeats = match entries.len() {
+            0..=16 => (entries.iter().enumerate())
+                .any(|(at, entry)| entries[..at].iter().any(|it| it.0 == entry.0)),
+            len => {
+                let keys: FxHashSet<&[u8]> = entries.iter().map(|it| &it.0[..]).collect();
+                keys.len() < len
+            }
+        };
+        if !has_repeats {
+            return Json::Object(entries);
+        }
+        let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut kept: Vec<(Vec<u8>, Json)> = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            match places.entry(key) {
+                Entry::Occupied(place) => kept[*place.get()].1 = value,
+                Entry::Vacant(place) => {
+                    kept.push((place.key().clone(), value));
+                    place.insert(kept.len() - 1);
+                }
+            }
+        }
+        Json::Object(kept)
+    }
+
+    /// Of two entries with one key the last counts, as for `JSON.parse`.
     pub fn get(&self, key: &[u8]) -> Option<&Json> {
         match self {
-            Json::Object(entries) => entries.iter().find(|e| e.0 == key).map(|e| &e.1),
+            Json::Object(entries) => entries.iter().rfind(|e| e.0 == key).map(|e| &e.1),
             _ => None,
         }
     }
@@ -117,6 +281,28 @@ impl Json {
     pub fn as_object(&self) -> Option<&[(Vec<u8>, Json)]> {
         match self {
             Json::Object(o) => Some(o),
+            _ => None,
+        }
+    }
+
+    /// A type with a `Drop` can't be taken apart by a pattern. These three do that.
+    pub fn into_string(mut self) -> Option<Vec<u8>> {
+        match &mut self {
+            Json::String(s) => Some(std::mem::take(s)),
+            _ => None,
+        }
+    }
+
+    pub fn into_array(mut self) -> Option<Vec<Json>> {
+        match &mut self {
+            Json::Array(a) => Some(std::mem::take(a)),
+            _ => None,
+        }
+    }
+
+    pub fn into_object(mut self) -> Option<Vec<(Vec<u8>, Json)>> {
+        match &mut self {
+            Json::Object(o) => Some(std::mem::take(o)),
             _ => None,
         }
     }
@@ -286,6 +472,9 @@ pub struct TsConfigSourceFile<'s> {
     /// `convertConfigFileToObject`: the object that is converted. `None`: the root is not an
     /// object, nor an array that contains one.
     pub root: Option<ExprId>,
+    /// For an object with many properties that `property` has been asked about: the first with
+    /// each name. It is asked about each of thousands of `paths`.
+    first_with_name: RefCell<FxHashMap<ExprId, FxHashMap<Box<[u8]>, PropId>>>,
 }
 
 impl<'s> TsConfigSourceFile<'s> {
@@ -297,7 +486,7 @@ impl<'s> TsConfigSourceFile<'s> {
     ) -> Option<Self> {
         let atoms = Interner::new_in(session);
         let path = b"/tsconfig.json";
-        let mut hir = host.parse(session.arena(), path, &text, &atoms, &Options::default());
+        let mut hir = host.parse(session.arena(), path, &text, &atoms, Default::default());
         hir.text = text;
         let is_object =
             |e: &ExprId| matches!(hir[*e].kind, ExprKind::Object(_)) && !is_parenthesized(&hir, *e);
@@ -306,7 +495,12 @@ impl<'s> TsConfigSourceFile<'s> {
             ExprKind::Array(items) => hir.ids(items).find(is_object),
             _ => Some(root).filter(is_object),
         };
-        Some(TsConfigSourceFile { hir, atoms, root })
+        Some(TsConfigSourceFile {
+            hir,
+            atoms,
+            root,
+            first_with_name: Default::default(),
+        })
     }
 
     /// `SourceFile.Diagnostics`
@@ -371,6 +565,20 @@ impl<'s> TsConfigSourceFile<'s> {
             _ => return None,
         };
         let mut assignments = props.iter().filter(|&p| self.hir[p].kind == PropKind::Init);
+        if props.len() > 32 {
+            let mut first_with_name = self.first_with_name.borrow_mut();
+            let of_object = first_with_name.entry(object).or_insert_with(|| {
+                let mut of_object = FxHashMap::default();
+                for p in assignments {
+                    if let Some(prop_name) = self.try_get_text_of_property_name(p) {
+                        of_object.entry(prop_name.into()).or_insert(p);
+                    }
+                }
+                of_object
+            });
+            let keys = [Some(key), key2].into_iter().flatten();
+            return (keys.filter_map(|key| of_object.get(key).copied())).min_by_key(|p| p.idx());
+        }
         assignments.find(|&p| {
             let prop_name = self.try_get_text_of_property_name(p);
             prop_name.is_some_and(|prop_name| prop_name == key || key2 == Some(prop_name))
@@ -498,15 +706,11 @@ impl<'s> TsConfigSourceFile<'s> {
             ),
             // `convertObjectLiteralExpressionToJson`
             ExprKind::Object(_) => {
-                let mut result: Vec<(Vec<u8>, Json)> = Vec::new();
-                for (p, key) in self.properties(e) {
+                let entries = self.properties(e).map(|(p, key)| {
                     let value = self.convert_property_value_to_json(hir[p].value);
-                    match result.iter_mut().find(|entry| entry.0 == key) {
-                        Some(entry) => entry.1 = value,
-                        None => result.push((key.to_vec(), value)),
-                    }
-                }
-                Json::Object(result)
+                    (key.to_vec(), value)
+                });
+                Json::object(entries.collect())
             }
             _ => Json::Null,
         }

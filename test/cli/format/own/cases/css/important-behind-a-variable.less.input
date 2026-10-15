@@ -1,0 +1,7 @@
+a {
+  color: @dark!important;
+  b: @a!IMPORTANT;
+  c: @d ! important;
+  e: @@color!important;
+  f: lighten(@@color, 30%)!important;
+}

@@ -1,0 +1,39 @@
+archive: refuse symlinks in the destination with openat2(RESOLVE_NO_SYMLINKS) and O_NOFOLLOW_ANY
+
+Bun.Archive#extract() gave each entry's whole path to one openat,
+mkdirat or symlinkat call. The kernel resolved a symlink that was
+already in the destination, so an entry could land outside it.
+
+ContainedDir creates the entries of a caller-provided destination. The
+open that each file entry already makes now refuses symlinks in the kernel:
+openat2 with RESOLVE_NO_SYMLINKS on Linux, O_NOFOLLOW_ANY on macOS. A
+directory or a symlink entry opens its parent the same way and is created
+as one name in it. Missing parents are made one name at a time. Where the
+kernel has no such open (Linux before 5.6, a sandbox, an Android kernel,
+FreeBSD), the parent is opened one component at a time with O_NOFOLLOW
+and those directories stay open.
+
+openat2 counts as missing when it fails with ENOSYS, EPERM, EACCES,
+EFAULT, EOPNOTSUPP, EINVAL or E2BIG and the same call on `/` fails that
+way too. `/` opens for every process, so an error about a path does not
+turn openat2 off.
+
+A symlink under the name of a file entry is replaced. A symlink in place
+of a parent directory, or under the name of a directory entry, rejects
+with ELOOP and the path of the entry, in both extractors. With
+fs.protected_symlinks the kernel answers EACCES for another user's
+symlink at the end of a path, so an lstat tells that symlink from a
+directory the process cannot search. The glob extractor now creates
+symlink entries last, as the default extractor does.
+
+In a caller-provided destination the default extractor now also rejects
+a directory entry that it cannot create. Before, it ignored that failure
+when the name had a `/` in it. The mode it gives mkdirat has no setuid or
+setgid bit: the kernel ignores both there, and a sandbox can refuse them.
+
+bun create keeps its own check for a link in the destination and now
+extracts through ContainedDir. bun install and the --compile download
+extract into a directory they made. They pass
+DestinationKind::PrivateFresh and keep their calls.
+
+Co-authored-by: Alistair Smith <hi@alistair.sh>

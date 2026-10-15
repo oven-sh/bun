@@ -1,0 +1,305 @@
+======== XPRE-dir-entry-no-slash-over-dangling-symlink default (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: out/ok 666 nlink=1 "data"
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: out/ok 666 nlink=1 "data"
+======== XPRE-dir-entry-no-slash-over-dangling-symlink glob (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+======== XPRE-dir-entry-over-dangling-symlink default (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: out/ok 666 nlink=1 "data"
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: out/ok 666 nlink=1 "data"
+======== XPRE-dir-entry-over-dangling-symlink glob (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+======== XPRE-dir-entry-over-symlink default (EXPECTED: pre-existing symlink)
+  run 1: base count=3 | pr rejected:ELOOP
+     base only: out/ok 666 nlink=1 "data"
+     base only: victim/f 666 nlink=1 "data"
+  run 2: base count=3 | pr rejected:ELOOP
+     base only: out/ok 666 nlink=1 "data"
+     base only: victim/f 666 nlink=1 "data"
+======== XPRE-dir-entry-over-symlink glob (EXPECTED: pre-existing symlink)
+  run 1: base count=3 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+     base only: victim/f 644 nlink=1 "data"
+  run 2: base count=3 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+     base only: victim/f 644 nlink=1 "data"
+======== XPRE-leaf-symlink default (EXPECTED: pre-existing symlink)
+  run 1: base count=1 | pr count=1
+     base only: out/cfg -> ../victim/f.txt
+     base only: victim/f.txt 644 nlink=1 "OVERWRITTEN"
+     pr only:   out/cfg 666 nlink=1 "OVERWRITTEN"
+     pr only:   victim/f.txt 644 nlink=1 "ORIGINAL\n"
+  run 2: base count=1 | pr count=1
+     base only: out/cfg -> ../victim/f.txt
+     base only: victim/f.txt 644 nlink=1 "OVERWRITTEN"
+     pr only:   out/cfg 666 nlink=1 "OVERWRITTEN"
+     pr only:   victim/f.txt 644 nlink=1 "ORIGINAL\n"
+======== XPRE-leaf-symlink glob (EXPECTED: pre-existing symlink)
+  run 1: base count=1 | pr count=1
+     base only: out/cfg -> ../victim/f.txt
+     base only: victim/f.txt 644 nlink=1 "OVERWRITTEN"
+     pr only:   out/cfg 644 nlink=1 "OVERWRITTEN"
+     pr only:   victim/f.txt 644 nlink=1 "ORIGINAL\n"
+  run 2: base count=1 | pr count=1
+     base only: out/cfg -> ../victim/f.txt
+     base only: victim/f.txt 644 nlink=1 "OVERWRITTEN"
+     pr only:   out/cfg 644 nlink=1 "OVERWRITTEN"
+     pr only:   victim/f.txt 644 nlink=1 "ORIGINAL\n"
+======== XPRE-leaf-symlink-dangling default (EXPECTED: pre-existing symlink)
+  run 1: base count=1 | pr count=1
+     base only: nowhere 666 nlink=1 "NEW"
+     base only: out/cfg -> ../nowhere
+     pr only:   out/cfg 666 nlink=1 "NEW"
+  run 2: base count=1 | pr count=1
+     base only: nowhere 666 nlink=1 "NEW"
+     base only: out/cfg -> ../nowhere
+     pr only:   out/cfg 666 nlink=1 "NEW"
+======== XPRE-leaf-symlink-dangling glob (EXPECTED: pre-existing symlink)
+  run 1: base count=1 | pr count=1
+     base only: nowhere 644 nlink=1 "NEW"
+     base only: out/cfg -> ../nowhere
+     pr only:   out/cfg 644 nlink=1 "NEW"
+  run 2: base count=1 | pr count=1
+     base only: nowhere 644 nlink=1 "NEW"
+     base only: out/cfg -> ../nowhere
+     pr only:   out/cfg 644 nlink=1 "NEW"
+======== XPRE-leaf-symlink-to-dir default (EXPECTED: pre-existing symlink)
+  run 1: base rejected:Error | pr count=1
+     base only: out/name -> real
+     pr only:   out/name 666 nlink=1 "F"
+  run 2: base rejected:Error | pr count=1
+     base only: out/name -> real
+     pr only:   out/name 666 nlink=1 "F"
+======== XPRE-leaf-symlink-to-dir glob (EXPECTED: pre-existing symlink)
+  run 1: base count=0 | pr count=1
+     base only: out/name -> real
+     pr only:   out/name 644 nlink=1 "F"
+  run 2: base count=0 | pr count=1
+     base only: out/name -> real
+     pr only:   out/name 644 nlink=1 "F"
+======== XPRE-parent-symlink-deep default (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: out/ok 666 nlink=1 "data"
+     base only: victim/c/ 755
+     base only: victim/c/f 666 nlink=1 "F"
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: out/ok 666 nlink=1 "data"
+     base only: victim/c/ 755
+     base only: victim/c/f 666 nlink=1 "F"
+======== XPRE-parent-symlink-deep glob (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+     base only: victim/c/ 755
+     base only: victim/c/f 644 nlink=1 "F"
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+     base only: victim/c/ 755
+     base only: victim/c/f 644 nlink=1 "F"
+======== XPRE-parent-symlink-inside default (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: out/ok 666 nlink=1 "data"
+     base only: out/real/f 666 nlink=1 "F"
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: out/ok 666 nlink=1 "data"
+     base only: out/real/f 666 nlink=1 "F"
+======== XPRE-parent-symlink-inside glob (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+     base only: out/real/f 644 nlink=1 "F"
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+     base only: out/real/f 644 nlink=1 "F"
+======== XPRE-parent-symlink-outside default (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: out/inside 666 nlink=1 "INSIDE"
+     base only: victim/f 666 nlink=1 "OUTSIDE"
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: out/inside 666 nlink=1 "INSIDE"
+     base only: victim/f 666 nlink=1 "OUTSIDE"
+======== XPRE-parent-symlink-outside glob (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: out/inside 644 nlink=1 "INSIDE"
+     base only: victim/f 644 nlink=1 "OUTSIDE"
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: out/inside 644 nlink=1 "INSIDE"
+     base only: victim/f 644 nlink=1 "OUTSIDE"
+======== XPRE-raw-dir-noslash-over-dangling-symlink default (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: out/ok 666 nlink=1 "data"
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: out/ok 666 nlink=1 "data"
+======== XPRE-raw-dir-noslash-over-dangling-symlink glob (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+======== XPRE-symlink-dangling-parent default (EXPECTED: pre-existing symlink)
+  run 1: base rejected:Error | pr rejected:ELOOP
+  run 2: base rejected:Error | pr rejected:ELOOP
+======== XPRE-symlink-dangling-parent glob (EXPECTED: pre-existing symlink)
+  run 1: base count=1 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+  run 2: base count=1 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+======== XPRE-symlink-entry-deep-under-symlink default (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: victim/e/ 755
+     base only: victim/e/f/ 755
+     base only: victim/e/f/link -> x
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: victim/e/ 755
+     base only: victim/e/f/ 755
+     base only: victim/e/f/link -> x
+======== XPRE-symlink-entry-deep-under-symlink glob (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: victim/e/ 755
+     base only: victim/e/f/ 755
+     base only: victim/e/f/link -> x
+  run 2: base count=1 | pr rejected:ELOOP
+     base only: victim/e/ 755
+     base only: victim/e/f/ 755
+     base only: victim/e/f/link -> x
+======== XPRE-symlink-entry-under-symlink default (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: victim/link -> x
+  run 2: base count=2 | pr rejected:ELOOP
+     base only: victim/link -> x
+======== XPRE-symlink-entry-under-symlink glob (EXPECTED: pre-existing symlink)
+  run 1: base count=2 | pr rejected:ELOOP
+     base only: victim/link -> x
+  run 2: base count=1 | pr rejected:ELOOP
+     base only: victim/link -> x
+======== XPRE-symlink-to-file-parent default (EXPECTED: pre-existing symlink)
+  run 1: base rejected:Error | pr rejected:ELOOP
+  run 2: base rejected:Error | pr rejected:ELOOP
+======== XPRE-symlink-to-file-parent glob (EXPECTED: pre-existing symlink)
+  run 1: base count=1 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+  run 2: base count=1 | pr rejected:ELOOP
+     base only: out/ok 644 nlink=1 "data"
+======== long-name-300-dir default 
+  run 1: base count=2 | pr rejected:Error
+     base only: out/ok 666 nlink=1 "data"
+  run 2: base count=2 | pr rejected:Error
+     base only: out/ok 666 nlink=1 "data"
+======== raw-symlink-nested-trailing-slash default 
+  run 1: base count=2 | pr count=2
+     base only: out/x/ 755
+     base only: out/x/y/ 755
+     base only: out/x/y/l/ 755
+  run 2: base count=2 | pr count=2
+     base only: out/x/ 755
+     base only: out/x/y/ 755
+     base only: out/x/y/l/ 755
+======== raw-symlink-nested-trailing-slash glob 
+  run 1: base count=1 | pr count=1
+     base only: out/x/ 755
+     base only: out/x/y/ 755
+  run 2: base count=1 | pr count=1
+     base only: out/x/ 755
+     base only: out/x/y/ 755
+======== raw-symlink-trailing-slash default 
+  run 1: base count=2 | pr count=2
+     base only: out/l/ 755
+  run 2: base count=2 | pr count=2
+     base only: out/l/ 755
+======== symlink-chain-same-archive glob 
+  run 1: base count=2 | pr count=1
+     base only: out/d1 -> .
+     base only: out/d2/ 755
+     base only: out/d2/up/ 755
+     base only: out/d2/up/escape 644 nlink=1 "data"
+     pr only:   out/d1/ 755
+     pr only:   out/d1/d2/ 755
+     pr only:   out/d1/d2/up/ 755
+     pr only:   out/d1/d2/up/escape 644 nlink=1 "data"
+  run 2: base count=1 | pr count=1
+     base only: out/d1 -> .
+     base only: out/d2/ 755
+     base only: out/d2/up/ 755
+     base only: out/d2/up/escape 644 nlink=1 "data"
+     pr only:   out/d1/ 755
+     pr only:   out/d1/d2/ 755
+     pr only:   out/d1/d2/up/ 755
+     pr only:   out/d1/d2/up/escape 644 nlink=1 "data"
+======== symlink-nested-three glob 
+  run 1: base count=2 | pr count=2
+     base only: out/x -> y
+     pr only:   out/x/ 755
+     pr only:   out/x/p/ 755
+     pr only:   out/x/p/q -> r
+  run 2: base count=1 | pr count=1
+     base only: out/x -> y
+     pr only:   out/x/ 755
+     pr only:   out/x/p/ 755
+     pr only:   out/x/p/q -> r
+======== symlink-parent-chain glob 
+  run 1: base count=4 | pr count=3
+     base only: out/a -> b
+     base only: out/c/f 644 nlink=1 "data"
+     pr only:   out/a/ 755
+     pr only:   out/a/f 644 nlink=1 "data"
+  run 2: base count=2 | pr count=2
+     base only: out/a -> b
+     base only: out/c/f 644 nlink=1 "data"
+     pr only:   out/a/ 755
+     pr only:   out/a/f 644 nlink=1 "data"
+======== symlink-then-dir-same-name glob 
+  run 1: base count=3 | pr count=3
+     base only: out/d -> real
+     pr only:   out/d/ 755
+     pr only:   out/d/f 644 nlink=1 "data"
+  run 2: base count=3 | pr count=3
+     base only: out/d -> real
+     base only: out/real/f 644 nlink=1 "data"
+     pr only:   out/d/ 755
+     pr only:   out/d/f 644 nlink=1 "data"
+======== symlink-then-file-same-name glob 
+  run 1: base count=3 | pr count=2
+     base only: out/n -> x
+     pr only:   out/n 644 nlink=1 "file"
+  run 2: base count=2 | pr count=2
+     base only: out/n -> x
+     pr only:   out/n 644 nlink=1 "file"
+======== symlink-then-write-through glob 
+  run 1: base count=3 | pr count=2
+     base only: out/d -> .
+     base only: out/f 644 nlink=1 "data"
+     pr only:   out/d/ 755
+     pr only:   out/d/f 644 nlink=1 "data"
+  run 2: base count=2 | pr count=2
+     base only: out/d -> .
+     base only: out/f 644 nlink=1 "data"
+     pr only:   out/d/ 755
+     pr only:   out/d/f 644 nlink=1 "data"
+======== symlink-to-dir-then-member glob 
+  run 1: base count=4 | pr count=3
+     base only: out/current -> releases/v1
+     base only: out/releases/v1/config 644 nlink=1 "cfg"
+     pr only:   out/current/ 755
+     pr only:   out/current/config 644 nlink=1 "cfg"
+  run 2: base count=3 | pr count=3
+     base only: out/current -> releases/v1
+     base only: out/releases/v1/config 644 nlink=1 "cfg"
+     pr only:   out/current/ 755
+     pr only:   out/current/config 644 nlink=1 "cfg"
+======== symlink-under-symlink-name glob 
+  run 1: base count=2 | pr count=2
+     base only: out/a -> b
+     pr only:   out/a/ 755
+     pr only:   out/a/c -> d
+  run 2: base count=2 | pr count=1
+     base only: out/a -> b
+     base only: out/b/c -> d
+     pr only:   out/a/ 755
+     pr only:   out/a/c -> d
+compared 194 case/mode pairs as root, 40 differ

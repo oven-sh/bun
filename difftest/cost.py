@@ -7,7 +7,7 @@ env = {**os.environ, "BUN_DEBUG_QUIET_LOGS": "1", "BUN_RUNTIME_TRANSPILER_CACHE_
 for kv in sys.argv[2:]:
     k, v = kv.split("=", 1); env[k] = v
 HERE = "/tmp/arc/diff"
-KEYS = ("mkdirat", "openat", "openat2", "close", "write", "pwrite64")
+KEYS = ("mkdirat", "openat", "openat2", "close", "write", "pwrite64", "newfstatat", "statx", "fstat", "unlinkat")
 def run(tar, dest, flag):
     r = subprocess.run([HERE + "/sc", bun, HERE + "/count.mjs", tar, dest, flag], capture_output=True, text=True, env=env)
     m = [l for l in r.stderr.splitlines() if l.startswith("SC ")]
@@ -32,4 +32,5 @@ print("          D      A      E      B      C")
 for k in ("first", "second"):
     print("%-7s" % k + "".join("%7d" % v for v in rows[k]))
 for shape, f, s in detail:
-    print(" ", shape, "first", f, "| second", s)
+    nz = lambda d: {k: v for k, v in d.items() if v}
+    print(" ", shape, "first", nz(f), "| second", nz(s))

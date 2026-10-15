@@ -9,6 +9,7 @@
 use crate as css;
 use crate::SmallList;
 use crate::VendorPrefix;
+use crate::css_values::number::NonNegative;
 use crate::prefixes::Feature as PrefixFeature;
 use crate::targets::Targets;
 
@@ -1682,7 +1683,9 @@ pub enum Property {
     BorderEndEndRadius(css::css_values::size::Size2D<css::css_values::length::LengthPercentage>),
     BorderRadius((border_radius::BorderRadius, VendorPrefix)),
     BorderImageSource(css::css_values::image::Image),
-    BorderImageOutset(css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>),
+    BorderImageOutset(
+        css::css_values::rect::Rect<NonNegative<css::css_values::length::LengthOrNumber>>,
+    ),
     BorderImageRepeat(border_image::BorderImageRepeat),
     BorderImageWidth(css::css_values::rect::Rect<border_image::BorderImageSideWidth>),
     BorderImageSlice(border_image::BorderImageSlice),
@@ -1852,7 +1855,9 @@ pub enum Property {
     MaskBorderMode(masking::MaskBorderMode),
     MaskBorderSlice(border_image::BorderImageSlice),
     MaskBorderWidth(css::css_values::rect::Rect<border_image::BorderImageSideWidth>),
-    MaskBorderOutset(css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>),
+    MaskBorderOutset(
+        css::css_values::rect::Rect<NonNegative<css::css_values::length::LengthOrNumber>>,
+    ),
     MaskBorderRepeat(border_image::BorderImageRepeat),
     MaskBorder(masking::MaskBorder),
     WebKitMaskComposite(SmallList<masking::WebKitMaskComposite, 1>),
@@ -1868,7 +1873,7 @@ pub enum Property {
     ),
     MaskBoxImageOutset(
         (
-            css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>,
+            css::css_values::rect::Rect<NonNegative<css::css_values::length::LengthOrNumber>>,
             VendorPrefix,
         ),
     ),
@@ -2908,7 +2913,9 @@ impl Property {
             }
             PropertyId::BorderImageOutset => {
                 if let Some(c) = parse_value::<
-                    css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>,
+                    css::css_values::rect::Rect<
+                        NonNegative<css::css_values::length::LengthOrNumber>,
+                    >,
                 >(input, options)
                 {
                     return Ok(Property::BorderImageOutset(c));
@@ -3786,7 +3793,9 @@ impl Property {
             }
             PropertyId::MaskBorderOutset => {
                 if let Some(c) = parse_value::<
-                    css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>,
+                    css::css_values::rect::Rect<
+                        NonNegative<css::css_values::length::LengthOrNumber>,
+                    >,
                 >(input, options)
                 {
                     return Ok(Property::MaskBorderOutset(c));
@@ -3841,7 +3850,9 @@ impl Property {
             }
             PropertyId::MaskBoxImageOutset(pre) => {
                 if let Some(c) = parse_value::<
-                    css::css_values::rect::Rect<css::css_values::length::LengthOrNumber>,
+                    css::css_values::rect::Rect<
+                        NonNegative<css::css_values::length::LengthOrNumber>,
+                    >,
                 >(input, options)
                 {
                     return Ok(Property::MaskBoxImageOutset((c, pre)));

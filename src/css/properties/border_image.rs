@@ -7,12 +7,13 @@ use css::Printer;
 use css::SmallList;
 
 use crate::generics::IsCompatible as _;
+use crate::generics::Parse as _;
 use css::VendorPrefix;
 use css::css_properties::{Property, PropertyIdTag};
 use css::css_values::image::Image;
 use css::css_values::length::LengthOrNumber;
 use css::css_values::length::LengthPercentage;
-use css::css_values::number::{CSSNumber, CSSNumberFns};
+use css::css_values::number::{CSSNumber, CSSNumberFns, NonNegative};
 use css::css_values::percentage::NumberOrPercentage;
 use css::css_values::percentage::Percentage;
 use css::css_values::rect::Rect;
@@ -28,7 +29,7 @@ pub struct BorderImage {
     /// The width of the border image.
     pub(crate) width: Rect<BorderImageSideWidth>,
     /// The amount that the image extends beyond the border box.
-    pub(crate) outset: Rect<LengthOrNumber>,
+    pub(crate) outset: Rect<NonNegative<LengthOrNumber>>,
     /// How the border image is scaled and tiled.
     pub(crate) repeat: BorderImageRepeat,
 }
@@ -54,7 +55,7 @@ impl BorderImage {
         let mut source: Option<Image> = None;
         let mut slice: Option<BorderImageSlice> = None;
         let mut width: Option<Rect<BorderImageSideWidth>> = None;
-        let mut outset: Option<Rect<LengthOrNumber>> = None;
+        let mut outset: Option<Rect<NonNegative<LengthOrNumber>>> = None;
         let mut repeat: Option<BorderImageRepeat> = None;
 
         loop {
@@ -65,7 +66,7 @@ impl BorderImage {
                     let maybe_width_outset = input.try_parse(
                         |i: &mut css::Parser| -> Result<(
                             Option<Rect<BorderImageSideWidth>>,
-                            Option<Rect<LengthOrNumber>>,
+                            Option<Rect<NonNegative<LengthOrNumber>>>,
                         )> {
                             i.expect_delim(b'/')?;
 
@@ -73,9 +74,9 @@ impl BorderImage {
 
                             let o = i
                                 .try_parse(
-                                    |in_: &mut css::Parser| -> Result<Rect<LengthOrNumber>> {
+                                    |in_: &mut css::Parser| -> Result<Rect<NonNegative<LengthOrNumber>>> {
                                         in_.expect_delim(b'/')?;
-                                        Rect::<LengthOrNumber>::parse(in_)
+                                        Rect::<NonNegative<LengthOrNumber>>::parse(in_)
                                     },
                                 )
                                 .ok();
@@ -130,8 +131,9 @@ impl BorderImage {
                 width: width.unwrap_or_else(|| {
                     Rect::<BorderImageSideWidth>::all(BorderImageSideWidth::default())
                 }),
-                outset: outset
-                    .unwrap_or_else(|| Rect::<LengthOrNumber>::all(LengthOrNumber::default())),
+                outset: outset.unwrap_or_else(|| {
+                    Rect::<NonNegative<LengthOrNumber>>::all(NonNegative(LengthOrNumber::default()))
+                }),
                 repeat: repeat.unwrap_or_else(BorderImageRepeat::default),
             });
         }
@@ -153,7 +155,7 @@ impl BorderImage {
         source: &Image,
         slice: &BorderImageSlice,
         width: &Rect<BorderImageSideWidth>,
-        outset: &Rect<LengthOrNumber>,
+        outset: &Rect<NonNegative<LengthOrNumber>>,
         repeat: &BorderImageRepeat,
         dest: &mut Printer,
     ) -> core::result::Result<(), PrintErr> {
@@ -164,7 +166,9 @@ impl BorderImage {
         let has_width = !width.eql(&Rect::<BorderImageSideWidth>::all(
             BorderImageSideWidth::default(),
         ));
-        let has_outset = !outset.eql(&Rect::<LengthOrNumber>::all(LengthOrNumber::Number(0.0)));
+        let has_outset = !outset.eql(&Rect::<NonNegative<LengthOrNumber>>::all(NonNegative(
+            LengthOrNumber::Number(0.0),
+        )));
         if has_slice || has_width || has_outset {
             dest.write_str(" ")?;
             slice.to_css(dest)?;
@@ -230,7 +234,9 @@ impl BorderImage {
             source: Image::default(),
             slice: BorderImageSlice::default(),
             width: Rect::<BorderImageSideWidth>::all(BorderImageSideWidth::default()),
-            outset: Rect::<LengthOrNumber>::all(LengthOrNumber::default()),
+            outset: Rect::<NonNegative<LengthOrNumber>>::all(
+                NonNegative(LengthOrNumber::default()),
+            ),
             repeat: BorderImageRepeat::default(),
         }
     }
@@ -290,9 +296,9 @@ impl BorderImageRepeat {
 #[derive(Clone, PartialEq)]
 pub enum BorderImageSideWidth {
     /// A number representing a multiple of the border width.
-    Number(CSSNumber),
+    Number(NonNegative<CSSNumber>),
     /// An explicit length or percentage.
-    LengthPercentage(LengthPercentage),
+    LengthPercentage(NonNegative<LengthPercentage>),
     /// The `auto` keyword, representing the natural width of the image slice.
     Auto,
 }
@@ -301,10 +307,10 @@ impl BorderImageSideWidth {
     // Hand-expanded — tried in declaration order
     // (Number → LengthPercentage → keyword `auto`).
     pub(crate) fn parse(input: &mut css::Parser) -> Result<Self> {
-        if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
+        if let Ok(n) = input.try_parse(NonNegative::<CSSNumber>::parse) {
             return Ok(BorderImageSideWidth::Number(n));
         }
-        if let Ok(lp) = input.try_parse(LengthPercentage::parse) {
+        if let Ok(lp) = input.try_parse(NonNegative::<LengthPercentage>::parse) {
             return Ok(BorderImageSideWidth::LengthPercentage(lp));
         }
         input.expect_ident_matching(b"auto")?;
@@ -313,14 +319,14 @@ impl BorderImageSideWidth {
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
-            BorderImageSideWidth::Number(n) => CSSNumberFns::to_css(*n, dest),
-            BorderImageSideWidth::LengthPercentage(lp) => lp.to_css(dest),
+            BorderImageSideWidth::Number(n) => CSSNumberFns::to_css(n.0, dest),
+            BorderImageSideWidth::LengthPercentage(lp) => lp.0.to_css(dest),
             BorderImageSideWidth::Auto => dest.write_str("auto"),
         }
     }
 
     fn default() -> BorderImageSideWidth {
-        BorderImageSideWidth::Number(1.0)
+        BorderImageSideWidth::Number(NonNegative(1.0))
     }
 
     pub(crate) fn deep_clone(&self, _arena: &Arena) -> Self {
@@ -329,7 +335,7 @@ impl BorderImageSideWidth {
 
     fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
-            BorderImageSideWidth::LengthPercentage(l) => l.is_compatible(browsers),
+            BorderImageSideWidth::LengthPercentage(l) => l.0.is_compatible(browsers),
             _ => true,
         }
     }
@@ -375,7 +381,7 @@ impl BorderImageRepeatKeyword {
 /// A value for the [border-image-slice](https://www.w3.org/TR/css-backgrounds-3/#border-image-slice) property.
 pub struct BorderImageSlice {
     /// The offsets from the edges of the image.
-    pub(crate) offsets: Rect<NumberOrPercentage>,
+    pub(crate) offsets: Rect<NonNegative<NumberOrPercentage>>,
     /// Whether the middle of the border image should be preserved.
     pub(crate) fill: bool,
 }
@@ -385,7 +391,7 @@ impl BorderImageSlice {
         let mut fill = input
             .try_parse(|i| i.expect_ident_matching(b"fill"))
             .is_ok();
-        let offsets = Rect::<NumberOrPercentage>::parse(input)?;
+        let offsets = Rect::<NonNegative<NumberOrPercentage>>::parse(input)?;
         if !fill {
             fill = input
                 .try_parse(|i| i.expect_ident_matching(b"fill"))
@@ -412,9 +418,9 @@ impl BorderImageSlice {
 
     fn default() -> BorderImageSlice {
         BorderImageSlice {
-            offsets: Rect::<NumberOrPercentage>::all(NumberOrPercentage::Percentage(Percentage {
-                v: 1.0,
-            })),
+            offsets: Rect::<NonNegative<NumberOrPercentage>>::all(NonNegative(
+                NumberOrPercentage::Percentage(Percentage { v: 1.0 }),
+            )),
             fill: false,
         }
     }
@@ -465,7 +471,7 @@ pub(crate) struct BorderImageHandler {
     pub source: Option<Image>,
     pub slice: Option<BorderImageSlice>,
     pub width: Option<Rect<BorderImageSideWidth>>,
-    pub outset: Option<Rect<LengthOrNumber>>,
+    pub outset: Option<Rect<NonNegative<LengthOrNumber>>>,
     pub repeat: Option<BorderImageRepeat>,
     pub vendor_prefix: VendorPrefix,
     pub flushed_properties: BorderImageProperty,

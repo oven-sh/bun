@@ -5,6 +5,7 @@ use crate::Printer;
 
 use crate::css_values::image::Image;
 use crate::css_values::length::LengthOrNumber;
+use crate::css_values::number::NonNegative;
 use crate::css_values::position::Position;
 use crate::css_values::rect::Rect;
 
@@ -291,7 +292,7 @@ pub struct MaskBorder {
     /// The width of the mask image.
     pub(crate) width: Rect<BorderImageSideWidth>,
     /// The amount that the image extends beyond the border box.
-    pub(crate) outset: Rect<LengthOrNumber>,
+    pub(crate) outset: Rect<NonNegative<LengthOrNumber>>,
     /// How the mask image is scaled and tiled.
     pub(crate) repeat: BorderImageRepeat,
     /// How the mask image is interpreted.

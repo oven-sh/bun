@@ -178,6 +178,20 @@ function bucketOfAWaitingUpload() {
   });
 }
 
+const env = { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined };
+
+/** `script` in a process of its own, with `client` for the bucket. */
+async function child(stub: Bucket, script: string, more: Record<string, string> = {}) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `const client = new Bun.S3Client(${JSON.stringify(stub.options)});\n${script}`],
+    env: { ...env, ...more },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  return { stdout: stdout.trim(), exitCode, requests: stub.requests().sort() };
+}
+
 const part = Buffer.alloc(5 * 1024 * 1024, "a");
 const files = tempDir("s3-retry", { "hello.txt": "hello" });
 afterAll(() => files[Symbol.dispose]());
@@ -324,6 +338,28 @@ describe.concurrent("S3 retry", () => {
         "other-key",
         "other-key",
       ]);
+    });
+
+    const write = `await client.write("key", "hello"); console.log("written");`;
+
+    test("that BUN_CONFIG_HTTP_RETRY_BACKOFF sets", async () => {
+      await using stub = await bucket(once(fails(503, "SlowDown")));
+      expect(await child(stub, write, { BUN_CONFIG_HTTP_RETRY_BACKOFF: "1000" })).toEqual({
+        stdout: "written",
+        exitCode: 0,
+        requests: ["PUT", "PUT"],
+      });
+      expect(stub.waits()[0]).toBeGreaterThanOrEqual(800);
+    });
+
+    test("or at once with BUN_CONFIG_HTTP_RETRY_BACKOFF=0, whatever Retry-After asks", async () => {
+      // A minute, which no test waits.
+      await using stub = await bucket(once(fails(503, "SlowDown", { "Retry-After": "60" })));
+      expect(await child(stub, write, { BUN_CONFIG_HTTP_RETRY_BACKOFF: "0" })).toEqual({
+        stdout: "written",
+        exitCode: 0,
+        requests: ["PUT", "PUT"],
+      });
     });
   });
 
@@ -472,7 +508,7 @@ describe.concurrent("S3 retry", () => {
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "main.mjs"],
-        env: bunEnv,
+        env,
         cwd: String(dir),
         stdout: "pipe",
         stderr: "inherit",
@@ -483,6 +519,17 @@ describe.concurrent("S3 retry", () => {
         requests: ["HEAD", "PUT"],
       });
       expect(exitCode).toBe(0);
+    });
+
+    test("when its process exits", async () => {
+      await using stub = await bucketOfAWaitingUpload();
+      const script = `
+        client.write("key", "hello").catch(() => {});
+        await client.exists("fence");
+        console.log("exits");
+        process.exit(0);
+      `;
+      expect(await child(stub, script)).toEqual({ stdout: "exits", exitCode: 0, requests: ["HEAD", "PUT"] });
     });
 
     test("when its upload failed meanwhile", async () => {

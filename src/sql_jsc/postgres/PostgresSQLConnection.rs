@@ -1316,7 +1316,7 @@ impl PostgresSQLConnection {
                 request.status.get(),
                 QueryStatus::Success | QueryStatus::Fail
             ) {
-                self.finish_request(&request);
+                self.count(&request, RequestCounter::None);
                 let global = self.global();
                 let reason = js_reason.unwrap_or_else(|| {
                     postgres_error_to_js(global, None, AnyPostgresError::ConnectionClosed)
@@ -1361,6 +1361,17 @@ impl PostgresSQLConnection {
             .get()
             .front()
             .map(|req| ParentRef::from(req.as_non_null()))
+    }
+
+    /// The request that a result belongs to: the head, once its Bind or its Query is written.
+    fn executed(&self) -> Result<ParentRef<PostgresSQLQuery>, AnyPostgresError> {
+        let head = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+        match head.status.get() {
+            QueryStatus::Pending | QueryStatus::Preparing => {
+                Err(AnyPostgresError::UnexpectedMessage)
+            }
+            _ => Ok(head),
+        }
     }
 
     /// Pop the FIFO head if it is still `request` (re-entrant JS may already
@@ -1589,16 +1600,22 @@ impl PostgresSQLConnection {
         }
     }
 
-    #[inline]
-    pub(crate) fn note_request_pending(&self) {
-        self.pending_requests.set(self.pending_requests.get() + 1);
-    }
-
-    #[inline]
-    pub(crate) fn note_request_written(&self) {
-        let n = self.pending_requests.get();
-        debug_assert!(n > 0, "pending_requests underflow");
-        self.pending_requests.set(n.wrapping_sub(1));
+    /// A request is in the counter that its flags name, whatever a server makes of its status.
+    pub(crate) fn count(&self, request: &PostgresSQLQuery, counter: RequestCounter) {
+        let cell = |counter| match counter {
+            RequestCounter::None => None,
+            RequestCounter::Pending => Some(&self.pending_requests),
+            RequestCounter::Nonpipelinable => Some(&self.nonpipelinable_requests),
+            RequestCounter::Pipelined => Some(&self.pipelined_requests),
+        };
+        if let Some(from) = cell(request.flags.get().counter) {
+            debug_assert!(from.get() > 0, "request counter underflow");
+            from.set(from.get().saturating_sub(1));
+        }
+        if let Some(to) = cell(counter) {
+            to.set(to.get() + 1);
+        }
+        request.update_flags(|f| f.counter = counter);
     }
 
     pub(crate) fn can_pipeline(&self) -> bool {
@@ -1726,34 +1743,6 @@ impl PostgresSQLConnection {
         }
     }
 
-    fn finish_request(&self, item: &PostgresSQLQuery) {
-        match item.status.get() {
-            QueryStatus::Running | QueryStatus::Binding | QueryStatus::PartialResponse => {
-                let counter = item.flags.get().counter;
-                item.update_flags(|f| f.counter = RequestCounter::None);
-                match counter {
-                    RequestCounter::None => {}
-                    RequestCounter::Nonpipelinable => {
-                        let n = self.nonpipelinable_requests.get();
-                        debug_assert!(n > 0, "nonpipelinable_requests underflow");
-                        self.nonpipelinable_requests.set(n.saturating_sub(1));
-                    }
-                    RequestCounter::Pipelined => {
-                        let n = self.pipelined_requests.get();
-                        debug_assert!(n > 0, "pipelined_requests underflow");
-                        self.pipelined_requests.set(n.saturating_sub(1));
-                    }
-                }
-            }
-            QueryStatus::Pending | QueryStatus::Preparing => {
-                // ErrorResponse on a Parse-in-flight request: it never reached
-                // Binding, so account for it leaving the pending set here.
-                self.note_request_written();
-            }
-            QueryStatus::Success | QueryStatus::Fail => {}
-        }
-    }
-
     /// What a request rejects with for a row the client cannot decode. `Err`: the VM is stopping.
     fn undecodable_row_error(&self, err: AnyPostgresError) -> Result<JSValue, AnyPostgresError> {
         if self.global().has_pending_termination_exception() {
@@ -1793,7 +1782,7 @@ impl PostgresSQLConnection {
         else {
             return false;
         };
-        self.note_request_written();
+        self.count(request, RequestCounter::None);
         request.leave_queue();
         self.requests.with_mut(|q| q.remove(written + index));
         true
@@ -1818,8 +1807,8 @@ impl PostgresSQLConnection {
                 .skip(written)
                 .take_while(|queued| queued.flags.get().retry == Retry::Done)
                 .count();
+            self.count(&head, RequestCounter::Pending);
             requests.insert(written + came_back, head);
-            self.note_request_pending();
         });
     }
 
@@ -1836,11 +1825,8 @@ impl PostgresSQLConnection {
     }
 
     fn note_request_bound(&self, request: &PostgresSQLQuery) {
-        self.note_request_written();
+        self.count(request, RequestCounter::Pipelined);
         request.status.set(QueryStatus::Binding);
-        request.update_flags(|f| f.counter = RequestCounter::Pipelined);
-        self.pipelined_requests
-            .set(self.pipelined_requests.get() + 1);
     }
 
     /// `false`: user code ran, or threw and the request is rejected. What was read before is stale.
@@ -1893,11 +1879,8 @@ impl PostgresSQLConnection {
             if let Err(err) = protocol::write_query(query.slice(), &mut self.writer()) {
                 return self.fail_write(err);
             }
-            self.note_request_written();
+            self.count(&req, RequestCounter::Nonpipelinable);
             req.status.set(QueryStatus::Running);
-            req.update_flags(|f| f.counter = RequestCounter::Nonpipelinable);
-            self.nonpipelinable_requests
-                .set(self.nonpipelinable_requests.get() + 1);
             return true;
         }
 
@@ -2015,7 +1998,7 @@ impl PostgresSQLConnection {
 
         match message_type {
             MessageType::DataRow => {
-                let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                let request = self.executed()?;
                 if request.is_rejected() {
                     // Already rejected, GC protection dropped: discard until ReadyForQuery.
                     return reader.skip_message();
@@ -2137,14 +2120,13 @@ impl PostgresSQLConnection {
                 if let Some(request) = self.current() {
                     if request.flags.get().discard_response {
                         // The end of the response it was kept in flight for.
-                        self.finish_request(&request);
+                        self.count(&request, RequestCounter::None);
                         request.status.set(QueryStatus::Fail);
                         self.discard_request(&request);
                     } else if request.flags.get().retry == Retry::AtReadyForQuery {
-                        self.finish_request(&request);
                         self.requeue_head();
                     } else if request.status.get() == QueryStatus::PartialResponse {
-                        self.finish_request(&request);
+                        self.count(&request, RequestCounter::None);
                         // if is a partial response, just signal that the query is now complete
                         request.on_result(b"", self.global(), true);
                         self.discard_request(&request);
@@ -2159,7 +2141,7 @@ impl PostgresSQLConnection {
                 self.update_has_pending_activity();
             }
             MessageType::CommandComplete => {
-                let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                let request = self.executed()?;
                 if request.is_rejected() {
                     return reader.skip_message();
                 }
@@ -2754,7 +2736,7 @@ impl PostgresSQLConnection {
             }
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
-                let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
+                let request = self.executed()?;
                 if request.is_rejected() {
                     return Ok(());
                 }

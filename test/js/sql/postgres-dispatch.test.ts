@@ -1,8 +1,29 @@
 // The conversion of a parameter (toString, toJSON) is user code. It can start another query on the same
 // connection with execute(), close the connection, throw, or run the event loop.
-import { expect, test } from "bun:test";
+// At the end: what a server sends out of place.
+import { SQL } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer } from "harness";
 import path from "node:path";
+import {
+  pgBindComplete,
+  pgBindParameters,
+  pgCloseComplete,
+  pgCommandComplete,
+  pgCopyData,
+  pgCopyDone,
+  pgCopyInResponse,
+  pgCopyOutResponse,
+  pgDataRow,
+  pgErrorResponse,
+  pgMockServer,
+  pgNoData,
+  pgParameterDescription,
+  pgParseComplete,
+  pgRaw,
+  pgReadyForQuery,
+  pgRowDescription,
+} from "./wire-frames";
 
 const fixture = path.join(import.meta.dir, "postgres-dispatch-fixture.ts");
 const wireFixture = path.join(import.meta.dir, "postgres-dispatch-wire-fixture.ts");
@@ -260,5 +281,81 @@ test.concurrent("wire order equals queue order", async () => {
     "first execution": wire("nested", "P", "D", "S", "B(outer)", "E", "S", ...nestedBind),
     // An object with a toString asks for the types first. A string does not.
     "prepare: false": wire("nested", "P", "D", "S", "P", "B(outer)", "E", "S", "P", "D", ...nestedBind),
+  });
+});
+
+// A reply has no name on it: it goes to the request at the head of the queue. A broken server or proxy can send a
+// message that cannot belong to that request. Whatever the client makes of it, every query settles and the next one runs.
+describe("a message that is out of place", () => {
+  /** Answers a Bind with its first parameter in the column `v`. Once, `stray` follows the answer to a Parse. */
+  async function strayAfterParse(stray: Buffer[]) {
+    let row: Buffer | null = null;
+    const { port, server } = await pgMockServer((type, body) => {
+      switch (type) {
+        case "P":
+          return [pgParseComplete(), ...stray.splice(0)];
+        case "D":
+          return [pgParameterDescription([25]), pgRowDescription([{ name: "v", typeOid: 25 }])];
+        case "B":
+          row = pgBindParameters(body)[0];
+          return pgBindComplete();
+        case "E":
+          return [pgDataRow([row]), pgCommandComplete("SELECT 1")];
+        case "S":
+          return pgReadyForQuery();
+      }
+    });
+    return { url: `postgres://u@127.0.0.1:${port}/db`, [Symbol.dispose]: () => void server.close() };
+  }
+  const settled = (query: PromiseLike<unknown[]>) =>
+    query.then(
+      rows => [...rows],
+      e => e.errno ?? e.code,
+    );
+  const empty = Buffer.alloc(0);
+  const violation = "ERR_POSTGRES_UNEXPECTED_MESSAGE";
+
+  // Only Parse, Describe and Sync of the first query are written: nothing was executed.
+  test.each([
+    // A result. The connection fails and the pool dials again.
+    ["CommandComplete", pgCommandComplete("SELECT 1"), violation],
+    ["EmptyQueryResponse", pgRaw("I", empty), violation],
+    ["DataRow", pgDataRow([Buffer.from("stray")]), violation],
+    // The answer of a server that refuses the Parse.
+    ["ErrorResponse", pgErrorResponse({ S: "ERROR", C: "22012", M: "division by zero" }), "22012"],
+    ["CopyInResponse", pgCopyInResponse([0]), "ERR_POSTGRES_COPY_NOT_SUPPORTED"],
+    ["CopyOutResponse", pgCopyOutResponse([0]), "ERR_POSTGRES_COPY_NOT_SUPPORTED"],
+    // pgdog 0.1.60 sends a ReadyForQuery too many.
+    ["ReadyForQuery", pgReadyForQuery(), [{ v: "a" }]],
+    ["ParseComplete", pgParseComplete(), [{ v: "a" }]],
+    ["ParameterDescription", pgParameterDescription([25]), [{ v: "a" }]],
+    ["RowDescription", pgRowDescription([{ name: "v", typeOid: 25 }]), [{ v: "a" }]],
+    ["NoData", pgNoData(), [{ v: "a" }]],
+    ["BindComplete", pgBindComplete(), [{ v: "a" }]],
+    ["CloseComplete", pgCloseComplete(), [{ v: "a" }]],
+    ["PortalSuspended", pgRaw("s", empty), [{ v: "a" }]],
+    ["CopyData", pgCopyData(Buffer.from("stray")), [{ v: "a" }]],
+    ["CopyDone", pgCopyDone(), [{ v: "a" }]],
+  ])("%s in the answer to Parse", async (_, stray, first) => {
+    using server = await strayAfterParse([stray]);
+    await using sql = new SQL(server.url, { max: 1 });
+    expect([await settled(sql`select ${"a"} as v`), await settled(sql`select ${"b"} as v`)]).toEqual([
+      first,
+      [{ v: "b" }],
+    ]);
+  });
+
+  test.each([
+    ["behind a ReadyForQuery too many", [pgReadyForQuery(), pgCommandComplete("SELECT 1")], {}],
+    ["with prepare: false", [pgCommandComplete("SELECT 1")], { prepare: false }],
+  ])("CommandComplete in the answer to Parse, %s", async (_, stray, options) => {
+    using server = await strayAfterParse(stray);
+    await using sql = new SQL(server.url, { max: 1, ...options });
+    // With prepare: false only a value like this one asks for the types first.
+    const text = (v: string) => ({ toString: () => v });
+    expect([await settled(sql`select ${text("a")} as v`), await settled(sql`select ${text("b")} as v`)]).toEqual([
+      violation,
+      [{ v: "b" }],
+    ]);
   });
 });

@@ -377,6 +377,8 @@ for (const image of ["mysql_plain", "mariadb_plain"] as const) {
           "after a reservation",
           "{ const reserved = await sql.reserve(); await reserved`SELECT 1`; reserved.release(); }",
         ],
+        ["after a reservation that ran nothing", "(await sql.reserve()).release();"],
+        ["after another client ran one", "await new Bun.SQL({ url: process.env.MYSQL_URL, max: 1 })`SELECT 1`;"],
       ])("a query that an idle connection gets %s keeps the process alive", async (_, between) => {
         expect(await runScript(script(between))).toMatchObject({ stdout: "first done\nsecond done\n", exitCode: 0 });
       });

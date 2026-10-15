@@ -69,9 +69,7 @@ pub struct Flags {
     /// Rejected while the server still answers it: its response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
     pub(crate) cancel: Cancel,
-    /// Which connection counter this request's dispatch incremented; reset to
-    /// `None` when `finish_request` consumes that contribution, so the
-    /// decrement is idempotent across its call sites.
+    /// Written by `PostgresSQLConnection::count` alone.
     pub(crate) counter: RequestCounter,
     pub(crate) retry: Retry,
     pub(crate) copy: CopyStream,
@@ -114,6 +112,8 @@ pub enum Retry {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RequestCounter {
     None,
+    /// `PostgresSQLConnection::pending_requests`
+    Pending,
     /// `PostgresSQLConnection::nonpipelinable_requests`
     Nonpipelinable,
     /// `PostgresSQLConnection::pipelined_requests`
@@ -523,7 +523,7 @@ impl PostgresSQLQuery {
         connection
             .requests
             .with_mut(|q| q.push_back(this.ref_guard()));
-        connection.note_request_pending();
+        connection.count(this, RequestCounter::Pending);
         this.connection.set(Some(connection.ref_guard()));
         // Request is enqueued: keep the event loop alive until the server responds.
         connection.poll_ref.with_mut(|r| {

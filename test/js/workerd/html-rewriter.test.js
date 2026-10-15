@@ -3412,3 +3412,217 @@ describe("GC pressure mid-rewrite", () => {
     });
   });
 });
+
+describe("text that is not valid UTF-8", () => {
+  // A text handler gets each chunk of text decoded as UTF-8, with U+FFFD in
+  // place of bytes that are not UTF-8. A chunk that the handler does not
+  // replace or remove is written with the bytes it had in the input.
+  const doc = (...parts) => Buffer.concat(parts.map(part => Buffer.from(part, "latin1")));
+  const hex = bytes => Buffer.from(bytes).toString("hex");
+  const chunked = (bytes, size) =>
+    new ReadableStream({
+      start(controller) {
+        for (let i = 0; i < bytes.length; i += size) controller.enqueue(bytes.subarray(i, i + size));
+        controller.close();
+      },
+    });
+  const rewrite = async (rewriter, body) => hex(await rewriter.transform(new Response(body)).arrayBuffer());
+
+  const documents = {
+    "windows-1252 text": doc("<p>caf\xE9</p>"),
+    "Shift_JIS text": doc("<p>\x93\xFA\x96\x7B</p>"),
+    "bytes that no UTF-8 sequence has": doc("<p>a\xC0\xAF\xFF\xED\xA0\x80b</p>"),
+    "a sequence that the end tag cuts short": doc("<p>aa\xE2\x82</p>"),
+    "a sequence that the end of the input cuts short": doc("<p>caf\xC3"),
+    "text in title, script, style and textarea": doc(
+      "<title>caf\xE9</title><script>var s = '\xE9';</script>",
+      "<style>p:after{content:'\xE9'}</style><textarea>\xE9</textarea>",
+    ),
+    "several text nodes": doc("<p>caf\xE9<b>\xFF</b>\xC0<!---->\xE9</p>tail \xE9"),
+  };
+  const bodies = {
+    "bytes": bytes => bytes,
+    "a Blob": bytes => new Blob([bytes]),
+    "a stream of 1-byte chunks": bytes => chunked(bytes, 1),
+    "a stream of 3-byte chunks": bytes => chunked(bytes, 3),
+  };
+  const registrations = {
+    "on()": (rewriter, text) => rewriter.on("*", { text }),
+    "onDocument()": (rewriter, text) => rewriter.onDocument({ text }),
+  };
+  const observers = {
+    "a handler that only reads": t => void [t.text, t.lastInTextNode, t.removed],
+    "an async handler that only reads": async t => {
+      await Promise.resolve();
+      void [t.text, t.lastInTextNode, t.removed];
+    },
+    "an async handler that waits for a timer": async t => {
+      await setImmediatePromise();
+    },
+  };
+
+  describe.each(Object.entries(documents))("%s", (_, bytes) => {
+    it.each(Object.keys(observers))("%s leaves the bytes as they were", async observer => {
+      for (const [registration, register] of Object.entries(registrations)) {
+        for (const [body, make] of Object.entries(bodies)) {
+          let sawReplacement = false;
+          const rewriter = register(new HTMLRewriter(), t => {
+            sawReplacement ||= t.text.includes("\uFFFD");
+            return observers[observer](t);
+          });
+          const out = await rewrite(rewriter, make(bytes));
+          expect({ registration, body, out, sawReplacement }).toEqual({
+            registration,
+            body,
+            out: hex(bytes),
+            sawReplacement: true,
+          });
+        }
+      }
+    });
+  });
+
+  it("text longer than one chunk keeps its bytes", async () => {
+    const long = doc("<p>", Buffer.alloc(1500, "a"), "\xE9 ", Buffer.alloc(1500, "b"), "\xE9</p>");
+    for (const observer of ["a handler that only reads", "an async handler that only reads"]) {
+      for (const body of [long, chunked(long, 1000), chunked(long, 7)]) {
+        let chunks = 0;
+        const rewriter = new HTMLRewriter().on("p", {
+          text(t) {
+            chunks++;
+            return observers[observer](t);
+          },
+        });
+        expect(await rewrite(rewriter, body)).toBe(hex(long));
+        expect(chunks).toBeGreaterThan(2);
+      }
+    }
+  });
+
+  it("a handler gets the same chunks as before, with U+FFFD for the bytes that are not UTF-8", async () => {
+    const chunksOf = async body => {
+      const chunks = [];
+      const rewriter = new HTMLRewriter().on("p", { text: t => void chunks.push([t.text, t.lastInTextNode]) });
+      await rewrite(rewriter, body);
+      return chunks;
+    };
+    expect(await chunksOf(doc("<p>a\xA9b</p>"))).toEqual([
+      ["a\uFFFDb", false],
+      ["", true],
+    ]);
+    // 0xE9 can start a character, so its U+FFFD comes when the end tag shows
+    // that it did not.
+    expect(await chunksOf(doc("<p>caf\xE9</p>"))).toEqual([
+      ["caf", false],
+      ["\uFFFD", true],
+    ]);
+    expect(await chunksOf(chunked(doc("<p>a\xF0\x9F\x98\x80b\xFF</p>"), 5))).toEqual([
+      ["a", false],
+      ["\u{1F600}b\uFFFD", false],
+      ["", true],
+    ]);
+  });
+
+  describe.each([
+    ["sync", t => t],
+    ["async", async t => void (await Promise.resolve())],
+  ])("a %s handler", (_, finish) => {
+    const rewritten = (bytes, change, body = bytes) =>
+      rewrite(
+        new HTMLRewriter().on("p", {
+          text(t) {
+            change(t);
+            return finish(t);
+          },
+        }),
+        body,
+      );
+
+    it("writes content before and after a chunk around its bytes", async () => {
+      const around = t => {
+        if (t.text === "") return;
+        t.before("<b>", { html: true });
+        t.after("</b>", { html: true });
+      };
+      expect(await rewritten(doc("<p>caf\xE9!</p>"), around)).toBe(hex(doc("<p><b>caf\xE9!</b></p>")));
+      expect(await rewritten(doc("<p>caf\xE9</p>"), around)).toBe(hex(doc("<p><b>caf</b><b>\xE9</b></p>")));
+    });
+
+    it("drops the bytes of a chunk it replaces or removes", async () => {
+      const bytes = doc("<p>caf\xE9!</p><p>th\xE9</p>");
+      expect(await rewritten(bytes, t => t.text && t.replace("tea"))).toBe(hex(doc("<p>tea</p><p>teatea</p>")));
+      expect(await rewritten(bytes, t => t.remove())).toBe(hex(doc("<p></p><p></p>")));
+      // Only the chunk that shows the U+FFFD of the cut-short 0xE9 goes.
+      expect(await rewritten(bytes, t => t.lastInTextNode && t.remove())).toBe(hex(doc("<p>caf\xE9!</p><p>th</p>")));
+    });
+
+    it("keeps a character whole when two chunks of a stream split it", async () => {
+      // U+1F600 is f0 9f 98 80, U+20AC is e2 82 ac.
+      const wellFormed = doc("<p>a\xF0\x9F\x98\x80b</p>");
+      const damaged = doc("<p>caf\xE9\xE2\x82\xACb</p>");
+      const replace = text => t => t.text.includes(text) && t.replace("X");
+
+      expect(await rewritten(wellFormed, () => {}, chunked(wellFormed, 6))).toBe(hex(wellFormed));
+      expect(await rewritten(wellFormed, replace("\u{1F600}"), chunked(wellFormed, 6))).toBe(hex(doc("<p>aX</p>")));
+      expect(await rewritten(wellFormed, replace("a"), chunked(wellFormed, 6))).toBe(
+        hex(doc("<p>X\xF0\x9F\x98\x80b</p>")),
+      );
+
+      expect(await rewritten(damaged, () => {}, chunked(damaged, 8))).toBe(hex(damaged));
+      expect(await rewritten(damaged, replace("\u20AC"), chunked(damaged, 8))).toBe(hex(doc("<p>caf\xE9X</p>")));
+      expect(await rewritten(damaged, replace("caf"), chunked(damaged, 8))).toBe(hex(doc("<p>X\xE2\x82\xACb</p>")));
+    });
+  });
+
+  it("the synchronous transform() keeps the bytes", () => {
+    const bytes = documents["bytes that no UTF-8 sequence has"];
+    const rewriter = () => new HTMLRewriter().on("p", { text() {} });
+    const exact = new Uint8Array(bytes).buffer;
+    expect(hex(rewriter().transform(exact))).toBe(hex(bytes));
+    expect(hex(rewriter().transform(new Uint8Array(exact)))).toBe(hex(bytes));
+    expect(hex(rewriter().transform(new DataView(exact)))).toBe(hex(bytes));
+  });
+
+  it("every kind of Response body keeps the bytes", async () => {
+    const bytes = documents["several text nodes"];
+    using dir = tempDir("html-rewriter-text-bytes", { "page.html": bytes });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(bytes, { headers: { "content-type": "text/html; charset=windows-1252" } }),
+    });
+    const sources = {
+      "Bun.file": () => Bun.file(join(String(dir), "page.html")),
+      "fetch()": async () => (await fetch(server.url)).body,
+      "a direct stream": () =>
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            for (let i = 0; i < bytes.length; i += 4) {
+              controller.write(bytes.subarray(i, i + 4));
+              await controller.flush();
+            }
+            controller.close();
+          },
+        }),
+      "an async iterable": () =>
+        (async function* () {
+          for (let i = 0; i < bytes.length; i += 4) yield bytes.subarray(i, i + 4);
+        })(),
+    };
+    for (const [source, make] of Object.entries(sources)) {
+      for (const [observer, observe] of Object.entries(observers)) {
+        const out = await rewrite(new HTMLRewriter().onDocument({ text: observe }), await make());
+        expect({ source, observer, out }).toEqual({ source, observer, out: hex(bytes) });
+      }
+    }
+  });
+
+  it("a UTF-8 document is written as before", async () => {
+    const bytes = Buffer.from("<p>caf\u00E9 \u65E5\u672C \u{1F600}</p>");
+    for (const body of Object.values(bodies)) {
+      for (const observe of Object.values(observers)) {
+        expect(await rewrite(new HTMLRewriter().onDocument({ text: observe }), body(bytes))).toBe(hex(bytes));
+      }
+    }
+  });
+});

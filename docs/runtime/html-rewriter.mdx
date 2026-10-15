@@ -286,6 +286,8 @@ rewriter.on("p", {
 });
 ```
 
+Bun decodes each text chunk as UTF-8. Bytes that are not valid UTF-8 read as U+FFFD in `text.text`. A chunk that you do not replace or remove keeps its original bytes in the output.
+
 ### Comment Operations
 
 Comments support similar methods to text nodes:

@@ -44,6 +44,7 @@ const kFirstFragment = Symbol("kFirstFragment");
 const kForOnEventAttribute = Symbol("kIsForOnEventAttribute");
 const kHandshake = Symbol("kHandshake");
 const kHandshakeTimer = Symbol("kHandshakeTimer");
+const kIdentityError = Symbol("kIdentityError");
 const kHeaders = Symbol("kHeaders");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const kListener = Symbol("kListener");
@@ -1047,6 +1048,7 @@ class WebSocket extends EventEmitter {
   declare [kCallbacks]: SendCallback[] | null;
   declare [kFirstFragment]: boolean;
   declare [kHandshakeTimer]: Timer | undefined;
+  declare [kIdentityError]: unknown;
   declare [kNative]: NativeClient | NativeServer | null;
   declare [kTransport]: Transport;
   declare [kWriteCallback]: SendCallback | undefined;
@@ -1839,7 +1841,8 @@ const clientHandlers: ClientHandlers = {
     detach(native);
     this[kNative] = null;
     this._req = null;
-    emitErrorAndClose(this, connectError(native, error));
+    const identityError = code === "ERR_TLS_CERT_ALTNAME_INVALID" && this[kIdentityError];
+    emitErrorAndClose(this, (identityError as Error) || connectError(native, error));
   },
   // The peer's Close frame was received and ours was sent.
   conclude(code, reason) {
@@ -1971,6 +1974,20 @@ class ClientSocket {
   }
 }
 Object.defineProperty(ClientSocket, "name", { value: "Socket" });
+
+// node:tls destroys the socket with whatever `checkServerIdentity` returned, so 'error' gets that value. The native
+// client only reports that the name check failed.
+function keepIdentityError(websocket: WebSocket, tls: NativeTlsOptions): NativeTlsOptions {
+  const { checkServerIdentity } = tls;
+  // With `rejectUnauthorized: false` the connection goes on, and a later failure must not report this one.
+  if (!$isCallable(checkServerIdentity) || tls.rejectUnauthorized === false) return tls;
+
+  return {
+    ...tls,
+    checkServerIdentity: (hostname: string, cert: unknown) =>
+      (websocket[kIdentityError] = checkServerIdentity(hostname, cert)),
+  };
+}
 
 function connectError(native: NativeClient, error: NativeError): Error {
   const { code } = error;
@@ -2733,15 +2750,8 @@ function initAsClient(
       // Always set `proxy.tls`, even if empty. Without it the native client would use the target's options for the
       // proxy too, which is what the `tls` option asks for.
       if (agentOpts.isSecureProxy && !$isObject(opts.tls)) {
-        const connectOpts: Dictionary<unknown> = { __proto__: null as never, ...agentOpts.connectOpts };
-
-        // The native client always checks the proxy's certificate against the proxy URL's hostname, so let the agent
-        // connect if it does something else.
-        if ((connectOpts.servername != null || connectOpts.checkServerIdentity != null) && hasCustomConnect(agent)) {
-          proxy = null;
-        } else {
-          agentOpts.proxy!.tls = require("internal/tls").nodeClientTlsToNative(connectOpts) ?? {};
-        }
+        const connectOpts = { __proto__: null, ...agentOpts.connectOpts };
+        agentOpts.proxy!.tls = require("internal/tls").nodeClientTlsToNative(connectOpts) ?? {};
       }
     }
   }
@@ -2834,7 +2844,12 @@ function initAsClient(
     extensions: undefined,
   };
 
-  if (proxy) nativeOptions.proxy = proxy;
+  if (proxy) {
+    const proxyTls = (proxy as ProxyOptions).tls;
+    nativeOptions.proxy = $isObject(proxyTls)
+      ? { ...(proxy as ProxyOptions), tls: keepIdentityError(websocket, proxyTls) }
+      : proxy;
+  }
 
   let tls = opts.tls;
   if ($isObject(tls)) {
@@ -2843,7 +2858,7 @@ function initAsClient(
     // The agent's options take precedence: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js#L305
     tls = require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...options, ...agentOptions });
   }
-  if (tls) nativeOptions.tls = tls;
+  if (tls) nativeOptions.tls = keepIdentityError(websocket, tls);
 
   // Strip the credentials, which are sent in the Authorization header below, and an empty fragment.
   let url = parsedUrl.href;

@@ -5025,7 +5025,8 @@ declare module "bun" {
        * Replaces the built-in hostname check, as in `fetch()` and `tls.connect()`.
        * Any truthy return value rejects the server, including the Promise of an
        * `async` function.
-       * Through an HTTPS proxy it runs for the target's certificate only.
+       * Through an HTTPS proxy it runs for the target's certificate only. The
+       * proxy's certificate goes to `proxy.tls.checkServerIdentity`.
        * With `rejectUnauthorized: false` it still runs when the certificate
        * chain verified, but its result is not enforced.
        * @param hostname - The name the certificate is verified against: `serverName` if set, else the URL host
@@ -5093,8 +5094,10 @@ declare module "bun" {
            * target uses only the top-level `tls` option. Otherwise `tls`
            * applies to both connections.
            *
-           * The proxy's certificate is always checked against the hostname in
-           * the proxy URL. `serverName` is ignored.
+           * `serverName` and `checkServerIdentity` are the exception: the
+           * top-level ones never apply to the proxy, only the ones given here.
+           * By default the proxy's certificate is checked against the hostname
+           * in the proxy URL.
            *
            * @example
            * ```ts
@@ -5106,7 +5109,7 @@ declare module "bun" {
            * });
            * ```
            */
-          tls?: TLSOptions;
+          tls?: WebSocketOptionsTLS["tls"];
         };
   };
 

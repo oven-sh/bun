@@ -1294,6 +1294,24 @@ describe("WebSocket TLS server identity", () => {
       expect({ proxy: proxy.sni, target: server.sni }).toEqual({ proxy: [null], target: [serverName] });
       expect(proxy.requests).toHaveLength(1);
     });
+
+    it("proxy.tls.serverName names an HTTPS proxy and not the target", async () => {
+      using server = startSniServer();
+      using proxy = await startRecordingProxy({ tls: true });
+      const url = `wss://127.0.0.1:${await server.port}/`;
+      const connect = (serverName: string) =>
+        openSession(
+          new WebSocket(url, {
+            proxy: { url: `https://127.0.0.1:${proxy.port}`, tls: { ca: tlsCerts.cert, serverName } },
+            tls: { ca: tlsCerts.cert },
+          }),
+        );
+      expect(await connect("localhost")).toEqual(opened);
+      expect({ proxy: proxy.sni, target: server.sni }).toEqual({ proxy: ["localhost"], target: [null] });
+      // 127.0.0.1 is in the SAN, evil.test is not. Without serverName this would open.
+      expect(await connect("evil.test")).toEqual(tlsFailed(url));
+      expect(proxy.requests).toHaveLength(1);
+    });
   });
 
   describe.concurrent("WebSocket tls.checkServerIdentity", () => {
@@ -1447,31 +1465,45 @@ describe("WebSocket TLS server identity", () => {
       }
     });
 
-    describe.each(["direct", "through an HTTP proxy"] as const)("from inside the callback, %s", route => {
-      it.each(["close", "terminate"] as const)("may %s() the WebSocket", async method => {
-        using server = startSniServer();
-        using proxy = await startRecordingProxy();
-        const url = `wss://localhost:${await server.port}/`;
-        const ws = new WebSocket(url, {
-          headers: { Authorization: "Bearer secret" },
-          proxy: route === "direct" ? undefined : `http://127.0.0.1:${proxy.port}`,
-          tls: {
+    describe.each(["direct", "through an HTTP proxy", "of an HTTPS proxy"] as const)(
+      "from inside the callback, %s",
+      route => {
+        it.each(["close", "terminate"] as const)("may %s() the WebSocket", async method => {
+          const ofProxy = route === "of an HTTPS proxy";
+          using server = startSniServer();
+          using proxy = await startRecordingProxy({ tls: ofProxy });
+          const url = `wss://localhost:${await server.port}/`;
+          const closes = {
             ca: tlsCerts.cert,
             checkServerIdentity() {
               ws[method]();
               return undefined;
             },
-          },
+          };
+          const ws: WebSocket = new WebSocket(url, {
+            headers: { Authorization: "Bearer secret" },
+            proxy: ofProxy
+              ? { url: `https://127.0.0.1:${proxy.port}`, tls: closes }
+              : route === "direct"
+                ? undefined
+                : `http://127.0.0.1:${proxy.port}`,
+            tls: ofProxy ? { ca: tlsCerts.cert } : closes,
+          });
+          expect(await clientEvents(ws)).toEqual([
+            {
+              error: `WebSocket connection to '${url}' failed: WebSocket is closed before the connection is established`,
+            },
+            { code: 1006, reason: "", wasClean: false },
+          ]);
+          if (ofProxy) {
+            await Promise.all(proxy.departures);
+            expect(proxy.requests).toEqual([]);
+          } else {
+            expect(await server.receivedInTotal()).toBe("");
+          }
         });
-        expect(await clientEvents(ws)).toEqual([
-          {
-            error: `WebSocket connection to '${url}' failed: WebSocket is closed before the connection is established`,
-          },
-          { code: 1006, reason: "", wasClean: false },
-        ]);
-        expect(await server.receivedInTotal()).toBe("");
-      });
-    });
+      },
+    );
 
     it("replaces the built-in hostname check, like fetch", async () => {
       using server = startSniServer();
@@ -1547,16 +1579,22 @@ describe("WebSocket TLS server identity", () => {
       ["a string", "pin"],
       ["an object", {}],
     ] as const)("throws when it is %s, like fetch", (_label, value) => {
-      let error: unknown;
-      try {
-        new WebSocket("wss://localhost:1/", { tls: { checkServerIdentity: value as never } });
-      } catch (e) {
-        error = e;
+      const invalid = { checkServerIdentity: value as never };
+      for (const [option, options] of [
+        ["tls", { tls: invalid }],
+        ["proxy.tls", { proxy: { url: "https://localhost:1", tls: invalid } }],
+      ] as const) {
+        let error: unknown;
+        try {
+          new WebSocket("wss://localhost:1/", options);
+        } catch (e) {
+          error = e;
+        }
+        expect(error).toMatchObject({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining(`The "${option}.checkServerIdentity" property must be of type function`),
+        });
       }
-      expect(error).toMatchObject({
-        code: "ERR_INVALID_ARG_TYPE",
-        message: expect.stringContaining('The "tls.checkServerIdentity" property must be of type function'),
-      });
     });
 
     it("is ignored when it is null, and the built-in check applies", async () => {
@@ -1814,29 +1852,36 @@ describe("WebSocket TLS server identity", () => {
 
   // Not concurrent: these count every live WebSocket in the process, or force a full GC.
   describe("WebSocket tls.checkServerIdentity lifetime", () => {
-    it("survives a GC before the handshake ends when only the WebSocket refers to it", async () => {
-      const release = Promise.withResolvers<void>();
-      using server = startSniServer({ hold: release.promise });
-      const url = `wss://127.0.0.1:${await server.port}/`;
-      const calls: string[] = [];
-      // Nothing in this scope refers to the callback or to the tls object. The built-in check
-      // rejects evil.test, so the connection opens only if the callback is still there to run.
-      const ws = (() =>
-        new WebSocket(url, {
-          tls: {
+    it.each(["tls", "proxy.tls"] as const)(
+      "%s: survives a GC before the handshake ends when only the WebSocket refers to it",
+      async option => {
+        const release = Promise.withResolvers<void>();
+        using server = startSniServer({ hold: release.promise });
+        const port = await server.port;
+        const calls: string[] = [];
+        // Nothing in this scope refers to the callback or to the tls object. The built-in check
+        // rejects evil.test, so the connection opens only if the callback is still there to run.
+        const ws = (() => {
+          const checked = {
             ca: tlsCerts.cert,
             serverName: "evil.test",
             checkServerIdentity: (hostname: string) => void calls.push(hostname),
-          },
-        }))();
-      const session = openSession(ws);
-      // A connection that ends before its ClientHello fails the assertion below and does not hang here.
-      await Promise.race([server.clientHello, session]);
-      Bun.gc(true);
-      release.resolve();
-      expect(await session).toEqual(opened);
-      expect(calls).toEqual(["evil.test"]);
-    });
+          };
+          return option === "tls"
+            ? new WebSocket(`wss://127.0.0.1:${port}/`, { tls: checked })
+            : new WebSocket("ws://127.0.0.1:1/", { proxy: { url: `https://127.0.0.1:${port}`, tls: checked } });
+        })();
+        const session = openSession(ws);
+        // A connection that ends before its ClientHello fails the assertion below and does not hang here.
+        await Promise.race([server.clientHello, session]);
+        Bun.gc(true);
+        release.resolve();
+        // The server isn't a proxy, so it turns down the CONNECT request that follows the handshake.
+        const events = await session;
+        if (option === "tls") expect(events).toEqual(opened);
+        expect(calls).toEqual(["evil.test"]);
+      },
+    );
 
     it("does not keep a closed WebSocket alive when the callback captures it", async () => {
       using server = startSniServer();

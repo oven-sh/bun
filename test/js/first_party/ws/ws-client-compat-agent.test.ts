@@ -416,6 +416,34 @@ describe.each(implementations)("ws client connection options ($name)", ({ ws: im
     });
   });
 
+  // node:tls destroys the socket with the value the callback returned.
+  test.each([
+    ["an Error", Object.assign(new Error("pinned"), { code: "PINNED" })],
+    ["a string", "pinned"],
+  ])("'error' gets what checkServerIdentity returned: %s", async (_, verdict) => {
+    await using peer = await createPeer({ secure: true });
+    const errors: unknown[] = [];
+    using client = connect(peer.url, { ca: certificate.cert, checkServerIdentity: () => verdict as Error });
+    client.ws.on("error", error => errors.push(error));
+    await nextEvent(client.ws, "close");
+    expect(errors).toEqual([verdict]);
+    expect(errors[0]).toBe(verdict);
+  });
+
+  test("a checkServerIdentity verdict that rejectUnauthorized: false dropped isn't reported later", async () => {
+    await using peer = await createPeer({
+      secure: true,
+      respond: () => "HTTP/1.1 500 Nope\r\nContent-Length: 0\r\n\r\n",
+    });
+    using client = connect(peer.url, {
+      ca: certificate.cert,
+      rejectUnauthorized: false,
+      checkServerIdentity: () => new Error("pinned"),
+    });
+    await nextEvent(client.ws, "close");
+    expect(client.events).toEqual(['error Error "Unexpected server response: 500" rs=2', abnormalClose]);
+  });
+
   describe("options passed through to node:net", () => {
     test("family: 6 can't reach a server listening on 127.0.0.1", async () => {
       await using peer = await createPeer();

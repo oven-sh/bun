@@ -292,12 +292,15 @@ where
 
         debug_assert!(vm.event_loop_handle.is_some());
 
-        let server_name: Option<Box<[u8]>> = ssl_config
-            .as_deref()
-            .and_then(SSLConfig::server_name_bytes)
-            .map(bun_http::strip_ipv6_brackets)
-            .filter(|name| !name.is_empty())
-            .map(Box::from);
+        let server_name_of = |config: Option<&SSLConfig>| -> Option<Box<[u8]>> {
+            config
+                .and_then(SSLConfig::server_name_bytes)
+                .map(bun_http::strip_ipv6_brackets)
+                .filter(|name| !name.is_empty())
+                .map(Box::from)
+        };
+        let server_name = server_name_of(ssl_config.as_deref());
+        let proxy_server_name = server_name_of(proxy_ssl_config);
 
         // These BunString inputs are always ASCII (URL parts, tokens, base64),
         // so `String.to_utf8()` borrows the 8-bit backing without allocating.
@@ -513,9 +516,14 @@ where
         if SSL {
             // A user-supplied Host header does NOT affect SNI.
             // Through a proxy this socket's peer is the proxy; `server_name` names the target.
-            let sni: &[u8] = match &server_name {
-                Some(name) if !using_proxy => name,
-                _ => bun_http::strip_ipv6_brackets(display_host),
+            let peer_name = if using_proxy {
+                &proxy_server_name
+            } else {
+                &server_name
+            };
+            let sni: &[u8] = match peer_name {
+                Some(name) => name,
+                None => bun_http::strip_ipv6_brackets(display_host),
             };
             if !sni.is_empty() {
                 this.hostname.set(ZBox::from_bytes(sni));

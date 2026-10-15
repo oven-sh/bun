@@ -441,7 +441,7 @@ const socket = new WebSocket("wss://localhost:3000", {
 });
 ```
 
-With an `https://` proxy, `tls` applies to both the proxy and the server. To configure them separately, pass `proxy.tls`. The proxy then uses only `proxy.tls`, and the server uses only `tls`.
+With an `https://` proxy, `tls` applies to both the proxy and the server. To configure them separately, pass `proxy.tls`. The proxy then uses only `proxy.tls`, and the server uses only `tls`. `serverName` and `checkServerIdentity` are never shared: the ones in `tls` are for the server, and the ones in `proxy.tls` are for the proxy.
 
 ```ts
 const socket = new WebSocket("wss://example.com", {

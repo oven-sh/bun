@@ -31,7 +31,8 @@ bun_opaque::opaque_ffi! {
 pub(crate) enum TlsPeer {
     /// The WebSocket server, reached directly or inside a proxy tunnel.
     Target,
-    /// An HTTPS proxy. `tls.checkServerIdentity` is for the target only, as in fetch.
+    /// An HTTPS proxy. `tls.checkServerIdentity` is for the target only, as in fetch. The proxy
+    /// has `proxy.tls.checkServerIdentity`.
     Proxy,
 }
 
@@ -40,7 +41,7 @@ enum NameCheck {
     /// `rejectUnauthorized: false` and no callback.
     Nobody,
     BuiltIn,
-    /// `tls.checkServerIdentity`. Without `enforce` it still runs, as in Node, and its verdict is dropped.
+    /// The peer's `checkServerIdentity`. Without `enforce` it still runs, as in Node, and its verdict is dropped.
     Callback {
         callback: JSValue,
         enforce: bool,
@@ -49,7 +50,7 @@ enum NameCheck {
 
 #[derive(Clone, Copy)]
 pub(crate) enum TlsHandshake {
-    /// `tls.checkServerIdentity` runs in the context of the script that made the WebSocket.
+    /// `checkServerIdentity` runs in the context of the script that made the WebSocket.
     First { context: ContextId, peer: TlsPeer },
     /// On the connected client's socket. BoringSSL refuses a changed certificate here.
     Renegotiation,
@@ -161,7 +162,10 @@ unsafe extern "C" {
     ) -> bool;
     safe fn WebSocket__isProxyTLS(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__bunContext(websocket_context: &CppWebSocket) -> *const core::ffi::c_void;
-    safe fn WebSocket__checkServerIdentity(websocket_context: &CppWebSocket) -> JSValue;
+    safe fn WebSocket__checkServerIdentity(
+        websocket_context: &CppWebSocket,
+        for_proxy: bool,
+    ) -> JSValue;
     safe fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: BunString);
     // Also declared in `bun_runtime::api::bun::x509`, which is above this crate.
     safe fn Bun__X509__toJSLegacyEncoding(
@@ -324,18 +328,14 @@ impl CppWebSocket {
     }
 
     /// Rooted through the JS wrapper, which is alive while the socket is.
-    fn check_server_identity(&self) -> Option<JSValue> {
-        let callback = WebSocket__checkServerIdentity(self);
+    fn check_server_identity(&self, peer: TlsPeer) -> Option<JSValue> {
+        let callback = WebSocket__checkServerIdentity(self, peer == TlsPeer::Proxy);
         (!callback.is_empty_or_undefined_or_null() && callback.is_callable()).then_some(callback)
     }
 
     fn name_check(&self, peer: TlsPeer) -> NameCheck {
         let enforce = self.reject_unauthorized(peer);
-        let callback = match peer {
-            TlsPeer::Target => self.check_server_identity(),
-            TlsPeer::Proxy => None,
-        };
-        match callback {
+        match self.check_server_identity(peer) {
             Some(callback) => NameCheck::Callback { callback, enforce },
             None if enforce => NameCheck::BuiltIn,
             None => NameCheck::Nobody,

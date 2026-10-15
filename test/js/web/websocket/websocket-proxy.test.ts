@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as harness from "harness";
 import { tls as tlsCerts } from "harness";
 import type { HttpsProxyAgent as HttpsProxyAgentType } from "https-proxy-agent";
-import { createHash } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net, { type AddressInfo } from "node:net";
@@ -15,8 +15,8 @@ import {
   clientEvents,
   connectRequest,
   createConnectProxy,
-  echoSession,
   echoed,
+  echoSession,
   failed,
   failingSession,
   openOrFailure,
@@ -1056,6 +1056,95 @@ describe("`proxy.tls`", () => {
     } finally {
       proxy.close();
     }
+  });
+
+  describe("checkServerIdentity", () => {
+    const owners = new Map([
+      [new X509Certificate(tlsCerts.cert).fingerprint256, "the proxy's certificate"],
+      [new X509Certificate(read("http/fixtures/openssl_localhost.crt")).fingerprint256, "the target's certificate"],
+    ]);
+    const proxyCall = "proxy.tls: 127.0.0.1, the proxy's certificate";
+    const targetCall = "tls: 127.0.0.1, the target's certificate";
+    /** TLS options, plus what their `checkServerIdentity` returns. Without a `verdict` there is no callback. */
+    type Checked = Bun.TLSOptions & { verdict?: "accept" | "reject" };
+    type Row = [
+      name: string,
+      proxyTls: Checked | undefined,
+      tls: Checked,
+      calls: string[],
+      outcome: "opens" | "rejects the proxy" | "rejects the target",
+    ];
+
+    test.each<Row>([
+      [
+        "each callback gets its own peer's certificate",
+        { ca: proxyCa, verdict: "accept" },
+        { ca: targetCa, verdict: "accept" },
+        [proxyCall, targetCall],
+        "opens",
+      ],
+      ["tls's isn't called for the proxy", { ca: proxyCa }, { ca: targetCa, verdict: "accept" }, [targetCall], "opens"],
+      [
+        "tls's isn't called for the proxy without proxy.tls",
+        undefined,
+        { ca: [proxyCa, targetCa], verdict: "accept" },
+        [targetCall],
+        "opens",
+      ],
+      [
+        "proxy.tls's can reject the proxy",
+        { ca: proxyCa, verdict: "reject" },
+        { ca: targetCa, verdict: "accept" },
+        [proxyCall],
+        "rejects the proxy",
+      ],
+      [
+        "tls's can reject the target",
+        { ca: proxyCa, verdict: "accept" },
+        { ca: targetCa, verdict: "reject" },
+        [proxyCall, targetCall],
+        "rejects the target",
+      ],
+      [
+        "proxy.tls.rejectUnauthorized: false drops its verdict",
+        { ca: proxyCa, rejectUnauthorized: false, verdict: "reject" },
+        { ca: targetCa },
+        [proxyCall],
+        "opens",
+      ],
+      ["it never sees a chain that didn't verify", { verdict: "accept" }, { ca: targetCa }, [], "rejects the proxy"],
+      [
+        "it replaces the check against proxy.tls.serverName",
+        { ca: proxyCa, serverName: "proxy.test", verdict: "accept" },
+        { ca: targetCa },
+        ["proxy.tls: proxy.test, the proxy's certificate"],
+        "opens",
+      ],
+    ])("%s", async (_, proxyTls, tlsOptions, expectedCalls, outcome) => {
+      using recorded = await startRecordingProxy({ tls: true });
+      const calls: string[] = [];
+      const withCallback = (option: string, { verdict, ...options }: Checked) => ({
+        ...options,
+        checkServerIdentity:
+          verdict &&
+          ((hostname: string, cert: tls.PeerCertificate) => {
+            calls.push(`${option}: ${hostname}, ${owners.get(cert.fingerprint256)}`);
+            return verdict === "reject" ? new Error("PIN-REJECT") : undefined;
+          }),
+      });
+      const port = secureTarget.port!;
+      const url = `wss://127.0.0.1:${port}`;
+      const ws = new WebSocket(url, {
+        proxy: { url: `https://127.0.0.1:${recorded.port}`, tls: proxyTls && withCallback("proxy.tls", proxyTls) },
+        tls: withCallback("tls", tlsOptions),
+      });
+      expect({ events: await echoSession(ws, "hello"), requests: recorded.requests, calls }).toEqual({
+        events: outcome === "opens" ? echoed("hello") : failed(url, "TLS handshake failed"),
+        // A rejected proxy never gets the CONNECT request.
+        requests: outcome === "rejects the proxy" ? [] : [connectRequest(port)],
+        calls: expectedCalls,
+      });
+    });
   });
 
   test.each(["http", "https"])("throws on invalid options like `tls` does, with an %s: proxy", scheme => {

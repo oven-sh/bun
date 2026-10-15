@@ -175,7 +175,7 @@ static Vector<String> convertProtocols(JSGlobalObject& lexicalGlobalObject, JSVa
 }
 
 // Parses `tls` or `proxy.tls`.
-static void convertTLS(Zig::GlobalObject* globalObject, JSObject* tls, WebSocketTLSOptions& result)
+static void convertTLS(Zig::GlobalObject* globalObject, JSObject* tls, WebSocketTLSOptions& result, ASCIILiteral checkServerIdentityName)
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -187,6 +187,17 @@ static void convertTLS(Zig::GlobalObject* globalObject, JSObject* tls, WebSocket
 
     result.sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tls)) };
     RETURN_IF_EXCEPTION(throwScope, );
+
+    // Throw on a non-callable value, same as fetch(). Ignoring it would silently skip the check the user asked for.
+    JSValue checkServerIdentityValue = Bun::getIfPropertyExistsPrototypePollutionMitigation(vm, globalObject, tls, Identifier::fromString(vm, "checkServerIdentity"_s));
+    RETURN_IF_EXCEPTION(throwScope, );
+    if (!checkServerIdentityValue.isUndefinedOrNull()) {
+        if (!checkServerIdentityValue.isCallable()) {
+            Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, checkServerIdentityName, "function"_s, checkServerIdentityValue);
+            return;
+        }
+        result.checkServerIdentity = checkServerIdentityValue;
+    }
 }
 
 static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object, WebSocketOptions& options)
@@ -221,19 +232,8 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
     JSValue tlsValue = get(object, Identifier::fromString(vm, "tls"_s));
     RETURN_IF_EXCEPTION(throwScope, );
     if (auto* tls = tlsValue.getObject()) {
-        convertTLS(globalObject, tls, options.tls);
+        convertTLS(globalObject, tls, options.tls, "tls.checkServerIdentity"_s);
         RETURN_IF_EXCEPTION(throwScope, );
-
-        // Throw on a non-callable value, same as fetch(). Ignoring it would silently skip the check the user asked for.
-        JSValue checkServerIdentityValue = get(tls, Identifier::fromString(vm, "checkServerIdentity"_s));
-        RETURN_IF_EXCEPTION(throwScope, );
-        if (!checkServerIdentityValue.isUndefinedOrNull()) {
-            if (!checkServerIdentityValue.isCallable()) {
-                Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "tls.checkServerIdentity"_s, "function"_s, checkServerIdentityValue);
-                return;
-            }
-            options.checkServerIdentity = checkServerIdentityValue;
-        }
     }
 
     // Mirrors npm ws's `const opts = { perMessageDeflate: true, ...options }; if (opts.perMessageDeflate)`:
@@ -277,14 +277,27 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
         JSValue proxyTLSValue = get(proxy, Identifier::fromString(vm, "tls"_s));
         RETURN_IF_EXCEPTION(throwScope, );
         if (auto* proxyTLS = proxyTLSValue.getObject()) {
-            convertTLS(globalObject, proxyTLS, options.proxyTLS.emplace());
+            convertTLS(globalObject, proxyTLS, options.proxyTLS.emplace(), "proxy.tls.checkServerIdentity"_s);
             RETURN_IF_EXCEPTION(throwScope, );
         }
     }
 }
 
+// The `checkServerIdentity` callbacks of `tls` and `proxy.tls`, copied out before create() takes the options.
+struct CheckServerIdentityCallbacks {
+    CheckServerIdentityCallbacks() = default;
+    explicit CheckServerIdentityCallbacks(const WebSocketOptions& options)
+        : target(options.tls.checkServerIdentity)
+        , proxy(options.proxyTLS ? options.proxyTLS->checkServerIdentity : JSValue())
+    {
+    }
+
+    JSValue target;
+    JSValue proxy;
+};
+
 // Creates the wrapper and stores the JS values it keeps alive for its WebSocket. See JSWebSocket::m_owner for `owner` and `handlers`.
-static JSC::EncodedJSValue wrapNewWebSocket(JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject& globalObject, ScriptExecutionContext& context, Structure* structure, ExceptionOr<Ref<WebSocket>>&& socket, JSValue checkServerIdentity = {}, JSObject* owner = nullptr, JSObject* handlers = nullptr)
+static JSC::EncodedJSValue wrapNewWebSocket(JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject& globalObject, ScriptExecutionContext& context, Structure* structure, ExceptionOr<Ref<WebSocket>>&& socket, CheckServerIdentityCallbacks checkServerIdentity = {}, JSObject* owner = nullptr, JSObject* handlers = nullptr)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -293,8 +306,10 @@ static JSC::EncodedJSValue wrapNewWebSocket(JSGlobalObject* lexicalGlobalObject,
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto* wrapper = uncheckedDowncast<JSWebSocket>(asObject(jsValue));
-    if (checkServerIdentity)
-        wrapper->wrapped().setCheckServerIdentity(vm, wrapper, checkServerIdentity);
+    if (checkServerIdentity.target)
+        wrapper->wrapped().setCheckServerIdentity(vm, wrapper, checkServerIdentity.target, false);
+    if (checkServerIdentity.proxy)
+        wrapper->wrapped().setCheckServerIdentity(vm, wrapper, checkServerIdentity.proxy, true);
     // Strip Bun.ModuleGraph frames. They'd keep the graph alive, and collecting the graph is what closes this socket.
     auto* contextGlobalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
     JSValue asyncContext = Bun::asyncContextWithoutModuleGraphs(contextGlobalObject, contextGlobalObject->m_asyncContextData.get()->getInternalField(0));
@@ -335,7 +350,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWebSocketDOMConstructo
 
     auto* structure = structureForNewTarget<WebSocket>(lexicalGlobalObject, callFrame);
     RETURN_IF_EXCEPTION(throwScope, {});
-    JSValue checkServerIdentity = options.checkServerIdentity;
+    CheckServerIdentityCallbacks checkServerIdentity { options };
     RELEASE_AND_RETURN(throwScope, wrapNewWebSocket(lexicalGlobalObject, *castedThis->globalObject(), *context, structure, WebSocket::create(*context, url, WTF::move(options)), checkServerIdentity));
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSWebSocketConstructorConstruct, JSWebSocketDOMConstructor::construct);
@@ -821,7 +836,8 @@ void JSWebSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSWebSocket>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    thisObject->wrapped().checkServerIdentity().visit(visitor);
+    thisObject->wrapped().checkServerIdentity(false).visit(visitor);
+    thisObject->wrapped().checkServerIdentity(true).visit(visitor);
     thisObject->wrapped().asyncContext().visit(visitor);
     visitor.append(thisObject->m_owner);
     visitor.append(thisObject->m_handlers);
@@ -1011,7 +1027,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreateWebSocketForWs, (JSGlobalObject * lexicalGlobal
             return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_CHAR, "Invalid character in header content [\"Sec-WebSocket-Extensions\"]"_s);
     }
 
-    JSValue checkServerIdentity = options.checkServerIdentity;
+    CheckServerIdentityCallbacks checkServerIdentity { options };
     RELEASE_AND_RETURN(throwScope, wrapNewWebSocket(lexicalGlobalObject, *globalObject, *context, getDOMStructure<JSWebSocket>(vm, *globalObject), WebSocket::create(*context, url, WTF::move(options)), checkServerIdentity, owner, handlers));
 }
 

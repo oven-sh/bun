@@ -103,6 +103,8 @@ private:
 struct WebSocketTLSOptions {
     WebSocketSSLConfigPtr sslConfig;
     std::optional<bool> rejectUnauthorized;
+    // create()'s caller stores this on the wrapper. Until then the JS options object keeps it alive.
+    JSC::JSValue checkServerIdentity;
 };
 
 // The parsed `options` argument of `new WebSocket(url, options)`. Filled in by JSWebSocket.cpp.
@@ -115,8 +117,6 @@ struct WebSocketOptions {
     // `proxy.tls`. If set, it alone applies to the connection to the proxy and `tls` alone to the target.
     // Otherwise `tls` applies to both.
     std::optional<WebSocketTLSOptions> proxyTLS;
-    // create()'s caller stores this on the wrapper. Until then the JS options object keeps it alive.
-    JSC::JSValue checkServerIdentity;
     // Value of the Sec-WebSocket-Extensions request header (the permessage-deflate offer). Null omits the header.
     String extensions { "permessage-deflate; client_max_window_bits"_s };
     WebSocketConnectedOptions connected { 128 * 1024 * 1024, true, false, false, false };
@@ -314,10 +314,14 @@ public:
 
     bool isProxyTLS() const { return m_connectionType == ConnectionType::ProxyTLS; }
 
-    const JSValueInWrappedObject& checkServerIdentity() const { return m_checkServerIdentity; }
-    void setCheckServerIdentity(JSC::VM& vm, const JSC::JSCell* wrapper, JSC::JSValue callback)
+    // Unlike the other `tls` options, `tls.checkServerIdentity` never applies to the proxy. Only `proxy.tls`'s does.
+    const JSValueInWrappedObject& checkServerIdentity(bool forProxy) const
     {
-        m_checkServerIdentity.set(vm, wrapper, callback);
+        return forProxy ? m_proxyCheckServerIdentity : m_checkServerIdentity;
+    }
+    void setCheckServerIdentity(JSC::VM& vm, const JSC::JSCell* wrapper, JSC::JSValue callback, bool forProxy)
+    {
+        (forProxy ? m_proxyCheckServerIdentity : m_checkServerIdentity).set(vm, wrapper, callback);
     }
 
     // The async context captured by the constructor. Trusted events are dispatched inside it.
@@ -432,8 +436,9 @@ private:
     // alive on their own through queueTaskKeepingObjectAlive().
     RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
 
-    // `tls.checkServerIdentity` and the async context, marked by JSWebSocket::visitChildren.
+    // `tls.checkServerIdentity`, `proxy.tls.checkServerIdentity` and the async context, marked by JSWebSocket::visitChildren.
     JSValueInWrappedObject m_checkServerIdentity;
+    JSValueInWrappedObject m_proxyCheckServerIdentity;
     JSValueInWrappedObject m_asyncContext;
 
     NativeCallbacks m_native;

@@ -584,9 +584,7 @@ describe("TLS options with an HttpsProxyAgent", () => {
     });
   });
 
-  // The native client always checks the proxy's certificate against the hostname in the proxy URL, so the agent itself
-  // connects when it was given one of these options.
-  test("an agent with `servername` or `checkServerIdentity` connects on its own", async () => {
+  test("an agent's `servername` and `checkServerIdentity` apply to the proxy", async () => {
     const checked: string[] = [];
     const pinned = Object.assign(new Error("pinned"), { code: "PINNED" });
     const withAgent = async (options: ConnectionOptions) => {
@@ -601,12 +599,12 @@ describe("TLS options with an HttpsProxyAgent", () => {
       rejects: await withAgent({ checkServerIdentity: () => pinned }),
       checked,
     }).toEqual({
-      servername: { events: echoed("hello"), transport: "stream" },
+      servername: { events: echoed("hello"), transport: "native" },
       otherName: {
         events: failed({ error: expect.any(String), code: "ERR_TLS_CERT_ALTNAME_INVALID" }),
         transport: null,
       },
-      accepts: { events: echoed("hello"), transport: "stream" },
+      accepts: { events: echoed("hello"), transport: "native" },
       rejects: { events: failed({ error: "pinned", code: "PINNED" }), transport: null },
       checked: ["127.0.0.1"],
     });

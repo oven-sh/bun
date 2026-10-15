@@ -1432,9 +1432,9 @@ extern "C" void* WebSocket__bunContext(WebCore::WebSocket* webSocket)
     return webSocket->scriptExecutionContext()->bunContext();
 }
 
-extern "C" JSC::EncodedJSValue WebSocket__checkServerIdentity(WebCore::WebSocket* webSocket)
+extern "C" JSC::EncodedJSValue WebSocket__checkServerIdentity(WebCore::WebSocket* webSocket, bool forProxy)
 {
-    return JSC::JSValue::encode(webSocket->checkServerIdentity().getValue(JSC::jsUndefined()));
+    return JSC::JSValue::encode(webSocket->checkServerIdentity(forProxy).getValue(JSC::jsUndefined()));
 }
 
 extern "C" void WebSocket__setProtocol(WebCore::WebSocket* webSocket, BunString protocol)

@@ -129,31 +129,31 @@ class Utf8Stream extends EventEmitter {
     // Bound methods instead of node's rest/spread arrows: the arrows allocate an
     // arguments array on every write()/flush(), and the per-write inner release
     // callback allocated a fresh closure per fs.write. Bind once here.
-    const boundRelease = this.#release.bind(this) as (err: any, n: any) => void;
+    const boundRelease = this.#release.$bind(this) as (err: any, n: any) => void;
     if (contentMode === kContentModeBuffer) {
       this.#writingBuf = kEmptyBuffer;
-      this.#write = this.#writeBuffer.bind(this);
-      this.#flush = this.#flushBuffer.bind(this);
-      this.#flushSync = this.#flushBufferSync.bind(this);
-      this.#actualWrite = this.#actualWriteBuffer.bind(this);
+      this.#write = this.#writeBuffer.$bind(this);
+      this.#flush = this.#flushBuffer.$bind(this);
+      this.#flushSync = this.#flushBufferSync.$bind(this);
+      this.#actualWrite = this.#actualWriteBuffer.$bind(this);
       this.#fsWriteSync = function fsWriteSyncBuffer(this: Utf8Stream) {
         return this.#fs.writeSync(this.#fd, this.#writingBuf);
-      }.bind(this);
+      }.$bind(this);
       this.#fsWrite = function fsWriteBuffer(this: Utf8Stream) {
         return this.#fs.write(this.#fd, this.#writingBuf, boundRelease);
-      }.bind(this);
+      }.$bind(this);
     } else {
       this.#writingBuf = "";
-      this.#write = this.#writeUtf8.bind(this);
-      this.#flush = this.#flushUtf8.bind(this);
-      this.#flushSync = this.#flushSyncUtf8.bind(this);
-      this.#actualWrite = this.#actualWriteUtf8.bind(this);
+      this.#write = this.#writeUtf8.$bind(this);
+      this.#flush = this.#flushUtf8.$bind(this);
+      this.#flushSync = this.#flushSyncUtf8.$bind(this);
+      this.#actualWrite = this.#actualWriteUtf8.$bind(this);
       this.#fsWriteSync = function fsWriteSyncUtf8(this: Utf8Stream) {
         return this.#fs.writeSync(this.#fd, this.#writingBuf, "utf8");
-      }.bind(this);
+      }.$bind(this);
       this.#fsWrite = function fsWriteUtf8(this: Utf8Stream) {
         return this.#fs.write(this.#fd, this.#writingBuf, "utf8", boundRelease);
-      }.bind(this);
+      }.$bind(this);
     }
 
     if (typeof fd === "number") {

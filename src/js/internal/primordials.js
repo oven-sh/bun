@@ -25,16 +25,16 @@ const createSafeIterator = (factory, next_) => {
 
 // Intrinsics do not have `call` as a valid identifier, so this cannot be `Function.prototype.call.bind`.
 const FunctionPrototypeCall = $getByIdDirect(Function.prototype, "call");
-const ObjectPrototypeHasOwnProperty = FunctionPrototypeCall.bind(Object.prototype.hasOwnProperty);
+const ObjectPrototypeHasOwnProperty = FunctionPrototypeCall.$bind(Object.prototype.hasOwnProperty);
 
 function getGetter(cls, getter) {
   // TODO: __lookupGetter__ is deprecated, but Object.getOwnPropertyDescriptor doesn't work on built-ins like Typed Arrays.
-  return FunctionPrototypeCall.bind(cls.prototype.__lookupGetter__(getter));
+  return FunctionPrototypeCall.$bind(cls.prototype.__lookupGetter__(getter));
 }
 
 function uncurryThis(func) {
   // Intrinsics do not have `call` as a valid identifier, so this cannot be `Function.prototype.call.bind`.
-  return FunctionPrototypeCall.bind(func);
+  return FunctionPrototypeCall.$bind(func);
 }
 
 const copyProps = (src, dest) => {
@@ -95,7 +95,7 @@ const ArrayIteratorPrototypeNext = uncurryThis(Array.prototype[Symbol.iterator](
 const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext);
 
 const PromisePrototypeThen = $Promise.prototype.$then;
-const PromiseResolve = Promise.$resolve.bind(Promise);
+const PromiseResolve = Promise.$resolve.$bind(Promise);
 // Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal`
 // is null for the void variant (no result bookkeeping, resolves with nothing).
 const safePromiseAllCollect = (promises, mapFn, returnVal) =>

@@ -9,7 +9,6 @@ const {
   ArrayPrototypeIncludes,
   ArrayPrototypeMap,
   Boolean,
-  FunctionPrototypeBind,
   MathMin,
   RegExpPrototypeExec,
   SafeSet,
@@ -467,7 +466,7 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
   // Refresh prints the whole screen again and the preview will be removed
   // during that procedure. Print the preview again. This also makes sure
   // the preview is always correct after resizing the terminal window.
-  const originalRefresh = FunctionPrototypeBind(repl._refreshLine, repl);
+  const originalRefresh = repl._refreshLine.$bind(repl);
   repl._refreshLine = () => {
     inputPreview = null;
     originalRefresh();
@@ -477,7 +476,7 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
   let insertCompletionPreview = true;
   // Insert the longest common suffix of the current input in case the user
   // moves to the right while already being at the current input end.
-  const originalMoveCursor = FunctionPrototypeBind(repl._moveCursor, repl);
+  const originalMoveCursor = repl._moveCursor.$bind(repl);
   repl._moveCursor = dx => {
     const currentCursor = repl.cursor;
     originalMoveCursor(dx);
@@ -489,7 +488,7 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
 
   // This is the only function that interferes with the completion insertion.
   // Monkey patch it to prevent inserting the completion when it shouldn't be.
-  const originalClearLine = FunctionPrototypeBind(repl.clearLine, repl);
+  const originalClearLine = repl.clearLine.$bind(repl);
   repl.clearLine = () => {
     insertCompletionPreview = false;
     originalClearLine();

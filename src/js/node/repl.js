@@ -57,7 +57,6 @@ const {
   ArrayPrototypeSort,
   Boolean,
   Error: MainContextError,
-  FunctionPrototypeBind,
   FunctionPrototypeCall,
   JSONStringify,
   MathMaxApply,
@@ -926,7 +925,7 @@ class REPLServer extends Interface {
     const { clearPreview, showPreview } = setupPreview(this, kContextId, kBufferedCommandSymbol, preview);
 
     // Wrap readline tty to enable editor mode and pausing.
-    const ttyWrite = FunctionPrototypeBind(self._ttyWrite, self);
+    const ttyWrite = self._ttyWrite.$bind(self);
     self._ttyWrite = (d, key) => {
       key ||= {};
       if (paused && !(self.breakEvalOnSigint && key.ctrl && key.name === "c")) {

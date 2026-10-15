@@ -85,7 +85,6 @@ const { promisify } = require("internal/promisify");
 const ObjectAssign = Object.assign;
 const ArrayIsArray = Array.isArray;
 const ObjectKeys = Object.keys;
-const FunctionPrototypeBind = Function.prototype.bind;
 const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypePush = Array.prototype.push;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
@@ -668,7 +667,7 @@ class Http2ServerRequest extends Readable {
     stream.on("error", onStreamError);
     stream.on("aborted", onStreamAbortedRequest);
     stream.on("close", onStreamCloseRequest);
-    stream.on("timeout", onStreamTimeout.bind(this));
+    stream.on("timeout", onStreamTimeout.$bind(this));
     this.on("pause", onRequestPause);
     this.on("resume", onRequestResume);
   }
@@ -793,7 +792,7 @@ class Http2ServerResponse extends Stream {
     stream.on("aborted", onStreamAbortedResponse);
     stream.on("close", onStreamCloseResponse);
     stream.on("wantTrailers", onStreamTrailersReady);
-    stream.on("timeout", onStreamTimeout.bind(this));
+    stream.on("timeout", onStreamTimeout.$bind(this));
   }
 
   // User land modules such as finalhandler just check truthiness of this
@@ -1365,7 +1364,7 @@ const proxySocketHandler = {
       case "setTimeout":
       case "ref":
       case "unref":
-        return FunctionPrototypeBind.$call(session[prop], session);
+        return session[prop].$bind(session);
       case "destroy":
       case "emit":
       case "end":
@@ -1390,7 +1389,7 @@ const proxySocketHandler = {
           throw $ERR_HTTP2_SOCKET_UNBOUND();
         }
         const value = socket[prop];
-        return typeof value === "function" ? FunctionPrototypeBind.$call(value, socket) : value;
+        return typeof value === "function" ? value.$bind(socket) : value;
       }
     }
   },
@@ -2247,7 +2246,7 @@ function streamOnResume(this: Http2Stream) {
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
-  setImmediate(rstNextTick.bind(session, this.id, code));
+  setImmediate(rstNextTick.$bind(session, this.id, code));
 }
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
@@ -2264,7 +2263,7 @@ function setupRequestEndAndSignal(req: Http2Stream, options: any, signal: AbortS
   if (options?.endStream) req.end();
   if (signal) {
     addAbortListener ??= require("internal/abort_listener").addAbortListener;
-    const disposable = addAbortListener(signal, abortRequestStream.bind(req, signal));
+    const disposable = addAbortListener(signal, abortRequestStream.$bind(req, signal));
     req.once("close", disposable[Symbol.dispose]);
   }
 }
@@ -2589,18 +2588,18 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       if (this.pending) {
         // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
-        this.once("ready", sendRstOnReady.bind(this, session, code));
+        this.once("ready", sendRstOnReady.$bind(this, session, code));
       } else if (this.writableFinished || code) {
-        setImmediate(rstNextTick.bind(session, this.#id, code));
+        setImmediate(rstNextTick.$bind(session, this.#id, code));
       } else {
-        this.once("finish", rstNextTick.bind(session, this.#id, code));
+        this.once("finish", rstNextTick.$bind(session, this.#id, code));
       }
       // node destroys the stream once both halves have finished; without this a stream closed
       // while idle never emits 'close'.
       if (this.writableFinished) {
         scheduleDestroyIfNotDestroyed(this);
       } else {
-        this.once("finish", scheduleDestroyIfNotDestroyed.bind(null, this));
+        this.once("finish", scheduleDestroyIfNotDestroyed.$bind(null, this));
       }
     }
   }
@@ -2684,7 +2683,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
-      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+      setImmediate(rstNextTick.$bind(session, this.#id, rstCode));
     }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error
@@ -3139,7 +3138,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   // stream itself goes away (peer reset, session destroy), stop reading the file. Like node's
   // onFileUnpipe, only an fd the stream opened itself (respondWithFile) is closed here; an fd
   // handed to respondWithFD stays the caller's to close.
-  fileStream.on("error", onFileStreamError.bind(this));
+  fileStream.on("error", onFileStreamError.$bind(this));
   this.once("close", () => {
     fileStream.unpipe(sink);
     if (ownsFd) fileStream.destroy();
@@ -3179,7 +3178,7 @@ function afterOpen(options, headers, err, fd) {
     return;
   }
 
-  fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
+  fs.fstat(fd, doSendFileFD.$bind(this, options, fd, headers));
 }
 
 // Node's Http2Stream[kMaybeDestroy] server branch (lib/internal/http2/core.js): once the
@@ -3405,7 +3404,7 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
     this[kOwnsFd] = true;
-    fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
+    fs.open(path, "r", afterOpen.$bind(this, options || {}, headers));
   }
   respondWithFD(fd, headers?: HeadersObject | null, options?) {
     if (typeof fd !== "number") {
@@ -3473,9 +3472,9 @@ class ServerHttp2Stream extends Http2Stream {
       closeWritableForFileResponse(this);
     }
     if (fd instanceof FileHandle) {
-      fs.fstat(fd.fd, doSendFileFD.bind(this, options, fd, headers));
+      fs.fstat(fd.fd, doSendFileFD.$bind(this, options, fd, headers));
     } else {
-      fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
+      fs.fstat(fd, doSendFileFD.$bind(this, options, fd, headers));
     }
   }
   additionalHeaders(headers?: HeadersObject | null) {
@@ -4526,12 +4525,12 @@ class ServerHttp2Session extends Http2Session {
       type: 0, // server type
       handlers: ServerHttp2Session.#Handlers,
     });
-    socket.on("close", this.#onClose.bind(this));
-    socket.on("error", this.#onError.bind(this));
-    socket.on("timeout", this.#onTimeout.bind(this));
+    socket.on("close", this.#onClose.$bind(this));
+    socket.on("error", this.#onError.$bind(this));
+    socket.on("timeout", this.#onTimeout.$bind(this));
     initHttp2SessionPerf(this, "server");
-    socket.on("data", this.#onRead.bind(this));
-    socket.on("drain", this.#onDrain.bind(this));
+    socket.on("data", this.#onRead.$bind(this));
+    socket.on("drain", this.#onDrain.$bind(this));
 
     process.nextTick(emitConnectNT, this, socket);
   }
@@ -4812,9 +4811,7 @@ class ServerHttp2Session extends Http2Session {
         // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
         // precedence over the destroy code when streams are torn down.
         const streamRstCode = this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR;
-        parser.forEachStream(
-          FunctionPrototypeBind.$call(destroyStreamForSessionDestroy, undefined, error, streamRstCode),
-        );
+        parser.forEachStream(destroyStreamForSessionDestroy.$bind(undefined, error, streamRstCode));
         parser.emitErrorToAllStreams(streamRstCode);
         parser.detach();
         this.#parser = null;
@@ -5323,7 +5320,7 @@ class ClientHttp2Session extends Http2Session {
       // node: streams the peer did not process (id above the GOAWAY's lastStreamId) are
       // destroyed with ERR_HTTP2_GOAWAY_SESSION - clients (grpc) rely on that error class to
       // retry on a fresh connection instead of reporting a cancellation.
-      self.#parser?.forEachStream(rejectStreamAboveGoawayLastId.bind(null, lastStreamId));
+      self.#parser?.forEachStream(rejectStreamAboveGoawayLastId.$bind(null, lastStreamId));
       // Requests still queued behind the concurrency limit never got a stream id; they can never
       // be submitted on this session, so reject them the same way.
       const pendingRequests = self.#pendingRequests;
@@ -5708,7 +5705,7 @@ class ClientHttp2Session extends Http2Session {
       // The parser's construction re-enters JS and can drain the tick queue, so a
       // connect that fires from that drain arrives before the constructor finished.
       if (this.#parser === undefined) {
-        process.nextTick(onConnect.bind(this));
+        process.nextTick(onConnect.$bind(this));
         return;
       }
       try {
@@ -5731,7 +5728,7 @@ class ClientHttp2Session extends Http2Session {
 
       if (socket.connecting || socket.secureConnecting) {
         const connectEvent = socket instanceof tls.TLSSocket ? "secureConnect" : "connect";
-        socket.once(connectEvent, onConnect.bind(this));
+        socket.once(connectEvent, onConnect.$bind(this));
       } else {
         connectOnNextTick = true;
       }
@@ -5752,7 +5749,7 @@ class ClientHttp2Session extends Http2Session {
               port: String(port),
               ALPNProtocols: ["h2"],
             },
-        onConnect.bind(this),
+        onConnect.$bind(this),
       );
       this[bunHTTP2Socket] = socket;
     }
@@ -5771,17 +5768,17 @@ class ClientHttp2Session extends Http2Session {
       settings: nativeSettings,
       handlers: ClientHttp2Session.#Handlers,
     });
-    socket.on("data", this.#onRead.bind(this));
-    socket.on("drain", this.#onDrain.bind(this));
-    socket.on("close", this.#onClose.bind(this));
-    socket.on("error", this.#onError.bind(this));
-    socket.on("timeout", this.#onTimeout.bind(this));
+    socket.on("data", this.#onRead.$bind(this));
+    socket.on("drain", this.#onDrain.$bind(this));
+    socket.on("close", this.#onClose.$bind(this));
+    socket.on("error", this.#onError.$bind(this));
+    socket.on("timeout", this.#onTimeout.$bind(this));
     initHttp2SessionPerf(this, "client");
     if (connectOnNextTick) {
       // Queued only now that the session is fully built: the parser's construction
       // re-enters JS, which can drain the tick queue, and an earlier-queued onConnect
       // would then run against a session whose #parser is not assigned yet.
-      process.nextTick(onConnect.bind(this));
+      process.nextTick(onConnect.$bind(this));
     }
   }
 
@@ -6405,7 +6402,7 @@ function setupCompat(ev) {
     const options = this[bunSocketServerOptions];
     const ServerRequest = options?.Http2ServerRequest || Http2ServerRequest;
     const ServerResponse = options?.Http2ServerResponse || Http2ServerResponse;
-    this.on("stream", FunctionPrototypeBind.$call(onServerStream, this, ServerRequest, ServerResponse));
+    this.on("stream", onServerStream.$bind(this, ServerRequest, ServerResponse));
   }
 }
 

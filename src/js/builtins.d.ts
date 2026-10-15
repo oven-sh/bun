@@ -142,8 +142,6 @@ declare function $resolvePromise<T>(promise: Promise<T>, value: NoInfer<T>): voi
 declare function $rejectPromise(promise: Promise<unknown>, value: unknown): void;
 /** A new pending promise. `$resolvePromise` / `$rejectPromise` require it to still be pending. */
 declare function $newPromise<T = unknown>(): Promise<T>;
-/** The `Function.prototype.bind` a script cannot replace: `$bindFunction.$call(fn, thisArg, ...args)`. A replaced `bind` is handed `fn`. */
-declare const $bindFunction: Function["bind"];
 /** Like the resolving functions of a Promise executor: calls after the first one are ignored. */
 declare function $resolvePromiseWithFirstResolvingFunctionCallCheck<T>(promise: Promise<T>, value: NoInfer<T>): void;
 declare function $rejectPromiseWithFirstResolvingFunctionCallCheck(promise: Promise<unknown>, value: unknown): void;

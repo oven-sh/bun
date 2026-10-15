@@ -158,7 +158,7 @@ class FSWatcher extends EventEmitter {
     this.#ignoreMatcher = createIgnoreMatcher(options?.ignore);
     this.#listener = listener;
     try {
-      this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
+      this.#watcher = fs.watch(path, options || {}, this.#onEvent.$bind(this));
     } catch (e: any) {
       e.path = path;
       e.filename = path;

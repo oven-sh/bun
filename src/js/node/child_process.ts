@@ -1493,7 +1493,7 @@ class ChildProcess extends EventEmitter {
           );
         },
         lazy: true,
-        ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
+        ipc: has_ipc ? this.#emitIpcMessage.$bind(this) : undefined,
         onDisconnect: has_ipc ? ok => this.#onDisconnect(ok) : undefined,
         serialization,
         argv0: spawnargs[0],

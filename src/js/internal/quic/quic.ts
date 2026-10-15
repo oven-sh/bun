@@ -55,7 +55,6 @@ const NumberIsInteger = Number.isInteger;
 const NumberIsNaN = Number.isNaN;
 const ArrayPrototypePush = uncurryThis(Array.prototype.push);
 const ErrorCaptureStackTrace = Error.captureStackTrace;
-const FunctionPrototypeBind = uncurryThis(Function.prototype.bind);
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectKeys = Object.keys;
 const PromisePrototypeThen = uncurryThis(Promise.prototype.then);
@@ -1811,7 +1810,7 @@ class QuicStream {
       inner.onerror = undefined;
     } else {
       validateFunction(fn, "onerror");
-      inner.onerror = FunctionPrototypeBind(fn, this);
+      inner.onerror = fn.$bind(this);
       inner.pendingClose ??= PromiseWithResolvers();
       markPromiseAsHandled(inner.pendingClose.promise);
     }
@@ -1831,7 +1830,7 @@ class QuicStream {
       inner.state.wantsBlock = false;
     } else {
       validateFunction(fn, "onblocked");
-      inner.onblocked = FunctionPrototypeBind(fn, this);
+      inner.onblocked = fn.$bind(this);
       inner.state.wantsBlock = true;
     }
   }
@@ -1850,7 +1849,7 @@ class QuicStream {
       inner.state.wantsReset = false;
     } else {
       validateFunction(fn, "onreset");
-      inner.onreset = FunctionPrototypeBind(fn, this);
+      inner.onreset = fn.$bind(this);
       inner.state.wantsReset = true;
     }
   }
@@ -1870,7 +1869,7 @@ class QuicStream {
     } else {
       validateFunction(fn, "onheaders");
       assertHeadersSupported(inner.session);
-      inner.onheaders = FunctionPrototypeBind(fn, this);
+      inner.onheaders = fn.$bind(this);
       inner.state.wantsHeaders = true;
     }
   }
@@ -1889,7 +1888,7 @@ class QuicStream {
     } else {
       validateFunction(fn, "oninfo");
       assertHeadersSupported(inner.session);
-      inner.oninfo = FunctionPrototypeBind(fn, this);
+      inner.oninfo = fn.$bind(this);
     }
   }
 
@@ -1907,7 +1906,7 @@ class QuicStream {
     } else {
       validateFunction(fn, "ontrailers");
       assertHeadersSupported(inner.session);
-      inner.ontrailers = FunctionPrototypeBind(fn, this);
+      inner.ontrailers = fn.$bind(this);
     }
   }
 
@@ -1926,7 +1925,7 @@ class QuicStream {
     } else {
       validateFunction(fn, "onwanttrailers");
       assertHeadersSupported(inner.session);
-      inner.onwanttrailers = FunctionPrototypeBind(fn, this);
+      inner.onwanttrailers = fn.$bind(this);
       inner.state.wantsTrailers = true;
     }
   }
@@ -2886,7 +2885,7 @@ class QuicSession {
       inner.onerror = undefined;
     } else {
       validateFunction(fn, "onerror");
-      inner.onerror = FunctionPrototypeBind(fn, this);
+      inner.onerror = fn.$bind(this);
       markPromiseAsHandled(inner.pendingClose.promise);
       markPromiseAsHandled(inner.pendingOpen.promise);
       for (const stream of inner.streams) {
@@ -2908,7 +2907,7 @@ class QuicSession {
       inner.onstream = undefined;
     } else {
       validateFunction(fn, "onstream");
-      inner.onstream = FunctionPrototypeBind(fn, this);
+      inner.onstream = fn.$bind(this);
     }
   }
 
@@ -2926,7 +2925,7 @@ class QuicSession {
       inner.state.hasDatagramListener = false;
     } else {
       validateFunction(fn, "ondatagram");
-      inner.ondatagram = FunctionPrototypeBind(fn, this);
+      inner.ondatagram = fn.$bind(this);
       inner.state.hasDatagramListener = true;
     }
   }
@@ -2949,7 +2948,7 @@ class QuicSession {
       inner.state.hasDatagramStatusListener = false;
     } else {
       validateFunction(fn, "ondatagramstatus");
-      inner.ondatagramstatus = FunctionPrototypeBind(fn, this);
+      inner.ondatagramstatus = fn.$bind(this);
       inner.state.hasDatagramStatusListener = true;
     }
   }
@@ -2968,7 +2967,7 @@ class QuicSession {
       inner.state.hasPathValidationListener = false;
     } else {
       validateFunction(fn, "onpathvalidation");
-      inner.onpathvalidation = FunctionPrototypeBind(fn, this);
+      inner.onpathvalidation = fn.$bind(this);
       inner.state.hasPathValidationListener = true;
     }
   }
@@ -2985,7 +2984,7 @@ class QuicSession {
       inner.onkeylog = undefined;
     } else {
       validateFunction(fn, "onkeylog");
-      inner.onkeylog = FunctionPrototypeBind(fn, this);
+      inner.onkeylog = fn.$bind(this);
     }
   }
 
@@ -3001,7 +3000,7 @@ class QuicSession {
       inner.onqlog = undefined;
     } else {
       validateFunction(fn, "onqlog");
-      inner.onqlog = FunctionPrototypeBind(fn, this);
+      inner.onqlog = fn.$bind(this);
       if (inner.pendingQlog !== undefined) {
         const pending = inner.pendingQlog;
         inner.pendingQlog = undefined;
@@ -3026,7 +3025,7 @@ class QuicSession {
       inner.state.hasSessionTicketListener = false;
     } else {
       validateFunction(fn, "onsessionticket");
-      inner.onsessionticket = FunctionPrototypeBind(fn, this);
+      inner.onsessionticket = fn.$bind(this);
       inner.state.hasSessionTicketListener = true;
     }
   }
@@ -3044,7 +3043,7 @@ class QuicSession {
       inner.onversionnegotiation = undefined;
     } else {
       validateFunction(fn, "onversionnegotiation");
-      inner.onversionnegotiation = FunctionPrototypeBind(fn, this);
+      inner.onversionnegotiation = fn.$bind(this);
     }
   }
 
@@ -3061,7 +3060,7 @@ class QuicSession {
       inner.onhandshake = undefined;
     } else {
       validateFunction(fn, "onhandshake");
-      inner.onhandshake = FunctionPrototypeBind(fn, this);
+      inner.onhandshake = fn.$bind(this);
     }
   }
 
@@ -3079,7 +3078,7 @@ class QuicSession {
       inner.state.hasNewTokenListener = false;
     } else {
       validateFunction(fn, "onnewtoken");
-      inner.onnewtoken = FunctionPrototypeBind(fn, this);
+      inner.onnewtoken = fn.$bind(this);
       inner.state.hasNewTokenListener = true;
     }
   }
@@ -3097,7 +3096,7 @@ class QuicSession {
       inner.onearlyrejected = undefined;
     } else {
       validateFunction(fn, "onearlyrejected");
-      inner.onearlyrejected = FunctionPrototypeBind(fn, this);
+      inner.onearlyrejected = fn.$bind(this);
     }
   }
 
@@ -3115,7 +3114,7 @@ class QuicSession {
       inner.state.hasOriginListener = false;
     } else {
       validateFunction(fn, "onorigin");
-      inner.onorigin = FunctionPrototypeBind(fn, this);
+      inner.onorigin = fn.$bind(this);
       inner.state.hasOriginListener = true;
     }
   }
@@ -3133,7 +3132,7 @@ class QuicSession {
       inner.ongoaway = undefined;
     } else {
       validateFunction(fn, "ongoaway");
-      inner.ongoaway = FunctionPrototypeBind(fn, this);
+      inner.ongoaway = fn.$bind(this);
     }
   }
 
@@ -4565,7 +4564,7 @@ class QuicEndpoint {
     }
     validateObject(options, "options");
     validateFunction(onsession, "onsession");
-    this.#inner.onsession = FunctionPrototypeBind(onsession, this);
+    this.#inner.onsession = onsession.$bind(this);
 
     const {
       onerror,

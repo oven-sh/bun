@@ -449,7 +449,7 @@ class Glob {
     }
     return Array.from(
       this.#results,
-      this.#withFileTypes ? statForFileTypes.bind(null, this.#cache, this.#root) : undefined,
+      this.#withFileTypes ? statForFileTypes.$bind(null, this.#cache, this.#root) : undefined,
     );
   }
   #isDirectorySync(path, stat, pattern) {

@@ -201,7 +201,7 @@ function dlopen(path, options) {
 
   // Bind it because it's a breaking change to not do so
   // Previously, it didn't need to be bound
-  result.close = result.close.bind(result);
+  result.close = result.close.$bind(result);
 
   return result;
 }
@@ -249,7 +249,7 @@ function cc(options) {
 
   // Bind it because it's a breaking change to not do so
   // Previously, it didn't need to be bound
-  result.close = result.close.bind(result);
+  result.close = result.close.$bind(result);
 
   return result;
 }

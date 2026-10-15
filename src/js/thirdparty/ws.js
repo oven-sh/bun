@@ -989,12 +989,12 @@ class BunWebSocketMocked extends EventEmitter {
     this.#protocol = protocol;
     this.#extensions = extensions;
 
-    const message = this.#message.bind(this);
-    const open = this.#open.bind(this);
-    const close = this.#close.bind(this);
-    const drain = this.#drain.bind(this);
-    const ping = this.#ping.bind(this);
-    const pong = this.#pong.bind(this);
+    const message = this.#message.$bind(this);
+    const open = this.#open.$bind(this);
+    const close = this.#close.$bind(this);
+    const drain = this.#drain.$bind(this);
+    const ping = this.#ping.$bind(this);
+    const pong = this.#pong.$bind(this);
 
     this[kBunInternals] = {
       message, // a message is received

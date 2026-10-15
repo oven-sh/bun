@@ -454,10 +454,10 @@ var access = function access(path, mode, callback?) {
 
     fs.lutimesCb(callback, path, atime, mtime);
   },
-  accessSync = fs.accessSync.bind(fs),
-  appendFileSync = fs.appendFileSync.bind(fs),
-  closeSync = fs.closeSync.bind(fs),
-  copyFileSync = fs.copyFileSync.bind(fs),
+  accessSync = fs.accessSync.$bind(fs),
+  appendFileSync = fs.appendFileSync.$bind(fs),
+  closeSync = fs.closeSync.$bind(fs),
+  copyFileSync = fs.copyFileSync.$bind(fs),
   // This behavior - never throwing -- matches Node.js behavior.
   // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
   existsSync = function existsSync(_path: string) {
@@ -467,20 +467,20 @@ var access = function access(path, mode, callback?) {
       return false;
     }
   },
-  chownSync = fs.chownSync.bind(fs),
-  chmodSync = fs.chmodSync.bind(fs),
-  fchmodSync = fs.fchmodSync.bind(fs),
-  fchownSync = fs.fchownSync.bind(fs),
-  fstatSync = fs.fstatSync.bind(fs),
-  fsyncSync = fs.fsyncSync.bind(fs),
-  ftruncateSync = fs.ftruncateSync.bind(fs),
-  futimesSync = fs.futimesSync.bind(fs),
-  lchmodSync = constants.O_SYMLINK !== undefined ? fs.lchmodSync.bind(fs) : undefined, // lchmod is only available on macOS
-  lchownSync = fs.lchownSync.bind(fs),
-  linkSync = fs.linkSync.bind(fs),
-  lstatSync = fs.lstatSync.bind(fs),
-  mkdirSync = fs.mkdirSync.bind(fs),
-  mkdtempSync = fs.mkdtempSync.bind(fs),
+  chownSync = fs.chownSync.$bind(fs),
+  chmodSync = fs.chmodSync.$bind(fs),
+  fchmodSync = fs.fchmodSync.$bind(fs),
+  fchownSync = fs.fchownSync.$bind(fs),
+  fstatSync = fs.fstatSync.$bind(fs),
+  fsyncSync = fs.fsyncSync.$bind(fs),
+  ftruncateSync = fs.ftruncateSync.$bind(fs),
+  futimesSync = fs.futimesSync.$bind(fs),
+  lchmodSync = constants.O_SYMLINK !== undefined ? fs.lchmodSync.$bind(fs) : undefined, // lchmod is only available on macOS
+  lchownSync = fs.lchownSync.$bind(fs),
+  linkSync = fs.linkSync.$bind(fs),
+  lstatSync = fs.lstatSync.$bind(fs),
+  mkdirSync = fs.mkdirSync.$bind(fs),
+  mkdtempSync = fs.mkdtempSync.$bind(fs),
   mkdtempDisposableSync = function mkdtempDisposableSync(prefix, options) {
     const path = mkdtempSync(prefix, options);
     // Stash the full path in case of process.chdir()
@@ -491,7 +491,7 @@ var access = function access(path, mode, callback?) {
     }
     return { path, remove, [Symbol.dispose]: remove };
   },
-  openSync = fs.openSync.bind(fs),
+  openSync = fs.openSync.$bind(fs),
   readSync = function readSync(fd, buffer, offsetOrOptions?, length?, position?) {
     let offset = offsetOrOptions;
     if (arguments.length <= 3 || typeof offsetOrOptions === "object") {
@@ -535,19 +535,19 @@ var access = function access(path, mode, callback?) {
       throw err;
     }
   },
-  readdirSync = fs.readdirSync.bind(fs),
-  readFileSync = fs.readFileSync.bind(fs),
-  fdatasyncSync = fs.fdatasyncSync.bind(fs),
-  writeFileSync = fs.writeFileSync.bind(fs),
-  readlinkSync = fs.readlinkSync.bind(fs),
-  renameSync = fs.renameSync.bind(fs),
-  statSync = fs.statSync.bind(fs),
-  statfsSync = fs.statfsSync.bind(fs),
-  symlinkSync = fs.symlinkSync.bind(fs),
-  truncateSync = fs.truncateSync.bind(fs),
-  unlinkSync = fs.unlinkSync.bind(fs),
-  utimesSync = fs.utimesSync.bind(fs),
-  lutimesSync = fs.lutimesSync.bind(fs),
+  readdirSync = fs.readdirSync.$bind(fs),
+  readFileSync = fs.readFileSync.$bind(fs),
+  fdatasyncSync = fs.fdatasyncSync.$bind(fs),
+  writeFileSync = fs.writeFileSync.$bind(fs),
+  readlinkSync = fs.readlinkSync.$bind(fs),
+  renameSync = fs.renameSync.$bind(fs),
+  statSync = fs.statSync.$bind(fs),
+  statfsSync = fs.statfsSync.$bind(fs),
+  symlinkSync = fs.symlinkSync.$bind(fs),
+  truncateSync = fs.truncateSync.$bind(fs),
+  unlinkSync = fs.unlinkSync.$bind(fs),
+  utimesSync = fs.utimesSync.$bind(fs),
+  lutimesSync = fs.lutimesSync.$bind(fs),
   rmSync = function rmSync(path, options) {
     if (typeof options === "object" && options !== null) {
       // Node merges the caller's options over the defaults with a spread, which
@@ -595,7 +595,7 @@ var access = function access(path, mode, callback?) {
       position,
     );
   },
-  writevSync = fs.writevSync.bind(fs),
+  writevSync = fs.writevSync.$bind(fs),
   readv = function readv(fd, buffers, position, callback?) {
     if (typeof position === "function") {
       callback = position;
@@ -606,7 +606,7 @@ var access = function access(path, mode, callback?) {
 
     fs.readvCb((err, bytesRead) => (err ? callback(err) : callback(null, bytesRead, buffers)), fd, buffers, position);
   },
-  readvSync = fs.readvSync.bind(fs),
+  readvSync = fs.readvSync.$bind(fs),
   Dirent = fs.Dirent,
   Stats = fs.Stats,
   watch = function watch(path, options, listener) {
@@ -629,8 +629,8 @@ var access = function access(path, mode, callback?) {
     // surfaces as an uncaught exception instead of rejecting this internal
     // promise chain (same convention as glob() below).
     fs.stat(path).then(
-      onOpendirStatFulfilled.bind(null, callback, path, result),
-      onOpendirStatRejected.bind(null, callback, path),
+      onOpendirStatFulfilled.$bind(null, callback, path, result),
+      onOpendirStatRejected.$bind(null, callback, path),
     );
   };
 
@@ -692,7 +692,7 @@ function encodeRealpathResult(result, encoding) {
 let assertEncodingForWindows: any = undefined;
 const realpathSync: typeof import("node:fs").realpathSync =
   process.platform !== "win32"
-    ? (fs.realpathSync.bind(fs) as any)
+    ? (fs.realpathSync.$bind(fs) as any)
     : function realpathSync(p, options) {
         let encoding;
         if (options) {
@@ -958,7 +958,7 @@ realpath.native = function realpath(p, options, callback?) {
 
   fs.realpathNativeCb(callback, p, options);
 };
-realpathSync.native = fs.realpathNativeSync.bind(fs);
+realpathSync.native = fs.realpathNativeSync.$bind(fs);
 
 // attempt to use the native code version if possible
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
@@ -1131,7 +1131,7 @@ class Dir {
     }
     this.#pendingCount++;
     this.#pendingOp = p;
-    const done = this.#opDone.bind(this);
+    const done = this.#opDone.$bind(this);
     p.then(done, done);
     return p;
   }
@@ -1157,7 +1157,7 @@ class Dir {
       return;
     }
 
-    return this.#enqueue(this.#readOp.bind(this));
+    return this.#enqueue(this.#readOp.$bind(this));
   }
 
   #opDone() {
@@ -1174,7 +1174,7 @@ class Dir {
         encoding: this.#options?.encoding,
         recursive: this.#options?.recursive,
       })
-      .then(this.#onReaddir.bind(this));
+      .then(this.#onReaddir.$bind(this));
   }
 
   #onReaddir(entries) {
@@ -1197,7 +1197,7 @@ class Dir {
       settleCallbackWithNull(this.close(), cb);
       return;
     }
-    return this.#enqueue(this.#closeOp.bind(this));
+    return this.#enqueue(this.#closeOp.$bind(this));
   }
 
   closeSync() {

@@ -362,7 +362,7 @@ IncomingMessage.prototype._read = function _read(_n) {
   }
 
   if (!handle.ondata) {
-    handle.ondata = onDataIncomingMessage.bind(this);
+    handle.ondata = onDataIncomingMessage.$bind(this);
   }
 };
 
@@ -407,7 +407,7 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
   if (socket && !socket.destroyed && this.aborted) {
     socket.destroy(err);
     const state = { cleanup: undefined as undefined | (() => void) };
-    state.cleanup = finished(socket, onFinishedAfterDestroy.bind(this, state, err, cb));
+    state.cleanup = finished(socket, onFinishedAfterDestroy.$bind(this, state, err, cb));
   } else {
     process.nextTick(onError, this, err, cb);
   }

@@ -238,11 +238,11 @@ class MockTimers {
 
   #executionQueue = new PriorityQueue(compareTimersLists, setPosition);
 
-  #setTimeout = this.#createTimer.bind(this, false);
-  #clearTimeout = this.#clearTimer.bind(this);
-  #setInterval = this.#createTimer.bind(this, true);
-  #clearInterval = this.#clearTimer.bind(this);
-  #clearImmediate = this.#clearTimer.bind(this);
+  #setTimeout = this.#createTimer.$bind(this, false);
+  #clearTimeout = this.#clearTimer.$bind(this);
+  #setInterval = this.#createTimer.$bind(this, true);
+  #clearInterval = this.#clearTimer.$bind(this);
+  #clearImmediate = this.#clearTimer.$bind(this);
 
   #restoreSetImmediate() {
     Object.defineProperty(globalThis, "setImmediate", this.#realSetImmediate);
@@ -509,8 +509,8 @@ class MockTimers {
   #setImmediatePromisified(result, options) {
     return this.#promisifyTimer({
       __proto__: null,
-      timerFn: this.#setImmediate.bind(this),
-      clearFn: this.#clearImmediate.bind(this),
+      timerFn: this.#setImmediate.$bind(this),
+      clearFn: this.#clearImmediate.$bind(this),
       ms: TIMERS_DEFAULT_INTERVAL.setImmediate,
       result,
       options,
@@ -520,8 +520,8 @@ class MockTimers {
   #setTimeoutPromisified(ms, result, options) {
     return this.#promisifyTimer({
       __proto__: null,
-      timerFn: this.#setTimeout.bind(this),
-      clearFn: this.#clearTimeout.bind(this),
+      timerFn: this.#setTimeout.$bind(this),
+      clearFn: this.#clearTimeout.$bind(this),
       ms,
       result,
       options,
@@ -572,7 +572,7 @@ class MockTimers {
           (nodeTimers as MockableTimers).setTimeout = this.#setTimeout;
           nodeTimers.clearTimeout = this.#clearTimeout;
 
-          nodeTimersPromises.setTimeout = this.#setTimeoutPromisified.bind(this);
+          nodeTimersPromises.setTimeout = this.#setTimeoutPromisified.$bind(this);
         },
         "setInterval": () => {
           this.#storeOriginalSetInterval();
@@ -583,7 +583,7 @@ class MockTimers {
           (nodeTimers as MockableTimers).setInterval = this.#setInterval;
           nodeTimers.clearInterval = this.#clearInterval;
 
-          nodeTimersPromises.setInterval = this.#setIntervalPromisified.bind(this);
+          nodeTimersPromises.setInterval = this.#setIntervalPromisified.$bind(this);
         },
         "setImmediate": () => {
           this.#storeOriginalSetImmediate();
@@ -593,12 +593,12 @@ class MockTimers {
           // "Receiver must be an instance of MockTimers"
           // because #setImmediate is the only function here
           // that calls #createTimer and it's not bound to MockTimers
-          (globalThis as MockableTimers).setImmediate = this.#setImmediate.bind(this);
+          (globalThis as MockableTimers).setImmediate = this.#setImmediate.$bind(this);
           globalThis.clearImmediate = this.#clearImmediate;
 
-          (nodeTimers as MockableTimers).setImmediate = this.#setImmediate.bind(this);
+          (nodeTimers as MockableTimers).setImmediate = this.#setImmediate.$bind(this);
           nodeTimers.clearImmediate = this.#clearImmediate;
-          nodeTimersPromises.setImmediate = this.#setImmediatePromisified.bind(this);
+          nodeTimersPromises.setImmediate = this.#setImmediatePromisified.$bind(this);
         },
         "Date": () => {
           this.#nativeDateDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Date");

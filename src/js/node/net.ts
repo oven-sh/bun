@@ -466,7 +466,7 @@ function onUpgradedClose(self, connection) {
 // Armed ahead of the stream-level engine's own 'close' thunk: that thunk aborts
 // a pending handshake, which a socket destroyed first does not report.
 function destroyWhenUpgradedCloses(self, connection) {
-  connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
+  connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.$bind(null, self, connection)));
 }
 // Node's wrap 'error' -> _emitTLSError.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L65
@@ -489,7 +489,7 @@ function linkUpgraded(self, connection: SocketInstance) {
   self[kupgraded] = connection;
   self._parent = isSocket ? connection : null;
   destroyWhenUpgradedCloses(self, connection);
-  connection.on("error", onUpgradedError.bind(null, self));
+  connection.on("error", onUpgradedError.$bind(null, self));
   self.connecting = isSocket && (connection.connecting || !connection._handle);
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L964-L973
@@ -505,10 +505,10 @@ function onUpgradedEnd(connection, eof) {
 function attachTLSEngine(self, connection, options) {
   const [handle, events] = upgradeDuplexToTLS(connection, options);
   connection.on("data", events[0]);
-  connection.on("end", onUpgradedEnd.bind(null, connection, events[1]));
+  connection.on("end", onUpgradedEnd.$bind(null, connection, events[1]));
   connection.on("drain", events[2]);
   connection.on("close", events[3]);
-  connection.once(kReadError, onUpgradedReadError.bind(null, self));
+  connection.once(kReadError, onUpgradedReadError.$bind(null, self));
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L120
   connection.resume();
   self._handle = handle;
@@ -1217,7 +1217,7 @@ const ServerHandlers = {
       suspended: false,
     };
     try {
-      cb.$call(server, servername, onSNIResolution.bind(null, state));
+      cb.$call(server, servername, onSNIResolution.$bind(null, state));
     } catch (err) {
       state.settled = true;
       state.failed = toSNIError(err);
@@ -2180,7 +2180,7 @@ function Socket(options?): void {
       // addAbortListener registers a once listener; the close hook detaches it when the socket
       // goes away first (mirrors node's addAbortSignal + eos cleanup).
       addAbortListener ??= require("internal/abort_listener").addAbortListener;
-      const disposable = addAbortListener(signal, destroyWhenAborted.bind(this));
+      const disposable = addAbortListener(signal, destroyWhenAborted.$bind(this));
       this.once("close", disposable[Symbol.dispose]);
     }
   }
@@ -2404,8 +2404,8 @@ Socket.prototype.connect = function connect(...args) {
       linkUpgraded(this, connection);
       // upgradeTLS() takes an established socket.
       if (upgradeDuplex || !this.connecting) attachClientTLS(this, connection, tls, upgradeDuplex);
-      else connection.once("connect", attachClientTLS.bind(null, this, connection, tls, false));
-      if (this.connecting) connection.once("connect", onUpgradedConnect.bind(null, this, connection));
+      else connection.once("connect", attachClientTLS.$bind(null, this, connection, tls, false));
+      if (this.connecting) connection.once("connect", onUpgradedConnect.$bind(null, this, connection));
       return this;
     }
   }
@@ -2548,7 +2548,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     closeOwedRaw(this, upgraded);
     const transport = transportToDestroy(this);
     if (transport !== undefined) abortTransport(transport);
-    if (transport instanceof Socket) transport.once("close", emitCloseNT.bind(null, this, err ? true : false));
+    if (transport instanceof Socket) transport.once("close", emitCloseNT.$bind(null, this, err ? true : false));
     else process.nextTick(emitCloseNT, this, err ? true : false);
   }
 
@@ -2686,7 +2686,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   } else {
     process.nextTick(adoptServerTLS, this, connection, options);
   }
-  if (this.connecting) connection.once("connect", onUpgradedConnect.bind(null, this, connection));
+  if (this.connecting) connection.once("connect", onUpgradedConnect.$bind(null, this, connection));
 };
 
 // Client-side `new tls.TLSSocket(socket)`: the tls.connect({ socket }) upgrade, without onConnectSecure and onConnectEnd.
@@ -3042,8 +3042,8 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     this[kwriteCallback] = callback;
     this._pendingData = chunk;
     this._pendingEncoding = encoding;
-    const onClose = onUpgradeWriteClose.bind(this, callback);
-    this.once(kUpgradeAttached, onUpgradeAttachedWrite.bind(this, chunk, encoding, callback, onClose));
+    const onClose = onUpgradeWriteClose.$bind(this, callback);
+    this.once(kUpgradeAttached, onUpgradeAttachedWrite.$bind(this, chunk, encoding, callback, onClose));
     this.once("close", onClose);
     return;
   }
@@ -3493,7 +3493,7 @@ function internalConnectMultiple(context, canceled?) {
 
   // const req = new TCPConnectWrap();
   const req: ConnectReq = {};
-  req.oncomplete = afterConnectMultiple.bind(undefined, context, current);
+  req.oncomplete = afterConnectMultiple.$bind(undefined, context, current);
   req.address = address;
   req.port = port;
   req.localAddress = localAddress;

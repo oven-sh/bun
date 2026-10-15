@@ -218,8 +218,8 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
       if (agentKey && !requestOptions[kPerRequestCheckServerIdentity]) {
         // The tunneled socket carries the TLS session with the target; cache
         // it (and evict on close) under the target's agent key.
-        tunneledSocket.on("session", onSocketSession.bind(agent, agentKey));
-        tunneledSocket.once("close", onSocketClose.bind(agent, agentKey));
+        tunneledSocket.on("session", onSocketSession.$bind(agent, agentKey));
+        tunneledSocket.once("close", onSocketClose.$bind(agent, agentKey));
       }
     }
     return headerEndIndex;
@@ -360,10 +360,10 @@ function createConnection(...args) {
     // connection to the proxy, not the target - establishTunnel attaches
     // these listeners to the tunneled target socket instead, so the proxy's
     // session is never cached under the target's key.
-    socket.on("session", onSocketSession.bind(this, agentKey));
+    socket.on("session", onSocketSession.$bind(this, agentKey));
 
     // Evict session on error
-    socket.once("close", onSocketClose.bind(this, agentKey));
+    socket.once("close", onSocketClose.$bind(this, agentKey));
   }
 
   return socket;

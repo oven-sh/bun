@@ -30,7 +30,6 @@ const ArrayPrototypeSpliceFn = Array.prototype.splice;
 const ArrayPrototypeToSortedFn = Array.prototype.toSorted;
 const ArrayPrototypeUnshiftFn = Array.prototype.unshift;
 const DateNowFn = Date.now;
-const FunctionPrototypeBindFn = Function.prototype.bind;
 const JSONStringifyFn = JSON.stringify;
 const MathMaxFn = Math.max;
 const PromiseRejectFn = Promise.reject;
@@ -78,10 +77,6 @@ export default {
   Boolean,
   DateNow: () => DateNowFn.$call(Date),
   Error,
-  FunctionPrototypeBind: (fn, thisArg, ...args) => {
-    ArrayPrototypeUnshiftFn.$call(args, thisArg);
-    return FunctionPrototypeBindFn.$apply(fn, args);
-  },
   FunctionPrototypeCall: (fn, thisArg, ...args) => fn.$apply(thisArg, args),
   JSONStringify: (...args) => JSONStringifyFn.$apply(JSON, args),
   MathCeil: Math.ceil,

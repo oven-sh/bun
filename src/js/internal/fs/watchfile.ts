@@ -23,7 +23,7 @@ class StatWatcher extends EventEmitter {
 
   constructor(path, options) {
     super();
-    this._handle = fs.watchFile(path, options, this.#onChange.bind(this));
+    this._handle = fs.watchFile(path, options, this.#onChange.$bind(this));
   }
 
   #onChange(curr, prev) {

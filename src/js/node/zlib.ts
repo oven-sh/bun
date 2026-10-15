@@ -653,7 +653,7 @@ Zlib.prototype.params = function params(level, strategy, callback) {
   checkRangesOrGetDefault(strategy, "strategy", Z_DEFAULT_STRATEGY, Z_FIXED);
 
   if (this._level !== level || this._strategy !== strategy) {
-    this.flush(Z_SYNC_FLUSH, paramsAfterFlushCallback.bind(this, level, strategy, callback));
+    this.flush(Z_SYNC_FLUSH, paramsAfterFlushCallback.$bind(this, level, strategy, callback));
   } else {
     process.nextTick(callback);
   }

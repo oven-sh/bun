@@ -63,7 +63,6 @@ const DatePrototypeGetTime = uncurryThis(Date.prototype.getTime);
 const DatePrototypeToISOString = uncurryThis(Date.prototype.toISOString);
 const DatePrototypeToString = uncurryThis(Date.prototype.toString);
 const ErrorPrototypeToString = uncurryThis(Error.prototype.toString);
-const FunctionPrototypeBind = uncurryThis(Function.prototype.bind);
 const FunctionPrototypeToString = uncurryThis(Function.prototype.toString);
 const JSONStringify = JSON.stringify;
 const MapPrototypeEntries = uncurryThis(Map.prototype.entries);
@@ -1332,9 +1331,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       const prefix = getPrefix(constructor, tag, "Set", `(${size})`);
       keys = getKeys(value, ctx.showHidden);
       formatter =
-        constructor !== null
-          ? FunctionPrototypeBind(formatSet, null, value)
-          : FunctionPrototypeBind(formatSet, null, SetPrototypeValues(value));
+        constructor !== null ? formatSet.$bind(null, value) : formatSet.$bind(null, SetPrototypeValues(value));
       if (size === 0 && keys.length === 0 && protoProps === undefined) return `${prefix}{}`;
       braces = [`${prefix}{`, "}"];
     } else if (isMap(value)) {
@@ -1342,9 +1339,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       const prefix = getPrefix(constructor, tag, "Map", `(${size})`);
       keys = getKeys(value, ctx.showHidden);
       formatter =
-        constructor !== null
-          ? FunctionPrototypeBind(formatMap, null, value)
-          : FunctionPrototypeBind(formatMap, null, MapPrototypeEntries(value));
+        constructor !== null ? formatMap.$bind(null, value) : formatMap.$bind(null, MapPrototypeEntries(value));
       if (size === 0 && keys.length === 0 && protoProps === undefined) return `${prefix}{}`;
       braces = [`${prefix}{`, "}"];
     } else if (isTypedArray(value)) {
@@ -1362,7 +1357,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       if (value.length === 0 && keys.length === 0 && !ctx.showHidden) return `${braces[0]}]`;
       // Special handle the value. The original value is required below. The
       // bound function is required to reconstruct missing information.
-      formatter = FunctionPrototypeBind(formatTypedArray, null, bound, size);
+      formatter = formatTypedArray.$bind(null, bound, size);
       extrasType = kArrayExtrasType;
 
       if (ctx.showHidden) {
@@ -1373,12 +1368,12 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       keys = getKeys(value, ctx.showHidden);
       braces = getIteratorBraces("Map", tag);
       // Add braces to the formatter parameters.
-      formatter = FunctionPrototypeBind(formatIterator, null, braces);
+      formatter = formatIterator.$bind(null, braces);
     } else if (isSetIterator(value)) {
       keys = getKeys(value, ctx.showHidden);
       braces = getIteratorBraces("Set", tag);
       // Add braces to the formatter parameters.
-      formatter = FunctionPrototypeBind(formatIterator, null, braces);
+      formatter = formatIterator.$bind(null, braces);
     } else {
       noIterator = true;
     }
@@ -1446,7 +1441,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
     } else if (isModuleNamespaceObject(value)) {
       braces[0] = `${getPrefix(constructor, tag, "Module")}{`;
       // Special handle keys for namespace objects.
-      formatter = formatNamespaceObject.bind(null, keys);
+      formatter = formatNamespaceObject.$bind(null, keys);
     } else if (isBoxedPrimitive(value)) {
       base = getBoxedBase(value, ctx, keys, constructor, tag);
       if (keys.length === 0 && protoProps === undefined) {

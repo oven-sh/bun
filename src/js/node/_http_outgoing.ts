@@ -356,7 +356,7 @@ OutgoingMessage.prototype.uncork = function uncork() {
       callbacks.push(buf[n + 2]);
     }
   }
-  this._send(crlf_buf, null, callbacks?.length ? runChunkCallbacks.bind(undefined, callbacks) : null);
+  this._send(crlf_buf, null, callbacks?.length ? runChunkCallbacks.$bind(undefined, callbacks) : null);
 
   this[kChunkedBuffer].length = 0;
   this[kChunkedLength] = 0;
@@ -1109,7 +1109,7 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
     throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(this[kBytesWritten], contentLength);
   }
 
-  const finish = onFinish.bind(undefined, this);
+  const finish = onFinish.$bind(undefined, this);
 
   if (this._hasBody && this.chunkedEncoding) {
     this._send("0\r\n" + this._trailer + "\r\n", "latin1", finish);

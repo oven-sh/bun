@@ -469,7 +469,7 @@ function setupConnectionsTracking(this: any) {
     clearInterval(this[kConnectionsCheckingInterval]);
   }
   const delay = this.connectionsCheckingInterval ?? 30_000;
-  this[kConnectionsCheckingInterval] = setInterval(checkConnections.bind(this), delay);
+  this[kConnectionsCheckingInterval] = setInterval(checkConnections.$bind(this), delay);
   this[kConnectionsCheckingInterval].unref();
 }
 
@@ -859,7 +859,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // handler ran: Node.js hands the socket over with no listeners and
             // tests assert socket.listenerCount("close") === 0 there.
             const promise = $newPromise();
-            socket.once("close", $bindFunction.$call(resolveHandoffPromise, undefined, promise));
+            socket.once("close", resolveHandoffPromise.$bind(undefined, promise));
             return promise;
           } else {
             // Node.js will close the socket and will NOT respond with 400 Bad Request
@@ -928,12 +928,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_res.once("finish", stopServerResponsePerf);
         }
 
-        handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
+        handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.$bind(socket);
         // Like Node's connectionListener -> parserOnBody: body bytes flow into
         // the IncomingMessage as they arrive, and the push callback readStop()s
         // the socket (which emits 'pause' on it) once the buffer fills.
         if (hasBody) {
-          handle.ondata = onDataIncomingMessage.bind(http_req);
+          handle.ondata = onDataIncomingMessage.$bind(http_req);
         }
         drainMicrotasks();
 
@@ -1074,7 +1074,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           releaseServerParserShim(socket, http_req);
           if (hasBody) {
             socket[kUpgradeIncoming] = http_req;
-            http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
+            http_req.once("end", clearUpgradeIncoming.$bind(undefined, socket));
           } else {
             http_req.complete = true;
           }
@@ -1099,7 +1099,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // machinery; hold the native callback open until the raw socket
           // closes.
           const upgradePromise = $newPromise();
-          socket.once("close", $bindFunction.$call(resolveHandoffPromise, undefined, upgradePromise));
+          socket.once("close", resolveHandoffPromise.$bind(undefined, upgradePromise));
           return upgradePromise;
         } else if (rejectMissingHost) {
           http_res.writeHead(400, { Connection: "close" });
@@ -1163,7 +1163,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       drainedAtClose: false,
     };
     this[kListenerGeneration] = listenerGeneration;
-    getBunServerAllClosedPromise(handle).$then(emitCloseNTServer.bind(this, listenerGeneration));
+    getBunServerAllClosedPromise(handle).$then(emitCloseNTServer.$bind(this, listenerGeneration));
     applyServerCustomOptions(this);
 
     if (this?._unref) {
@@ -1186,8 +1186,8 @@ function applyServerCustomOptions(server: Server) {
     true,
     serverLenientFlags(server),
     typeof server.maxHeaderSize !== "undefined" ? server.maxHeaderSize : getMaxHTTPHeaderSize(),
-    onServerClientError.bind(server, server[kListenerGeneration]),
-    onServerConnection.bind(server, server[kListenerGeneration]),
+    onServerClientError.$bind(server, server[kListenerGeneration]),
+    onServerConnection.$bind(server, server[kListenerGeneration]),
     !!server.httpAllowHalfOpen,
   );
   setServerMaxHeadersCount(handle, nativeMaxHeadersCount(server.maxHeadersCount));
@@ -1718,7 +1718,7 @@ function getNodeHTTPServerSocket() {
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
       this[kHandle] = handle;
       this._secureEstablished = !!handle?.secureEstablished;
-      handle.onclose = this.#onClose.bind(this);
+      handle.onclose = this.#onClose.$bind(this);
       handle.duplex = this;
 
       this.encrypted = encrypted;
@@ -1757,8 +1757,8 @@ function getNodeHTTPServerSocket() {
       if (handle) {
         this[kStreamingEnabled] = enable;
         if (enable) {
-          handle.ondata = this.#onData.bind(this);
-          handle.ondrain = this.#onDrain.bind(this);
+          handle.ondata = this.#onData.$bind(this);
+          handle.ondrain = this.#onDrain.$bind(this);
         } else {
           handle.ondata = undefined;
           handle.ondrain = undefined;
@@ -1812,7 +1812,7 @@ function getNodeHTTPServerSocket() {
       // native on_abort has released the pending-request ref.
       this.#pendingAbortMessage = this._httpMessage;
       this.#closingHandle = handle;
-      handle.onclose = this.#onCloseForDestroy.bind(this, callback, err, handle);
+      handle.onclose = this.#onCloseForDestroy.$bind(this, callback, err, handle);
       if (this.resetAndClosing) {
         this.resetAndClosing = false;
         handle.reset();
@@ -1897,7 +1897,7 @@ function getNodeHTTPServerSocket() {
 
       // Node emits the response 'close' from its first socket 'close' listener: a response listener cannot remove a socket listener from the current emission.
       if (message && !message._closed) {
-        this.prependOnceListener("close", emitCloseNT.bind(undefined, message));
+        this.prependOnceListener("close", emitCloseNT.$bind(undefined, message));
       }
 
       if (req && !req.destroyed && !req[kHandle]?.upgraded) {
@@ -3619,7 +3619,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   if (draining) {
     // Native calls back once the body is out; a dying connection finishes from emit("close").
     this[kPendingFinish] = callback ?? null;
-    handle.onwritable = flushPendingFinish.bind(this);
+    handle.onwritable = flushPendingFinish.$bind(this);
   } else {
     queueResponseFinished(this, callback);
   }
@@ -3743,7 +3743,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   const strict = strictContentLength(this, headerState, false);
   // Node returns true for every write to a response that cannot have a body (write_ in lib/_http_outgoing.js).
   const hasBody = this._hasBody;
-  const onWritable = hasBody ? allowWritesToContinue.bind(this) : undefined;
+  const onWritable = hasBody ? allowWritesToContinue.$bind(this) : undefined;
 
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
@@ -3786,7 +3786,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     handle.flushHeaders();
     if (hasBody && handle.bufferedAmount > 0) {
       this[kPendingCallbacks].push(callback);
-      handle.onwritable = allowWritesToContinue.bind(this);
+      handle.onwritable = allowWritesToContinue.$bind(this);
       return false;
     }
     process.nextTick(callback);

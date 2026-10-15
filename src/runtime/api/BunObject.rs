@@ -64,7 +64,6 @@ pub(crate) fn get_public_path_with_asset_prefix(
 
 use bun_jsc::HostReturn as _;
 use core::ffi::c_void;
-use std::io::Write as _;
 
 use bun_core::Output;
 use bun_jsc::{
@@ -1114,8 +1113,13 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     let mut query_string = BunString::EMPTY;
 
     let decoded_specifier;
+    let mut mode = mode;
     let specifier_for_resolve = if specifier.starts_with_ascii(b"file://") {
         decoded_specifier = bun_url::path_from_file_url(specifier);
+        // The path of a file URL has no query.
+        if mode == ResolveMode::Esm {
+            mode = ResolveMode::Path;
+        }
         &decoded_specifier
     } else {
         specifier
@@ -1137,13 +1141,9 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     };
 
     if !query_string.is_empty() {
-        let mut arraylist: Vec<u8> = Vec::with_capacity(1024);
-        // Vec<u8> writes are infallible.
-        let _ = write!(&mut arraylist, "{}{}", result_value, query_string);
-
-        return Ok(Resolved::Found(bun_string_jsc::create_utf8_for_js(
-            ctx, &arraylist,
-        )?));
+        // SAFETY: bun_vm_ptr() is the live per-thread VM.
+        let key = unsafe { &mut *ctx.bun_vm_ptr() }.join_module_key(&result_value, &query_string);
+        return Ok(Resolved::Found(key.into_js(ctx)?));
     }
 
     Ok(Resolved::Found(result_value.into_js(ctx)?))

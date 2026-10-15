@@ -2513,6 +2513,51 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
+    /// Index of the `?` that starts the query of `path` (absolute, or relative to `dir`; its first `?` is at `first`): a `?` is part of a name while the listing of its folder has that name.
+    pub fn query_start_in_path(&mut self, dir: &[u8], path: &[u8], first: usize) -> Option<usize> {
+        let mut question = first;
+        let mut folder_buf = bun_paths::path_buffer_pool::get();
+        loop {
+            let name_start =
+                strings::last_index_of_char(&path[..question], b'/').map_or(0, |slash| slash + 1);
+            let name_end = strings::index_of_char_usize(&path[question..], b'/')
+                .map_or(path.len(), |slash| question + slash);
+            if dir.len() + name_start + 2 >= folder_buf.len() {
+                return Some(question);
+            }
+            let folder = bun_paths::resolve_path::join_abs_string_buf::<
+                bun_paths::resolve_path::platform::Auto,
+            >(dir, &mut folder_buf[..], &[&path[..name_start]]);
+            let Some(listing) = self.read_dir_info_ignore_error(folder) else {
+                return Some(question);
+            };
+
+            // The longest name that holds this `?` and is in the listing.
+            let name = &path[name_start..name_end];
+            let mut end = name.len();
+            loop {
+                if let Some(found) = listing.get_entry(self.generation, &name[..end]) {
+                    // SAFETY: rfs points at the process-global RealFS; the lazy stat in `kind()` is
+                    // serialized on the per-entry mutex.
+                    if path.get(name_start + end) != Some(&b'/')
+                        || unsafe { found.entry().kind(self.rfs_ptr(), self.store_fd) }
+                            == Fs::file_system::EntryKind::Dir
+                    {
+                        break;
+                    }
+                }
+                match strings::last_index_of_char(&name[..end], b'?') {
+                    Some(shorter) if name_start + shorter > question => end = shorter,
+                    _ => return Some(question),
+                }
+            }
+            if name_start + end < name_end {
+                return Some(name_start + end);
+            }
+            question = name_end + strings::index_of_char_usize(&path[name_end..], b'?')?;
+        }
+    }
+
     pub(crate) fn load_node_modules(
         &mut self,
         import_path: &[u8],

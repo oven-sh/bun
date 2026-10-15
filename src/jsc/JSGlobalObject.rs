@@ -1437,23 +1437,52 @@ use bun_core::fmt::VecWriter as WriteVec;
 // Exported `extern "C"` functions.
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// The key of the module that an ES module `specifier` names.
 #[unsafe(no_mangle)]
 extern "C" fn Zig__GlobalObject__resolve(
     res: &mut ErrorableString,
     global: &JSGlobalObject,
     specifier: &BunString,
     source: &BunString,
-    query: &mut BunString,
+) {
+    resolve_module_key(res, global, specifier, source, crate::virtual_machine::ResolveMode::Esm);
+}
+
+/// [`Zig__GlobalObject__resolve`] for a filesystem path: a `?` in it is part of a name.
+#[unsafe(no_mangle)]
+extern "C" fn Zig__GlobalObject__resolvePath(
+    res: &mut ErrorableString,
+    global: &JSGlobalObject,
+    path: &BunString,
+    source: &BunString,
+) {
+    resolve_module_key(res, global, path, source, crate::virtual_machine::ResolveMode::Path);
+}
+
+fn resolve_module_key(
+    res: &mut ErrorableString,
+    global: &JSGlobalObject,
+    specifier: &BunString,
+    source: &BunString,
+    mode: crate::virtual_machine::ResolveMode,
 ) {
     crate::mark_binding();
+    let mut query = BunString::EMPTY;
     match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
         global,
         specifier,
         source,
-        Some(query),
-        crate::virtual_machine::ResolveMode::Esm,
+        Some(&mut query),
+        mode,
     ) {
-        Ok(Ok(path)) => *res = ErrorableString::ok(path),
+        Ok(Ok(path)) => {
+            *res = ErrorableString::ok(if query.is_empty() {
+                path
+            } else {
+                // SAFETY: per-thread VM is live (caller is on the JS thread).
+                unsafe { &mut *global.bun_vm_ptr() }.join_module_key(&path, &query)
+            })
+        }
         Ok(Err(value)) => *res = ErrorableString::err(value),
         Err(_) => debug_assert!(global.has_exception()),
     }

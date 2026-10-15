@@ -446,10 +446,10 @@ pub(crate) fn normalize_specifier<'a>(
     let specifier = slice;
     let mut query: &[u8] = b"";
 
-    if let Some(i) = strings::index_of_char(slice, b'?') {
-        let i = i as usize;
-        query = &slice[i..];
-        slice = &slice[..i];
+    if strings::contains_char(slice, b'?') {
+        let path_len = jsc_vm.module_key_path_len(slice);
+        query = &slice[path_len..];
+        slice = &slice[..path_len];
     }
 
     (slice, specifier, query)

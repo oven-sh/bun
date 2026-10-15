@@ -314,7 +314,10 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
         const child = Bun.spawn({ cmd: [process.execPath, "--no-env-file", "-e", print], stdout: "pipe" });
         const [fromChild] = await Promise.all([child.stdout.text(), child.exited]);
         const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
-        const fromWorker = await new Promise<string>(resolve => (worker.onmessage = event => resolve(event.data)));
+        const fromWorker = await new Promise<string>((resolve, reject) => {
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = event => reject(new Error(event.message));
+        });
         await worker.terminate();
         return {
           inline,
@@ -474,7 +477,6 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
           const own = seen([process.env.API_KEY, process.env.ONLY_IN_DOT_ENV].join());
           console.log("REPORT " + JSON.stringify({ scripts: scripts.length, route, own }));
           await server.stop(true);
-          process.exit(0);
         `,
       });
       const args = ["--no-env-file", "main.ts", ...(development ? ["--development"] : [])];
@@ -522,7 +524,10 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
 
         appendFileSync(".env", "LATE=late-from-dot-env\n");
         const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
-        const fromWorker = await new Promise<string>(resolve => (worker.onmessage = event => resolve(event.data)));
+        const fromWorker = await new Promise<string>((resolve, reject) => {
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = event => reject(new Error(event.message));
+        });
         await worker.terminate();
         const own = seen([process.env.EARLY, process.env.LATE].join());
         console.log("REPORT " + JSON.stringify({ worker: seen(fromWorker), own }));

@@ -13,6 +13,7 @@ use bun_install::lifecycle_script_runner::ScriptArgv;
 use bun_install::package_manager::workspace_selection;
 use bun_io::BufferedReader;
 use bun_paths as path;
+use bun_resolver::dir_info::ScriptPackage;
 
 use crate::Command;
 use crate::filter_arg as FilterArg;
@@ -805,12 +806,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     } else {
         // Not a package.json script - run as a raw command
         // If it looks like a file path, prefix with bun executable
-        let is_file = !raw_name.is_empty()
-            && (raw_name[0] == b'.'
-                || raw_name[0] == b'/'
-                || (cfg!(windows) && raw_name[0] == b'\\')
-                || has_runnable_extension(raw_name));
-        let command_z: Box<[u8]> = if is_file {
+        let command_z: Box<[u8]> = if runs_as_file(raw_name) {
             let bun_path: &[u8] = bun::self_exe_path().map(|z| z.as_bytes()).unwrap_or(b"bun");
             // Quote the bun path so that backslashes on Windows are not
             // interpreted as escape characters by `bun exec` (Bun's shell).
@@ -1050,8 +1046,17 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             }
         };
 
-        let package_json = (*root_dir_info).enclosing_package_json;
-        let scripts_map: Option<&ScriptsMap> = package_json.and_then(|pkg| pkg.scripts.as_deref());
+        let scripts_map: Option<&ScriptsMap> = match root_dir_info.script_package() {
+            ScriptPackage::Loaded(package_json) => package_json.scripts.as_deref(),
+            ScriptPackage::Unloadable { dir, error } => {
+                // A name that is no file can be a script that is there.
+                if script_names.iter().any(|name| !runs_as_file(name)) {
+                    RunCommand::print_unloadable_package_json(ctx, dir, error);
+                }
+                None
+            }
+            ScriptPackage::Absent => None,
+        };
 
         for raw_name in &script_names {
             // Check if this is a glob pattern
@@ -1252,6 +1257,15 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     let status = state.finalize();
     Global::exit(status as u32);
+}
+
+/// Whether `name` is run as a file, by `bun`, and not as a command of the shell.
+fn runs_as_file(name: &[u8]) -> bool {
+    !name.is_empty()
+        && (name[0] == b'.'
+            || name[0] == b'/'
+            || (cfg!(windows) && name[0] == b'\\')
+            || has_runnable_extension(name))
 }
 
 fn has_runnable_extension(name: &[u8]) -> bool {

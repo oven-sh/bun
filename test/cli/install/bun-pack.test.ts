@@ -1169,7 +1169,8 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
     });
   });
 
-  test.concurrent("and keeps the tarball that a --filename links to", async () => {
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  test.serial("and keeps the tarball that a --filename links to", async () => {
     await using dir = tempDir("pack-failed-link", {
       "package.json": JSON.stringify({ name: "pack-failed", version: "1.0.0", files: ["index.js", "unreadable.js"] }),
       "index.js": "module.exports = 1;",
@@ -1240,7 +1241,8 @@ describe.concurrent("what is at the tarball's destination already", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("a file that may be written, in a folder that may not", async () => {
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  test.serial.skipIf(isWindows)("a file that may be written, in a folder that may not", async () => {
     using dir = tempDir("pack-over-locked", { ...files, "pkg/out/pack-over-1.0.0.tgz": "an earlier tarball" });
     using unprivileged = unprivilegedSpawnOptions(String(dir));
     await chmod(join(dir, "pkg", "out"), 0o555);

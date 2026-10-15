@@ -1295,7 +1295,8 @@ describe.concurrent("auto-install throws what it cannot do instead of ending the
     expect(exitCode).toBe(0);
   });
 
-  describe.skipIf(isWindows)("a cache directory that is read-only", () => {
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  describe.serial.skipIf(isWindows)("a cache directory that is read-only", () => {
     async function run(dir: string) {
       using unprivileged = unprivilegedSpawnOptions(dir);
       await using proc = Bun.spawn({
@@ -2355,7 +2356,10 @@ describe.concurrent("auto-install is off when a security scanner is configured",
 
   type Options = { cwd?: string; args?: string[]; env?: Record<string, string | undefined>; warm?: boolean };
 
-  /** A file with this text gets mode 000, and bun runs as a user that file modes apply to. Not for Windows. */
+  /**
+   * A file with this text gets mode 000, and bun runs as a user that file modes apply to. Not for Windows. For serial
+   * tests: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+   */
   const UNREADABLE = "# mode 000\n";
 
   /** Runs `app/index.js`. The user's own bunfig is `home/.bunfig.toml`. */
@@ -2514,7 +2518,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect(await run(files, { cwd: "elsewhere", args: ["../app/src/deep/index.js"] })).toEqual(refused(configured));
   });
 
-  test.skipIf(isWindows).each([
+  test.serial.skipIf(isWindows).each([
     [".npmrc", "a folder of the project", { cwd: "app/src" }],
     [".npmrc", "outside the project", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
     ["bunfig.toml", "outside the project", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
@@ -2537,7 +2541,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect(await run(files)).toEqual(refused(unreadable));
   });
 
-  test.skipIf(isWindows).each([
+  test.serial.skipIf(isWindows).each([
     ["the user's bunfig", "home/.bunfig.toml"],
     ["the user's .npmrc", "home/.npmrc"],
     ["the project's .npmrc", "app/.npmrc"],
@@ -2561,16 +2565,18 @@ describe.concurrent("auto-install is off when a security scanner is configured",
       ["configures a scanner", scanner, configured],
     ].filter(([, bunfig]) => !isWindows || bunfig !== UNREADABLE),
   )("a bunfig.toml that %s", (_, bunfig, why) => {
-    test("in the project root", async () => {
+    const cell = test.serialIf(bunfig === UNREADABLE);
+
+    cell("in the project root", async () => {
       expect(await run({ ...project, "app/bunfig.toml": bunfig }, { cwd: "app/src" })).toEqual(refused(why));
     });
 
-    test("between the working directory and the project root", async () => {
+    cell("between the working directory and the project root", async () => {
       const files = { ...project, "app/src/bunfig.toml": bunfig, "app/src/deep/index.js": requireIt };
       expect(await run(files, { cwd: "app/src/deep" })).toEqual(refused(why));
     });
 
-    test("above the project root is not read", async () => {
+    cell("above the project root is not read", async () => {
       expect(await run({ ...project, "bunfig.toml": bunfig }, { cwd: "app/src" })).toEqual(installed);
     });
   });
@@ -2584,7 +2590,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
       ] as [string, string | DirectoryTree][]
     ).filter(([, packageJson]) => !isWindows || packageJson !== UNREADABLE),
   )("a package.json that %s", (_, packageJson) => {
-    test("beside the importing file, below a project", async () => {
+    test.serialIf(packageJson === UNREADABLE)("beside the importing file, below a project", async () => {
       const result = await run({ ...project, "app/src/package.json": packageJson }, { cwd: "app/src" });
       expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
     });
@@ -2611,7 +2617,7 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect({ ...result, stderr: "" }).toEqual({ stdout: "", stderr: "", exitCode: 1, requests: [] });
   });
 
-  test.skipIf(isWindows)("the project's bunfig.toml cannot be read", async () => {
+  test.serial.skipIf(isWindows)("the project's bunfig.toml cannot be read", async () => {
     const result = await run({ "app/bunfig.toml": UNREADABLE, "app/index.js": requireIt });
     expect(result.stderr).toContain("bunfig.toml are not applied.");
     expect({ ...result, stderr: "" }).toEqual(refused(unreadable));

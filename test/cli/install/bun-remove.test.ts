@@ -724,7 +724,8 @@ it.concurrent("bun r is an alias of bun remove", async () => {
   expect(exitCode).toBe(0);
 });
 
-it.concurrent.skipIf(isWindows)("bun remove that cannot save bun.lock leaves node_modules as it was", async () => {
+// Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+it.serial.skipIf(isWindows)("bun remove that cannot save bun.lock leaves node_modules as it was", async () => {
   const pkg = JSON.stringify({ name: "root", dependencies: { foo: "file:./foo", bar: "file:./bar" } });
   using dir = tempDir("bun-remove-lockfile-not-saved", { ...local("foo"), ...local("bar"), "package.json": pkg });
   expect(await run(String(dir), "install")).toMatchObject({ exitCode: 0 });

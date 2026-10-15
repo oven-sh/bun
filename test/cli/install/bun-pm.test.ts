@@ -1873,7 +1873,8 @@ describe.concurrent("bun pm cache rm", () => {
     expect(await pmCache([], proj, spawnEnv)).toEqual({ stdout: target, stderr: "", exitCode: 0 });
   });
 
-  test.skipIf(isWindows)("a cache directory in a read-only parent is emptied", async () => {
+  // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+  test.serial.skipIf(isWindows)("a cache directory in a read-only parent is emptied", async () => {
     using dir = tempDir("pm-cache-rm-read-only-parent", {
       ...sideFiles,
       ...projectFiles,

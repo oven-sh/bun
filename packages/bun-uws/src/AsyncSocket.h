@@ -498,8 +498,8 @@ public:
         loopData->releaseCorkSlot(slot);
 
         if (offset) {
-            /* Corked data is already accounted for via its write call */
-            auto [written, failed] = write(buffer, offset, false, length);
+            /* Corked data is already accounted for via its write call. An optional src is never queued, so it needs no room. */
+            auto [written, failed] = write(buffer, offset, false, optionally ? 0 : length);
 
             if (failed && optionally) {
                 /* We do not need to care for buffering here, write does that */

@@ -212,6 +212,8 @@ impl Dir {
             let dir_fd = top.iter.dir();
             let parent_dir = top.parent_dir;
             let name = core::mem::take(&mut top.name);
+            // A directory that read as removed and still holds entries could read that way on every retry.
+            let read_as_removed = top.iter.dir_was_removed();
             // Pop before closing so the cleanup guard doesn't double-close on
             // an error from `unlinkat_a`.
             stack.pop();
@@ -222,7 +224,7 @@ impl Dir {
                 Ok(()) => {}
                 Err(e) => match e.get_errno() {
                     E::ENOENT => {}
-                    E::ENOTEMPTY => need_to_retry = true,
+                    E::ENOTEMPTY if !read_as_removed => need_to_retry = true,
                     _ => return Err(e),
                 },
             }

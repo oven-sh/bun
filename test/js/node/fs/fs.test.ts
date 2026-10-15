@@ -6289,6 +6289,15 @@ function makeRmTree(root, depth = 0) {
   fs.mkdirSync(path.join(dir, "vanish-before-read"));
   return root;
 }
+// A filesystem can answer the read of a directory that is still there with
+// ENOENT; the shim plays one for "read-fails-enoent".
+function makeStillThereTree(root, depth = 0) {
+  let dir = root;
+  for (let i = 0; i < depth; i++) dir = path.join(dir, "level" + i);
+  fs.mkdirSync(path.join(dir, "read-fails-enoent"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "read-fails-enoent", "inner.txt"), "x");
+  return root;
+}
 const names = entries => entries.map(String).sort();
 const direntNames = (root, entries) =>
   entries.map(d => path.relative(root, path.join(d.parentPath, d.name))).sort();
@@ -6345,6 +6354,14 @@ const removed = async (root, fn) => ({ error: (await outcome(fn)) ?? null, left:
     root = makeRmTree("rm-deep" + key, 20);
     out["rmDeep" + key] = await removed(root, () => fs.rmSync(root, { recursive: true, force }));
   }
+  // A directory that reads as removed and that rmdir still finds full is
+  // reported. It is not read again: it would read the same way every time.
+  root = makeStillThereTree("rm-still-there");
+  out.rmStillThere = await removed(root, () => fs.rmSync(root, { recursive: true, force: true }));
+  root = makeStillThereTree("rm-still-there-async");
+  out.rmStillThereAsync = await removed(root, () => fs.promises.rm(root, { recursive: true, force: true }));
+  root = makeStillThereTree("rm-still-there-deep", 20);
+  out.rmStillThereDeep = await removed(root, () => fs.rmSync(root, { recursive: true, force: true }));
   console.log(JSON.stringify(out));
 })();
 `,
@@ -6376,6 +6393,9 @@ const removed = async (root, fn) => ({ error: (await outcome(fn)) ?? null, left:
   expect(removedDirReaddir.actions(log, String(dir))).toEqual(
     [
       "read-fails-eio root-eio/read-fails-eio",
+      ...["rm-still-there", "rm-still-there-async", deep("rm-still-there-deep")].map(
+        root => `read-fails-enoent ${root}/read-fails-enoent`,
+      ),
       ...[
         ...trees,
         ...["root-async", "root-plain", "root-sync"],
@@ -6404,6 +6424,9 @@ const removed = async (root, fn) => ({ error: (await outcome(fn)) ?? null, left:
     rmSync: gone,
     rmAsync: gone,
     rmDeep: gone,
+    rmStillThere: { error: { code: "ENOTEMPTY", path: "rm-still-there" }, left: true },
+    rmStillThereAsync: { error: { code: "ENOTEMPTY", path: "rm-still-there-async" }, left: true },
+    rmStillThereDeep: { error: { code: "ENOTEMPTY", path: "rm-still-there-deep" }, left: true },
   });
   expect(exitCode).toBe(0);
 });
@@ -6421,8 +6444,9 @@ it.skipIf(!isLinux)("a directory that was removed after it was opened reads as e
     fs.rmdirSync(p);
     return `/proc/self/fd/${fd}`;
   };
+  let opened: fs.Dir | undefined;
   try {
-    const opened = fs.opendirSync(removed("opendir"));
+    opened = fs.opendirSync(removed("opendir"));
     const copy = path.join(String(dir), "copy");
     fs.cpSync(removed("cp") + "/", copy, { recursive: true });
     expect({
@@ -6442,8 +6466,8 @@ it.skipIf(!isLinux)("a directory that was removed after it was opened reads as e
       opendir: null,
       cpSync: [],
     });
-    opened.closeSync();
   } finally {
+    opened?.closeSync();
     for (const fd of fds) fs.closeSync(fd);
   }
 });

@@ -4,14 +4,22 @@
 // Compiled by `removedDirReaddir` in test/harness.ts. What it does to a
 // directory depends on the directory's name:
 //
-//   vanish-before-read  removed (with its inner.txt) before its first read
-//   vanish-mid-read     removed (with its inner.txt) after its first read
+//   vanish-before-read  removed (with the files in it) before its first read
+//   vanish-mid-read     removed (with the files in it) after its first read
 //                       handed out entries
+//   vanish-once-linked  removed (with the files in it) before the first read
+//                       of a listing, once its inner.txt has a second hard
+//                       link: a listing that starts after an install linked
+//                       the directory
 //   read-fails-eio      every read fails with EIO; it is not removed
+//   read-fails-enoent   every read fails with ENOENT; it is not removed. No
+//                       kernel filesystem does this to a directory that is
+//                       still there, a FUSE server can.
 //
 // Each action appends "<name> <path>" to the file $REMOVED_DIR_READDIR_LOG
 // names, so a test can tell the shim saw bun's reads.
 #define _GNU_SOURCE
+#include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -20,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -33,6 +42,15 @@ static void record(const char *name, const char *path) {
   if (fd < 0) return;
   dprintf(fd, "%s %s\n", name, path);
   close(fd);
+}
+
+// libc's readdir() issues getdents64 itself, not through syscall(), so this does not come back here.
+static void remove_dir(const char *name, const char *path) {
+  DIR *dir = opendir(path);
+  if (!dir) return;
+  for (struct dirent *entry; (entry = readdir(dir));) unlinkat(dirfd(dir), entry->d_name, 0);
+  closedir(dir);
+  if (rmdir(path) == 0) record(name, path);
 }
 
 long syscall(long nr, ...) {
@@ -54,20 +72,25 @@ long syscall(long nr, ...) {
   name = name ? name + 1 : target;
 
   if (strcmp(name, "vanish-before-read") == 0) {
-    unlinkat(fd, "inner.txt", 0);
-    if (rmdir(target) == 0) record(name, target);
+    remove_dir(name, target);
   } else if (strcmp(name, "vanish-mid-read") == 0) {
     // After the rmdir the link reads "... (deleted)", so this branch is not
     // taken again and the next read reaches the kernel as it is.
     long rc = next_syscall(nr, a1, a2, a3, a4, a5, a6);
-    if (rc > 0) {
-      unlinkat(fd, "inner.txt", 0);
-      if (rmdir(target) == 0) record(name, target);
-    }
+    if (rc > 0) remove_dir(name, target);
     return rc;
+  } else if (strcmp(name, "vanish-once-linked") == 0) {
+    struct stat st;
+    if (lseek(fd, 0, SEEK_CUR) == 0 && fstatat(fd, "inner.txt", &st, 0) == 0 && st.st_nlink > 1) remove_dir(name, target);
   } else if (strcmp(name, "read-fails-eio") == 0) {
     record(name, target);
     errno = EIO;
+    return -1;
+  } else if (strcmp(name, "read-fails-enoent") == 0) {
+    // A walk that reads the directory again and again must not fill the disk.
+    static int recorded;
+    if (recorded++ < 64) record(name, target);
+    errno = ENOENT;
     return -1;
   }
   return next_syscall(nr, a1, a2, a3, a4, a5, a6);

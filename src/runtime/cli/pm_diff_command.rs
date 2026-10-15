@@ -685,6 +685,10 @@ fn read_dir_tree(
         loop {
             let entry = match it.next() {
                 Ok(Some(entry)) => entry,
+                Ok(None) if it.dir_was_removed() => fail(
+                    bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::getdents64),
+                    &prefix,
+                ),
                 Ok(None) => break,
                 Err(err) => fail(err, &prefix),
             };

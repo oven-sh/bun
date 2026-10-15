@@ -223,6 +223,8 @@ mod platform {
         pub(crate) buf: DirentBuf,
         pub(crate) index: usize,
         pub(crate) end_index: usize,
+        /// The listing ended because the directory was removed.
+        pub(crate) removed: bool,
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
@@ -233,7 +235,10 @@ mod platform {
                     let read = unsafe {
                         sys::getdents64(self.dir, self.buf.0.as_mut_ptr(), self.buf.0.len())
                     }?;
-                    let n = read.unwrap_or(0);
+                    let Some(n) = read else {
+                        self.removed = true;
+                        return Ok(None);
+                    };
                     if n == 0 {
                         return Ok(None);
                     }
@@ -304,6 +309,8 @@ mod platform {
         pub(crate) buf: DirentBuf,
         pub(crate) index: usize,
         pub(crate) end_index: usize,
+        /// The listing ended because the directory was removed.
+        pub(crate) removed: bool,
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
@@ -316,7 +323,10 @@ mod platform {
                     let read = unsafe {
                         sys::getdents64(self.dir, self.buf.0.as_mut_ptr(), self.buf.0.len())
                     }?;
-                    let n = read.unwrap_or(0);
+                    let Some(n) = read else {
+                        self.removed = true;
+                        return Ok(None);
+                    };
                     if n == 0 {
                         return Ok(None);
                     }
@@ -719,6 +729,19 @@ impl<const IS_U16: bool> NewWrappedIterator<IS_U16>
 where
     (): WrappedSelect<IS_U16>,
 {
+    /// The listing ended because the directory was removed after it was opened. Always false on macOS and Windows.
+    #[inline]
+    pub(crate) fn dir_was_removed(&self) -> bool {
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        {
+            self.iter.removed
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+        {
+            false
+        }
+    }
+
     pub(crate) fn init(dir: Fd) -> Self {
         #[cfg(target_os = "macos")]
         {
@@ -743,6 +766,7 @@ where
                     end_index: 0,
                     // zero-init avoids the invalid_value lint on [u8; N]
                     buf: platform::DirentBuf([0u8; 8192]),
+                    removed: false,
                 },
             };
         }
@@ -755,6 +779,7 @@ where
                     end_index: 0,
                     // zero-init avoids the invalid_value lint on [u8; N]
                     buf: platform::DirentBuf([0u8; 8192]),
+                    removed: false,
                 },
             };
         }

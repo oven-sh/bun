@@ -4,7 +4,8 @@
 //! it like everything else. So nothing outside can name what is in them, which the compiler sees to, and all of it can go.
 //!
 //! WHAT THE SAME FEATURES NEED IS AN ISLAND: a stretch of the executable that the linker itself says the bounds of, a section
-//! or the like. Everything that is compiled for those crates goes there (scripts/build/feature-pass.cpp). Within an island
+//! or the like. What is compiled for those crates goes there (scripts/build/feature-pass.cpp), but for what is written
+//! elsewhere and Bun has or could have too: an inline function or a template of a header of WebKit's. Within an island
 //! the linker drops, folds and moves what it likes, and nothing is shared between one and what is outside it, which
 //! Bun's build checks in what it linked (scripts/build/check-features.ts). So whether a byte stays is a matter of where it
 //! is, and `bun build --compile` leaves out the islands that none of the features that stay need (src/exe_features).

@@ -54,6 +54,8 @@ const line = /^(.*): +(?:[0-9a-f-]+ +)?([A-Za-z]) +(\S+)\s*$/;
 const definers = new Map<string, Set<number>>();
 /** The input of an island that has the one definition of a name that others can use. */
 const definedBy = new Map<string, string>();
+/** What the linker keeps one copy of for all that define it. feature-pass.cpp gives what is an island's of those a name of its own, `f.bun7`. */
+const shared = new Set<string>();
 const uses: [symbol: string, by: string][] = [];
 const paths = [...islandOf.keys()];
 for (let start = 0; start < paths.length; start += 100) {
@@ -70,6 +72,7 @@ for (let start = 0; start < paths.length; start += 100) {
     const islands = definers.get(symbol);
     if (islands === undefined) definers.set(symbol, new Set([island]));
     else islands.add(island);
+    if ("WwVv".includes(type) && !/\.bun\d+$/.test(symbol)) shared.add(symbol);
     if (island === 0) continue;
     if ("TDRBS".includes(type)) definedBy.set(symbol, path);
   }
@@ -159,7 +162,7 @@ for (const [address, isCode, symbol] of symbols) {
 
   // What several define, an inline variable of a header for one, is where the linker put the copy it kept.
   const [island] = islands?.size === 1 ? islands : [0];
-  if (island !== 0 && (isCode || stretch?.isCode)) {
+  if (island !== 0 && (isCode || stretch?.isCode) && !shared.has(symbol.split(".llvm.")[0]!)) {
     functionsSeen++;
     if (stretch === undefined || stretch.island !== island || !stretch.isCode) {
       outside.add(`  ${symbol}\n    of island ${island}, is in ${stretch ? `island ${stretch.island}` : "none"}`);

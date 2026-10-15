@@ -35,7 +35,7 @@ import {
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { emitRust, windowsShimPath } from "./rust.ts";
-import { clangFeatureFlags, emitFeatureCheck, islandOfSource } from "./rust/features.ts";
+import { clangFeatureFlags, crateOfSource, emitFeatureCheck } from "./rust/features.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
@@ -287,7 +287,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // is 3.3 MB) and bundling them would serialize work. Always called so
   // stale bundles are pruned even with --unifiedSources=false.
   // What is a feature's is not bundled: a bundle is compiled for the features of all that is in it.
-  const ofFeatures = sources.cxx.filter(src => islandOfSource(featureCrates, src) !== undefined);
+  const ofFeatures = sources.cxx.filter(src => crateOfSource(featureCrates, src) !== undefined);
   const split = generateUnifiedSources(
     cfg,
     sources.cxx.filter(src => !ofFeatures.includes(src)),
@@ -366,7 +366,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);
     const extraFlags = extraFlagsFor(cfg, relSrc);
-    const forFeatures = clangFeatureFlags(cfg, islandOfSource(featureCrates, src));
+    const forFeatures = clangFeatureFlags(cfg, crateOfSource(featureCrates, src));
     const opts: Parameters<typeof cxx>[3] = {
       flags: [...cxxFlagsFull, ...extraFlags, ...forFeatures.flags],
       implicitInputs: forFeatures.inputs,
@@ -382,20 +382,20 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       opts.orderOnlyInputs = codegenOrderOnly;
     }
     const object = cxx(n, cfg, src, opts);
-    islandOf.set(object, islandOfSource(featureCrates, src));
+    islandOf.set(object, crateOfSource(featureCrates, src)?.island);
     cxxObjects.push(object);
   }
 
   // Compile all .c files. No PCH — dep signal applied directly.
   const cObjects: string[] = [];
   const compileC = (src: string): string => {
-    const forFeatures = clangFeatureFlags(cfg, islandOfSource(featureCrates, src));
+    const forFeatures = clangFeatureFlags(cfg, crateOfSource(featureCrates, src));
     const obj = cc(n, cfg, src, {
       flags: [...cFlagsFull, ...forFeatures.flags],
       implicitInputs: [...depHeaderSignal, ...forFeatures.inputs],
       orderOnlyInputs: codegenOrderOnly,
     });
-    islandOf.set(obj, islandOfSource(featureCrates, src));
+    islandOf.set(obj, crateOfSource(featureCrates, src)?.island);
     cObjects.push(obj);
     return obj;
   };

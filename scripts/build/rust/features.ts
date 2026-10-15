@@ -145,18 +145,21 @@ export function featureCrates(islands: Islands): FeatureCrate[] {
   }));
 }
 
-/** The island of `source`, a C or C++ file: that of the crate whose directory it is in. */
-export function islandOfSource(crates: FeatureCrate[], source: string): number | undefined {
-  return crates.find(crate => source.startsWith(crate.directory + sep))?.island;
+/** The crate that `source`, a C or C++ file, is of: the one whose directory it is in. */
+export function crateOfSource(crates: FeatureCrate[], source: string): FeatureCrate | undefined {
+  return crates.find(crate => source.startsWith(crate.directory + sep));
 }
 
-/** What clang is given for a file of `island`, and what it then reads beside the file. */
-export function clangFeatureFlags(cfg: Config, island: number | undefined): { flags: string[]; inputs: string[] } {
+/** What clang is given for a file of `crate`, and what it then reads beside the file. */
+export function clangFeatureFlags(cfg: Config, crate: FeatureCrate | undefined): { flags: string[]; inputs: string[] } {
   const pass = featurePass(cfg);
-  if (island === undefined || pass === undefined) return { flags: [], inputs: [] };
+  if (crate === undefined || pass === undefined) return { flags: [], inputs: [] };
   const plugin = cfg.windows ? ["-Xclang", `-fpass-plugin=${pass}`] : [`-fpass-plugin=${pass}`];
   return {
-    flags: ["-Xclang", "-load", "-Xclang", pass, ...plugin, "-mllvm", `-bun-island=${island}`],
+    flags: [
+      ...["-Xclang", "-load", "-Xclang", pass, ...plugin, "-mllvm", `-bun-island=${crate.island}`],
+      ...["-mllvm", `-bun-island-directory=${crate.directory}`],
+    ],
     inputs: [pass],
   };
 }

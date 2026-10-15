@@ -4,7 +4,7 @@
 // An LLVM pass, as a plugin, because that is what every compiler bun is built with has in common:
 //
 //   BUN_ISLAND=7 rustc -Zllvm-plugins=<this>
-//   clang -Xclang -load -Xclang <this> -fpass-plugin=<this> -mllvm -bun-island=7
+//   clang -Xclang -load -Xclang <this> -fpass-plugin=<this> -mllvm -bun-island=7 -mllvm -bun-island-directory=<of the crate>
 //
 // rustc reads its options before it loads a plugin. ccache knows nothing of the environment.
 //
@@ -14,11 +14,13 @@
 // other crates that are made for its types, drop glue.
 
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Plugins/PassPlugin.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Path.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include <cstdlib>
@@ -28,6 +30,7 @@ using namespace llvm;
 namespace {
 
 cl::opt<std::string> islandOption("bun-island", cl::desc("The number of the island of this compilation unit"));
+cl::opt<std::string> directoryOption("bun-island-directory", cl::desc("Where the C and C++ of the island is"));
 
 // What goes with the island. Not all of it is in it.
 using Owned = SmallPtrSet<const GlobalObject*, 32>;
@@ -38,6 +41,22 @@ bool isThisUnitsAlone(const GlobalObject& global)
 {
     return !global.isDeclaration() && !global.hasAvailableExternallyLinkage() && !global.isWeakForLinker()
         && !global.hasLinkOnceLinkage() && !global.hasSection();
+}
+
+// Whether an inline function or a template is the island's is a matter of where it is written: in the directory of the crate,
+// or in a header of WebKit's, say, that Bun includes too. That is the same code that Bun has or could have, and the linker
+// keeps one copy for all. One that was made for a type or a lambda that only this unit can name is one that only this
+// unit can name.
+bool isWrittenIn(StringRef directory, const Function& function)
+{
+    const DISubprogram* subprogram = function.getSubprogram();
+    if (!subprogram || !subprogram->getFile())
+        return false;
+    SmallString<256> path(subprogram->getFile()->getFilename());
+    sys::path::make_absolute(subprogram->getFile()->getDirectory(), path);
+    sys::path::remove_dots(path, true);
+    StringRef rest(path);
+    return rest.consume_front(directory) && rest.starts_with("/");
 }
 
 bool isUsedOnlyBy(const Owned& owned, const Value& value, SmallPtrSetImpl<const Value*>& seen)
@@ -138,8 +157,8 @@ struct IslandPass : PassInfoMixin<IslandPass> {
         }
 
         // An inline function or a template is in every unit that uses it, and the linker keeps one copy for all of them, by name.
-        // Which copy is called makes no difference, only which one an address is of. So one that is only called gets a
-        // name that it has in this island alone, and the island a copy of its own.
+        // Which copy is called makes no difference, only which one an address is of. So one of the island's that is only
+        // called gets a name that it has in this island alone, and the island a copy of its own.
         DenseMap<const Comdat*, unsigned> membersOf;
         for (const GlobalObject& global : module.global_objects())
             membersOf[global.getComdat()]++;
@@ -147,7 +166,7 @@ struct IslandPass : PassInfoMixin<IslandPass> {
         for (Function& function : module) {
             const Comdat* comdat = function.getComdat();
             bool isAlone = !comdat || membersOf[comdat] == 1;
-            if (!function.hasLinkOnceODRLinkage() || function.isDeclaration() || function.hasAddressTaken() || !isAlone)
+            if (!function.hasLinkOnceODRLinkage() || function.isDeclaration() || function.hasAddressTaken() || !isAlone || !isWrittenIn(directoryOption, function))
                 continue;
             function.setName(function.getName() + ".bun" + island);
             if (comdat) {

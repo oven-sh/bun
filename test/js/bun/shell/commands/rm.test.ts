@@ -509,11 +509,14 @@ test.skipIf(!removedDirReaddir.available)(
       ["forceMidRead", "-rf", "vanish-mid-read"],
       ["noForce", "-r", "vanish-before-read"],
       ["otherError", "-rf", "read-fails-eio"],
+      ["stillThere", "-rf", "read-fails-enoent"],
     ]) {
       fs.mkdirSync(path.join(key, "keep", "deeper"), { recursive: true });
       fs.writeFileSync(path.join(key, "keep", "deeper", "file.txt"), "x");
       fs.mkdirSync(path.join(key, marked));
-      if (marked === "vanish-mid-read") fs.writeFileSync(path.join(key, marked, "inner.txt"), "x");
+      if (marked === "vanish-mid-read" || marked === "read-fails-enoent") {
+        fs.writeFileSync(path.join(key, marked, "inner.txt"), "x");
+      }
       const { exitCode, stderr } = await $\`rm \${flags} \${key}\`.quiet();
       out[key] = { exitCode, stderr: stderr.toString(), left: fs.existsSync(key) };
     }
@@ -534,6 +537,7 @@ test.skipIf(!removedDirReaddir.available)(
     expect(removedDirReaddir.actions(log, String(dir))).toEqual([
       "read-fails-eio otherError/read-fails-eio",
       "read-fails-eio otherError/read-fails-eio",
+      "read-fails-enoent stillThere/read-fails-enoent",
       "vanish-before-read force/vanish-before-read",
       "vanish-before-read noForce/vanish-before-read",
       "vanish-mid-read forceMidRead/vanish-mid-read",
@@ -547,6 +551,8 @@ test.skipIf(!removedDirReaddir.available)(
       // Every other read error is still an error, for rm and for ls.
       otherError: { exitCode: 1, stderr: "rm: otherError/read-fails-eio: Input/output error\n", left: true },
       ls: { exitCode: 1, stderr: "ls: otherError/read-fails-eio: Input/output error\n" },
+      // A filesystem that answers ENOENT for a directory that is still there: rmdir tells the truth.
+      stillThere: { exitCode: 1, stderr: "rm: stillThere/read-fails-enoent: Directory not empty\n", left: true },
     });
     expect(exitCode).toBe(0);
   },

@@ -546,6 +546,8 @@ pub mod dir_iterator {
         buf: AlignedBuf,
         index: usize,
         end_index: usize,
+        /// The listing ended because the directory was removed.
+        removed: bool,
     }
     #[cfg(target_os = "freebsd")]
     impl State {
@@ -555,6 +557,7 @@ pub mod dir_iterator {
                 buf: AlignedBuf::uninit(),
                 index: 0,
                 end_index: 0,
+                removed: false,
             }
         }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
@@ -562,7 +565,10 @@ pub mod dir_iterator {
                 if self.index >= self.end_index {
                     // SAFETY: buf is valid for BUF_SIZE bytes.
                     let read = unsafe { super::getdents64(dir, self.buf.as_mut_ptr(), BUF_SIZE) }?;
-                    let n = read.unwrap_or(0);
+                    let Some(n) = read else {
+                        self.removed = true;
+                        return Ok(None);
+                    };
                     if n == 0 {
                         return Ok(None);
                     }
@@ -802,14 +808,14 @@ pub mod dir_iterator {
         pub fn dir(&self) -> Fd {
             self.dir
         }
-        /// The listing ended because the directory was removed after it was opened. Linux and Android only.
+        /// The listing ended because the directory was removed after it was opened. Always false on macOS and Windows.
         #[inline]
         pub fn dir_was_removed(&self) -> bool {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
+            #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
             {
                 self.state.removed
             }
-            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
             {
                 false
             }

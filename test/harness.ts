@@ -2519,11 +2519,14 @@ export const dtUnknownReaddir = {
 /**
  * Runs bun beside something that removes the directories bun reads, with no
  * race: `env(log)` preloads a shim that acts from inside `getdents64`. It
- * removes a directory named `vanish-before-read` or `vanish-mid-read`, so that
- * the kernel fails the read with ENOENT, and it fails every read of a directory
- * named `read-fails-eio` with EIO. It appends a line to `log` each time; assert
- * on `actions()`, otherwise a test here passes vacuously if bun ever stops
- * issuing `getdents64` through libc's `syscall()` wrapper.
+ * removes a directory named `vanish-before-read`, `vanish-mid-read` or
+ * `vanish-once-linked`, so that the kernel fails the read with ENOENT. It fails
+ * every read of a directory named `read-fails-eio` with EIO, and of one named
+ * `read-fails-enoent` with ENOENT while the directory stays. The header of
+ * test/fixtures/removed-dir-readdir-shim.c says when each one acts. The shim
+ * appends a line to `log` each time; assert on `actions()`, otherwise a test
+ * here passes vacuously if bun ever stops issuing `getdents64` through libc's
+ * `syscall()` wrapper.
  */
 export const removedDirReaddir = {
   /** glibc with a C compiler. bun-musl is statically linked: LD_PRELOAD cannot load the shim. */

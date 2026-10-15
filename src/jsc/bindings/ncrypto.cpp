@@ -1966,8 +1966,9 @@ EVP_PKEY* TryParseECSubjectPublicKeyInfo(const unsigned char* der, size_t der_le
         return nullptr;
     }
 
-    auto eckey = ECKeyPointer::New(group);
-    if (!eckey || !EC_KEY_oct2key(eckey.get(), CBS_data(&key), CBS_len(&key), nullptr)) {
+    ECKeyPointer eckey(EC_KEY_new());
+    if (!eckey || !EC_KEY_set_group(eckey.get(), group)
+        || !EC_KEY_oct2key(eckey.get(), CBS_data(&key), CBS_len(&key), nullptr)) {
         return nullptr;
     }
 

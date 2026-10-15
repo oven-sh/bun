@@ -123,6 +123,55 @@ devTest("add new css import later", {
     await c.style("body").notFound();
   },
 });
+devTest("a second JS importer of a stylesheet keeps its link", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["main.js"],
+      body: `<div class="box">hello</div>`,
+    }),
+    "main.js": `
+      import "./first.js";
+    `,
+    // second.js is only found through first.js, so styles.css is already in
+    // the graph when the import in second.js is resolved.
+    "first.js": `
+      import "./styles.css";
+      import "./second.js";
+      import.meta.hot.accept();
+    `,
+    "second.js": `
+      import "./styles.css";
+      import.meta.hot.accept();
+    `,
+    "styles.css": `
+      .box {
+        color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".box").color.expect.toBe("red");
+
+    // The import in second.js alone keeps the stylesheet on the page.
+    await dev.write(
+      "first.js",
+      `
+        import "./second.js";
+        import.meta.hot.accept();
+      `,
+    );
+    await c.style(".box").color.expect.toBe("red");
+
+    await dev.write(
+      "second.js",
+      `
+        import.meta.hot.accept();
+      `,
+    );
+    await c.style(".box").notFound();
+  },
+});
 devTest("css import another css file", {
   files: {
     "index.html": emptyHtmlFile({

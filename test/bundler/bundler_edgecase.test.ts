@@ -1823,6 +1823,49 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("h(");
     },
   });
+  // x.js is an entry point, and `external` names it, so an import of it stays
+  // external (esbuild does the same). The specifier of that import is the
+  // absolute path of x.js, which is also the path the entry point is bundled
+  // under. The import must not be linked to that module.
+  for (const backend of ["api", "cli"] as const) {
+    itBundled(`edgecase/EntryPointIsExternalFileImportedByAbsolutePath${backend.toUpperCase()}`, ({ root }) => ({
+      backend,
+      files: {
+        "/x.js": `export const x = "bundled-x";`,
+        "/entry.js": `import "./mid.js";`,
+        "/mid.js": `import { x } from ${JSON.stringify(join(root, "x.js"))}; console.log(x);`,
+      },
+      entryPoints: ["/x.js", "/entry.js"],
+      external: [join(root, "x.js")],
+      outdir: "/out",
+      onAfterBundle(api) {
+        api.expectFile("/out/x.js").toContain(`"bundled-x"`);
+        const entry = api.readFile("/out/entry.js");
+        expect(entry).toMatch(/^import \{ x \} from "[^"]*x\.js";$/m);
+        expect(entry).not.toContain(`"bundled-x"`);
+      },
+    }));
+  }
+  // tsconfig "paths" maps the specifier in late.js, the absolute path of a.js,
+  // to b.js. entry.js imports a.js too, so that specifier text is also the path
+  // of a module in the bundle. The import in late.js is b.js all the same.
+  itBundled("edgecase/TsconfigPathsTargetIsNotReplacedByTheModuleAtTheSpecifierPath", ({ root }) => ({
+    files: {
+      "/entry.js": /* js */ `
+        import { who as b } from "./b.js";
+        import { who as a } from "./a.js";
+        import "./late.js";
+        console.log("entry", a, b);
+      `,
+      "/a.js": `export const who = "A";`,
+      "/b.js": `export const who = "B";`,
+      "/late.js": `import { who } from ${JSON.stringify(join(root, "a.js"))}; console.log("late", who);`,
+      "/tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { [join(root, "a.js")]: ["./b.js"] } },
+      }),
+    },
+    run: { stdout: "late B\nentry A B" },
+  }));
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
       "/entry.js": `

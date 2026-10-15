@@ -540,6 +540,47 @@ describe("bundler", () => {
       },
     });
   }
+  // late.js imports x.js by its absolute path, and that import is external:
+  // through the `external` option, or because a plugin says so. Another import
+  // made x.js a module of the bundle. The external import must stay external,
+  // like in esbuild. late.js is loaded only after x.js is on its way into the
+  // bundle, so x.js is registered before late.js is scanned.
+  for (const variant of ["ExternalOption", "PluginAnswer"] as const) {
+    itBundled(`plugin/ExternalImportIsNotLinkedToABundledFileWithTheSamePath${variant}`, ({ root }) => {
+      const bundled = Promise.withResolvers<void>();
+      const x = join(root, "x.js");
+      return {
+        files: {
+          "/entry.js": /* js */ `
+            import { x } from "bundle-x";
+            import "./late.js";
+            console.log(x);
+          `,
+          "/x.js": `export const x = "bundled-x";`,
+          "/late.js": ``,
+        },
+        external: variant === "ExternalOption" ? [x] : undefined,
+        plugins(builder) {
+          builder.onResolve({ filter: /^bundle-x$/ }, () => {
+            bundled.resolve();
+            return { path: x };
+          });
+          if (variant === "PluginAnswer") {
+            builder.onResolve({ filter: /x\.js$/ }, args => ({ path: args.path, external: true }));
+          }
+          builder.onLoad({ filter: /late\.js$/ }, async () => {
+            await bundled.promise;
+            return { contents: `import { x as y } from ${JSON.stringify(x)}; console.log(y);`, loader: "js" };
+          });
+        },
+        onAfterBundle(api) {
+          const contents = api.readFile("/out.js");
+          expect(contents).toContain(`var x = "bundled-x";`);
+          expect(contents).toMatch(/^import \{ x as y \} from "[^"]*x\.js";$/m);
+        },
+      };
+    });
+  }
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
       files: {
@@ -1892,5 +1933,181 @@ describe("bundler", () => {
         outputs: result.outputs.map(output => path.basename(output.path)),
       }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
     });
+  }
+
+  // An import that resolution leaves without a module keeps its specifier as
+  // its path. That text can equal the path of a module in the bundle, here a
+  // plugin module in another namespace, and the import must not be linked to it.
+  // The builds run in a child process: a debug build asserts on such a link.
+  const importWithoutModuleFixture = {
+    "entry.js": `
+      import { x } from "virt";
+      import "./late.js";
+      console.log(x);
+    `,
+    "late.js": ``,
+    "wrapped-entry.js": `
+      import wrapped from "wrapped:ext-pkg";
+      console.log(wrapped);
+    `,
+    "build.mjs": `
+      function lines(output) {
+        return output
+          .split("\\n")
+          .map(line => line.trim())
+          .filter(line => !line.startsWith("//") && /ext-pkg|not-installed-pkg|"fs"|"react"|from-virt|wrapped/.test(line));
+      }
+
+      // entry.js imports the plugin module "virt" and late.js. \`path\` is the
+      // path of the plugin module and the specifier that late.js imports.
+      // late.js is loaded only after the "virt" answer is queued, so the
+      // plugin module is registered before late.js is scanned.
+      async function build({ path, late, options = {}, setup = () => {} }) {
+        const virtAnswered = Promise.withResolvers();
+        const result = await Bun.build({
+          entrypoints: ["./entry.js"],
+          throw: false,
+          ...options,
+          plugins: [
+            {
+              name: "virt",
+              setup(build) {
+                build.onResolve({ filter: /^virt$/ }, () => {
+                  virtAnswered.resolve();
+                  return { path, namespace: "virt" };
+                });
+                build.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+                  return { contents: 'export const x = "from-virt";', loader: "js" };
+                });
+                setup(build);
+                build.onLoad({ filter: /late\\.js$/ }, async () => {
+                  await virtAnswered.promise;
+                  return { contents: late, loader: "js" };
+                });
+              },
+            },
+          ],
+        });
+        return result.success ? lines(await result.outputs[0].text()) : result.logs.map(log => log.message);
+      }
+
+      const cases = {
+        externalOption: () =>
+          build({
+            path: "ext-pkg",
+            late: 'import pkg from "ext-pkg"; console.log(pkg);',
+            options: { external: ["ext-pkg"] },
+          }),
+        // The parser reads a module named "react" as CommonJS, so this link
+        // printed \`__INVALID__REF__\` where the one above failed the build.
+        externalOptionReact: () =>
+          build({
+            path: "react",
+            late: 'import React from "react"; console.log(React);',
+            options: { external: ["react"] },
+          }),
+        pluginDeclines: () =>
+          build({
+            path: "ext-pkg",
+            late: 'import pkg from "ext-pkg"; console.log(pkg);',
+            options: { external: ["ext-pkg"] },
+            setup(build) {
+              build.onResolve({ filter: /^ext-pkg$/ }, () => undefined);
+            },
+          }),
+        pluginAnswersExternal: () =>
+          build({
+            path: "ext-pkg",
+            late: 'import pkg from "ext-pkg"; console.log(pkg);',
+            setup(build) {
+              build.onResolve({ filter: /^ext-pkg$/ }, args => ({ path: args.path, external: true }));
+            },
+          }),
+        builtin: () =>
+          build({
+            path: "fs",
+            late: 'import { readFileSync } from "node:fs"; console.log(readFileSync);',
+            options: { target: "bun" },
+          }),
+        unresolvedRequire: () =>
+          build({
+            path: "not-installed-pkg",
+            late: 'let pkg; try { pkg = require("not-installed-pkg"); } catch { pkg = "fallback"; } console.log(pkg);',
+          }),
+        // A plugin module whose contents import its own path text. There is no
+        // order to force: a module is registered before its records are scanned.
+        async importsItsOwnPathText() {
+          const result = await Bun.build({
+            entrypoints: ["./wrapped-entry.js"],
+            external: ["ext-pkg"],
+            throw: false,
+            plugins: [
+              {
+                name: "wrapped",
+                setup(build) {
+                  build.onResolve({ filter: /^wrapped:/ }, args => {
+                    return { path: args.path.slice("wrapped:".length), namespace: "wrapped" };
+                  });
+                  build.onLoad({ filter: /.*/, namespace: "wrapped" }, args => {
+                    return {
+                      contents: "import * as real from " + JSON.stringify(args.path) + "; export default { wrapped: real };",
+                      loader: "js",
+                    };
+                  });
+                },
+              },
+            ],
+          });
+          return result.success ? lines(await result.outputs[0].text()) : result.logs.map(log => log.message);
+        },
+      };
+
+      const results = {};
+      for (const name of process.argv.slice(2)) results[name] = await cases[name]();
+      console.log(JSON.stringify(results));
+    `,
+  };
+  const importOfExtPkg = [`var x = "from-virt";`, `import pkg from "ext-pkg";`];
+  for (const [name, expected] of [
+    [
+      "an external import",
+      {
+        externalOption: importOfExtPkg,
+        externalOptionReact: [`var x = "from-virt";`, `import React from "react";`],
+        pluginDeclines: importOfExtPkg,
+        pluginAnswersExternal: importOfExtPkg,
+      },
+    ],
+    [
+      "a builtin, an unresolved require, and a module's import of its own path text",
+      {
+        builtin: [`var x = "from-virt";`, `import { readFileSync } from "fs";`],
+        unresolvedRequire: [
+          `pkg = (()=>{throw new Error("Cannot require module "+"not-installed-pkg");})();`,
+          `var x = "from-virt";`,
+        ],
+        importsItsOwnPathText: [`import * as real from "ext-pkg";`, `var ext_pkg_default = { wrapped: real };`],
+      },
+    ],
+  ] as const) {
+    test.concurrent(
+      `plugin/an import without a module is not linked to a module with the same path text: ${name}`,
+      async () => {
+        using dir = tempDir("plugin-import-without-module", importWithoutModuleFixture);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build.mjs", ...Object.keys(expected)],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual(expected);
+        expect(exitCode).toBe(0);
+      },
+    );
   }
 });

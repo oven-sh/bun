@@ -1,5 +1,6 @@
 // Plugin tests concern plugins in development mode.
-import { devTest, minimalFramework } from "../bake-harness";
+import { expect } from "bun:test";
+import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
 devTest("onResolve", {
@@ -110,6 +111,61 @@ devTest("onResolve + onLoad virtual file", {
     ]);
   },
 });
+devTest("a plugin-external import whose path is a file another route bundled adds no stylesheet", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./external-styles-plugin.ts"]
+    `,
+    // resolveDir is the importer's directory, so the answer is the path that
+    // styles.css is bundled under for styled.ts.
+    "external-styles-plugin.ts": `
+      import * as path from 'path';
+      export default {
+        name: 'external-styles',
+        setup(build) {
+          build.onResolve({ filter: /^external-styles$/ }, (args) => {
+            return { path: path.join(args.resolveDir, 'styles.css'), external: true };
+          });
+        },
+      };
+    `,
+    "styled.html": emptyHtmlFile({ scripts: ["styled.ts"] }),
+    "styled.ts": `
+      import './styles.css';
+    `,
+    "external.html": emptyHtmlFile({ scripts: ["external.ts"] }),
+    "external.ts": `
+      import 'external-styles';
+    `,
+    "styles.css": `
+      .box { color: red; }
+    `,
+  },
+  async test(dev) {
+    // A fetch returns after its route is bundled, so styles.css is a file of
+    // the dev server before the plugin answers the import in external.ts.
+    expect(await fetchPage(dev, "/styled")).toEqual({
+      status: 200,
+      stylesheets: [expect.stringMatching(/\.css$/)],
+    });
+    // 200: the plugin answered the import. Unresolved, the route is a 500.
+    expect(await fetchPage(dev, "/external")).toEqual({
+      status: 200,
+      stylesheets: [],
+    });
+  },
+});
+
+async function fetchPage(dev: Dev, url: string) {
+  const response = await dev.fetch(url);
+  const html = await response.text();
+  return {
+    status: response.status,
+    stylesheets: [...html.matchAll(/<link rel="stylesheet"[^>]*href="([^"]+)"/g)].map(match => match[1]),
+  };
+}
+
 // devTest("onLoad with watchFile", {
 //   framework: minimalFramework,
 //   pluginFile: `

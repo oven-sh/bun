@@ -1,6 +1,6 @@
-import { CString, dlopen, linkSymbols, ptr, toArrayBuffer, toBuffer } from "bun:ffi";
+import { cc, CString, dlopen, linkSymbols, ptr, toArrayBuffer, toBuffer } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isMusl } from "harness";
+import { isMusl, isWindows } from "harness";
 
 // Not `toThrow()`: it also accepts an Error that the function returns, which is
 // what `toBuffer()` and `toArrayBuffer()` did with their TypeError before they
@@ -165,5 +165,27 @@ describe("FFI error messages", () => {
         },
       });
     }).toThrow('you must provide a "ptr" field with the memory address of the native function.');
+  });
+});
+
+// "50%deposit.so" is a file name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
+// Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789).
+describe.skipIf(isWindows)("a file URL whose path does not percent-decode to UTF-8", () => {
+  const uriMalformed = { name: "URIError", message: "URI malformed", code: undefined };
+
+  test("dlopen throws a URIError", () => {
+    const url = new URL("50%deposit.so", import.meta.url);
+    for (const path of [url, url.href]) {
+      const error = thrownBy(() => dlopen(path, { x: {} }).close());
+      expect({ name: error?.name, message: error?.message, code: error?.code }).toEqual(uriMalformed);
+    }
+  });
+
+  test("cc throws a URIError", () => {
+    const url = new URL("50%deposit.c", import.meta.url);
+    for (const source of [url, url.href, [url]]) {
+      const error = thrownBy(() => cc({ source, symbols: { add: { returns: "int", args: ["int", "int"] } } }).close());
+      expect({ name: error?.name, message: error?.message, code: error?.code }).toEqual(uriMalformed);
+    }
   });
 });

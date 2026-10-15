@@ -186,9 +186,9 @@ fn after_element(slice: &[u8], len: usize, separator: u8) -> Option<&[u8]> {
     }
 }
 
-/// The JSON number `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?` at the start of `text`: its length, and whether it is an integer.
+/// The JSON number `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?` at the start of `text`: its length, and its value if the int cell holds it.
 #[inline(never)] // inlined, it costs every other element kind in parse_array a few instructions
-fn json_number(text: &[u8]) -> Option<(usize, bool)> {
+fn json_number(text: &[u8]) -> Option<(usize, Option<i32>)> {
     #[inline(always)]
     fn digits(text: &[u8], from: usize) -> usize {
         text[from..]
@@ -196,14 +196,24 @@ fn json_number(text: &[u8]) -> Option<(usize, bool)> {
             .take_while(|byte| byte.is_ascii_digit())
             .count()
     }
-    let mut len = usize::from(text.first() == Some(&b'-'));
-    let integer = digits(text, len);
-    if integer == 0 || (integer > 1 && text[len] == b'0') {
+    let negative = text.first() == Some(&b'-');
+    let start = usize::from(negative);
+    let integer = digits(text, start);
+    if integer == 0 || (integer > 1 && text[start] == b'0') {
         return None;
     }
-    len += integer;
-    let integer_len = len;
-    if text.get(len) == Some(&b'.') {
+    let mut len = start + integer;
+    let Some(b'.' | b'e' | b'E') = text.get(len) else {
+        // An integer of up to 9 digits fits the int cell. `-0` and every other number is a double, as in JSON.parse.
+        if integer > 9 || (negative && text[start] == b'0') {
+            return Some((len, None));
+        }
+        let magnitude = text[start..len]
+            .iter()
+            .fold(0, |sum, digit| sum * 10 + i32::from(digit - b'0'));
+        return Some((len, Some(if negative { -magnitude } else { magnitude })));
+    };
+    if text[len] == b'.' {
         let fraction = digits(text, len + 1);
         if fraction == 0 {
             return None;
@@ -218,7 +228,7 @@ fn json_number(text: &[u8]) -> Option<(usize, bool)> {
         }
         len += 1 + sign + exponent;
     }
-    Some((len, len == integer_len))
+    Some((len, None))
 }
 
 fn parse_array(
@@ -427,23 +437,17 @@ fn parse_array(
                         continue;
                     }
                 }
-                // parse_f64 also takes `inf`, `nan`, `+1` and `.5`, so the JSON number grammar is checked first.
+                // parse_double reads the number at the start of any text, and `+1` or `.5` too, so the JSON number grammar is checked first.
                 (b'-' | b'0'..=b'9', ElementKind::Json) => {
-                    if let Some((len, integer)) = json_number(slice)
+                    if let Some((len, int)) = json_number(slice)
                         && let Some(rest) = after_element(slice, len, separator)
                     {
-                        let number = &slice[..len];
-                        // Up to 9 digits fit the int cell. `-0` and every other number is a double, as in JSON.parse.
-                        if integer
-                            && len <= 9
-                            && number != b"-0"
-                            && let Some(int) = bun_core::fmt::parse_decimal::<i32>(number)
-                        {
+                        if let Some(int) = int {
                             array.push(SQLDataCell::int4(int));
                         } else {
                             array.push(SQLDataCell::float8(
-                                bun_core::fmt::parse_f64(number)
-                                    .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
+                                bun_core::fmt::parse_double(&slice[..len])
+                                    .map_err(|_| AnyPostgresError::UnsupportedArrayFormat)?,
                             ));
                         }
                         slice = rest;

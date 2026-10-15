@@ -1073,6 +1073,53 @@ describe("expect()", () => {
     }
   });
 
+  if (isBun) {
+    // Symbol.hasInstance can make a thrown string, symbol or BigInt an instance of the class, so
+    // the failure of .not.toThrow(Class) cannot assume a .message. A child process runs it,
+    // because a null dereference there ends the whole test run.
+    test(".not.toThrow(Class) reports a thrown value that is not an object", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        import { expect } from "bun:test";
+        class Anything {
+          static [Symbol.hasInstance]() {
+            return true;
+          }
+        }
+        for (const thrown of ["boom", Symbol("boom"), 10n ** 30n, {}, { message: "an object" }, new TypeError("an error")]) {
+          try {
+            expect(() => {
+              throw thrown;
+            }).not.toThrow(Anything);
+            console.log("passed");
+          } catch (e) {
+            console.log(e.message.split("\\n").filter(Boolean).slice(1).join(" | "));
+          }
+        }
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.split("\n"), stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+        stdout: [
+          'Expected constructor: not Anything | Received value: "boom"',
+          "Expected constructor: not Anything | Received value: Symbol(boom)",
+          "Expected constructor: not Anything | Received value: 1000000000000000000000000000000n",
+          "Expected constructor: not Anything | Received value: {}",
+          'Expected constructor: not Anything | Received message: "an object"',
+          'Expected constructor: not Anything | Received message: "an error"',
+          "",
+        ],
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  }
+
   test("deepEquals derived strings and strings", () => {
     let a = new String("hello");
     let b = "hello";

@@ -28,7 +28,7 @@ type State = {
   tag: string;
   ticks: number;
   port: any;
-  pid: number;
+  pid: number | undefined;
   settled: string | undefined;
   heard: string[];
   file: string;
@@ -1955,7 +1955,7 @@ async function greetsThrough(options: object, tag: string): Promise<boolean> {
         close: () => resolve(false),
         error: () => resolve(false),
       },
-    } as Parameters<typeof Bun.connect>[0]);
+    } as unknown as Parameters<typeof Bun.connect>[0]);
   } catch {
     return false;
   }
@@ -2058,7 +2058,7 @@ let hostMysql: Bun.TCPSocketListener<{ tag?: string }>;
 let hostKeepAlive: Bun.TCPSocketListener<{ tag?: string }>;
 let hostUnix: Bun.UnixSocketListener<{ tag?: string }>;
 let hostHttp2: http2.Http2Server;
-let hostHttp: Bun.Server;
+let hostHttp: Bun.Server<{ tag: string }>;
 beforeAll(async () => {
   hostTcp = Bun.listen<{ tag?: string }>({ hostname: "127.0.0.1", port: 0, socket: tracksTags("tcp:") });
   hostTls = Bun.listen<{ tag?: string }>({
@@ -2170,7 +2170,7 @@ const kinds: Record<string, Kind> = {
     args: () => [bunExe()],
     alive: async state => {
       try {
-        process.kill(state.pid, 0);
+        process.kill(state.pid!, 0);
         return true;
       } catch {
         return false;
@@ -2249,7 +2249,7 @@ const kinds: Record<string, Kind> = {
     args: () => [bunExe()],
     alive: async state => {
       try {
-        process.kill(state.pid, 0);
+        process.kill(state.pid!, 0);
         return true;
       } catch {
         return false;
@@ -2482,7 +2482,7 @@ test("ModuleGraph isolation: a Bun.SQL query of a disposed graph reports nothing
 
 test("ModuleGraph isolation: a query the host makes on a disposed graph's Bun.SQL fails instead of waiting for ever", async () => {
   // Servers that let a client in and answer nothing afterwards.
-  using postgres = Bun.listen({
+  using postgres = Bun.listen<boolean | undefined>({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
@@ -2752,7 +2752,7 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
       let buffered = Buffer.alloc(0);
       socket.once("data", () => {
         socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
-        socket.on("data", data => {
+        socket.on("data", (data: Buffer) => {
           buffered = pgReadFrontendMessages(Buffer.concat([buffered, data]), type => {
             if (type === 0x51 /* Query */)
               socket.write(Buffer.concat([pgCommandComplete("LISTEN"), pgReadyForQuery()]));
@@ -3088,7 +3088,7 @@ describe.concurrent("ModuleGraph isolation: disposing from inside", () => {
     using made = await newGraph();
     const { graph, app } = made;
     const state = newState("held");
-    const server: Bun.Server = graph.run(() =>
+    const server: Bun.Server<undefined> = graph.run(() =>
       app.call(() => Bun.serve({ port: 0, fetch: () => new Response("held") })),
     );
     await graph.run(() =>

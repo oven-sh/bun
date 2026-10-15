@@ -19,6 +19,7 @@ use crate::bun_json as json;
 use crate::initialize_store;
 
 pub struct MapEntry {
+    /// Nodes are in the process heap and never freed: a mimalloc heap per entry costs 30 KB.
     pub root: Expr,
     pub source: Source,
     pub indentation: Indentation,
@@ -27,33 +28,9 @@ pub struct MapEntry {
     /// so the source's path slices stay valid for the entry's lifetime.
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
     _path_storage: bun_core::ZBox,
-    /// Owns the arena that backs decoded string bytes inside `root`.
-    /// `deepClone` does *not* dupe escape-decoded `E.String.data` slices.
-    /// The parser takes a `&Arena`, so the arena must outlive the
-    /// cached AST — hold it here so it drops with the entry.
-    ///
-    /// Public so editors that splice new `Expr` nodes into `root`
-    /// (e.g. `update_interactive_command::update_package_json_files_from_updates`)
-    /// can allocate those nodes here instead of in the resettable `Store` —
-    /// the cached `root` outlives `initialize_store()` resets.
-    pub json_arena: bun_alloc::Arena,
     /// Superseded `source.contents` buffers, pinned so cached `root` slices
     /// stay valid; freed when the entry drops.
     pub stale_contents: Vec<std::borrow::Cow<'static, [u8]>>,
-}
-
-impl Default for MapEntry {
-    fn default() -> Self {
-        Self {
-            root: Expr::default(),
-            source: Source::default(),
-            indentation: Indentation::default(),
-            indentation_guessed: false,
-            _path_storage: bun_core::ZBox::default(),
-            json_arena: bun_alloc::Arena::new(),
-            stale_contents: Vec::new(),
-        }
-    }
 }
 
 impl MapEntry {
@@ -63,10 +40,9 @@ impl MapEntry {
     /// writes the printed JSON back into `source.contents`. The caller then
     /// invokes this to restore the invariant `root == parse(source)`.
     pub(crate) fn reparse_root(&mut self, log: &mut Log) -> Result<(), Error> {
-        let json_bump = bun_alloc::Arena::new();
-        let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
-        self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
-        self.json_arena = json_bump;
+        let heap = bun_alloc::Arena::borrowing_default();
+        let parsed = parse_package_json(&self.source, log, &heap, false)?;
+        self.root = json::clone_out_of_store(&parsed.root, &self.source, log, &heap)?;
         Ok(())
     }
 }
@@ -137,6 +113,33 @@ impl WorkspacePackageJSONCache {
         abs_package_json_path: &[u8],
         opts: GetJSONOptions,
     ) -> GetResult<'_> {
+        self.get_or_insert(log, abs_package_json_path, opts, None)
+    }
+
+    /// `contents` stands for a package.json that is never written (`bun add --dry-run`).
+    pub(crate) fn insert_unwritten(
+        &mut self,
+        log: &mut Log,
+        abs_package_json_path: &[u8],
+        contents: &'static [u8],
+    ) -> Result<(), Error> {
+        self.get_or_insert(
+            log,
+            abs_package_json_path,
+            GetJSONOptions::default(),
+            Some(contents),
+        )
+        .unwrap()
+        .map(drop)
+    }
+
+    fn get_or_insert(
+        &mut self,
+        log: &mut Log,
+        abs_package_json_path: &[u8],
+        opts: GetJSONOptions,
+        unwritten: Option<&'static [u8]>,
+    ) -> GetResult<'_> {
         debug_assert!(is_absolute(abs_package_json_path));
 
         #[cfg(windows)]
@@ -174,41 +177,47 @@ impl WorkspacePackageJSONCache {
 
         // MOVE_DOWN: `bun.sys.File.toSource` lives in `bun_logger` (T1 → T2
         // cyclebreak; `bun_sys` cannot name `Source`).
-        let source = match bun_ast::to_source(&key, Default::default()) {
-            Ok(s) => s,
-            Err(err) => {
-                return GetResult::ReadErr(err.into());
-            }
+        let source = match unwritten {
+            Some(contents) => Source::init_path_string(key.as_bytes(), contents),
+            None => match bun_ast::to_source(&key, Default::default()) {
+                Ok(s) => s,
+                Err(err) => {
+                    return GetResult::ReadErr(err.into());
+                }
+            },
         };
 
         if opts.init_reset_store {
             initialize_store();
         }
 
-        let json_bump = bun_alloc::Arena::new();
-        let parsed = match parse_package_json(&source, log, &json_bump, opts.guess_indentation) {
+        let heap = bun_alloc::Arena::borrowing_default();
+        let parsed = match parse_package_json(&source, log, &heap, opts.guess_indentation) {
             Ok(p) => p,
             Err(err) => {
                 return GetResult::ParseErr(err);
             }
         };
 
+        let root = match json::clone_out_of_store(&parsed.root, &source, log, &heap) {
+            Ok(root) => root,
+            Err(err) => {
+                return GetResult::ParseErr(err.into());
+            }
+        };
+
         let value = MapEntry {
-            root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
+            root,
             source,
             indentation: parsed.indentation,
             indentation_guessed: opts.guess_indentation,
             // `source.path` borrows this allocation; the `Box<[u8]>` heap
             // address is stable across the move into the map.
             _path_storage: key,
-            json_arena: json_bump,
             stale_contents: Vec::new(),
         };
 
-        let entry = bun_core::handle_oom(self.map.get_or_put(path));
-        debug_assert!(!entry.found_existing);
-        *entry.value_ptr = value;
-
-        GetResult::Entry(entry.value_ptr)
+        bun_core::handle_oom(self.map.put(path, value));
+        GetResult::Entry(self.map.get_mut(path).unwrap())
     }
 }

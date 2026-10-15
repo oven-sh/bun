@@ -39,6 +39,7 @@ use crate::ZStr;
 // ──────────────────────────────────────────────────────────────────────────────
 
 new!(pub AGENT: string, "AGENT", {});
+new!(pub ANDROID_ROOT: string, "ANDROID_ROOT", {});
 new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default: false });
 // A compiled executable decodes ALL of its embedded bytecode at exit and writes one digest line per module here: for
 // comparing two builds of the same sources whose bytecode payloads are laid out differently.
@@ -66,6 +67,8 @@ new!(pub BUN_CONFIG_HTTP_IDLE_TIMEOUT: unsigned, "BUN_CONFIG_HTTP_IDLE_TIMEOUT",
 // A peer that accepts the TCP connection but never answers the upgrade fails
 // with error + close(1006). 0 disables; uSockets' 4 s sweep rounds small values up.
 new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIMEOUT", { default: 120 });
+// Seconds the `new WebSocket()` client waits for the server's TCP close after its close event. 0 disables.
+new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", { default: 30 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
@@ -83,7 +86,8 @@ new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 // size limit of the embedded module graph (`StandaloneModuleGraph::to_bytes`)
 // so a test can reach it without a 4 GiB input.
 new!(pub BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: unsigned, "BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES", {});
-new!(pub BUN_DEBUG_TEST_TEXT_LOCKFILE: boolean, "BUN_DEBUG_TEST_TEXT_LOCKFILE", { default: false });
+// How long `bun check` runs before it draws its progress line (default 300), so a test can see the line on a small project.
+new!(pub BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: unsigned, "BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS", {});
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
 // Debug-only: when set, `NumberRenamer` dumps the symbol table before
 // renaming (`src/js_printer/renamer.rs`). Presence-checked, value ignored.
@@ -118,6 +122,8 @@ new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SI
 // thread schedules a drain; collapses the per-chunk thread-pool futex wake
 // into roughly one per `threshold` bytes.
 new!(pub BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: unsigned, "BUN_INSTALL_STREAMING_DRAIN_THRESHOLD", { default: 256 * 1024 });
+// How long `bun install` retries a rename Windows refuses while a scanner holds a file open.
+new!(pub BUN_INSTALL_WINDOWS_RENAME_RETRY_MS: unsigned, "BUN_INSTALL_WINDOWS_RENAME_RETRY_MS", { default: 5_000 });
 new!(pub BUN_NEEDS_PROC_SELF_WORKAROUND: boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", { default: false });
 new!(pub BUN_OPTIONS: string, "BUN_OPTIONS", {});
 new!(pub BUN_POSTGRES_SOCKET_MONITOR: string, "BUN_POSTGRES_SOCKET_MONITOR", {});
@@ -175,6 +181,11 @@ new!(pub NODE_COMPILE_CACHE: string, "NODE_COMPILE_CACHE", {});
 new!(pub NODE_COMPILE_CACHE_PORTABLE: string, "NODE_COMPILE_CACHE_PORTABLE", {});
 new!(pub NODE_DEBUG_NATIVE: string, "NODE_DEBUG_NATIVE", {});
 new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
+// Set by `bun run` for a script named `check`, `lint` or `format`: the packages whose script of that
+// name is running. In those, `bun check` is the type checker and not the script again.
+new!(pub BUN_INTERNAL_SCRIPTS_OF_COMMANDS: string, "BUN_INTERNAL_SCRIPTS_OF_COMMANDS", {});
+// What a Bun that has `bun check` and not the other two sets in its place. Only read.
+new!(pub BUN_INTERNAL_CHECK_SCRIPTS: string, "BUN_INTERNAL_CHECK_SCRIPTS", {});
 // Set by HostProcess.rs when spawning the WebView host subprocess. The
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.
@@ -183,6 +194,7 @@ new!(pub NODE_PENDING_DEPRECATION: string, "NODE_PENDING_DEPRECATION", {});
 new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { default: false });
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
 new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});
+new!(pub npm_package_json: string, "npm_package_json", {});
 new!(pub PATH: string, "PATH", {});
 new!(pub REPL_ID: boolean, "REPL_ID", { default: false });
 new!(pub RUNNER_DEBUG: boolean, "RUNNER_DEBUG", { default: false });

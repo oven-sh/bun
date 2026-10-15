@@ -14,6 +14,7 @@ use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
+use bun_install::lifecycle_script_runner::ScriptArgv;
 use bun_io::{BufferedReader, ReadState};
 use bun_sys as sys;
 
@@ -89,22 +90,15 @@ impl<'a> ProcessHandle<'a> {
         state.remaining_scripts += 1;
         let handle = self;
 
-        let argv: [*const c_char; 4] = [
-            state.shell_bin.as_ptr().cast(),
-            if cfg!(unix) {
-                c"-c".as_ptr()
-            } else {
-                c"exec".as_ptr()
-            },
-            handle.config.combined.as_ptr().cast(),
-            core::ptr::null(),
-        ];
+        let argv = ScriptArgv::new(state.shell_bin, handle.config.combined)?;
         let start_time = Instant::now();
         let spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
             let env_ptr = state.env;
+            // The guard below borrows `env_ptr`.
+            let env_of_script = env_ptr;
             // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
             let env = unsafe { &mut *env_ptr };
             // Copy to owned — `original_path` borrows env.map which is
@@ -119,7 +113,14 @@ impl<'a> ProcessHandle<'a> {
                 let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             }
             // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
-            let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
+            let envp = crate::cli::script_or_command::with_package_script(
+                unsafe { &mut *env_of_script },
+                &handle.config.script_name,
+                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
+                    &handle.config.package_json_path,
+                ),
+                |env| env.map.create_null_delimited_env_map(),
+            )?;
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
             // with argv[0] non-null; valid for this call.
             break 'brk unsafe {
@@ -324,7 +325,8 @@ struct State<'a> {
     draw_buf: Vec<u8>,
     last_lines_written: usize,
     pretty_output: bool,
-    shell_bin: &'static ZStr, // intentionally leaked (process exits)
+    /// POSIX shell the scripts run under; `None` on Windows (see `ScriptArgv`).
+    shell_bin: Option<&'static ZStr>,
     aborted: bool,
     // Raw `*mut` — process-lifetime singleton owned
     // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
@@ -832,14 +834,8 @@ pub(crate) fn run_scripts_with_filter(
         };
 
         let run_in_bun = ctx.debug.run_in_bun;
-        let path_var: Vec<u8> = RunCommand::configure_path_for_run_with_package_json_dir(
-            &mut *ctx,
-            path,
-            &mut this_transpiler,
-            None,
-            path,
-            run_in_bun,
-        )?;
+        let path_var: Vec<u8> =
+            RunCommand::path_for_run(this_transpiler.env_mut(), path, None, path, run_in_bun)?;
 
         for (i, name) in [&pre_script_name[..], script_name, &post_script_name[..]]
             .iter()
@@ -883,7 +879,7 @@ pub(crate) fn run_scripts_with_filter(
             // SAFETY: interned[combined_len] == 0 (copied from `copy_script`).
             let combined = ZStr::from_buf(interned, combined_len);
 
-            let dep_source_buf = package.json.dependencies.source_buf;
+            let dep_source_buf: &[u8] = &package.json.dependencies.source_buf;
             let deps: Vec<Box<[u8]>> = package
                 .json
                 .dependencies
@@ -934,20 +930,13 @@ pub(crate) fn run_scripts_with_filter(
     bun_io::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(unsafe {
         &mut *event_loop
     }));
-    let shell_bin: &'static ZStr = {
-        #[cfg(unix)]
-        {
-            RunCommand::find_shell(
-                // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
-                unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
-                fsinstance.top_level_dir,
-            )
-            .ok_or(crate::Error::MissingShell)?
-        }
-        #[cfg(not(unix))]
-        {
-            bun_core::self_exe_path().map_err(|_| crate::Error::MissingShell)?
-        }
+    let shell_bin: Option<&'static ZStr> = if cfg!(unix) {
+        // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
+        let path = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
+        let top_level_dir = fsinstance.top_level_dir;
+        Some(RunCommand::find_shell(path, top_level_dir).ok_or(crate::Error::MissingShell)?)
+    } else {
+        None
     };
 
     let handles: Box<[ProcessHandle]> = Vec::with_capacity(scripts.len()).into();

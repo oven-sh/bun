@@ -372,8 +372,7 @@ void Performance::scheduleTaskIfNeeded()
     });
 }
 
-// With a Bun.ModuleGraph in the realm, the immediate is set and run in no async context: it stays the
-// realm's when a graph is disposed, and no callback sees the AsyncLocalStorage stores of another graph.
+// With a Bun.ModuleGraph in the realm, no graph owns the immediate (dispose() does not drop it) and no callback sees a graph's AsyncLocalStorage stores.
 class NoAsyncContextInRealmWithModuleGraphs {
     WTF_MAKE_NONCOPYABLE(NoAsyncContextInRealmWithModuleGraphs);
     WTF_FORBID_HEAP_ALLOCATION;

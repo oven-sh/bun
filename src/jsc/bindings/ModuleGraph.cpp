@@ -274,10 +274,10 @@ static JSModuleGraph* moduleGraphOfFrame(Zig::GlobalObject* globalObject, JSValu
     return nullptr;
 }
 
-// For built-ins that keep something long-lived of whoever made it (an http.Agent, a Bun.SQL),
-// given the async context they are in: the Bun.ModuleGraph it is inside of, and the frame that
-// entered that graph's context (what they `run()` their later work in, without keeping the
-// AsyncLocalStorage stores of whoever made them).
+// For built-ins that keep something long-lived of whoever made it (an http.Agent, a Bun.SQL, a
+// StatWatcher), given the async context they are in: the Bun.ModuleGraph it is inside
+// of, and the frame that entered that graph's context (what they `run()` their later work in,
+// without keeping the AsyncLocalStorage stores of whoever made them).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleGraphOfFrame, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto* global = defaultGlobalObject(globalObject);

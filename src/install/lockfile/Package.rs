@@ -2350,7 +2350,9 @@ impl Package<u64> {
             }
         }
 
-        let missing_workspace = if pm.options.enable.frozen_lockfile() {
+        let missing_workspace = if pm.options.runtime_auto_install {
+            workspace_map::MissingWorkspace::SkipEmptyToo
+        } else if pm.options.enable.frozen_lockfile() {
             workspace_map::MissingWorkspace::SkipIfInLockfile(&pm.lockfile)
         } else {
             workspace_map::MissingWorkspace::Error

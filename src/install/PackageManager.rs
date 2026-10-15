@@ -2148,12 +2148,13 @@ fn is_shared_directory(_: &[u8]) -> bool {
 /// The directory of the project that `dir` is in, as `init` finds it: of the nearest package.json, then of the
 /// workspace root it is a member of. One that only says how to read the files beside it, such as
 /// `{ "type": "commonjs" }`, is part of the project above it. With no project above, the topmost such is the project's.
+/// With it comes the topmost directory of the project at or above `dir`: the same one, or the member that a link leads to.
 /// `unreadable` gets the path of a package.json that may be the project's and cannot be read or parsed.
 fn find_project<'a>(
     dir: &'a [u8],
     workspace_package_json_cache: &mut WorkspacePackageJSONCache,
     unreadable: &mut Option<Box<[u8]>>,
-) -> Option<&'a [u8]> {
+) -> Option<(&'a [u8], &'a [u8])> {
     let mut walk = PackageJsonWalk::new(dir);
     let mut project = None;
     let mut topmost = None;
@@ -2191,21 +2192,26 @@ fn find_project<'a>(
         }
         break;
     }
-    if let Some(member) = project.filter(|_| is_named) {
+    let above_dir = project.or(topmost)?;
+    if project.is_some() && is_named {
         match find_workspace_root(
             &mut walk,
-            without_trailing_slash_windows_path(member),
+            without_trailing_slash_windows_path(above_dir),
             &mut bun_ast::Log::init(),
             None,
             None,
         ) {
-            Ok(Some((root, _, _))) => project = Some(root),
+            // Found by the path as typed, the root is not above `dir`.
+            Ok(Some((root, _, _))) if !core::ptr::eq(walk.cwd, dir) => {
+                return Some((root, above_dir));
+            }
+            Ok(Some((root, _, _))) => return Some((root, root)),
             Ok(None) => {}
             // It may be the workspace root's.
             Err(_) => *unreadable = Some(walk.path.as_slice().into()),
         }
     }
-    project.or(topmost)
+    Some((above_dir, above_dir))
 }
 
 /// [`find_project`] for `bunx`, which has no manager.
@@ -2216,6 +2222,7 @@ pub fn project_directory(cwd: &[u8]) -> Option<&[u8]> {
         &mut WorkspacePackageJSONCache::default(),
         &mut None,
     )
+    .map(|(project, _)| project)
 }
 
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
@@ -2909,12 +2916,15 @@ fn init_with_runtime_once(
         &mut unreadable,
     );
     // Its bunfig.toml, .npmrc and lockfile say where packages come from. None above it is read.
-    let project_dir = project.unwrap_or(importer_dir);
+    let (project_dir, above_importer) = project.unwrap_or((importer_dir, importer_dir));
     // A bunfig.toml or .npmrc in a folder between the two counts as well, over the ones above it.
     let mut settings_dirs: Vec<&[u8]> = core::iter::successors(Some(importer_dir), |&dir| {
-        bun_core::dirname(dir).filter(|_| dir != project_dir)
+        bun_core::dirname(dir).filter(|_| dir != above_importer)
     })
     .collect();
+    if project_dir != above_importer {
+        settings_dirs.push(project_dir);
+    }
     settings_dirs.reverse();
 
     // `bun_install` came from the start directory; `process.chdir()` moves `top_level_dir`.
@@ -3075,7 +3085,7 @@ fn init_with_runtime_once(
             return Ok(());
         }
     }
-    if project.is_some_and(|root| parse_runtime_root(manager, log, root).is_ok()) {
+    if project.is_some_and(|(root, _)| parse_runtime_root(manager, log, root).is_ok()) {
         return Ok(());
     }
     manager.lockfile.init_empty();

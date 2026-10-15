@@ -172,6 +172,8 @@ pub(crate) enum MissingWorkspace<'a> {
     Error,
     Skip,
     SkipIfInLockfile(&'a Lockfile),
+    /// Auto-install: also one whose package.json is empty, which ends `bun install`. The program that runs goes on.
+    SkipEmptyToo,
 }
 
 /// `None`: no usable `"name"`, so nothing to link or resolve it by; skipped, as pnpm and npm do.
@@ -181,6 +183,7 @@ fn process_workspace_name(
     abs_package_json_path: &[u8],
     dir: &[u8],
     log: &mut bun_ast::Log,
+    missing_workspace: MissingWorkspace<'_>,
 ) -> crate::Result<Option<Entry>> {
     let workspace_json = json_cache
         .get_with_path(
@@ -194,6 +197,9 @@ fn process_workspace_name(
         )
         .unwrap()?;
     if workspace_json.source.contents.is_empty() {
+        if matches!(missing_workspace, MissingWorkspace::SkipEmptyToo) {
+            return Ok(None);
+        }
         crate::package_manager_real::install_with_manager::exit_on_empty_package_json(
             abs_package_json_path,
         );
@@ -444,6 +450,7 @@ impl WorkspaceMap {
                         abs_package_json_path,
                         dir,
                         log,
+                        missing_workspace,
                     )
                     .map(|entry| (dir, entry))
                 }
@@ -455,7 +462,7 @@ impl WorkspaceMap {
                 Err(err) => {
                     if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                         let tolerated = match missing_workspace {
-                            MissingWorkspace::Skip => true,
+                            MissingWorkspace::Skip | MissingWorkspace::SkipEmptyToo => true,
                             MissingWorkspace::Error => false,
                             MissingWorkspace::SkipIfInLockfile(lockfile) => abs_package_json_path
                                 .is_some_and(|abs| {
@@ -607,6 +614,7 @@ impl WorkspaceMap {
                                 abs_package_json_path,
                                 dir,
                                 log,
+                                missing_workspace,
                             )
                             .map(|entry| (dir, entry))
                         }

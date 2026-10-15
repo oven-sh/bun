@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -3124,6 +3124,82 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
       }),
     });
     expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  cell("a member with an empty package.json is passed over when there is no bun.lock", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      cwd: dir => join(dir, "app", "packages", "member"),
+      files: r => ({
+        "app/.npmrc": scopeAndToken(r),
+        "app/package.json": JSON.stringify({ name: "app", workspaces: ["packages/*", "listed"] }),
+        "app/packages/member/package.json": JSON.stringify({ name: "member" }),
+        "app/packages/member/x.mjs": importIt,
+        "app/packages/other/package.json": "",
+        "app/listed/package.json": "",
+      }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  // `app/packages/member` is a link to `outside/up/member`, and bun is started in it by that name.
+  describe.skipIf(isWindows)("a member that is a link to a folder outside the workspace root", () => {
+    const scanner = `[install.security]\nscanner = "./scanner.ts"\n`;
+    const created = ["app", "cache", "home", "outside"];
+    const inLinkedMember = (files: (r: Registries) => Files) =>
+      autoInstall({
+        args: ["x.mjs"],
+        cwd: dir => join(dir, "app", "packages", "member"),
+        env: (_, dir) => ({ PWD: join(dir, "app", "packages", "member") }),
+        prepare: dir =>
+          symlinkSync(join("..", "..", "outside", "up", "member"), join(dir, "app", "packages", "member")),
+        files: r => ({
+          "app/package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
+          "app/packages/.keep": "",
+          "outside/up/member/package.json": JSON.stringify({ name: "member" }),
+          "outside/up/member/x.mjs": importIt,
+          ...files(r),
+        }),
+      });
+
+    cell.each([
+      [".npmrc", scopeAndToken],
+      ["bunfig.toml", bunfigScope],
+    ] as [string, (r: Registries) => string][])("the %s of the root counts", async (name, settings) => {
+      expect(await inLinkedMember(r => ({ [`app/${name}`]: settings(r) }))).toEqual({
+        ...fromPrivateRegistry,
+        created,
+      });
+    });
+
+    cell.each([
+      ["outside/up/.npmrc", scopeAndToken],
+      ["outside/.npmrc", scopeAndToken],
+      ["outside/up/bunfig.toml", bunfigScope],
+      ["outside/bunfig.toml", () => scanner],
+    ] as [string, (r: Registries) => string][])("%s, above what the link leads to, is not read", async (path, text) => {
+      expect(await inLinkedMember(r => ({ [path]: text(r) }))).toEqual({ ...fromDefaultRegistry, created });
+    });
+
+    cell("the .npmrc of the member overrides the one of the root", async () => {
+      const result = await inLinkedMember(r => ({
+        "app/.npmrc": `@corp:registry=http://${r.DEFAULT}/\n`,
+        "outside/up/member/.npmrc": scopeAndToken(r),
+      }));
+      expect(result).toEqual({ ...fromPrivateRegistry, created });
+    });
+
+    cell("a scanner in the bunfig.toml of the root turns auto-install off", async () => {
+      const result = await inLinkedMember(() => ({ "app/bunfig.toml": scanner }));
+      expect(result.stderr).toContain("auto-install is off because a security scanner is configured");
+      expect({ ...result, stderr: "" }).toEqual({
+        ...fromPrivateRegistry,
+        stdout: "",
+        seen: [],
+        created: ["app", "home", "outside"],
+        exitCode: 1,
+      });
+    });
   });
 
   const projectInProject = {

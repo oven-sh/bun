@@ -1694,8 +1694,7 @@ bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, cause| {
     // write+dealloc provenance; the guard keeps it so across `close()` and `run_pending`.
     unsafe {
         let _guard = RefPtr::init_ref(this);
-        // The isolate swap flushes stdio first; a backpressured `end()` then drains on the live
-        // loop. VM teardown has no loop left to drain on, so it takes the native close below.
+        // Only the isolate swap drains a backpressured `end()`: VM teardown has no loop left.
         if (*this).flush_on_abort.get()
             && matches!(
                 cause,

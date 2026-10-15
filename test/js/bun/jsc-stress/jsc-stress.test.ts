@@ -122,7 +122,9 @@ const jsFixtures = [
   "loop-unrolling.js",
   "licm-no-pre-header.js",
   // RegExp
+  "regexp-greedy-group-in-tail-position.js",
   "regexp-greedy-group-with-minimum-can-match-empty.js",
+  "regexp-repeated-group-saves-the-alternative-that-matched.js",
   // Builtins
   "function-prototype-call-not-called-as-a-method.js",
 ];

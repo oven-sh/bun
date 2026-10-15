@@ -121,21 +121,9 @@ function getValidatedFsPath(p: any, propName: string = "path") {
   throw $ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], p);
 }
 
-const validateInt32 = $newCppFunction("NodeValidator.cpp", "jsFunction_validateInt32", 0);
-const validateUint32 = $newCppFunction("NodeValidator.cpp", "jsFunction_validateUint32", 0);
-
-/** Node 16 to 24's options for `rmdir(path, { recursive: true })`: the `rm` defaults, and `force` is never honored. */
-function validateRmdirRecursiveOptions(options) {
-  options = { recursive: false, retryDelay: 100, maxRetries: 0, ...options, force: false };
-  validateBoolean(options.recursive, "options.recursive");
-  validateInt32(options.retryDelay, "options.retryDelay", 0);
-  validateUint32(options.maxRetries, "options.maxRetries");
-  return options;
-}
-
 hideFromStack(validateLinkHeaderValue);
 hideFromStack(validateString, validateFunction, validateBoolean);
-hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName, validateRmdirRecursiveOptions);
+hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
 
 // Must match jsFunction_validateObject in NodeValidator.cpp. The values are node's:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L224-L227
@@ -174,9 +162,9 @@ export default {
   /** `(value, name, minLength = 0)` */
   validateArray: $newCppFunction("NodeValidator.cpp", "jsFunction_validateArray", 0),
   /** `(value, name, min = -2147483648, max = 2147483647)` */
-  validateInt32,
+  validateInt32: $newCppFunction("NodeValidator.cpp", "jsFunction_validateInt32", 0),
   /** `(value, name, positive = false)` */
-  validateUint32,
+  validateUint32: $newCppFunction("NodeValidator.cpp", "jsFunction_validateUint32", 0),
   /** `(data, encoding)` */
   validateEncoding: $newCppFunction("NodeValidator.cpp", "jsFunction_validateEncoding", 0),
   /** `(buffer, name = 'buffer')` */
@@ -189,6 +177,4 @@ export default {
   getValidatedFsPath,
   /** `(filename)` */
   throwIfNullBytesInFileName,
-  /** `(options)`: returns the options with the defaults filled in */
-  validateRmdirRecursiveOptions,
 };

@@ -5,9 +5,7 @@ const {
   validateFunction,
   validateInteger,
   validateEncoding,
-  validateRmdirRecursiveOptions,
   getValidatedPath,
-  getValidatedFsPath,
   throwIfNullBytesInFileName,
 } = require("internal/validators");
 
@@ -117,8 +115,8 @@ var access = function access(path, mode, callback?) {
 
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep the Node 16 to 24 behavior.
     if (options?.recursive) {
-      path = getValidatedFsPath(path);
-      options = validateRmdirRecursiveOptions(options);
+      path = require("internal/validators").getValidatedFsPath(path);
+      options = require("internal/fs/cp-sync").validateRmdirRecursiveOptions(options);
       fs.lstatCb((err, stats) => {
         if (err) callback(err);
         else if (stats.isDirectory()) settleCallback(require("node:fs/promises").rm(path, options), callback);
@@ -587,8 +585,8 @@ var access = function access(path, mode, callback?) {
   rmdirSync = function rmdirSync(path, options) {
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep the Node 16 to 24 behavior.
     if (options?.recursive) {
-      path = getValidatedFsPath(path);
-      options = validateRmdirRecursiveOptions(options);
+      path = require("internal/validators").getValidatedFsPath(path);
+      options = require("internal/fs/cp-sync").validateRmdirRecursiveOptions(options);
       if (!fs.lstatSync(path).isDirectory()) return fs.rmdirSync(path);
       return rmSync(path, options);
     }

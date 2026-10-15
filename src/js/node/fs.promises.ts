@@ -8,8 +8,6 @@ const {
   validateObject,
   validateAbortSignal,
   validateEncoding,
-  validateRmdirRecursiveOptions,
-  getValidatedFsPath,
 } = require("internal/validators");
 
 const constants = $processBindingConstants.fs;
@@ -367,9 +365,9 @@ const exports = {
   rmdir: async function rmdir(path, options) {
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep the Node 16 to 24 behavior.
     if (options?.recursive) {
-      path = getValidatedFsPath(path);
+      path = require("internal/validators").getValidatedFsPath(path);
       validateObject(options, "options");
-      const rmOptions = validateRmdirRecursiveOptions(options);
+      const rmOptions = require("internal/fs/cp-sync").validateRmdirRecursiveOptions(options);
       // stat, not lstat, so rm unlinks a symlink to a directory. An inherited `recursive` is false here, as in node.
       if (rmOptions.recursive && (await fs.stat(path)).isDirectory()) return exports.rm(path, rmOptions);
       return fs.rmdir(path);

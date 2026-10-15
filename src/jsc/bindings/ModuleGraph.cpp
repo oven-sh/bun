@@ -623,8 +623,13 @@ void JSModuleGraph::dispose(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!disposed())
+    if (!disposed()) {
         m_loader->clearAll();
+        // Once the calling script has returned: until then it usually still holds the graph's exports.
+        vm.whenIdle([&vm] {
+            vm.heap.collectNowFullIfNotDoneRecently(Async);
+        });
+    }
     // Everything the graph's script opened goes: servers, sockets, timers, in-flight requests,
     // child processes, workers.
     m_context->stop();

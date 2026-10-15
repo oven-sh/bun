@@ -5607,6 +5607,11 @@ declare module "bun" {
      * they start reports nothing either. Objects the graph's code made (a
      * socket, a worker, a stream) no longer work, for the host either.
      *
+     * The garbage collector frees the graph's modules and objects once
+     * nothing references them. `dispose()` asks it for a full collection,
+     * which starts after the calling script returns: drop your own
+     * references to the graph's exports in that script.
+     *
      * Not a sandbox: synchronous calls run to completion. Idempotent.
      *
      * @see https://bun.com/docs/runtime/module-graph#disposing

@@ -22,6 +22,22 @@ const dir = String(
       export const handle = await fs.promises.open(import.meta.path, "r");
     `,
     "dep.mjs": `export const dep = { tag: typeof TAG === "undefined" ? "host" : TAG };`,
+    "host-that-only-disposes.mjs": `
+      let collected = 0;
+      const registry = new FinalizationRegistry(() => { collected++; });
+      const graphs = [];
+      for (let i = 0; i < 5; i++) {
+        const graph = new Bun.ModuleGraph();
+        registry.register((await graph.import(import.meta.dir + "/dep.mjs")).dep, i);
+        graphs.push(graph);
+      }
+      // What has lived through a collection is freed only by a full one.
+      Bun.gc(true);
+      for (const graph of graphs) graph.dispose();
+      for (let turns = 0; turns < 1000 && !collected; turns++) await new Promise(resolve => setTimeout(resolve, 1));
+      console.log(JSON.stringify({ collected: collected > 0 }));
+      process.exit(0);
+    `,
     "esm.mjs": `
       import { dep } from "./dep.mjs";
       export { dep };
@@ -700,6 +716,21 @@ describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () =
     expect(stdout.trim()).toBe(`{"collected":true}`);
     expect(exitCode).toBe(0);
   });
+});
+
+// A file, not `-e`: that starts with a single GC marker, and a collection on the JS thread with no
+// helper to mark for it advances only as the script allocates.
+test("ModuleGraph GC: dispose() gets what the graph held collected, in a host that neither asks for a collection nor allocates", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), file("host-that-only-disposes.mjs")],
+    // Without Bun's own collections of an idle process.
+    env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim()).toBe(`{"collected":true}`);
+  expect(exitCode).toBe(0);
 });
 
 test("ModuleGraph GC: survives collecting continuously", async () => {

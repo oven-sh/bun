@@ -90,6 +90,11 @@ impl Strong {
         self.value().and_then(ReadableStream::from_js_direct)
     }
 
+    /// Whether this handle holds `stream`. Pure, and no FFI call for a `Held` or `Empty` handle.
+    pub(crate) fn holds(&self, stream: &ReadableStream) -> bool {
+        self.value() == Some(stream.value)
+    }
+
     pub(crate) fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
         if let Some(stream) = self.get() {
             let Some((first, second)) = stream.tee(global)? else {
@@ -267,19 +272,32 @@ impl ReadableStream {
         result
     }
 
-    /// Cancel the stream and forward `reason` verbatim to the underlying source's
-    /// cancel algorithm (the spec's ReadableStreamCancel). Unlike `cancel()`,
-    /// this does not synthesize a DOMException — fetch() uses it to surface
-    /// `AbortSignal.reason` to the request body's cancel callback.
+    /// For a holder that never attached to this stream (no reader, no sink of its own). A stream
+    /// that another consumer holds is left alone, as `ReadableStream.prototype.cancel()` leaves a
+    /// locked stream. A free stream is cancelled: `reason` goes verbatim to the underlying
+    /// source's cancel algorithm (the spec's ReadableStreamCancel) and the native source is
+    /// marked done. Unlike `cancel()`, this does not synthesize a DOMException — fetch() uses
+    /// it to surface `AbortSignal.reason` to the request body's cancel callback.
     pub fn cancel_with_reason(
         &self,
         global_this: &JSGlobalObject,
         reason: JSValue,
     ) -> JsResult<()> {
-        let result =
+        let cancelled =
             bun_jsc::cpp::ReadableStream__cancelWithReason(self.value, global_this, reason);
-        self.done();
-        result
+        // `Ok(false)`: the stream, and its native source with it, belongs to the consumer that locked it.
+        if !matches!(cancelled, Ok(false)) {
+            self.done();
+        }
+        cancelled.map(|_| ())
+    }
+
+    /// [`Self::done`] for a holder that never attached to this stream: a stream that another
+    /// consumer holds keeps its native source.
+    pub fn done_unless_locked(&self, global_this: &JSGlobalObject) {
+        if !self.is_locked(global_this) {
+            self.done();
+        }
     }
 
     pub fn abort(&self, global_this: &JSGlobalObject) -> JsResult<()> {

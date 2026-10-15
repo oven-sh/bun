@@ -717,8 +717,8 @@ bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig
 bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 // no-op unless the reader slot holds a REAL reader (the direct/native lock is a no-op here).
 void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: yes
-// NO sentinel guard (reachable on a NativeSink-controlled stream).
-void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: yes
+// For a caller that never attached: a locked stream is left alone (returns false).
+bool ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: yes
 bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no

@@ -172,7 +172,7 @@ impl<'a> Writable<'a> {
                             bun_sys::Result::Ok(()) => {}
                             bun_sys::Result::Err(err) => {
                                 if let Stdio::ReadableStream(rs) = stdio {
-                                    rs.cancel(global)?;
+                                    rs.done_unless_locked(global);
                                 }
                                 return Err(global.throw_value(err.to_js(global)));
                             }
@@ -255,7 +255,7 @@ impl<'a> Writable<'a> {
                         // The writer did not take `fd`; nothing else closes it.
                         fd.close();
                         if let Stdio::ReadableStream(rs) = stdio {
-                            rs.cancel(global)?;
+                            rs.done_unless_locked(global);
                         }
                         return Err(global.throw_value(err.to_js(global)));
                     }

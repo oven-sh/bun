@@ -163,17 +163,22 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__cancel(JSC::EncodedJS
     markPromiseAsHandled(vm, result);
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
+// For a caller that never attached to the stream. Returns false when it left the stream alone.
+extern "C" [[ZIG_EXPORT(check_slow)]] bool ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
-        return;
+        return true;
+    // The lock is another consumer's, as for ReadableStream.prototype.cancel(): that consumer ends the stream.
+    if (isReadableStreamLocked(stream))
+        return false;
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* result = readableStreamCancel(globalObject, stream, JSValue::decode(reason));
-    RETURN_IF_EXCEPTION(scope, );
+    RETURN_IF_EXCEPTION(scope, true);
     markPromiseAsHandled(vm, result);
+    return true;
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__error(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)

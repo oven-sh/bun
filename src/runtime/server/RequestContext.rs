@@ -373,8 +373,17 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 /// Release the body's hold on a stream the sink is done with, and mark a
 /// `Locked` body used. Non-generic and out of line: the eight `RequestContext`
 /// monomorphizations share one copy.
+///
+/// `attached` is `None` when the request's pump has settled: the stream is the one it read.
+/// At the end of a request it is the request's own ref, which holds the stream only if the
+/// request attached it. A stream the request never attached (refused, not rendered, or sent
+/// by another request) stays with the consumer that holds it.
 #[inline(never)]
-fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
+fn release_body_stream(
+    response: &mut Response,
+    global_this: &JSGlobalObject,
+    attached: Option<&JsCell<readable_stream::Strong>>,
+) {
     if let Body::Value::Locked(locked) = response.get_body_value()
         && locked.has_consumer()
     {
@@ -383,7 +392,12 @@ fn release_body_stream(response: &mut Response, global_this: &JSGlobalObject) {
     if let Some(stream) = response.get_body_readable_stream() {
         stream.value.ensure_still_alive();
         response.detach_readable_stream(global_this);
-        stream.done();
+        // The cell is read here and not held: `done()` can re-enter the request that owns it.
+        if attached.is_none_or(|own| own.get().holds(&stream)) {
+            stream.done();
+        } else {
+            stream.done_unless_locked(global_this);
+        }
     }
     // Read after the stream calls: the check observes the post-detach state.
     let body_value = response.get_body_value();
@@ -1574,7 +1588,12 @@ where
                 if let Some(stream) = shim::response_body_stream(response) {
                     let _keep = jsc::EnsureStillAlive(stream.value);
                     shim::response_detach_stream(response, global_this);
-                    crate::dispatch::fold(stream.abort(global_this));
+                    // As in `release_body_stream`: only the request that attached the stream ends it.
+                    if this.response_body_readable_stream_ref.get().holds(&stream) {
+                        crate::dispatch::fold(stream.abort(global_this));
+                    } else {
+                        stream.done_unless_locked(global_this);
+                    }
                     any_js_calls.set(true);
                 }
             }
@@ -1607,7 +1626,11 @@ where
         // (`reclaim_promise_cell`), so its `handle_*_stream` cleanup never
         // runs: release the body's hold on the stream here.
         if let Some(resp) = self.response_mut() {
-            release_body_stream(resp, global_this);
+            release_body_stream(
+                resp,
+                global_this,
+                Some(&self.response_body_readable_stream_ref),
+            );
         }
 
         self.response_root.clear();
@@ -2132,15 +2155,19 @@ where
         debug_assert!(this.server.get().is_some());
         let global_this = this.server().global_this();
 
+        // `set_abort_handler` can run `on_abort` and the finalize after it (a closed socket), and
+        // the stream is not attached yet: the request's ref must not claim it in the meantime.
+        let readable_ref = this
+            .response_body_readable_stream_ref
+            .replace(readable_stream::Strong::default());
         // Armed here, not in `to_async()`: `stop(true)` inside `pull()` must reach `on_abort`; see `end_already_responded_stream`.
         this.set_abort_handler();
         if this.is_aborted_or_ended() {
             // No reader yet: `cancel()` would skip the stream.
             crate::dispatch::fold(stream.cancel_with_reason(global_this, JSValue::UNDEFINED));
-            this.response_body_readable_stream_ref
-                .with_mut(|s| s.deinit());
             return;
         }
+        this.response_body_readable_stream_ref.set(readable_ref);
         let resp = this.resp.get().expect("infallible: resp bound");
 
         stream.value.ensure_still_alive();
@@ -2926,7 +2953,7 @@ where
         // from `&self`.
         let global_this = self.server().global_this();
         if let Some(resp) = self.response_mut() {
-            release_body_stream(resp, global_this);
+            release_body_stream(resp, global_this, None);
             // Unlike the reject path: used whatever it held, not only when `Locked`.
             *resp.get_body_value() = Body::Value::Used;
         }
@@ -3016,7 +3043,7 @@ where
         }
 
         if let Some(resp) = self.response_mut() {
-            release_body_stream(resp, global_this);
+            release_body_stream(resp, global_this, None);
         }
 
         // aborted so call finalizeForAbort
@@ -3169,6 +3196,9 @@ where
 
                     if stream.is_locked(global_this) {
                         stream_log!("was locked but it shouldn't be");
+                        // Refused, so not attached: the stream stays with the consumer that locked it.
+                        this.response_body_readable_stream_ref
+                            .with_mut(|s| s.deinit());
                         let err = jsc::SystemError {
                             code: BunString::static_(<&'static str>::from(
                                 jsc::ErrorCode::ERR_STREAM_CANNOT_PIPE,
@@ -3386,14 +3416,12 @@ where
         if let Some(err) = err {
             // No status committed yet: the upstream producer (e.g. a
             // suspended `HTMLRewriter` transform whose async handler
-            // rejected) failed before any bytes were emitted. Drop the
-            // stream and hand the error to the server's `error()` hook so it
-            // can supply the response.
+            // rejected) failed before any bytes were emitted. Hand the error
+            // to the server's `error()` hook so it can supply the response.
+            // The request keeps its ref: it attached the stream, so it ends it.
             if !this.flags.has_written_status() {
                 let global_this = this.server().global_this();
                 let js_err = err.to_js(global_this);
-                this.response_body_readable_stream_ref
-                    .with_mut(|s| s.deinit());
                 this.run_error_handler(js_err);
                 return;
             }

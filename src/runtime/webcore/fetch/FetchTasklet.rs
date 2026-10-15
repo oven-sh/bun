@@ -633,7 +633,8 @@ impl FetchTasklet {
             return Ok(());
         };
         if self.signal_aborted() {
-            return stream.abort(&self.global_this);
+            stream.done_unless_locked(&self.global_this);
+            return Ok(());
         }
 
         let global_this = self.global_this;

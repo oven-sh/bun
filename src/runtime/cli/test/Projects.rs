@@ -7,8 +7,8 @@
 //! changes. `[test] preload` runs first in every global, then the
 //! project's own `preload`.
 
-use bun_resolver::fs::FileSystem;
 use bun_options_types::context::TestProject;
+use bun_resolver::fs::FileSystem;
 
 /// Index into the `[[test.projects]]` table plus one. `BASE_KEY` is a file
 /// that matches no project: it runs with `[test] preload` only.

@@ -443,27 +443,16 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       { flag: "--react", template: "react-app" },
       { flag: "--react=tailwind", template: "react-tailwind" },
       { flag: "--react=shadcn", template: "react-shadcn" },
-    ])(
-      "bun init $flag fills in an empty package.json",
-      async ({ flag, template }) => {
-        await using temp = tempDir(`bun-init-empty-package-json-${template}`, { "package.json": "" });
-        const packageJson = path.join(temp, "package.json");
+    ])("bun init $flag fills in an empty package.json", async ({ flag, template }) => {
+      await using temp = tempDir(`bun-init-empty-package-json-${template}`, { "package.json": "" });
 
-        const first = await initReact(temp, flag);
-        expect(first.lines).toContain(filled);
-        expect(first.lines).not.toContain(skipped);
-        expect(fs.readFileSync(packageJson)).toEqual(templatePackageJson(template));
-        expect(first.exitCode).toBe(0);
+      const { lines, exitCode } = await initReact(temp, flag);
 
-        // The second run finds a package.json with content.
-        const second = await initReact(temp, flag);
-        expect(second.lines).toContain(skipped);
-        expect(second.lines).not.toContain(filled);
-        expect(fs.readFileSync(packageJson)).toEqual(templatePackageJson(template));
-        expect(second.exitCode).toBe(0);
-      },
-      30_000,
-    );
+      expect(lines).toContain(filled);
+      expect(lines).not.toContain(skipped);
+      expect(fs.readFileSync(path.join(temp, "package.json"))).toEqual(templatePackageJson(template));
+      expect(exitCode).toBe(0);
+    });
 
     test("bun init --react fills in package.json and no other empty file", async () => {
       await using temp = tempDir("bun-init-empty-package-json-only", { "package.json": "", "bunfig.toml": "" });
@@ -475,7 +464,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       expect(fs.readFileSync(path.join(temp, "package.json"))).toEqual(templatePackageJson("react-app"));
       expect(fs.statSync(path.join(temp, "bunfig.toml")).size).toBe(0);
       expect(exitCode).toBe(0);
-    }, 30_000);
+    });
 
     test("bun init --react keeps a package.json that has content", async () => {
       const contents = '{ "name": "x" }\n';
@@ -501,21 +490,17 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
 
     // Creating a symlink needs a privilege on Windows.
-    test.skipIf(isWindows)(
-      "bun init --react fills in an empty package.json through a symlink",
-      async () => {
-        await using temp = tempDir("bun-init-empty-package-json-symlink", { "real.json": "" });
-        fs.symlinkSync("real.json", path.join(temp, "package.json"));
+    test.skipIf(isWindows)("bun init --react fills in an empty package.json through a symlink", async () => {
+      await using temp = tempDir("bun-init-empty-package-json-symlink", { "real.json": "" });
+      fs.symlinkSync("real.json", path.join(temp, "package.json"));
 
-        const { lines, exitCode } = await initReact(temp);
+      const { lines, exitCode } = await initReact(temp);
 
-        expect(lines).toContain(filled);
-        expect(fs.readlinkSync(path.join(temp, "package.json"))).toBe("real.json");
-        expect(fs.readFileSync(path.join(temp, "real.json"))).toEqual(templatePackageJson("react-app"));
-        expect(exitCode).toBe(0);
-      },
-      30_000,
-    );
+      expect(lines).toContain(filled);
+      expect(fs.readlinkSync(path.join(temp, "package.json"))).toBe("real.json");
+      expect(fs.readFileSync(path.join(temp, "real.json"))).toEqual(templatePackageJson("react-app"));
+      expect(exitCode).toBe(0);
+    });
 
     test.skipIf(isWindows)("bun init --react skips a package.json that is not a regular file", async () => {
       await using temp = tempDir("bun-init-react-package-json-device", {});
@@ -548,52 +533,48 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
     // The template menu reaches the React writer through a different branch of
     // `bun init` than the `--react` flag does. The menu needs a POSIX pty.
-    test.skipIf(isWindows)(
-      "bun init fills in an empty package.json when React is picked from the menu",
-      async () => {
-        await using temp = tempDir("bun-init-empty-package-json-menu", { "package.json": "" });
+    test.skipIf(isWindows)("bun init fills in an empty package.json when React is picked from the menu", async () => {
+      await using temp = tempDir("bun-init-empty-package-json-menu", { "package.json": "" });
 
-        const decoder = new TextDecoder();
-        let output = "";
-        const projectMenu = Promise.withResolvers<void>();
-        const reactMenu = Promise.withResolvers<void>();
-        await using terminal = new Bun.Terminal({
-          cols: 80,
-          rows: 24,
-          data(_, chunk: Uint8Array) {
-            output += decoder.decode(chunk, { stream: true });
-            if (output.includes("Select a project template")) projectMenu.resolve();
-            if (output.includes("Select a React template")) reactMenu.resolve();
-          },
-        });
+      const decoder = new TextDecoder();
+      let output = "";
+      const projectMenu = Promise.withResolvers<void>();
+      const reactMenu = Promise.withResolvers<void>();
+      await using terminal = new Bun.Terminal({
+        cols: 80,
+        rows: 24,
+        data(_, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("Select a project template")) projectMenu.resolve();
+          if (output.includes("Select a React template")) reactMenu.resolve();
+        },
+      });
 
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "init"],
-          cwd: temp,
-          env: initEnv,
-          terminal,
-        });
-        // Fail with the child's output if it exits before a menu we wait for.
-        const exitedEarly = proc.exited.then(code => {
-          throw new Error(`bun init exited before the menu (code ${code}):\n${output}`);
-        });
-        exitedEarly.catch(() => {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init"],
+        cwd: temp,
+        env: initEnv,
+        terminal,
+      });
+      // Fail with the child's output if it exits before a menu we wait for.
+      const exitedEarly = proc.exited.then(code => {
+        throw new Error(`bun init exited before the menu (code ${code}):\n${output}`);
+      });
+      exitedEarly.catch(() => {});
 
-        await Promise.race([projectMenu.promise, exitedEarly]);
-        // "2" picks the second entry (React) and submits it.
-        terminal.write("2");
-        await Promise.race([reactMenu.promise, exitedEarly]);
-        // "1" picks the first entry (Default).
-        terminal.write("1");
+      await Promise.race([projectMenu.promise, exitedEarly]);
+      // "2" picks the second entry (React) and submits it.
+      terminal.write("2");
+      await Promise.race([reactMenu.promise, exitedEarly]);
+      // "1" picks the first entry (Default).
+      terminal.write("1");
 
-        const exitCode = await proc.exited;
-        expect(output).toContain(filled);
-        expect(output).not.toContain(skipped);
-        expect(fs.readFileSync(path.join(temp, "package.json"))).toEqual(templatePackageJson("react-app"));
-        expect(exitCode).toBe(0);
-      },
-      30_000,
-    );
+      const exitCode = await proc.exited;
+      expect(output).toContain(filled);
+      expect(output).not.toContain(skipped);
+      expect(fs.readFileSync(path.join(temp, "package.json"))).toEqual(templatePackageJson("react-app"));
+      expect(exitCode).toBe(0);
+    });
   });
 
   test.each(["--react", "--react=tailwind", "--react=shadcn"])(

@@ -120,7 +120,8 @@ export function constructStdCollision(opts: {
   } = opts;
   if (freeA.length !== 8 || freeB.length !== 8) throw new Error("free words must be 8 bytes");
   const csBytes = [...charset].map(c => c.charCodeAt(0));
-  const inSet = new Set(csBytes);
+  const inSet = new Uint8Array(256);
+  for (const b of csBytes) inSet[b] = 1;
   const padCode = padFillCh.charCodeAt(0);
   const prefix = enc(prefixStr);
   const suffix = enc(suffixStr);
@@ -130,26 +131,68 @@ export function constructStdCollision(opts: {
 
   // `prefix + pad` is aligned to a 48-byte boundary, so its rounds are fixed
   // across the search. Process them once and vary only the steer round whose
-  // lane-0 output (state[0]) becomes the required "kill" word. Recomputing just
-  // that one lane per candidate keeps the search allocation-free and fast.
+  // lane-0 output (state[0]) becomes the required "kill" word.
   const baseBlock = new Uint8Array(prefix.length + basePad);
   baseBlock.set(prefix, 0);
   baseBlock.fill(padCode, prefix.length);
   const baseState0 = roundsOver(seed, baseBlock, baseBlock.length / 48)[0];
 
+  // Lane 0 of the steer round reads two words: the first one is the search
+  // counter, written in base charset.length, the second one is fixed. About one
+  // in (256 / charset.length) ** 8 candidates (~9000 tries) yields an in-charset
+  // kill word, and BigInt arithmetic is slow in debug builds of JavaScriptCore,
+  // so the loop below spends as few BigInt operations per candidate as it can:
+  // the counter word is updated incrementally from these per-digit tables
+  // instead of being re-read from bytes, and the lane is mixed inline.
   const steer = new Uint8Array(48);
+  for (let i = 8; i < 16; i++) steer[i] = csBytes[(i * 7) % csBytes.length];
   steer.set(steerTail, 16);
-  for (let extra = 0; extra < maxSteer; extra++) {
-    let t = extra;
-    for (let i = 0; i < 8; i++) {
-      steer[i] = csBytes[t % csBytes.length];
-      t = Math.floor(t / csBytes.length);
+  const fixedWord = (read(8, steer, 8) ^ baseState0) & MASK;
+  const digits = new Uint32Array(8);
+  // step[i][k]: what adding one to digit i (now k - 1) adds to the counter word;
+  // wrap[i]: what resetting digit i from its highest value to 0 adds.
+  const step = Array.from({ length: 8 }, (_, i) =>
+    csBytes.map((b, k) => (k === 0 ? 0n : BigInt(b - csBytes[k - 1]) << BigInt(8 * i))),
+  );
+  const wrap = Array.from({ length: 8 }, (_, i) => BigInt(csBytes[0] - csBytes[csBytes.length - 1]) << BigInt(8 * i));
+  let counterWord = 0n;
+  for (let i = 0; i < 8; i++) counterWord |= BigInt(csBytes[0]) << BigInt(8 * i);
+
+  for (let tries = 0; tries < maxSteer; tries++) {
+    if (tries > 0) {
+      let i = 0;
+      while (true) {
+        if (++digits[i] < csBytes.length) {
+          counterWord += step[i][digits[i]];
+          break;
+        }
+        digits[i] = 0;
+        counterWord += wrap[i];
+        if (++i === 8) throw new Error("search space exhausted");
+      }
     }
-    for (let i = 8; i < 16; i++) steer[i] = csBytes[(i * 7 + extra) % csBytes.length];
-    // state[0] after the steer round; == the kill word the control lane needs.
-    const state0 = mix((read(8, steer, 0) ^ SECRET[1]) & MASK, (read(8, steer, 8) ^ baseState0) & MASK);
+    // state[0] after the steer round (== mix(counterWord ^ SECRET[1], fixedWord));
+    // it is the kill word the control lane needs, so it must be in-charset.
+    const product = (counterWord ^ SECRET[1]) * fixedWord;
+    const state0 = (product & MASK) ^ (product >> 64n);
+    const low = Number(state0 & 0xffffffffn);
+    const high = Number(state0 >> 32n);
+    if (
+      !(
+        inSet[low & 0xff] &&
+        inSet[(low >>> 8) & 0xff] &&
+        inSet[(low >>> 16) & 0xff] &&
+        inSet[low >>> 24] &&
+        inSet[high & 0xff] &&
+        inSet[(high >>> 8) & 0xff] &&
+        inSet[(high >>> 16) & 0xff] &&
+        inSet[high >>> 24]
+      )
+    ) {
+      continue;
+    }
     const killBytes = u64le(state0);
-    if (!killBytes.every(bb => inSet.has(bb))) continue;
+    for (let i = 0; i < 8; i++) steer[i] = csBytes[digits[i]];
 
     const preBlock = new Uint8Array(baseBlock.length + 48);
     preBlock.set(baseBlock, 0);

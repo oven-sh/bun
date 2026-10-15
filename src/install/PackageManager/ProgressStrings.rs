@@ -1,6 +1,6 @@
 use core::sync::atomic::Ordering;
 
-use bun_core::Output;
+use bun_core::{Output, strings};
 use const_format::concatcp;
 
 use crate::bun_progress::Node as ProgressNode;
@@ -94,24 +94,25 @@ impl PackageManager {
         name: &[u8],
         emoji: &[u8],
     ) {
+        let emoji_len = if Output::enable_ansi_colors_stderr() {
+            if IS_FIRST {
+                self.progress_name_buf[..emoji.len()].copy_from_slice(emoji);
+            }
+            emoji.len()
+        } else {
+            0
+        };
+        // Display-only, so a name longer than the buffer is simply cut short.
+        let name =
+            strings::truncate_to_char_boundary(name, self.progress_name_buf.len() - emoji_len);
+        self.progress_name_buf[emoji_len..][..name.len()].copy_from_slice(name);
+        let len = emoji_len + name.len();
         // SAFETY: `node` is `self.downloads_node` / `self.scripts_node`, both of
         // which point at storage owned by (or outliving) this `PackageManager`
         // singleton; `progress_name_buf` is an inline field of that same
         // singleton, so the buffer outlives every node that references it and
         // erasing the slice lifetime to `'static` is sound.
-        unsafe {
-            let len = if Output::enable_ansi_colors_stderr() {
-                if IS_FIRST {
-                    self.progress_name_buf[..emoji.len()].copy_from_slice(emoji);
-                }
-                self.progress_name_buf[emoji.len()..][..name.len()].copy_from_slice(name);
-                emoji.len() + name.len()
-            } else {
-                self.progress_name_buf[..name.len()].copy_from_slice(name);
-                name.len()
-            };
-            node.name = bun_ptr::detach_lifetime(&self.progress_name_buf[..len]);
-        }
+        node.name = unsafe { bun_ptr::detach_lifetime(&self.progress_name_buf[..len]) };
     }
 
     pub fn start_progress_bar_if_none(&mut self) {

@@ -807,7 +807,7 @@ function hpackInt(prefixBits: number, flags: number, n: number) {
   const max = (1 << prefixBits) - 1;
   if (n < max) return Buffer.from([flags | n]);
   const bytes = [flags | max];
-  for (n -= max; n >= 128; n = Math.floor(n / 128)) bytes.push(n % 128 | 0x80);
+  for (n -= max; n >= 128; n = Math.floor(n / 128)) bytes.push((n % 128) | 0x80);
   bytes.push(n);
   return Buffer.from(bytes);
 }

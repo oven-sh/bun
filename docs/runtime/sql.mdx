@@ -1234,6 +1234,8 @@ const sql = new SQL("postgres://user:password@db.example.com/mydb?sslmode=verify
 
 You can also set it with `?channel_binding=` in the URL or with `PGCHANNELBINDING`. Channel binding does not replace certificate verification, so keep `verify-full`.
 
+With `sslmode=prefer`, a connection that fell back to plaintext fails with `ERR_POSTGRES_CHANNEL_BINDING_FAILED` when the server offers SCRAM-SHA-256-PLUS: the server is on TLS, so something between the two removed it. `channelBinding: "disable"` turns the check off.
+
 Only PostgreSQL has channel binding. On MySQL, MariaDB and SQLite, `"require"` throws when you create the client, and the other values have no effect.
 
 ### SSL Modes Overview

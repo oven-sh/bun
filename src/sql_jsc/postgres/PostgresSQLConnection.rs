@@ -2286,7 +2286,12 @@ impl PostgresSQLConnection {
                             Socket::SocketTls(tls) => tls.ssl_mut(),
                             Socket::SocketTcp(_) => None,
                         };
-                        match SASL::init(*offered, self.channel_binding, tls) {
+                        match SASL::init(
+                            *offered,
+                            self.channel_binding,
+                            tls,
+                            self.ssl_mode != SSLMode::Disable,
+                        ) {
                             Ok(sasl) => self
                                 .authentication_state
                                 .set(AuthenticationState::Sasl(Box::new(sasl))),

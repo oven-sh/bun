@@ -471,13 +471,13 @@ describe.concurrent("scripted server", () => {
       "n,,",
     ],
     ["no TLS", { mechanisms: [PLAIN] }, "prefer", PLAIN, "n,,"],
-    // A proxy that speaks TLS to the server for a client that does not.
+    // A proxy that speaks TLS to the server for a client that was told to speak plaintext.
     ["no TLS, -PLUS offered", { mechanisms: [PLUS, PLAIN] }, "prefer", PLAIN, "n,,"],
     ["no TLS, -PLUS offered, disable", { mechanisms: [PLUS, PLAIN] }, "disable", PLAIN, "n,,"],
     [
-      "sslmode=prefer and a server that declines TLS, -PLUS offered",
+      "sslmode=prefer and a server that declines TLS, -PLUS offered, disable",
       { mechanisms: [PLUS, PLAIN], clientTls: "prefer" },
-      "prefer",
+      "disable",
       PLAIN,
       "n,,",
     ],
@@ -506,6 +506,14 @@ describe.concurrent("scripted server", () => {
   });
 
   test.each([
+    [
+      // The client wanted TLS, the server is on TLS, and the client is not.
+      "sslmode=prefer and a server that declines TLS, -PLUS offered",
+      { mechanisms: [PLUS, PLAIN], clientTls: "prefer" },
+      "prefer",
+      "ERR_POSTGRES_CHANNEL_BINDING_FAILED",
+      'server offered SCRAM-SHA-256-PLUS authentication over a non-SSL connection. channelBinding: "disable" connects without channel binding',
+    ],
     [
       "require, no TLS, -PLUS offered",
       { mechanisms: [PLUS, PLAIN] },

@@ -1302,21 +1302,17 @@ fn print_summary(
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
 
-/// One line per file embedded in the executable beside the bundle: a `with { type: "file" }`
-/// import, a `new URL("./x", import.meta.url)` sibling, or an `--asset`.
+/// One line per file the bundler embedded from a module reference: a `with { type: "file" }`
+/// import or a `new URL("./x", import.meta.url)` sibling. Files from `--asset` were listed by
+/// the user and are not repeated.
 fn print_embedded_assets(output_files: &[options::OutputFile], cwd: &[u8]) {
     for f in output_files.iter() {
-        if f.output_kind != options::OutputKind::Asset {
+        if f.output_kind != options::OutputKind::Asset || f.src_path.text.is_empty() {
             continue;
         }
-        let shown: &[u8] = if f.src_path.text.is_empty() {
-            strings::remove_leading_dot_slash(&f.dest_path)
-        } else {
-            resolve_path::relative(cwd, f.src_path.text)
-        };
         bun_core::prettyln!(
             "           <green>embed<r>  {}  <d>{}<r>",
-            bstr::BStr::new(shown),
+            bstr::BStr::new(resolve_path::relative(cwd, f.src_path.text)),
             bun_fmt::size(f.size, Default::default())
         );
     }

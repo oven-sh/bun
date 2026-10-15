@@ -1440,8 +1440,8 @@ fn asked_version(
 /// dependency is refused before anything is fetched for it or printed about it.
 fn unsafe_name<'a>(
     lockfile: &'a Lockfile::Lockfile,
-    dependency: &Dependency,
-    asked: &Asked,
+    dependency: &'a Dependency,
+    asked: &'a Asked,
 ) -> Option<&'a [u8]> {
     let alias = lockfile.str(&dependency.name);
     let alias_is_safe = if alias == lockfile.str(&dependency.version.literal) {

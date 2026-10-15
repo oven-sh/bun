@@ -29,7 +29,7 @@ const timeString = 'Bundled "src/js" for ' + (debug ? "development" : "productio
 console.time(timeString);
 
 if (!CMAKE_BUILD_ROOT || !TYPES_DIR) {
-  console.error("Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR> <TYPES_DIR> --assertions=[OFF|ON]");
+  console.error("Usage: bun bundle-modules.ts --debug=[OFF|ON] <CMAKE_WORK_DIR> <TYPES_DIR>");
   process.exit(1);
 }
 

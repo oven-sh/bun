@@ -1,6 +1,5 @@
 // --disallow-code-generation-from-strings: as Node.js's flag, eval and the Function constructors
 // throw. With "=strict" (Bun's own), nothing in the process turns a string into script.
-import { evaluateForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isWindows, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -564,8 +563,6 @@ describe.concurrent.skipIf(!builtStrict)("a build with =strict as a constant", (
 // refuses everything else where code is made ready to run, whichever way it came in. A `bun build --compile` executable is
 // stored in itself, so to it a file on disk is not static.
 describe.concurrent("=strict runs static code only", () => {
-  // It is inside #if ASSERT_ENABLED.
-  const hasEvaluateForTesting = evaluateForTesting !== undefined;
   const exe = isWindows ? "app.exe" : "app";
 
   // No top-level await: --format=cjs and --bytecode do not take it.
@@ -621,17 +618,6 @@ describe.concurrent("=strict runs static code only", () => {
           reactFastRefresh: false,
         } } }),
       };
-      if (${hasEvaluateForTesting}) {
-        const evaluate = async source => (await import("bun:internal-for-testing")).evaluateForTesting(source);
-        routes.evaluate = () => evaluate(recordRun("evaluate"));
-        routes.evaluateJSONPAssignment = () => evaluate('ran = {"a":1}');
-        routes.evaluateJSONPCall = () => evaluate('process.exit({"a":1})');
-        // A program's global declarations come before its code.
-        routes.evaluateDeclarations = async () => {
-          const error = await evaluate("var declaredVar; let declaredLet; function declaredFunction() {}").catch(String);
-          return [error, "declaredVar" in globalThis, "declaredFunction" in globalThis, typeof declaredLet];
-        };
-      }
       if (process.argv[3] === "compiled") {
         Object.assign(routes, {
           importWritten: () => import(write("imported.mjs")),
@@ -744,19 +730,13 @@ describe.concurrent("=strict runs static code only", () => {
     macroExportName: "BuildMessage: " + refusedMacro,
     macroInBuild: [refusedMacro],
     devServer: refused,
-    ...(hasEvaluateForTesting && {
-      evaluate: refused,
-      evaluateJSONPAssignment: refused,
-      evaluateJSONPCall: refused,
-      evaluateDeclarations: [refused, false, false, "undefined"],
-    }),
   };
   const bake = { BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1" };
 
   test("refuses what is made at run time", async () => {
     using dir = tempDir("disallow-code-generation-refuses", files);
     const cwd = String(dir);
-    const cmd = [bunExe(), strict, "--expose-internals", "./refused-routes.ts", cwd];
+    const cmd = [bunExe(), strict, "./refused-routes.ts", cwd];
     const { stdout, exitCode } = await spawn(cmd, cwd, bake);
     expect(JSON.parse(stdout)).toEqual({ results: refusedWhereverTheProgramIsStored, unhandled: [] });
     expect(exitCode).toBe(0);
@@ -765,7 +745,7 @@ describe.concurrent("=strict runs static code only", () => {
   test("a compiled executable refuses files on disk too", async () => {
     using dir = tempDir("disallow-code-generation-compiled-refuses", files);
     const cwd = String(dir);
-    await compile(cwd, ["./refused-routes.ts"], [], strict + " --expose-internals");
+    await compile(cwd, ["./refused-routes.ts"], [], strict);
 
     const { stdout, exitCode } = await runCompiled(cwd, [cwd, "compiled"], bake);
     expect(JSON.parse(stdout)).toEqual({

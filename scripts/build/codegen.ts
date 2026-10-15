@@ -880,14 +880,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
       desc: "JS modules (bundle-modules)",
       // Note: arg is BUILD_PATH (buildDir), not CODEGEN_PATH. The script
       // derives CODEGEN_DIR = join(BUILD_PATH, "codegen") internally.
-      args: shJoin(cfg, [
-        "run",
-        script,
-        debugFlag(cfg),
-        cfg.buildDir,
-        cfg.typesDir,
-        `--assertions=${cfg.assertions ? "ON" : "OFF"}`,
-      ]),
+      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir, cfg.typesDir]),
     },
   });
 

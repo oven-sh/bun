@@ -780,12 +780,10 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
 }
 
 // The prototype of every CommonJS module object, so that a write to `Module.prototype._compile`
-// reaches the loader and `module instanceof Module` holds. `constructor` and `require` are put
-// on it when the constructor is created.
+// reaches the loader and `module instanceof Module` holds.
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleConstructor)
 {
-    auto* globalObject = defaultGlobalObject(moduleConstructor->globalObject());
-    return globalObject->CommonJSModuleObjectStructure()->storedPrototypeObject();
+    return defaultGlobalObject(moduleConstructor->globalObject())->commonJSModulePrototype();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1056,6 +1054,11 @@ const JSC::ClassInfo JSModuleConstructor::s_info = {
     CREATE_METHOD_TABLE(JSModuleConstructor)
 };
 
+JSObject* createNodeModuleConstructor(JSC::VM& vm, Zig::GlobalObject* globalObject)
+{
+    return JSModuleConstructor::create(vm, globalObject);
+}
+
 static JSC::Structure* createNodeModuleSourceMapEntryStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 6);
@@ -1135,20 +1138,6 @@ extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapOriginObject(
 void addNodeModuleConstructorProperties(JSC::VM& vm,
     Zig::GlobalObject* globalObject)
 {
-    globalObject->m_nodeModuleConstructor.initLater(
-        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
-            auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
-            JSObject* moduleConstructor = JSModuleConstructor::create(init.vm, globalObject);
-            JSObject* prototype = globalObject->CommonJSModuleObjectStructure()->storedPrototypeObject();
-            prototype->putDirect(init.vm, init.vm.propertyNames->constructor, moduleConstructor,
-                static_cast<unsigned>(PropertyAttribute::DontEnum));
-            prototype->putDirectCustomAccessor(
-                init.vm, WebCore::clientData(init.vm)->builtinNames().requirePublicName(),
-                JSC::CustomGetterSetter::create(init.vm, getterRequireFunction, setterRequireFunction),
-                0);
-            init.set(moduleConstructor);
-        });
-
     globalObject->m_nodeModuleSourceMapEntryStructure.initLater(
         [](const Zig::GlobalObject::Initializer<Structure>& init) {
             init.set(createNodeModuleSourceMapEntryStructure(init.vm, init.owner));
@@ -1240,7 +1229,7 @@ JSC::JSObject* generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGloba
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+    auto* constructor = globalObject->nodeModuleConstructor();
 
     // The exports are the static table's enumerable entries, not the constructor's own properties (`length`,
     // `name`, `prototype`, whatever user code assigned onto Module).

@@ -3,6 +3,7 @@
 
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/LazyClassStructure.h"
 #include "headers-handwritten.h"
 #include "wtf/NakedPtr.h"
 #include "BunClientData.h"
@@ -159,6 +160,7 @@ public:
     }
 };
 
+void initCommonJSModuleClassStructure(JSC::LazyClassStructure::Initializer& init);
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);
 

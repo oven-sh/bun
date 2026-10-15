@@ -1213,7 +1213,7 @@ impl DevServer {
             // Nothing says that what the dev server bundles is static code.
             Err(err)
                 if bun_core::code_generation_from_strings()
-                    == bun_core::CodeGenerationFromStrings::Disallowed =>
+                    == bun_core::CodeGenerationFromStrings::Strict =>
             {
                 return Err(err);
             }

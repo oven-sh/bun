@@ -112,9 +112,7 @@ impl MacroContext {
     ) -> crate::Result<Expr> {
         // A macro's entry point is text made here, with names in it from the source that imports the macro, which may be a
         // string. The engine would refuse it, but nothing catches that rejection.
-        if bun_core::code_generation_from_strings()
-            == bun_core::CodeGenerationFromStrings::Disallowed
-        {
+        if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Strict {
             log.add_range_error(
                 Some(source),
                 import_range,

@@ -593,7 +593,7 @@ unsafe fn configure_debugger(
 
     let Some(debugger) = debugger else { return };
     // The debugger evaluates what its client sends, whatever the engine's eval setting.
-    if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Disallowed {
+    if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Strict {
         const STRICT: &str = "--disallow-code-generation-from-strings=strict";
         // Editors set this one for every process started from their terminals (Bun's VS Code
         // extension does by default), so it does not say that anybody asked to debug this one.

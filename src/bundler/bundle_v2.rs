@@ -6469,9 +6469,7 @@ pub mod bv2_impl {
                     resolve_result.resolve_queue.clear();
                 }
 
-                // The records barrel optimization deferred are not followed for a failed
-                // file, so a later request must not un-defer them. (The graph row keeps only
-                // the records: it has no `target` to resolve them against.)
+                // A later request must not un-defer a failed file's barrel-deferred records: its graph row has no `target`.
                 for record in result.ast.import_records.iter_mut() {
                     record
                         .flags

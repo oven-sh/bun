@@ -1973,6 +1973,45 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/7928. Windows does not allow `?` in a file name.
+  test.skipIf(isWindows).each([[[]], [["./some-path?/my.test.js", "./so?me"]]])(
+    "runs the test files in a folder with `?` in its name (arguments: %j)",
+    async args => {
+      const testFile = `
+        import { expect, test } from "bun:test";
+        import { folder } from "./dep.js";
+        test("in " + folder, () => {
+          expect(import.meta.dir.split("/").pop()).toBe(folder);
+          console.log("RAN " + folder);
+        });
+      `;
+      using dir = tempDir("scanner-question-mark", {
+        "some-path?/my.test.js": testFile,
+        "some-path?/dep.js": `export const folder = "some-path?";`,
+        "so?me/my.test.js": testFile,
+        "so?me/dep.js": `export const folder = "so?me";`,
+        // What the part before each "?" names.
+        "some-path/index.js": `console.log("SHOULD NOT RUN some-path/index.js");`,
+        "so/index.js": `console.log("SHOULD NOT RUN so/index.js");`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toContain("RAN some-path?");
+      expect(stdout).toContain("RAN so?me");
+      expect(stdout).not.toContain("SHOULD NOT RUN");
+      expect(stderr).toContain(" 2 pass");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // The scanner builds every absolute path in a PathBuffer of MAX_PATH_BYTES:
   // 4096 on Linux, 1024 on every other POSIX (src/bun_core/util.rs). On Windows
   // it is 32767*3+1 bytes, more than a command line or an NT path can hold, so

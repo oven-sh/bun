@@ -99,7 +99,7 @@ replacements.push({
 });
 
 // Classes and objects in ZigGlobalObject.lut.txt. `Blob` becomes `@natives.Blob` (NativeGlobals, ZigGlobalObject.cpp).
-// Functions are left out because evaluating a function row creates a new function each time.
+// Its functions are left out, except nativeFunctions: the one in `@natives` is not the one on globalThis.
 export const nativeGlobals = Array.from(
   readFileSync(join(import.meta.dir, "../jsc/bindings/ZigGlobalObject.lut.txt"), "utf8").matchAll(
     /^ +(\w+) +(\S+) +(\S+)$/gm,
@@ -110,6 +110,18 @@ export const nativeGlobals = Array.from(
   )
   .map(({ 1: name }) => name)
   .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process");
+
+// What fake timers replace. As in Node, they don't stop the timers of builtin modules.
+// Only the bare name is `@natives.setTimeout`. `globalThis.setTimeout` is what script sees, for node:timers.
+export const nativeFunctions = [
+  "setTimeout",
+  "setInterval",
+  "setImmediate",
+  "clearTimeout",
+  "clearInterval",
+  "clearImmediate",
+  "queueMicrotask",
+];
 
 /** The defines for globalsToPrefix and nativeGlobals don't apply to `const { Blob } = globalThis`. */
 export function assertNoDestructuredGlobalThis(source: string, file: string) {
@@ -185,6 +197,10 @@ for (const name of globalsToPrefix) {
 
 for (const name of nativeGlobals) {
   define[name] = define["globalThis." + name] = "__intrinsic__natives." + name;
+}
+
+for (const name of nativeFunctions) {
+  define[name] = "__intrinsic__natives." + name;
 }
 
 for (const key in define) {

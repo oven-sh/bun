@@ -3,6 +3,10 @@ import { heapStats } from "bun:jsc";
 import { vi as bunVi, jest, setSystemTime } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
+import { once } from "node:events";
+import http from "node:http";
+import net, { type AddressInfo } from "node:net";
+import { performance, PerformanceObserver } from "node:perf_hooks";
 import nodeTimers, { setTimeout as nodeSetTimeout } from "node:timers";
 import { setTimeout as nodeSetTimeoutPromise } from "node:timers/promises";
 import { promisify } from "node:util";
@@ -2027,6 +2031,66 @@ describe("a faked setImmediate", () => {
          console.log("exiting");`,
       ]),
     ).toEqual({ stdout: "exiting\n", stderr: "", exitCode: 0, signalCode: null });
+  });
+});
+
+// As in Node, whose own modules do not call the functions on globalThis.
+describe("the timers of builtin modules stay real", () => {
+  const everyTimer = { toFake: everyFunction.filter(name => name !== "nextTick") };
+
+  test("node:net closes a socket and a server", async () => {
+    const server = net.createServer(socket => socket.end("bye")).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    vi.useFakeTimers(everyTimer);
+    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    const [text] = await Promise.all([client.setEncoding("utf8").toArray(), once(client, "close")]);
+    expect(text.join("")).toBe("bye");
+    server.close();
+    await once(server, "close");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("node:http answers a request", async () => {
+    const server = http
+      .createServer((request, response) => response.end("hello " + request.url))
+      .listen(0, "127.0.0.1");
+    await once(server, "listening");
+    vi.useFakeTimers(everyTimer);
+    const request = http.get({
+      port: (server.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      path: "/x",
+      agent: false,
+    });
+    const [response] = (await once(request, "response")) as [http.IncomingMessage];
+    expect((await response.setEncoding("utf8").toArray()).join("")).toBe("hello /x");
+    server.close();
+    await once(server, "close");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("a PerformanceObserver of perf_hooks is told", async () => {
+    vi.useFakeTimers({ toFake: ["setImmediate", "clearImmediate"] });
+    const { promise, resolve } = Promise.withResolvers<string[]>();
+    const observer = new PerformanceObserver(list => resolve(list.getEntries().map(entry => entry.name)));
+    observer.observe({ entryTypes: ["function"] });
+    performance.timerify(function timed() {})();
+    expect(await promise).toEqual(["timed"]);
+    observer.disconnect();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("node:timers still has the functions of globalThis", () => {
+    for (const name of [
+      "setTimeout",
+      "setInterval",
+      "setImmediate",
+      "clearTimeout",
+      "clearInterval",
+      "clearImmediate",
+    ]) {
+      expect(nodeTimers[name]).toBe(saved[name]);
+    }
   });
 });
 

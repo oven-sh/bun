@@ -4975,6 +4975,8 @@ bool NativeGlobals::getOwnPropertySlot(JSC::JSObject* object, JSC::JSGlobalObjec
         value = std::bit_cast<JSC::LazyClassStructure*>(fields + entry->lazyClassStructureOffset())->constructor(globalObject);
     else if (entry->attributes() & PropertyAttribute::PropertyCallback)
         value = entry->lazyPropertyCallback()(vm, globalObject);
+    else if (entry->attributes() & PropertyAttribute::Function)
+        value = JSC::JSFunction::create(vm, globalObject, entry->functionLength(), String(propertyName.publicName()), entry->function(), JSC::ImplementationVisibility::Public, entry->intrinsic());
     if (!value)
         return false;
 

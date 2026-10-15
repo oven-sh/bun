@@ -337,6 +337,60 @@ describe.each(linkers)("%s linker", linker => {
       await expectRoundTrip(dir, () => check(dir));
     });
 
+    test.concurrent.each([
+      ["its own name", "no-deps"],
+      ["another name", "published"],
+    ])("an alias under %s, in a bun.lock of Bun 1.4: it stays as it is", async (_, alias) => {
+      const dependencies = { [alias]: "npm:no-deps@1.0.0" };
+      const dir = await project(linker, { "": { name: "sandbox", version: "1.0.0", dependencies } });
+      await ok(dir, "install", "--lockfile-only");
+      const older = await lockText(dir);
+      await Promise.all([
+        write(join(dir, "package.json"), JSON.stringify(root({ dependencies }))),
+        write(join(dir, "packages", "no-deps", "package.json"), JSON.stringify(member)),
+      ]);
+
+      await ok(dir, "install", "--frozen-lockfile");
+      await ok(dir, "install");
+      expect(await lockText(dir)).toBe(older);
+    });
+
+    // In Bun 1.4 only a registry range that the workspace's version does not satisfy took its entry. Next to anything
+    // else, a workspace that bun.lock does not have is a new one.
+    test.concurrent.each<[string, () => string, string?]>([
+      ["catalog:", () => "catalog:", "3.0.0"],
+      ["another package under its name", () => "npm:a-dep@1.0.1", "3.0.0"],
+      ["a tarball URL", () => `${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`, "3.0.0"],
+      ["a tarball file", () => "file:./no-deps.tgz", "3.0.0"],
+      ["link:", () => "link:./vendor/no-deps", "3.0.0"],
+      ["a range, without a version of its own", () => "1.0.0", undefined],
+    ])("a workspace that is new next to %s is a change", async (_, spec, version) => {
+      const dir = await project(linker, {
+        "": root({
+          workspaces: { packages: ["packages/*"], catalog: { "no-deps": "1.0.0" } },
+          dependencies: { "no-deps": spec() },
+        }),
+        "packages/use": { name: "use" },
+        "vendor/no-deps": { name: "no-deps", version: "7.0.0" },
+      });
+      const packed = { "package/package.json": JSON.stringify({ name: "no-deps", version: "5.0.0" }) };
+      await write(join(dir, "no-deps.tgz"), await new Bun.Archive(packed, { compress: "gzip" }).bytes());
+      await ok(dir, "install");
+      expect((await resolved(dir)).workspaces).toEqual(["", "packages/use"]);
+
+      await write(
+        join(dir, "packages", "no-deps", "package.json"),
+        JSON.stringify({ name: "no-deps", version, dependencies: { "what-bin": "1.0.0" } }),
+      );
+      const frozen = await bun(dir, "install", "--frozen-lockfile");
+      expect(frozen.stderr).toContain("error: lockfile had changes, but lockfile is frozen");
+      expect(frozen.exitCode).toBe(1);
+
+      await ok(dir, "install");
+      expect((await resolved(dir)).workspaces).toEqual(["", "packages/no-deps", "packages/use"]);
+      expect(await seenFrom(dir, "packages/no-deps", "what-bin")).toBe("1.0.0");
+    });
+
     test.concurrent("a range, and the install fails on what the workspace cannot get", async () => {
       const dir = await project(linker, {
         "": root({ dependencies: { "no-deps": "1.0.0" } }),

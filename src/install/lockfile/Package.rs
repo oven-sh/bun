@@ -837,7 +837,7 @@ pub struct DiffSummary {
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
     /// Not in `add`: rows of the new root for members that a lockfile of Bun 1.4 or older has no
-    /// entry for, because the root gives their name to another package.
+    /// entry for, because the root asks the registry for another version of their name.
     pub(crate) members_left_out: Vec<u32>,
 }
 
@@ -1324,12 +1324,18 @@ impl Diff {
         if is_root {
             summary.members_left_out = (to_deps!().iter().enumerate())
                 .filter(|(to_i, member)| {
+                    // What took the member's row then: a registry range on its name, also behind an
+                    // alias, that its version does not satisfy. One that it satisfies is no range here.
                     member.behavior.is_workspace()
                         && !paired.is_set(*to_i)
+                        && to_lockfile.workspace_versions.contains(&member.name_hash)
                         && (to_deps!().iter().enumerate()).any(|(own_i, own)| {
-                            own.name_hash == member.name_hash
+                            paired.is_set(own_i)
                                 && !own.behavior.is_workspace()
-                                && paired.is_set(own_i)
+                                && own.version.try_npm().is_some_and(|npm| {
+                                    semver::string::Builder::string_hash(npm.name.slice(to_buf!()))
+                                        == member.name_hash
+                                })
                         })
                 })
                 .map(|(to_i, _)| to_i as u32)

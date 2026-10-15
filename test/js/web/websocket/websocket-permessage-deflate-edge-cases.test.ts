@@ -2,8 +2,8 @@ import { serve } from "bun";
 import { expect, setDefaultTimeout, test } from "bun:test";
 import crypto from "node:crypto";
 import net from "node:net";
-import { deflateRawSync, inflateRawSync, constants as zc } from "node:zlib";
-import { createPeer, RawSocket } from "./raw-peer";
+import { createDeflateRaw, deflateRawSync, inflateRawSync, constants as zc } from "node:zlib";
+import { createPeer, encodeFrame, OP, RawSocket } from "./raw-peer";
 
 // The decompression bomb test needs extra time to compress 150MB of test data
 setDefaultTimeout(30_000);
@@ -646,3 +646,55 @@ test("WebSocket client honors client_max_window_bits=8", async () => {
     ws.close();
   }
 });
+
+// Without context takeover the client inflates with libdeflate if the output fits in 128 KiB, and with zlib otherwise.
+// With context takeover a repeated message is encoded as references to the previous one, which only zlib can resolve.
+test.each([true, false])(
+  "WebSocket client inflates messages of every size (server_no_context_takeover=%p)",
+  async noContextTakeover => {
+    const text = (length: number) => {
+      const bytes = Buffer.alloc(length);
+      let x = length;
+      for (let i = 0; i < length; i++) {
+        x = (Math.imul(x, 1103515245) + 12345) | 0;
+        bytes[i] = 0x61 + ((x >>> 16) % 6);
+      }
+      return bytes;
+    };
+    const KiB = 1024;
+    const messages = [1, 100, 100, 2048, 2048, 128 * KiB - 1, 128 * KiB, 128 * KiB + 1, 300 * KiB, 100].map(text);
+
+    const deflater = createDeflateRaw();
+    const deflated: Buffer[] = [];
+    deflater.on("data", chunk => deflated.push(chunk));
+    const frames: Buffer[] = [];
+    for (const message of messages) {
+      deflated.length = 0;
+      deflater.write(message);
+      await new Promise<void>(resolve => deflater.flush(zc.Z_SYNC_FLUSH, () => resolve()));
+      frames.push(encodeFrame(OP.binary, Buffer.concat(deflated).subarray(0, -4), { rsv1: true }));
+      if (noContextTakeover) deflater.reset();
+    }
+
+    await using peer = await createPeer({
+      headers: [
+        "Sec-WebSocket-Extensions: permessage-deflate" + (noContextTakeover ? "; server_no_context_takeover" : ""),
+      ],
+      afterUpgrade: Buffer.concat(frames),
+    });
+    const received: Buffer[] = [];
+    const done = Promise.withResolvers<void>();
+    const ws = new WebSocket(peer.url);
+    ws.binaryType = "nodebuffer";
+    ws.onmessage = event => void (received.push(event.data) === messages.length && done.resolve());
+    ws.onclose = event => done.reject(new Error(`closed: code=${event.code} reason=${event.reason}`));
+    try {
+      await done.promise;
+      expect(received.map(message => message.length)).toEqual(messages.map(message => message.length));
+      expect(received.every((message, i) => message.equals(messages[i]))).toBe(true);
+    } finally {
+      ws.onclose = null;
+      ws.terminate();
+    }
+  },
+);

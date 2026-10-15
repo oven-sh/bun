@@ -67,6 +67,8 @@ const INFLATE_BUFFER_SIZE: usize = 128 * 1024;
 
 // DEFLATE trailer bytes added by Z_SYNC_FLUSH
 const DEFLATE_TRAILER: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
+/// An empty stored block with BFINAL set.
+const FINAL_EMPTY_BLOCK: [u8; 5] = [0x01, 0x00, 0x00, 0xff, 0xff];
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 pub enum DecompressError {
@@ -150,26 +152,32 @@ impl PerMessageDeflate {
         out.try_reserve_exact(INFLATE_BUFFER_SIZE)
             .map_err(|_| DecompressError::OutOfMemory)?;
 
-        // First we try with libdeflate, which is both faster and doesn't need the trailing deflate bytes
-        if Self::can_use_libdeflate(in_buf.len()) {
+        let mut in_with_trailer: Vec<u8> = Vec::new();
+        in_with_trailer
+            .try_reserve_exact(in_buf.len() + DEFLATE_TRAILER.len() + FINAL_EMPTY_BLOCK.len())
+            .map_err(|_| DecompressError::OutOfMemory)?;
+        in_with_trailer.extend_from_slice(in_buf);
+        in_with_trailer.extend_from_slice(&DEFLATE_TRAILER);
+
+        // libdeflate is faster than zlib, but it only inflates a finished stream, so it needs a final
+        // block. It also can't see earlier messages, so it only works without context takeover.
+        if self.decompress_no_context_takeover && Self::can_use_libdeflate(in_buf.len()) {
             if let Some(decompressor) = decompressor {
-                let result =
-                    decompressor.decompress_to_vec(in_buf, out, libdeflate_sys::Encoding::Deflate);
+                in_with_trailer.extend_from_slice(&FINAL_EMPTY_BLOCK);
+                let result = decompressor.decompress_to_vec(
+                    &in_with_trailer,
+                    out,
+                    libdeflate_sys::Encoding::Deflate,
+                );
                 if result.status == libdeflate_sys::Status::Success {
                     if out.len() - initial_len > max_len {
                         return Err(DecompressError::TooLarge);
                     }
                     return Ok(());
                 }
+                in_with_trailer.truncate(in_buf.len() + DEFLATE_TRAILER.len());
             }
         }
-
-        let mut in_with_trailer: Vec<u8> = Vec::new();
-        in_with_trailer
-            .try_reserve_exact(in_buf.len() + DEFLATE_TRAILER.len())
-            .map_err(|_| DecompressError::OutOfMemory)?;
-        in_with_trailer.extend_from_slice(in_buf);
-        in_with_trailer.extend_from_slice(&DEFLATE_TRAILER);
 
         let mut remaining = in_with_trailer.as_slice();
         let mut saw_stream_end = false;

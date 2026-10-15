@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
-import { describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -226,7 +226,23 @@ plugin({
   // A debug build takes about a second to start. Several at once pass the test timeout.
   const concurrentTest = test.concurrentIf(!isDebug);
 
+  // A preload: Module.runMain answers a promise whose "constructor" getter throws. The load of the
+  // entry point reads that getter.
+  const runMainAnswerThrows = `
+    require("node:module").runMain = () => {
+      const promise = Promise.resolve();
+      Object.defineProperty(promise, "constructor", { get() { throw new Error("from the getter"); } });
+      return promise;
+    };
+  `;
+
   describe("with --hot", () => {
+    // A test that times out does not get to the end of its body, where its child is killed.
+    const children = new Set();
+    afterAll(() => {
+      for (const proc of children) proc.kill();
+    });
+
     function spawnHot(files) {
       const dir = tempDir("preload-hot", { "main.js": `console.log("main ran");`, ...files });
       const cmd = [bunExe(), "--hot", "--no-clear-screen", "--preload", "./first.js", "--preload", "./second.js"];
@@ -237,6 +253,7 @@ plugin({
         stdout: "pipe",
         stderr: "pipe",
       });
+      children.add(proc);
       // Reads the stream as it comes. The function it returns gives all that was read, once that
       // has `expected` (a string or a RegExp) in it or the stream has ended.
       const collect = stream => {
@@ -262,55 +279,112 @@ plugin({
           return text;
         };
       };
+      const path = name => join(String(dir), name);
       return {
         stdout: collect(proc.stdout),
         stderr: collect(proc.stderr),
-        write: (name, contents) => writeFileSync(join(String(dir), name), contents),
-        remove: name => rmSync(join(String(dir), name)),
+        write: (name, contents) => writeFileSync(path(name), contents),
+        // The file is never there empty, as it is for a moment in a write.
+        create(name, contents) {
+          writeFileSync(path(name + ".new"), contents);
+          renameSync(path(name + ".new"), path(name));
+        },
+        remove: name => rmSync(path(name)),
         async [Symbol.asyncDispose]() {
           proc.kill();
           await proc.exited;
+          children.delete(proc);
           dir[Symbol.dispose]();
         },
       };
     }
 
+    // For a preload that holds its load until the test has made a file. It gives up after a
+    // minute, so that it does not outlive a test that timed out.
+    const waitFor = `
+      const waitFor = name => {
+        const deadline = Date.now() + 60_000;
+        while (!require("node:fs").existsSync(__dirname + "/" + name)) {
+          if (Date.now() > deadline) process.exit(3);
+          Bun.sleepSync(1);
+        }
+      };
+    `;
+
+    // A preload holds its load until the reload for a save is posted. `save` is code of the
+    // preload that saves a watched file. If it is empty, the test saves one. The watcher logs a
+    // change (logLevel) just before it posts the reload for it, so that line does not say that the
+    // reload is posted. The preload then saves a second file: the watcher gets to that change,
+    // and logs it, only after it has posted the first reload.
+    const hold = (save = "") => `
+      ${waitFor}
+      {
+        const fs = require("node:fs");
+        const helper = require.resolve("./helper.js");
+        require(helper);
+        ${save}
+        waitFor("saved");
+        fs.writeFileSync(helper, fs.readFileSync(helper));
+        waitFor("helper-saved");
+      }
+    `;
+    async function posted(hot, file) {
+      const saved = new RegExp("watcher: .*" + file.replace(".", "\\."));
+      expect(await hot.stderr(saved)).toMatch(saved);
+      hot.write("saved", "");
+      expect(await hot.stderr(/watcher: .*helper\.js/)).toMatch(/watcher: .*helper\.js/);
+      hot.write("helper-saved", "");
+    }
+    const held = { "bunfig.toml": `logLevel = "debug"`, "helper.js": `// A module of the preload that holds.` };
+
     concurrentTest("a reload that lands while the preloads load waits for them", async () => {
-      // It saves a watched file, itself, while it evaluates. The watcher logs a change (logLevel)
-      // just before it posts the reload for it, so the log line does not say that the reload is
-      // posted. The preload then saves a second file: the watcher gets to that change, and logs
-      // it, only after it has posted the first reload. The preload goes on from there.
       const first = `
         if (!globalThis.savedOnce) {
           globalThis.savedOnce = true;
-          const fs = require("node:fs");
-          const helper = require.resolve("./helper.js");
-          require(helper);
-          fs.writeFileSync(__filename, fs.readFileSync(__filename));
-          while (!fs.existsSync(__dirname + "/first-logged")) {}
-          fs.writeFileSync(helper, fs.readFileSync(helper));
-          while (!fs.existsSync(__dirname + "/helper-logged")) {}
+          ${hold("fs.writeFileSync(__filename, fs.readFileSync(__filename));")}
         }
         console.log("first ran");
       `;
-      await using hot = spawnHot({
-        "bunfig.toml": `logLevel = "debug"`,
-        "first.js": first,
-        "helper.js": `// A module of first.js.`,
-        "second.js": `console.log("second ran");`,
-      });
-      expect(await hot.stderr(/watcher: .*first\.js/)).toMatch(/watcher: .*first\.js/);
-      hot.write("first-logged", "");
-      expect(await hot.stderr(/watcher: .*helper\.js/)).toMatch(/watcher: .*helper\.js/);
-      hot.write("helper-logged", "");
+      await using hot = spawnHot({ ...held, "first.js": first, "second.js": `console.log("second ran");` });
+      await posted(hot, "first.js");
       // The preloads ran once and in order. The reload came after them: they are not run again.
       expect(await hot.stdout("main ran\nmain ran\n")).toStartWith("first ran\nsecond ran\nmain ran\nmain ran\n");
       hot.write("main.js", `console.log("main ran again");`);
       expect(await hot.stdout("main ran again\n")).toContain("main ran again\n");
     });
 
+    // A preload that failed keeps the list of preloads, and each reload loads them again.
+    const failsOnce = `
+      if (!globalThis.failedOnce) {
+        globalThis.failedOnce = true;
+        throw new Error("from second.js");
+      }
+    `;
+
+    concurrentTest("a reload that lands while the preloads of a reload load runs them again", async () => {
+      // In the reload, second.js holds its load while the test saves first.js, which was read before.
+      const second = `
+        ${failsOnce}
+        if (!globalThis.heldOnce) {
+          globalThis.heldOnce = true;
+          console.log("second holds");
+          ${hold()}
+        }
+        console.log("second ran");
+      `;
+      const first = text => `console.log("first ran: ${text}");`;
+      await using hot = spawnHot({ ...held, "first.js": first("old"), "second.js": second });
+      expect(await hot.stderr("error: from second.js")).toContain("error: from second.js");
+      hot.write("main.js", `console.log("main ran");`);
+      expect(await hot.stdout("second holds\n")).toBe("first ran: old\nfirst ran: old\nsecond holds\n");
+      hot.write("first.js", first("new"));
+      await posted(hot, "first.js");
+      const again = "first ran: new\nsecond ran\nmain ran\n";
+      // Or the entry point ran twice, with no preload in between.
+      expect(await hot.stdout(new RegExp(again + "|main ran\n[^]*main ran\n"))).toContain(again);
+    });
+
     concurrentTest("a preload that is gone on a reload is reported, and the next reload runs", async () => {
-      // A preload that failed keeps the list of preloads, and a reload runs them again.
       await using hot = spawnHot({
         "first.js": `throw new Error("from first.js");`,
         "second.js": `console.log("second ran");`,
@@ -319,7 +393,7 @@ plugin({
       hot.remove("first.js");
       hot.write("main.js", `console.log("main ran");`);
       expect(await hot.stderr('preload not found "./first.js"')).toContain('preload not found "./first.js"');
-      hot.write("first.js", `console.log("first ran");`);
+      hot.create("first.js", `console.log("first ran");`);
       hot.write("main.js", `console.log("main ran");`);
       expect(await hot.stdout("main ran\n")).toContain("first ran\nsecond ran\nmain ran\n");
       // The error of the load before is not reported again.
@@ -327,22 +401,36 @@ plugin({
     });
 
     concurrentTest("a reload that fails reports what it logged, and not what an earlier reload logged", async () => {
+      const first = text => `throw new Error("from first.js, ${text}");`;
       await using hot = spawnHot({
         "tsconfig.json": `{}`,
-        "first.js": `throw new Error("from first.js");`,
+        "first.js": first("one"),
         "second.js": `console.log("second ran");`,
       });
-      expect(await hot.stderr("error: from first.js")).toContain("error: from first.js");
-      // The next reload logs a warning about this tsconfig.json. Nothing prints what a reload logs.
+      expect(await hot.stderr("error: from first.js, one")).toContain("error: from first.js, one");
+      // The first load prints what is logged until it has reported its error. After the error of a
+      // reload, that is over.
+      hot.write("first.js", first("two"));
+      expect(await hot.stderr("error: from first.js, two")).toContain("error: from first.js, two");
+      // This reload logs a warning about tsconfig.json, and nothing prints it.
       hot.write("tsconfig.json", `{ "compilerOptions": { "paths": { "@/*": ["src/*"] } } }`);
-      hot.write("first.js", `throw new Error("from first.js again");`);
-      expect(await hot.stderr("error: from first.js again")).toContain("error: from first.js again");
+      hot.write("first.js", first("three"));
+      expect(await hot.stderr("error: from first.js, three")).toContain("error: from first.js, three");
       hot.write("tsconfig.json", `{}`);
       hot.remove("first.js");
       hot.write("main.js", `console.log("main ran");`);
       const stderr = await hot.stderr('preload not found "./first.js"');
       expect(stderr).toContain('preload not found "./first.js"');
       expect(stderr).not.toContain("tsconfig.json");
+    });
+
+    concurrentTest("a reload that throws before it has a promise is reported, and the next reload runs", async () => {
+      await using hot = spawnHot({ "first.js": runMainAnswerThrows, "second.js": failsOnce });
+      expect(await hot.stderr("error: from second.js")).toContain("error: from second.js");
+      hot.write("main.js", `console.log("main ran");`);
+      expect(await hot.stderr("error: from the getter")).toContain("error: from the getter");
+      hot.write("main.js", `console.log("main ran again");`);
+      expect(await hot.stdout("main ran again\n")).toContain("main ran again\n");
     });
   });
 });

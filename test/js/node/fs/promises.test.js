@@ -419,8 +419,10 @@ it("teardown waits for every concurrent in-flight write", async () => {
   expect(fh.fd).toBe(-1);
 });
 
-// A rejected write makes the writer refuse further writes (node keeps it
-// usable). It must still give the handle back: end(), endSync(), fail() and the
+// A rejected write makes the writer refuse further writes. Node keeps it
+// usable, its writeAll() has no catch:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L759-L789
+// The writer must still give the handle back: end(), endSync(), fail() and the
 // disposers behave as in node, and the ref on the handle does not outlive the
 // last write in flight.
 describe("FileHandle.writer() after a rejected write", () => {

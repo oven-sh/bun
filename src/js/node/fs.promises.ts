@@ -1094,17 +1094,14 @@ function asyncWrap(fn: any, name: string) {
       let closing = false;
       let pendingEndPromise: Promise<number> | null = null;
       let error: unknown = null;
-      // What further writes reject with: the first write that rejected, or
-      // fail()'s reason. As in node, only fail() sets `error`, so
-      // end()/endSync()/fail() still run after a rejected write.
+      // What later writes reject with. Only fail() sets `error` (as in node), so end()/endSync()/fail() still run.
       let writeError: unknown = null;
       // Count of in-flight async writes (write() doesn't serialize callers,
       // so several can be on the threadpool at once).
       let asyncPending = 0;
-      // Set when end()/fail() must tear down, or a rejected write must give the
-      // ref back, while an async write is still on the threadpool:
-      // writeAll/writevAll run it from their finally so the fd is never closed
-      // under an in-flight write.
+      // Set when end()/fail() or a rejected write must tear down while an async write is still on
+      // the threadpool: writeAll/writevAll run it from their finally so the
+      // fd is never closed under an in-flight write.
       let deferredTeardown: (() => void) | null = null;
       function runDeferredTeardown() {
         if (deferredTeardown !== null) {
@@ -1169,12 +1166,9 @@ function asyncWrap(fn: any, name: string) {
             if (position >= 0) position += bytesWritten;
           }
         } catch (err) {
-          // Node has no catch here: its writer stays usable and holds its ref
-          // until end()/fail() (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L759-L789).
-          // Bun refuses further writes: the write may have hit the disk
-          // partially and the cursor/limit were advanced optimistically. Such a
-          // writer needs no ref, so it gives the ref back after the last
-          // in-flight write. The lock and autoClose still wait for end()/fail().
+          // A failed/aborted write may have hit the disk partially and the
+          // cursor/limit were advanced optimistically; the writer's state is
+          // no longer trustworthy: refuse further writes, give the ref back once none is in flight. Node does neither.
           if (!closed && !writeError && err) {
             writeError = err;
             deferredTeardown = releaseRef;

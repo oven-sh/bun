@@ -990,6 +990,32 @@ describe("close() on a stream that waits for trailers: no 'wantTrailers'", () =>
       });
     });
   }
+
+  test("response behind another stream's stuck body: end('hello'), close(code)", async () => {
+    await withRawClient("GET", async (stuck, peer) => {
+      peer.send(windowUpdate(0));
+      await peer.settle();
+      stuck.respond({ ":status": 200 });
+      stuck.write(BODY);
+      await peer.until(() => peer.wire(1) === STALLED);
+      const opened = once(stuck.session!, "stream");
+      peer.request(3, "GET");
+      const [stream]: http2.ServerHttp2Stream[] = await opened;
+      stream.on("error", () => {});
+      let wantTrailers = 0;
+      stream.on("wantTrailers", () => {
+        wantTrailers++;
+        stream.sendTrailers({ "x-t": "1" });
+      });
+      await nextTurn();
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.end("hello");
+      stream.close(NGHTTP2_INTERNAL_ERROR);
+      await peer.until(() => peer.wire(3).includes("R"));
+      await peer.settle();
+      assert.deepStrictEqual({ wantTrailers, wire: resetOnce(peer.wire(3)) }, { wantTrailers: 0, wire: "H D5 R2" });
+    });
+  });
 });
 
 // RST_STREAM dropped the rest of the body: the writable side of the stream did not finish.
@@ -1526,6 +1552,52 @@ describe("a stream that user code closed keeps its code when the peer resets it"
       }
     }
   }
+
+  for (const [call, act] of [
+    ["close()", stream => stream.close()],
+    ["destroy()", stream => stream.destroy()],
+  ] as [string, (stream: http2.ServerHttp2Stream) => void][]) {
+    for (const peerCode of [NGHTTP2_INTERNAL_ERROR, NGHTTP2_CANCEL]) {
+      test(`response: respond(), ${call}, RST_STREAM(${peerCode}) in the read after the call`, async () => {
+        await withRawClient("POST", async (stream, peer) => {
+          const seen = { aborted: 0, errors: [] as string[] };
+          stream.removeAllListeners("error");
+          stream.on("aborted", () => seen.aborted++);
+          stream.on("error", error => seen.errors.push((error as NodeJS.ErrnoException).code!));
+          const closed = new Promise(resolve => stream.on("close", resolve));
+          stream.respond({ ":status": 200 });
+          await peer.until(() => peer.wire(1) === "H");
+          setImmediate(() => {
+            peer.send(rstStream(peerCode));
+            act(stream);
+          });
+          await closed;
+          assert.deepStrictEqual(
+            { ...seen, rstCode: stream.rstCode },
+            { aborted: 1, errors: [], rstCode: NGHTTP2_NO_ERROR },
+          );
+        });
+      });
+    }
+  }
+
+  // GOAWAY with a last stream id below the request: nghttp2 closes the request as refused.
+  test("close(), GOAWAY below the stream in the read after the call", async () => {
+    await withRawServer(async (session, accepted) => {
+      const peer = await accepted;
+      const errors: string[] = [];
+      const req = session.request({ ":method": "POST" });
+      req.on("error", error => errors.push((error as NodeJS.ErrnoException).code!));
+      const closed = new Promise(resolve => req.on("close", resolve));
+      await peer.until(() => peer.wire(1) === "H");
+      setImmediate(() => {
+        peer.send(frameOf(7, 0, 0, Buffer.concat([u32(0), u32(NGHTTP2_NO_ERROR)])));
+        req.close();
+      });
+      await closed;
+      assert.deepStrictEqual({ errors, rstCode: req.rstCode }, { errors: [], rstCode: NGHTTP2_NO_ERROR });
+    });
+  });
 });
 
 // The peer counts a stream against SETTINGS_MAX_CONCURRENT_STREAMS until it gets RST_STREAM.

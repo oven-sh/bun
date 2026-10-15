@@ -871,6 +871,8 @@ const SQL = function SQL(
       };
     }
     let needs_rollback = false;
+    // The rejection of the BEFORE_COMMIT_OR_ROLLBACK statement, when ROLLBACK still has to follow it.
+    let before_rejection: unknown;
     try {
       await run_internal_transaction_sql(BEGIN_COMMAND);
       needs_rollback = true;
@@ -881,7 +883,16 @@ const SQL = function SQL(
       // at this point we dont need to rollback anymore
       needs_rollback = false;
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-        await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+        try {
+          await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+        } catch (err) {
+          if (pool.isRollbackOwedAfterBeforeRejection?.(err)) {
+            // The server still holds the transaction, and only ROLLBACK ends it.
+            needs_rollback = true;
+            before_rejection = err;
+          }
+          throw err;
+        }
       }
       const commit_result = await run_internal_transaction_sql(COMMIT_COMMAND);
       // PostgreSQL answers COMMIT on an aborted transaction with a
@@ -898,13 +909,19 @@ const SQL = function SQL(
     } catch (err) {
       try {
         if (!(state.connectionState & ReservedConnectionState.closed) && needs_rollback) {
-          if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-            await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+          if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND && before_rejection === undefined) {
+            try {
+              await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+            } catch (before_err) {
+              if (!pool.isRollbackOwedAfterBeforeRejection?.(before_err)) throw before_err;
+              before_rejection = before_err;
+            }
           }
           await run_internal_transaction_sql(ROLLBACK_COMMAND);
         }
-      } catch (err) {
-        return reject(err);
+      } catch (rollback_err) {
+        // A failed ROLLBACK does not replace the rejection of the statement before it.
+        return reject(before_rejection ?? rollback_err);
       }
       return reject(err);
     } finally {

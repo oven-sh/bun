@@ -12,6 +12,7 @@
 export const prestartMap = {
   "js/sql/sql-mysql": ["mysql_plain", "mysql_native_password", "mysql_tls"],
   "js/sql/sql-mariadb": ["mariadb_plain"],
+  "js/sql/sql-mysql.test": ["mariadb_plain"],
   "js/sql/tls-sql": ["postgres_tls"],
   "js/sql/local-sql": ["postgres_tls"],
   "js/sql/sql.test": ["postgres_plain"],

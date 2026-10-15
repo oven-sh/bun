@@ -15,7 +15,8 @@ use super::ts_types::{write_ts_interface_signatures, write_ts_signatures};
 use super::type_parameters::{type_arguments, type_parameters};
 use crate::js::attach::Marker;
 use crate::js::format::{
-    ExprOptions, FormatTypeAnnotation, format_name, format_node, identifier, write_expression,
+    ExprOptions, FormatTypeAnnotation, format_name, format_node, identifier, name_without_comments,
+    write_expression,
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
@@ -1030,7 +1031,7 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
                 [
                     space(),
                     FormatLeadingComments::Comments(comments.leading),
-                    source_text(name.span()),
+                    name_without_comments(name.span()),
                     indent(&FormatTrailingComments::Comments(comments.trailing))
                 ]
             );

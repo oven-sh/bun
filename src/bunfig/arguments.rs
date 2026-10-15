@@ -61,6 +61,17 @@ fn unreadable_config(
     config_path: &[u8],
 ) -> Result<(), crate::Error> {
     if auto_loaded {
+        if bun_ast::DEFAULT_LOG_LEVEL
+            .load()
+            .at_least(bun_ast::Level::Warn)
+            && err.is_unreadable_file(config_path)
+        {
+            bun_core::warn!(
+                "{}\nThe settings in <b>{}<r> are not applied.",
+                err,
+                BStr::new(config_path),
+            );
+        }
         return Ok(());
     }
     bun_core::pretty_errorln!(
@@ -71,14 +82,37 @@ fn unreadable_config(
     Global::exit(exit_code_of_failure(cmd));
 }
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ConfigFile {
+    /// `$XDG_CONFIG_HOME/.bunfig.toml` or `$HOME/.bunfig.toml`
+    User,
+    /// `./bunfig.toml`
+    Project,
+    /// `--config`
+    Named,
+}
+
+struct RestoreLogLevel {
+    log: *mut bun_ast::Log,
+    level: bun_ast::Level,
+}
+
+impl Drop for RestoreLogLevel {
+    fn drop(&mut self) {
+        // SAFETY: see `load_bunfig`; runs on the same thread.
+        unsafe { (*self.log).level = self.level };
+    }
+}
+
 fn load_bunfig(
     cmd: CommandTag,
-    auto_loaded: bool,
+    file: ConfigFile,
     config_path: &ZStr,
     ctx: Context<'_>,
     tool: Option<&mut ToolReader<'_>>,
     counts: Counts,
 ) -> Result<(), crate::Error> {
+    let auto_loaded = file != ConfigFile::Named;
     let source =
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
             Ok(s) => s,
@@ -100,25 +134,27 @@ fn load_bunfig(
     let original_level = unsafe { (*log_ptr).level };
     // SAFETY: see above.
     unsafe { (*log_ptr).level = bun_ast::Level::Warn };
-    let _guard = scopeguard::guard(original_level, move |lvl| {
-        // SAFETY: same as above; runs on the same thread.
-        unsafe { (*log_ptr).level = lvl };
-    });
+    let _restore = RestoreLogLevel {
+        log: log_ptr,
+        level: original_level,
+    };
     ctx.debug.loaded_bunfig = true;
-    Bunfig::parse(cmd, &source, ctx, tool, counts)
+    Bunfig::parse(cmd, &source, file == ConfigFile::Project, ctx, tool, counts)
 }
 
-fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Error> {
-    if ctx.has_loaded_global_config {
-        return Ok(());
+/// The user's own file, once.
+pub fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) {
+    if !cmd.read_global_config() || ctx.has_loaded_global_config {
+        return;
     }
     ctx.has_loaded_global_config = true;
 
     let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf) {
-        load_bunfig(cmd, true, path, ctx, None, Counts::Everything)?;
+        if let Err(err) = load_bunfig(cmd, ConfigFile::User, path, ctx, None, Counts::Everything) {
+            report_bunfig_load_failure(cmd, ctx.log, err);
+        }
     }
-    Ok(())
 }
 
 pub fn load_config_path(
@@ -137,26 +173,12 @@ fn load_config_path_for_tool(
     ctx: Context<'_>,
     tool: Option<&mut ToolReader<'_>>,
 ) -> Result<(), crate::Error> {
-    // `cmd.read_global_config()` is evaluated at runtime (see
-    // the note on `Parser::parse` in src/bunfig/bunfig.rs);
-    // `Tag::read_global_config` is a const-ish
-    // lookup so the dead arm is still a single branch.
-    if cmd.read_global_config() {
-        if let Err(err) = load_global_bunfig(cmd, ctx) {
-            if auto_loaded {
-                return Ok(());
-            }
-
-            bun_core::pretty_errorln!(
-                "{}\nreading global config \"{}\"",
-                err,
-                BStr::new(config_path.as_bytes()),
-            );
-            Global::exit(1);
-        }
-    }
-
-    load_bunfig(cmd, auto_loaded, config_path, ctx, tool, Counts::Everything)
+    let file = if auto_loaded {
+        ConfigFile::Project
+    } else {
+        ConfigFile::Named
+    };
+    load_bunfig(cmd, file, config_path, ctx, tool, Counts::Everything)
 }
 
 #[cold]
@@ -220,19 +242,9 @@ pub fn load_config_for_tool(
         }
     }
 
+    load_global_bunfig(cmd, ctx);
+
     let mut config_buf = bun_paths::path_buffer_pool::get();
-    if cmd.read_global_config() {
-        if !ctx.has_loaded_global_config {
-            ctx.has_loaded_global_config = true;
-
-            if let Some(path) = get_home_config_path(&mut config_buf) {
-                if let Err(err) = load_config_path(cmd, true, path, ctx) {
-                    report_bunfig_load_failure(cmd, ctx.log, err);
-                }
-            }
-        }
-    }
-
     let mut config_path_: &[u8] = user_config_path_.unwrap_or(b"");
 
     let mut auto_loaded: bool = false;
@@ -343,7 +355,14 @@ pub fn load_config_above_for_tool(
         // SAFETY: process-global Log; see `load_bunfig` note.
         let said = unsafe { &*ctx.log }.msgs.len();
         let counts = Counts::OnlyForTheTool;
-        if let Err(err) = load_bunfig(cmd, true, path, &mut *ctx, Some(read), counts) {
+        if let Err(err) = load_bunfig(
+            cmd,
+            ConfigFile::Project,
+            path,
+            &mut *ctx,
+            Some(read),
+            counts,
+        ) {
             if !is_optional {
                 report_bunfig_load_failure_as(cmd, ctx.log, err, Some(&shown));
             }

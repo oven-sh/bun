@@ -562,6 +562,7 @@ impl DynamicBitSetUnmanaged {
 
     /// Creates a bit set with no elements present.
     /// If bit_length is not zero, deinit must eventually be called.
+    #[inline(never)]
     pub fn init_empty(bit_length: usize) -> Result<Self, AllocError> {
         let mut this = Self::default();
         this.resize(bit_length, false)?;
@@ -663,6 +664,7 @@ impl DynamicBitSetUnmanaged {
     /// deinitializes the array and releases its memory.
     /// The passed allocator must be the same one used for
     /// init* or resize in the past. Idempotent.
+    #[inline(never)]
     pub fn deinit(&mut self) {
         self.resize(0, false).expect("unreachable");
     }

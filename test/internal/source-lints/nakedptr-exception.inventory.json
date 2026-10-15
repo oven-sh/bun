@@ -1,6 +1,6 @@
 {
   "src/jsc/bindings/JSCommonJSExtensions.cpp": 1,
-  "src/jsc/bindings/JSCommonJSModule.cpp": 3,
+  "src/jsc/bindings/JSCommonJSModule.cpp": 2,
   "src/jsc/bindings/JSEnvironmentVariableMap.cpp": 1,
   "src/jsc/bindings/JSMockFunction.cpp": 1,
   "src/jsc/bindings/NodeVM.cpp": 1,

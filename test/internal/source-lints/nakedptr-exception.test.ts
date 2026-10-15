@@ -10,18 +10,22 @@ import path from "path";
 // VM that was told to stop.
 //
 // A frame that calls script and does not re-throw what it threw uses the plain overload under a
-// `TopExceptionScope` instead:
+// `TopExceptionScope` instead, and hands what it finds there to `Bun::clearExceptionOrTakeTermination()`
+// (BunClientData.h) before it reports anything:
 //
 //     call(globalObject, function, callData, thisValue, args);
 //     if (auto* exception = scope.exception()) [[unlikely]] {
-//         if (!scope.tryClearException()) {            // the VM's stop
-//             Bun::takeTerminationOutsideScript(vm, scope); // pending beneath script, taken outside it
-//             return;
-//         }
+//         if (!Bun::clearExceptionOrTakeTermination(vm, scope))
+//             return; // the VM's stop: pending beneath script, taken outside it
 //         report(exception);
 //     }
 //
-// (`EventEmitter::innerInvokeEventListeners`, `JSEventListener::handleEvent`, `NodeTimerObject.cpp`.)
+// (`EventEmitter::innerInvokeEventListeners`, `JSEventListener::handleEvent`, `JSCallbackData::invokeCallback`.)
+//
+// This lint guards that call shape only. The other half of the rule has no spelling to count: a report can
+// stop the VM and leave nothing pending, so a loop that reports an error and then calls script again reads
+// the gate first (`isStoppingOrStopped`, as `JSNextTickQueue::drain` does). The tests in "a worker stopped
+// by the handler of its uncaught error" (worker_threads.test.ts) guard that half.
 //
 // This is a ratchet: `nakedptr-exception.inventory.json` counts today's uses per file. They re-throw
 // what they take, or convert it for a caller that does. A new one fails the test; removing one requires
@@ -88,7 +92,7 @@ describe("NakedPtr<Exception> takes (ratchet)", () => {
     }
     expect(
       grown,
-      "call script with the plain overload under a TopExceptionScope and leave a termination to Bun::takeTerminationOutsideScript — see the header of this test",
+      "call script with the plain overload under a TopExceptionScope and hand what it threw to Bun::clearExceptionOrTakeTermination — see the header of this test",
     ).toEqual([]);
   });
 

@@ -260,12 +260,8 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         auto* exception = scope.exception();
 
         if (exception) [[unlikely]] {
-            // The VM's stop is not the listener's error. Beneath script it stays pending and unwinds the caller of
-            // emit(); with no script beneath, this is the frame that takes it.
-            if (!scope.tryClearException()) {
-                Bun::takeTerminationOutsideScript(vm, scope);
+            if (!Bun::clearExceptionOrTakeTermination(vm, scope))
                 return fired;
-            }
             auto errorIdentifier = vm.propertyNames->error;
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
@@ -280,7 +276,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
                 expcep.append(errorValue);
                 fireEventListeners(errorIdentifier, WTF::move(expcep));
             }
-            // A stop made by the handlers of that error, beneath script: the next listener is not entered on top of it.
+            // The handlers of that error can stop the VM beneath script: no listener is entered over that termination.
             if (scope.exception())
                 return fired;
         }

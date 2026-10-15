@@ -2297,58 +2297,239 @@ test.concurrent("a vm timeout that never fires leaves nothing behind either", as
   expect(exitCode).toBe(0);
 });
 
-// A timeout that lands in a listener that native code called for the script (process.emit(),
-// dispatchEvent(), abort()) ends the script there, as in Node. The dispatcher used to take the
-// termination as the listener's error and drop it: the next listener ran, the script went on after
-// the call, and the timeout was thrown only once the script had finished.
-test.concurrent("a vm timeout in a listener of emit(), dispatchEvent() or abort() ends the script", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      const vm = require("node:vm");
-      // Long enough for the timeout to land in it. It ends by itself, so a timeout that is lost fails this test and does not hang it.
-      const spin = () => { const end = performance.now() + 3000; while (performance.now() < end); };
-      const ran = [];
-      const second = () => ran.push("second listener");
-      process.on("spin", spin).on("spin", second);
-      const target = new EventTarget();
-      target.addEventListener("spin", spin);
-      target.addEventListener("spin", second);
-      const controller = new AbortController();
-      controller.signal.addEventListener("abort", spin);
-      controller.signal.addEventListener("abort", second);
-      const calls = {
-        "process.emit": () => process.emit("spin"),
-        "dispatchEvent": () => target.dispatchEvent(new Event("spin")),
-        "abort": () => controller.abort(),
-      };
-      for (const [name, call] of Object.entries(calls)) {
-        ran.length = 0;
+// A timeout that lands in a listener or callback that native code called for the script (process.emit(),
+// dispatchEvent(), abort()) ends the script there, as in Node. The dispatcher used to take the termination as
+// the listener's error and drop it: the script went on after the call, a `once` listener behind the one that
+// was interrupted was consumed without being called, and the timeout was thrown only once the script had
+// finished. No row depends on where the timeout lands: one that fires before the listener is entered gives
+// the same output.
+describe("a vm timeout in a listener that native code called ends the script", () => {
+  const cases: [name: string, setup: string, expected: string][] = [
+    [
+      "process.emit()",
+      `process.on("spin", spin).on("spin", () => ran.push("second listener"));
+       const call = () => process.emit("spin");`,
+      "threw ERR_SCRIPT_EXECUTION_TIMEOUT []",
+    ],
+    [
+      "dispatchEvent()",
+      `const target = new EventTarget();
+       target.addEventListener("spin", spin);
+       target.addEventListener("spin", () => ran.push("second listener"));
+       const call = () => target.dispatchEvent(new Event("spin"));`,
+      "threw ERR_SCRIPT_EXECUTION_TIMEOUT []",
+    ],
+    [
+      "abort()",
+      `const controller = new AbortController();
+       controller.signal.addEventListener("abort", spin);
+       controller.signal.addEventListener("abort", () => ran.push("second listener"));
+       const call = () => controller.abort();`,
+      "threw ERR_SCRIPT_EXECUTION_TIMEOUT []",
+    ],
+    [
+      // Bun reports a listener's throw from inside emit(), so its handler runs beneath the script too.
+      "process.emit(), in the 'uncaughtException' listener that a listener's throw is reported to",
+      `process.on("uncaughtException", spin);
+       process.on("throw", () => { throw new Error("listener threw"); }).on("throw", () => ran.push("second listener"));
+       const call = () => process.emit("throw");`,
+      "threw ERR_SCRIPT_EXECUTION_TIMEOUT []",
+    ],
+    [
+      "abort(), in the first of the two abort algorithms of pipeTo()",
+      `const controller = new AbortController();
+       const sinks = [];
+       const pipe = cancel =>
+         new ReadableStream({ cancel })
+           .pipeTo(new WritableStream({ start(sink) { sinks.push(sink); } }), { signal: controller.signal })
+           .catch(() => {});
+       pipe(spin);
+       pipe(() => ran.push("second cancel()"));
+       const call = () => { for (const sink of sinks) sink.error(new Error("sink failed")); controller.abort(); };`,
+      "threw ERR_SCRIPT_EXECUTION_TIMEOUT []",
+    ],
+    [
+      "dispatchEvent(), a once listener behind it stays registered",
+      `let spinning = true;
+       const target = new EventTarget();
+       target.addEventListener("spin", () => { if (spinning) spin(); });
+       target.addEventListener("spin", () => ran.push("once listener"), { once: true });
+       target.addEventListener("spin", () => ran.push("plain listener"));
+       const call = () => target.dispatchEvent(new Event("spin"));
+       const afterwards = () => { spinning = false; call(); };`,
+      `threw ERR_SCRIPT_EXECUTION_TIMEOUT [] then ["once listener","plain listener"]`,
+    ],
+    [
+      "process.emit(), a once listener behind it stays registered",
+      `let spinning = true;
+       process.on("spin", () => { if (spinning) spin(); });
+       process.once("spin", () => ran.push("once listener"));
+       process.on("spin", () => ran.push("plain listener"));
+       const call = () => process.emit("spin");
+       const afterwards = () => { spinning = false; call(); };`,
+      `threw ERR_SCRIPT_EXECUTION_TIMEOUT [] then ["once listener","plain listener"]`,
+    ],
+    [
+      // The context's own microtask checkpoint runs inside the run, under its timeout.
+      "dispatchEvent() from a microtask of an afterEvaluate context",
+      `const target = new EventTarget();
+       target.addEventListener("spin", spin);
+       target.addEventListener("spin", () => ran.push("second listener"));
+       const call = () => target.dispatchEvent(new Event("spin"));
+       const context = vm.createContext({ call, ran }, { microtaskMode: "afterEvaluate" });
+       const run = () => vm.runInContext("Promise.resolve().then(() => { call(); ran.push('microtask after the call'); }); 1", context, { timeout: 50 });`,
+      "threw ERR_SCRIPT_EXECUTION_TIMEOUT []",
+    ],
+  ];
+
+  test.concurrent.each(cases)("%s", async (_name, setup, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const vm = require("node:vm");
+        // Long enough for the timeout to land in it. It ends by itself, so a timeout that is lost fails the test and does not hang it.
+        const spin = () => { const end = performance.now() + 3000; while (performance.now() < end); };
+        const ran = [];
+        ${setup}
         let outcome;
         try {
-          outcome = "returned " + vm.runInNewContext("call(); ran.push('script after the call'); 1", { call, ran }, { timeout: 50 });
+          outcome = "returned " + (typeof run === "function" ? run() : vm.runInNewContext("call(); ran.push('script after the call'); 1", { call, ran }, { timeout: 50 }));
         } catch (e) {
           outcome = "threw " + e.code;
         }
-        console.log(name + ": " + outcome + " " + JSON.stringify(ran));
-      }
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+        outcome += " " + JSON.stringify(ran);
+        if (typeof afterwards === "function") {
+          ran.length = 0;
+          afterwards();
+          outcome += " then " + JSON.stringify(ran);
+        }
+        console.log(outcome);
+        process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe(
-    "process.emit: threw ERR_SCRIPT_EXECUTION_TIMEOUT []\n" +
-      "dispatchEvent: threw ERR_SCRIPT_EXECUTION_TIMEOUT []\n" +
-      "abort: threw ERR_SCRIPT_EXECUTION_TIMEOUT []\n",
-  );
-  expect(exitCode).toBe(0);
+  // The same with no deadline to race: the first listener interrupts the run itself.
+  test.skipIf(isWindows)("and so does a SIGINT under breakOnSigint", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const vm = require("node:vm");
+        for (const kind of ["process.emit", "dispatchEvent", "abort"]) {
+          const ran = [];
+          const first = () => { ran.push("first listener entered"); process.kill(process.pid, "SIGINT"); for (;;) {} };
+          const second = () => ran.push("second listener");
+          let call;
+          if (kind === "process.emit") {
+            process.on("interrupt", first).on("interrupt", second);
+            call = () => process.emit("interrupt");
+          } else if (kind === "dispatchEvent") {
+            const target = new EventTarget();
+            target.addEventListener("interrupt", first);
+            target.addEventListener("interrupt", second);
+            call = () => target.dispatchEvent(new Event("interrupt"));
+          } else {
+            const controller = new AbortController();
+            controller.signal.addEventListener("abort", first);
+            controller.signal.addEventListener("abort", second);
+            call = () => controller.abort();
+          }
+          let outcome;
+          try {
+            outcome = "returned " + vm.runInNewContext("call(); ran.push('script after the call'); 1", { call, ran }, { breakOnSigint: true });
+          } catch (e) {
+            outcome = "threw " + e.code;
+          }
+          process.removeAllListeners("interrupt");
+          console.log(kind + ": " + outcome + " " + JSON.stringify(ran));
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        'process.emit: threw ERR_SCRIPT_EXECUTION_INTERRUPTED ["first listener entered"]\n' +
+        'dispatchEvent: threw ERR_SCRIPT_EXECUTION_INTERRUPTED ["first listener entered"]\n' +
+        'abort: threw ERR_SCRIPT_EXECUTION_INTERRUPTED ["first listener entered"]\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // ws.close() fires the 'abort' listeners of the upgraded request's signal from native code, which then calls
+  // the 'close' handler. A timeout that lands in a listener is the script's to unwind: the native code in
+  // between stops there.
+  test.concurrent("and native code between the script and the listener stops too (ServerWebSocket close)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const vm = require("node:vm");
+        const spin = () => { const end = performance.now() + 3000; while (performance.now() < end); };
+        for (const withCloseHandler of [true, false]) {
+          const done = Promise.withResolvers();
+          const websocket = {
+            message(ws) {
+              globalThis.socket = ws;
+              globalThis.wentOn = false;
+              let outcome;
+              try {
+                vm.runInThisContext("socket.close(1000, 'bye'); globalThis.wentOn = true;", { timeout: 50 });
+                outcome = "returned";
+              } catch (e) {
+                outcome = "threw " + e.code;
+              }
+              done.resolve(outcome + ", script after close() ran: " + globalThis.wentOn);
+            },
+          };
+          if (withCloseHandler) websocket.close = () => {};
+          const server = Bun.serve({
+            port: 0,
+            fetch(request, server) {
+              request.signal.addEventListener("abort", spin);
+              return server.upgrade(request) ? undefined : new Response("not a websocket");
+            },
+            websocket,
+          });
+          const client = new WebSocket("ws://localhost:" + server.port);
+          client.onopen = () => client.send("close me");
+          console.log((withCloseHandler ? "with" : "without") + " a close handler: " + (await done.promise));
+          await server.stop(true);
+        }
+        process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        "with a close handler: threw ERR_SCRIPT_EXECUTION_TIMEOUT, script after close() ran: false\n" +
+        "without a close handler: threw ERR_SCRIPT_EXECUTION_TIMEOUT, script after close() ran: false\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // The following tests run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run

@@ -129,5 +129,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, is_static @ 78, bytecode_cache @ 80, module_info @ 104);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

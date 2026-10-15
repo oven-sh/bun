@@ -281,6 +281,13 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     );
     argv.push(lit(b"test\0"));
     argv.push(lit(b"--test-worker\0"));
+    // Not everything in the file has a flag below.
+    if let Some(config_file) = &opts.config_file {
+        argv.push(print_z(format_args!(
+            "--config={}",
+            bstr::BStr::new(config_file)
+        ))?);
+    }
     argv.push(if opts.isolate_modules {
         lit(b"--isolate=modules\0")
     } else if opts.isolate {

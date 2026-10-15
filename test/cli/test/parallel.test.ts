@@ -254,6 +254,37 @@ test("--parallel forwards -t to workers", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("--parallel: the workers read the file that --config names, and not ./bunfig.toml", async () => {
+  const file = `
+    import { expect, test, vi } from "vitest";
+    const fn = vi.fn();
+    test("first", () => void fn());
+    test("second", () => { console.log(JSON.stringify([fn.mock.calls.length, globalThis.preloads])); });
+  `;
+  using dir = tempDir("parallel-config", {
+    "a.test.js": file,
+    "b.test.js": file,
+    "bunfig.toml": `[test]\npreload = ["./not-named.js"]`,
+    "other/named.toml": `[test]\nclearMocks = false\npreload = ["./named.js"]`,
+    "not-named.js": `(globalThis.preloads ??= []).push("not named");`,
+    "named.js": `(globalThis.preloads ??= []).push("named");`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--config=other/named.toml", "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // What a worker prints comes out with the report.
+  expect((stdout + stderr).split("\n").filter(line => line.startsWith("["))).toEqual(Array(2).fill(`[1,["named"]]`));
+  expect(stderr).toContain("4 pass");
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel --bail stops dispatching new files after threshold", async () => {
   // Every file fails, so whichever two the Scanner hands out first will
   // trigger bail before any third file is dispatched. Order-independent.

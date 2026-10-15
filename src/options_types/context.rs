@@ -450,6 +450,8 @@ pub struct TestOptions {
     pub test_filter_regex: Option<core::ptr::NonNull<()>>, // SAFETY: erased *mut bun_jsc::RegularExpression
     pub max_concurrency: u32,
     pub resets_before_each_test: [Option<bool>; RESETS_BEFORE_EACH_TEST.len()],
+    /// The absolute path of the file that `--config` names. The workers of `--parallel` read it instead of `./bunfig.toml`.
+    pub config_file: Option<Box<[u8]>>,
     /// `bun test --isolate`: run each test file in a fresh global object on
     /// the same VM, force-closing leaked handles between files.
     pub isolate: bool,
@@ -611,6 +613,7 @@ impl Default for TestOptions {
             // overrides explicitly.
             max_concurrency: if bun_core::env::ENABLE_ASAN { 5 } else { 20 },
             resets_before_each_test: [None; RESETS_BEFORE_EACH_TEST.len()],
+            config_file: None,
             isolate: false,
             isolate_modules: false,
             parallel: 0,

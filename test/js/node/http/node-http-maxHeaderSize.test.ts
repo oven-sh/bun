@@ -338,7 +338,7 @@ describe("the head of a proxy's CONNECT response", () => {
     for (let round = 0; round < 1000; round++) {
       const bytes = Buffer.from(Array.from({ length: 1 + random(300) }, () => alphabet[random(alphabet.length)]));
       const limit = round % 3 === 0 ? Infinity : 1 + random(300);
-      let head: Buffer | undefined;
+      let buffer: Buffer | undefined;
       let node = Buffer.alloc(0);
       let received = 0;
       let result: "ended" | "exceeded" | "pending" = "pending";
@@ -349,7 +349,7 @@ describe("the head of a proxy's CONNECT response", () => {
         const chunk = Buffer.from(bytes.subarray(received, received + size));
         if (received > 0 && chunk.length > received) seen.chunksLargerThanAllBefore++;
         if (received > 0 && received + chunk.length > limit) seen.chunksPastLimit++;
-        head = appendHeadChunk(head, received, chunk, limit);
+        const head: Buffer = (buffer = appendHeadChunk(buffer, received, chunk, limit));
         const index = indexOfHeadEnd(head, received, received + chunk.length);
         received += chunk.length;
         // Node: https://github.com/nodejs/node/blob/v26.10.0/lib/https.js#L251-L256

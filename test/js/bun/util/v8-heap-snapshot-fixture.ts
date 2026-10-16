@@ -89,18 +89,15 @@ switch (mode) {
     break;
   }
 
-  // The test checks the permissions of the file that the two modes below leave
-  // behind, so each one pins the umask those permissions depend on.
   case "write-default": {
-    process.umask(0o022);
     const path = require("node:v8").writeHeapSnapshot();
     const json = await Bun.file(path).json();
+    require("node:fs").rmSync(path);
     result = { filename: require("node:path").basename(path), ...describeSnapshot(json) };
     break;
   }
 
   case "write-path": {
-    process.umask(0o022);
     const returnedPath = require("node:v8").writeHeapSnapshot(pathArg);
     result = { returnedPath, ...describeSnapshot(await Bun.file(pathArg).json()) };
     break;

@@ -33,6 +33,8 @@ pub struct PrinterOptions<'a> {
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.
     pub pseudo_classes: Option<PseudoClasses<'a>>,
+    /// Print each raw token list in one form, for a diff. `bun pm diff` sets it.
+    pub canonical_token_lists: bool,
 }
 
 impl<'a> PrinterOptions<'a> {
@@ -50,6 +52,7 @@ impl<'a> PrinterOptions<'a> {
             },
             analyze_dependencies: None,
             pseudo_classes: None,
+            canonical_token_lists: false,
         }
     }
 }
@@ -120,6 +123,8 @@ pub struct Printer<'a> {
     pub(crate) line: u32,
     pub(crate) col: u32,
     pub(crate) minify: bool,
+    /// Set by `minify` and by `canonical_token_lists`. The second alone is the diff print.
+    pub(crate) collapse_token_whitespace: bool,
     pub(crate) targets: Targets,
     pub(crate) vendor_prefix: css::VendorPrefix,
     /// True while nested rules are being re-serialized for a non-final vendor
@@ -279,6 +284,7 @@ impl<'a> Printer<'a> {
             sources: None,
             dest,
             minify: options.minify,
+            collapse_token_whitespace: options.minify || options.canonical_token_lists,
             targets: options.targets,
             dependencies: if options.analyze_dependencies.is_some() {
                 Some(BumpVec::new_in(arena))

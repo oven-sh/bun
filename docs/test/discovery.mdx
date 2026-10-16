@@ -22,6 +22,8 @@ By default, `bun test` ignores:
 - Hidden directories (those starting with a period `.`)
 - Files that don't have JavaScript-like extensions (based on available [loaders](/bundler/loaders))
 
+`bun test` follows symbolic links to directories. A test that it reaches through a link is named by the path of the link, so filters and [`pathIgnorePatterns`](/test/configuration#path-ignore-patterns) match that path. `bun test` passes over a link that leads back to a directory it is already inside.
+
 ## Customizing Test Discovery
 
 ### Position Arguments as Filters

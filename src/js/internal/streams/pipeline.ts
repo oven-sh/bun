@@ -23,6 +23,8 @@ const {
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const ArrayIsArray = Array.isArray;
 const SymbolDispose = Symbol.dispose;
+// Captured at load: a setImmediate that user code replaces later (fake timers) must not hold back a teardown.
+const setImmediate = globalThis.setImmediate;
 
 let PassThrough;
 let Readable;
@@ -163,7 +165,7 @@ function pipeline(...streams) {
   return pipelineImpl(streams, once(popCallback(streams)));
 }
 
-function pipelineImpl(streams, callback, opts?) {
+function pipelineImpl(streams, callback, opts?, inner?) {
   if (streams.length === 1 && ArrayIsArray(streams[0])) {
     streams = streams[0];
   }
@@ -228,6 +230,29 @@ function pipelineImpl(streams, callback, opts?) {
       }
       process.nextTick(callback, error, value);
     }
+  }
+
+  // Bun only, Node has no such hook: compose() calls stop() when its Duplex is destroyed before the pipeline has ended.
+  if (inner !== undefined) {
+    inner.stop = (err, always) => {
+      // stop() records no error: the members report. An error from before keeps its place, unless it is abort-class.
+      if (
+        (!error || error.name === "AbortError" || error.code === "ERR_STREAM_PREMATURE_CLOSE") &&
+        (always || (err.name !== "AbortError" && err.code !== "ERR_STREAM_PREMATURE_CLOSE"))
+      ) {
+        const done = callback;
+        // Until the pipeline has ended, `err` replaces a failure (unless `err` is abort-class), and with `always` any result.
+        callback = (e, val) => done(always || e ? err : e, val);
+      }
+      while (destroys.length) {
+        destroys.shift()?.(err);
+      }
+      // finishImpl runs this entry before its own abort: a signal that is still open then gets `err` as its reason.
+      const abort = () => ac.abort(err);
+      destroys.push(abort);
+      // Next turn: the 'error' of a destroyed member (nextTick) reaches the pipeline before a stage sees the signal.
+      setImmediate(abort);
+    };
   }
 
   let ret;

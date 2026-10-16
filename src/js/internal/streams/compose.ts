@@ -1,6 +1,7 @@
 "use strict";
 
-const { pipeline } = require("internal/streams/pipeline");
+const { pipelineImpl } = require("internal/streams/pipeline");
+const { once } = require("internal/shared");
 const Duplex = require("internal/streams/duplex");
 const { destroyer } = require("internal/streams/destroy");
 const {
@@ -15,6 +16,22 @@ const {
 const eos = require("internal/streams/end-of-stream");
 
 const ArrayPrototypeSlice = Array.prototype.slice;
+const PromisePrototypeThen = $Promise.prototype.$then;
+
+const nop = () => {};
+
+// What compose() shares with an inner pipeline that has a pump: the pipeline's stop, and the web sides compose locked.
+interface Inner {
+  stop: ((err: unknown, always: boolean) => void) | undefined;
+  writer: WritableStreamDefaultWriter | undefined;
+  reader: ReadableStreamDefaultReader | undefined;
+  readable: ReadableStream | undefined;
+}
+
+// User code can replace cancel() and abort(): a throw, or a result that is not a promise, must not change a teardown.
+function ignoreOutcome(result) {
+  if ($isPromise(result)) PromisePrototypeThen.$call(result, undefined, nop);
+}
 
 export default function compose(...streams) {
   if (streams.length === 0) {
@@ -36,8 +53,11 @@ export default function compose(...streams) {
     streams[lastIdx] = Duplex.from(streams[lastIdx]);
   }
 
+  let pumped = false;
   for (let n = 0; n < streams.length; ++n) {
-    if (!isNodeStream(streams[n]) && !isWebStream(streams[n])) {
+    const isNode = isNodeStream(streams[n]);
+    pumped ||= !isNode;
+    if (!isNode && !isWebStream(streams[n])) {
       // TODO(ronag): Add checks for non streams.
       continue;
     }
@@ -57,10 +77,14 @@ export default function compose(...streams) {
   let onreadable;
   let onclose;
   let d;
+  const inner: Inner | undefined = pumped
+    ? { stop: undefined, writer: undefined, reader: undefined, readable: undefined }
+    : undefined;
 
   function onfinished(err) {
     const cb = onclose;
     onclose = null;
+    if (inner !== undefined) inner.stop = undefined;
 
     if (cb) {
       cb(err);
@@ -72,7 +96,7 @@ export default function compose(...streams) {
   }
 
   const head = streams[0];
-  const tail = pipeline(streams, onfinished);
+  const tail = pipelineImpl(streams, once(onfinished), undefined, inner);
 
   const writable = !!(isWritable(head) || isWritableStream(head) || isTransformStream(head));
   const readable = !!(isReadable(tail) || isReadableStream(tail) || isTransformStream(tail));
@@ -113,6 +137,7 @@ export default function compose(...streams) {
     } else if (isWebStream(head)) {
       const writable = (isTransformStream(head) ? head.writable : head) as WritableStream;
       const writer = writable.getWriter();
+      inner!.writer = writer;
 
       d._write = async function (chunk, encoding, callback) {
         try {
@@ -176,6 +201,8 @@ export default function compose(...streams) {
     } else if (isWebStream(tail)) {
       const readable = (isTransformStream(tail) ? tail.readable : tail) as ReadableStream;
       const reader = readable.getReader();
+      inner!.reader = reader;
+      inner!.readable = readable;
       d._read = async function () {
         while (true) {
           try {
@@ -206,14 +233,45 @@ export default function compose(...streams) {
     ondrain = null;
     onfinish = null;
 
+    // autoDestroy calls _destroy at a normal completion too: the inner pipeline then succeeds, and nothing is stopped.
+    let early = false;
+    if (inner !== undefined) {
+      // 'finish' proves that the tail is done. 'end' alone does not: the tail, and a writable side, must have got their last input.
+      const inputEnded = (!isNodeStream(tail) || tail.writableEnded) && (!writable || d._writableState.finalCalled);
+      const completed = (writable && d.writableFinished) || (readable && d.readableEnded && inputEnded);
+      early = !completed;
+    }
+
     if (isNodeStream(tail)) {
       destroyer(tail, err);
+    }
+
+    // Deliberate divergence from Node v26.3.0, which stops a node tail only and can then wait forever for the inner pipeline: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/compose.js#L223-L240
+    let cut = false;
+    if (early) {
+      const { writer, reader } = inner!;
+      // Not behind a web ReadableStream head: node's test-webstreams-compose.js expects no event from that shape.
+      if (reader !== undefined && !isReadableStream(head)) {
+        cut = true;
+        try {
+          // Release first: a cancel under the lock ends the pending read of _read() with `done`, and 'end' comes before 'error'.
+          reader.releaseLock();
+          ignoreOutcome(inner!.readable!.cancel(err));
+        } catch {}
+      }
+      if (writer !== undefined) {
+        try {
+          ignoreOutcome(writer.abort(err));
+        } catch {}
+      }
     }
 
     if (onclose === null) {
       callback(err);
     } else {
       onclose = callback;
+      // After the cut the rest of the output is lost: a pipeline that has not ended then reports `err` even when it succeeds.
+      if (early) inner!.stop!(err, cut);
     }
   };
 

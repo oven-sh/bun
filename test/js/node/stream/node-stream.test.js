@@ -1778,6 +1778,1153 @@ describe("Duplex.from({ readable, writable }) destroy propagation (nodejs/node#6
   });
 });
 
+// compose() runs its members in an inner pipeline, and destroy() waits for that pipeline to call back.
+// Deliberate divergence from Node v26.3.0, which stops a node tail only
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/compose.js#L223-L240). With a web stream or a
+// function stage among the members nothing ends the inner pipeline there: 'close' never comes, and an outer
+// pipeline() never settles. Bun stops the rest too. Such a compose() then reports an early destroy() as a
+// compose() of node streams does on Node.
+describe("compose() with a web stream or a function stage: destroy() ends the inner pipeline", () => {
+  const turn = () => new Promise(resolve => setImmediate(resolve));
+  const turns = async count => {
+    for (let i = 0; i < count; i++) await turn();
+  };
+  // Without the fix nothing here settles, so a wait ends after a number of event loop turns, not after a time.
+  const turnsUntil = async done => {
+    for (let i = 0; i < 100 && !done(); i++) await turn();
+    return done();
+  };
+  const watch = stream => {
+    const events = [];
+    stream.on("error", err => events.push(err));
+    for (const name of ["end", "finish", "close"]) stream.on(name, () => events.push(name));
+    return events;
+  };
+  const closed = events => () => events.includes("close");
+  const outcomeOf = promise => {
+    const outcome = { of: "pending" };
+    promise.then(
+      () => (outcome.of = "resolved"),
+      err => (outcome.of = err),
+    );
+    return outcome;
+  };
+  const settled = outcome => () => outcome.of !== "pending";
+  const abortError = expect.objectContaining({ name: "AbortError", code: "ABORT_ERR" });
+  const sink = () =>
+    new Writable({
+      write(chunk, encoding, callback) {
+        callback();
+      },
+    });
+  // Ends its readable side after the first chunk and swallows the rest.
+  const takeOne = () => {
+    let taken = false;
+    return new Transform({
+      transform(chunk, encoding, callback) {
+        if (!taken) {
+          taken = true;
+          this.push(chunk);
+          this.push(null);
+        }
+        callback();
+      },
+    });
+  };
+  // Calls back two turns late, so it still works when a member behind it has ended the output.
+  const slow = () =>
+    new Transform({
+      transform(chunk, encoding, callback) {
+        setImmediate(() => setImmediate(() => callback(null, chunk)));
+      },
+    });
+  // A function stage that waits on its signal, not on its source, and then fails with `failure(signal)`.
+  const parked = failure =>
+    async function* (source, { signal }) {
+      await new Promise((resolve, reject) => {
+        signal.addEventListener("abort", () => reject(failure(signal)), { once: true });
+      });
+      yield* source;
+    };
+  const stageError = () => Object.assign(new Error("stage"), { code: "STAGE" });
+  // What pumpToNode() reports when a stage fails with its own error after its destination was destroyed.
+  const stageAnd = code =>
+    expect.objectContaining({
+      name: "AggregateError",
+      errors: [expect.objectContaining({ code: "STAGE" }), expect.objectContaining({ code })],
+    });
+
+  describe("by member shape", () => {
+    const kinds = {
+      T: () => new PassThrough(),
+      W: () => new TransformStream(),
+      WS: () => new WritableStream(),
+      R: () => new Readable({ read() {} }),
+      Wn: sink,
+      G: () =>
+        async function* (source) {
+          yield* source;
+        },
+      Gsig: () => parked(signal => signal.reason),
+      Gown: () => parked(stageError),
+      take1: takeOne,
+      slowT: slow,
+    };
+    const boom = new Error("boom");
+    const build = shape => {
+      const composed = Stream.compose(...shape.split(",").map(kind => kinds[kind]()));
+      const seen = { closed: false, errors: [], data: "", events: [] };
+      composed.on("close", () => (seen.closed = true)).on("error", err => seen.errors.push(err));
+      // A stage that waits on its signal passes no chunk, so the events that need a chunk do not apply.
+      return { composed, seen, passes: !/Gsig|Gown/.test(shape) };
+    };
+    const read = ({ composed, seen }) => composed.on("data", chunk => (seen.data += chunk));
+    const events = [
+      async ({ composed }) => (await turns(3), composed.destroy()),
+      async ({ composed }) => (await turns(3), composed.destroy(boom)),
+      async ({ composed }) => composed.destroy(),
+      async ctx => {
+        const { composed } = ctx;
+        if (composed.writable) composed.write("x");
+        if (composed.readable) read(ctx);
+        await turns(3);
+        composed.destroy();
+      },
+      async ctx => {
+        const { composed } = ctx;
+        if (!composed.writable) return false;
+        if (composed.readable) read(ctx);
+        composed.end("x");
+        composed.destroy();
+      },
+      async ctx => {
+        const { composed } = ctx;
+        if (!composed.writable || !composed.readable || !ctx.passes) return false;
+        read(ctx);
+        composed.on("end", () => composed.destroy());
+        composed.end("x");
+      },
+      async ctx => {
+        const { composed } = ctx;
+        if (!composed.writable || !ctx.passes) return false;
+        if (composed.readable) read(ctx);
+        composed.on("finish", () => composed.destroy(boom));
+        composed.end("x");
+      },
+      async ctx => {
+        const { composed, seen } = ctx;
+        if (!composed.writable || !composed.readable || !ctx.passes) return false;
+        read(ctx);
+        for (const name of ["end", "finish"]) composed.on(name, () => seen.events.push(name));
+        composed.write("a");
+        composed.write("b");
+        composed.end("c");
+      },
+    ];
+    const letter = ({ seen }) => {
+      if (!seen.closed) return ".";
+      const [err] = seen.errors;
+      if (seen.errors.length > 1) return "?";
+      if (err === boom) return "B";
+      if (err?.name === "AbortError" && err.code === "ABORT_ERR") return "A";
+      if (err?.name === "AggregateError" && err.errors.map(e => e.code).join() === "STAGE,ABORT_ERR") return "G";
+      if (err !== undefined) return "?";
+      const completion = seen.events.sort().join() === "end,finish";
+      return completion && seen.data === "abc" ? "D" : completion && seen.data === "a" ? "d" : "-";
+    };
+
+    // One row per member shape, one letter per event. The events, in order:
+    //   destroy() | destroy(boom) | destroy() in the tick of compose() | write(), then destroy()
+    //   | end(), then destroy() in the same tick | destroy() in the 'end' listener | destroy(boom) in the 'finish' listener
+    //   | write(), end() and a reader, with no destroy()
+    // The letters:
+    //   A  'error' with an AbortError, then 'close'        B  'error' with boom itself, then 'close'
+    //   G  'error' with an AggregateError of the stage's own error and the AbortError, then 'close'
+    //   -  'close' and no error                            D  every chunk, 'end', 'finish', 'close', no error
+    //   d  as D, with the first chunk only                 (space)  the event does not apply to the shape
+    // A cell that never closes reads ".". On Node v26.3.0, and without the fix, every row but the last four
+    // has such cells. The members: T PassThrough, W TransformStream, WS WritableStream, R Readable, Wn Writable,
+    // G function stage, Gsig and Gown function stages that wait on their signal (Gown fails with its own error).
+    it.each([
+      ["T,W", "ABAAA-BD"],
+      ["W,T", "ABAAA--D"],
+      ["W,W", "ABAAA-BD"],
+      ["T,W,T", "ABAAA--D"],
+      ["W,T,W", "ABAAA-BD"],
+      ["T,W,W,T", "ABAAA--D"],
+      ["T,WS", "ABAAA B "],
+      ["W,WS", "ABAAA B "],
+      ["R,W", "ABAA    "],
+      ["W,Wn", "ABAAA - "],
+      ["R,WS", "ABAA    "],
+      ["R,G,Wn", "ABAA    "],
+      ["R,T,WS", "ABAA    "],
+      ["T,G,T", "ABAAA--D"],
+      ["W,G,W", "ABAAA-BD"],
+      ["T,Gsig,T", "ABAAA   "],
+      ["T,Gsig,W", "ABAAA   "],
+      ["W,Gsig,T", "ABAAA   "],
+      ["T,Gown,T", "GBGGG   "],
+      ["W,Gown,W", "ABAAA   "],
+      ["slowT,W,take1,T", "ABAAA--d"],
+      ["T,W,take1", "ABAAAA-d"],
+      ["W,take1,T", "ABAAA--d"],
+      // No pump in the last three, and a pipe() behind the stage in the first of them: Node settles all four rows.
+      ["T,Gown,T,T", "GBGGG   "],
+      ["T,T", "ABAAA-BD"],
+      ["T,T,T", "ABAAA-BD"],
+    ])("compose(%s)", async (shape, row) => {
+      let got = "";
+      for (const event of events) {
+        const ctx = build(shape);
+        if ((await event(ctx)) === false) {
+          got += " ";
+          continue;
+        }
+        await turnsUntil(() => ctx.seen.closed);
+        await turns(5);
+        got += letter(ctx);
+      }
+      expect(got).toBe(row);
+    });
+  });
+
+  it("destroy() destroys a node head and releases the reader of a web tail", async () => {
+    const head = new PassThrough();
+    const tail = new TransformStream();
+    const composed = Stream.compose(head, tail);
+    const events = watch(composed);
+    expect(tail.readable.locked).toBe(true);
+    composed.destroy();
+    await turnsUntil(closed(events));
+    expect({ headDestroyed: head.destroyed, tailLocked: tail.readable.locked }).toEqual({
+      headDestroyed: true,
+      tailLocked: false,
+    });
+  });
+
+  it("destroy(error) aborts a web head with that error", async () => {
+    let reason;
+    const head = new TransformStream({
+      cancel(why) {
+        reason = why;
+      },
+    });
+    const composed = Stream.compose(head, new PassThrough());
+    const events = watch(composed);
+    const boom = new Error("boom");
+    composed.destroy(boom);
+    await turnsUntil(closed(events));
+    expect(events).toEqual([boom, "close"]);
+    expect(reason).toBe(boom);
+  });
+
+  it("destroy(error) on compose(Readable, WritableStream) destroys the source and aborts the sink with that error", async () => {
+    let reason;
+    const source = new Readable({ read() {} });
+    const composed = Stream.compose(
+      source,
+      new WritableStream({
+        abort(why) {
+          reason = why;
+        },
+      }),
+    );
+    const events = watch(composed);
+    const boom = new Error("boom");
+    composed.destroy(boom);
+    await turnsUntil(closed(events));
+    expect(events).toEqual([boom, "close"]);
+    expect({ sourceDestroyed: source.destroyed, sameReason: reason === boom }).toEqual({
+      sourceDestroyed: true,
+      sameReason: true,
+    });
+  });
+
+  // The inner pipeline reports this failure by itself, and nothing has read the web head. Node leaves it open.
+  it("a function stage that fails before it reads aborts a web head with its error", async () => {
+    let reason;
+    const head = new TransformStream({
+      cancel(why) {
+        reason = why;
+      },
+    });
+    const failed = new Error("stage failed");
+    const composed = Stream.compose(
+      head,
+      async function* () {
+        throw failed;
+      },
+      new PassThrough(),
+    );
+    const events = watch(composed);
+    await turnsUntil(closed(events));
+    expect(events).toEqual([failed, "close"]);
+    expect(reason).toBe(failed);
+  });
+
+  // A read of the web tail is pending when destroy() runs. If destroy() ends that read with `done`,
+  // the composed stream pushes null and emits 'end' in front of the error.
+  it("a flowing stream emits no 'end' before the error", async () => {
+    const composed = Stream.compose(new PassThrough(), new TransformStream());
+    const events = watch(composed);
+    composed.on("data", () => {});
+    await turn();
+    composed.destroy();
+    await turnsUntil(closed(events));
+    expect(events).toEqual([abortError, "close"]);
+  });
+
+  // User code can replace cancel() and abort(), for example with a wrapper that returns its own value.
+  // The teardown must still report the error of destroy(), and not a TypeError about that value.
+  it.each([
+    [
+      "cancel() of the web tail throws",
+      () => [new PassThrough(), new TransformStream()],
+      tail => tail.readable,
+      "cancel",
+      true,
+    ],
+    [
+      "cancel() of the web tail returns no promise",
+      () => [new PassThrough(), new TransformStream()],
+      tail => tail.readable,
+      "cancel",
+      false,
+    ],
+    [
+      "abort() of a writer throws",
+      () => [new TransformStream(), new PassThrough()],
+      () => WritableStreamDefaultWriter.prototype,
+      "abort",
+      true,
+    ],
+    [
+      "abort() of a writer returns no promise",
+      () => [new TransformStream(), new PassThrough()],
+      () => WritableStreamDefaultWriter.prototype,
+      "abort",
+      false,
+    ],
+  ])("destroy(error) still emits that error when %s", async (_, members, owner, method, throws) => {
+    const streams = members();
+    const target = owner(streams.at(-1));
+    const original = target[method];
+    let calls = 0;
+    target[method] = function (reason) {
+      calls++;
+      original.call(this, reason).catch(() => {});
+      if (throws) throw new Error("replaced " + method);
+      return 1;
+    };
+    try {
+      const composed = Stream.compose(...streams);
+      const events = watch(composed);
+      const boom = new Error("boom");
+      composed.destroy(boom);
+      await turnsUntil(closed(events));
+      expect(events).toEqual([boom, "close"]);
+      expect(events[0]).toBe(boom);
+      expect(calls).toBeGreaterThan(0);
+    } finally {
+      target[method] = original;
+    }
+  });
+
+  describe("pipeline(source, compose(...), sink, { signal }) rejects with the AbortError", () => {
+    it("when the signal has aborted before the call", async () => {
+      const composed = Stream.compose(new PassThrough(), new TransformStream());
+      const outcome = outcomeOf(
+        Stream.promises.pipeline(Readable.from(["a"]), composed, sink(), { signal: AbortSignal.abort() }),
+      );
+      await turnsUntil(settled(outcome));
+      expect(outcome.of).toEqual(abortError);
+    });
+
+    it.each([
+      ["Transform, TransformStream", () => [new PassThrough(), new TransformStream()]],
+      ["TransformStream, Transform", () => [new TransformStream(), new PassThrough()]],
+      ["Transform, CompressionStream", () => [new PassThrough(), new CompressionStream("gzip")]],
+    ])("when the signal aborts in the next turn: compose(%s)", async (_, members) => {
+      const source = new Readable({ read() {} });
+      source.push("a");
+      const controller = new AbortController();
+      const outcome = outcomeOf(
+        Stream.promises.pipeline(source, Stream.compose(...members()), sink(), { signal: controller.signal }),
+      );
+      await turn();
+      controller.abort();
+      await turnsUntil(settled(outcome));
+      expect(outcome.of).toEqual(abortError);
+      expect(source.destroyed).toBe(true);
+    });
+
+    // The sink never completes a write, so every buffer up to the web tail fills. The inner pump then waits
+    // on the web tail (writer.ready), not on its source: only a cancel of the tail's readable side wakes it.
+    it("when the sink is slower than the source", async () => {
+      const chunk = Buffer.alloc(65536, "a");
+      const source = new Readable({
+        read() {
+          this.push(chunk);
+        },
+      });
+      const slow = new Writable({ write() {} });
+      const composed = Stream.compose(new PassThrough(), new TransformStream());
+      const controller = new AbortController();
+      const outcome = outcomeOf(Stream.promises.pipeline(source, composed, slow, { signal: controller.signal }));
+      expect(await turnsUntil(() => composed.writableNeedDrain)).toBe(true);
+      controller.abort();
+      await turnsUntil(settled(outcome));
+      expect(outcome.of).toEqual(abortError);
+    });
+
+    // The source has ended and the head has finished. Only the inner pipeline can reach the member in the middle.
+    it("when a member in the middle never calls back", async () => {
+      const head = new PassThrough();
+      const busy = new Transform({ transform() {} });
+      const composed = Stream.compose(head, busy, new TransformStream());
+      const controller = new AbortController();
+      const outcome = outcomeOf(
+        Stream.promises.pipeline(Readable.from(["a"]), composed, sink(), { signal: controller.signal }),
+      );
+      expect(await turnsUntil(() => head.destroyed)).toBe(true);
+      controller.abort();
+      await turnsUntil(settled(outcome));
+      expect(outcome.of).toEqual(abortError);
+      expect(busy.destroyed).toBe(true);
+    });
+
+    // The readable side has ended and the writable side is still open: this is not a normal completion.
+    // In the first shape the tail itself still takes input. In the second a member in front of the tail ended early.
+    it.each([
+      ["TransformStream, early end", () => [new TransformStream(), takeOne()]],
+      ["TransformStream, early end, Transform", () => [new TransformStream(), takeOne(), new PassThrough()]],
+    ])("when a member has ended the readable side early: compose(%s)", async (_, members) => {
+      const source = new Readable({ read() {} });
+      source.push("a");
+      const composed = Stream.compose(...members());
+      const controller = new AbortController();
+      const outcome = outcomeOf(Stream.promises.pipeline(source, composed, sink(), { signal: controller.signal }));
+      expect(await turnsUntil(() => composed.readableEnded)).toBe(true);
+      controller.abort();
+      await turnsUntil(settled(outcome));
+      expect(outcome.of).toEqual(abortError);
+    });
+
+    // The cancel of the tail makes the flush that is in flight fail (it enqueues into a readable side that is
+    // closed). That failure is the result of the abort, not of the program. This passes without the fix too.
+    it("when the web tail is in its flush()", async () => {
+      const flushing = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      const tail = new TransformStream({
+        async flush(controller) {
+          flushing.resolve();
+          await release.promise;
+          controller.enqueue("trailer");
+        },
+      });
+      const controller = new AbortController();
+      const outcome = outcomeOf(
+        Stream.promises.pipeline(Readable.from(["a"]), Stream.compose(new PassThrough(), tail), sink(), {
+          signal: controller.signal,
+        }),
+      );
+      await flushing.promise;
+      controller.abort();
+      await turn();
+      release.resolve();
+      await turnsUntil(settled(outcome));
+      expect(outcome.of).toEqual(abortError);
+    });
+  });
+
+  // The pump destroys the member that ended early, so the inner pipeline has an AbortError of its own when
+  // destroy() runs. The cancel of the tail then makes its flush() fail. That TypeError is not the result.
+  it.each([
+    ["destroy()", undefined],
+    ["destroy(error)", new Error("boom")],
+  ])("%s while a web tail behind an early end is in its flush() emits the error of the destroy", async (_, error) => {
+    const tail = new TransformStream({
+      async flush(controller) {
+        await turns(2);
+        controller.enqueue("z");
+      },
+    });
+    const composed = Stream.compose(slow(), takeOne(), tail);
+    const events = watch(composed);
+    composed.on("data", () => {});
+    composed.write("a");
+    composed.write("b");
+    composed.end("c");
+    await turns(3);
+    composed.destroy(error);
+    await turnsUntil(closed(events));
+    expect(events).toEqual([error ?? abortError, "close"]);
+  });
+
+  // What a client that leaves does to an http response: the destination closes before the source has ended.
+  describe("pipeline(source, compose(...), destination, callback) when the destination is destroyed", () => {
+    it.each([
+      ["Transform, TransformStream", () => [new PassThrough(), new TransformStream()]],
+      ["TransformStream, Transform", () => [new TransformStream(), new PassThrough()]],
+      [
+        "Transform, function, Transform",
+        () => [
+          new PassThrough(),
+          async function* (source) {
+            yield* source;
+          },
+          new PassThrough(),
+        ],
+      ],
+    ])("compose(%s): the callback gets ERR_STREAM_PREMATURE_CLOSE", async (_, members) => {
+      const source = new Readable({ read() {} });
+      const composed = Stream.compose(...members());
+      const events = watch(composed);
+      const destination = sink();
+      const { promise, resolve } = Promise.withResolvers();
+      let called = false;
+      Stream.pipeline(source, composed, destination, err => {
+        called = true;
+        resolve(err);
+      });
+      await turn();
+      destination.destroy();
+      await turnsUntil(() => called);
+      expect(called).toBe(true);
+      const err = await promise;
+      expect(err).toMatchObject({ code: "ERR_STREAM_PREMATURE_CLOSE" });
+      expect(events).toEqual([err, "close"]);
+      expect(source.destroyed).toBe(true);
+    });
+
+    // Without the fix the file stream is never destroyed: the callback never comes, and the descriptor stays open.
+    it("a composed file read: the callback comes and the file closes", async () => {
+      using dir = tempDir("compose-disconnect", { "data.txt": Buffer.alloc(1 << 20, "a") });
+      const file = createReadStream(join(String(dir), "data.txt"));
+      const closedFile = new Promise(resolve => file.once("close", resolve));
+      const arrived = Promise.withResolvers();
+      // Takes the first chunk and never calls back.
+      const destination = new Writable({
+        write() {
+          arrived.resolve();
+        },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      Stream.pipeline(file.compose(new TextDecoderStream()), destination, resolve);
+      await arrived.promise;
+      destination.destroy();
+      // The teardown reaches the file in a fixed number of turns. The callback then waits for the file to close.
+      expect(await turnsUntil(() => file.destroyed)).toBe(true);
+      expect(await promise).toMatchObject({ code: "ERR_STREAM_PREMATURE_CLOSE" });
+      await closedFile;
+    });
+  });
+
+  describe("a function stage", () => {
+    // The stage waits on something other than its source. Only its signal can end it.
+    it.each([
+      ["destroy()", undefined, () => [new PassThrough(), new PassThrough()]],
+      ["destroy(error)", new Error("boom"), () => [new PassThrough(), new PassThrough()]],
+      // With a pipe() behind the stage the pipeline aborts the signal itself, before the deferred abort of stop().
+      [
+        "destroy(), with two members behind it",
+        undefined,
+        () => [new PassThrough(), new PassThrough(), new PassThrough()],
+      ],
+      [
+        "destroy(error), with two members behind it",
+        new Error("boom"),
+        () => [new PassThrough(), new PassThrough(), new PassThrough()],
+      ],
+    ])("that waits on its signal gets the error of %s as the reason", async (_, error, around) => {
+      let reason;
+      const [head, ...rest] = around();
+      const composed = Stream.compose(
+        head,
+        parked(signal => (reason = signal.reason)),
+        ...rest,
+      );
+      const events = watch(composed);
+      composed.destroy(error);
+      await turnsUntil(closed(events));
+      expect(events).toEqual([error ?? abortError, "close"]);
+      expect(reason).toBe(events[0]);
+    });
+
+    it("between two web streams: destroy(error) emits that error", async () => {
+      const composed = Stream.compose(
+        new TransformStream(),
+        async function* (source) {
+          yield* source;
+        },
+        new TransformStream(),
+      );
+      const events = watch(composed);
+      const boom = new Error("boom");
+      composed.destroy(boom);
+      await turnsUntil(closed(events));
+      expect(events).toEqual([boom, "close"]);
+      expect(events[0]).toBe(boom);
+    });
+
+    // stop() must not wait on a setImmediate that a program has replaced (fake timers).
+    it("that waits on its signal is aborted when globalThis.setImmediate is replaced", async () => {
+      const composed = Stream.compose(
+        new PassThrough(),
+        parked(signal => signal.reason),
+        new PassThrough(),
+      );
+      const events = watch(composed);
+      const original = globalThis.setImmediate;
+      globalThis.setImmediate = () => {};
+      try {
+        composed.destroy();
+      } finally {
+        globalThis.setImmediate = original;
+      }
+      await turnsUntil(closed(events));
+      expect(events).toEqual([abortError, "close"]);
+    });
+
+    describe("that fails with its own error when its signal aborts", () => {
+      // destroy(error) reports the error it got, not the failure of the stage that the teardown caused.
+      it("destroy(error) emits that error", async () => {
+        const composed = Stream.compose(new TransformStream(), parked(stageError), new PassThrough());
+        const events = watch(composed);
+        const boom = new Error("boom");
+        composed.destroy(boom);
+        await turnsUntil(closed(events));
+        expect(events).toEqual([boom, "close"]);
+        expect(events[0]).toBe(boom);
+      });
+
+      // An AbortError does not hide another error: a pipeline() with a signal reports the same AggregateError.
+      it("destroy() emits the AggregateError that pipeline() reports", async () => {
+        const composed = Stream.compose(new PassThrough(), parked(stageError), new PassThrough());
+        const events = watch(composed);
+        composed.destroy();
+        await turnsUntil(closed(events));
+        expect(events).toEqual([stageAnd("ABORT_ERR"), "close"]);
+      });
+
+      it("a destination that is destroyed gives the AggregateError that pipeline() reports", async () => {
+        const composed = Stream.compose(new PassThrough(), parked(stageError), new PassThrough());
+        const destination = sink();
+        const { promise, resolve } = Promise.withResolvers();
+        let called = false;
+        Stream.pipeline(new Readable({ read() {} }), composed, destination, err => {
+          called = true;
+          resolve(err);
+        });
+        await turn();
+        destination.destroy();
+        await turnsUntil(() => called);
+        expect(called).toBe(true);
+        expect(await promise).toEqual(stageAnd("ERR_STREAM_PREMATURE_CLOSE"));
+      });
+
+      // The signal aborts one turn after destroy(), so the result does not depend on where destroy() runs.
+      // Node settles this shape (a pipe() is behind the stage), and this passes without the fix.
+      it.each([
+        ["a promise job", run => Promise.resolve().then(run)],
+        ["a timer", run => setImmediate(run)],
+        ["process.nextTick", run => process.nextTick(run)],
+      ])("destroy() from %s emits the same AggregateError", async (_, schedule) => {
+        const composed = Stream.compose(new PassThrough(), parked(stageError), new PassThrough(), new PassThrough());
+        const events = watch(composed);
+        schedule(() => composed.destroy());
+        await turnsUntil(closed(events));
+        expect(events).toEqual([stageAnd("ABORT_ERR"), "close"]);
+      });
+    });
+
+    // The inner pipeline has an error of its own already. A pump that waits on the idle web head can keep it
+    // from calling back. That error stays the result, as it does for a compose() of node streams.
+    it.each([
+      ["TransformStream, Transform", member => [new TransformStream(), member]],
+      ["TransformStream, Transform, TransformStream", member => [new TransformStream(), member, new TransformStream()]],
+    ])("a member that failed first keeps its error over destroy(error): compose(%s)", async (_, members) => {
+      const failed = new Error("member failed");
+      const member = new PassThrough();
+      const composed = Stream.compose(...members(member));
+      const events = watch(composed);
+      member.destroy(failed);
+      await turns(3);
+      composed.destroy(new Error("boom"));
+      await turnsUntil(closed(events));
+      expect(events).toEqual([failed, "close"]);
+    });
+
+    // Deliberate divergence from Node v26.3.0: Node does not abort the signal of the stage here. It waits
+    // for the work of the stage to end, and then emits the AbortError alone. Bun aborts the signal, the work
+    // fails with an error of its own, and the result is the AggregateError that pipeline() reports for the
+    // same stage.
+    describe("that is busy with signal-aware work", () => {
+      const busy = () =>
+        async function* (source, { signal }) {
+          for await (const chunk of source) {
+            await new Promise((resolve, reject) => {
+              const aborted = () => reject(new DOMException("The work was aborted", "AbortError"));
+              signal.addEventListener("abort", aborted, { once: true });
+              turns(10).then(resolve);
+            });
+            yield chunk;
+          }
+        };
+      const workAnd = code =>
+        expect.objectContaining({
+          name: "AggregateError",
+          errors: [expect.objectContaining({ name: "AbortError" }), expect.objectContaining({ code })],
+        });
+
+      it("destroy() emits an AggregateError that holds the AbortError", async () => {
+        const composed = Stream.compose(new PassThrough(), busy(), new PassThrough());
+        const events = watch(composed);
+        composed.write("a");
+        await turns(3);
+        composed.destroy();
+        await turnsUntil(closed(events));
+        expect(events).toEqual([workAnd("ABORT_ERR"), "close"]);
+      });
+
+      it("pipeline() with a signal rejects with an AggregateError that holds the AbortError", async () => {
+        const source = new Readable({ read() {} });
+        source.push("a");
+        const composed = Stream.compose(new PassThrough(), busy(), new PassThrough());
+        const controller = new AbortController();
+        const outcome = outcomeOf(Stream.promises.pipeline(source, composed, sink(), { signal: controller.signal }));
+        await turns(3);
+        controller.abort();
+        await turnsUntil(settled(outcome));
+        expect(outcome.of).toEqual(workAnd("ABORT_ERR"));
+      });
+
+      it("destroy(error) emits that error", async () => {
+        const composed = Stream.compose(new PassThrough(), busy(), new PassThrough());
+        const events = watch(composed);
+        const boom = new Error("boom");
+        composed.write("a");
+        await turns(3);
+        composed.destroy(boom);
+        await turnsUntil(closed(events));
+        expect(events).toEqual([boom, "close"]);
+      });
+    });
+  });
+
+  describe("every way to destroy compose(Transform, TransformStream) reaches 'close'", () => {
+    const make = () => Stream.compose(new PassThrough(), new TransformStream());
+
+    it("readable.compose(stream, { signal }) with a signal that has aborted", async () => {
+      const composed = new Readable({ read() {} }).compose(new TransformStream(), { signal: AbortSignal.abort() });
+      const events = watch(composed);
+      await turnsUntil(closed(events));
+      expect(events).toEqual([abortError, "close"]);
+    });
+
+    it("readable.compose(stream, { signal }) with a signal that aborts later", async () => {
+      const controller = new AbortController();
+      const composed = new Readable({ read() {} }).compose(new TransformStream(), { signal: controller.signal });
+      const events = watch(composed);
+      await turn();
+      controller.abort();
+      await turnsUntil(closed(events));
+      expect(events).toEqual([abortError, "close"]);
+    });
+
+    it("addAbortSignal()", async () => {
+      const controller = new AbortController();
+      const composed = Stream.addAbortSignal(controller.signal, make());
+      const events = watch(composed);
+      controller.abort();
+      await turnsUntil(closed(events));
+      expect(events).toEqual([abortError, "close"]);
+    });
+
+    it("stream.destroy()", async () => {
+      const composed = make();
+      const events = watch(composed);
+      Stream.destroy(composed);
+      await turnsUntil(closed(events));
+      expect(events).toEqual([abortError, "close"]);
+    });
+
+    it("Symbol.asyncDispose", async () => {
+      const composed = make();
+      const events = watch(composed);
+      const outcome = outcomeOf(composed[Symbol.asyncDispose]());
+      await turnsUntil(settled(outcome));
+      expect({ disposed: outcome.of, events }).toEqual({ disposed: "resolved", events: [abortError, "close"] });
+    });
+
+    it("for await with a break", async () => {
+      const composed = make();
+      const events = watch(composed);
+      composed.write("a");
+      for await (const chunk of composed) {
+        expect(chunk.toString()).toBe("a");
+        break;
+      }
+      await turnsUntil(closed(events));
+      expect(events).toEqual([abortError, "close"]);
+    });
+
+    it("take(1)", async () => {
+      const composed = make();
+      const events = watch(composed);
+      composed.write("a");
+      let taken;
+      composed
+        .take(1)
+        .toArray()
+        .then(chunks => (taken = chunks.map(String)));
+      await turnsUntil(closed(events));
+      expect({ taken, closed: events.at(-1) }).toEqual({ taken: ["a"], closed: "close" });
+    });
+
+    it("finished() calls back after destroy()", async () => {
+      const composed = make();
+      const events = watch(composed);
+      const { promise, resolve } = Promise.withResolvers();
+      Stream.finished(composed, resolve);
+      composed.destroy();
+      await turnsUntil(closed(events));
+      expect(events).toEqual([abortError, "close"]);
+      expect(await promise).toBe(events[0]);
+    });
+
+    it("Readable.toWeb(composed).cancel()", async () => {
+      const composed = make();
+      const events = watch(composed);
+      await Readable.toWeb(composed).cancel();
+      await turnsUntil(closed(events));
+      expect(events.at(-1)).toBe("close");
+    });
+
+    it("destroy() of a compose() that holds it as a member", async () => {
+      const outer = Stream.compose(new PassThrough(), make());
+      const events = watch(outer);
+      outer.destroy();
+      await turnsUntil(closed(events));
+      expect(events).toEqual([abortError, "close"]);
+    });
+  });
+
+  // The file is larger than the buffers between it and the reader, so the file stream cannot end by itself.
+  // Without the fix it is never destroyed, and its file descriptor stays open. With it the file stream gets
+  // the AbortError of the composed stream, as a node member of any compose() does on Node.
+  it("an early exit from a composed file read closes the file", async () => {
+    using dir = tempDir("compose-destroy", { "data.txt": Buffer.alloc(1 << 20, "a") });
+    const file = createReadStream(join(String(dir), "data.txt"));
+    const events = watch(file);
+    for await (const chunk of file.compose(new TextDecoderStream())) {
+      expect(chunk.length).toBeGreaterThan(0);
+      break;
+    }
+    expect(await turnsUntil(() => file.destroyed)).toBe(true);
+    if (!events.includes("close")) await new Promise(resolve => file.once("close", resolve));
+    expect(events).toEqual([abortError, "close"]);
+  });
+
+  // Node emits 'end' here and then waits forever: `for await` never returns, and the source stays open.
+  // A compose() of node streams with the same tail emits this AbortError on Node too.
+  it("a tail that ends early while the source is open: 'end', then the AbortError", async () => {
+    const source = new Readable({ read() {} });
+    source.push("a");
+    source.push("b");
+    const composed = Stream.compose(
+      source,
+      async function* (chunks) {
+        yield* chunks;
+      },
+      takeOne(),
+    );
+    const events = watch(composed);
+    const chunks = [];
+    const outcome = outcomeOf(
+      (async () => {
+        for await (const chunk of composed) chunks.push(String(chunk));
+      })(),
+    );
+    await turnsUntil(settled(outcome));
+    expect({ chunks, events, loop: outcome.of, sourceDestroyed: source.destroyed }).toEqual({
+      chunks: ["a"],
+      events: ["end", abortError, "close"],
+      loop: abortError,
+      sourceDestroyed: true,
+    });
+  });
+
+  // These cases settle on Node v26.3.0 too, with another result: its destroy() stops nothing, so the members
+  // run to their end. Bun reports what a compose() of node streams reports for the same calls on Node.
+  describe("destroy() after the input is complete and before 'end' is an abort", () => {
+    // Node: 'end', 'close'.
+    it("destroy() inside the 'data' listener of the last chunk", async () => {
+      const composed = Stream.compose(new PassThrough(), new TransformStream());
+      const events = watch(composed);
+      const chunks = [];
+      composed.on("data", chunk => {
+        chunks.push(String(chunk));
+        composed.destroy();
+      });
+      composed.end("x");
+      await turnsUntil(closed(events));
+      expect({ chunks, events }).toEqual({ chunks: ["x"], events: [abortError, "close"] });
+    });
+
+    // Node: 'end', 'close'.
+    it("destroy() inside the flush() of a web tail", async () => {
+      let composed;
+      const tail = new TransformStream({
+        flush() {
+          composed.destroy();
+        },
+      });
+      composed = Stream.compose(new PassThrough(), tail);
+      const events = watch(composed);
+      composed.on("data", () => {});
+      composed.end("x");
+      await turnsUntil(closed(events));
+      expect(events).toEqual([abortError, "close"]);
+    });
+
+    // Node: 'close' and no error. The sink gets the chunk and closes.
+    it("end(chunk), then destroy(), with a WritableStream as the last member", async () => {
+      const state = { written: [], closed: false, aborted: undefined };
+      const composed = Stream.compose(
+        new PassThrough(),
+        new WritableStream({
+          write(chunk) {
+            state.written.push(String(chunk));
+          },
+          close() {
+            state.closed = true;
+          },
+          abort(reason) {
+            state.aborted = reason;
+          },
+        }),
+      );
+      const events = watch(composed);
+      composed.end("x");
+      composed.destroy();
+      await turnsUntil(closed(events));
+      expect(events).toEqual([abortError, "close"]);
+      expect(state).toEqual({ written: [], closed: false, aborted: events[0] });
+    });
+
+    // The inner pipeline has called back, so destroy() has nothing to stop. As on Node, the output that the
+    // reader did not take is dropped with no error. This passes without the fix.
+    it("destroy() after the inner pipeline has ended emits no error", async () => {
+      const composed = Stream.compose(new PassThrough(), new TransformStream());
+      const events = watch(composed);
+      // With this listener the composed stream reads its tail, and the chunks stay in its buffer.
+      composed.on("readable", () => {});
+      composed.end("x");
+      expect(await turnsUntil(() => events.includes("finish") && composed._readableState.ended)).toBe(true);
+      await turns(3);
+      composed.destroy();
+      await turnsUntil(closed(events));
+      expect(events).toEqual(["finish", "close"]);
+    });
+  });
+
+  // Node v26.3.0 swallows these errors: the composed stream destroys itself with them and then waits forever,
+  // or reports the success of the inner pipeline.
+  describe("an error that destroys the composed stream itself is reported", () => {
+    it("a web tail that gives an object to a byte stream", async () => {
+      const tail = new TransformStream({
+        transform(chunk, controller) {
+          controller.enqueue({ not: "bytes" });
+        },
+      });
+      const composed = Stream.compose(new PassThrough(), tail);
+      const events = watch(composed);
+      composed.on("data", () => {});
+      composed.end("a");
+      await turnsUntil(closed(events));
+      expect(events).toEqual([expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }), "close"]);
+    });
+
+    it.each([
+      [
+        "end(chunk) on a compose() that is not writable",
+        () => [new Readable({ read() {} }), new TransformStream()],
+        composed => composed.end("x"),
+      ],
+      [
+        "write() after end()",
+        () => [new PassThrough(), new TransformStream()],
+        composed => {
+          composed.end("a");
+          composed.write("b");
+        },
+      ],
+    ])("%s", async (_, members, act) => {
+      const composed = Stream.compose(...members());
+      const events = watch(composed);
+      act(composed);
+      await turnsUntil(closed(events));
+      expect(events).toEqual([expect.objectContaining({ code: "ERR_STREAM_WRITE_AFTER_END" }), "close"]);
+    });
+  });
+
+  // As a compose() of node streams does on every runtime: 'error' with no listener is an uncaught exception.
+  // Node v26.3.0 prints nothing here and exits 0, because its destroy() never completes.
+  it("destroy() with no 'error' listener throws the AbortError", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { compose, PassThrough } = require("node:stream");
+         compose(new PassThrough(), new TransformStream()).destroy();`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("AbortError");
+    expect(exitCode).toBe(1);
+  });
+
+  // destroy() also runs at the end of a stream that completed: autoDestroy calls it. Then nothing may be
+  // stopped, because the inner pipeline is about to call back with its own result. These pass without the fix.
+  describe("a composed stream that completes is left as Node leaves it", () => {
+    const run = async (composed, act) => {
+      const events = watch(composed);
+      const chunks = [];
+      composed.on("data", chunk => chunks.push(String(chunk)));
+      act?.(composed);
+      await turnsUntil(closed(events));
+      return { chunks, events: events.map(event => (typeof event === "string" ? event : event.code)) };
+    };
+
+    it("an early end behind a slow head: 'end', 'finish', 'close' and no error", async () => {
+      const composed = Stream.compose(slow(), new TransformStream(), takeOne(), new PassThrough());
+      const result = await run(composed, () => {
+        composed.write("a");
+        composed.write("b");
+        composed.end("c");
+      });
+      expect(result).toEqual({ chunks: ["a"], events: ["end", "finish", "close"] });
+    });
+
+    it("an early end behind a slow head: destroy() inside the 'end' listener emits no error", async () => {
+      const composed = Stream.compose(slow(), new TransformStream(), takeOne(), new PassThrough());
+      const result = await run(composed, () => {
+        composed.on("end", () => composed.destroy());
+        composed.write("a");
+        composed.write("b");
+        composed.end("c");
+      });
+      expect(result).toEqual({ chunks: ["a"], events: ["end", "close"] });
+    });
+
+    // The tail itself ends the output early. Its input has ended by the time of 'end', so it completes.
+    it("an early end of the tail behind a slow head: destroy() inside the 'end' listener emits no error", async () => {
+      const composed = Stream.compose(slow(), new TransformStream(), takeOne(), takeOne());
+      const result = await run(composed, () => {
+        composed.on("end", () => composed.destroy());
+        composed.write("a");
+        composed.write("b");
+        composed.end("c");
+      });
+      expect(result).toEqual({ chunks: ["a"], events: ["end", "close"] });
+    });
+
+    // 'finish' comes when the tail is done, and the head still works then.
+    it("a compose() with no readable side, an early end behind a slow head: 'finish', 'close' and no error", async () => {
+      const composed = Stream.compose(slow(), new TransformStream(), takeOne(), sink());
+      const result = await run(composed, () => {
+        composed.write("a");
+        composed.write("b");
+        composed.end("c");
+      });
+      expect(result).toEqual({ chunks: [], events: ["finish", "close"] });
+    });
+
+    // After a turn this runs in a promise job. Then 'finish' comes before the inner pipeline has called back.
+    it("destroy() inside the 'finish' listener, before 'end', emits no error", async () => {
+      await turn();
+      const composed = Stream.compose(
+        new TransformStream(),
+        async function* (source) {
+          for await (const chunk of source) {
+            yield chunk;
+            return;
+          }
+        },
+        new TransformStream(),
+      );
+      const { events } = await run(composed, () => {
+        composed.on("finish", () => composed.destroy());
+        composed.write("a");
+        composed.write("b");
+        composed.end("c");
+      });
+      expect(events.filter(event => event !== "end")).toEqual(["finish", "close"]);
+    });
+
+    it("an early end with a source that ends by itself: 'end', 'close' and no error", async () => {
+      const composed = Stream.compose(
+        Readable.from(["a", "b", "c"]),
+        new TransformStream(),
+        takeOne(),
+        new PassThrough(),
+      );
+      expect(await run(composed)).toEqual({ chunks: ["a"], events: ["end", "close"] });
+    });
+
+    it("compose(Readable, WritableStream): 'close' only, and the sink gets every chunk", async () => {
+      const state = { written: [], closed: false };
+      const composed = Stream.compose(
+        Readable.from(["a", "b"]),
+        new WritableStream({
+          write(chunk) {
+            state.written.push(String(chunk));
+          },
+          close() {
+            state.closed = true;
+          },
+        }),
+      );
+      const events = watch(composed);
+      await turnsUntil(closed(events));
+      expect({ events, state }).toEqual({ events: ["close"], state: { written: ["a", "b"], closed: true } });
+    });
+
+    // The two calls that destroy() makes for an early stop. A normal completion makes neither.
+    it("no cancel() of a web tail and no abort() of the writer of a web head", async () => {
+      const tail = new TransformStream();
+      const calls = [];
+      const cancel = tail.readable.cancel;
+      tail.readable.cancel = function (reason) {
+        calls.push("cancel");
+        return cancel.call(this, reason);
+      };
+      const abort = WritableStreamDefaultWriter.prototype.abort;
+      WritableStreamDefaultWriter.prototype.abort = function (reason) {
+        calls.push("abort");
+        return abort.call(this, reason);
+      };
+      try {
+        const composed = Stream.compose(new TransformStream(), tail);
+        const { chunks, events } = await run(composed, () => composed.end("a"));
+        expect({ chunks, events: events.toSorted(), calls }).toEqual({
+          chunks: ["a"],
+          events: ["close", "end", "finish"],
+          calls: [],
+        });
+      } finally {
+        WritableStreamDefaultWriter.prototype.abort = abort;
+      }
+    });
+  });
+});
+
 describe("pipeline real error overrides AbortError (nodejs/node#62113)", () => {
   it("reports the real error when a destroy callback errors after abort", async () => {
     const ac = new AbortController();

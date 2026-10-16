@@ -6316,6 +6316,8 @@ describe.skipIf(!canBindMountAFile())("a lockfile under a real bind mount", () =
         return {
           exitCode,
           errors: errorLines(stderr),
+          // The lockfiles bun says it saved.
+          saved: stderr.split(/\r?\n/).filter(line => line.startsWith("Saved ")),
           leftovers: readdirSync(app).filter(isLockfileTemp),
           dependencies: Object.keys(JSON.parse(readFileSync(join(app, "package.json"), "utf8")).dependencies ?? {}),
         };
@@ -6331,6 +6333,7 @@ describe.skipIf(!canBindMountAFile())("a lockfile under a real bind mount", () =
     expect(await p.mounted("rw", "add", tgz("b"))).toEqual({
       exitCode: 0,
       errors: [],
+      saved: ["Saved lockfile"],
       leftovers: [],
       dependencies: ["a", "b"],
     });
@@ -6339,6 +6342,7 @@ describe.skipIf(!canBindMountAFile())("a lockfile under a real bind mount", () =
     expect(await p.mounted("rw", "install", "--yarn")).toEqual({
       exitCode: 0,
       errors: [],
+      saved: ["Saved yarn.lock"],
       leftovers: [],
       dependencies: ["a", "b"],
     });
@@ -6347,6 +6351,7 @@ describe.skipIf(!canBindMountAFile())("a lockfile under a real bind mount", () =
     expect(await p.mounted("rw", "remove", "a", "b")).toEqual({
       exitCode: 0,
       errors: [],
+      saved: ["Saved lockfile"],
       leftovers: [],
       dependencies: [],
     });
@@ -6378,12 +6383,14 @@ describe.skipIf(!canBindMountAFile())("a lockfile under a real bind mount", () =
     expect(await p.mounted("ro", "install", "--yarn")).toEqual({
       exitCode: 1,
       errors: ["EROFS: Read-only file system: Failed to replace old lockfile with new lockfile on disk (open)"],
+      saved: [],
       leftovers: [],
       dependencies: ["a"],
     });
     expect(await p.mounted("ro", "add", tgz("b"))).toEqual({
       exitCode: 1,
       errors: ["EROFS: Read-only file system: Failed to replace old lockfile with new lockfile on disk (open)"],
+      saved: [],
       leftovers: [],
       dependencies: ["a"],
     });

@@ -2141,8 +2141,9 @@ impl Default for Lockfile {
     }
 }
 
-/// Linux refuses to rename onto or unlink a mount point (a bind-mounted file) with EBUSY; on
-/// Windows EBUSY is a sharing violation.
+/// Linux refuses to rename onto or unlink a mount point (a bind-mounted file) with EBUSY. A network
+/// filesystem that refuses a file in use the same way gets the same answer: write into the file
+/// that is there. On Windows EBUSY is a sharing violation, so this is false there.
 pub(crate) fn is_mount_point_error(err: &sys::Error) -> bool {
     cfg!(any(target_os = "linux", target_os = "android")) && err.get_errno() == sys::E::EBUSY
 }

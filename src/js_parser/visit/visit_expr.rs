@@ -1869,19 +1869,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
-    /// `console.log.bind(console)` does not call the dropped function. It makes a function that
-    /// the program calls later, so it becomes `() => {}` where a dropped call becomes `undefined`.
+    /// `console.log.bind(console)` makes a function to call later: `() => {}`, not `undefined`.
     #[cold]
     #[inline(never)]
     fn replace_bind_of_dropped_function(p: &mut Self, e: &mut Expr) -> bool {
         let Data::ECall(mut call) = e.data else {
             return false;
         };
-        if !Self::is_bind_of_dropped_function(p, call.target) {
+        let Data::EDot(bind) = call.target.data else {
+            return false;
+        };
+        debug_assert!(bind.name == b"bind");
+        // Not a bind of a dropped function: `Mousetrap.bind(k, f)`, or a callee on the drop list.
+        if !matches!(bind.target.data, Data::EDot(..))
+            || Self::is_drop_key(p, call.target)
+            || !Self::is_dropped_name(p, bind.target)
+        {
             return false;
         }
-        // The arguments go away with the call. They are still visited, because the visit has to
-        // enter every scope in the order the parser made them.
+        // The arguments are removed but still visited: the visit enters every scope in parse order.
         let old_is_control_flow_dead = p.is_control_flow_dead;
         p.is_control_flow_dead = true;
         for arg in call.args.slice_mut() {
@@ -1891,28 +1897,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = p.new_expr(E::Arrow::NOOP_RETURN_UNDEFINED, e.loc);
         true
     }
-    /// Whether the visited `callee` is `<dropped>.method.bind`. Read from the drop list and not
-    /// from the flag alone: `import.meta.hot` raises the same flag with no drop list.
-    fn is_bind_of_dropped_function(p: &mut Self, callee: Expr) -> bool {
-        let Data::EDot(bind) = callee.data else {
+    /// Whether `callee` spells a drop key. Unlike `is_dot_define_match`, `a?.b` counts as `a.b`.
+    fn is_drop_key(p: &Self, callee: Expr) -> bool {
+        let Data::EDot(last) = callee.data else {
             return false;
         };
-        // `Mousetrap.bind(key, fn)` calls a dropped method: under `--drop=Mousetrap` the receiver
-        // is the dropped name, and under `--drop=Mousetrap.bind` the callee is.
-        if bind.name != b"bind"
-            || !matches!(bind.target.data, Data::EDot(..))
-            || Self::is_dropped_dot(p, callee)
-        {
+        let Some(keys) = p.define.dots_for(last.name.slice()) else {
             return false;
-        }
-        let mut receiver = bind.target;
+        };
+        keys.as_slice().iter().any(|key| {
+            let Some((root, members)) = key.parts.split_first() else {
+                return false;
+            };
+            let mut expr = callee;
+            for member in members.iter().rev() {
+                match expr.data {
+                    Data::EDot(dot) if strings::eql(member, &dot.name) => expr = dot.target,
+                    _ => return false,
+                }
+            }
+            let Data::EIdentifier(id) = expr.data else {
+                return false;
+            };
+            key.data.method_call_must_be_replaced_with_undefined()
+                && strings::eql(p.load_name_from_ref(id.ref_), root)
+        })
+    }
+    /// Reads the drop list, not the flag alone: `import.meta.hot` raises it with no drop list.
+    fn is_dropped_name(p: &mut Self, mut expr: Expr) -> bool {
         loop {
-            match receiver.data {
+            match expr.data {
                 Data::EDot(dot) => {
-                    if Self::is_dropped_dot(p, receiver) {
+                    if Self::is_dropped_dot(p, expr) {
                         return true;
                     }
-                    receiver = dot.target;
+                    expr = dot.target;
                 }
                 Data::EIdentifier(id) => {
                     let name = p.load_name_from_ref(id.ref_);

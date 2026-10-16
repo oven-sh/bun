@@ -4,7 +4,7 @@ const PublicArray = globalThis.Array;
 const {
   Query,
   SQLQueryFlags,
-  symbols: { _strings, _values },
+  symbols: { _strings, _values, _slot, _requeue },
 } = require("internal/sql/query");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
@@ -597,17 +597,24 @@ const enum PooledConnectionFlags {
 }
 export type { BasePooledConnection, PooledConnectionState };
 
-function onQueryFinish(this: BasePooledConnection, onClose: (err: Error) => void) {
-  this.queries.delete(onClose);
-  this.adapter.release(this);
+/// A pool query settled: the slot that holds it, if one does, stops counting it.
+function onPoolQuerySettled(this: QueryType<any, any>) {
+  const connection = this[_slot] as BasePooledConnection | null;
+  if (connection) {
+    this[_slot] = null;
+    connection.adapter.release(connection);
+  }
 }
 
-abstract class BasePooledConnection<ConnectionHandle extends { close(): void; flush(): void } = any> {
+abstract class BasePooledConnection<
+  ConnectionHandle extends { close(): void; flush(): void; takeUnsent(): unknown } = any,
+> {
   adapter: BaseSQLAdapter<any, any, any>;
   connection: ConnectionHandle | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
-  queries: Set<(err: Error) => void> = new Set();
+  /// reservations holding this connection (sql.reserve(), sql.begin()); its queries are settled by the driver
+  closeHandlers: Set<(err: Error) => void> = new Set();
   onFinish: ((err: Error | null) => void) | null = null;
   connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
   flags: number = 0;
@@ -692,7 +699,11 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
           this.connection?.close();
         }
       } else {
-        this.adapter.release(this, true);
+        const adapter = this.adapter;
+        if (!err && adapter.handedBack !== null) {
+          adapter.resumeHandedBack(this);
+        }
+        adapter.release(this, true);
       }
     }
   }
@@ -701,6 +712,10 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (err) {
       err = this.wrapError(err);
     }
+    const established = this.state === PooledConnectionState.connected;
+    // What the connection never wrote is the pool's again; the driver rejects what it keeps when this callback returns.
+    const unsent =
+      established && !this.adapter.closed ? (this.connection?.takeUnsent() as QueryType<any, any>[]) : undefined;
     this.connection = null;
     this.storedError = err;
     if (this.#shouldRetryConnecting(err)) {
@@ -715,7 +730,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     }
     // this connect cycle is over; a later retry() starts a fresh one
     this.connectStartedAt = 0;
-    this.#finishClose(err);
+    this.#finishClose(err, established, unsent);
   }
 
   static #retryTimerFired(self: BasePooledConnection) {
@@ -766,7 +781,8 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     return false;
   }
 
-  #finishClose(err: any) {
+  /// `established`: the connection had completed its handshake. Otherwise a connect cycle failed.
+  #finishClose(err: any, established: boolean = false, unsent?: QueryType<any, any>[]) {
     const connectionInfo = this.connectionInfo;
     const poolClosedSlotBeforeOnconnect =
       this.onFinish !== null && !(this.flags & PooledConnectionFlags.onConnectFired);
@@ -779,14 +795,14 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       this.state = PooledConnectionState.closed;
       this.storedError = err;
 
+      const adapter = this.adapter;
       // remove from ready connections if its there
-      this.adapter.readyConnections.delete(this);
-      const queries = new Set(this.queries);
-      this.queries?.clear?.();
+      adapter.readyConnections.delete(this);
+      const closeHandlers = new Set(this.closeHandlers);
+      this.closeHandlers.clear();
       this.flags &= ~PooledConnectionFlags.reserved;
 
-      // notify all queries that the connection is closed
-      for (const onClose of queries) {
+      for (const onClose of closeHandlers) {
         onClose(err);
       }
       const onFinish = this.onFinish;
@@ -794,17 +810,25 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
         onFinish(err);
       }
 
-      this.adapter.release(this, true);
+      if (unsent !== undefined && unsent.length > 0) {
+        adapter.takeBack(this, unsent, err);
+      } else if (!established && adapter.handedBack !== null) {
+        adapter.failHandedBack(err);
+      }
+      adapter.release(this, true);
     }
   }
 
   onClose(onClose: (err: Error) => void) {
-    this.queries.add(onClose);
+    this.closeHandlers.add(onClose);
   }
 
-  bindQuery(query: QueryType<any, any>, onClose: (err: Error) => void) {
-    this.queries.add(onClose);
-    query.finally(onQueryFinish.bind(this, onClose));
+  /// The query counts against this slot until it settles or is handed back unsent; it registers its settle hook only once.
+  bindQuery(query: QueryType<any, any>) {
+    if (query[_slot] === undefined) {
+      query.finally(onPoolQuerySettled.bind(query));
+    }
+    query[_slot] = this;
   }
 
   protected doRetry() {
@@ -940,6 +964,8 @@ abstract class BaseSQLAdapter<
 
   public waitingQueue: Array<(err: Error | null, result: any) => void> = [];
   public reservedQueue: Array<(err: Error | null, result: any) => void> = [];
+  /// callers of `waitingQueue` that a closed connection handed back unsent, while a connection is dialed for them
+  public handedBack: Array<(err: Error | null, result: any) => void> | null = null;
 
   public poolStarted: boolean = false;
   public closed: boolean = false;
@@ -1096,10 +1122,7 @@ abstract class BaseSQLAdapter<
   }
 
   detachConnectionCloseHandler(connection: PooledConnection, handler: (err: Error) => void): void {
-    const queries = connection.queries;
-    if (queries) {
-      queries.delete(handler);
-    }
+    connection.closeHandlers?.delete(handler);
   }
 
   validateTransactionOptions(options: string): { valid: boolean; error?: string } {
@@ -1231,6 +1254,90 @@ abstract class BaseSQLAdapter<
     this.flushConcurrentQueries();
   }
 
+  /// `unsent`: what `connection` never wrote, in issue order. Its pool queries wait again in front of the callers already queued, and the slot dials again for those still waiting.
+  takeBack(connection: PooledConnection, unsent: QueryType<any, any>[], err: Error) {
+    const later = this.waitingQueue;
+    this.waitingQueue = [];
+    for (const query of unsent) {
+      if (query[_slot] === connection) {
+        query[_slot] = null;
+        connection.queryCount--;
+        this.totalQueries--;
+        query[_requeue]();
+      } else {
+        // it ran on a connection that sql.begin() or sql.reserve() holds: no other connection can run it
+        query.reject(err);
+      }
+    }
+    const handedBack = this.waitingQueue;
+    this.waitingQueue = handedBack.concat(later);
+    if (handedBack.length === 0) {
+      return;
+    }
+    if (connection.state === PooledConnectionState.closed && !connection.retry()) {
+      return;
+    }
+    this.handedBack = this.handedBack === null ? handedBack : this.handedBack.concat(handedBack);
+    this.flushConcurrentQueries();
+  }
+
+  /// The callers handed back take `connection` before a reservation does: a sql.begin() asked for after them can be waiting for one of them.
+  resumeHandedBack(connection: PooledConnection) {
+    const resumed = this.#takeHandedBack();
+    if (resumed.length === 0) {
+      return;
+    }
+    connection.queryCount += resumed.length;
+    this.totalQueries += resumed.length;
+    if (this.reservedQueue.length > 0) {
+      // as connect() does for a reservation that finds every connection busy
+      connection.flags |= PooledConnectionFlags.preReserved;
+    }
+    for (const pending of resumed) {
+      pending(null, connection);
+    }
+  }
+
+  /// After a failed dial the callers handed back do not wait for a connection that sql.begin() or sql.reserve() holds: its holder can be waiting for them.
+  failHandedBack(err: Error) {
+    const pollSize = this.connections.length;
+    let free = false;
+    for (let i = 0; i < pollSize; i++) {
+      const connection = this.connections[i];
+      if (!connection) continue;
+      if (connection.state === PooledConnectionState.pending) {
+        // that dial decides
+        return;
+      }
+      if (
+        connection.state === PooledConnectionState.connected &&
+        !(connection.flags & (PooledConnectionFlags.reserved | PooledConnectionFlags.preReserved))
+      ) {
+        free = true;
+      }
+    }
+    if (free) {
+      this.handedBack = null;
+      return;
+    }
+    for (const pending of this.#takeHandedBack()) {
+      pending(err, null);
+    }
+  }
+
+  /// Removes from `waitingQueue` the callers of `handedBack` that still wait, and returns them.
+  #takeHandedBack() {
+    const handedBack = new Set(this.handedBack);
+    this.handedBack = null;
+    const taken: Array<(err: Error | null, result: any) => void> = [];
+    const rest: Array<(err: Error | null, result: any) => void> = [];
+    for (const pending of this.waitingQueue) {
+      (handedBack.has(pending) ? taken : rest).push(pending);
+    }
+    this.waitingQueue = rest;
+    return taken;
+  }
+
   hasConnectionsAvailable() {
     if (this.readyConnections?.size > 0) return true;
     if (this.poolStarted) {
@@ -1329,6 +1436,7 @@ abstract class BaseSQLAdapter<
 
     this.readyConnections.clear();
     this.waitingQueue.length = 0;
+    this.handedBack = null;
     return Promise.all(promises);
   }
 

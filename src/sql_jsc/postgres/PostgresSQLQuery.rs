@@ -275,6 +275,24 @@ impl PostgresSQLQuery {
         self.on_js_error(e, global_object);
     }
 
+    /// The JS `Query` of a request no byte of which was written.
+    pub(crate) fn unsent_target(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
+        if self.status.get() != Status::Pending {
+            return None;
+        }
+        self.get_target(global_object, false)
+    }
+
+    /// Undoes `do_run` for a request whose connection closed before writing any of it: the pool runs it on another connection.
+    pub(crate) fn take_back(&self, global_object: &JSGlobalObject) {
+        debug_assert!(self.status.get() == Status::Pending);
+        self.release_statement();
+        if let Some(this_value) = self.this_value.get().try_get() {
+            js::target_set_cached(this_value, global_object, JSValue::ZERO);
+        }
+        self.this_value.with_mut(|r| r.downgrade());
+    }
+
     pub(crate) fn allow_gc(this_value: JSValue, global_object: &JSGlobalObject) {
         if this_value.is_empty() {
             return;
@@ -772,6 +790,7 @@ impl PostgresSQLQuery {
                         f.set(ConnectionFlags::WAITING_TO_PREPARE, true);
                         connection.flags.set(f);
                     }
+                    this.status.set(Status::Preparing);
                     did_write = true;
                 }
                 // Unnamed prepared statements with params: skip writeQuery+Sync here.
@@ -819,7 +838,7 @@ impl PostgresSQLQuery {
         }
 
         connection.requests.with_mut(|q| q.push_back(queued));
-        if this.status.get() == Status::Pending {
+        if this.status.get().awaits_write() {
             connection.note_request_pending();
         }
         // Request is enqueued: keep the event loop alive until the server

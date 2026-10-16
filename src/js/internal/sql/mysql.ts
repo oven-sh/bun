@@ -176,7 +176,7 @@ class PooledMySQLConnection extends BasePooledConnection<$ZigGeneratedClasses.My
   /// pool. Refused connections (ERR_MYSQL_CONNECTION_REFUSED) fail fast:
   /// nothing is listening, and probes/healthchecks rely on the immediate
   /// error. Real server errors (authentication, handshake errors) and closes
-  /// of established connections are not retried here.
+  /// of established connections are not retried here (BaseSQLAdapter.takeBack dials again for what such a connection never sent).
   protected isConnectFailureError(err: Error | null): boolean {
     return err instanceof MySQLError && (err as any).code === "ERR_MYSQL_CONNECTION_FAILED";
   }

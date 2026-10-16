@@ -87,20 +87,6 @@ const SQL = function SQL(
   );
   const pool = adapterFromOptions(connectionInfo);
 
-  function onQueryDisconnected(this: Query<any, any>, err: Error) {
-    // connection closed mid query this will not be called if the query finishes first
-    const query = this;
-
-    if (err) {
-      return query.reject(err);
-    }
-
-    // query is cancelled when waiting for a connection from the pool
-    if (query.cancelled) {
-      return query.reject(pool.queryCancelledError());
-    }
-  }
-
   function onQueryConnected(this: Query<any, any>, handle: BaseQueryHandle<any>, err, connectionHandle) {
     const query = this;
     if (err) {
@@ -113,9 +99,7 @@ const SQL = function SQL(
       return query.reject(pool.queryCancelledError());
     }
 
-    if (connectionHandle.bindQuery) {
-      connectionHandle.bindQuery(query, onQueryDisconnected.bind(query));
-    }
+    connectionHandle.bindQuery?.(query);
 
     try {
       const connection = pool.getConnectionForQuery ? pool.getConnectionForQuery(connectionHandle) : connectionHandle;

@@ -822,15 +822,15 @@ describe("bundler", () => {
       stdout: "lib side effect\nlib",
     },
   });
-  // A "sideEffects" glob is relative to the package directory. A `[` or `{` in the name of that
-  // directory, or of a directory above it, is a character of the name and not part of the glob.
+  // A "sideEffects" glob is relative to the package directory. Glob syntax in the name of that
+  // directory, or of a directory above it, is characters of the name and not part of the glob.
   for (const [id, parent, backend] of [
     ["Bracket", "[client]", "api"],
     ["BracketCLI", "[client]", "cli"],
     ["Brace", "{old,new}", "api"],
     ["BraceCLI", "{old,new}", "cli"],
-    ["OpenBracket", "a[b", "api"],
-    ["OpenBrace", "a{b", "api"],
+    ["BraceRange", "{1..3}", "api"],
+    ["ExtGlob", "@(client)", "api"],
   ] as const) {
     itBundled(`dce/PackageJsonSideEffectsGlobUnder${id}Directory`, {
       backend,

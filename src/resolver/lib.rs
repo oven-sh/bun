@@ -742,14 +742,6 @@ pub mod fs {
             const { core::cell::RefCell::new(core::mem::MaybeUninit::uninit()) };
     }
 
-    thread_local! {
-        // The last directory read that failed on this thread. `RealFS` caches
-        // nothing for it and does not know who asked, so the resolver takes
-        // it from here to report it. Written and read on error paths only.
-        static FAILED_READ: core::cell::Cell<Option<Box<DirReadFailure>>> =
-            const { core::cell::Cell::new(None) };
-    }
-
     fn temp_entries_option_write(value: EntriesOption) -> &'static mut EntriesOption {
         TEMP_ENTRIES_OPTION.with_borrow_mut(|slot| {
             slot.write(value);
@@ -914,9 +906,9 @@ pub mod fs {
 
     /// A directory whose read failed, with the error. A failed read is cached
     /// nowhere, so whoever needed the listing reports it.
-    pub struct DirReadFailure {
-        pub dir: Box<[u8]>,
-        pub err: crate::Error,
+    pub(crate) struct DirReadFailure {
+        pub(crate) dir: Box<[u8]>,
+        pub(crate) err: crate::Error,
     }
 
     impl DirReadFailure {
@@ -1311,6 +1303,7 @@ pub mod fs {
                     dir_entry::Err {
                         original_err: err,
                         canonical_error: err,
+                        read_failed: false,
                     },
                 )));
             }
@@ -1319,6 +1312,7 @@ pub mod fs {
                 EntriesOption::Err(dir_entry::Err {
                     original_err: err,
                     canonical_error: err,
+                    read_failed: false,
                 }),
             )?;
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
@@ -1330,8 +1324,8 @@ pub mod fs {
         /// a failed open. Any other error stores nothing: a fresh slot stays
         /// unknown and a stale listing keeps its names and its generation, so
         /// the next lookup reads the directory again. The caller gets the
-        /// error in the threadlocal slot, and `take_read_failure` hands it
-        /// to a resolution that reports it.
+        /// error in the threadlocal slot, marked `read_failed` so that a
+        /// resolution can tell it from a cached one and report it.
         fn read_failed(
             &mut self,
             dir: &[u8],
@@ -1348,11 +1342,11 @@ pub mod fs {
                 }
                 return self.read_directory_error(dir, err);
             }
-            FAILED_READ.set(Some(DirReadFailure::new(dir, err)));
             Ok(temp_entries_option_write(EntriesOption::Err(
                 dir_entry::Err {
                     original_err: err,
                     canonical_error: err,
+                    read_failed: true,
                 },
             )))
         }
@@ -1365,15 +1359,6 @@ pub mod fs {
             store_fd: bool,
         ) -> crate::CrateResult<&mut EntriesOption> {
             self.read_directory_with_iterator(dir_, handle_, generation, store_fd, ())
-        }
-
-        /// The error of the last read of `dir` on this thread, if that read
-        /// failed and nothing took the error yet.
-        #[cold]
-        pub(crate) fn take_read_failure(dir: &[u8]) -> Option<Box<DirReadFailure>> {
-            let failure = FAILED_READ.take()?;
-            (*failure.dir == *strings::paths::without_trailing_slash_windows_path(dir))
-                .then_some(failure)
         }
 
         // One of the learnings here
@@ -1421,6 +1406,7 @@ pub mod fs {
                         dir_entry::Err {
                             original_err: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                             canonical_error: crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                            read_failed: false,
                         },
                     )));
                 }

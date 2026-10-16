@@ -1735,7 +1735,15 @@ impl<'a> Resolver<'a> {
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
-            if let Some(query) = dir.get_entry(self.generation, name.filename) {
+            let found = match dir.get_entry(self.generation, name.filename) {
+                Ok(found) => found,
+                // `resolve_and_auto_install` reports a directory read that failed.
+                Err(err) => {
+                    self.dir_read_failure = Some(Fs::DirReadFailure::new(dir.abs_path, err));
+                    return Err(err);
+                }
+            };
+            if let Some(query) = found {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
                 let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
@@ -3602,6 +3610,7 @@ impl<'a> Resolver<'a> {
             // Packages in the global disk cache are top-level, we shouldn't try
             // to check for a parent package.json
             None,
+            None,
             allocators::NOT_FOUND,
             open_dir,
             Some(package_id),
@@ -3755,6 +3764,9 @@ impl<'a> Resolver<'a> {
                     let _entries_lock = rfs.entries_mutex.lock_guard();
                     resolved_dir_info
                         .get_entries_ref_locked(self.generation)
+                        .unwrap_or_else(|err| {
+                            refresh_failed(&mut self.dir_read_failure, &resolved_dir_info, err)
+                        })
                         .map(|entries| (entries.get(base), entries.fd))
                 };
                 let Some((entry_lookup, dirname_fd)) = looked_up else {
@@ -3814,8 +3826,15 @@ impl<'a> Resolver<'a> {
                                 let ext: &[u8] = ext;
                                 let file_name = &mut buf[0..index.len() + ext.len()];
                                 file_name[index.len()..].copy_from_slice(ext);
-                                let index_query =
-                                    dir_info_ref.get_entry(self.generation, &file_name[..]);
+                                let index_query = dir_info_ref
+                                    .get_entry(self.generation, &file_name[..])
+                                    .unwrap_or_else(|err| {
+                                        refresh_failed(
+                                            &mut self.dir_read_failure,
+                                            &dir_info_ref,
+                                            err,
+                                        )
+                                    });
                                 if let Some(iq) = index_query {
                                     // SAFETY: rfs points at the process-global RealFS; the
                                     // lazy-stat rewrite inside `kind()` is serialized on the
@@ -3934,8 +3953,11 @@ impl<'a> Resolver<'a> {
                 let ext: &[u8] = ext;
                 let file_name = &mut buf[0..base.len() + ext.len()];
                 file_name[base.len()..].copy_from_slice(ext);
-                if let Some(ext_query) =
-                    resolved_dir_info.get_entry(self.generation, &file_name[..])
+                if let Some(ext_query) = resolved_dir_info
+                    .get_entry(self.generation, &file_name[..])
+                    .unwrap_or_else(|err| {
+                        refresh_failed(&mut self.dir_read_failure, &resolved_dir_info, err)
+                    })
                 {
                     // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                     // rewrite inside `kind()` is serialized on the per-entry mutex.
@@ -3975,8 +3997,11 @@ impl<'a> Resolver<'a> {
                 for &replacement in ts_exts.iter() {
                     let file_name = &mut buf[0..segment.len() + replacement.len()];
                     file_name[segment.len()..].copy_from_slice(replacement);
-                    if let Some(ts_query) =
-                        resolved_dir_info.get_entry(self.generation, &file_name[..])
+                    if let Some(ts_query) = resolved_dir_info
+                        .get_entry(self.generation, &file_name[..])
+                        .unwrap_or_else(|err| {
+                            refresh_failed(&mut self.dir_read_failure, &resolved_dir_info, err)
+                        })
                     {
                         // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                         // rewrite inside `kind()` is serialized on the per-entry mutex.
@@ -4794,6 +4819,34 @@ impl<'a> Resolver<'a> {
                 &safe_path[dir_path_i..end]
             };
 
+            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
+            // `put`; resolver mutex held.
+            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
+                .map(|p| unsafe { DirInfoRef::from_raw(p) });
+
+            // The listing of the parent says whether this directory is a
+            // symlink. The nearest cached ancestor can hold a listing from an
+            // earlier generation, so read it before this directory gets a
+            // slot: a read that fails then caches nothing for this directory.
+            // `entries_mutex` is held and is not recursive, hence `_locked`.
+            let parent_entries = match parent_dir_ptr {
+                Some(parent) if !self.opts.preserve_symlinks => {
+                    match parent.get_entries_ref_locked(self.generation) {
+                        Ok(parent_entries) => parent_entries,
+                        // An ancestor that may not be listed is opaque and empty, as above.
+                        Err(crate::Error::Sys(
+                            bun_errno::SystemErrno::EPERM | bun_errno::SystemErrno::EACCES,
+                        )) => None,
+                        Err(err) => {
+                            self.dir_read_failure =
+                                Some(Fs::DirReadFailure::new(parent.abs_path, err));
+                            return Err(err);
+                        }
+                    }
+                }
+                _ => None,
+            };
+
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
             // SAFETY: `dir_cache()` is the live singleton; resolver mutex held.
@@ -4806,10 +4859,6 @@ impl<'a> Resolver<'a> {
                     DirInfo::DirInfo::default(),
                 )
             }?;
-            // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
-            // `put`; resolver mutex held.
-            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
-                .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
             self.dir_info_uncached(
                 dir_info_ptr,
@@ -4819,6 +4868,7 @@ impl<'a> Resolver<'a> {
                 queue_top.result,
                 cached_dir_entry_result.index,
                 parent_dir_ptr,
+                parent_entries,
                 top_parent.index,
                 open_dir,
                 None,
@@ -5436,6 +5486,7 @@ impl<'a> Resolver<'a> {
             let _entries_lock = realfs.entries_mutex.lock_guard();
             dir_info
                 .get_entries_ref_locked(self.generation)
+                .unwrap_or_else(|err| refresh_failed(&mut self.dir_read_failure, &dir_info, err))
                 .map(|entries| {
                     (
                         entries.get(&base[..]),
@@ -5896,21 +5947,22 @@ impl<'a> Resolver<'a> {
             match err.original_err {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                 | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
-                _ => match Fs::file_system::RealFS::take_read_failure(dir_path) {
-                    // `resolve_and_auto_install` reports a read that failed.
-                    Some(failure) => self.dir_read_failure = Some(failure),
-                    None => {
-                        let _ = self.log_mut().add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Cannot read directory \"{}\": {}",
-                                bstr::BStr::new(dir_path),
-                                bstr::BStr::new(err.original_err.name())
-                            ),
-                        );
-                    }
-                },
+                // `resolve_and_auto_install` reports a read that failed.
+                _ if err.read_failed => {
+                    self.dir_read_failure =
+                        Some(Fs::DirReadFailure::new(dir_path, err.original_err));
+                }
+                _ => {
+                    let _ = self.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Cannot read directory \"{}\": {}",
+                            bstr::BStr::new(dir_path),
+                            bstr::BStr::new(err.original_err.name())
+                        ),
+                    );
+                }
             }
             dec_ret!(None);
         }
@@ -6158,6 +6210,10 @@ impl<'a> Resolver<'a> {
         _result: allocators::Result,
         dir_entry_index: allocators::IndexType,
         parent: Option<DirInfoRef>,
+        // The listing of `parent` at this generation, read under the
+        // `entries_mutex` that the caller still holds. `None` when symlinks
+        // are preserved.
+        parent_entries: Option<&'static Fs::file_system::DirEntry>,
         parent_index: allocators::IndexType,
         fd: FD,
         package_id: Option<Install::PackageID>,
@@ -6343,74 +6399,64 @@ impl<'a> Resolver<'a> {
                 .or(parent_.package_json_for_dependencies);
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
-            if !self.opts.preserve_symlinks {
-                // The only caller that reaches this with `parent` set
-                // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
-                // mutex is non-recursive, so go through the `_locked` accessor.
-                if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
-                    if let Some(lookup) = parent_entries.get(base) {
-                        let entries_fd = entries!().fd;
-                        if entries_fd.is_valid()
-                            && !lookup.entry().cache().fd.is_valid()
-                            && self.store_fd
-                        {
-                            // Every cached-`Entry` rewrite takes the per-entry mutex.
-                            let _entry_guard = lookup.entry().mutex.lock_guard();
-                            lookup.entry().set_cache_fd(entries_fd);
-                        }
-                        // SAFETY: EntryStore-owned slot — read-only borrow,
-                        // dies (NLL) before any later `&mut` to this slot.
-                        let entry = lookup.entry();
+            if let Some(lookup) = parent_entries.and_then(|entries| entries.get(base)) {
+                let entries_fd = entries!().fd;
+                if entries_fd.is_valid() && !lookup.entry().cache().fd.is_valid() && self.store_fd {
+                    // Every cached-`Entry` rewrite takes the per-entry mutex.
+                    let _entry_guard = lookup.entry().mutex.lock_guard();
+                    lookup.entry().set_cache_fd(entries_fd);
+                }
+                // SAFETY: EntryStore-owned slot — read-only borrow,
+                // dies (NLL) before any later `&mut` to this slot.
+                let entry = lookup.entry();
 
-                        // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
-                        // rewrite inside `symlink()` is serialized on `Entry.mutex`.
-                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
-                        if !symlink.is_empty() {
-                            if let Some(logs) = self.debug_logs.as_mut() {
-                                let mut buf = Vec::new();
-                                let _ = write!(
-                                    &mut buf,
-                                    "Resolved symlink \"{}\" to \"{}\"",
-                                    bstr::BStr::new(path),
-                                    bstr::BStr::new(symlink)
-                                );
-                                logs.add_note(buf);
-                            }
-                            info.abs_real_path = symlink;
-                        } else if !parent_.abs_real_path.is_empty() {
-                            // this might leak a little i'm not sure
-                            let parts = [parent_.abs_real_path, base];
-                            // NOTE: split into two statements so the two `&mut FileSystem`
-                            // borrows from `unsafe { &mut *self.fs() }` don't overlap (Stacked Borrows).
-                            let joined = self
-                                .fs_ref()
-                                .abs_buf(&parts, bufs!(dir_info_uncached_filename));
-                            symlink = self
-                                .fs_ref()
-                                .dirname_store
-                                .append_slice(joined)
-                                .expect("unreachable");
-
-                            if let Some(logs) = self.debug_logs.as_mut() {
-                                let mut buf = Vec::new();
-                                let _ = write!(
-                                    &mut buf,
-                                    "Resolved symlink \"{}\" to \"{}\"",
-                                    bstr::BStr::new(path),
-                                    bstr::BStr::new(symlink)
-                                );
-                                logs.add_note(buf);
-                            }
-                            {
-                                // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = lookup.entry().mutex.lock_guard();
-                                lookup
-                                    .entry()
-                                    .set_cache_symlink(Interned::from_static(symlink));
-                            }
-                            info.abs_real_path = symlink;
-                        }
+                // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
+                // rewrite inside `symlink()` is serialized on `Entry.mutex`.
+                let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
+                if !symlink.is_empty() {
+                    if let Some(logs) = self.debug_logs.as_mut() {
+                        let mut buf = Vec::new();
+                        let _ = write!(
+                            &mut buf,
+                            "Resolved symlink \"{}\" to \"{}\"",
+                            bstr::BStr::new(path),
+                            bstr::BStr::new(symlink)
+                        );
+                        logs.add_note(buf);
                     }
+                    info.abs_real_path = symlink;
+                } else if !parent_.abs_real_path.is_empty() {
+                    // this might leak a little i'm not sure
+                    let parts = [parent_.abs_real_path, base];
+                    // NOTE: split into two statements so the two `&mut FileSystem`
+                    // borrows from `unsafe { &mut *self.fs() }` don't overlap (Stacked Borrows).
+                    let joined = self
+                        .fs_ref()
+                        .abs_buf(&parts, bufs!(dir_info_uncached_filename));
+                    symlink = self
+                        .fs_ref()
+                        .dirname_store
+                        .append_slice(joined)
+                        .expect("unreachable");
+
+                    if let Some(logs) = self.debug_logs.as_mut() {
+                        let mut buf = Vec::new();
+                        let _ = write!(
+                            &mut buf,
+                            "Resolved symlink \"{}\" to \"{}\"",
+                            bstr::BStr::new(path),
+                            bstr::BStr::new(symlink)
+                        );
+                        logs.add_note(buf);
+                    }
+                    {
+                        // Every cached-`Entry` rewrite takes the per-entry mutex.
+                        let _entry_guard = lookup.entry().mutex.lock_guard();
+                        lookup
+                            .entry()
+                            .set_cache_symlink(Interned::from_static(symlink));
+                    }
+                    info.abs_real_path = symlink;
                 }
             }
 
@@ -6876,6 +6922,19 @@ fn primary_side_effects(
     } else {
         SideEffects::NoSideEffectsPackageJsonArray
     }
+}
+
+/// The listing of `dir` is from an earlier generation, and the read that
+/// refreshes it failed with `err`. A lookup in that listing has no answer, so
+/// it finds nothing, and `resolve_and_auto_install` reports `failure`.
+#[cold]
+fn refresh_failed<T>(
+    failure: &mut Option<Box<Fs::DirReadFailure>>,
+    dir: &DirInfo::DirInfo,
+    err: crate::Error,
+) -> Option<T> {
+    *failure = Some(Fs::DirReadFailure::new(dir.abs_path, err));
+    None
 }
 
 #[inline]

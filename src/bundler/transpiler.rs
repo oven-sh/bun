@@ -689,10 +689,11 @@ impl<'a> Transpiler<'a> {
                         .entries_mutex
                         .lock_guard();
                     match dir_info.get_entries_ref_locked(self.resolver.generation) {
-                        Some(entries) => dot_env::DirEntryKeys(
+                        Ok(Some(entries)) => dot_env::DirEntryKeys(
                             entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
                         ),
-                        None => return Ok(()),
+                        // Unreadable, like the `read_dir_info` above.
+                        Ok(None) | Err(_) => return Ok(()),
                     }
                 };
 

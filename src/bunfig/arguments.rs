@@ -237,7 +237,7 @@ fn read_install_section(config_path: &ZStr) -> Result<Option<Box<api::BunInstall
     Bunfig::parse_install_section(&source).map_err(|_| path.into())
 }
 
-pub fn load_config_path(
+fn load_config_path(
     cmd: CommandTag,
     auto_loaded: bool,
     config_path: &ZStr,
@@ -472,4 +472,19 @@ pub fn load_config_with_cmd_args(
     ctx: Context<'_>,
 ) -> Result<(), crate::Error> {
     load_config(cmd, args.option(b"--config"), ctx)
+}
+
+/// `bun run`, `bun repl`, the `node` shim and compiled executables load `./bunfig.toml` here.
+pub fn load_cwd_config_or_exit(ctx: Context<'_>) {
+    if ctx.debug.loaded_bunfig {
+        return;
+    }
+    if let Err(err) = load_config_path(
+        CommandTag::RunCommand,
+        true,
+        bun_core::zstr!("bunfig.toml"),
+        ctx,
+    ) {
+        report_bunfig_load_failure(CommandTag::RunCommand, ctx.log, err);
+    }
 }

@@ -13,6 +13,6 @@ pub mod error;
 
 pub use arguments::{
     Above, ToolReader, load_config, load_config_above_for_tool, load_config_for_tool,
-    load_config_path, load_config_with_cmd_args,
+    load_config_with_cmd_args, load_cwd_config_or_exit,
 };
 pub use error::{Error, Result};

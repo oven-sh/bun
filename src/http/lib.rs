@@ -3560,10 +3560,8 @@ impl<'a> HTTPClient<'a> {
 
                             let to_send = self.request_body();
                             // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                            let sent = match ProxyTunnel::write(proxy_ptr, to_send) {
-                                Ok(n) => n,
-                                // WantRead/WantWrite, or the tunnel closed (on_close already ran).
-                                Err(_) => return,
+                            let Ok(sent) = ProxyTunnel::write(proxy_ptr, to_send) else {
+                                return;
                             };
 
                             self.state.request_sent_len += sent;
@@ -3627,10 +3625,8 @@ impl<'a> HTTPClient<'a> {
                         return;
                     }
                     // just wait and retry when onWritable! if closed internally will call proxy.onClose
-                    let amount = match ProxyTunnel::write(proxy_ptr, to_send) {
-                        Ok(n) => n,
-                        // WantRead/WantWrite, or the tunnel closed (on_close already ran).
-                        Err(_) => return,
+                    let Ok(amount) = ProxyTunnel::write(proxy_ptr, to_send) else {
+                        return;
                     };
 
                     if IS_FIRST_CALL {

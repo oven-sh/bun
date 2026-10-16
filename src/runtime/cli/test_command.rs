@@ -987,7 +987,7 @@ pub(crate) fn on_process_exit(vm: &mut VirtualMachine) {
     let overruled = match vm.exit_handler.exit_code {
         // SAFETY: see above.
         0 => unsafe { (*runner.as_ptr()).has_observed_failure() },
-        // The 1 that `note_process_exit` stored in place of a 0.
+        // The 1 that `process.exit()` stored in place of a 0 after `note_process_exit`.
         1 => request.is_some(),
         _ => false,
     };
@@ -1597,12 +1597,21 @@ impl CommandLineReporter {
                 pretty_errorln!("<r>\n::endgroup::\n");
             }
             vm.run_error_handler(error, None);
+            // `--bail` is applied here: `handle_test_completed` would exit before `Bun__Process__exit` runs `vm.on_exit()`.
+            let bail = core::mem::take(&mut (*this).jest.bail);
             if let Some(file) = &active_file {
+                let until_bail = if bail == 0 {
+                    u32::MAX
+                } else {
+                    bail.saturating_sub((*this).jest.summary.fail)
+                };
                 bun_test::Execution::Execution::end_failed_sequences_in_flight(
                     core::ptr::NonNull::new_unchecked(file.as_ptr()),
+                    until_bail,
                 );
             }
-            (*this).write_early_end_report(false);
+            (*this).jest.bail = bail;
+            (*this).write_early_end_report(bail != 0 && (*this).jest.summary.fail >= bail);
         }
     }
 

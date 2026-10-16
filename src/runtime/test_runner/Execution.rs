@@ -628,9 +628,9 @@ impl Execution {
         }
     }
 
-    /// Ends each failed sequence that still runs its hooks, so `advance_sequence` reports it before the process exits.
+    /// Ends up to `limit` failed sequences that still run their hooks, so `advance_sequence` reports them before the process exits.
     #[cold]
-    pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>) {
+    pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>, mut limit: u32) {
         let (group, range) = {
             // SAFETY: `buntest` is the live active file. This borrow of its `execution` ends with the block.
             let bun_test = unsafe { &mut *buntest.as_ptr() };
@@ -652,6 +652,10 @@ impl Execution {
             if !sequence.result.is_fail() {
                 continue;
             }
+            if limit == 0 {
+                return;
+            }
+            limit -= 1;
             // SAFETY: arena-owned entries, alive for the lifetime of the `BunTest`.
             while let Some(next) = nn(unsafe { last.as_ref() }.next) {
                 last = next;
@@ -660,6 +664,11 @@ impl Execution {
             sequence.active_entry = Some(last);
             sequence.maybe_skip = false;
             sequence.executing = true;
+            // No retry starts. `print_test_line` takes the attempt number from the difference of these two counts.
+            if let Some(test_entry) = sequence.test_entry {
+                // SAFETY: arena-owned entry, alive for the lifetime of the `BunTest`. No borrow of it is live here.
+                unsafe { (*test_entry.as_ptr()).retry_count -= sequence.remaining_retry_count };
+            }
             sequence.remaining_retry_count = 0;
             Execution::advance_sequence(buntest, NonNull::from(sequence), group);
         }

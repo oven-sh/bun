@@ -393,12 +393,11 @@ pub(crate) mod Jest {
         unsafe { RUNNER.read() }
     }
 
-    /// Before `process.exit()` emits 'exit' with code 0: a failed run gets code 1, and the call site is kept.
+    /// Before `process.exit()` emits 'exit' with code 0: whether the run has failed, so that the caller stores code 1. The call site is kept.
     #[unsafe(export_name = "Bun__TestRunner__noteProcessExit")]
     extern "C" fn note_process_exit(global: &JSGlobalObject, argless: bool) -> bool {
-        let vm = global.bun_vm().as_mut();
         // The field: the method is also true on the debugger thread, and `RUNNER` belongs to the main thread.
-        if !vm.is_main_thread {
+        if !global.bun_vm().is_main_thread {
             return false;
         }
         let Some(runner) = runner_ptr() else {
@@ -420,21 +419,15 @@ pub(crate) mod Jest {
                 *request = Some(jsc::Strong::create(error, global));
             }
         }
-        vm.exit_handler.exit_code = 1;
         true
     }
 
-    /// `process.exit()` returned to JS after `note_process_exit`, so the run continues with its 0.
+    /// `process.exit()` returned to JS after `note_process_exit`, so no exit reports that call.
     #[unsafe(export_name = "Bun__TestRunner__cancelProcessExit")]
-    extern "C" fn cancel_process_exit(global: &JSGlobalObject) {
+    extern "C" fn cancel_process_exit() {
         if let Some(runner) = runner_ptr() {
             // SAFETY: as in `note_process_exit`.
             unsafe { (*runner.as_ptr()).exit_request = None };
-        }
-        let exit_code = &mut global.bun_vm().as_mut().exit_handler.exit_code;
-        // Another code is one that an 'exit' listener stored.
-        if *exit_code == 1 {
-            *exit_code = 0;
         }
     }
 

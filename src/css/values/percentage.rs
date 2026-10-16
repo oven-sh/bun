@@ -254,137 +254,6 @@ impl<D> DimensionPercentage<D> {
         }
     }
 
-    pub(crate) fn add_internal(self, other: Self) -> Self
-    where
-        Self: crate::values::calc::CalcValue,
-        D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
-    {
-        if let Some(res) = self.add_recursive(&other) {
-            return res;
-        }
-        self.add_impl(other)
-    }
-
-    fn add_recursive(&self, other: &Self) -> Option<Self>
-    where
-        Self: crate::values::calc::CalcValue,
-        D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
-    {
-        match (self, other) {
-            (Self::Dimension(a), Self::Dimension(b)) => {
-                if let Some(res) = a.try_add(b) {
-                    return Some(Self::Dimension(res));
-                }
-            }
-            (Self::Percentage(a), Self::Percentage(b)) => {
-                return Some(Self::Percentage(Percentage { v: a.v + b.v }));
-            }
-            (Self::Calc(this_calc), _) => match this_calc.as_ref() {
-                Calc::Value(v) => return v.add_recursive(other),
-                Calc::Sum { left, right } => {
-                    // With owning Boxes we deep_clone the sum operands. The values
-                    // are only read during this computation, so the clone is
-                    // semantically equivalent (just extra allocation).
-                    let left_calc = Self::Calc(left.deep_clone_boxed());
-                    if let Some(res) = left_calc.add_recursive(other) {
-                        return Some(res.add_impl(Self::Calc(right.deep_clone_boxed())));
-                    }
-
-                    let right_calc = Self::Calc(right.deep_clone_boxed());
-                    if let Some(res) = right_calc.add_recursive(other) {
-                        return Some(Self::Calc(left.deep_clone_boxed()).add_impl(res));
-                    }
-                }
-                _ => {}
-            },
-            (_, Self::Calc(other_calc)) => match other_calc.as_ref() {
-                Calc::Value(v) => return self.add_recursive(v),
-                Calc::Sum { left, right } => {
-                    let left_calc = Self::Calc(left.deep_clone_boxed());
-                    if let Some(res) = self.add_recursive(&left_calc) {
-                        return Some(res.add_impl(Self::Calc(right.deep_clone_boxed())));
-                    }
-
-                    let right_calc = Self::Calc(right.deep_clone_boxed());
-                    if let Some(res) = self.add_recursive(&right_calc) {
-                        return Some(Self::Calc(left.deep_clone_boxed()).add_impl(res));
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
-        }
-
-        None
-    }
-
-    fn add_impl(self, other: Self) -> Self
-    where
-        Self: crate::values::calc::CalcValue,
-        D: protocol::Zero + protocol::TrySign,
-    {
-        let mut a = self;
-        let mut b = other;
-
-        if a.is_zero() {
-            return b;
-        }
-        if b.is_zero() {
-            return a;
-        }
-
-        if a.is_sign_negative() && b.is_sign_positive() {
-            core::mem::swap(&mut a, &mut b);
-        }
-
-        match (a, b) {
-            (Self::Calc(a_calc), b)
-                if matches!(*a_calc, Calc::Value(_)) && !matches!(b, Self::Calc(_)) =>
-            {
-                let Calc::Value(v) = *a_calc else {
-                    unreachable!()
-                };
-                v.add_impl(b)
-            }
-            (a, Self::Calc(b_calc))
-                if matches!(*b_calc, Calc::Value(_)) && !matches!(a, Self::Calc(_)) =>
-            {
-                let Calc::Value(v) = *b_calc else {
-                    unreachable!()
-                };
-                a.add_impl(*v)
-            }
-            (a, b) => Self::Calc(Box::new(Calc::Sum {
-                left: Box::new(a.into_calc()),
-                right: Box::new(b.into_calc()),
-            })),
-        }
-    }
-
-    #[inline]
-    fn is_sign_positive(&self) -> bool
-    where
-        Self: crate::values::calc::CalcValue,
-        D: protocol::TrySign,
-    {
-        let Some(sign) = self.try_sign() else {
-            return false;
-        };
-        sign.is_sign_positive()
-    }
-
-    #[inline]
-    fn is_sign_negative(&self) -> bool
-    where
-        Self: crate::values::calc::CalcValue,
-        D: protocol::TrySign,
-    {
-        let Some(sign) = self.try_sign() else {
-            return false;
-        };
-        sign.is_sign_negative()
-    }
-
     pub(crate) fn partial_cmp(&self, other: &Self) -> Option<Ordering>
     where
         D: protocol::PartialCmp,
@@ -429,6 +298,19 @@ impl<D> DimensionPercentage<D> {
         match self {
             Self::Calc(calc) => *calc,
             other => Calc::Value(Box::new(other)),
+        }
+    }
+}
+
+/// Two dimensions with units that add, or two percentages. `calc()` keeps every other pair as a sum.
+impl<D: protocol::TryAdd> protocol::TryAdd for DimensionPercentage<D> {
+    fn try_add(&self, rhs: &Self) -> Option<Self> {
+        match (self, rhs) {
+            (Self::Dimension(a), Self::Dimension(b)) => a.try_add(b).map(Self::Dimension),
+            (Self::Percentage(a), Self::Percentage(b)) => {
+                Some(Self::Percentage(Percentage { v: a.v + b.v }))
+            }
+            _ => None,
         }
     }
 }

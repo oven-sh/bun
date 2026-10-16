@@ -507,7 +507,11 @@ impl MySQLConnection {
             }
             let payload = &reader.peek()[PacketHeader::SIZE..packet_length];
             reader.set_offset_from_start(packet_length);
-            self.handle_packet(payload, header.sequence_id, header.sequence_id.wrapping_add(1))?;
+            self.handle_packet(
+                payload,
+                header.sequence_id,
+                header.sequence_id.wrapping_add(1),
+            )?;
             // After the SSLRequest, bytes already buffered behind this packet are plaintext a
             // man-in-the-middle could have injected (CVE-2021-23222 class).
             if self.tls_status == TLSStatus::MessageSent && !reader.peek().is_empty() {

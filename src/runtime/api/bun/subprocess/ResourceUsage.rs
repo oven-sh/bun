@@ -7,7 +7,7 @@ use bun_spawn::RusageFields as _; // trait + impls now live in bun_spawn_sys::sp
 // (it round-trips `m_ctx` as `void*`).
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 #[repr(C)]
-pub struct ResourceUsage {
+pub(crate) struct ResourceUsage {
     pub(crate) rusage: Rusage,
 }
 

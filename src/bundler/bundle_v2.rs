@@ -169,6 +169,23 @@ impl<'a> BundleV2<'a> {
         &*self.transpiler
     }
 
+    /// `--bytecode-order` files are read only for an executable with bytecode.
+    pub(crate) fn reads_bytecode_order_files(&self) -> bool {
+        self.transpiler.options.bytecode && self.transpiler.options.compile_mode.is_executable()
+    }
+
+    /// Every input this build read from disk: the files of the module graph, and the bytecode order files.
+    pub(crate) fn input_paths(&self) -> crate::input_path_set::InputPathSet {
+        let mut input_paths =
+            crate::input_path_set::InputPathSet::from_graph(&self.graph, self.file_map);
+        if self.reads_bytecode_order_files() {
+            for path in self.transpiler.options.bytecode_order.iter() {
+                input_paths.add_root(path);
+            }
+        }
+        input_paths
+    }
+
     #[inline]
     pub fn r#loop(&mut self) -> &mut EventLoop {
         &mut self.linker.r#loop
@@ -3401,9 +3418,7 @@ pub mod bv2_impl {
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
             // Read now, once and in full (a pipe will do): a path that is wrong fails the build here, before anything
             // is parsed, not after the link.
-            if this.transpiler.options.bytecode
-                && this.transpiler.options.compile_mode.is_executable()
-            {
+            if this.reads_bytecode_order_files() {
                 let paths = this
                     .transpiler
                     .options
@@ -4514,7 +4529,7 @@ pub mod bv2_impl {
                     input_paths: if this.linker.writes_output_files_to_disk() {
                         Default::default()
                     } else {
-                        crate::input_path_set::InputPathSet::from_graph(&this.graph, this.file_map)
+                        this.input_paths()
                     },
                 })
             })();
@@ -5715,8 +5730,7 @@ pub mod bv2_impl {
 
             // Without an executable to assemble, the linker checked and wrote everything, the metafile paths included.
             let input_paths = if self.linker.options.compile_mode.is_executable() {
-                let mut input_paths =
-                    crate::input_path_set::InputPathSet::from_graph(&self.graph, self.file_map);
+                let mut input_paths = self.input_paths();
                 for root in self.transpiler.options.caller_input_roots.iter() {
                     input_paths.add_root(root);
                 }

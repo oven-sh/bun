@@ -1059,6 +1059,101 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     expect(exitCode).toBe(0);
   });
 
+  // A --bytecode-order file is read by the build and is not in the module graph.
+  const orderFile = `v2\nF 0123456789abcdef\n`;
+
+  // On Windows the executable gets an .exe suffix, so it cannot collide with the order file.
+  test.skipIf(isWindows)("--compile with an --outfile that names a --bytecode-order file", async () => {
+    using dir = tempDir("build-overwrite-compile-order", {
+      "app.js": `console.log("APP");\n`,
+      "app.order": orderFile,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--bytecode",
+        "--bytecode-order=app.order",
+        "./app.js",
+        "--outfile",
+        "app.order",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Refusing to overwrite input file "app.order"');
+    expect(stdout).toBe("");
+    expect(await Bun.file(path.join(String(dir), "app.order")).text()).toBe(orderFile);
+    expect(exitCode).toBe(1);
+  });
+
+  test("--compile with a --metafile that names a --bytecode-order file", async () => {
+    using dir = tempDir("build-overwrite-compile-order-metafile", {
+      "app.js": `console.log("APP");\n`,
+      "app.order": orderFile,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        "--bytecode",
+        "--bytecode-order=app.order",
+        "./app.js",
+        "--metafile=app.order",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Refusing to overwrite input file "app.order"');
+    expect(stdout).toBe("");
+    expect(await Bun.file(path.join(String(dir), "app.order")).text()).toBe(orderFile);
+    expect(exitCode).toBe(1);
+  });
+
+  test("Bun.build with compile.bytecodeOrder and a metafile path that names the order file", async () => {
+    using dir = tempDir("build-api-overwrite-compile-order-metafile", {
+      "app.js": `console.log("APP");\n`,
+      "app.order": orderFile,
+      "run.js": `
+        const result = await Bun.build({
+          entrypoints: ["./app.js"],
+          bytecode: true,
+          compile: { outfile: "app", bytecodeOrder: "app.order" },
+          outdir: "./out",
+          metafile: "../app.order",
+          throw: false,
+        });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(l => l.message) }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The order file names no function of this build, which is a warning in the logs.
+    expect(JSON.parse(stdout)).toEqual({
+      success: false,
+      logs: expect.arrayContaining([expect.stringContaining('Refusing to overwrite input file "app.order"')]),
+    });
+    expect(await Bun.file(path.join(String(dir), "app.order")).text()).toBe(orderFile);
+    expect(exitCode).toBe(0);
+  });
+
   test("--metafile that names an input", async () => {
     using dir = tempDir("build-overwrite-metafile", {
       "a.js": `import data from "./data.json";\nconsole.log(data);\n`,

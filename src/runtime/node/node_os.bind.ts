@@ -21,7 +21,7 @@ export const loadavg = b.fn({ returns: b.array(b.f64) });
 export const networkInterfaces = b.fn({ returns: b.any, capability: "js", throws: true });
 export const release = b.fn({ returns: b.string });
 export const totalmem = b.fn({ returns: b.u64 });
-export const uptime = b.fn({ returns: b.f64, capability: "js", throws: true });
+export const uptime = b.fn({ returns: b.f64, throws: true });
 
 export const UserInfoOptions = b.dictionary(
   { encoding: b.string.loose.utf8.default("") },

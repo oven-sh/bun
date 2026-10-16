@@ -87,11 +87,6 @@ struct IDLConversionContextBase : Detail::IDLConversionContextMarker {
         derived().throwTypeMustBe(global, scope, "an object"_s);
     }
 
-    void throwNotBufferSource(JSC::JSGlobalObject& global, JSC::ThrowScope& scope)
-    {
-        derived().throwTypeMustBe(global, scope, "an ArrayBuffer or TypedArray"_s);
-    }
-
     void throwNotBlob(JSC::JSGlobalObject& global, JSC::ThrowScope& scope)
     {
         derived().throwTypeMustBe(global, scope, "a Blob"_s);

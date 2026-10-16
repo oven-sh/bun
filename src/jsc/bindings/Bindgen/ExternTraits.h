@@ -7,7 +7,7 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/RefPtr.h>
-#include "JSStringUTF8View.h"
+#include "Bindgen/JSStringUTF8View.h"
 
 namespace Bun::Bindgen {
 

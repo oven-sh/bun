@@ -184,14 +184,18 @@ export const TestInner = b.dictionary({
   name: b.string.utf8.default("inner"),
 });
 export const TestChoice = b.union({ none: b.null, flag: b.bool });
+/** A string is a color. What `bytes` refuses, and everything else, is kept as it is. */
+export const TestColorOrRest = b.union({ color: TestColor, bytes: b.bufferSource, rest: b.any });
 export const TestOuter = b.dictionary({
   inner: TestInner.nullable,
   value: b.any,
   choice: TestChoice,
+  rest: TestColorOrRest,
   counter: TestCounter.nullable,
 });
 /** What a default written in the schema gives each member, the nested ones included. */
 export const describeDefaults = b.fn({
   args: { options: TestOuter.default({ inner: {} }) },
   returns: b.string.utf8,
+  capability: "heap",
 });

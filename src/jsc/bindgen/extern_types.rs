@@ -2,6 +2,7 @@
 
 use core::ffi::{c_uint, c_void};
 
+use super::JsHeap;
 use crate::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 
 /// `WTF::StringImpl*` carrying one ref, or null.
@@ -91,21 +92,21 @@ pub struct ExternBytes {
 }
 impl ExternBytes {
     /// # Safety
-    /// `'a` ends before the host function that passed this returns.
+    /// The host function that passed this is the call `heap` belongs to.
     #[inline(always)]
-    pub unsafe fn get<'a>(self) -> &'a [u8] {
+    pub unsafe fn get<'a>(self, _: &JsHeap<'a>) -> &'a [u8] {
         // SAFETY: C++ never passes a null pointer for a present value.
         unsafe { core::slice::from_raw_parts(self.data, self.length) }
     }
     /// # Safety
     /// As [`get`](Self::get).
     #[inline(always)]
-    pub unsafe fn get_optional<'a>(self) -> Option<&'a [u8]> {
+    pub unsafe fn get_optional<'a>(self, heap: &JsHeap<'a>) -> Option<&'a [u8]> {
         if self.data.is_null() {
             return None;
         }
         // SAFETY: forwarded.
-        Some(unsafe { self.get() })
+        Some(unsafe { self.get(heap) })
     }
 }
 

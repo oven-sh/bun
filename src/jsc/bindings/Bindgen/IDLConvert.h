@@ -25,6 +25,11 @@ struct IDLHumanReadableName<Bindgen::IDLArray<IDL>> : BaseIDLHumanReadableName {
         = Bun::concatCStrings("array of ", Detail::nestedHumanReadableName<IDL>());
 };
 
+// A union with this alternative takes every value, so nothing reports it.
+template<> struct IDLHumanReadableName<Bindgen::IDLRawAny> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("any value");
+};
+
 template<> struct IDLHumanReadableName<Bindgen::IDLArrayBufferRef> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer");
 };
@@ -37,7 +42,6 @@ template<> struct IDLHumanReadableName<Bindgen::IDLStrictUTF8String> : BaseIDLHu
     static constexpr auto humanReadableName = std::to_array("string");
 };
 template<> struct IDLHumanReadableName<Bindgen::IDLLooseUTF8String> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
-template<> struct IDLHumanReadableName<Bindgen::IDLStrictStringOrStringObject> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
 template<> struct IDLHumanReadableName<Bindgen::IDLBufferSourceBytes> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
 };
@@ -310,6 +314,6 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLArrayBufferRef>
         JSC::ThrowScope& scope,
         Ctx& ctx)
     {
-        ctx.throwNotBufferSource(globalObject, scope);
+        Bun::Bindgen::throwNotUnsharedBufferSource(globalObject, scope, ctx);
     }
 };

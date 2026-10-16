@@ -405,7 +405,7 @@ pub mod btjs;
 #[path = "CppTask.rs"]
 pub mod cpp_task;
 #[path = "fmt_jsc.rs"]
-pub mod fmt_jsc;
+pub(crate) mod fmt_jsc;
 #[path = "HTTPServerAgent.rs"]
 pub mod http_server_agent;
 #[path = "JSSecrets.rs"]
@@ -460,7 +460,7 @@ pub mod async_module;
 pub mod bindgen;
 #[cfg(debug_assertions)]
 #[path = "bindgen_test.rs"]
-pub mod bindgen_test;
+pub(crate) mod bindgen_test;
 #[path = "BunCPUProfiler.rs"]
 pub mod bun_cpu_profiler;
 #[path = "BunHeapProfiler.rs"]
@@ -1581,4 +1581,4 @@ unsafe extern "C" {
 pub mod generated;
 
 #[path = "generated_bindgen.rs"]
-pub mod generated_bindgen;
+pub(crate) mod generated_bindgen;

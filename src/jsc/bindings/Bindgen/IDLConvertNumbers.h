@@ -1,7 +1,8 @@
 #pragma once
 #include "Bindgen/IDLTypes.h"
 #include "BunIDLConvertBase.h"
-#include <JavaScriptCore/JSBigInt.h>
+#include <JavaScriptCore/JSBigIntInlines.h>
+#include <JavaScriptCore/MathCommon.h>
 #include <limits>
 #include <type_traits>
 #include <utility>
@@ -71,7 +72,6 @@ private:
     {
         static constexpr auto minInt = std::numeric_limits<T>::min();
         static constexpr auto maxInt = std::numeric_limits<T>::max();
-        static constexpr auto maxSafeInteger = 9007199254740991LL;
 
         auto& vm = JSC::getVM(&globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -102,7 +102,7 @@ private:
 
         double number = value.asNumber();
         // Written so that NaN is caught here: casting it to an integer is undefined.
-        if (!(number <= maxSafeInteger && number >= -maxSafeInteger)) {
+        if (!(number <= JSC::maxSafeInteger() && number >= JSC::minSafeInteger())) {
             ctx.throwNumberNotInteger(globalObject, scope, number);
             return {};
         }
@@ -111,7 +111,7 @@ private:
             ctx.throwNumberNotInteger(globalObject, scope, number);
             return {};
         }
-        if constexpr (maxInt >= static_cast<std::uint64_t>(maxSafeInteger)) {
+        if constexpr (maxInt >= JSC::maxSafeIntegerAsUInt64()) {
             if (std::signed_integral<T> || intVal >= 0) {
                 return static_cast<T>(intVal);
             }

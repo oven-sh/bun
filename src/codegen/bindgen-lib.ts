@@ -41,7 +41,7 @@ export const string = new StringType();
 /** The JS value itself, as a `JsLocal<'a>`. */
 export const any = new AnyType();
 
-/** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, ArrayBuffer>`. `.bytes`, `.arrayBuffer`. */
+/** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.bytes`, `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
 
 /** The native `Blob` behind a JS `Blob`. */
@@ -51,6 +51,7 @@ export const blob = new RefType(
   "bun_jsc::webcore_types::Blob",
   "Bindgen/IDLConvertBlob.h",
   [{ cpp: "WebCore::JSBlob" }],
+  "detached Blobs",
 );
 
 const null_ = new UnitType("null");

@@ -14,24 +14,35 @@ namespace Bun::Bindgen {
 template<typename Traits> class JSWrapper;
 }
 
+namespace JSC {
+namespace JSCastingHelpers {
+
 // A cell whose type is JSDOMWrapperType is a JSDestructibleObject, so its ClassInfo is in the cell: no Structure load.
 template<typename Traits>
-struct JSC::JSCastingHelpers::InheritsTraits<Bun::Bindgen::JSWrapper<Traits>> {
+struct InheritsTraits<Bun::Bindgen::JSWrapper<Traits>> {
     static constexpr std::optional<JSTypeRange> typeRange { std::nullopt };
     template<typename From>
     static inline bool inherits(From* from)
     {
-        return from->type() == static_cast<JSType>(WebCore::JSDOMWrapperType)
-            && uncheckedDowncast<const JSDestructibleObject>(from)->classInfo() == Bun::Bindgen::JSWrapper<Traits>::info();
+        using To = Bun::Bindgen::JSWrapper<Traits>;
+        if (from->type() != static_cast<JSType>(WebCore::JSDOMWrapperType)) {
+            ASSERT(!from->JSCell::inheritsSlow(To::info()));
+            return false;
+        }
+        const ClassInfo* classInfo = uncheckedDowncast<const JSDestructibleObject>(from)->classInfo();
+        ASSERT(classInfo == from->JSCell::classInfo());
+        return classInfo == To::info();
     }
 };
+
+} // namespace JSCastingHelpers
+} // namespace JSC
 
 namespace Bun::Bindgen {
 
 // One per class, defined by generated code.
 struct ClassDefinition {
     const JSC::ClassInfo* info;
-    JSC::Structure* (*createStructure)(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
     std::span<const JSC::HashTableValue> prototypeTableValues;
     std::span<const JSC::HashTableValue> constructorTableValues;
     // Properties a static table cannot describe (private names). May be null.
@@ -48,8 +59,6 @@ public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
-    // A payload is not one of a few sizes shared with other cells, so a precise-allocation tier buys nothing.
-    static constexpr uint8_t numberOfLowerTierPreciseCells = 0;
     static constexpr unsigned numberOfInternalFields = Traits::numberOfInternalFields;
 
     DECLARE_INFO;
@@ -71,11 +80,6 @@ public:
             nullptr);
     }
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(WebCore::JSDOMWrapperType), StructureFlags), info());
-    }
-
     // The payload is uninitialized: the caller writes it before anything else can run.
     static JSWrapper* create(JSC::VM& vm, JSC::Structure* structure)
     {
@@ -86,6 +90,7 @@ public:
 
     static void destroy(JSC::JSCell* cell)
     {
+        STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSWrapper);
         Traits::finalize(static_cast<JSWrapper*>(cell)->payload());
     }
 
@@ -94,7 +99,11 @@ public:
     static size_t allocationSize() { return offsetOfPayload() + Traits::payloadSize(); }
 
     void* payload() { return reinterpret_cast<uint8_t*>(this) + offsetOfPayload(); }
-    JSC::WriteBarrier<JSC::Unknown>& internalField(unsigned index) { return internalFields()[index]; }
+    JSC::WriteBarrier<JSC::Unknown>& internalField(unsigned index)
+    {
+        ASSERT(index < numberOfInternalFields);
+        return internalFields()[index];
+    }
     std::span<JSC::WriteBarrier<JSC::Unknown>, numberOfInternalFields> internalFields()
     {
         return std::span<JSC::WriteBarrier<JSC::Unknown>, numberOfInternalFields> { reinterpret_cast<JSC::WriteBarrier<JSC::Unknown>*>(reinterpret_cast<uint8_t*>(this) + offsetOfInternalFields()), numberOfInternalFields };
@@ -112,6 +121,8 @@ private:
                 field.setWithoutWriteBarrier(JSC::jsUndefined());
         }
     }
+
+    DECLARE_DEFAULT_FINISH_CREATION;
 };
 
 template<typename Traits>
@@ -121,8 +132,7 @@ void JSWrapper<Traits>::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSWrapper>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    for (auto& field : thisObject->internalFields())
-        visitor.append(field);
+    visitor.appendValues(thisObject->internalFields().data(), numberOfInternalFields);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<typename Traits>, JSWrapper<Traits>);

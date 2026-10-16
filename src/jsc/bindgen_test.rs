@@ -7,18 +7,18 @@ use crate::bindgen::{
     JsWrapperStrong, WithValue,
 };
 use crate::generated_bindgen::bindgen_test::{
-    TestAnything, TestChoice, TestColor, TestCounterClass, TestCounterInternalFields as _,
-    TestFailure, TestHolderClass, TestNames, TestOptions, TestOptionsEcho, TestOuter,
-    TestTokenClass, TestValue,
+    TestAnything, TestChoice, TestColor, TestColorOrRest, TestCounterClass,
+    TestCounterInternalFields as _, TestFailure, TestHolderClass, TestNames, TestOptions,
+    TestOptionsEcho, TestOuter, TestTokenClass, TestValue,
 };
 
 // This example should be kept in sync with bindgen's documentation
-pub fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
+pub(crate) fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
     a.checked_add(b)
         .ok_or_else(|| heap.error(format_args!("Integer overflow while adding")))
 }
 
-pub fn required_and_optional_arg(a: bool, b: Option<usize>, c: i32, d: Option<u8>) -> i32 {
+pub(crate) fn required_and_optional_arg(a: bool, b: Option<usize>, c: i32, d: Option<u8>) -> i32 {
     let Some(b_nonnull) = b else {
         return 123456i32
             .wrapping_add(c)
@@ -36,27 +36,27 @@ pub fn required_and_optional_arg(a: bool, b: Option<usize>, c: i32, d: Option<u8
     math_result
 }
 
-pub fn utf8_echo(text: &[u8]) -> &[u8] {
+pub(crate) fn utf8_echo(text: &[u8]) -> &[u8] {
     text
 }
 
-pub fn utf8_echo_loose(text: &[u8]) -> &[u8] {
+pub(crate) fn utf8_echo_loose(text: &[u8]) -> &[u8] {
     text
 }
 
-pub fn utf8_optional(text: Option<&[u8]>) -> Option<&[u8]> {
+pub(crate) fn utf8_optional(text: Option<&[u8]>) -> Option<&[u8]> {
     text
 }
 
-pub fn utf8_owned(text: bun_core::Utf8Bytes<'static>) -> bun_core::Utf8Bytes<'static> {
+pub(crate) fn utf8_owned(text: bun_core::Utf8Bytes<'static>) -> bun_core::Utf8Bytes<'static> {
     text
 }
 
-pub fn string_echo(text: bun_core::String) -> bun_core::String {
+pub(crate) fn string_echo(text: bun_core::String) -> bun_core::String {
     text
 }
 
-pub fn next_color(color: TestColor) -> TestColor {
+pub(crate) fn next_color(color: TestColor) -> TestColor {
     match color {
         TestColor::Red => TestColor::Green,
         TestColor::Green => TestColor::Blue,
@@ -64,7 +64,7 @@ pub fn next_color(color: TestColor) -> TestColor {
     }
 }
 
-pub fn options_echo<'a>(_: &JsHeap<'a>, options: TestOptions<'a>) -> TestOptionsEcho<'a> {
+pub(crate) fn options_echo<'a>(_: &JsHeap<'a>, options: TestOptions<'a>) -> TestOptionsEcho<'a> {
     TestOptionsEcho {
         count: options.count,
         flag: options.flag,
@@ -76,7 +76,7 @@ pub fn options_echo<'a>(_: &JsHeap<'a>, options: TestOptions<'a>) -> TestOptions
     }
 }
 
-pub fn describe_value(value: TestValue<'_>) -> Vec<u8> {
+pub(crate) fn describe_value(value: TestValue<'_>) -> Vec<u8> {
     match value {
         TestValue::Number(number) => format!("number {number}").into_bytes(),
         TestValue::Flag(flag) => format!("flag {flag}").into_bytes(),
@@ -85,7 +85,7 @@ pub fn describe_value(value: TestValue<'_>) -> Vec<u8> {
     }
 }
 
-pub fn describe_anything<'a>(cx: &mut JsScope<'a>, value: TestAnything<'a>) -> Vec<u8> {
+pub(crate) fn describe_anything<'a>(cx: &mut JsScope<'a>, value: TestAnything<'a>) -> Vec<u8> {
     match value {
         TestAnything::Nothing => b"nothing".to_vec(),
         TestAnything::Flag(flag) => format!("flag {flag}").into_bytes(),
@@ -110,7 +110,7 @@ pub fn describe_anything<'a>(cx: &mut JsScope<'a>, value: TestAnything<'a>) -> V
     }
 }
 
-pub fn describe_defaults(options: TestOuter<'_>) -> Vec<u8> {
+pub(crate) fn describe_defaults<'a>(heap: &JsHeap<'a>, options: TestOuter<'a>) -> Vec<u8> {
     let inner = match options.inner {
         Some(inner) => {
             let name = bstr::BStr::new(inner.name);
@@ -127,15 +127,22 @@ pub fn describe_defaults(options: TestOuter<'_>) -> Vec<u8> {
         TestChoice::None => "none".to_owned(),
         TestChoice::Flag(flag) => flag.to_string(),
     };
+    let rest = match options.rest {
+        TestColorOrRest::Color(color) => format!("{color:?}"),
+        TestColorOrRest::Bytes(bytes) => bytes.with_bytes(heap, |bytes| format!("{bytes:?}")),
+        TestColorOrRest::Rest(rest) if rest.is_undefined() => "undefined".to_owned(),
+        TestColorOrRest::Rest(_) => "given".to_owned(),
+    };
     let counter = options.counter.is_some();
-    format!("inner: {inner}; value: {value}; choice: {choice}; counter: {counter}").into_bytes()
+    format!("inner: {inner}; value: {value}; choice: {choice}; rest: {rest}; counter: {counter}")
+        .into_bytes()
 }
 
-pub fn overloaded_text_times(text: &[u8], times: u32) -> Vec<u8> {
+pub(crate) fn overloaded_text_times(text: &[u8], times: u32) -> Vec<u8> {
     [b"text times ", text.repeat(times as usize).as_slice()].concat()
 }
 
-pub fn overloaded_text_upper(text: &[u8], upper: bool) -> Vec<u8> {
+pub(crate) fn overloaded_text_upper(text: &[u8], upper: bool) -> Vec<u8> {
     let text = if upper {
         text.to_ascii_uppercase()
     } else {
@@ -144,19 +151,19 @@ pub fn overloaded_text_upper(text: &[u8], upper: bool) -> Vec<u8> {
     [b"text upper ", text.as_slice()].concat()
 }
 
-pub fn overloaded_two_numbers(a: f64, b: f64) -> Vec<u8> {
+pub(crate) fn overloaded_two_numbers(a: f64, b: f64) -> Vec<u8> {
     format!("two numbers {a} {b}").into_bytes()
 }
 
-pub fn overloaded_number(number: f64) -> Vec<u8> {
+pub(crate) fn overloaded_number(number: f64) -> Vec<u8> {
     format!("number {number}").into_bytes()
 }
 
-pub fn overloaded_list(list: Vec<f64>) -> Vec<u8> {
+pub(crate) fn overloaded_list(list: Vec<f64>) -> Vec<u8> {
     format!("list {:?}", list.into_boxed_slice()).into_bytes()
 }
 
-pub fn overloaded_counter<'a>(
+pub(crate) fn overloaded_counter<'a>(
     cx: &mut JsScope<'a>,
     counter: JsWrapper<'a, TestCounter>,
 ) -> Vec<u8> {
@@ -164,17 +171,17 @@ pub fn overloaded_counter<'a>(
     format!("counter {count}").into_bytes()
 }
 
-pub fn sum_array(numbers: Vec<i32>) -> f64 {
+pub(crate) fn sum_array(numbers: Vec<i32>) -> f64 {
     numbers
         .into_iter()
         .fold(0.0, |sum, number| sum + f64::from(number))
 }
 
-pub fn range(length: u32) -> core::ops::Range<u32> {
+pub(crate) fn range(length: u32) -> core::ops::Range<u32> {
     0..length
 }
 
-pub fn names(text: &[u8]) -> TestNames {
+pub(crate) fn names(text: &[u8]) -> TestNames {
     let all: Vec<Vec<u8>> = words(text).map(<[u8]>::to_vec).collect();
     TestNames {
         first: all.first().cloned().unwrap_or_default(),
@@ -183,7 +190,7 @@ pub fn names(text: &[u8]) -> TestNames {
     }
 }
 
-pub fn words(text: &[u8]) -> impl Iterator<Item = &[u8]> {
+pub(crate) fn words(text: &[u8]) -> impl Iterator<Item = &[u8]> {
     bun_core::strings::tokenize(text, b" ")
 }
 
@@ -191,19 +198,19 @@ fn sum(bytes: &[u8]) -> u32 {
     bytes.iter().map(|&byte| u32::from(byte)).sum()
 }
 
-pub fn sum_bytes(bytes: &[u8]) -> u32 {
+pub(crate) fn sum_bytes(bytes: &[u8]) -> u32 {
     sum(bytes)
 }
 
-pub fn sum_bytes_optional(bytes: Option<&[u8]>) -> Option<u32> {
+pub(crate) fn sum_bytes_optional(bytes: Option<&[u8]>) -> Option<u32> {
     bytes.map(sum)
 }
 
-pub fn sum_bytes_then_text(bytes: &[u8], text: &[u8]) -> u32 {
+pub(crate) fn sum_bytes_then_text(bytes: &[u8], text: &[u8]) -> u32 {
     sum(bytes) + sum(text)
 }
 
-pub fn sum_before_and_after_callback<'a>(
+pub(crate) fn sum_before_and_after_callback<'a>(
     cx: &mut JsScope<'a>,
     buffer: JsLocal<'a, BufferSource>,
     callback: JsLocal<'a>,
@@ -218,14 +225,14 @@ pub fn sum_before_and_after_callback<'a>(
     Ok([before, buffer.with_bytes(&cx.heap, sum)])
 }
 
-pub fn with_value_echo<'a>(_: &JsHeap<'a>, text: WithValue<'a, &'a [u8]>) -> JsLocal<'a> {
+pub(crate) fn with_value_echo<'a>(_: &JsHeap<'a>, text: WithValue<'a, &'a [u8]>) -> JsLocal<'a> {
     if text.converted.is_empty() {
         return JsLocal::UNDEFINED;
     }
     text.value
 }
 
-pub fn fail<'a>(
+pub(crate) fn fail<'a>(
     heap: &JsHeap<'a>,
     how: TestFailure,
     value: JsLocal<'a>,
@@ -243,7 +250,7 @@ pub fn fail<'a>(
 
 static ALIVE: AtomicUsize = AtomicUsize::new(0);
 
-pub struct TestCounter {
+pub(crate) struct TestCounter {
     count: i32,
     label: Vec<u8>,
 }
@@ -316,7 +323,7 @@ impl TestCounterClass for TestCounter {
     }
 
     fn starting<'a>(heap: &JsHeap<'a>, at: i32) -> JsWrapper<'a, Self> {
-        Self::new(at).to_js(heap)
+        Self::new(at).into_js(heap)
     }
 
     fn alive() -> usize {
@@ -324,7 +331,7 @@ impl TestCounterClass for TestCounter {
     }
 }
 
-pub struct TestHolder {
+pub(crate) struct TestHolder {
     counter: JsWrapperStrong<TestCounter>,
 }
 
@@ -345,7 +352,7 @@ impl TestHolderClass for TestHolder {
     }
 }
 
-pub struct TestToken {
+pub(crate) struct TestToken {
     id: u32,
 }
 
@@ -355,6 +362,6 @@ impl TestTokenClass for TestToken {
     }
 }
 
-pub fn make_token<'a>(heap: &JsHeap<'a>, id: u32) -> JsWrapper<'a, TestToken> {
-    TestToken { id }.to_js(heap)
+pub(crate) fn make_token<'a>(heap: &JsHeap<'a>, id: u32) -> JsWrapper<'a, TestToken> {
+    TestToken { id }.into_js(heap)
 }

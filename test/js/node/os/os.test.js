@@ -348,9 +348,16 @@ it("functions have Node's length", () => {
 
 it("userInfo ignores options that are not an object, like Node", () => {
   const info = os.userInfo();
-  for (const options of [undefined, null, 5, "utf8", true, Symbol("s"), [], ["utf8"], () => {}]) {
+  const encoding = {
+    get() {
+      throw new Error("encoding was read");
+    },
+  };
+  const callable = Object.defineProperty(() => {}, "encoding", encoding);
+  for (const options of [undefined, null, 5, "utf8", true, Symbol("s"), [], ["utf8"], callable]) {
     expect(os.userInfo(options)).toEqual(info);
   }
+  expect(() => os.userInfo(Object.defineProperty({}, "encoding", encoding))).toThrow("encoding was read");
 });
 
 it("setPriority with an undefined priority takes the first argument as the priority", () => {

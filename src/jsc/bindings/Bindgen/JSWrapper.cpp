@@ -7,6 +7,10 @@
 namespace Bun::Bindgen {
 using namespace JSC;
 
+// It shares a subspace with the constructors of `.classes.ts` classes.
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSClassConstructor, InternalFunction);
+STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSClassConstructor);
+
 const ClassInfo JSClassConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSClassConstructor) };
 
 static JSC_DECLARE_HOST_FUNCTION(callJSClassConstructor);
@@ -29,7 +33,9 @@ JSClassConstructor* JSClassConstructor::create(VM& vm, JSGlobalObject* globalObj
     auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
     auto* constructor = new (NotNull, allocateCell<JSClassConstructor>(vm)) JSClassConstructor(vm, structure, definition.construct);
     constructor->finishCreation(vm, definition.constructorLength, definition.info->className, PropertyAdditionMode::WithoutStructureTransition);
-    Bun::reifyStaticPropertyTable(vm, info(), definition.constructorTableValues, *constructor);
+    // Reifying makes the structure a dictionary, even for no properties.
+    if (!definition.constructorTableValues.empty())
+        Bun::reifyStaticPropertyTable(vm, info(), definition.constructorTableValues, *constructor);
     constructor->putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     return constructor;
 }
@@ -46,7 +52,7 @@ void setupClassStructure(LazyClassStructure::Initializer& init, unsigned classIn
         definition.finishPrototypeCreation(vm, init.global, prototype);
     Bun::putToStringTagWithoutTransition(vm, prototype, definition.info);
     init.setPrototype(prototype);
-    init.setStructure(definition.createStructure(vm, init.global, prototype));
+    init.setStructure(Bun::createClassStructure(vm, init.global, prototype, TypeInfo(static_cast<JSC::JSType>(WebCore::JSDOMWrapperType), JSDestructibleObject::StructureFlags), definition.info));
     if (definition.construct)
         init.setConstructor(JSClassConstructor::create(vm, init.global, definition, prototype));
 }
@@ -54,13 +60,13 @@ void setupClassStructure(LazyClassStructure::Initializer& init, unsigned classIn
 Structure* structureForClass(JSGlobalObject* globalObject, unsigned classIndex)
 {
     auto* global = defaultGlobalObject(globalObject);
-    return global->m_bindgenAdditions.m_classes[classIndex].getInitializedOnMainThread(global);
+    return global->m_bindgenAdditions.m_classes[classIndex].get(global);
 }
 
 JSObject* constructorForClass(JSGlobalObject* globalObject, unsigned classIndex)
 {
     auto* global = defaultGlobalObject(globalObject);
-    return global->m_bindgenAdditions.m_classes[classIndex].constructorInitializedOnMainThread(global);
+    return global->m_bindgenAdditions.m_classes[classIndex].constructor(global);
 }
 
 Structure* structureForNewTarget(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned classIndex)

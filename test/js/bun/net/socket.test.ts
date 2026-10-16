@@ -6553,6 +6553,8 @@ it("socket and tls options are not read from Object.prototype", async () => {
     hostname: "256.256.256.256",
     unix: "/nonexistent/socket",
     tls: true,
+    passphrase: 5,
+    ca: 5,
   };
   Object.assign(Object.prototype, polluted);
   try {
@@ -6562,6 +6564,8 @@ it("socket and tls options are not read from Object.prototype", async () => {
     using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
     expect(server.port).toBeGreaterThan(1);
     expect(server.hostname).toBe("127.0.0.1");
+    using secure = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { ...tls } });
+    expect(secure.port).toBeGreaterThan(1);
   } finally {
     for (const name of Object.keys(polluted)) delete (Object.prototype as any)[name];
   }

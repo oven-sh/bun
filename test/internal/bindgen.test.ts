@@ -67,6 +67,37 @@ it("optional arguments / default arguments", () => {
   expect(bindgen.requiredAndOptionalArg(true, null, 5, 2)).toBe(123463);
 });
 
+it("length counts the arguments up to the last that is not optional, or is what the schema says", () => {
+  expect(bindgen.utf8EchoLoose.length).toBe(1);
+  expect(bindgen.utf8Optional.length).toBe(0);
+  expect(bindgen.utf8Echo.length).toBe(3);
+  // These take undefined, and are still arguments a caller writes.
+  expect(bindgen.describeAnything.length).toBe(1);
+  expect(bindgen.sumBeforeAndAfterCallback.length).toBe(2);
+});
+
+itAlways("mistakes in a schema are errors when it loads", () => {
+  expect(() => b.i32.enforceRange(0, 5).loose).toThrow(".loose is another way");
+  expect(() => b.i32.validateInteger().wrap).toThrow(".wrap is another way");
+  expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
+  expect(() => b.array(b.null)).toThrow("an array of nothing but null");
+  expect(() => b.dictionary({ fooBar: b.bool, foo_bar: b.bool })).toThrow("two fields are both foo_bar");
+  expect(() => b.union({ "a-b": b.bool })).toThrow("an alternative is named in camelCase");
+  expect(() => b.enumeration(["self"])).toThrow("Self cannot name anything in Rust");
+  expect(() => b.fn({ args: { fooBar: b.bool, foo_bar: b.bool } })).toThrow("two arguments are both foo_bar");
+  expect(() => b.fn({ length: 1.5 })).toThrow("1.5 is not a count");
+  expect(() => b.overloads({ args: { a: b.bool }, length: 1 }, { args: { a: b.f64 }, length: 2 })).toThrow(
+    "length is given once",
+  );
+  const label = { getter: b.string, setter: true } as const;
+  expect(() => b.class({ rustPath: "T", proto: { label, setLabel: {} } })).toThrow("are both set_label");
+  b.class({ rustPath: "T", proto: { label: { getter: b.string }, setLabel: {}, getLabel: {} } });
+  expect(() => b.class({ rustPath: "T", proto: { value: { getter: b.any } } })).toThrow('takes capability: "heap"');
+  expect(() => b.class({ rustPath: "T", internalFields: ["a", "a"] })).toThrow("two internal fields are both a");
+  // What takes undefined can come before what does not.
+  b.fn({ args: { encoding: b.string.nullable, callback: b.any, length: b.f64 } });
+});
+
 it("custom enforceRange boundaries", () => {
   expect(bindgen.requiredAndOptionalArg(false, 0, 5)).toBe(5);
   expect(() => bindgen.requiredAndOptionalArg(false, 0, -1)).toThrow("Value -1 is outside the range [0, 100]");
@@ -165,7 +196,7 @@ describe("strings", () => {
     expect(bindgen.utf8EchoLoose(12)).toBe("12");
     expect(bindgen.utf8EchoLoose(null)).toBe("null");
     expect(bindgen.utf8EchoLoose({ toString: () => "custom" })).toBe("custom");
-    expect(() => bindgen.utf8EchoLoose(Symbol("s"))).toThrow(TypeError);
+    expect(() => bindgen.utf8EchoLoose(Symbol("s"))).toThrow(new TypeError("Cannot convert a symbol to a string"));
     expect(() =>
       bindgen.utf8EchoLoose({
         toString() {
@@ -180,12 +211,6 @@ describe("strings", () => {
     expect(bindgen.utf8Optional(undefined)).toBe(null);
     expect(bindgen.utf8Optional()).toBe(null);
     expect(bindgen.utf8Optional("")).toBe("");
-  });
-
-  it("length is the number of required arguments, or what the schema says", () => {
-    expect(bindgen.utf8EchoLoose.length).toBe(1);
-    expect(bindgen.utf8Optional.length).toBe(0);
-    expect(bindgen.utf8Echo.length).toBe(3);
   });
 
   it("an argument that was not passed is undefined", () => {
@@ -207,8 +232,13 @@ describe("enumerations", () => {
   });
 
   it("rejects anything else", () => {
-    for (const value of ["Red", "", "purple", 0, null, undefined, {}]) {
-      expect(() => bindgen.nextColor(value)).toThrow(TypeError);
+    const invalid = (message: string) =>
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+    for (const value of ["Red", "", "purple"]) {
+      expect(() => bindgen.nextColor(value)).toThrow(invalid('color must be "red", "green", or "blue"'));
+    }
+    for (const value of [0, null, undefined, {}]) {
+      expect(() => bindgen.nextColor(value)).toThrow(invalid("color must be a string"));
     }
   });
 });
@@ -246,19 +276,22 @@ describe("dictionaries", () => {
   });
 
   it("a default written in the schema reaches every member, the nested ones included", () => {
-    const defaults = "inner: a=true b=7 name=inner; value: undefined; choice: none; counter: false";
+    const defaults = "inner: a=true b=7 name=inner; value: undefined; choice: none; rest: undefined; counter: false";
     expect(bindgen.describeDefaults()).toBe(defaults);
     expect(bindgen.describeDefaults(undefined)).toBe(defaults);
     expect(bindgen.describeDefaults({ inner: {} })).toBe(defaults);
-    expect(bindgen.describeDefaults({})).toBe("inner: none; value: undefined; choice: none; counter: false");
+    expect(bindgen.describeDefaults({})).toBe(
+      "inner: none; value: undefined; choice: none; rest: undefined; counter: false",
+    );
     expect(
       bindgen.describeDefaults({
         inner: { a: false, name: "n" },
         value: null,
         choice: true,
+        rest: "lime",
         counter: new (bindgen as any).TestCounter(),
       }),
-    ).toBe("inner: a=false b=7 name=n; value: given; choice: true; counter: true");
+    ).toBe("inner: a=false b=7 name=n; value: given; choice: true; rest: Green; counter: true");
   });
 
   it("a member that is absent is absent, whatever was on the stack before", () => {
@@ -513,9 +546,11 @@ describe("unions", () => {
 
   it("rejects what fits none", () => {
     for (const value of [null, undefined, {}, Symbol("s"), 1n]) {
-      expect(() => bindgen.describeValue(value)).toThrow(TypeError);
+      expect(() => bindgen.describeValue(value)).toThrow(
+        "value must be of type number, boolean, string, or array of integer",
+      );
     }
-    expect(() => bindgen.describeValue(["not a number"])).toThrow(TypeError);
+    expect(() => bindgen.describeValue(["not a number"])).toThrow("element of value must be a number");
   });
 
   it("sends each kind of value to the alternative that takes it", () => {
@@ -606,6 +641,14 @@ describe("unions", () => {
     );
   });
 
+  it("an enumeration takes strings, and b.any what nothing before it took", () => {
+    const rest = (value: unknown) => bindgen.describeDefaults({ rest: value }).match(/rest: (.*);/)![1];
+    expect(rest("blue")).toBe("Blue");
+    expect(() => rest("purple")).toThrow('TestOuter.rest must be "red", "green", or "blue"');
+    expect(rest(new Uint8Array([1, 2]))).toBe("[1, 2]");
+    for (const value of [new SharedArrayBuffer(2), null, 5, {}, new String("blue")]) expect(rest(value)).toBe("given");
+  });
+
   itAlways("an alternative that cannot be chosen is an error in the schema", () => {
     expect(() => b.union({ anything: b.any, text: b.string })).toThrow("text is never chosen");
     expect(() => b.union({ text: b.string.loose, flag: b.bool })).toThrow("flag is never chosen");
@@ -614,8 +657,16 @@ describe("unions", () => {
     expect(() => b.union({ none: b.null, inner: b.union({ text: b.string }) })).toThrow("list the alternatives");
     expect(() => b.union({ text: b.string.nullable, flag: b.bool })).toThrow("add b.null as an alternative");
     expect(() => b.union({ tag: b.bool, text: b.string })).toThrow("has a member of that name");
-    // What one refuses, the next can take.
-    b.union({ bytes: b.bufferSource, reference: b.bufferSource.arrayBuffer });
+    const mode = b.enumeration(["on", "off"]);
+    expect(() => b.union({ text: b.string, mode })).toThrow("mode is never chosen");
+    b.union({ mode, options: b.dictionary({ flag: b.bool }) });
+    // What one refuses, the next can take, unless it refuses the same.
+    b.union({ bytes: b.bufferSource, rest: b.any });
+    expect(() => b.union({ bytes: b.bufferSource, reference: b.bufferSource.arrayBuffer })).toThrow(
+      "reference is never chosen",
+    );
+    expect(() => b.union({ one: b.blob, other: b.blob })).toThrow("other is never chosen");
+    expect(() => b.union({ none: b.null, flag: b.bool }).nullable).toThrow("already takes undefined");
     b.union({ text: b.string, boxed: b.string.utf8 });
   });
 });
@@ -679,8 +730,8 @@ describe("arrays", () => {
     expect(bindgen.sumArray([1, 2, 3])).toBe(6);
     expect(bindgen.sumArray(Array.from({ length: 1000 }, (_, i) => i))).toBe(499500);
     expect(() => bindgen.sumArray(new Set([4, 5]))).toThrow("numbers must be an array of integer");
-    expect(() => bindgen.sumArray([1, "2"])).toThrow(TypeError);
-    expect(() => bindgen.sumArray(5)).toThrow(TypeError);
+    expect(() => bindgen.sumArray([1, "2"])).toThrow("element of numbers must be a number");
+    expect(() => bindgen.sumArray(5)).toThrow("numbers must be an array of integer");
   });
 
   it("out", () => {
@@ -730,7 +781,9 @@ describe("buffers", () => {
       expect(() => bindgen.sumBytes(value)).toThrow(
         "bytes must be an ArrayBuffer or ArrayBufferView that is not shared",
       );
-      expect(() => bindgen.sumBeforeAndAfterCallback(value, () => {})).toThrow(TypeError);
+      expect(() => bindgen.sumBeforeAndAfterCallback(value, () => {})).toThrow(
+        "buffer must be an ArrayBuffer or ArrayBufferView that is not shared",
+      );
     }
   });
 
@@ -846,7 +899,7 @@ describe("classes", () => {
   it("a constructor that throws makes nothing", () => {
     const before = TestCounter.alive();
     expect(() => new TestCounter(-1)).toThrow(new RangeError("start must not be negative"));
-    expect(() => new TestCounter("1")).toThrow(TypeError);
+    expect(() => new TestCounter("1")).toThrow("start must be a number");
     // A collection in between can only lower it.
     expect(TestCounter.alive()).toBeLessThanOrEqual(before);
   });
@@ -863,7 +916,7 @@ describe("classes", () => {
     expect(() => {
       "use strict";
       counter.count = 1;
-    }).toThrow(TypeError);
+    }).toThrow(new TypeError("Attempted to assign to readonly property."));
   });
 
   it("a cached getter is computed once per object", () => {
@@ -895,12 +948,22 @@ describe("classes", () => {
       new Headers(),
       10n ** 30n,
     ]) {
-      expect(() => increment.call(receiver)).toThrow(TypeError);
-      expect(() => count.call(receiver)).toThrow(TypeError);
-      expect(() => setLabel.call(receiver, "x")).toThrow(TypeError);
+      expect(() => increment.call(receiver)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_THIS",
+          message: expect.stringStartingWith("Expected this to be instanceof TestCounter"),
+        }),
+      );
+      expect(() => count.call(receiver)).toThrow(
+        new TypeError("The TestCounter.count getter can only be used on instances of TestCounter"),
+      );
+      expect(() => setLabel.call(receiver, "x")).toThrow(
+        new TypeError("The TestCounter.label setter can only be used on instances of TestCounter"),
+      );
     }
     expect(() => new TestCounter().plus({})).toThrow("other must be an instance of TestCounter");
-    expect(() => new TestCounter().plus(new Bun.Glob("*"))).toThrow(TypeError);
+    expect(() => new TestCounter().plus(new Bun.Glob("*"))).toThrow("other must be an instance of TestCounter");
   });
 
   it("can be subclassed and made with Reflect.construct", () => {

@@ -31,18 +31,19 @@ Structure* createObjectStructure(VM& vm, JSGlobalObject* globalObject, unsigned 
 extern "C" EncodedJSValue Bun__Bindgen__createObject(JSGlobalObject* globalObject, unsigned structureIndex, const EncodedJSValue* values, size_t count)
 {
     VM& vm = getVM(globalObject);
+    auto* global = defaultGlobalObject(globalObject);
     ASSERT(count == Tables::objectStructures[structureIndex].memberCount);
     bool hasEveryMember = true;
     for (size_t i = 0; i < count; ++i)
         hasEveryMember &= !!values[i];
     if (hasEveryMember) [[likely]] {
-        JSObject* object = constructEmptyObject(vm, defaultGlobalObject(globalObject)->m_bindgenAdditions.m_objectStructures[structureIndex].getInitializedOnMainThread(globalObject));
+        JSObject* object = constructEmptyObject(vm, global->m_bindgenAdditions.m_objectStructures[structureIndex].get(global));
         for (size_t i = 0; i < count; ++i)
             object->putDirectOffset(vm, static_cast<PropertyOffset>(i), JSValue::decode(values[i]));
         return JSValue::encode(object);
     }
     const Identifier* memberNames = schemaStrings(vm).memberNames(Tables::objectStructures[structureIndex].firstMemberNameIndex, count);
-    JSObject* object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
+    JSObject* object = constructEmptyObject(global, global->objectPrototype(), count);
     for (size_t i = 0; i < count; ++i) {
         if (values[i])
             object->putDirect(vm, memberNames[i], JSValue::decode(values[i]));

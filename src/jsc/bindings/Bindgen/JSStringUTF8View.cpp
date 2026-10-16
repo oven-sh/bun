@@ -1,6 +1,7 @@
 #include "root.h"
 #include "Bindgen/JSStringUTF8View.h"
 #include <wtf/SIMDUTF.h>
+#include <wtf/unicode/UTF8Conversion.h>
 
 namespace Bun::Bindgen {
 using namespace JSC;
@@ -25,9 +26,8 @@ bool JSStringUTF8View::convert()
         return true;
     }
     // simdutf refuses unpaired surrogates; each becomes U+FFFD.
-    auto lenient = view.utf8(WTF::ConversionMode::StrictConversionReplacingUnpairedSurrogatesWithFFFD);
-    m_converted.shrink(0);
-    return m_converted.tryAppend(byteCast<uint8_t>(lenient.span()));
+    m_converted.shrink(WTF::Unicode::convertReplacingInvalidSequences(span, byteCast<char8_t>(m_converted.mutableSpan())).buffer.size());
+    return true;
 }
 
 }

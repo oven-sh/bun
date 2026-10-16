@@ -6,13 +6,13 @@ use crate::JsError;
 use bun_core::fmt;
 use bun_core::{MutableString, String};
 
-pub mod js_bindings {
+pub(crate) mod js_bindings {
     use super::*;
 
     use crate::generated_bindgen::fmt_jsc::Formatter;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn fmt_string(code: &[u8], formatter_id: Formatter) -> Result<String, JsError> {
+    pub(crate) fn fmt_string(code: &[u8], formatter_id: Formatter) -> Result<String, JsError> {
         let mut buffer = MutableString::init_empty();
         let writer = buffer.writer();
 

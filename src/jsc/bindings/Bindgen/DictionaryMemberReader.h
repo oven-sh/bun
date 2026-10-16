@@ -20,18 +20,6 @@ public:
     NEVER_INLINE JSC::JSValue get(unsigned index);
 
 private:
-    // `get` stops before Object.prototype. Asked per member: converting one can run JavaScript.
-    ALWAYS_INLINE bool canSkipPrototypeChain() const
-    {
-        if (m_object->type() != JSC::FinalObjectType)
-            return false;
-        JSC::Structure* structure = m_object->structure();
-        if (structure->hasPolyProto())
-            return false;
-        JSC::JSValue prototype = structure->storedPrototype();
-        return prototype == m_globalObject->objectPrototype() || prototype.isNull();
-    }
-
     JSC::VM& m_vm;
     JSC::JSGlobalObject* m_globalObject;
     JSC::JSObject* m_object;

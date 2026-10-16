@@ -1318,28 +1318,25 @@ mod _impl {
         }
     }
 
-    pub(crate) fn uptime(cx: &mut JsScope<'_>) -> JsResult<f64> {
-        let global = cx.global();
+    pub(crate) fn uptime() -> Result<f64, Box<SystemError>> {
         #[cfg(windows)]
         {
             let mut uptime_value: f64 = 0.0;
             // SAFETY: valid out-pointer
             let err = unsafe { libuv::uv_uptime(&mut uptime_value) };
             if err != 0 {
-                let sys_err = SystemError {
+                return Err(Box::new(SystemError {
                     message: BunString::static_("failed to get system uptime").into(),
                     code: BunString::static_("ERR_SYSTEM_ERROR").into(),
                     errno: err,
                     syscall: BunString::static_("uv_uptime").into(),
                     ..Default::default()
-                };
-                return Err(global.throw_value(sys_err.to_error_instance(global)));
+                }));
             }
             return Ok(uptime_value);
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
-            let _ = global;
             let mut boot_time: bun_sys::posix::timeval = bun_core::ffi::zeroed();
             if bun_sys::posix::sysctl_read(c"kern.boottime", &mut boot_time).is_err() {
                 return Ok(0.0);
@@ -1348,7 +1345,6 @@ mod _impl {
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let _ = global;
             if let Ok(info) = bun_sys::posix::sysinfo() {
                 return Ok(info.uptime as f64);
             }

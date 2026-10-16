@@ -78,7 +78,8 @@ impl<'a> JsHeap<'a> {
 
 impl<'a> JsScope<'a> {
     /// # Safety
-    /// `global` is this thread's live global object and the caller was entered by the engine or the event loop.
+    /// `global` is this thread's live global object, JavaScript may run here (the engine or the event loop entered the
+    /// caller, and not to finalize or visit a cell), and nothing borrowed through another `JsScope` is still in use.
     #[inline(always)]
     pub unsafe fn with<R>(
         global: *mut JSGlobalObject,
@@ -179,6 +180,18 @@ impl<'a> IntoError<'a> for bun_sys::Error {
         Error::unthrown(crate::SysErrorJsc::to_js(&self, heap.global()))
     }
 }
+impl<'a> IntoError<'a> for crate::SystemError {
+    #[cold]
+    fn into_error(self, heap: &JsHeap<'a>) -> Error<'a> {
+        Error::unthrown(self.to_error_instance(heap.global()))
+    }
+}
+impl<'a, E: IntoError<'a>> IntoError<'a> for Box<E> {
+    #[cold]
+    fn into_error(self, heap: &JsHeap<'a>) -> Error<'a> {
+        (*self).into_error(heap)
+    }
+}
 impl<'a> IntoError<'a> for core::convert::Infallible {
     fn into_error(self, _: &JsHeap<'a>) -> Error<'a> {
         match self {}
@@ -210,10 +223,10 @@ impl<'a, T> JsLocal<'a, T> {
     }
 
     /// # Safety
-    /// `value` is a live, non-empty `T` belonging to the call `'a`.
+    /// `value` is a non-empty `T` that something holds for the call `heap` belongs to.
     #[doc(hidden)]
     #[inline(always)]
-    pub unsafe fn from_extern(value: JSValue) -> Self {
+    pub unsafe fn from_extern(value: JSValue, _: &JsHeap<'a>) -> Self {
         Self::from_raw(value)
     }
 
@@ -238,7 +251,7 @@ impl<'a> JsLocal<'a> {
     pub const UNDEFINED: Self = JsLocal(JSValue::UNDEFINED, PhantomData, PhantomData);
     pub const NULL: Self = JsLocal(JSValue::NULL, PhantomData, PhantomData);
 
-    /// `value` is alive now, so it is for the rest of the call that `heap` belongs to.
+    /// Where a [`JSValue`] of the older API comes in: one this call was given or made, not one kept from an earlier call.
     #[inline(always)]
     pub fn new(_: &JsHeap<'a>, value: JSValue) -> Self {
         debug_assert!(!value.is_empty());
@@ -312,7 +325,7 @@ pub unsafe trait JsPayload: Sized + 'static {
 
     /// A new JS object that owns `self`.
     #[inline]
-    fn to_js<'a>(self, heap: &JsHeap<'a>) -> JsWrapper<'a, Self> {
+    fn into_js<'a>(self, heap: &JsHeap<'a>) -> JsWrapper<'a, Self> {
         // SAFETY: a null structure is always valid.
         unsafe { JsWrapper::create_with_structure(heap, core::ptr::null_mut(), self) }
     }
@@ -335,10 +348,10 @@ impl<T: JsPayload> Copy for JsWrapper<'_, T> {}
 
 impl<'a, T: JsPayload> JsWrapper<'a, T> {
     /// # Safety
-    /// `cell` is a live wrapper of `T` belonging to the call `'a`.
+    /// `cell` is a wrapper of `T` that something holds for the call `heap` belongs to.
     #[doc(hidden)]
     #[inline(always)]
-    pub unsafe fn from_extern(cell: NonNull<c_void>) -> Self {
+    pub unsafe fn from_extern(cell: NonNull<c_void>, _: &JsHeap<'a>) -> Self {
         JsWrapper(cell, PhantomData, PhantomData)
     }
 
@@ -353,7 +366,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     ) -> Self {
         // SAFETY: nothing runs between the allocation and the write, which cannot panic.
         unsafe {
-            let this = Self::from_extern(T::create_cell(heap.global_ptr(), structure));
+            let this = Self::from_extern(T::create_cell(heap.global_ptr(), structure), heap);
             this.payload().write(payload);
             this
         }
@@ -391,7 +404,7 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
     /// Lends the payload. `f` cannot run JavaScript: that takes the `&mut JsScope` the `JsPayloads` is borrowed from.
     #[inline(always)]
     pub fn with<R>(self, _: &JsPayloads<'a>, f: impl FnOnce(&T) -> R) -> R {
-        // SAFETY: every `&mut T` holds `JsPayloads` exclusively.
+        // SAFETY: a `&mut T` is lent by `with_mut`, which holds `JsPayloads` exclusively, or to a body that has no `JsPayloads`.
         let result = f(unsafe { &*self.payload() });
         self.as_value().0.ensure_still_alive();
         result
@@ -454,10 +467,13 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
 pub struct JsWrapperStrong<T: JsPayload>(Strong, PhantomData<*const T>);
 impl<T: JsPayload> JsWrapperStrong<T> {
     #[inline]
-    pub fn get<'a>(&self, _: &JsHeap<'a>) -> JsWrapper<'a, T> {
+    pub fn get<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, T> {
         // SAFETY: made from a `JsWrapper<T>`; a cell value is its pointer.
         unsafe {
-            JsWrapper::from_extern(NonNull::new_unchecked(self.0.get().encoded() as *mut c_void))
+            JsWrapper::from_extern(
+                NonNull::new_unchecked(self.0.get().encoded() as *mut c_void),
+                heap,
+            )
         }
     }
 }
@@ -481,10 +497,10 @@ pub mod to_js {
         u8: u8 => |n| JSValue::js_number_from_int32(i32::from(n));
         u16: u16 => |n| JSValue::js_number_from_int32(i32::from(n));
         i32: i32 => JSValue::js_number_from_int32;
-        u32: u32 => |n| JSValue::js_number(f64::from(n));
+        u32: u32 => |n| JSValue::js_number_from_uint64(u64::from(n));
         u64: u64 => JSValue::js_number_from_uint64;
         usize: usize => |n| JSValue::js_number_from_uint64(n as u64);
-        f64: f64 => JSValue::js_number;
+        f64: f64 => |n| JSValue::js_number(JSValue::purify_nan(n));
     }
 
     #[inline(always)]
@@ -566,14 +582,17 @@ pub mod to_js {
     }
 
     /// An empty value is a member that is absent.
+    ///
+    /// # Safety
+    /// `values` are the members of `Tables::objectStructures[structure_index]`.
     #[doc(hidden)]
     #[inline]
-    pub fn object_with_structure<'a>(
+    pub unsafe fn object_with_structure<'a>(
         heap: &JsHeap<'a>,
         structure_index: u32,
         values: &[JSValue],
     ) -> Result<'a, JsLocal<'a>> {
-        // SAFETY: `values` is on the caller's stack, where the GC sees it; this cannot throw.
+        // SAFETY: forwarded; this cannot throw.
         Ok(JsLocal::from_raw(unsafe {
             extern_types::Bun__Bindgen__createObject(
                 heap.global_ptr(),
@@ -584,10 +603,12 @@ pub mod to_js {
         }))
     }
 
+    /// # Safety
+    /// `index` is one into `Tables::enumerationValues`.
     #[doc(hidden)]
     #[inline]
-    pub fn enumeration_value<'a>(heap: &JsHeap<'a>, index: u32) -> Result<'a, JsLocal<'a>> {
-        // SAFETY: a generated index; this cannot throw.
+    pub unsafe fn enumeration_value<'a>(heap: &JsHeap<'a>, index: u32) -> Result<'a, JsLocal<'a>> {
+        // SAFETY: forwarded; this cannot throw.
         Ok(JsLocal::from_raw(unsafe {
             extern_types::Bun__Bindgen__enumerationValueToJS(heap.global_ptr(), index)
         }))
@@ -601,12 +622,20 @@ pub fn host_fn_return<'a, T, E: IntoError<'a>>(
     result: core::result::Result<T, E>,
     convert: impl FnOnce(&JsHeap<'a>, T) -> Result<'a, JsLocal<'a>>,
 ) -> JSValue {
-    let error = match result {
-        Ok(value) => match convert(&cx.heap, value) {
-            Ok(value) => return value.0,
-            Err(error) => error,
-        },
-        Err(error) => error.into_error(&cx.heap),
+    let value = 'value: {
+        let error = match result {
+            Ok(value) => match convert(&cx.heap, value) {
+                Ok(value) => break 'value value.0,
+                Err(error) => error,
+            },
+            Err(error) => error.into_error(&cx.heap),
+        };
+        error.into_host_fn_return(cx)
     };
-    error.into_host_fn_return(cx)
+    debug_assert_eq!(
+        value.is_empty(),
+        cx.heap.global().has_exception(),
+        "a body fails exactly when an exception is pending",
+    );
+    value
 }

@@ -31,7 +31,10 @@ async function load(source: string): Promise<SchemaFile> {
   const stem = path.basename(file, ".bind.ts");
   const origin: Origin = { stem, namespace: pascalCase(stem), rustModule: snakeCase(stem), crate };
   const result: SchemaFile = { origin, moduleDefinition: null, types: [], functions: [] };
-  for (const [name, value] of Object.entries((await import(pathToFileURL(file).href)) as Record<string, unknown>)) {
+  const exports: Record<string, unknown> = await import(pathToFileURL(file).href).catch(error => {
+    throw new Error(`${file}: ${error.message}`, { cause: error });
+  });
+  for (const [name, value] of Object.entries(exports)) {
     if (value instanceof ModuleDefinition) {
       assert(name === "default", `${stem}.bind.ts: b.module() is the default export`);
       result.moduleDefinition = value;
@@ -87,9 +90,17 @@ for (const file of files) {
 }
 const tables = analyze(files);
 
+/** What a schema is found to get wrong only as text is made of it. */
+function emit<T>(file: SchemaFile, text: (file: SchemaFile) => T): T {
+  try {
+    return text(file);
+  } catch (error) {
+    throw new Error(`${file.origin.stem}.bind.ts: ${(error as Error).message}`, { cause: error });
+  }
+}
 for (const file of files) {
-  writeIfNotChanged(path.join(codegenPath, `Generated${file.origin.namespace}.h`), cppHeader(file));
-  writeIfNotChanged(path.join(codegenPath, `Generated${file.origin.namespace}.cpp`), cppSource(file));
+  writeIfNotChanged(path.join(codegenPath, `Generated${file.origin.namespace}.h`), emit(file, cppHeader));
+  writeIfNotChanged(path.join(codegenPath, `Generated${file.origin.namespace}.cpp`), emit(file, cppSource));
 }
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Tables.h"), cppTables(tables));
 writeIfNotChanged(path.join(codegenPath, "GeneratedBindings+Counts.h"), cppCounts(tables));

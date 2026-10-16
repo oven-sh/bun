@@ -37,7 +37,7 @@ export const TLSOptions = b.dictionary(
     keyFile: b.string.nullable,
     certFile: b.string.nullable,
     caFile: b.string.nullable,
-    ALPNProtocols: { type: ALPNProtocols, rustName: "alpn_protocols" },
+    ALPNProtocols,
     ciphers: b.string.nullable,
     clientRenegotiationLimit: b.u32.default(0),
     clientRenegotiationWindow: b.u32.default(0),

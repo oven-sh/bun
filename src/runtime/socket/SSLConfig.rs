@@ -145,9 +145,8 @@ impl SSLConfigFromJs for SSLConfig {
         value: JSValue,
         is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
-        generated::TLSOptions::from_js(global, value, |generated| {
-            Self::from_generated(vm, global, &generated, is_server)
-        })
+        let generated = generated::TLSOptions::from_js(global, value)?;
+        Self::from_generated(vm, global, &generated, is_server)
     }
 
     fn from_generated(

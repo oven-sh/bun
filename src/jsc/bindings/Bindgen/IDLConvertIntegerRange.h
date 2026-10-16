@@ -3,6 +3,9 @@
 #include "Bindgen/IDLTypes.h"
 #include "ErrorCode.h"
 #include "JSDOMConvertBase.h"
+#include <JavaScriptCore/MathCommon.h>
+#include <cmath>
+#include <wtf/text/MakeString.h>
 
 namespace Bun::Bindgen {
 
@@ -45,7 +48,7 @@ struct WebCore::Converter<Bun::Bindgen::IDLValidateInteger<T, Min, Max>> : WebCo
             return 0;
         }
         double number = value.asNumber();
-        if (!std::isfinite(number) || number != std::round(number)) {
+        if (!JSC::isInteger(number)) {
             Bun::ERR::OUT_OF_RANGE(scope, &globalObject, name, "an integer"_s, value);
             return 0;
         }

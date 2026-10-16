@@ -40,7 +40,7 @@ template void SchemaStrings::visit(SlotVisitor&);
 
 SchemaStrings& schemaStrings(VM& vm)
 {
-    return static_cast<WebCore::JSVMClientData*>(vm.clientData)->bindgenStrings;
+    return static_cast<WebCore::JSVMClientData*>(vm.clientData)->schemaStrings;
 }
 
 }

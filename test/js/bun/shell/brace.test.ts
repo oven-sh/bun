@@ -175,6 +175,20 @@ describe("brace + glob composition", () => {
     // ...and does not split into a spurious `]foo` branch.
     expect(words).not.toContain("x.]foo");
   });
+
+  test("the glob part matches a dotfile that a brace alternative names", async () => {
+    using dir = tempDir("shell-brace-glob-dot", {
+      ".env": "",
+      ".npmrc": "",
+      "package.json": "",
+    });
+    const out = (await $`echo {.e,p}*`.cwd(String(dir)).text()).trim();
+    const words = out.split(" ");
+    expect(words).toContain(".env");
+    expect(words).toContain("package.json");
+    // No alternative names `.npmrc`, and `p*` does not match a dotfile.
+    expect(words).not.toContain(".npmrc");
+  });
 });
 
 // $.braces() recursed once per `{` group (parse_atom <-> parse_expansion /

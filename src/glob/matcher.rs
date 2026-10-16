@@ -1308,6 +1308,13 @@ fn match_groups(
     }
 }
 
+/// Returns false only if `glob`, one segment of a pattern, matches no name that starts with `.` under [`Dots::Hide`].
+pub(crate) fn may_match_hidden(glob: &[u8]) -> bool {
+    // Only a `.` in the pattern takes that dot, and a group or a class has to come before it.
+    let choice = strings::index_of_any(glob, b"{([");
+    glob.starts_with(b"\\.") || choice.is_some_and(|at| strings::contains_char(&glob[at..], b'.'))
+}
+
 /// Returns true if `path` has a `.` or `..` segment or, with [`Dots::Hide`], a segment that starts with `.`.
 #[inline]
 pub(crate) fn has_closed_segment<const WINDOWS: bool>(path: &[u8], dots: Dots) -> bool {

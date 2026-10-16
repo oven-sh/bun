@@ -1009,6 +1009,145 @@ describe("explicit dotfile segments match without dot:true", () => {
     const result = await Array.fromAsync(new Glob(".dotdir/inner.txt").scan({ cwd: String(dir) }));
     expect(norm(result)).toEqual([".dotdir/inner.txt"]);
   });
+
+  // The rule applies to each alternative of a group, like minimatch after
+  // brace expansion: `{.a,*}` is `.a` (explicit) or `*` (hidden).
+  const groupFiles = {
+    "flat/.a": "x",
+    "flat/.b": "x",
+    "flat/.ca": "x",
+    "flat/a.b": "x",
+    "flat/c": "x",
+    ".env": "x",
+    ".eslintrc.js": "x",
+    "package.json": "x",
+    ".github/ci.yml": "x",
+    ".github/.secret": "x",
+    ".github/workflows/test.yml": "x",
+    "src/index.ts": "x",
+    "src/.keep": "x",
+    "sub/.npmrc": "x",
+    "sub/package.json": "x",
+  };
+
+  test.each([
+    ["flat/{.a,.b}", ["flat/.a", "flat/.b"]],
+    ["flat/{c,.a}", ["flat/.a", "flat/c"]],
+    ["flat/{*,.a}", ["flat/.a", "flat/a.b", "flat/c"]],
+    ["flat/{.,}a", ["flat/.a"]],
+    ["flat/{,.}a", ["flat/.a"]],
+    ["flat/{.c,x}*", ["flat/.ca"]],
+    ["flat/{a,.c}?", ["flat/.ca"]],
+    ["flat/{x,{.b,c}}", ["flat/.b", "flat/c"]],
+    ["flat/{.a,c}{,x}", ["flat/.a", "flat/c"]],
+    ["flat/{,x}.a", ["flat/.a"]],
+    ["flat/{{,x},y}.a", ["flat/.a"]],
+    ["flat/{**,.a}", ["flat/.a", "flat/a.b", "flat/c"]],
+    ["flat/+(.a|c)", ["flat/.a", "flat/c"]],
+    ["flat/@(.a|.b)", ["flat/.a", "flat/.b"]],
+    ["flat/?(.)a", ["flat/.a"]],
+    // A dotfile or a dot directory at any depth.
+    ["{.env,package.json}", [".env", "package.json"]],
+    ["{.env,.eslintrc.js}", [".env", ".eslintrc.js"]],
+    ["{.github,src}/*", [".github/ci.yml", "src/index.ts"]],
+    ["{.github,src}/**", [".github/ci.yml", ".github/workflows/test.yml", "src/index.ts"]],
+    ["{.github,src}/{*,.keep}", [".github/ci.yml", "src/.keep", "src/index.ts"]],
+    ["**/{.npmrc,package.json}", ["package.json", "sub/.npmrc", "sub/package.json"]],
+    ["**/{.github,sub}/*", [".github/ci.yml", "sub/package.json"]],
+    // No alternative spells out the dot: dotfiles stay hidden.
+    ["flat/{*,?a}", ["flat/a.b", "flat/c"]],
+    ["flat/*{.a,c}", ["flat/c"]],
+    ["flat/{,x}*", ["flat/a.b", "flat/c"]],
+    ["flat/{[!x],c}a", []],
+    ["flat/[.a]a", []],
+    ["{src,sub}/*", ["src/index.ts", "sub/package.json"]],
+    ["{*,src}/*", ["flat/a.b", "flat/c", "src/index.ts", "sub/package.json"]],
+    // A negated segment never opts dotfiles in.
+    ["flat/!*", []],
+    ["flat/!{.a,c}", ["flat/a.b"]],
+  ])("pattern %j applies the dotfile rule to each alternative", async (pattern, expected) => {
+    using dir = tempDir("glob-scan-group-dot", groupFiles);
+    const cwd = String(dir);
+    const glob = new Glob(pattern);
+    expect(norm(Array.from(glob.scanSync({ cwd })))).toEqual(expected);
+    expect(norm(await Array.fromAsync(glob.scan({ cwd })))).toEqual(expected);
+    // `dot: true` only adds entries.
+    expect(norm(Array.from(glob.scanSync({ cwd, dot: true })))).toEqual(expect.arrayContaining(expected));
+  });
+
+  test.skipIf(isWindows)("an escaped dot in an alternative is explicit", () => {
+    using dir = tempDir("glob-scan-group-dot-escaped", groupFiles);
+    const result = Array.from(new Glob("flat/{\\.a,c}").scanSync({ cwd: String(dir) }));
+    expect(result.sort()).toEqual(["flat/.a", "flat/c"]);
+  });
+
+  test("a dot directory that an alternative names is returned with onlyFiles: false", () => {
+    using dir = tempDir("glob-scan-group-dot-dirs", groupFiles);
+    const scan = (p: string) => norm(Array.from(new Glob(p).scanSync({ cwd: String(dir), onlyFiles: false })));
+    expect(scan("{.github,src}")).toEqual([".github", "src"]);
+    expect(scan("{src,sub}")).toEqual(["src", "sub"]);
+    expect(scan("{*,.x}")).toEqual(["flat", "package.json", "src", "sub"]);
+  });
+
+  test("an absolute pattern applies the same rule", () => {
+    using dir = tempDir("glob-scan-group-dot-absolute", groupFiles);
+    const result = Array.from(new Glob(path.join(String(dir), "{.env,package.json}")).scanSync());
+    expect(result.sort()).toEqual([path.join(String(dir), ".env"), path.join(String(dir), "package.json")]);
+  });
+
+  test("a group of 65 dotfiles returns each of them", () => {
+    const names = Array.from({ length: 65 }, (_, i) => `.f${i}`).sort();
+    using dir = tempDir("glob-scan-group-dot-65", Object.fromEntries(names.map(name => [name, "x"])));
+    const result = Array.from(new Glob(`{${names.join(",")}}`).scanSync({ cwd: String(dir) }));
+    expect(result.sort()).toEqual(names);
+  });
+
+  // Differential check. A dotfile is returned exactly when `dot: true` returns
+  // it and one expansion of the pattern that starts with `.` matches it. Every
+  // other name does not depend on `dot`.
+  test("generated brace patterns agree with their expansions", () => {
+    const names = [".a", ".b", ".ca", ".x", ".xa", "a", "c", "ca", "xa", "a.a", "x.a"];
+    using dir = tempDir("glob-scan-group-dot-generated", Object.fromEntries(names.map(name => [name, "x"])));
+    const cwd = String(dir);
+
+    let seed = 0x2f6e2b1;
+    const rand = (n: number) => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) % n;
+    };
+    type Part = [text: string, expansions: string[]];
+    const atoms = [".a", ".", "a", "c", "x", "*", "?", "", ".*", "?a"];
+    const atom = (): Part => {
+      const text = atoms[rand(atoms.length)];
+      return [text, [text]];
+    };
+    const group = (depth: number): Part => {
+      const alternatives = Array.from({ length: 2 + rand(2) }, () =>
+        depth < 2 && rand(4) === 0 ? group(depth + 1) : atom(),
+      );
+      return [`{${alternatives.map(a => a[0]).join(",")}}`, alternatives.flatMap(a => a[1])];
+    };
+
+    const failures: { pattern: string; actual: string[]; expected: string[] }[] = [];
+    for (let i = 0; i < 50; i++) {
+      const parts = Array.from({ length: 1 + rand(3) }, () => (rand(3) === 0 ? atom() : group(0)));
+      const pattern = parts.map(p => p[0]).join("");
+      const expansions = parts.reduce((acc, p) => acc.flatMap(a => p[1].map(b => a + b)), [""]);
+      const withDot = new Set(new Glob(pattern).scanSync({ cwd, dot: true }));
+      const expected = names
+        .filter(
+          name =>
+            withDot.has(name) &&
+            (!name.startsWith(".") || expansions.some(e => e.startsWith(".") && new Glob(e).match(name))),
+        )
+        .sort();
+      const actual = Array.from(new Glob(pattern).scanSync({ cwd })).sort();
+      if (!Bun.deepEquals(actual, expected)) failures.push({ pattern, actual, expected });
+    }
+    expect(failures).toEqual([]);
+  });
 });
 
 // Directory entries on Linux are bytes that need not be valid UTF-8. The

@@ -497,10 +497,7 @@ impl MySQLQuery {
         true
     }
 
-    /// [`Self::result`] accepted a result that cannot be handed to JS. The
-    /// last result of a response is already off the queue, so it becomes
-    /// `Fail`. An earlier one stays in flight: see [`Self::discard_response`].
-    /// Returns whether the caller has a rejection to deliver.
+    /// [`Self::discard_response`] once [`Self::result`] accepted the result: the last one is already `Success`.
     pub(crate) fn fail_accepted_result(&mut self) -> bool {
         if self.status == Status::Success {
             self.status = Status::Fail;

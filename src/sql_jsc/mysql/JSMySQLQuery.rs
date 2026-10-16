@@ -228,9 +228,7 @@ impl JSMySQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// The server assigns `last_insert_id` as a u64. A number holds it up to
-    /// `Number.MAX_SAFE_INTEGER`. Above that it follows the `bigint` option,
-    /// as a BIGINT column does: a BigInt, or a decimal string without the option.
+    /// Above `Number.MAX_SAFE_INTEGER` the value follows the `bigint` option, as a BIGINT column does.
     fn last_insert_id_to_js(&self, global: &JSGlobalObject, value: u64) -> JsResult<JSValue> {
         if value <= bun_jsc::MAX_SAFE_INTEGER as u64 {
             return Ok(JSValue::js_number_from_uint64(value));
@@ -284,8 +282,6 @@ impl JSMySQLQuery {
         };
         debug_assert!(function.is_callable(), "onQueryResolveFn is not callable");
 
-        // `result()` above accepted this result, so a throw from the BigInt or
-        // string allocation takes that back to reject the query.
         let global = self.global_object();
         let last_insert_id = match self.last_insert_id_to_js(global, result.last_insert_id) {
             Ok(value) => value,

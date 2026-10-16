@@ -240,13 +240,13 @@ Disable this cache when using ephemeral filesystems like Docker. Bun's Docker im
 
 On Windows, Defender real-time scanning inspects the `.pile` files in this cache when Bun writes or opens them. An import of a large package touches many cache files at once. The scans can make that import slower than with the cache disabled. Node.js writes a compile cache only when you opt in with `NODE_COMPILE_CACHE` or `module.enableCompileCache()`, so it does not trigger these scans by default.
 
-To keep the cache and avoid the scans, exclude the cache directory from Defender. Run this in an elevated PowerShell. The parent directory also covers the package cache used by `bun install`, so Defender no longer scans any file in either cache.
+To keep the cache and avoid the scans, exclude the transpiler cache directory from Defender. Run this in an elevated PowerShell. Defender then scans nothing in that directory.
 
 ```powershell
-Add-MpPreference -ExclusionPath "$env:USERPROFILE\.bun\install\cache"
+Add-MpPreference -ExclusionPath "$env:USERPROFILE\.bun\install\cache\@t@"
 ```
 
-If you elevate with a different administrator account, `$env:USERPROFILE` expands to that account's profile. Use the literal path of the account that runs Bun instead, for example `C:\Users\<name>\.bun\install\cache`. Check the result with `Get-MpPreference | Select-Object -ExpandProperty ExclusionPath`.
+Use the directory Bun resolves for your environment. If `XDG_CACHE_HOME` or `BUN_RUNTIME_TRANSPILER_CACHE_PATH` is set, exclude that path instead. If you elevate with a different administrator account, `$env:USERPROFILE` expands to that account's profile. Use the literal path of the account that runs Bun instead, for example `C:\Users\<name>\.bun\install\cache\@t@`. Check the result with `Get-MpPreference | Select-Object -ExpandProperty ExclusionPath`.
 
 Or disable the cache. This needs no administrator rights and keeps Defender coverage unchanged.
 

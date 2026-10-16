@@ -404,9 +404,11 @@ pub mod bv2_impl {
 
         /// TYPE_ONLY moved
         /// down to bundler (T5); bake (in runtime, T6) constructs values of this type.
+        #[derive(Clone)]
         pub enum BuiltInModule {
-            Import(Box<[u8]>),
-            Code(Box<[u8]>),
+            Import(std::borrow::Cow<'static, [u8]>),
+            /// `Cow::Borrowed` is one of Bun's embedded sources.
+            Code(std::borrow::Cow<'static, [u8]>),
         }
 
         /// `EntryPointList` flags.
@@ -475,7 +477,7 @@ pub mod bv2_impl {
         }
         impl Framework {
             /// Construct the bundler-side TYPE_ONLY view. Called from
-            /// `bun_runtime::bake::Framework::init_transpiler_with_options`; the
+            /// `bun_runtime::bake::Framework::as_bundler_view`; the
             /// runtime owns the canonical `bake.Framework` and projects the
             /// fields the bundler reads.
             pub fn new(

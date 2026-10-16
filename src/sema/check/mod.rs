@@ -1119,6 +1119,10 @@ struct QueryFrame {
 pub enum Requested {
     /// `GetSyntacticDiagnostics`: the diagnostics of the parser and the scanner.
     Syntactic,
+    /// The same, for a caller that then asks for the types it needs, as typescript-eslint and tsgolint do, and reads no
+    /// diagnostics. A file that can be too large for control flow analysis (2563) is checked as under `All`: the check
+    /// disables the analysis for one block at a time, and stores the types of the rest before anything asks.
+    Types,
     /// .. and `GetDeclarationDiagnostics`. The declaration transformer queries the checker only
     /// about what the file exports.
     Declaration,

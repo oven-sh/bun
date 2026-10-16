@@ -436,6 +436,26 @@ export default function () {
     expect(exitCode).toBe(1);
   });
 
+  test('a framework entry point that a "browser" map disables is reported', async () => {
+    using dir = tempDir("bake-production-disabled-entry", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./client.ts": false } }),
+      "client.ts": `export {};`,
+      "server.ts": `export function render() { return new Response("ok"); }`,
+      "routes/index.ts": `export default () => new Response("ok");`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain("Failed to resolve './client.ts' for framework (client side entrypoint)");
+    expect(exitCode).toBe(1);
+  });
+
   test("handles build with no pages directory without crashing", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
       "app.ts": `export default { app: { framework: "react" } };`,

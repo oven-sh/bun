@@ -148,12 +148,6 @@ pub(crate) struct Options<'a> {
     pub broadcast_console_log_from_browser_to_server: bool,
 }
 
-// Note: the fields (`arena`, `root`, `vm`, `framework`,
-// `bundler_options`, `broadcast_console_log_from_browser_to_server`) are
-// required with no sensible zero value, so `Default` is intentionally NOT
-// implemented. Callers construct `Options` via struct-literal at the call site
-// (see `bake_body.rs::UserOptions::into_dev_server_options`).
-
 // The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`
 // all use `@fieldParentPointer` to access DevServer's state. This pattern has
 // made it easier to group related fields together, but one must remember those
@@ -472,8 +466,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         );
         w!(generation, 0);
         w!(graph_safety_lock, ThreadLock::init_unlocked());
-        w!(framework, options.framework);
-        w!(bundler_options, options.bundler_options);
         w!(emit_incremental_visualizer_events, 0);
         w!(emit_memory_visualizer_events, 0);
         w!(
@@ -483,9 +475,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
             frontend_only,
-            (*addr_of_mut!((*p).framework))
-                .file_system_router_types
-                .is_empty()
+            options.framework.file_system_router_types.is_empty()
         );
         w!(client_graph, IncrementalGraph::default());
         w!(server_graph, IncrementalGraph::default());
@@ -594,8 +584,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     //
     // SAFETY: `init_transpiler` writes the slot via `MaybeUninit::write` (see
     // `bake_body.rs`), so the previous (uninitialized) bytes are never dropped.
-    // `framework`/`log`/`bundler_options` were written above; reborrowing each
-    // individually via `addr_of_mut!` is sound because no `&mut DevServer` exists.
+    // `log` was written above; reborrowing it is sound because no `&mut DevServer` exists.
     // Note: `Transpiler<'static>` erases the arena lifetime — `options.arena`
     // is the `UserOptions.arena` which is moved into / outlives the `DevServer`
     // box. Widen `'a → 'static` here once.
@@ -608,9 +597,10 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // accessed below were each written above and are reborrowed disjointly via
     // `addr_of_mut!`, so no overlapping `&mut` exists.
     unsafe {
-        let framework = &mut *addr_of_mut!((*p).framework);
+        // Still in `options`, so that an early return drops them.
+        let framework = &options.framework;
         let log = &mut *addr_of_mut!((*p).log);
-        let bundler_options = &mut *addr_of_mut!((*p).bundler_options);
+        let bundler_options = &options.bundler_options;
 
         match framework.init_transpiler(
             arena,
@@ -663,6 +653,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
 
         w!(bundler_framework_views, bundler_framework_views);
+        w!(framework, options.framework);
+        w!(bundler_options, options.bundler_options);
     }
 
     // ── every field is now written ───────────────────────────────────────────
@@ -717,7 +709,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             unsafe { &mut (*(*dev_ptr).server_transpiler.as_mut_ptr()).resolver },
             // SAFETY: see above; `client_transpiler` was initialized and is disjoint from `framework`.
             unsafe { &mut (*(*dev_ptr).client_transpiler.as_mut_ptr()).resolver },
-            options.arena,
         )
         .is_err()
     {

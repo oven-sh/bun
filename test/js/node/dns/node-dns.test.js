@@ -8,6 +8,7 @@ import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
+import { Worker } from "node:worker_threads";
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
@@ -912,6 +913,10 @@ describe("dns.lookupService with a numeric-string port", () => {
   });
 });
 
+// The order that "localhost" has on this host with no sort applied. The two
+// orders of dns.lookup() differ only where it has an IPv4 and an IPv6 address.
+const localhostVerbatim = await dns_promises.lookup("localhost", { all: true, order: "verbatim" }).catch(() => []);
+
 // A resolver keeps a 32-slot pending cache per query kind. The first in-flight
 // query for a name owns a slot; identical queries issued while it is in flight
 // are chained onto it and settled together when it completes, so the server
@@ -919,7 +924,8 @@ describe("dns.lookupService with a numeric-string port", () => {
 // get no slot and settle on their own. The fake server below records every
 // query it receives and answers an A query for "a<n>.pending.test" with
 // 10.0.0.<n>, so a promise settled from the wrong slot shows up as the wrong
-// address.
+// address. It answers MX with two records, TXT with one, and every other type
+// with the name "ptr.pending.test".
 describe("pending cache", () => {
   function encodeName(name) {
     return Buffer.concat([
@@ -928,7 +934,7 @@ describe("pending cache", () => {
     ]);
   }
 
-  async function startFakeServer() {
+  async function startFakeServer(onReplied) {
     const socket = dgram.createSocket("udp4");
     const queries = [];
     socket.on("message", (query, rinfo) => {
@@ -941,13 +947,22 @@ describe("pending cache", () => {
       const qtype = query.readUInt16BE(off + 1);
       const question = query.subarray(12, off + 5);
       const qname = labels.join(".");
-      queries.push(`${qtype === 1 ? "A" : qtype === 12 ? "PTR" : qtype} ${qname}`);
+      queries.push(`${{ 1: "A", 12: "PTR", 15: "MX", 16: "TXT" }[qtype] ?? qtype} ${qname}`);
 
-      const rdata =
-        qtype === 1 ? Buffer.from([10, 0, 0, Number(/\d+/.exec(labels[0])[0])]) : encodeName("ptr.pending.test");
-      const header = Buffer.from([query[0], query[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
-      const answer = Buffer.from([0xc0, 0x0c, 0, qtype, 0, 1, 0, 0, 0, 60, rdata.length >> 8, rdata.length & 0xff]);
-      socket.send(Buffer.concat([header, question, answer, rdata]), rinfo.port, rinfo.address);
+      const records = {
+        1: () => [Buffer.from([10, 0, 0, Number(/\d+/.exec(labels[0])[0])])],
+        15: () =>
+          [20, 10].map(priority =>
+            Buffer.concat([Buffer.from([0, priority]), encodeName(`mx${priority}.pending.test`)]),
+          ),
+        16: () => [Buffer.from("\x02hi")],
+      }[qtype]?.() ?? [encodeName("ptr.pending.test")];
+      const header = Buffer.from([query[0], query[1], 0x81, 0x80, 0, 1, 0, records.length, 0, 0, 0, 0]);
+      const answers = records.flatMap(rdata => [
+        Buffer.from([0xc0, 0x0c, 0, qtype, 0, 1, 0, 0, 0, 60, rdata.length >> 8, rdata.length & 0xff]),
+        rdata,
+      ]);
+      socket.send(Buffer.concat([header, question, ...answers]), rinfo.port, rinfo.address, onReplied);
     });
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
@@ -1028,6 +1043,299 @@ describe("pending cache", () => {
   test.concurrent("concurrent lookup() of the same name all settle", async () => {
     const results = await Promise.all(Array.from({ length: 8 }, () => dns_promises.lookup("localhost", { family: 4 })));
     expect(results).toEqual(Array(8).fill({ address: "127.0.0.1", family: 4 }));
+  });
+
+  // One reply settles every caller chained onto a query, but each caller gets
+  // a result of its own, as in Node: what one caller does to its array, or to
+  // a record in it, must not show in another caller's answer.
+  const inFlight = ask => Promise.all([ask(), ask(), ask()]);
+  // The calls whose callers were handed the same array or the same record.
+  const shared = results =>
+    Object.keys(results).filter(call => {
+      const cells = results[call].flatMap(answer => [answer, ...answer.filter(record => typeof record === "object")]);
+      return new Set(cells).size !== cells.length;
+    });
+
+  test.concurrent("callers that share one query each get their own result", async () => {
+    const { socket, queries, resolver, port } = await startFakeServer();
+    try {
+      const callbacks = new dns.Resolver({ timeout: 1000, tries: 1 });
+      callbacks.setServers(["127.0.0.1:" + port]);
+      const resolveMxWithCallback = name =>
+        new Promise((resolve, reject) =>
+          callbacks.resolveMx(name, (err, records) => (err ? reject(err) : resolve(records))),
+        );
+
+      const results = {
+        "resolve4 ttl": await inFlight(() => resolver.resolve4("a1.pending.test", { ttl: true })),
+        resolveMx: await inFlight(() => resolver.resolveMx("mx.pending.test")),
+        "resolveMx callback": await inFlight(() => resolveMxWithCallback("mx-callback.pending.test")),
+        resolveTxt: await inFlight(() => resolver.resolveTxt("txt.pending.test")),
+        reverse: await inFlight(() => resolver.reverse("192.0.2.7")),
+        // The OS resolver answers "localhost" from the hosts file.
+        "Bun.dns.lookup": await inFlight(() => Bun.dns.lookup("localhost", { family: 4 })),
+      };
+      expect(shared(results)).toEqual([]);
+      const mx = [
+        { priority: 20, exchange: "mx20.pending.test" },
+        { priority: 10, exchange: "mx10.pending.test" },
+      ];
+      expect(results).toEqual({
+        "resolve4 ttl": Array(3).fill([{ address: "10.0.0.1", ttl: 60 }]),
+        resolveMx: Array(3).fill(mx),
+        "resolveMx callback": Array(3).fill(mx),
+        resolveTxt: Array(3).fill([["hi"]]),
+        reverse: Array(3).fill(["ptr.pending.test"]),
+        "Bun.dns.lookup": Array(3).fill(
+          expect.arrayContaining([expect.objectContaining({ address: "127.0.0.1", family: 4 })]),
+        ),
+      });
+
+      // Three senders each take the best mail host off their own list.
+      const bestMailHost = async () => {
+        const records = await resolver.resolveMx("mail.pending.test");
+        return records.sort((a, b) => a.priority - b.priority).shift().exchange;
+      };
+      expect(await Promise.all([bestMailHost(), bestMailHost(), bestMailHost()])).toEqual(
+        Array(3).fill("mx10.pending.test"),
+      );
+
+      // Still one query per name and resolver.
+      expect(queries).toEqual([
+        "A a1.pending.test",
+        "MX mx.pending.test",
+        "MX mx-callback.pending.test",
+        "TXT txt.pending.test",
+        "PTR 7.2.0.192.in-addr.arpa",
+        "MX mail.pending.test",
+      ]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  // The default resolver, in a child process as above: c-ares lookup(),
+  // lookupService(), a callback caller and a promise caller of one query, a
+  // caller in another realm, whose answer is built in that realm, and the
+  // host beside two Bun.ModuleGraph instances of one program.
+  test.concurrent("default-resolver callers that share one query each get their own result", async () => {
+    const { socket, queries, port } = await startFakeServer();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const dns = require("node:dns");
+           dns.setServers(["127.0.0.1:" + process.argv[1]]);
+           const inFlight = ask => Promise.all([ask(), ask(), ask()]);
+           const distinct = values => new Set(values).size === values.length;
+           (async () => {
+             const lookup = await inFlight(() => Bun.dns.lookup("a5.pending.test.", { backend: "c-ares", family: 4 }));
+             const lookupService = await inFlight(() => Bun.dns.lookupService("192.0.2.7", 80));
+             const mx = await Promise.all([
+               new Promise(resolve => dns.resolveMx("mx.pending.test", (err, records) => resolve(records))),
+               dns.promises.resolveMx("mx.pending.test"),
+             ]);
+             const inRealm = new ShadowRealm().evaluate(
+               "(name, done) => { Bun.dns.resolveTxt(name).then(records => done(records instanceof Array && records[0] instanceof Array)); }",
+             );
+             const txt = await Promise.all([
+               Bun.dns.resolveTxt("txt.pending.test"),
+               new Promise(resolve => inRealm("txt.pending.test", resolve)),
+               Bun.dns.resolveTxt("txt.pending.test"),
+             ]);
+             const graphs = [new Bun.ModuleGraph(), new Bun.ModuleGraph()];
+             const askFromGraph = () => Bun.dns.resolveMx("graphs.pending.test");
+             const sideBySide = await Promise.all([askFromGraph(), ...graphs.map(graph => graph.run(askFromGraph))]);
+             for (const graph of graphs) graph.dispose();
+             console.log(JSON.stringify({
+               lookup: {
+                 own: distinct(lookup) && distinct(lookup.map(answer => answer[0])),
+                 addresses: lookup.map(answer => answer.map(record => record.address)),
+               },
+               lookupService: { own: distinct(lookupService), hostnames: lookupService.map(answer => answer[0]) },
+               mx: {
+                 own: distinct(mx) && distinct(mx.flat()),
+                 exchanges: mx.map(answer => answer.map(record => record.exchange)),
+               },
+               txt: { own: distinct([txt[0], txt[2], txt[0][0], txt[2][0]]), builtInItsRealm: txt[1], main: [txt[0], txt[2]] },
+               graphs: {
+                 own: distinct(sideBySide) && distinct(sideBySide.flat()),
+                 exchanges: sideBySide.map(answer => answer.map(record => record.exchange)),
+               },
+             }));
+           })();`,
+          String(port),
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        lookup: { own: true, addresses: Array(3).fill(["10.0.0.5"]) },
+        lookupService: { own: true, hostnames: Array(3).fill("ptr.pending.test") },
+        mx: { own: true, exchanges: Array(2).fill(["mx20.pending.test", "mx10.pending.test"]) },
+        txt: { own: true, builtInItsRealm: true, main: Array(2).fill([["hi"]]) },
+        graphs: { own: true, exchanges: Array(3).fill(["mx20.pending.test", "mx10.pending.test"]) },
+      });
+      expect(exitCode).toBe(0);
+      expect(queries).toEqual([
+        "A a5.pending.test",
+        "PTR 7.2.0.192.in-addr.arpa",
+        "MX mx.pending.test",
+        "TXT txt.pending.test",
+        "MX graphs.pending.test",
+      ]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  // dns.lookup() sorts the list it gets by `order`, and lookups that differ
+  // only in `order` share one query: the sort of one must not reach another.
+  test.concurrent.skipIf(new Set(localhostVerbatim.map(record => record.family)).size < 2)(
+    "lookup() keeps its own order behind a lookup with another order",
+    async () => {
+      const otherOrder = localhostVerbatim[0].family === 4 ? "ipv6first" : "ipv4first";
+      const [, all, first] = await Promise.all([
+        dns_promises.lookup("localhost", { all: true, order: otherOrder }),
+        dns_promises.lookup("localhost", { all: true, order: "verbatim" }),
+        dns_promises.lookup("localhost", { order: "verbatim" }),
+      ]);
+      expect({ all, first }).toEqual({ all: localhostVerbatim, first: localhostVerbatim[0] });
+    },
+  );
+
+  // Resolving a promise with an array reads the array's "then", so this getter
+  // runs a full collection inside every settle, between the callers of one
+  // query. Each answer goes from its conversion straight into its promise.
+  test.concurrent("a collection inside every settle leaves each caller's answer intact", async () => {
+    const { socket, queries, port } = await startFakeServer();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const dns = require("node:dns");
+           dns.setServers(["127.0.0.1:" + process.argv[1]]);
+           let collections = 0;
+           Object.defineProperty(Array.prototype, "then", {
+             configurable: true,
+             get() {
+               collections++;
+               Bun.gc(true);
+             },
+           });
+           const collectionsPerCall = {};
+           const inFlight = async (call, ask) => {
+             const before = collections;
+             const answers = await Promise.all([ask(), ask(), ask()]);
+             collectionsPerCall[call] = collections - before;
+             return answers;
+           };
+           (async () => {
+             // Callers chain only on a query that goes to the server: each call needs a name of its own.
+             const answers = {
+               resolveMx: await inFlight("resolveMx", () => Bun.dns.resolveMx("mx.pending.test")),
+               resolveTxt: await inFlight("resolveTxt", () => Bun.dns.resolveTxt("txt.pending.test")),
+               reverse: await inFlight("reverse", () => Bun.dns.reverse("192.0.2.7")),
+               lookupService: (await inFlight("lookupService", () => Bun.dns.lookupService("192.0.2.8", 80))).map(
+                 answer => answer[0],
+               ),
+               "c-ares lookup": (
+                 await inFlight("c-ares lookup", () => Bun.dns.lookup("a5.pending.test.", { backend: "c-ares", family: 4 }))
+               ).map(answer => answer.map(record => record.address)),
+               lookup: (await inFlight("lookup", () => Bun.dns.lookup("localhost", { family: 4 }))).map(
+                 answer => answer[0].address,
+               ),
+             };
+             delete Array.prototype.then;
+             console.log(JSON.stringify({ collectionsPerCall, answers }));
+           })();`,
+          String(port),
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        // Three settles and the list that Promise.all resolves with.
+        collectionsPerCall: {
+          resolveMx: 4,
+          resolveTxt: 4,
+          reverse: 4,
+          lookupService: 4,
+          "c-ares lookup": 4,
+          lookup: 4,
+        },
+        answers: {
+          resolveMx: Array(3).fill([
+            { priority: 20, exchange: "mx20.pending.test" },
+            { priority: 10, exchange: "mx10.pending.test" },
+          ]),
+          resolveTxt: Array(3).fill([["hi"]]),
+          reverse: Array(3).fill(["ptr.pending.test"]),
+          lookupService: Array(3).fill("ptr.pending.test"),
+          "c-ares lookup": Array(3).fill(["10.0.0.5"]),
+          lookup: Array(3).fill("127.0.0.1"),
+        },
+      });
+      expect(exitCode).toBe(0);
+      expect(queries).toEqual([
+        "MX mx.pending.test",
+        "TXT txt.pending.test",
+        "PTR 7.2.0.192.in-addr.arpa",
+        "PTR 8.2.0.192.in-addr.arpa",
+        "A a5.pending.test",
+      ]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  // A worker that asked for its own exit still reads the replies that are
+  // already there. The conversion for the first caller of the MX query meets
+  // the termination: no later caller of that query is converted or settled.
+  // A settle reads the answer's "then", which this getter counts. The TXT
+  // query has one caller and a reply of its own, and is still settled.
+  test.concurrent("after a termination the rest of a chain settles nobody", async () => {
+    const state = new Int32Array(new SharedArrayBuffer(12)); // the gate, settled MX answers, settled TXT answers
+    let replies = 0;
+    const { socket, queries, port } = await startFakeServer(() => {
+      if (++replies !== 2) return;
+      Atomics.store(state, 0, 1);
+      Atomics.notify(state, 0);
+    });
+    try {
+      const worker = new Worker(
+        `const { port, state } = require("node:worker_threads").workerData;
+         require("node:dns").setServers(["127.0.0.1:" + port]);
+         Object.defineProperty(Array.prototype, "then", {
+           get() {
+             if (this[0]?.exchange) Atomics.add(state, 1, 1);
+             else if (Array.isArray(this[0])) Atomics.add(state, 2, 1);
+           },
+         });
+         setImmediate(() => {
+           for (let i = 0; i < 3; i++) Bun.dns.resolveMx("mx.pending.test");
+           Bun.dns.resolveTxt("txt.pending.test");
+           // Until both replies have left the server. A reply that never leaves ends the worker with 2.
+           const gate = Atomics.wait(state, 0, 0, 30_000);
+           process.reallyExit(gate === "timed-out" ? 2 : 0); // in a worker: asks for the termination and returns
+         });`,
+        { eval: true, workerData: { port, state } },
+      );
+      const [exitCode] = await once(worker, "exit");
+      expect({ settled: { mx: Atomics.load(state, 1), txt: Atomics.load(state, 2) }, queries, exitCode }).toEqual({
+        settled: { mx: 0, txt: 1 },
+        queries: ["MX mx.pending.test", "TXT txt.pending.test"],
+        exitCode: 0,
+      });
+    } finally {
+      socket.close();
+    }
   });
 });
 

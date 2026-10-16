@@ -634,9 +634,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
 
                 if (UNLIKELY(s->send_rejected) && !s->ssl && !s->flags.is_paused) {
-                    /* The event us_socket_reject_sends asked for, or the one its caller ran under. A rejected
-                     * send leaves nothing of the connection to wait for: this is its hangup. The read loop
-                     * delivers what the peer sent, and the end closes the socket. A paused owner reads on resume. */
+                    /* The event us_socket_reject_sends asked for, or the one its caller ran under: the hangup of
+                     * a connection that takes no more sends. The read loop delivers what the peer sent, and the
+                     * end closes the socket. A paused owner reads on resume. */
                     us_internal_dispatch_ready_poll(&s->p, 0, eof | LIBUS_POLL_HANGUP, LIBUS_SOCKET_READABLE);
                     return;
                 }

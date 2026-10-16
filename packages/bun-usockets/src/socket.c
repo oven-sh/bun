@@ -637,8 +637,12 @@ static inline __attribute__((always_inline)) int us_internal_socket_raw_writev(s
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
-
-    return written < 0 ? 0 : (int)written;
+    if (written < 0) {
+        return 0;
+    }
+    /* Progress ends a run of unclassified failures, as in us_socket_write_check_error. */
+    if (fatal_write_error) s->unclassified_send_failures = 0;
+    return (int)written;
 }
 
 int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {

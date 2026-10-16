@@ -433,10 +433,9 @@ impl us_socket_t {
         (written, fatal)
     }
 
-    /// The owner's send was rejected with a fatal code of
-    /// [`Self::write_check_error`] or [`Self::raw_writev_check_error`]. Ends
-    /// the write side: the loop reads what the peer sent, then closes. False
-    /// when the socket can not write now, and nothing was done.
+    /// Ends the write side after a fatal code of [`Self::write_check_error`]
+    /// or [`Self::raw_writev_check_error`]: the loop reads what the peer sent,
+    /// then closes. False when the socket can not write now: nothing is done.
     pub(crate) fn reject_sends(&mut self) -> bool {
         bun_core::scoped_log!(uws, "us_socket_reject_sends({:p})", self);
         c::us_socket_reject_sends(self) != 0

@@ -965,11 +965,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         called
     }
 
-    /// The kernel rejected a send of this socket's owner. Nothing closes under
-    /// the writer: the write side ends, and the loop closes the socket after it
-    /// has read what the peer sent. The owner says what a clean close means
-    /// (`NativeCallbacks::close_code`). False when nothing was done: the
-    /// socket is not established, or its write side had ended before.
+    /// The kernel rejected a send of this socket's owner: ends the write side,
+    /// and the loop closes the socket after it has read what the peer sent.
+    /// False when nothing was done (not established, or its writes had ended).
     pub(crate) fn reject_sends(&self) -> bool {
         self.socket.get().reject_sends()
     }

@@ -676,11 +676,10 @@ int us_socket_raw_write(us_socket_r s, const char *data, int length);
  * write instead of retrying forever. A TLS socket reports the failed send of
  * its ciphertext, or EPROTO for a failed SSL_write, once its handshake was reported. */
 int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
-/* The owner of a plain TCP socket got a fatal code from us_socket_write_check_error or
- * us_socket_raw_writev_check_error. This ends the write side only, as the TLS engine does for a
- * rejected send of its own, and returns 1. The loop reads what the peer sent and then closes: with
- * the error of that read, or clean. The owner has the code of its send. Returns 0 and does nothing
- * for a socket that can not write now: one that is not established reports through its connect. */
+/* For the owner of a plain TCP socket after a fatal code of us_socket_write_check_error or
+ * us_socket_raw_writev_check_error: ends the write side, as the TLS engine does for its own sends.
+ * The loop reads what the peer sent and then closes, clean unless that read fails. Returns 0 and
+ * does nothing when the socket can not write now: one that is not established fails its connect. */
 int us_socket_reject_sends(us_socket_r s) nonnull_fn_decl;
 
 void us_socket_timeout(us_socket_r s, unsigned int seconds) nonnull_fn_decl;

@@ -180,19 +180,17 @@ impl Drop for NativeSocket {
     }
 }
 
-/// The first native send of a session that the kernel rejected. The socket stays open until
-/// the loop has read what the peer sent before. Node reports a reset from its read only and
-/// drops the status of a failed write, so its write order decides what the close reports:
-/// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1890-L1893
+/// The first native send that the kernel rejected. Node reports a reset from its read only,
+/// so the order of its write and its read decides what the close reports.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RejectedSend {
     None,
-    /// The send followed a read of the peer's bytes, where Node sends as well:
+    /// Made under a read. Node sends there too and drops the status, so frames count as sent:
     /// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L981-L984
-    /// Every frame counts as sent from then on, and the close is what the loop reads.
     Dropped,
-    /// The send came first. Every other write of Node's waits for its loop, so there its read
-    /// is first and reports the reset: this errno stands for that read at a clean end.
+    /// Made elsewhere. Node's write waits for its loop there, and its read reports the reset
+    /// first. This errno stands for that read when the loop reads a clean end:
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1838-L1858
     Errno(i32),
 }
 

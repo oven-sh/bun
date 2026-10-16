@@ -115,6 +115,15 @@ img.avif({ quality: 60 }); // macOS / Windows only
 
 `palette: true` quantizes to a ≤256-color palette and emits an indexed (color-type 3) PNG, optionally with Floyd–Steinberg `dither`. The indexed PNG is typically 3–5× smaller than truecolor for screenshots and UI assets.
 
+Each format keeps its own options. A format call selects the output format and sets the options it names. An option from an earlier call of the same format stays in effect. An option never applies to another format, so you can encode one image to several formats:
+
+```ts
+const img = new Bun.Image(input);
+const preview = await img.jpeg({ quality: 10 }).bytes();
+const full = await img.webp().bytes(); // WebP at its default quality, not 10
+const progressive = await img.jpeg({ progressive: true }).bytes(); // JPEG quality is still 10
+```
+
 ## Terminals
 
 A pipeline does no work until you await one of these:

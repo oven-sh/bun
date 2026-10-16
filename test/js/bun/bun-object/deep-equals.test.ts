@@ -1,4 +1,5 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import util from "node:util";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -145,6 +146,56 @@ describe("Bun.deepEquals strict mode", () => {
   // against Object.prototype.
   it.failing("distinguishes a null-prototype object from an object literal", () => {
     expect(Bun.deepEquals(Object.create(null), {}, true)).toBe(false);
+  });
+});
+
+// The native comparison visits a pair of one internal type once. So each of these pairs must get its answer in both argument orders from that one visit.
+describe("pairs of one internal type that are unequal in both argument orders", () => {
+  const deepEquals = Bun.deepEquals as (a: unknown, b: unknown, strict?: boolean, skipPrototype?: boolean) => boolean;
+  const passes = (assertion: () => void) => {
+    try {
+      assertion();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const entryPoints: [string, (a: unknown, b: unknown) => boolean][] = [
+    ["Bun.deepEquals", (a, b) => deepEquals(a, b)],
+    ["Bun.deepEquals strict", (a, b) => deepEquals(a, b, true)],
+    ["Bun.deepEquals strict, skipPrototype", (a, b) => deepEquals(a, b, true, true)],
+    ["expect().toEqual", (a, b) => passes(() => expect(a).toEqual(b))],
+    ["expect().toStrictEqual", (a, b) => passes(() => expect(a).toStrictEqual(b))],
+    ["util.isDeepStrictEqual", (a, b) => util.isDeepStrictEqual(a, b)],
+    ["util.isDeepStrictEqual, skipPrototype", (a, b) => util.isDeepStrictEqual(a, b, true as any)],
+  ];
+  const pairs: [string, () => unknown, () => unknown][] = [
+    [
+      "URLSearchParams with a repeated name",
+      () => new URLSearchParams("a=1&a=1"),
+      () => new URLSearchParams("a=1&a=2"),
+    ],
+    [
+      "Headers with a repeated name",
+      () =>
+        new Headers([
+          ["set-cookie", "a"],
+          ["set-cookie", "a"],
+        ]),
+      () =>
+        new Headers([
+          ["set-cookie", "a"],
+          ["x", "1"],
+        ]),
+    ],
+    ["Reflect and a boxed Symbol", () => Reflect, () => Object(Symbol.iterator)],
+    ["Math and a boxed BigInt", () => Math, () => Object(1n)],
+    ["boxed BigInts with different values", () => Object(1n), () => Object(2n)],
+  ];
+  describe.each(entryPoints)("%s", (_, equal) => {
+    it.each(pairs)("%s", (_, a, b) => {
+      expect([equal(a(), b()), equal(b(), a())]).toEqual([false, false]);
+    });
   });
 });
 

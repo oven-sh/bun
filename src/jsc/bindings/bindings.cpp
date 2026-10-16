@@ -964,9 +964,12 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c1, c2);
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
-    isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c2, c1);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+    // An arm answers for both argument orders of a pair of one JSType, and std::nullopt from it means "compare the own properties". The swapped call only lets a special right operand reject a left operand of another JSType.
+    if (c1->type() != c2->type()) {
+        isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c2, c1);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+    }
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
 
@@ -1592,6 +1595,11 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
 
+            // node compares the own enumerable properties of both errors name for name, as the generic walk does.
+            if (mode.checkPrototypes) {
+                break;
+            }
+
             // check arbitrary enumerable properties. `.stack` is not checked.
             left->materializeErrorInfoIfNeeded(vm);
             RETURN_IF_EXCEPTION(scope, {});
@@ -1835,7 +1843,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 auto urlSearchParams2 = dynamicDowncast<JSURLSearchParams>(c2);
                 if (urlSearchParams1 && urlSearchParams2) {
                     auto& wrapped1 = urlSearchParams1->wrapped();
-                    const auto& wrapped2 = urlSearchParams2->wrapped();
+                    auto& wrapped2 = urlSearchParams2->wrapped();
                     if (wrapped1.size() != wrapped2.size()) {
                         return false;
                     }
@@ -1845,6 +1853,16 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                         const auto& key = maybePair->key;
                         const auto& value = maybePair->value;
                         const auto& maybeValue = wrapped2.get(key);
+                        if (!maybeValue || maybeValue != value) {
+                            return false;
+                        }
+                    }
+                    // get() answers the first value of a name, so a repeated name needs the other direction too.
+                    auto iter2 = wrapped2.createIterator();
+                    while (const auto& maybePair = iter2.next()) {
+                        const auto& key = maybePair->key;
+                        const auto& value = maybePair->value;
+                        const auto& maybeValue = wrapped1.get(key);
                         if (!maybeValue || maybeValue != value) {
                             return false;
                         }
@@ -1870,7 +1888,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 auto headers2 = dynamicDowncast<JSFetchHeaders>(c2);
                 if (headers1 && headers2) {
                     auto& wrapped1 = headers1->wrapped();
-                    const auto& wrapped2 = headers2->wrapped();
+                    auto& wrapped2 = headers2->wrapped();
                     if (wrapped1.size() != wrapped2.size()) {
                         return false;
                     }
@@ -1880,6 +1898,20 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                         const auto& key = maybePair->key;
                         const auto& value = maybePair->value;
                         const auto& maybeValue = wrapped2.get(key);
+                        if (maybeValue.hasException()) {
+                            return false;
+                        }
+
+                        if (maybeValue.returnValue() != value) {
+                            return false;
+                        }
+                    }
+                    // The same in the other direction: the two can hold different names in equal numbers.
+                    auto iter2 = wrapped2.createIterator();
+                    while (const auto& maybePair = iter2.next()) {
+                        const auto& key = maybePair->key;
+                        const auto& value = maybePair->value;
+                        const auto& maybeValue = wrapped1.get(key);
                         if (maybeValue.hasException()) {
                             return false;
                         }
@@ -1949,35 +1981,94 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         }
     }
 
-    // Symbol and BigInt wrapper objects are plain ObjectType in JSC, so they are not
-    // reachable from the switch above. Like Number and Boolean wrappers, they must be
-    // the same kind of wrapper and hold the same internal value. Everything else --
-    // object literals, arrays -- has its own JSType and skips this.
-    if (c1Type == ObjectType) {
-        JSObject* obj1 = c1->getObject();
-        JSObject* obj2 = c2->getObject();
-        if (obj1 && obj2) {
-            std::optional<bool> temporalEqual = temporalObjectsDequal(obj1, obj2);
-            if (temporalEqual.has_value())
-                return temporalEqual;
+    return std::nullopt;
+}
 
-            const bool isSymbol1 = obj1->inherits<SymbolObject>();
-            const bool isBigInt1 = obj1->inherits<BigIntObject>();
-            if (isSymbol1 || isBigInt1) {
-                if (isSymbol1 != obj2->inherits<SymbolObject>() || isBigInt1 != obj2->inherits<BigIntObject>()) {
-                    return false;
-                }
-                JSValue val1 = uncheckedDowncast<JSWrapperObject>(obj1)->internalValue();
-                JSValue val2 = uncheckedDowncast<JSWrapperObject>(obj2)->internalValue();
-                bool same = JSC::sameValue(globalObject, val1, val2);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (!same) return false;
-                // Fall through to check own properties
+// node's entry points: whether `probed` holds every member of `walked`, or a deep-equal member that `walked` does not hold. `walkedIsRight` keeps each comparison in (left, right) order. `misses` counts the members that needed a deep-equal one. Compiled once for both node modes.
+static bool setMembersMatch(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSSet* walked, JSSet* probed, bool walkedIsRight, unsigned& misses)
+{
+    VM& vm = globalObject->vm();
+    auto walk = JSSetIterator::create(vm, globalObject->setIteratorStructure(), walked, IterationKind::Keys);
+    JSValue member;
+    while (walk->next(globalObject, member)) {
+        bool has = probed->has(globalObject, member);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (has) {
+            continue;
+        }
+
+        misses++;
+        auto scan = JSSetIterator::create(vm, globalObject->setIteratorStructure(), probed, IterationKind::Keys);
+        JSValue candidate;
+        bool foundMatchingMember = false;
+        while (scan->next(globalObject, candidate)) {
+            bool equal = mode.deepEquals(globalObject, walkedIsRight ? candidate : member, walkedIsRight ? member : candidate, gcBuffer, stack, scope, false);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!equal) {
+                continue;
+            }
+            // A member that both Sets hold is the partner of itself.
+            bool held = walked->has(globalObject, candidate);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!held) {
+                foundMatchingMember = true;
+                break;
             }
         }
-    }
 
-    return std::nullopt;
+        if (!foundMatchingMember) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The same for the entries of two Maps. An entry matches the first such deep-equal key, and then the two values must be deep-equal.
+static bool mapEntriesMatch(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSMap* walked, JSMap* probed, bool walkedIsRight, unsigned& misses)
+{
+    VM& vm = globalObject->vm();
+    auto walk = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), walked, IterationKind::Entries);
+    JSValue key, value;
+    while (walk->nextKeyValue(globalObject, key, value)) {
+        JSValue probedValue = probed->get(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (probedValue.isUndefined()) {
+            // get() answers undefined for an absent key and for a key that holds undefined.
+            bool has = probed->has(globalObject, key);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!has) {
+                misses++;
+                auto scan = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), probed, IterationKind::Entries);
+                JSValue candidateKey;
+                bool foundMatchingKey = false;
+                while (scan->nextKeyValue(globalObject, candidateKey, probedValue)) {
+                    bool keysEqual = mode.deepEquals(globalObject, walkedIsRight ? candidateKey : key, walkedIsRight ? key : candidateKey, gcBuffer, stack, scope, false);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (!keysEqual) {
+                        continue;
+                    }
+                    // A key that both Maps hold is the partner of itself.
+                    bool held = walked->has(globalObject, candidateKey);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (!held) {
+                        foundMatchingKey = true;
+                        break;
+                    }
+                }
+
+                if (!foundMatchingKey) {
+                    return false;
+                }
+            }
+        }
+
+        bool valuesEqual = mode.deepEquals(globalObject, walkedIsRight ? probedValue : value, walkedIsRight ? value : probedValue, gcBuffer, stack, scope, false);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!valuesEqual) {
+            return false;
+        }
+    }
+    return true;
 }
 
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
@@ -2000,6 +2091,26 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
         if (set1->size() != set2->size()) {
             return false;
+        }
+
+        if constexpr (checkPrototypes) {
+            // node walks the right Set and looks each member up in the left one.
+            unsigned misses = 0;
+            bool membersMatch = setMembersMatch(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, set2, set1, true, misses);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!membersMatch) {
+                return false;
+            }
+            // One member without an identical counterpart has matched the one member left for it. Two or more can match the same one, so then the other direction decides too.
+            if (misses > 1) {
+                membersMatch = setMembersMatch(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, set1, set2, false, misses);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!membersMatch) {
+                    return false;
+                }
+            }
+            // node also compares own enumerable properties of Sets.
+            break;
         }
 
         auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
@@ -2030,10 +2141,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             }
         }
 
-        if constexpr (checkPrototypes) {
-            // node also compares own enumerable properties of Sets.
-            break;
-        }
         return true;
     }
     case JSMapType: {
@@ -2047,6 +2154,26 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
         if (leftSize != map2->size()) {
             return false;
+        }
+
+        if constexpr (checkPrototypes) {
+            // node walks the right Map and looks each key up in the left one.
+            unsigned misses = 0;
+            bool entriesMatch = mapEntriesMatch(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, map2, map1, true, misses);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!entriesMatch) {
+                return false;
+            }
+            // One key without an identical counterpart has matched the one key left for it. Two or more can match the same one, so then the other direction decides too.
+            if (misses > 1) {
+                entriesMatch = mapEntriesMatch(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, map1, map2, false, misses);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!entriesMatch) {
+                    return false;
+                }
+            }
+            // node also compares own enumerable properties of Maps.
+            break;
         }
 
         auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
@@ -2084,10 +2211,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             }
         }
 
-        if constexpr (checkPrototypes) {
-            // node also compares own enumerable properties of Maps.
-            break;
-        }
         return true;
     }
     case ArrayBufferType:
@@ -2143,10 +2266,11 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
             const bool isSymbol1 = obj1->inherits<SymbolObject>();
             const bool isBigInt1 = obj1->inherits<BigIntObject>();
+            // A wrapper never equals an object that is not that kind of wrapper, whichever operand it is.
+            if (isSymbol1 != obj2->inherits<SymbolObject>() || isBigInt1 != obj2->inherits<BigIntObject>()) {
+                return false;
+            }
             if (isSymbol1 || isBigInt1) {
-                if (isSymbol1 != obj2->inherits<SymbolObject>() || isBigInt1 != obj2->inherits<BigIntObject>()) {
-                    return false;
-                }
                 JSValue val1 = uncheckedDowncast<JSWrapperObject>(obj1)->internalValue();
                 JSValue val2 = uncheckedDowncast<JSWrapperObject>(obj2)->internalValue();
                 bool same = JSC::sameValue(globalObject, val1, val2);

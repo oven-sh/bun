@@ -16,6 +16,8 @@ interface Case {
   strict: boolean;
   /** Whether assert.deepEqual(a, b) should succeed. */
   loose: boolean;
+  /** The answer of assert.deepStrictEqual(b, a), when it is not `strict`. */
+  strictSwapped?: boolean;
   /** Set when Bun disagrees with `strict`; the text says what Bun does instead. */
   strictBug?: string;
   /** Set when Bun disagrees with `loose`; the text says what Bun does instead. */
@@ -23,6 +25,18 @@ interface Case {
 }
 
 const sym = Symbol("shared");
+function SharedConstructor() {}
+const inheritsSharedConstructor = Object.create(Object.prototype, { constructor: { value: SharedConstructor } });
+const ownSharedConstructor = () =>
+  Object.assign(Object.create({}, { constructor: { value: SharedConstructor } }), { v: 1 });
+const inheritedSharedConstructor = () => Object.assign(Object.create(inheritsSharedConstructor), { v: 1 });
+const nullPrototypeProxy = () => new Proxy({}, { getPrototypeOf: () => null });
+const sharedObject = { a: 1 };
+const errorWithEnumerableCode = () => Object.assign(new Error("x"), { code: 1 });
+const errorWithHiddenCode = () =>
+  Object.defineProperty(Object.assign(new Error("x"), { other: 2 }), "code", { value: 1, enumerable: false });
+const errorWithEnumerableStack = (stack: string) =>
+  Object.defineProperty(new Error("x"), "stack", { value: stack, enumerable: true });
 const sharedArrayBuffer = new ArrayBuffer(4);
 
 function float64WithNaNPayload(bits: bigint) {
@@ -393,11 +407,45 @@ const cases: Case[] = [
     strict: true,
     loose: true,
   },
+  // node's strict mode reads `constructor` from the left operand only, so these answers depend on the argument order.
   {
     name: "a Proxy whose getPrototypeOf trap returns null and a null-prototype object",
-    a: () => new Proxy({}, { getPrototypeOf: () => null }),
+    a: nullPrototypeProxy,
     b: () => Object.create(null),
     strict: false,
+    strictSwapped: true,
+    loose: true,
+  },
+  {
+    name: "maps holding such a Proxy and such an object under the same key",
+    a: () => new Map([["k", nullPrototypeProxy()]]),
+    b: () => new Map([["k", Object.create(null)]]),
+    strict: false,
+    strictSwapped: true,
+    loose: true,
+  },
+  {
+    name: "an object with an own non-enumerable constructor and an object that inherits the same constructor",
+    a: ownSharedConstructor,
+    b: inheritedSharedConstructor,
+    strict: false,
+    strictSwapped: true,
+    loose: true,
+  },
+  {
+    name: "maps holding such objects under the same key",
+    a: () => new Map([["k", ownSharedConstructor()]]),
+    b: () => new Map([["k", inheritedSharedConstructor()]]),
+    strict: false,
+    strictSwapped: true,
+    loose: true,
+  },
+  {
+    name: "sets holding such objects",
+    a: () => new Set([ownSharedConstructor()]),
+    b: () => new Set([inheritedSharedConstructor()]),
+    strict: false,
+    strictSwapped: true,
     loose: true,
   },
   {
@@ -686,6 +734,70 @@ const cases: Case[] = [
     strict: false,
     loose: false,
   },
+  // node compares the own enumerable keys of both errors. A key that one error holds but does not enumerate is not a match.
+  {
+    name: "an error with an own enumerable key and an error that holds the key non-enumerable beside another key",
+    a: errorWithEnumerableCode,
+    b: errorWithHiddenCode,
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "arrays holding such errors",
+    a: () => [errorWithEnumerableCode()],
+    b: () => [errorWithHiddenCode()],
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "maps holding such errors under the same key",
+    a: () => new Map([["k", errorWithEnumerableCode()]]),
+    b: () => new Map([["k", errorWithHiddenCode()]]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "sets holding such errors",
+    a: () => new Set([errorWithEnumerableCode()]),
+    b: () => new Set([errorWithHiddenCode()]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with an own enumerable message and an error with another own enumerable key",
+    a: () => Object.assign(new Error(), { message: "x" }),
+    b: () => Object.assign(new Error("x"), { code: 1 }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with an own enumerable name and an error with another own enumerable key",
+    a: () => Object.assign(new Error("x"), { name: "Error" }),
+    b: () => Object.assign(new Error("x"), { errno: 1 }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "errors with equal own enumerable stacks",
+    a: () => errorWithEnumerableStack("at a"),
+    b: () => errorWithEnumerableStack("at a"),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "errors with unequal own enumerable stacks",
+    a: () => errorWithEnumerableStack("at a"),
+    b: () => errorWithEnumerableStack("at b"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
   {
     name: "errors with different causes",
     a: () => new Error("x", { cause: 1 }),
@@ -747,6 +859,54 @@ const cases: Case[] = [
     b: () => new Set([{ a: 1 }]),
     strict: true,
     loose: true,
+  },
+  // https://github.com/oven-sh/bun/issues/28760
+  {
+    name: "a set holding two deep-equal objects and a set holding two different ones",
+    a: () => new Set([{ a: 1 }, { a: 1 }]),
+    b: () => new Set([{ a: 1 }, { a: 2 }]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "a map keyed by two deep-equal objects and a map keyed by two different ones",
+    a: () =>
+      new Map([
+        [{ a: 1 }, 1],
+        [{ a: 1 }, 1],
+      ]),
+    b: () =>
+      new Map([
+        [{ a: 1 }, 1],
+        [{ a: 2 }, 1],
+      ]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  // One member has no identical counterpart, and its deep-equal match is the member that both sides hold.
+  {
+    name: "a set holding an object and a different one, and a set holding that object and a copy of it",
+    a: () => new Set([sharedObject, { a: 2 }]),
+    b: () => new Set([sharedObject, { a: 1 }]),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a map keyed by an object and a different one, and a map keyed by that object and a copy of it",
+    a: () =>
+      new Map([
+        [sharedObject, 1],
+        [{ a: 2 }, 1],
+      ]),
+    b: () =>
+      new Map([
+        [sharedObject, 1],
+        [{ a: 1 }, 1],
+      ]),
+    strict: false,
+    loose: false,
   },
   { name: "sets holding -0 and 0", a: () => new Set([-0]), b: () => new Set([0]), strict: true, loose: true },
   { name: "sets holding NaN", a: () => new Set([NaN]), b: () => new Set([NaN]), strict: true, loose: true },
@@ -977,6 +1137,10 @@ function describeMatrix(
           expect(error?.code).toBe("ERR_ASSERTION");
         }
         expect(caught(() => notEqual(testCase.a(), testCase.b())) === null).toBe(!expected);
+        if (mode !== "strict") return;
+        const swapped = testCase.strictSwapped ?? expected;
+        expect(caught(() => equal(testCase.b(), testCase.a())) === null).toBe(swapped);
+        expect(caught(() => notEqual(testCase.b(), testCase.a())) === null).toBe(!swapped);
       });
     }
   });
@@ -991,6 +1155,7 @@ describe("util.isDeepStrictEqual", () => {
     const run = testCase.strictBug ? test.failing : test;
     run(testCase.strictBug ? `${label} (Bun ${testCase.strictBug})` : label, () => {
       expect(util.isDeepStrictEqual(testCase.a(), testCase.b())).toBe(testCase.strict);
+      expect(util.isDeepStrictEqual(testCase.b(), testCase.a())).toBe(testCase.strictSwapped ?? testCase.strict);
     });
   }
 
@@ -998,6 +1163,256 @@ describe("util.isDeepStrictEqual", () => {
     expect(util.isDeepStrictEqual(undefined, undefined)).toBe(true);
     expect(util.isDeepStrictEqual(null, undefined)).toBe(false);
     expect(util.isDeepStrictEqual(Object.create(null), Object.create(null))).toBe(true);
+  });
+
+  // A Set or a Map is compared once, and not once per argument order: the second comparison doubled the work at each level of nesting.
+  describe("compares a nested Map once", () => {
+    let reads = 0;
+    const leaf = () => ({
+      get value() {
+        reads++;
+        return 1;
+      },
+    });
+    const nested = (wrap: (value: unknown) => unknown) => {
+      let value: unknown = leaf();
+      for (let depth = 0; depth < 10; depth++) value = wrap(value);
+      return value;
+    };
+    const stringKeyed = (value: unknown) => new Map([["k", value]]);
+    const skipPrototype = new assert.Assert({ skipPrototype: true });
+
+    test.each([
+      ["util.isDeepStrictEqual", (a: unknown, b: unknown) => util.isDeepStrictEqual(a, b), 2],
+      [
+        "util.isDeepStrictEqual, skipPrototype",
+        (a: unknown, b: unknown) => util.isDeepStrictEqual(a, b, true as any),
+        2,
+      ],
+      ["assert.deepStrictEqual", (a: unknown, b: unknown) => assert.deepStrictEqual(a, b), 2],
+      ["assert.strict.deepEqual", (a: unknown, b: unknown) => assert.strict.deepEqual(a, b), 2],
+      ["Assert({ skipPrototype }).deepStrictEqual", (a: unknown, b: unknown) => skipPrototype.deepStrictEqual(a, b), 2],
+      [
+        "assert.throws with a validation object",
+        (a: unknown, b: unknown) =>
+          assert.throws(
+            () => {
+              throw Object.assign(new Error("x"), { data: a });
+            },
+            { data: b },
+          ),
+        2,
+      ],
+      // The third read is for the message of the AssertionError.
+      [
+        "assert.notDeepStrictEqual",
+        (a: unknown, b: unknown) => expect(() => assert.notDeepStrictEqual(a, b)).toThrow(assert.AssertionError),
+        3,
+      ],
+    ])("%s reads a value under 10 string-keyed Maps once per side", (_, compare, expectedReads) => {
+      const a = nested(stringKeyed);
+      const b = nested(stringKeyed);
+      reads = 0;
+      compare(a, b);
+      expect(reads).toBe(expectedReads);
+    });
+
+    const symbolKey = Symbol("key");
+    const sharedKey = { id: 1 };
+    class Tagged extends Map {
+      tag = 1;
+    }
+    test.each([
+      ["one object member of a Set", (value: unknown) => new Set([value])],
+      ["one object key that only one side holds", (value: unknown) => new Map([[{ id: 1 }, value]])],
+      ["a number key", (value: unknown) => new Map([[1, value]])],
+      ["a symbol key", (value: unknown) => new Map([[symbolKey, value]])],
+      ["a null key", (value: unknown) => new Map([[null, value]])],
+      ["an object key that both sides hold", (value: unknown) => new Map([[sharedKey, value]])],
+      ["a subclass with a field", (value: unknown) => new Tagged([["k", value]])],
+      ["an own string property", (value: unknown) => Object.assign(stringKeyed(value), { x: 1 })],
+      ["an own symbol property", (value: unknown) => Object.assign(stringKeyed(value), { [symbolKey]: 1 })],
+      ["an own index property", (value: unknown) => Object.assign(stringKeyed(value), { 0: 1 })],
+      [
+        "an own non-enumerable property",
+        (value: unknown) => Object.defineProperty(stringKeyed(value), "hidden", { value: 1 }),
+      ],
+      [
+        "an undefined value beside it",
+        (value: unknown) =>
+          new Map([
+            ["k", value],
+            ["u", undefined],
+          ]),
+      ],
+    ])("10 nested collections with %s", (_, wrap) => {
+      const a = nested(wrap);
+      const b = nested(wrap);
+      reads = 0;
+      expect(util.isDeepStrictEqual(a, b)).toBe(true);
+      expect(reads).toBe(2);
+    });
+
+    test("entries are read in the order of the right Map, left value first", () => {
+      const log: string[] = [];
+      const logged = (name: string) => ({
+        get value() {
+          log.push(name);
+          return 1;
+        },
+      });
+      const left = new Map([
+        ["k1", logged("left k1")],
+        ["k2", logged("left k2")],
+      ]);
+      const right = new Map([
+        ["k2", logged("right k2")],
+        ["k1", logged("right k1")],
+      ]);
+      expect(util.isDeepStrictEqual(left, right)).toBe(true);
+      expect(log).toEqual(["left k2", "right k2", "left k1", "right k1"]);
+    });
+
+    test("a boxed String with an own property is converted once per side", () => {
+      let calls = 0;
+      const toString = function () {
+        calls++;
+        return "a";
+      };
+      const boxed = () => Object.assign(new String("a"), { toString });
+      expect(util.isDeepStrictEqual(boxed(), boxed())).toBe(true);
+      expect(calls).toBe(2);
+    });
+
+    test.each([
+      ["at the top level", (map: unknown) => map],
+      ["as a property", (map: unknown) => ({ map })],
+      ["as an array element", (map: unknown) => [map]],
+    ])("a Map that holds itself under a string key equals its copy, %s", (_, wrap) => {
+      const selfHolding = () => {
+        const map = new Map<string, unknown>();
+        map.set("self", map);
+        return wrap(map);
+      };
+      expect(util.isDeepStrictEqual(selfHolding(), selfHolding())).toBe(true);
+      assert.deepStrictEqual(selfHolding(), selfHolding());
+    });
+
+    test("two Maps that hold each other equal their copies", () => {
+      const pair = () => {
+        const first = new Map<string, unknown>();
+        const second = new Map<string, unknown>([["first", first]]);
+        first.set("second", second);
+        return first;
+      };
+      expect(util.isDeepStrictEqual(pair(), pair())).toBe(true);
+    });
+
+    test("a Set that holds itself equals its copy", () => {
+      const selfHolding = () => {
+        const set = new Set<unknown>();
+        set.add(set);
+        return set;
+      };
+      expect(util.isDeepStrictEqual(selfHolding(), selfHolding())).toBe(true);
+    });
+  });
+
+  // left = Map { k1: leaf, k2: 1 } against an equal right Map. The first read of a leaf getter changes one of the Maps.
+  // Each row holds node v26.3.0's answer and then bun's.
+  describe("a getter that changes a Map during the comparison", () => {
+    type Mutation = (
+      left: Map<unknown, unknown> & { x?: number },
+      right: Map<unknown, unknown> & { x?: number },
+    ) => void;
+    const scenarios: [string, Mutation, boolean, boolean][] = [
+      ["the right Map gains a primitive key", (left, right) => right.set("k3", 3), false, false],
+      // node made its list of the right keys that are objects before this walk.
+      ["the right Map gains an object key", (left, right) => right.set({}, 3), true, false],
+      ["the left Map gains a primitive key", (left, right) => left.set("k3", 3), true, true],
+      ["the left Map loses the key that is not visited yet", (left, right) => left.delete("k2"), false, false],
+      ["the right Map loses the key that is not visited yet", (left, right) => right.delete("k2"), true, true],
+      ["the left Map is cleared", (left, right) => left.clear(), false, false],
+      ["the right Map is cleared", (left, right) => right.clear(), true, true],
+      ["both Maps are cleared", (left, right) => (left.clear(), right.clear()), true, true],
+      [
+        "the right Map swaps the key under comparison",
+        (left, right) => (right.delete("k1"), right.set("k9", 9)),
+        false,
+        false,
+      ],
+      [
+        "the right Map swaps the key that is not visited yet",
+        (left, right) => (right.delete("k2"), right.set("k9", 1)),
+        false,
+        false,
+      ],
+      [
+        "the left Map swaps the key under comparison",
+        (left, right) => (left.delete("k1"), left.set("k9", 9)),
+        true,
+        true,
+      ],
+      [
+        "the left Map swaps the key that is not visited yet",
+        (left, right) => (left.delete("k2"), left.set("k9", 1)),
+        false,
+        false,
+      ],
+      ["the value that is not visited yet changes on the right", (left, right) => right.set("k2", 2), false, false],
+      ["the value that is not visited yet changes on the left", (left, right) => left.set("k2", 2), false, false],
+      ["the value under comparison is overwritten on the right", (left, right) => right.set("k1", 7), true, true],
+      ["the value under comparison is overwritten on the left", (left, right) => left.set("k1", 7), true, true],
+      // node compares the own properties before the entries.
+      ["the left Map gains an own property", (left, right) => void (left.x = 1), true, false],
+      ["the right Map gains an own property", (left, right) => void (right.x = 1), true, false],
+    ];
+    // left = Map { k0: 1, k1: leaf, k2: 1 }: k0 is compared before the getter runs.
+    const scenariosAfterFirstKey: [string, Mutation, boolean, boolean][] = [
+      [
+        "the right Map swaps the key that is compared already",
+        (left, right) => (right.delete("k0"), right.set("k9", 1)),
+        false,
+        false,
+      ],
+      [
+        "the left Map swaps the key that is compared already",
+        (left, right) => (left.delete("k0"), left.set("k9", 1)),
+        true,
+        true,
+      ],
+      [
+        "the value that is compared already is overwritten on the right",
+        (left, right) => right.set("k0", 2),
+        true,
+        true,
+      ],
+      ["the value that is compared already is overwritten on the left", (left, right) => left.set("k0", 2), true, true],
+      ["the right Map loses the key that is compared already", (left, right) => right.delete("k0"), true, true],
+      ["the left Map loses the key that is compared already", (left, right) => left.delete("k0"), true, true],
+    ];
+    function compareWith(mutate: Mutation, entriesBefore: [string, number][]) {
+      let mutated = false;
+      const leaf = () => ({
+        get value() {
+          if (!mutated) {
+            mutated = true;
+            mutate(left, right);
+          }
+          return 1;
+        },
+      });
+      const make = () => new Map<unknown, unknown>([...entriesBefore, ["k1", leaf()], ["k2", 1]]);
+      const left = make();
+      const right = make();
+      return util.isDeepStrictEqual(left, right);
+    }
+    test.each(scenarios)("%s", (_, mutate, _node, bun) => {
+      expect(compareWith(mutate, [])).toBe(bun);
+    });
+    test.each(scenariosAfterFirstKey)("%s", (_, mutate, _node, bun) => {
+      expect(compareWith(mutate, [["k0", 1]])).toBe(bun);
+    });
   });
 
   test("reads an array's own symbol-keyed getter once per side", () => {
@@ -1056,8 +1471,33 @@ describe("util.isDeepStrictEqual", () => {
     test("ignores the boxed-primitive subclass distinction", () => {
       class S extends String {}
       expect(util.isDeepStrictEqual(new String("a"), new S("a"))).toBe(false);
+      expect(util.isDeepStrictEqual(new S("a"), new String("a"))).toBe(false);
       expect(util.isDeepStrictEqual(new String("a"), new S("a"), true as any)).toBe(true);
+      expect(util.isDeepStrictEqual(new S("a"), new String("a"), true as any)).toBe(true);
     });
+
+    test.each([
+      ["Set", () => new Set([{ a: 1 }, { a: 1 }]), () => new Set([{ a: 1 }, { a: 2 }])],
+      [
+        "Map",
+        () =>
+          new Map([
+            [{ a: 1 }, 1],
+            [{ a: 1 }, 1],
+          ]),
+        () =>
+          new Map([
+            [{ a: 1 }, 1],
+            [{ a: 2 }, 1],
+          ]),
+      ],
+    ])(
+      "a %s with two deep-equal entries is not equal to one with two different entries, in both argument orders",
+      (_, a, b) => {
+        expect(util.isDeepStrictEqual(a(), b(), true as any)).toBe(false);
+        expect(util.isDeepStrictEqual(b(), a(), true as any)).toBe(false);
+      },
+    );
 
     test("does not leak into assert.deepStrictEqual", () => {
       expect(() => assert.deepStrictEqual(new Foo(42), new Bar(42))).toThrow();

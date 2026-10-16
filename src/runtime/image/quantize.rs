@@ -423,6 +423,8 @@ fn split_boxes<W: Weighted>(bins: &mut [W], want: usize) -> Vec<u8> {
     }
     let mut boxes: Vec<ColorBox> = Vec::with_capacity(want);
     boxes.push(ColorBox::new(0, bins.len(), &all));
+    // Sums per value of the split channel. `cut` leaves it zero.
+    let mut at_value = [Sums::default(); 256];
     while boxes.len() < want {
         // The box with the most squared error. A box of one bin has none.
         let mut pick: Option<usize> = None;
@@ -443,7 +445,7 @@ fn split_boxes<W: Weighted>(bins: &mut [W], want: usize) -> Vec<u8> {
         let ch = b.moments.channel_to_split();
         let slice = &mut bins[b.lo..b.hi];
         // `ch` has error, so it has two different values and a cut exists.
-        let Some(value) = cut(slice, ch, &b.moments) else {
+        let Some(value) = cut(slice, ch, &b.moments, &mut at_value) else {
             break;
         };
         // The bins below `value` go first. The order of `bins` does not change the two parts.
@@ -474,11 +476,19 @@ struct Sums {
 }
 
 /// The cut of `bins` along `ch` with the least squared error: the least value in the second part.
-fn cut<W: Weighted>(bins: &[W], ch: usize, total: &Moments) -> Option<u8> {
-    let mut at_value = [Sums::default(); 256];
+fn cut<W: Weighted>(
+    bins: &[W],
+    ch: usize,
+    total: &Moments,
+    at_value: &mut [Sums; 256],
+) -> Option<u8> {
+    let (mut least, mut most) = (usize::from(u8::MAX), 0usize);
     for bin in bins {
         let rgba = bin.rgba();
-        let sums = &mut at_value[usize::from(rgba[ch])];
+        let value = usize::from(rgba[ch]);
+        least = least.min(value);
+        most = most.max(value);
+        let sums = &mut at_value[value];
         let count = u64::from(bin.count());
         sums.n += count;
         for c in 0..4usize {
@@ -488,15 +498,13 @@ fn cut<W: Weighted>(bins: &[W], ch: usize, total: &Moments) -> Option<u8> {
     // The sum of squares is fixed: least error is the largest L²/nL + R²/nR over the parts' sums.
     let mut left = Sums::default();
     let mut best: Option<(u128, u8)> = None;
-    for (value, sums) in at_value.iter().enumerate() {
+    // Nothing is past `most`, so no cut is there.
+    for (value, slot) in at_value.iter_mut().enumerate().take(most).skip(least) {
+        let sums = core::mem::take(slot);
         if sums.n == 0 {
             continue;
         }
         left.n += sums.n;
-        // Nothing is past the last value.
-        if left.n == total.n {
-            break;
-        }
         let mut left_sq: u128 = 0;
         let mut right_sq: u128 = 0;
         for c in 0..4usize {
@@ -513,6 +521,7 @@ fn cut<W: Weighted>(bins: &[W], ch: usize, total: &Moments) -> Option<u8> {
             best = Some((score, u8::try_from(value + 1).expect("int cast")));
         }
     }
+    at_value[most] = Sums::default();
     best.map(|(_, value)| value)
 }
 

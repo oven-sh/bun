@@ -4,7 +4,7 @@
 //! for everything in it that the configuration has `files` for. Directories are listed on all
 //! threads, one level of the tree at a time, and one that the configuration ignores is not entered.
 
-use crate::configs::{Flavor, Loaded, Loader, depends_on_react};
+use crate::configs::{Flavor, Loaded, Loader, inherit_frameworks, read_frameworks};
 use crate::embedded::Framework;
 use crate::gitignore::{self, Files};
 use crate::run::{Environment, Fatal, Pool};
@@ -15,6 +15,7 @@ use bun_lint::js_plugin::{Host, Route};
 use bun_lint::linter::config::{Dotfiles, Seen};
 use bun_lint::linter::{FileConfig, ResolvedConfig};
 use bun_lint::modules::Listed;
+use bun_lint::rule::Frameworks;
 use bun_threading::Guarded;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -161,8 +162,8 @@ struct Directory {
     /// `inherited` ignores it. It is only read for the configuration files of oxlint in it and below it, each of which is asked
     /// alone about what it is nearest to.
     is_hidden: bool,
-    /// [`Loader::is_of_react`] of the parent directory, or of the directory itself if it's the search root.
-    is_of_react: bool,
+    /// [`Loader::detect_frameworks`] of the parent directory, or of the directory itself if it's the search root.
+    frameworks: Frameworks,
 }
 
 fn no_files_found(pattern: &[u8]) -> Fatal {
@@ -287,7 +288,7 @@ fn search(
                 relative: Vec::new(),
                 seen: None,
                 ignores,
-                is_of_react: loader.is_of_react(&inherited, &search.base_path),
+                frameworks: loader.detect_frameworks(&inherited, &search.base_path),
                 inherited,
                 is_hidden,
             });
@@ -339,10 +340,15 @@ fn search(
             let is_hidden = directory.is_hidden && Arc::ptr_eq(&own, &directory.inherited);
             // The listing already tells us whether there's a package.json, so most directories inherit the answer.
             let has_package = || entries.iter().any(|it| it.name == b"package.json");
-            let decides =
-                !directory.relative.is_empty() && own.flavor == Flavor::BuiltIn && has_package();
-            let of_own_package = decides.then(|| depends_on_react(&directory.path)).flatten();
-            let is_of_react = of_own_package.unwrap_or(directory.is_of_react);
+            let detects = !directory.relative.is_empty() && own.flavor == Flavor::BuiltIn;
+            let decides = detects && has_package();
+            let own_frameworks = decides.then(|| read_frameworks(&directory.path)).flatten();
+            let is_repository_root = detects
+                && entries
+                    .iter()
+                    .any(|it| matches!(&it.name[..], b".git" | b".jj"));
+            let frameworks =
+                inherit_frameworks(directory.frameworks, own_frameworks, is_repository_root);
             let reads_ignore_files = loader.reads_ignore_files(&own);
             let mut ignores = directory.ignores.clone();
             if reads_ignore_files && !loader.reads_ignore_files(&directory.inherited) {
@@ -361,7 +367,7 @@ fn search(
                 _ => &own.config.see(&directory.path),
             };
             let within = own.config.within(&directory.path, seen);
-            let mut within = within.outside_of_react(!is_of_react);
+            let mut within = within.with_frameworks(frameworks);
             for mut entry in entries {
                 let path = paths::join(&directory.path, &entry.name);
                 let (mut real, mut is_loop) = (None, false);
@@ -432,7 +438,7 @@ fn search(
                             inherited: Arc::clone(&own),
                             ignores: ignores.clone(),
                             is_hidden,
-                            is_of_react,
+                            frameworks,
                         });
                     }
                     continue;
@@ -465,10 +471,7 @@ fn search(
                         path,
                         size,
                         loaded: Arc::clone(&own),
-                        status: Status::Matched(match is_of_react {
-                            true => config,
-                            false => config.outside_of_react(),
-                        }),
+                        status: Status::Matched(config),
                     });
                 }
             }

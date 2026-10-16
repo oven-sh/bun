@@ -82,7 +82,7 @@ fn with_commas(n: usize) -> BString {
     out
 }
 
-fn plural(n: usize, one: &[u8], many: &[u8]) -> BString {
+pub fn plural(n: usize, one: &[u8], many: &[u8]) -> BString {
     let noun = if n == 1 { one } else { many };
     alloc_print!("{} {}", with_commas(n), noun.as_bstr())
 }
@@ -323,7 +323,11 @@ pub fn write_agent_source(
         let text = strings::replace_owned(text, b"\t", b" ");
         let _ = writeln!(out, "{line:>gutter$} | {}", text.trim_ascii_end().as_bstr());
         if line == at {
-            let carets = "^".repeat(to.unwrap_or(text.len()).saturating_sub(from).max(1));
+            let (from, to) = (
+                from.min(text.len()),
+                to.unwrap_or(text.len()).min(text.len()),
+            );
+            let carets = "^".repeat(to.saturating_sub(from).max(1));
             let _ = writeln!(out, "{:1$}{carets}", "", gutter + 3 + from);
         }
     }

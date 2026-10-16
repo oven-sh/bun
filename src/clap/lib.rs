@@ -200,7 +200,7 @@ pub struct Names {
 
 impl Names {
     /// Check if the given name matches the primary long name or any alias
-    pub(crate) fn matches_long(&self, name: &[u8]) -> bool {
+    pub fn matches_long(&self, name: &[u8]) -> bool {
         if let Some(l) = self.long {
             if name == l {
                 return true;
@@ -377,6 +377,8 @@ pub struct ParseOptions<'a> {
     /// Whole-token rewrites applied only where a token is being classified as a
     /// flag, never to an option's value or a `--` target. Node keeps its own
     /// aliases on exactly that branch (node_options-inl.h).
+    /// An alias written as `--name=value` also matches the two tokens `--name value`. An empty
+    /// replacement removes the flag from the arguments.
     pub short_aliases: &'static [(&'static [u8], &'static [u8])],
     /// A `--flag` or `--flag=value` that no param names is a positional, with its dashes, in its
     /// place among the others. For a command that hands flags on: `bun check --strict`. Otherwise
@@ -434,6 +436,11 @@ impl<Id: 'static> Args<Id> {
 
     pub fn options(&self, name: &'static [u8]) -> &[&'static [u8]] {
         self.clap.options(name)
+    }
+
+    /// Whether the parameter was passed. Works for flags and for parameters that take values.
+    pub fn has(&self, name: &'static [u8]) -> bool {
+        self.clap.has(name)
     }
 
     pub fn positionals(&self) -> &[&'static [u8]] {

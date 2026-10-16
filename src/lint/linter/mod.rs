@@ -1064,6 +1064,10 @@ impl<S: RuleSet> Linter<S> {
                 problems.retain(|it| !it.rule_id.as_ref().is_some_and(stands_for_js_rule));
             }
         }
+        // Before the comments, which are compared with a report where it's shown.
+        if file.language().stands_alone {
+            problems.iter_mut().for_each(LintMessage::stay_in_file);
+        }
         if wants_places && !in_run_order {
             LintMessage::sort(&mut problems);
         }

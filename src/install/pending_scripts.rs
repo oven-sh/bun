@@ -21,7 +21,7 @@ pub(crate) struct PendingScripts {
     unfinished: Vec<Unfinished>,
     /// Open, and locked while this install lives: the next one can tell a dead writer from this one.
     file: Option<File>,
-    /// False under `--ignore-scripts`, while another install holds the lock, and after a failed write.
+    /// False under `--ignore-scripts`, and when the file is not to be used: locked, too long, or an error.
     writes: bool,
     /// What a dead install left: the paths with a `+` line and no later `-` line.
     stale: Vec<Box<[u8]>>,
@@ -100,11 +100,26 @@ impl PendingScripts {
         (self.stale.iter()).any(|stale| is_behind(stale, key) && is_in_place(stale))
     }
 
+    /// The stale paths that `is_one` takes.
+    pub(crate) fn stale_where(&self, mut is_one: impl FnMut(&[u8]) -> bool) -> Vec<Box<[u8]>> {
+        (self.stale.iter())
+            .filter(|key| is_one(key))
+            .cloned()
+            .collect()
+    }
+
     /// The package at a stale `key` stays as it is: its scripts are not to run any more.
     pub(crate) fn forget_stale(&mut self, key: &[u8]) {
         if let Some(index) = self.stale.iter().position(|stale| **stale == *key) {
             self.stale.swap_remove(index);
             self.append(b'-', key);
+        }
+    }
+
+    /// The package at a stale `key` was removed. Gone, it needs no record: two trees can be one folder.
+    pub(crate) fn forget_removed(&mut self, key: &[u8]) {
+        if !is_in_place(key) {
+            self.forget_stale(key);
         }
     }
 

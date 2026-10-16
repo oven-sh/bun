@@ -656,6 +656,36 @@ impl<'a> PackageInstaller<'a> {
             || (self.lockfile()).has_trusted_dependency(alias, pkg_name, resolution)
     }
 
+    /// The postinstall optimizer leaves out the scripts of the package.
+    fn ignores_lifecycle_scripts(&self, package_id: PackageID, resolution: &Resolution) -> bool {
+        let (lockfile, options) = (self.lockfile(), &self.manager().options);
+        (self.manager().postinstall_optimizer).should_ignore_lifecycle_scripts(
+            &postinstall_optimizer::PkgInfo {
+                name_hash: self.pkg_name_hashes[package_id as usize],
+                version: (resolution.tag == resolution::Tag::Npm).then(|| resolution.npm().version),
+                version_buf: lockfile.buffers.string_bytes.as_slice(),
+            },
+            lockfile.packages.items_resolutions()[package_id as usize]
+                .get(lockfile.buffers.resolutions.as_slice()),
+            lockfile.packages.items_meta(),
+            options.cpu,
+            options.os,
+            options.libc,
+        )
+    }
+
+    /// `enqueue_lifecycle_scripts_for_trusted` runs no script of the package, whatever it has.
+    fn never_runs_scripts(
+        &self,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+        resolution: &Resolution,
+    ) -> bool {
+        self.lockfile().is_folder_inside_declarer(dependency_id)
+            || self.lockfile().is_member_outside(package_id)
+            || self.ignores_lifecycle_scripts(package_id, resolution)
+    }
+
     /// A package of the current tree has no script to run, also if a dead install listed it.
     fn forget_pending_scripts(&self, folder_name: &[u8]) {
         let (lockfile, tree_id) = (self.lockfile(), self.current_tree_id);
@@ -690,18 +720,20 @@ impl<'a> PackageInstaller<'a> {
                 };
                 let is_workspace = resolution.tag == resolution::Tag::Workspace;
                 let scripts = &scripts[package_id as usize];
-                let runs_scripts = (is_workspace && (scripts.has_any() || !scripts.filled))
+                let runs_scripts = ((is_workspace && (scripts.has_any() || !scripts.filled))
                     || self.is_trusted(
                         package_id,
                         alias,
                         self.names[package_id as usize].slice(string_buf),
                         resolution,
-                    );
+                    ))
+                    && !self.never_runs_scripts(dependency_id, package_id, resolution);
                 if resolution.tag == resolution::Tag::Root || !runs_scripts {
                     pending.borrow_mut().forget_stale(&key);
                 } else if !(is_workspace && pending.borrow().has_stale_behind(&key)) {
                     // A link stays while it leads to a stale package that this pass does not come to.
                     remove_placed_package(lockfile, tree.id, alias);
+                    pending.borrow_mut().forget_removed(&key);
                 }
             }
         }
@@ -2266,9 +2298,10 @@ impl<'a> PackageInstaller<'a> {
                         resolution,
                     ));
             // A workspace whose scripts are not read yet is listed when they are: most have none.
-            let runs_scripts = is_trusted
+            let runs_scripts = (is_trusted
                 || (resolution.tag == resolution::Tag::Workspace
-                    && self.lockfile().packages.items_scripts()[package_id as usize].has_any());
+                    && self.lockfile().packages.items_scripts()[package_id as usize].has_any()))
+                && !self.never_runs_scripts(dependency_id, package_id, resolution);
             if resolution.tag != resolution::Tag::Root && runs_scripts {
                 // Before it is placed: an install that dies from here on leaves the record.
                 let (lockfile, tree_id) = (self.lockfile(), self.current_tree_id);
@@ -2705,6 +2738,12 @@ impl<'a> PackageInstaller<'a> {
         resolution: &Resolution,
         record_trust: bool,
     ) {
+        if self.lockfile().is_folder_inside_declarer(dependency_id)
+            || self.lockfile().is_member_outside(package_id)
+        {
+            return;
+        }
+
         // SAFETY: `buffers.string_bytes` is append-only and never freed
         // for the lifetime of this `PackageInstaller`.
         let string_buf_ptr =
@@ -2713,44 +2752,18 @@ impl<'a> PackageInstaller<'a> {
 
         let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
         let (alias, alias_hash) = (dep.name, dep.name_hash);
-
-        if self.lockfile().is_folder_inside_declarer(dependency_id)
-            || self.lockfile().is_member_outside(package_id)
-        {
-            self.forget_pending_scripts(alias.slice(string_buf));
-            return;
-        }
-
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
 
         let mut folder_path = AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
         folder_path.append(alias.slice(string_buf)).unwrap_or_oom();
 
-        if self
-            .manager()
-            .postinstall_optimizer
-            .should_ignore_lifecycle_scripts(
-                &postinstall_optimizer::PkgInfo {
-                    name_hash: pkg_name_hash,
-                    version: (resolution.tag == resolution::Tag::Npm)
-                        .then(|| resolution.npm().version),
-                    version_buf: string_buf,
-                },
-                self.lockfile().packages.items_resolutions()[package_id as usize]
-                    .get(self.lockfile().buffers.resolutions.as_slice()),
-                self.lockfile().packages.items_meta(),
-                self.manager().options.cpu,
-                self.manager().options.os,
-                self.manager().options.libc,
-            )
-        {
+        if self.ignores_lifecycle_scripts(package_id, resolution) {
             if PackageManager::verbose_install() {
                 bun_core::pretty_errorln!(
                     "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
                     bstr::BStr::new(pkg_name.slice(string_buf)),
                 );
             }
-            self.forget_pending_scripts(alias.slice(string_buf));
             return;
         }
 
@@ -2851,12 +2864,9 @@ impl<'a> PackageInstaller<'a> {
                 .bins_after_scripts
                 .push(dependency_id);
         }
+        // New here: a package that was in place, and a workspace whose scripts the lockfile did not have.
         let (lockfile, tree_id) = (self.lockfile(), self.current_tree_id);
         (self.manager().pending_scripts.borrow_mut()).begin(tree_id, folder_name, || {
-            // A package that was in place gets no line: the lockfile has it run again, in place.
-            if resolution.tag != resolution::Tag::Workspace {
-                return Vec::new();
-            }
             pending_scripts_key(lockfile, tree_id, folder_name)
         });
         self.pending_lifecycle_scripts.push(PendingLifecycleScript {

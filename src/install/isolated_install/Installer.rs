@@ -180,6 +180,9 @@ impl<'a> Installer<'a> {
     /// Called from main thread, for an existing project-local store entry.
     pub(crate) fn start_relink_task(&mut self, entry_id: StoreEntryId) {
         let newly_trusted = self.is_newly_trusted(entry_id);
+        if newly_trusted {
+            self.list_pending_scripts(entry_id);
+        }
         let task = &mut self.tasks[entry_id.get() as usize];
         task.relink = Relink::Pending;
         task.newly_trusted = newly_trusted;
@@ -190,20 +193,32 @@ impl<'a> Installer<'a> {
     /// Like the hoisted linker, runs a `link:` dependency's scripts if no dependent links to
     /// `target` yet. Call this before the dependents' tasks start, because they create those links.
     pub(crate) fn start_link_task(&mut self, entry_id: StoreEntryId, target: &ZStr) {
-        let left_pending =
-            self.manager().retries_pending_scripts() && self.is_left_pending(entry_id);
+        // The links that a dead install listed do not say that the scripts of the entry ran.
+        let stale = if self.manager().retries_pending_scripts() {
+            self.stale_links_to(entry_id, target)
+        } else {
+            Vec::new()
+        };
+        let left_pending = !stale.is_empty() && self.runs_scripts(entry_id);
         let linked = !self.manager().options.enable.force_install()
             && !left_pending
             && self.has_link_from_dependent(entry_id, target);
-        if linked && !self.is_newly_trusted(entry_id) {
+        let skips = linked && !self.is_newly_trusted(entry_id);
+        if !skips {
+            if linked {
+                self.tasks[entry_id.get() as usize].relink = Relink::Unchanged;
+            }
+            self.list_pending_scripts(entry_id);
+        }
+        // After the line of this pass: an install that dies here leaves one of the two.
+        for key in &stale {
+            (self.manager().pending_scripts.borrow_mut()).forget_stale(key);
+        }
+        if skips {
             self.set_step(entry_id, Step::Done);
             self.on_task_complete(entry_id, CompleteState::Skipped);
             return;
         }
-        if linked {
-            self.tasks[entry_id.get() as usize].relink = Relink::Unchanged;
-        }
-        self.list_pending_scripts(entry_id);
         self.set_step(entry_id, Step::RunPreinstall);
         self.start_task(entry_id);
     }
@@ -243,19 +258,18 @@ impl<'a> Installer<'a> {
         })
     }
 
-    /// A dead install listed the `link:` entry: the links to it do not say that its scripts ran.
+    /// The stale records of the `link:` entry: a link from a dependent of this pass, or a link to `target`.
     #[cold]
-    fn is_left_pending(&self, entry_id: StoreEntryId) -> bool {
-        let key = self.pending_scripts_key(entry_id);
-        let pending = &self.manager().pending_scripts;
-        if !pending.borrow().is_stale(&key) {
-            return false;
-        }
-        if !self.is_trusted(entry_id) {
-            pending.borrow_mut().forget_stale(&key);
-            return false;
-        }
-        true
+    fn stale_links_to(&self, entry_id: StoreEntryId, target: &ZStr) -> Vec<Box<[u8]>> {
+        let links: Vec<AutoPath> = (self.links_from_dependents(entry_id, AutoPath::init)).collect();
+        let target = sys::stat(target).ok();
+        (self.manager().pending_scripts.borrow()).stale_where(|key| {
+            links.iter().any(|link| link.slice() == key)
+                || sys::stat(&bun_core::ZBox::from_bytes(key)).is_ok_and(|st| {
+                    (target.as_ref())
+                        .is_some_and(|to| st.st_ino == to.st_ino && st.st_dev == to.st_dev)
+                })
+        })
     }
 
     /// The scripts an earlier install blocked run now, if `Step::RunPreinstall` finds it trusted.
@@ -693,7 +707,7 @@ impl<'a> Installer<'a> {
     pub(crate) fn list_pending_scripts(&mut self, entry_id: StoreEntryId) {
         let is_trusted = self.is_trusted(entry_id);
         self.tasks[entry_id.get() as usize].trusted = Some(is_trusted);
-        if is_trusted {
+        if is_trusted && !self.ignores_lifecycle_scripts(entry_id) {
             (self.manager().pending_scripts.borrow_mut())
                 .begin(entry_id.get(), b"", || self.pending_scripts_key(entry_id));
         }
@@ -706,16 +720,15 @@ impl<'a> Installer<'a> {
         for index in 0..self.store.entries.len() {
             let entry_id = StoreEntryId::from(index as u32);
             let tag = self.resolution(entry_id).tag;
-            if self.entry_uses_global_store(entry_id)
-                || !(tag.can_enqueue_install_task() || tag == ResolutionTag::Folder)
-            {
+            if !(tag.can_enqueue_install_task() || tag == ResolutionTag::Folder) {
                 continue;
             }
             let key = self.pending_scripts_key(entry_id);
             if !pending.borrow().is_stale(&key) {
                 continue;
             }
-            if self.is_trusted(entry_id) {
+            // An entry that went to the global store lost its trust.
+            if self.runs_scripts(entry_id) {
                 self.delete_store_copy(entry_id);
             } else {
                 pending.borrow_mut().forget_stale(&key);
@@ -727,7 +740,10 @@ impl<'a> Installer<'a> {
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
         self.manager_mut().decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
-        if state != CompleteState::Fail {
+        // The record of a `link:` entry that is left out goes after the links to it.
+        let is_left_out_link = self.resolution(entry_id).tag == ResolutionTag::Symlink
+            && self.left_out_entries.contains(&entry_id);
+        if state != CompleteState::Fail && !is_left_out_link {
             (self.manager().pending_scripts.borrow_mut()).done(entry_id.get(), b"");
         }
 
@@ -861,20 +877,24 @@ impl<'a> Installer<'a> {
         // A task that still runs would put its entry in place after this has looked at it.
         self.tasks_in_flight.wait();
         let store = self.store;
+        let pending = &self.manager().pending_scripts;
         for (index, step) in store.entries.items_step().iter().enumerate() {
             let entry_id = StoreEntryId::from(index as u32);
+            let is_done = step.load(Ordering::Acquire) == Step::Done as u32;
             // Every unfinished trusted entry is discarded, because it is not known yet whether it
             // has scripts: a bun.lock written by an older Bun does not record that.
-            if entry_id == failed
-                || (step.load(Ordering::Acquire) != Step::Done as u32 && self.is_trusted(entry_id))
-            {
-                self.delete_store_copy(entry_id);
-                (self.manager().pending_scripts.borrow_mut()).done(entry_id.get(), b"");
+            if entry_id == failed || (!is_done && self.is_trusted(entry_id)) {
                 // Also remove the symlinks to a `link:` dependency, because `start_link_task` takes
                 // them to mean that its scripts already ran.
                 if self.resolution(entry_id).tag == ResolutionTag::Symlink {
                     self.left_out_entries.push(entry_id);
+                } else {
+                    self.delete_store_copy(entry_id);
+                    pending.borrow_mut().done(entry_id.get(), b"");
                 }
+            } else if is_done && matches!(self.tasks[index].result, Result::Done) {
+                // Its task ended after the last `run_tasks`: no script of it is left to run.
+                pending.borrow_mut().done(entry_id.get(), b"");
             }
         }
         self.unlink_left_out_entries();
@@ -894,6 +914,31 @@ impl<'a> Installer<'a> {
                 self.pkg_name(entry_id),
                 self.resolution(entry_id),
             )
+    }
+
+    /// The postinstall optimizer leaves out the scripts of the entry. Main and task threads.
+    fn ignores_lifecycle_scripts(&self, entry_id: StoreEntryId) -> bool {
+        let (manager, lockfile) = (self.manager(), self.lockfile());
+        let pkg_id = self.store.ids(entry_id).pkg_id;
+        let pkg_res = self.resolution(entry_id);
+        let pkgs = lockfile.packages.slice();
+        (manager.postinstall_optimizer).should_ignore_lifecycle_scripts(
+            &postinstall_optimizer::PkgInfo {
+                name_hash: pkgs.items_name_hash()[pkg_id as usize],
+                version: (pkg_res.tag == ResolutionTag::Npm).then(|| pkg_res.npm().version),
+                version_buf: lockfile.buffers.string_bytes.as_slice(),
+            },
+            pkgs.items_resolutions()[pkg_id as usize].get(lockfile.buffers.resolutions.as_slice()),
+            pkgs.items_meta(),
+            manager.options.cpu,
+            manager.options.os,
+            manager.options.libc,
+        )
+    }
+
+    /// The scripts of the entry, if it has some, run when it is placed.
+    fn runs_scripts(&self, entry_id: StoreEntryId) -> bool {
+        self.is_trusted(entry_id) && !self.ignores_lifecycle_scripts(entry_id)
     }
 
     /// Main thread, once no task runs: tasks read `lockfile.trusted_dependencies` without a lock.
@@ -1315,7 +1360,6 @@ impl Task {
         }
 
         let pkgs = lockfile.packages.slice();
-        let pkg_metas = pkgs.items_meta();
         let mut pkg_scripts: package::scripts::Scripts = pkgs.items_scripts()[pkg_id as usize];
         let dep_name = lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name);
         let is_trusted = (self.trusted).unwrap_or_else(|| installer.is_trusted(self.entry_id));
@@ -1336,27 +1380,7 @@ impl Task {
             return Ok(false);
         }
 
-        if is_trusted
-            && manager
-                .postinstall_optimizer
-                .should_ignore_lifecycle_scripts(
-                    &postinstall_optimizer::PkgInfo {
-                        name_hash: pkgs.items_name_hash()[pkg_id as usize],
-                        version: if pkg_res.tag == ResolutionTag::Npm {
-                            Some(pkg_res.npm().version)
-                        } else {
-                            None
-                        },
-                        version_buf: lockfile.buffers.string_bytes.as_slice(),
-                    },
-                    pkgs.items_resolutions()[pkg_id as usize]
-                        .get(lockfile.buffers.resolutions.as_slice()),
-                    pkg_metas,
-                    manager.options.cpu,
-                    manager.options.os,
-                    manager.options.libc,
-                )
-        {
+        if is_trusted && installer.ignores_lifecycle_scripts(self.entry_id) {
             return Ok(false);
         }
 
@@ -2276,6 +2300,8 @@ impl<'a> Installer<'a> {
                     let _ = remove_link(hidden.slice_z());
                 }
             }
+            // After the links of a `link:` entry are gone: an install that dies before leaves it listed.
+            (self.manager().pending_scripts.borrow_mut()).done(entry_id.get(), b"");
         }
     }
 

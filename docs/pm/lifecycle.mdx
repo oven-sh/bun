@@ -50,7 +50,9 @@ A curated list of popular npm packages with lifecycle scripts is allowed by defa
   The default trusted dependencies list only applies to packages installed from npm. For packages from other sources
   (such as `file:`, `link:`, `git:`, or `github:` dependencies), you must explicitly add them to `trustedDependencies`
   to run their lifecycle scripts, even if the package name matches an entry in the default list. This prevents malicious
-  packages from spoofing trusted package names through local file paths or git repositories.
+  packages from spoofing trusted package names through local file paths or git repositories. The name that counts is the
+  one you wrote for the dependency in `package.json`, so write that entry before you list the name. See [dependencies
+  added without a name](#dependencies-added-without-a-name).
 </Note>
 
 ### Behavior of the `trustedDependencies` field
@@ -66,6 +68,31 @@ Defining `trustedDependencies` in `package.json` **replaces** the default list r
 Set `trustedDependencies: []` when you want to opt out of the default allow list entirely without passing `--ignore-scripts` on every install. If you define `trustedDependencies` with an explicit list, include any packages from the [default list](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt) whose lifecycle scripts you still need (for example, `sharp` or `esbuild`). Bun no longer trusts those packages implicitly.
 
 The lockfile records the list, also an empty one. In a checkout that leaves out the workspace that declares it (a Docker layer, for example), `bun install --frozen-lockfile` keeps the default list off: of its packages, only those the lockfile records run their scripts.
+
+### Dependencies added without a name
+
+You can add a tarball URL, a local path, or a git repository without a name. Bun then names the dependency after the package: the `name` in its `package.json`, or the name of its folder or repository. You did not write that name, so it must not give the package trust. If the name is in `trustedDependencies`, Bun refuses the command and changes nothing.
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "trustedDependencies": ["my-native-addon"]
+}
+```
+
+```bash terminal icon="terminal"
+bun add https://example.com/addon.tgz
+```
+
+```txt
+error: "https://example.com/addon.tgz" has no name of its own, and Bun would name it "my-native-addon", which is in trustedDependencies
+note: a name in trustedDependencies lets a package run its lifecycle scripts. To allow that, write the entry yourself in package.json: "my-native-addon": "https://example.com/addon.tgz". To keep them blocked, write another name.
+```
+
+To let the package run its lifecycle scripts, write the entry in `package.json` yourself, then run `bun install`. For a tarball URL or a path, `bun add my-native-addon@https://example.com/addon.tgz` does the same. `bun add --trust` also adds the package, and it lets the dependencies of the package run their scripts too. To add the package with its scripts blocked, give it a name that is not in `trustedDependencies`.
+
+The check covers the command that adds the dependency, and a `package.json` entry whose key is equal to its value. A command without a name that moves a trusted dependency to another commit or URL is refused too: edit the entry, or write the name in the command. The check does not cover a dependency that an older version of Bun saved under a trusted name, or a name that you add to `trustedDependencies` later. Check where each entry with a trusted name comes from.
 
 ---
 

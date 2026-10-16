@@ -3,6 +3,8 @@ import { beforeAll, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
 import path from "path";
 import {
+  MYSQL_SERVER_MORE_RESULTS_EXISTS,
+  MYSQL_SERVER_STATUS_AUTOCOMMIT,
   listeningServer,
   mysqlAckSessionSetup,
   mysqlColumnDefinition,
@@ -13,6 +15,7 @@ import {
   mysqlRawPacket,
   mysqlReadPackets,
   mysqlStmtPrepareOk,
+  mysqlTextResultSet,
 } from "./wire-frames";
 const dir = tempDirWithFiles("sql-test", {
   "select-param.sql": `select ? as x`,
@@ -1439,6 +1442,84 @@ test("MySQL: binary TIME with a very large days field formats without integer wr
     expect(exitCode).toBe(0);
   } finally {
     await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
+// The container suite above checks these fields against real servers. This mock
+// covers the lanes with no docker daemon, and an affected-row count above 2^32.
+test("MySQL: count is the affected rows of an OK packet and command is the leading keyword of its statement", async () => {
+  const COM_QUERY = 0x03;
+  const COM_STMT_PREPARE = 0x16;
+  const COM_STMT_EXECUTE = 0x17;
+  const MYSQL_TYPE_LONG = 0x03;
+  const lastResult = MYSQL_SERVER_STATUS_AUTOCOMMIT;
+  const moreResults = MYSQL_SERVER_STATUS_AUTOCOMMIT | MYSQL_SERVER_MORE_RESULTS_EXISTS;
+
+  // Statement text -> what the server answers, over either protocol.
+  const responses: Record<string, Buffer> = {
+    "insert into t values (1), (2), (3)": mysqlOkPacket(1, 0x00, lastResult, 3),
+    "update t set a = 0": mysqlOkPacket(1, 0x00, lastResult, 2),
+    "delete from huge": mysqlOkPacket(1, 0x00, lastResult, 2n ** 40n),
+    // One result per statement: a result set (sequence ids 1 to 4), then two OK packets.
+    "select 1 as a; replace into t values (1); truncate table t": Buffer.concat([
+      mysqlTextResultSet(1, [{ name: "a", type: MYSQL_TYPE_LONG }], [["1"]], moreResults),
+      mysqlOkPacket(5, 0x00, moreResults, 2),
+      mysqlOkPacket(6, 0x00, lastResult, 0),
+    ]),
+  };
+
+  const { server, port } = await listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    const prepared: string[] = [];
+    socket.write(mysqlHandshakeV10());
+    socket.on("data", (chunk: Buffer) => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (!authed) {
+          authed = true;
+          socket.write(mysqlOkPacket(seq + 1));
+          return;
+        }
+        if (mysqlAckSessionSetup(socket, payload)) return;
+        if (payload[0] === COM_STMT_PREPARE) {
+          prepared.push(payload.subarray(1).toString());
+          socket.write(mysqlStmtPrepareOk(1, prepared.length, 0, 0));
+        } else if (payload[0] === COM_STMT_EXECUTE) {
+          socket.write(responses[prepared[payload.readUInt32LE(1) - 1]]);
+        } else if (payload[0] === COM_QUERY) {
+          socket.write(responses[payload.subarray(1).toString()]);
+        }
+      });
+    });
+    socket.on("error", () => {});
+  });
+
+  try {
+    await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+    const shape = (result: any) => ({
+      rows: [...result],
+      count: result.count,
+      command: result.command,
+      affectedRows: result.affectedRows,
+    });
+
+    expect({
+      text: shape(await sql.unsafe("insert into t values (1), (2), (3)")),
+      binary: shape(await sql`update t set a = 0`),
+      huge: shape(await sql`delete from huge`),
+      multi: (await sql`select 1 as a; replace into t values (1); truncate table t`.simple()).map(shape),
+    }).toEqual({
+      text: { rows: [], count: 3, command: "INSERT", affectedRows: 3 },
+      binary: { rows: [], count: 2, command: "UPDATE", affectedRows: 2 },
+      huge: { rows: [], count: 2 ** 40, command: "DELETE", affectedRows: 2 ** 40 },
+      multi: [
+        { rows: [{ a: 1 }], count: 1, command: "SELECT", affectedRows: 0 },
+        { rows: [], count: 2, command: "REPLACE", affectedRows: 2 },
+        { rows: [], count: 0, command: "TRUNCATE", affectedRows: 0 },
+      ],
+    });
+  } finally {
+    server.close();
   }
 });
 

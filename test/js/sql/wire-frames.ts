@@ -550,10 +550,15 @@ export function mysqlOkPacket(
   seq: number,
   header: 0x00 | 0xfe = 0x00,
   statusFlags: number = MYSQL_SERVER_STATUS_AUTOCOMMIT,
+  affectedRows: number | bigint = 0,
 ): Buffer {
   return mysqlRawPacket(
     seq,
-    Buffer.from([header, 0x00, 0x00, statusFlags & 0xff, (statusFlags >> 8) & 0xff, 0x00, 0x00]),
+    Buffer.concat([
+      Buffer.from([header]),
+      mysqlLenencInt(affectedRows),
+      Buffer.from([0x00, statusFlags & 0xff, (statusFlags >> 8) & 0xff, 0x00, 0x00]),
+    ]),
   );
 }
 

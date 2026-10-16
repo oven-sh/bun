@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -367,6 +367,7 @@ describe("event loop routing around macros", () => {
   const macro = (...body: string[]) =>
     ["export function m() {", ...body.map(line => "  " + line), "  return 1;", "}"].join("\n");
   const leftover = macro(`setImmediate(() => console.log("settled"));`);
+  const withMacro = `import { m } from "./m.ts" with { type: "macro" };\nexport const value = m();\n`;
 
   const unawaited: [name: string, macroSource: string][] = [
     [
@@ -480,8 +481,9 @@ describe("event loop routing around macros", () => {
     },
   );
 
-  // The regular loop runs an immediate a macro left behind from the macro loop's own queue, after its
-  // own immediates of that turn. The entry is never moved: a later macro that awaits it still finds it.
+  // An immediate queued while a macro ran sits on the macro loop. The regular loop runs it from that
+  // loop's own queue, after its own immediates of that turn. Until it has run, a later macro that awaits
+  // it still reaches it. What its callback queues belongs to the regular loop.
   const laterMacro = {
     "m.ts": [
       `let started: Promise<string>;`,
@@ -501,7 +503,7 @@ describe("event loop routing around macros", () => {
       "in a require()d module runs",
       {
         "m.ts": leftover,
-        "with-macro.ts": `import { m } from "./m.ts" with { type: "macro" };\nexport const value = m();\n`,
+        "with-macro.ts": withMacro,
         "index.ts": `const { value } = require("./with-macro.ts");\nconsole.log("value", value);\n`,
       },
       ["value 1", "settled"],
@@ -526,6 +528,106 @@ describe("event loop routing around macros", () => {
         ].join("\n"),
       },
       ["value 1", "settled"],
+    ],
+    [
+      "in a module imported while a plugin is registered runs",
+      {
+        "m.ts": leftover,
+        "with-macro.ts": withMacro,
+        "index.ts": [
+          `Bun.plugin({`,
+          `  name: "matches nothing",`,
+          `  setup(build) {`,
+          `    build.onLoad({ filter: /\\.nothing$/ }, () => ({ contents: "" }));`,
+          `  },`,
+          `});`,
+          `const { value } = await import("./with-macro.ts");`,
+          `console.log("value", value);`,
+        ].join("\n"),
+      },
+      ["value 1", "settled"],
+    ],
+    [
+      // A top-level await turns the loop through auto_tick, the other rows through auto_tick_active.
+      "is run for a program that awaits it at top level",
+      {
+        "m.ts": macro(`globalThis.leftover = new Promise(resolve => setImmediate(resolve, "ready"));`),
+        "index.ts": entry + `console.log(await globalThis.leftover);\n`,
+      },
+      ["value 1", "ready"],
+    ],
+    [
+      "by a program timer that fired inside a macro's wait runs",
+      {
+        "m.ts": `export async function m() {\n  await globalThis.release.promise;\n  return 1;\n}\n`,
+        "with-macro.ts": withMacro,
+        "index.ts": [
+          `globalThis.release = Promise.withResolvers();`,
+          `setTimeout(() => {`,
+          `  setImmediate(() => console.log("settled"));`,
+          `  globalThis.release.resolve();`,
+          `}, 1);`,
+          `const { value } = require("./with-macro.ts");`,
+          `console.log("value", value);`,
+        ].join("\n"),
+      },
+      ["value 1", "settled"],
+    ],
+    [
+      "runs while the program queues an immediate of its own on every turn",
+      {
+        "m.ts": macro(`setImmediate(() => (globalThis.settled = true));`),
+        "index.ts":
+          entry +
+          [
+            `let hops = 0;`,
+            `setImmediate(function hop() {`,
+            `  if (globalThis.settled || ++hops === 1000) console.log("program hops before it ran:", hops);`,
+            `  else setImmediate(hop);`,
+            `});`,
+          ].join("\n"),
+      },
+      ["value 1", "program hops before it ran: 1"],
+    ],
+    [
+      "and whose callback starts another macro runs, and so does what that macro left",
+      {
+        "m.ts": [
+          `export function first() {`,
+          `  setImmediate(() => {`,
+          `    setImmediate(() => console.log("A"));`,
+          `    console.log("second", globalThis.loadSecond());`,
+          `    setImmediate(() => console.log("C"));`,
+          `  });`,
+          `  return 1;`,
+          `}`,
+          `export function second() {`,
+          `  setImmediate(() => console.log("B"));`,
+          `  return 2;`,
+          `}`,
+        ].join("\n"),
+        "a.ts": laterMacro["a.ts"],
+        "b.ts": laterMacro["b.ts"],
+        "index.ts": `globalThis.loadSecond = () => require("./b.ts").b;\nconsole.log("first", require("./a.ts").a);\n`,
+      },
+      ["first 1", "second 2", "A", "C", "B"],
+    ],
+    [
+      "does not leave the loop polling once it ran",
+      {
+        "m.ts": leftover,
+        "index.ts":
+          `import { getEventLoopStats } from "bun:internal-for-testing";\n` +
+          entry +
+          [
+            `setTimeout(() => {`,
+            `  const before = getEventLoopStats().iteration;`,
+            `  // The measurement: a loop that does not block in its poll turns thousands of times in this window.`,
+            `  setTimeout(() => console.log("idle", getEventLoopStats().iteration - before < 10), 100);`,
+            `}, 1);`,
+          ].join("\n"),
+      },
+      ["value 1", "settled", "idle true"],
     ],
     [
       "runs after the program's own immediates of that turn",
@@ -598,13 +700,13 @@ describe("event loop routing around macros", () => {
     ],
   ];
 
-  test.concurrent.each(leftovers)("a setImmediate() a macro left behind %s", async (_name, files, expected) => {
+  test.concurrent.each(leftovers)("an immediate left on the macro loop %s", async (_name, files, expected) => {
     const { lines, stderr, exitCode, signalCode } = await run(files);
     expect({ lines, stderr }).toEqual({ lines: expected, stderr: "" });
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
-  test.concurrent("a setImmediate() a macro left behind that throws is reported and ends the process", async () => {
+  test.concurrent("an immediate left on the macro loop that throws is reported and ends the process", async () => {
     const { lines, stderr, exitCode, signalCode } = await run({
       "m.ts": macro(`setImmediate(() => {`, `  throw new Error("leftover threw");`, `});`),
       "index.ts": entry,
@@ -612,6 +714,221 @@ describe("event loop routing around macros", () => {
     expect(lines).toEqual(["value 1"]);
     expect(stderr).toContain("error: leftover threw");
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
+  // The leftover's callback writes to a sink, which registers its flush on the current loop, and then
+  // throws. The checkpoint after the batch has to be the regular loop's: the timer, kept due by the
+  // spin, reads the file before any later checkpoint runs. On Windows the flush is asynchronous.
+  test.concurrent.skipIf(isWindows)(
+    "an immediate left on the macro loop that throws takes its checkpoint on the regular loop",
+    async () => {
+      const { lines, stderr, exitCode, signalCode } = await run({
+        "m.ts": macro(
+          `setImmediate(() => {`,
+          `  globalThis.sink = Bun.file("out.txt").writer();`,
+          `  globalThis.sink.write("data");`,
+          `  const until = performance.now() + 10;`,
+          `  while (performance.now() < until);`,
+          `  throw new Error("leftover threw");`,
+          `});`,
+        ),
+        "index.ts": [
+          `import { m } from "./m.ts" with { type: "macro" };`,
+          `import fs from "node:fs";`,
+          `process.on("uncaughtException", error => console.log("caught", error.message));`,
+          `console.log("value", m());`,
+          `setTimeout(() => {`,
+          `  console.log("file", JSON.stringify(fs.readFileSync("out.txt", "utf8")));`,
+          `  globalThis.sink.end();`,
+          `}, 1);`,
+        ].join("\n"),
+      });
+      expect({ lines, stderr }).toEqual({ lines: ["value 1", "caught leftover threw", 'file "data"'], stderr: "" });
+      expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+    },
+  );
+
+  // Reads the keep-alive count in a process that stays alive, for five ends of a leftover. The
+  // top-level awaits turn the loop through auto_tick.
+  test.concurrent("the keep-alive of an immediate left on the macro loop is released in a live process", async () => {
+    const stage = (name: string) =>
+      `import { ${name} } from "./m.ts" with { type: "macro" };\nexport const value = ${name}();\n`;
+    const { lines, stderr, exitCode, signalCode } = await run({
+      "m.ts": [
+        `export function ran() {`,
+        `  setImmediate(() => {});`,
+        `  return 1;`,
+        `}`,
+        `export function threw() {`,
+        `  setImmediate(() => {`,
+        `    throw new Error("leftover threw");`,
+        `  });`,
+        `  return 1;`,
+        `}`,
+        `export function chained() {`,
+        `  let hops = 0;`,
+        `  setImmediate(function hop() {`,
+        `    if (++hops < 3) setImmediate(hop);`,
+        `  });`,
+        `  return 1;`,
+        `}`,
+        `export function cleared() {`,
+        `  globalThis.leftover = setImmediate(() => {});`,
+        `  return 1;`,
+        `}`,
+        `export function unrefd() {`,
+        `  setImmediate(() => {}).unref();`,
+        `  return 1;`,
+        `}`,
+      ].join("\n"),
+      "ran.ts": stage("ran"),
+      "threw.ts": stage("threw"),
+      "chained.ts": stage("chained"),
+      "cleared.ts": stage("cleared"),
+      "unrefd.ts": stage("unrefd"),
+      "index.ts": [
+        `import { getEventLoopStats } from "bun:internal-for-testing";`,
+        `process.on("uncaughtException", () => {});`,
+        `const hold = setInterval(() => {}, 2 ** 30);`,
+        `const baseline = getEventLoopStats().numPolls;`,
+        `const held = () => getEventLoopStats().numPolls - baseline;`,
+        `const turns = n =>`,
+        `  new Promise(resolve =>`,
+        `    setImmediate(function turn() {`,
+        `      if (--n) setImmediate(turn);`,
+        `      else resolve();`,
+        `    }),`,
+        `  );`,
+        `const counts = {};`,
+        `for (const name of ["ran", "threw", "chained", "cleared", "unrefd"]) {`,
+        `  require("./" + name + ".ts");`,
+        `  const queued = held();`,
+        `  if (name === "cleared") clearImmediate(globalThis.leftover);`,
+        `  await turns(5);`,
+        `  const after = held();`,
+        `  // A new immediate takes the keep-alive again only when the count is at zero, not below it.`,
+        `  const next = setImmediate(() => {});`,
+        `  counts[name] = { queued, after, next: held() };`,
+        `  clearImmediate(next);`,
+        `}`,
+        `console.log(JSON.stringify(counts));`,
+        `if (held() !== 0) process.exit(1);`,
+        `clearInterval(hold);`,
+      ].join("\n"),
+    });
+    expect({ counts: JSON.parse(lines.at(-1)!), stderr }).toEqual({
+      counts: {
+        ran: { queued: 1, after: 0, next: 1 },
+        threw: { queued: 1, after: 0, next: 1 },
+        chained: { queued: 1, after: 0, next: 1 },
+        cleared: { queued: 1, after: 0, next: 1 },
+        unrefd: { queued: 0, after: 0, next: 1 },
+      },
+      stderr: "",
+    });
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  // A completion can reach the macro loop's queue, wake the platform loop and have that wake-up used
+  // by the macro's own poll, all before the macro settles. The regular loop has to see it without
+  // another wake-up: the listening socket keeps the loop alive with no timer armed, and the spin gives
+  // the thread pool the time to post. Not concurrent: next to twenty other children the thread pool
+  // posts after the spin, and the row then passes whether or not the loop looks.
+  test("a completion left on the macro loop is adopted with no further wake-up", async () => {
+    const { lines, stderr, exitCode, signalCode } = await run(
+      {
+        "m.ts": [
+          `import fs from "node:fs";`,
+          `export async function m() {`,
+          `  const timer = new Promise(resolve => setTimeout(resolve, 50, 1));`,
+          `  setImmediate(() => {`,
+          `    fs.promises.stat(import.meta.dir).then(() => globalThis.settled());`,
+          `    const until = performance.now() + 200;`,
+          `    while (performance.now() < until);`,
+          `  });`,
+          `  return await timer;`,
+          `}`,
+        ].join("\n"),
+        "with-macro.ts": withMacro,
+        "index.ts": [
+          `const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });`,
+          `globalThis.settled = () => {`,
+          `  console.log("settled");`,
+          `  server.stop(true);`,
+          `};`,
+          `setImmediate(() => console.log("value", require("./with-macro.ts").value));`,
+        ].join("\n"),
+      },
+      { BUN_GC_TIMER_DISABLE: "1" },
+    );
+    expect({ lines, stderr }).toEqual({ lines: ["value 1", "settled"], stderr: "" });
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  // `bun test` drains a file's immediates when the file is done. What a macro left in file A runs
+  // there too, not while file B loads.
+  test.concurrent("bun test runs an immediate left on the macro loop in the file that queued it", async () => {
+    using dir = tempDir("macro-loops-test", {
+      "m.ts": leftover,
+      "with-macro.ts": withMacro,
+      "a.test.ts": [
+        `import { expect, test } from "bun:test";`,
+        `test("a", () => {`,
+        `  expect(require("./with-macro.ts").value).toBe(1);`,
+        `});`,
+      ].join("\n"),
+      "b.test.ts": [
+        `import { expect, test } from "bun:test";`,
+        `console.log("b loads");`,
+        `test("b", () => {`,
+        `  expect(1).toBe(1);`,
+        `});`,
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a.test.ts", "./b.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout.split("\n").filter(line => line === "settled" || line === "b loads");
+    expect({ lines, passed: stderr.includes(" 2 pass"), failed: stderr.includes(" 0 fail") }).toEqual({
+      lines: ["settled", "b loads"],
+      passed: true,
+      failed: true,
+    });
+    expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  // Observed with this shape: the child prints nothing and stays in the poll. The regular loop runs
+  // the first hop before the timer fires, so the second hop is the regular loop's, and the wait of the
+  // macro the timer starts ticks only the macro loop. The same holds for any loop-routed work a
+  // leftover's callback starts (a fetch, an fs call), and since #39905 for cross-thread completions.
+  test.todo("a later macro that awaits work a leftover's callback started on the regular loop", async () => {
+    const { lines, stderr, exitCode, signalCode } = await run({
+      "m.ts": [
+        `let done: Promise<string>;`,
+        `export function first() {`,
+        `  done = new Promise(resolve => setImmediate(() => setImmediate(resolve, "ready")));`,
+        `  return 1;`,
+        `}`,
+        `export async function second() {`,
+        `  return await done;`,
+        `}`,
+      ].join("\n"),
+      "a.ts": laterMacro["a.ts"],
+      "b.ts": laterMacro["b.ts"],
+      "index.ts": [
+        `const { a } = require("./a.ts");`,
+        `setTimeout(() => console.log(a, require("./b.ts").b), 0);`,
+        `const until = performance.now() + 5;`,
+        `while (performance.now() < until);`,
+      ].join("\n"),
+    });
+    expect({ lines, stderr }).toEqual({ lines: ["1 ready"], stderr: "" });
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
   // destroy() emits 'close' from a setImmediate(). Not concurrent: the child loads node:net, which takes
@@ -659,6 +976,30 @@ describe("event loop routing around macros", () => {
         `globalThis.log.push("required");`,
         `await digest;`,
         `console.log(seen, JSON.stringify(globalThis.log));`,
+      ].join("\n"),
+    });
+    expect({ lines, stderr }).toEqual({ lines: [`[] ["required","program"]`], stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The same for an immediate the program queued before the wait: it stays on the regular loop, which
+  // is why the macro loop has a queue of its own. The macro awaits two immediates of its own.
+  test.concurrent("a program immediate queued before a macro's wait does not run inside it", async () => {
+    const { lines, stderr, exitCode } = await run({
+      "m.ts": [
+        `export async function probe() {`,
+        `  await new Promise(resolve => setImmediate(resolve));`,
+        `  await new Promise(resolve => setImmediate(resolve));`,
+        `  return JSON.stringify(globalThis.log);`,
+        `}`,
+      ].join("\n"),
+      "with-macro.ts": `import { probe } from "./m.ts" with { type: "macro" };\nexport const seen = probe();\n`,
+      "index.ts": [
+        `globalThis.log = [];`,
+        `setImmediate(() => globalThis.log.push("program"));`,
+        `const { seen } = require("./with-macro.ts");`,
+        `globalThis.log.push("required");`,
+        `setImmediate(() => console.log(seen, JSON.stringify(globalThis.log)));`,
       ].join("\n"),
     });
     expect({ lines, stderr }).toEqual({ lines: [`[] ["required","program"]`], stderr: "" });

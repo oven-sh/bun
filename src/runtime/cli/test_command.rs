@@ -3044,6 +3044,9 @@ impl TestCommand {
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };
+                // Immediates queued while a macro ran belong to this file too.
+                // SAFETY: as above.
+                let _ = unsafe { bun_jsc::event_loop::EventLoop::run_macro_loop_leftovers(el, vm) };
 
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;

@@ -1019,9 +1019,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
     // rather than running unconditionally.
     {
-        // On every turn, ahead of the reads below: this runs the immediates a
-        // macro left behind, and a program that queues an immediate each turn
-        // must not starve them.
+        // On every turn, ahead of the reads below: this runs the immediates
+        // queued while a macro ran, and a program that queues an immediate
+        // each turn must not starve them.
         // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
         let macro_loop_pending =
             unsafe { bun_jsc::event_loop::EventLoop::run_macro_loop_leftovers(el, vm) };
@@ -1033,7 +1033,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         let has_pending_immediate = macro_loop_pending
             || has_yielded_tasks
             || !unsafe { &*el }.immediate_tasks.is_empty()
-            || unsafe { &*el }.has_pending_tasks();
+            || unsafe { &*el }.has_own_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
@@ -1174,7 +1174,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         let has_pending_immediate = macro_loop_pending
             || has_yielded_tasks
             || !unsafe { &*el }.immediate_tasks.is_empty()
-            || unsafe { &*el }.has_pending_tasks();
+            || unsafe { &*el }.has_own_pending_tasks();
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
             let ild = &(*loop_).internal_loop_data;

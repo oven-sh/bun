@@ -670,17 +670,19 @@ impl EventLoop {
 
     /// The macro loop, when this is the regular loop and no macro is running.
     /// Work a macro started (a ticket or weak post of `LoopKind::Macro`) posts
-    /// its completion and keep-alive release there, and a `setImmediate` under
-    /// a macro queues there, but that loop only ticks while a macro is being
-    /// waited on; whatever is left after the macro returned is this loop's to
-    /// run, and the platform loop both share stays alive for it until then.
+    /// its completion and keep-alive release there, but that loop only ticks
+    /// while a macro is being waited on; whatever finishes after the macro
+    /// returned is this loop's to run, and the platform loop both share stays
+    /// alive for it until then.
     ///
-    /// Cross-thread completions are moved (`tick_concurrent_with_count`): no
-    /// macro can be waiting on one the regular loop already popped. Immediates
-    /// are run where they sit (`run_macro_loop_immediates`): a later macro can
-    /// await one an earlier macro left, and its wait ticks only the macro loop.
+    /// A `setImmediate` under a macro queues on that loop too. This loop runs
+    /// those from that loop's own queue (`run_macro_loop_leftovers`) instead
+    /// of moving them: until one has run, a later macro's wait, which ticks
+    /// only the macro loop, can still reach it. That loop's `tasks`,
+    /// `yield_tasks` and `deferred_tasks` have no such hand-over.
     fn macro_loop_if_not_running(&self) -> Option<&EventLoop> {
-        // SAFETY: a sibling field of the live owning VM; shared reads only.
+        // SAFETY: a sibling field of the live owning VM. Shared access: this
+        // also runs beneath a batch of that loop's immediates.
         self.macro_loop_ptr_if_not_running()
             .map(|macro_loop| unsafe { macro_loop.as_ref() })
     }
@@ -698,31 +700,31 @@ impl EventLoop {
         }
     }
 
-    /// `auto_tick`, after this loop's own immediates and before the poll: what
-    /// the macro loop still holds when no macro is running. Returns whether
-    /// the poll must return at once for it.
+    /// `auto_tick`, after this loop's own immediates and before the poll: runs
+    /// the immediates queued on the macro loop, once no macro is running.
+    /// Returns whether the poll must return at once for that loop: a batch
+    /// ran, or its concurrent queue holds what the next `tick()` adopts.
     ///
-    /// `*mut Self`, not `&mut self`: the immediates' callbacks re-enter this
-    /// loop through `vm.event_loop`.
+    /// `*mut Self`, not `&mut self`: the callbacks re-enter this loop through
+    /// `vm.event_loop`.
     ///
     /// # Safety
-    /// `this` is the live loop `vm.event_loop` points at; `vm` is the live
+    /// `this` is the loop `vm.event_loop` points at; `vm` is the live
     /// per-thread VM.
     #[inline]
     pub unsafe fn run_macro_loop_leftovers(this: *mut Self, vm: *mut VirtualMachine) -> bool {
         // SAFETY: per fn contract; the borrow ends before anything re-enters.
-        match unsafe { (*this).macro_loop_ptr_if_not_running() } {
+        let macro_loop = unsafe {
+            debug_assert!(core::ptr::eq(this, (*vm).event_loop));
+            (*this).macro_loop_ptr_if_not_running()
+        };
+        match macro_loop {
             // SAFETY: per fn contract; the gate says no macro is running.
             Some(macro_loop) => unsafe { Self::run_macro_loop_immediates(macro_loop, vm) },
             None => false,
         }
     }
 
-    /// Runs the immediates the idle macro loop holds, from its own queue.
-    /// What their callbacks queue lands on the regular loop, which is current.
-    /// With none queued, reports that loop's concurrent queue: the next
-    /// `tick()` adopts it.
-    ///
     /// # Safety
     /// `macro_loop` came from `macro_loop_ptr_if_not_running`; `vm` is the
     /// live per-thread VM.
@@ -733,12 +735,14 @@ impl EventLoop {
         vm: *mut VirtualMachine,
     ) -> bool {
         let macro_loop = macro_loop.as_ptr();
-        // SAFETY: per fn contract; nothing else borrows the idle macro loop.
+        // SAFETY: per fn contract. A callback that starts a macro re-enters
+        // the macro loop; `tick_immediate_tasks` launders `self` for that.
         unsafe {
             if (*macro_loop).immediate_tasks.is_empty() {
                 return !(*macro_loop).concurrent_tasks.is_empty();
             }
             (*macro_loop).tick_immediate_tasks(vm);
+            debug_assert!(!(*vm).macro_mode);
             // `get_timeout` zeroes the poll timeout for this only on POSIX.
             #[cfg(windows)]
             (*(*vm).event_loop).wakeup();
@@ -814,13 +818,13 @@ impl EventLoop {
     /// faster than this thread runs what they post; without a bound a steady
     /// producer (a worker flooding postMessage) keeps `tick()` from ever
     /// returning and timers / I/O never run. What is left is picked up by the
-    /// next `tick()`, after a non-blocking poll (`has_pending_tasks`).
+    /// next `tick()`, after a non-blocking poll (`has_own_pending_tasks`).
     const CONCURRENT_REFILLS_PER_TICK: u32 = 8;
 
-    /// Work is queued here that the next `tick()` will run: the poll before it
-    /// must not block. What the macro loop holds for the next `tick()` is
-    /// `run_macro_loop_leftovers`'s to report.
-    pub fn has_pending_tasks(&self) -> bool {
+    /// Work is queued on this loop that the next `tick()` will run: the poll
+    /// before it must not block. The macro loop's share is reported by
+    /// `run_macro_loop_leftovers`, which `auto_tick` evaluates first.
+    pub fn has_own_pending_tasks(&self) -> bool {
         self.tasks.readable_length() > 0 || !self.concurrent_tasks.is_empty()
     }
 
@@ -1060,8 +1064,16 @@ impl EventLoop {
     /// un-drained current batch (busy-spin hazard).
     ///
     /// # Safety
-    /// `virtual_machine` must be the live per-thread VM that owns this `EventLoop`.
+    /// `virtual_machine` must be the live per-thread VM that owns this `EventLoop`,
+    /// and `self` its current loop, or its macro loop while no macro runs.
     pub unsafe fn tick_immediate_tasks(&mut self, virtual_machine: *mut VirtualMachine) {
+        // SAFETY: per fn contract; field reads only.
+        debug_assert!(unsafe {
+            let this: *const Self = self;
+            core::ptr::eq(this, (*virtual_machine).event_loop)
+                || (!(*virtual_machine).macro_mode
+                    && core::ptr::eq(this, &raw const (*virtual_machine).macro_event_loop))
+        });
         // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` is `noalias`, and
         // the only thing reaching the `__bun_run_immediate_task` extern call is
@@ -1093,8 +1105,8 @@ impl EventLoop {
 
         // make sure microtasks are drained if the last task had an exception
         if exception_thrown {
-            // The VM's current loop: the regular loop also runs the macro
-            // loop's queue (`run_macro_loop_immediates`).
+            // The VM's current loop, which is not `this` when the regular
+            // loop runs the macro loop's queue (`run_macro_loop_leftovers`).
             // SAFETY: `virtual_machine` is live per caller contract and its
             // `event_loop` points at one of its embedded loops.
             let _ = unsafe { (*(*virtual_machine).event_loop).maybe_drain_microtasks() };

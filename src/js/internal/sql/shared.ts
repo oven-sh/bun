@@ -2212,7 +2212,7 @@ function parseOptions(
       const copy = { ...this };
       if (copy.password) copy.password = "[REDACTED]";
       if ($isObject(copy.tls)) {
-        const tls: Bun.TLSOptions = { ...copy.tls };
+        const tls = { __proto__: null, ...(copy.tls as Bun.TLSOptions) };
         if (tls.key) tls.key = "[REDACTED]";
         if (tls.passphrase) tls.passphrase = "[REDACTED]";
         copy.tls = tls;

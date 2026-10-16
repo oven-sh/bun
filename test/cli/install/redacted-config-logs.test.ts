@@ -142,20 +142,15 @@ test("bunfig password value is masked in config error output", async () => {
 });
 
 // The invalid-escape message names the byte after the backslash for
-// Bun.TOML.parse, and omits it for bunfig.toml. The location points at the
-// backslash.
+// Bun.TOML.parse. For bunfig.toml it omits the byte and the hex-digit clause
+// that would name it. The location points at the backslash.
 const fix = "; for a literal backslash, use a literal string (single quotes) or write \\\\";
 test.concurrent.each([
-  [
-    "C:\\Users\\name",
-    "U",
-    15,
-    "Invalid escape sequence in basic string: a Unicode escape must be followed by exactly 8 hex digits" + fix,
-  ],
-  ["\\d+", "d", 13, "Invalid escape sequence in basic string" + fix],
+  ["C:\\Users\\name", "U", 15],
+  ["\\d+", "d", 13],
 ])(
   "bunfig invalid escape %s: the error omits the escaped byte and points at the backslash",
-  async (value, escaped, column, message) => {
+  async (value, escaped, column) => {
     using dir = tempDir("redacted-bunfig-escape", {
       "bunfig.toml": `[install]\npassword = "${value}"\n`,
       "package.json": "{}",
@@ -171,7 +166,8 @@ test.concurrent.each([
 
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(err).toContain(`error: ${message}`);
+    expect(err).toContain(`error: Invalid escape sequence in basic string${fix}`);
+    expect(err).not.toContain("hex digits");
     expect(err).toContain(`bunfig.toml:2:${column}`);
     expect(err).toContain(`password = "${Buffer.alloc(value.length, "*").toString()}"`);
     expect(err).not.toContain(`'\\${escaped}'`);

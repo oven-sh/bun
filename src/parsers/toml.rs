@@ -1391,7 +1391,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
         Ok(())
     }
 
-    /// `Invalid escape sequence '\c' in basic string{detail}; <fix>`.
+    /// `Invalid escape sequence '\c' in basic string{detail}; <fix>`. Under
+    /// redaction the byte and the detail are omitted, since the detail names
+    /// the byte too (`\x`, `\u` and `\U` each have their own digit count).
     fn err_escape(&mut self, escape_pos: usize, detail: core::fmt::Arguments<'_>) -> PErr {
         const FIX: &str =
             "; for a literal backslash, use a literal string (single quotes) or write \\\\";
@@ -1412,7 +1414,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
             ),
             _ => self.err_fmt(
                 escape_pos,
-                format_args!("Invalid escape sequence in basic string{}{}", detail, FIX),
+                format_args!("Invalid escape sequence in basic string{}", FIX),
             ),
         }
     }

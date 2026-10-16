@@ -409,6 +409,12 @@ const kGoawayCode = Symbol("goawayCode");
 const kGoawayLastStreamID = Symbol("goawayLastStreamID");
 const kReleaseUnannouncedStream = Symbol("releaseUnannouncedStream");
 const kGoawaySent = Symbol("goawaySent");
+// node's kState.flags: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L342-L345
+const kSessionFlags = Symbol("sessionFlags");
+enum SessionFlags {
+  // node sets this in setupHandle, when the session takes its connected socket. Never cleared.
+  Ready = 1 << 0,
+}
 
 // Node's socketOnError: once a GOAWAY has been received the peer is fully
 // within its rights to drop the connection, so an ECONNRESET behind it is
@@ -1899,6 +1905,7 @@ abstract class Http2Session extends EventEmitter {
   declare timeout: number | undefined;
   abstract get destroyed(): boolean;
   abstract destroy(error?: Error | number | null, code?: number): void;
+  abstract get [bunHTTP2Native](): typeof H2FrameParser | null;
   [bunHTTP2SessionTeardownFrame]: typeof kNoSessionTeardown | import("./async_hooks").Frame | undefined =
     kNoSessionTeardown;
   [bunHTTP2Socket]: TLSSocket | Socket | null | undefined;
@@ -1907,6 +1914,20 @@ abstract class Http2Session extends EventEmitter {
   // run inside it so 'close' doesn't inherit the last stream's frame.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
   [kDeferWriteCallback]: typeof process.nextTick | typeof setImmediate = setImmediate;
+  [kSessionFlags]: number = 0;
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1399-L1401
+  get connecting() {
+    return (this[kSessionFlags] & SessionFlags.Ready) === 0;
+  }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1520-L1523
+  get state() {
+    if ((this[kSessionFlags] & SessionFlags.Ready) !== 0 && !this.destroyed) {
+      // A socket 'close' drops the parser before destroy() detaches the socket.
+      const parser = this[bunHTTP2Native];
+      if (parser) return parser.getCurrentState();
+    }
+    return {};
+  }
   // The GOAWAY this side received (not one it sent), like node's Http2Session getters.
   get goawayCode() {
     return this[kGoawayCode] || NGHTTP2_NO_ERROR;
@@ -4024,7 +4045,6 @@ class ServerHttp2Session extends Http2Session {
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = null;
   #encrypted: boolean = false;
-  #pendingSettingsAck: boolean = true;
   // Count of SETTINGS frames sent that the peer has not yet ACKed (the initial connection
   // SETTINGS counts as the first). node destroys the session with
   // ERR_HTTP2_MAX_PENDING_SETTINGS_ACK when this exceeds maxOutstandingSettings.
@@ -4215,7 +4235,6 @@ class ServerHttp2Session extends Http2Session {
     localSettings(self: ServerHttp2Session, settings: Settings) {
       if (!self) return;
       self.#localSettings = settings;
-      self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
       // This ACK may be the only thing a gracefully closed, idle session was waiting for.
       const pingsDrained = self.#pingCallbacks === null || self.#pingCallbacks.length === 0;
@@ -4533,6 +4552,8 @@ class ServerHttp2Session extends Http2Session {
     socket.on("data", this.#onRead.bind(this));
     socket.on("drain", this.#onDrain.bind(this));
 
+    // A server session has its handle from here on, so `state` is populated at once, as before.
+    this[kSessionFlags] |= SessionFlags.Ready;
     process.nextTick(emitConnectNT, this, socket);
   }
 
@@ -4551,6 +4572,7 @@ class ServerHttp2Session extends Http2Session {
   get alpnProtocol() {
     return this.#alpnProtocol;
   }
+  // Not READY, which a server sets in its constructor: this follows the socket, as before.
   get connecting() {
     const socket = this[bunHTTP2Socket];
     if (!socket) {
@@ -4582,7 +4604,8 @@ class ServerHttp2Session extends Http2Session {
   }
 
   get pendingSettingsAck() {
-    return this.#pendingSettingsAck;
+    // node counts the first SETTINGS frame from setupHandle on. The count here starts at 1 for it.
+    return this.#pendingSettingsAckCount > (this.connecting ? 1 : 0);
   }
 
   get type() {
@@ -4597,9 +4620,6 @@ class ServerHttp2Session extends Http2Session {
     if (this.#socket_proxy) return this.#socket_proxy;
     this.#socket_proxy = new Proxy(this, proxySocketHandler);
     return this.#socket_proxy;
-  }
-  get state() {
-    return this.#parser?.getCurrentState();
   }
 
   get [bunHTTP2Native]() {
@@ -4695,7 +4715,6 @@ class ServerHttp2Session extends Http2Session {
       this.destroy($ERR_HTTP2_MAX_PENDING_SETTINGS_ACK(), constants.NGHTTP2_INTERNAL_ERROR);
       return;
     }
-    this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     // The frame is queued on the native session; flush it now (as close() does for its
     // GOAWAY) instead of waiting for the next unrelated write. Node schedules a session
@@ -4987,7 +5006,6 @@ class ClientHttp2Session extends Http2Session {
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = null;
   #encrypted: boolean = false;
-  #pendingSettingsAck: boolean = true;
   // Count of SETTINGS frames sent that the peer has not yet ACKed (the initial connection
   // SETTINGS counts as the first). node destroys the session with
   // ERR_HTTP2_MAX_PENDING_SETTINGS_ACK when this exceeds maxOutstandingSettings.
@@ -5218,7 +5236,6 @@ class ClientHttp2Session extends Http2Session {
     localSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
       self.#localSettings = settings;
-      self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
       // This ACK may be the only thing a gracefully closed, idle session was waiting for.
       const pingsDrained = self.#pingCallbacks === null || self.#pingCallbacks.length === 0;
@@ -5401,11 +5418,13 @@ class ClientHttp2Session extends Http2Session {
     return Array.from(initOriginSet(this, socket));
   }
   get alpnProtocol() {
-    return this.#alpnProtocol;
+    return this.connecting ? undefined : this.#alpnProtocol;
   }
   #onConnect() {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
+    // node's close() destroys a session that has nothing pending, so its setupHandle never sets READY.
+    if (!this.#closed || this.#pendingRequests?.length) this[kSessionFlags] |= SessionFlags.Ready;
     this.#connected = true;
     // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
@@ -5447,7 +5466,8 @@ class ClientHttp2Session extends Http2Session {
 
   #onClose() {
     const parser = this.#parser;
-    const err = this.connecting ? $ERR_SOCKET_CLOSED() : null;
+    // The socket's own flag, which a net.Socket clears before 'close'. Not the session's `connecting`.
+    const err = this[bunHTTP2Socket]?.connecting ? $ERR_SOCKET_CLOSED() : null;
     if (parser) {
       parser.forEachStream(streamCancel);
       parser.forEachStream(streamSocketClosed);
@@ -5497,13 +5517,6 @@ class ClientHttp2Session extends Http2Session {
       parser.flush();
     }
   }
-  get connecting() {
-    const socket = this[bunHTTP2Socket];
-    if (!socket) {
-      return false;
-    }
-    return socket.connecting || false;
-  }
   get connected() {
     return this[bunHTTP2Socket]?.connecting === false;
   }
@@ -5511,7 +5524,7 @@ class ClientHttp2Session extends Http2Session {
     return this[bunHTTP2Socket] === null;
   }
   get encrypted() {
-    return this.#encrypted;
+    return this.connecting ? undefined : this.#encrypted;
   }
   get closed() {
     return this.#closeCalled;
@@ -5528,7 +5541,8 @@ class ClientHttp2Session extends Http2Session {
   }
 
   get pendingSettingsAck() {
-    return this.#pendingSettingsAck;
+    // node counts the first SETTINGS frame from setupHandle on. The count here starts at 1 for it.
+    return this.#pendingSettingsAckCount > (this.connecting ? 1 : 0);
   }
 
   get type() {
@@ -5604,9 +5618,6 @@ class ClientHttp2Session extends Http2Session {
     this.#socket_proxy = new Proxy(this, proxySocketHandler);
     return this.#socket_proxy;
   }
-  get state() {
-    return this.#parser?.getCurrentState();
-  }
 
   settings(settings: Settings, callback?) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
@@ -5623,7 +5634,6 @@ class ClientHttp2Session extends Http2Session {
       this.destroy($ERR_HTTP2_MAX_PENDING_SETTINGS_ACK(), constants.NGHTTP2_INTERNAL_ERROR);
       return;
     }
-    this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
     // The frame is queued on the native session; flush it now (as close() does for its
     // GOAWAY) instead of waiting for the next unrelated write. Node schedules a session
@@ -5733,6 +5743,8 @@ class ClientHttp2Session extends Http2Session {
         const connectEvent = socket instanceof tls.TLSSocket ? "secureConnect" : "connect";
         socket.once(connectEvent, onConnect.bind(this));
       } else {
+        // node sets READY in its constructor for a connected socket. #onConnect takes the socket a tick later.
+        this[kSessionFlags] |= SessionFlags.Ready;
         connectOnNextTick = true;
       }
     } else {

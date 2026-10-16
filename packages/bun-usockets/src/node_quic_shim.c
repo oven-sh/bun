@@ -233,10 +233,30 @@ static struct lsxpack_header *nq_hsi_prepare_decode(void *hset,
     lsxpack_header_prepare_decode(&h->xhdr, h->decode_buf, 0, h->decode_cap);
     return &h->xhdr;
 }
+static inline int nq_has_nul_cr_lf(const char *p, size_t n) {
+    const unsigned char *s = (const unsigned char *) p;
+    /* NUL, LF and CR are all below 0x0e. This loop has no exit, so the
+     * compiler vectorizes it. Most fields hold no byte that low. */
+    unsigned char low = 0;
+    for (size_t i = 0; i < n; i++)
+        low |= s[i] < 0x0e;
+    if (!low) return 0;
+    for (size_t i = 0; i < n; i++)
+        if (s[i] == 0 || s[i] == '\n' || s[i] == '\r') return 1;
+    return 0;
+}
 static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
     struct nq_hset *h = hset;
     if (!hdr)
         return 0;
+    const char *name = lsxpack_header_get_name(hdr);
+    const char *val = lsxpack_header_get_value(hdr);
+    /* RFC 9114 10.3. As nghttp3 does: a pseudo-header with NUL, CR or LF fails
+     * the message, any other such field is left out and does not count below.
+     * Any non-zero return makes lsquic close the whole connection. */
+    if (nq_has_nul_cr_lf(name, hdr->name_len)
+            || nq_has_nul_cr_lf(val, hdr->val_len))
+        return hdr->name_len && name[0] == ':' ? -1 : 0;
     /* Dropped per Node's DefaultApplication semantics. */
     if (h->max_pairs && h->n_pairs >= h->max_pairs)
         return 0;
@@ -245,12 +265,6 @@ static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
         return 0;
     h->n_pairs++;
     h->total_bytes += (size_t) hdr->name_len + hdr->val_len;
-    const char *name = lsxpack_header_get_name(hdr);
-    const char *val = lsxpack_header_get_value(hdr);
-    /* RFC 9114 4.1.2 makes such a field invalid. */
-    if ((hdr->name_len && memchr(name, 0, hdr->name_len))
-            || (hdr->val_len && memchr(val, 0, hdr->val_len)))
-        return -1;
     size_t need = h->pairs_len + (size_t) hdr->name_len + 1
                 + (size_t) hdr->val_len + 1;
     if (need > h->pairs_cap) {

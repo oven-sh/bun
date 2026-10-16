@@ -284,6 +284,161 @@ describe("HTTP/3 header blocks that follow another header block", () => {
   });
 });
 
+// RFC 9114 10.3: a field that holds CR or LF is not a valid field. nghttp3 takes
+// such a field out of the block and delivers the rest, and fails the message
+// when the field is a pseudo-header.
+describe("received HTTP/3 fields that hold CR or LF", () => {
+  const encoder = new TextEncoder();
+  const request = { ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+  const sessionOptions = {
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 1 },
+  } as SessionOptions;
+  const quietSession = async (serverSession: any) => {
+    serverSession.onstream = (stream: any) => {
+      stream.closed.catch(() => {});
+    };
+    await serverSession.closed.catch(() => {});
+  };
+
+  describe.each([
+    ["CR LF", "a\r\nb: c"],
+    ["LF", "a\nb"],
+    ["CR", "a\rb"],
+  ])("a field value that holds %s", (_, bad) => {
+    test("is removed from every kind of block and the rest is delivered", async () => {
+      const seen: Record<string, unknown> = {};
+      const requestTrailers = Promise.withResolvers<Record<string, string>>();
+      const responseTrailers = Promise.withResolvers<Record<string, string>>();
+      await using server = await listen(quietSession, {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any, headers: Record<string, string>) {
+          seen.request = { ...headers };
+          this.sendInformationalHeaders({ ":status": "103", "x-bad": bad, "x-ok": "info" });
+          this.sendHeaders({ ":status": "200", "x-bad": bad, "x-ok": "response" });
+          this.writer.writeSync(encoder.encode("body"));
+          this.writer.endSync();
+        },
+        ontrailers(this: any, trailers: Record<string, string>) {
+          requestTrailers.resolve({ ...trailers });
+        },
+        onwanttrailers(this: any) {
+          // The only field of this block is the one that is removed.
+          this.sendTrailers({ "x-bad": bad });
+        },
+      });
+      const client = await connect(server.address!, sessionOptions);
+      await client.opened;
+
+      const stream: any = await client.createBidirectionalStream({
+        oninfo: (headers: Record<string, string>) => (seen.info = { ...headers }),
+        onheaders: (headers: Record<string, string>) => (seen.response = { ...headers }),
+        ontrailers: (trailers: Record<string, string>) => responseTrailers.resolve({ ...trailers }),
+      });
+      stream.closed.catch(() => {});
+      stream.sendHeaders({ ...request, "x-bad": bad, "x-ok": "request" });
+      stream.sendTrailers({ "x-bad": bad, "x-ok": "request trailers" });
+      let body = "";
+      for await (const batch of stream) {
+        for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+      }
+      seen.body = body;
+      seen.responseGetter = { ...stream.headers };
+      seen.requestTrailers = await requestTrailers.promise;
+      seen.responseTrailers = await responseTrailers.promise;
+      client.close();
+
+      expect(seen).toEqual({
+        request: { ...request, "x-ok": "request" },
+        requestTrailers: { "x-ok": "request trailers" },
+        info: { ":status": "103", "x-ok": "info" },
+        response: { ":status": "200", "x-ok": "response" },
+        responseGetter: { ":status": "200", "x-ok": "response" },
+        responseTrailers: {},
+        body: "body",
+      });
+    });
+  });
+
+  // nghttp3 checks a field before Node counts it against maxHeaderPairs.
+  test("a removed field does not count against maxHeaderPairs", async () => {
+    const seen = Promise.withResolvers<Record<string, string>>();
+    await using server = await listen(quietSession, {
+      sni: { "*": { keys: [key], certs: [cert] } },
+      transportParams: { maxIdleTimeout: 1 },
+      // The four pseudo-headers and one more field.
+      application: { maxHeaderPairs: 5 },
+      onheaders(this: any, headers: Record<string, string>) {
+        seen.resolve({ ...headers });
+        this.sendHeaders({ ":status": "200" }, { terminal: true });
+      },
+    } as SessionOptions);
+    const client = await connect(server.address!, sessionOptions);
+    await client.opened;
+
+    const stream = await client.createBidirectionalStream({
+      headers: { ...request, "x-bad": "a\r\nb", "x-ok": "kept" },
+    });
+    stream.closed.catch(() => {});
+    const headers = await seen.promise;
+    client.close();
+
+    expect(headers).toEqual({ ...request, "x-ok": "kept" });
+  });
+
+  test("a pseudo-header value that holds CR LF fails the connection with H3_MESSAGE_ERROR", async () => {
+    const paths: string[] = [];
+    await using server = await listen(
+      (serverSession: any) => {
+        serverSession.onerror = () => {};
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any, headers: Record<string, string>) {
+          paths.push(headers[":path"]);
+          this.sendHeaders({ ":status": "200" }, { terminal: true });
+        },
+      },
+    );
+
+    // The response status, or how the session closed.
+    const exchange = async (path: string) => {
+      const client = await connect(server.address!, { ...sessionOptions, onerror() {} } as SessionOptions);
+      const closed = client.closed.then(
+        () => "closed",
+        (err: any) => `${err.code} 0x${err.errorCode.toString(16)}`,
+      );
+      await client.opened;
+      const status = Promise.withResolvers<string>();
+      const stream = await client.createBidirectionalStream({
+        headers: { ...request, ":path": path },
+        onheaders: (headers: Record<string, string>) => status.resolve(headers[":status"]),
+      });
+      stream.closed.catch(() => {});
+      const outcome = await Promise.race([status.promise, closed]);
+      if (!client.destroyed) client.close().catch(() => {});
+      return outcome;
+    };
+
+    expect({
+      malformed: await exchange("/a\r\nb"),
+      next: await exchange("/next"),
+      paths,
+    }).toEqual({
+      malformed: "ERR_QUIC_APPLICATION_ERROR 0x10e",
+      next: "200",
+      paths: ["/next"],
+    });
+  });
+});
+
 describe("verifyClient", () => {
   test("a server requiring a client certificate never surfaces streams from a client that presented none", async () => {
     let announcedStreams = 0;

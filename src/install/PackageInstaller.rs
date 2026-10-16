@@ -564,6 +564,7 @@ pub(crate) fn pending_scripts_key(
         let through_link = tree_path(lockfile, member_tree, &mut member_buf).len();
         let folder = folder.slice(lockfile.buffers.string_bytes.as_slice());
         key.extend_from_slice(strings::without_trailing_slash(folder));
+        bun_paths::resolve_path::posix_to_platform_in_place(&mut key);
         key.push(SEP);
         key.extend_from_slice(b"node_modules");
         key.extend_from_slice(path.get(through_link..).unwrap_or_default());

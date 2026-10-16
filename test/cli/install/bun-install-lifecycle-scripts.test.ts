@@ -3677,17 +3677,23 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     );
   });
 
-  // `dep` of the workspace `b` is a devDependency: `--production` does not come to it. The link
-  // of `b` leads to it, so that install leaves `b` as it is too.
+  // `dep` of the workspace `b` is a devDependency: `--production` does not come to it, and its
+  // record stays. `b` is built by that install: its link goes and comes back, and the record of
+  // `dep` has the path of the folder, so it does not go with the link.
   test.skipIf(isWindows)("an install that does not come to a package behind the link of a workspace", async () => {
     await whileInstalling(
       async ({ ctx, kill, bun }) => {
         await kill("SIGKILL");
 
+        const state = () => ({
+          b: readFileSync(join(ctx.packageDir, "packages", "b", "ran.txt"), "utf8"),
+          list: existsSync(ctx.installed(record)),
+        });
         expect(await bun("install", "--production")).toMatchObject({ errors: [], ran: false, exitCode: 0 });
-        expect(existsSync(ctx.installed(record))).toBe(true);
+        expect(state()).toEqual({ b: "ran\n", list: true });
         expect(await bun("install")).toMatchObject({ errors: [], ran: true, exitCode: 0 });
-        expect(existsSync(ctx.installed(record))).toBe(false);
+        // The isolated linker runs the scripts of a workspace in every install.
+        expect(state()).toEqual({ b: linker === "hoisted" ? "ran\n" : "ran\nran\n", list: false });
       },
       {
         packages: { other: {} },
@@ -3702,7 +3708,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
             name: "b",
             version: "1.0.0",
             devDependencies: { dep: "npm:held@1.0.0" },
-            scripts: { postinstall: "echo b" },
+            scripts: { postinstall: "echo ran >> ran.txt" },
           }),
         },
         lockfile: true,
@@ -3868,6 +3874,51 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
       await writeFile(join(ctx.packageDir, nested, "kept.txt"), "kept");
       expect((await ctx.bun("install")).exitCode).toBe(0);
       expect(existsSync(join(ctx.packageDir, nested, "kept.txt"))).toBe(true);
+    },
+  );
+
+  // On a new tree both rows place `dep`, and its script runs once for each of them. The record of
+  // the folder ends with the second run, not with the first.
+  test.skipIf(isWindows || linker === "isolated")(
+    "a package under a workspace that has two names, between its two script runs",
+    async () => {
+      const wait = '{ echo run >> "$STARTED.runs" && read line < "$GATE" && test "$line" = go; }';
+      await whileInstalling(
+        async ({ ctx, proc, release, kill, bun }) => {
+          release("go");
+          const runs = join(ctx.packageDir, "started.runs");
+          while (!existsSync(runs) || readFileSync(runs, "utf8") !== "run\nrun\n") {
+            if (proc.exitCode !== null) {
+              // An install that runs the script once has nothing in between.
+              expect(existsSync(ctx.installed(record))).toBe(false);
+              return;
+            }
+            await Bun.sleep(1);
+          }
+          await kill("SIGKILL");
+
+          expect(await bun("install")).toMatchObject({ errors: [], ran: true, exitCode: 0 });
+          expect(existsSync(ctx.installed(record))).toBe(false);
+        },
+        {
+          packages: { held: { scripts: { postinstall: script(wait) } }, other: {} },
+          manifest: {
+            name: "foo",
+            workspaces: ["packages/*"],
+            dependencies: { bb: "workspace:packages/b", dep: "npm:other@1.0.0" },
+            trustedDependencies: ["held"],
+          },
+          files: {
+            "packages/b/package.json": JSON.stringify({
+              name: "b",
+              version: "1.0.0",
+              dependencies: { dep: "npm:held@1.0.0" },
+            }),
+          },
+          // One script at a time: the second run starts when the first has ended.
+          args: ["--concurrent-scripts=1"],
+        },
+      );
     },
   );
 

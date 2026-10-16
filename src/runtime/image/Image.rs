@@ -4,7 +4,9 @@
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
 //! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
 //! write one slot of `Pipeline` and return `this` — there is no op list, so
-//! calling a setter twice overwrites. The actual decode → transform → encode
+//! calling a setter twice overwrites. A format setter overwrites only the
+//! options it names, and each format has its own (`format_options`), so an
+//! option never crosses formats. The actual decode → transform → encode
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
 //! `toBase64`/`metadata`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
 
@@ -62,6 +64,12 @@ pub(crate) use crate::generated_classes::js_Image as js;
 pub(crate) struct Image {
     source: JsCell<Source>,
     pipeline: Cell<Pipeline>,
+    /// What the setter of each format has recorded, indexed by
+    /// `codecs::Format`. A format call starts from its own entry, so an
+    /// option stays for a later call of that format (as in Sharp) and never
+    /// reaches another format. Not in `Pipeline`: the worker needs only
+    /// `Pipeline.output`, the entry of the format that was set last.
+    format_options: [Cell<codecs::EncodeOptions>; ENCODABLE_FORMATS],
     /// Decompression-bomb guard. Checked against the *header* dimensions before
     /// any RGBA buffer is allocated. Mirrors Sharp's `limitInputPixels`.
     max_pixels: u64,
@@ -85,6 +93,7 @@ impl Default for Image {
         Self {
             source: JsCell::new(Source::JsBuffer),
             pipeline: Cell::new(Pipeline::default()),
+            format_options: Default::default(),
             max_pixels: codecs::DEFAULT_MAX_PIXELS,
             auto_orient: true,
             last_width: Cell::new(-1),
@@ -94,6 +103,9 @@ impl Default for Image {
         }
     }
 }
+
+/// The formats with a setter are the leading `codecs::Format` variants.
+const ENCODABLE_FORMATS: usize = codecs::Format::Avif as usize + 1;
 
 pub(crate) enum Source {
     /// Input is a JS ArrayBuffer/TypedArray held in the wrapper's `sourceJS`
@@ -558,14 +570,8 @@ impl Image {
         callframe: &CallFrame,
         fmt: codecs::Format,
     ) -> JsResult<JSValue> {
-        let mut enc: codecs::EncodeOptions =
-            self.pipeline
-                .get()
-                .output
-                .unwrap_or_else(|| codecs::EncodeOptions {
-                    format: fmt,
-                    ..Default::default()
-                });
+        let recorded = &self.format_options[fmt as usize];
+        let mut enc: codecs::EncodeOptions = recorded.get();
         enc.format = fmt;
         let args = callframe.arguments();
         if args.len() > 0 && args[0].is_object() {
@@ -598,6 +604,7 @@ impl Image {
                 enc.progressive = p.to_boolean();
             }
         }
+        recorded.set(enc);
         self.update_pipeline(|p| p.output = Some(enc));
         Ok(callframe.this())
     }

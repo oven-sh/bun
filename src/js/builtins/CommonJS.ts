@@ -71,8 +71,12 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // A resolved id may carry a `?query` suffix (part of the module cache key);
   // match the native-addon extension against the path portion only.
   const queryIndex = id.indexOf("?");
-  if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
-    return $internalRequire(id, this, requireMap);
+  if (queryIndex === -1) {
+    if (id.endsWith(".node")) return $internalRequire(id, this, requireMap, id.length);
+  } else if (id.indexOf(".node", queryIndex - 5) !== -1) {
+    // The path ends at this "?" or after it, so its ".node" starts 5 before this "?" or after that.
+    const pathLength = $newCppFunction("NodeModuleModule.cpp", "jsFunctionModuleKeyPathLength", 1)(id);
+    if (id.endsWith(".node", pathLength)) return $internalRequire(id, this, requireMap, pathLength);
   }
 
   if (id === "bun:test") {
@@ -164,7 +168,7 @@ export function requireResolve(this: JSCommonJSModule, id: string, options: { pa
 }
 
 $visibility = "Private";
-export function internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap) {
+export function internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap, pathLength: number) {
   // A native addon is loaded once per process: its one module object is the global cache's,
   // which a Bun.ModuleGraph's cache then also points at.
   const loaded = $requireMap.$get(id);
@@ -175,8 +179,7 @@ export function internalRequire(id: string, parent: JSCommonJSModule, requireMap
   }
   // `id` keys the module cache and may carry a `?query` suffix;
   // `process.dlopen` needs the on-disk path.
-  const queryIndex = id.indexOf("?");
-  const filename = queryIndex === -1 ? id : id.substring(0, queryIndex);
+  const filename = pathLength === id.length ? id : id.substring(0, pathLength);
   $assert(filename.endsWith(".node"));
 
   const module = $createCommonJSModule(id, {}, true, requireMap === $requireMap ? parent : undefined);

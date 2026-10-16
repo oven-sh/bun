@@ -1220,6 +1220,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
                 ->hasOverriddenModuleResolveFilenameFunction));
 }
 
+extern "C" uint32_t Bun__VM__moduleKeyPathLength(void* bunVM, const BunString* key);
+
+// $newCppFunction("NodeModuleModule.cpp", "jsFunctionModuleKeyPathLength"): the length of `<path>` in the key `<path>?<query>` that require() resolved.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleKeyPathLength,
+    (JSGlobalObject * globalObject,
+        CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto key = callframe->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto keyBun = Bun::toString(key);
+    return JSValue::encode(jsNumber(Bun__VM__moduleKeyPathLength(defaultGlobalObject(globalObject)->bunVM(), &keyBun)));
+}
+
 extern "C" bool Bun__streamIterEnabled();
 
 // $cpp("NodeModuleModule.cpp", "createStreamIterEnabledFlag"): the write-once

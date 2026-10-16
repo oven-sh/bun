@@ -1451,6 +1451,7 @@ mod vm_loader_ctx {
                 .as_deref()
                 .map(core::ptr::from_ref::<bun_ast::Source>),
             main() => &*core::ptr::from_ref::<[u8]>((*this).main()),
+            module_key_path_len(key) => (*this).module_key_path_len(key),
             read_dir_info_package_json(dir) => {
                 // Short-lived `&mut Resolver` (not `&mut VirtualMachine`) for
                 // the call — narrows the borrow re-entrant JS could alias.
@@ -3873,11 +3874,6 @@ unsafe fn normalize_specifier_for_loader<'a>(
     if slice.is_empty() {
         return (slice, slice, b"");
     }
-    // In a `data:` URL everything after the comma is the payload; a `?` is
-    // part of the data, not a query string.
-    if bun_core::strings::has_prefix_comptime(slice, b"data:") {
-        return (slice, slice, b"");
-    }
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
     let host = unsafe { &*jsc_vm }.origin.host;
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -3888,14 +3884,9 @@ unsafe fn normalize_specifier_for_loader<'a>(
     if opath.len() > 1 && slice.starts_with(opath) {
         slice = &slice[opath.len()..];
     }
-    let specifier = slice;
-    let mut query: &[u8] = b"";
-    if let Some(i) = bun_core::strings::index_of_char_usize(slice, b'?') {
-        let i = i as usize;
-        query = &slice[i..];
-        slice = &slice[..i];
-    }
-    (slice, specifier, query)
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    let path_len = unsafe { &mut *jsc_vm }.module_key_path_len(slice);
+    (&slice[..path_len], slice, &slice[path_len..])
 }
 
 /// Result of [`get_loader_and_virtual_source`] — mirrors

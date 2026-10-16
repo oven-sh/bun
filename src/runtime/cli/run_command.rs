@@ -1055,7 +1055,20 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // a script that imports the module and calls
             // `default.scheduled(controller)`. The synthetic source is keyed at
             // `cwd/[eval]` so the module loader serves it from `eval_source`.
-            let escaped_path = escape_for_js_string(entry);
+            let mut cwd_buf = bun_paths::path_buffer_pool::get();
+            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
+            let cwd_bytes = cwd.as_bytes();
+            // In a specifier a `?` starts a query. In the entry it is part of a name, which a file URL says.
+            let escaped_path = if !cfg!(windows) && bun_core::strings::contains_char(entry, b'?') {
+                let entry_url = bun_url::file_url_from_string(&bun_core::String::borrow_utf8(
+                    bun_paths::resolve_path::join_abs::<bun_paths::resolve_path::platform::Auto>(
+                        cwd_bytes, entry,
+                    ),
+                ));
+                escape_for_js_string(&entry_url.to_utf8())
+            } else {
+                escape_for_js_string(entry)
+            };
             let escaped_period = escape_for_js_string(&ctx.runtime_options.cron_period);
             let cron_script = format!(
                 "const mod = await import(\"{path}\");\n\
@@ -1073,9 +1086,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 runner_arena().alloc_slice_copy(cron_script.as_bytes());
 
             // entry_path must end with /[eval] for the transpiler to use eval_source
-            let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-            let cwd_bytes = cwd.as_bytes();
             let mut eval_path: Vec<u8> = Vec::with_capacity(cwd_bytes.len() + EVAL_TRIGGER.len());
             eval_path.extend_from_slice(cwd_bytes);
             eval_path.extend_from_slice(EVAL_TRIGGER);

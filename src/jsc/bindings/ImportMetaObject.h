@@ -42,23 +42,10 @@ public:
     /// - URL object -> use that url
     /// - string -> see the below method for how the string is processed
     /// - other -> assertion failure
-    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL);
+    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSValue specifierOrURL, JSC::SourceProvider* source);
 
-    /// TODO:
-    /// The rules for this function's input is a bit weird. `specifier` is an import path specifier aka a file path.
-    ///
-    /// - Should be an absolute path or name of a plugin module
-    /// - A '?' is handled not as a literal '?' in a file, but rather as the query string
-    /// - The string is not URL encoded, despite having a query string.
-    ///
-    /// caveat: It is impossible to have a module with a `?` in it's file name.
-    ///
-    /// Fixing this means adjusting a lot of how the module resolver works to operate and handle URL
-    /// escaping, see https://github.com/oven-sh/bun/issues/8640 for more details.
-    ///
-    /// The above rules get a best estimate bandage to solve the problems
-    /// stated in https://github.com/oven-sh/bun/pull/9399
-    static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier);
+    /// `specifier` is a module key, `<path>` or `<path>?<query>` (not URL encoded), and the URL of `source` (or null) is the `<path>` the module was read from.
+    static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier, JSC::SourceProvider* source);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

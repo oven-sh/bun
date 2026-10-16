@@ -443,16 +443,8 @@ pub(crate) fn normalize_specifier<'a>(
         }
     }
 
-    let specifier = slice;
-    let mut query: &[u8] = b"";
-
-    if let Some(i) = strings::index_of_char(slice, b'?') {
-        let i = i as usize;
-        query = &slice[i..];
-        slice = &slice[..i];
-    }
-
-    (slice, specifier, query)
+    let path_len = jsc_vm.module_key_path_len(slice);
+    (&slice[..path_len], slice, &slice[path_len..])
 }
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]

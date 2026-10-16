@@ -9,6 +9,27 @@ const path = require("node:path");
 
 const env = Bun.env;
 
+// An entry point is a path: as a file URL, a "?" in it is part of a name.
+function resolveEntry(file: string, cwd: string): string {
+  if (file.includes("?")) {
+    try {
+      return Bun.resolveSync(Bun.pathToFileURL(path.resolve(cwd, file)).href, cwd);
+    } catch {}
+  }
+  try {
+    return Bun.resolveSync(file, cwd);
+  } catch {
+    return Bun.resolveSync("./" + file, cwd);
+  }
+}
+
+// In a specifier a "?" starts a query. In the path of a resolved key it is part of a name, which a file URL says.
+function keySpecifier(key: string): string {
+  const pathLength = $newCppFunction("NodeModuleModule.cpp", "jsFunctionModuleKeyPathLength", 1)(key);
+  if (key.lastIndexOf("?", pathLength - 1) === -1) return key;
+  return Bun.pathToFileURL(key.slice(0, pathLength)).href + key.slice(pathLength);
+}
+
 // This function is called at startup.
 async function start() {
   let args: string[] = [];
@@ -84,11 +105,7 @@ yourself with Bun.serve().
         if (resolved.includes(path.sep + "node_modules" + path.sep)) {
           continue;
         }
-        try {
-          resolved = Bun.resolveSync(resolved, cwd);
-        } catch {
-          resolved = Bun.resolveSync("./" + resolved, cwd);
-        }
+        resolved = resolveEntry(resolved, cwd);
 
         if (resolved.includes(path.sep + "node_modules" + path.sep)) {
           continue;
@@ -97,12 +114,7 @@ yourself with Bun.serve().
         args.push(resolved);
       }
     } else {
-      let resolved = arg;
-      try {
-        resolved = Bun.resolveSync(arg, cwd);
-      } catch {
-        resolved = Bun.resolveSync("./" + arg, cwd);
-      }
+      const resolved = resolveEntry(arg, cwd);
 
       if (resolved.includes(path.sep + "node_modules" + path.sep)) {
         continue;
@@ -199,7 +211,7 @@ yourself with Bun.serve().
 
   const htmlImports = await Promise.all(
     args.map(arg => {
-      return import(arg).then(m => m.default);
+      return import(keySpecifier(arg)).then(m => m.default);
     }),
   );
 

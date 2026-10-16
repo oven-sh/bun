@@ -1,0 +1,7 @@
+{
+  "src/js/builtins/BundlerPlugin.ts": 1,
+  "src/js/builtins/CommonJS.ts": 1,
+  "src/jsc/VirtualMachine.rs": 2,
+  "src/jsc/bindings/ImportMetaObject.cpp": 2,
+  "src/resolver/resolver.rs": 2
+}

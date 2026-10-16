@@ -348,3 +348,69 @@ test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", a
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
 });
+
+// https://github.com/oven-sh/bun/issues/7928. Windows does not allow `?` in a file name.
+describe.concurrent.skipIf(isWindows)("in a working directory with `?` in its name", () => {
+  const scripts = {
+    "an ES module": `
+      import config from "./config.json";
+      console.log(JSON.stringify({
+        json: config.from,
+        require: require("./dep.cjs"),
+        dir: import.meta.dir.split("/").pop(),
+        file: import.meta.file,
+      }));
+    `,
+    "a CommonJS module": `
+      console.log(JSON.stringify({
+        json: require("./config.json").from,
+        require: require("./dep.cjs"),
+        dir: __dirname.split("/").pop(),
+        file: __filename.split("/").pop(),
+      }));
+    `,
+  };
+  async function run(name: string, args: string[], stdin?: string) {
+    using dir = tempDir("eval-question-mark", {
+      [`${name}/config.json`]: `{ "from": "the working directory" }`,
+      [`${name}/dep.cjs`]: `module.exports = "the working directory";`,
+      // What the part before the "?" names.
+      [`${name.split("?")[0]}/config.json`]: `{ "from": "another directory" }`,
+      [`${name.split("?")[0]}/dep.cjs`]: `module.exports = "another directory";`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: join(String(dir), name),
+      stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  describe.each(["what?", "wh?at"])("%s", name => {
+    describe.each(Object.keys(scripts))("%s script loads the files of that directory", kind => {
+      test.each([
+        ["bun -e", ["-e", scripts[kind]], undefined, "[eval]"],
+        ["bun -", ["-"], scripts[kind], "[stdin]"],
+      ])("%s", async (_, args, stdin, file) => {
+        const { stdout, stderr, exitCode } = await run(name, args, stdin);
+        expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+          stdout: { json: "the working directory", require: "the working directory", dir: name, file },
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+
+    test("bun -p prints a value from the files of that directory", async () => {
+      expect(await run(name, ["-p", `require("./dep.cjs") + ": " + __dirname.split("/").pop()`])).toEqual({
+        stdout: `the working directory: ${name}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+});

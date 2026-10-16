@@ -270,7 +270,12 @@ declare function $host(): TODO;
 declare function $hostname(): TODO;
 declare function $ignoreBOM(): TODO;
 declare function $importer(): TODO;
-declare function $internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap): TODO;
+declare function $internalRequire(
+  id: string,
+  parent: JSCommonJSModule,
+  requireMap: RequireMap,
+  pathLength: number,
+): any;
 declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
 declare function $isAbsolute(): TODO;
 declare function $join(): TODO;

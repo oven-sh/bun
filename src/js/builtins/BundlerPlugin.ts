@@ -88,6 +88,16 @@ export function loadAndResolvePluginsForServe(
     let onstart_promises_array: Array<Promise<any>> | undefined = undefined;
     for (let i = 0; i < plugins.length; i++) {
       let pluginModuleResolved = await Bun.resolve(plugins[i], bunfig_folder);
+      const pathLength = $newCppFunction(
+        "NodeModuleModule.cpp",
+        "jsFunctionModuleKeyPathLength",
+        1,
+      )(pluginModuleResolved);
+      // In a specifier a "?" starts a query. In the path of the resolved key it is part of a name, which a file URL says.
+      if (pluginModuleResolved.lastIndexOf("?", pathLength - 1) !== -1) {
+        pluginModuleResolved =
+          Bun.pathToFileURL(pluginModuleResolved.slice(0, pathLength)).href + pluginModuleResolved.slice(pathLength);
+      }
 
       let pluginModuleRaw = await import(pluginModuleResolved);
       if (!pluginModuleRaw || !pluginModuleRaw.default) {

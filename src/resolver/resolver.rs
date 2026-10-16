@@ -2528,6 +2528,76 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
+    /// Index of the `?` that starts the query of `path` (absolute, or relative to `dir`; its first `?` is at `first`): a `?` is part of a name that the listing of its folder has, or of a folder that the resolver has read.
+    pub fn query_start_in_path(&mut self, dir: &[u8], path: &[u8], first: usize) -> Option<usize> {
+        // A relative path is from `dir`, or from the top-level directory when the source has none, as in `resolve_and_auto_install`.
+        let dir: &[u8] = if bun_paths::is_absolute(path) {
+            b""
+        } else if bun_paths::is_absolute(dir) {
+            dir
+        } else {
+            self.fs_ref().top_level_dir
+        };
+        let mut question = first;
+        let mut buf = None;
+        loop {
+            let name_start =
+                strings::last_index_of_char(&path[..question], b'/').map_or(0, |slash| slash + 1);
+            let name_end = strings::index_of_char_usize(&path[question..], b'/')
+                .map_or(path.len(), |slash| question + slash);
+            if dir.len() + name_end + 2 >= MAX_PATH_BYTES {
+                return Some(question);
+            }
+            let folder: &[u8] = if &path[..name_start] == b"./" && dir.len() > 1 {
+                bun_paths::string_paths::without_trailing_slash(dir)
+            } else {
+                bun_paths::resolve_path::join_abs_string_buf::<
+                    bun_paths::resolve_path::platform::Auto,
+                >(
+                    dir,
+                    &mut buf.get_or_insert_with(bun_paths::path_buffer_pool::get)[..],
+                    &[&path[..name_start]],
+                )
+            };
+            let Some(listing) = self.read_dir_info_ignore_error(folder) else {
+                return Some(question);
+            };
+
+            // The longest name that holds this `?` and that the resolver knows.
+            let name = &path[name_start..name_end];
+            let mut end = name.len();
+            loop {
+                let is_folder = end == name.len() && name_end < path.len();
+                let known = match listing.get_entry(self.generation, &name[..end]) {
+                    // SAFETY: rfs points at the process-global RealFS; the lazy stat in `kind()` is
+                    // serialized on the per-entry mutex.
+                    Some(found) => {
+                        !is_folder
+                            || unsafe { found.entry().kind(self.rfs_ptr(), self.store_fd) }
+                                == Fs::file_system::EntryKind::Dir
+                    }
+                    // The listing can be older than a folder that the resolver then read.
+                    None => {
+                        is_folder
+                            && dir.is_empty()
+                            && self.dir_cache_mut().get(&path[..name_end]).is_some()
+                    }
+                };
+                if known {
+                    break;
+                }
+                match strings::last_index_of_char(&name[..end], b'?') {
+                    Some(shorter) if name_start + shorter > question => end = shorter,
+                    _ => return Some(question),
+                }
+            }
+            if name_start + end < name_end {
+                return Some(name_start + end);
+            }
+            question = name_end + strings::index_of_char_usize(&path[name_end..], b'?')?;
+        }
+    }
+
     pub(crate) fn load_node_modules(
         &mut self,
         import_path: &[u8],

@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 import { expect, it, mock } from "bun:test";
-import { bunEnv, bunExe, expectRssDeltaBelow, ospath, tempDir } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, expectRssDeltaBelow, isWindows, ospath, tempDir } from "harness";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -345,6 +345,34 @@ it("import.meta is correct in a module that was required with a query param", as
   expect(cjs.path).toBe(join(import.meta.dir, "./other-cjs.js"));
   expect(cjs.dir).toBe(import.meta.dir);
   expect(cjs.file).toBe("other-cjs.js");
+});
+
+// https://github.com/oven-sh/bun/issues/7928. Windows does not allow `?` in a file name.
+it.skipIf(isWindows)("import.meta is of the file in a folder with `?` in its name", async () => {
+  using dir = tempDir("import-meta-question-mark", {
+    "me?ta/esm.mjs": `
+      export const { url, path, dir, file, dirname, filename } = import.meta;
+      export const cjs = require("./cjs.cjs");
+      const leaf = await import("./leaf.mjs?v=1");
+      export const withQuery = { url: leaf.url, path: leaf.path };
+    `,
+    "me?ta/leaf.mjs": `export const { url, path } = import.meta;`,
+    "me?ta/cjs.cjs": `module.exports = { url: import.meta.url, path: import.meta.path, dir: import.meta.dir, file: import.meta.file };`,
+  });
+  const folder = realpathSync(join(String(dir), "me?ta"));
+  const folderURL = Bun.pathToFileURL(folder).href;
+  expect(folderURL).toEndWith("/me%3Fta");
+
+  expect({ ...(await import(folderURL + "/esm.mjs")) }).toEqual({
+    url: folderURL + "/esm.mjs",
+    path: join(folder, "esm.mjs"),
+    dir: folder,
+    file: "esm.mjs",
+    dirname: folder,
+    filename: join(folder, "esm.mjs"),
+    cjs: { url: folderURL + "/cjs.cjs", path: join(folder, "cjs.cjs"), dir: folder, file: "cjs.cjs" },
+    withQuery: { url: folderURL + "/leaf.mjs?v=1", path: join(folder, "leaf.mjs") },
+  });
 });
 
 it("import.meta of a collected module does not leak its url", async () => {

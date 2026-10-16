@@ -225,13 +225,32 @@ impl MacroEntryPoint {
                 break 'brk cursor.position() as usize;
             }
 
+            // In a specifier a `?` starts a query. In the path of the macro it is part of a name, which a file URL says.
+            let macro_url = (!cfg!(windows)
+                && bun_paths::is_absolute(dir_to_use)
+                && (strings::contains_char(dir_to_use, b'?')
+                    || strings::contains_char(import_path.filename, b'?')))
+            .then(|| {
+                let url = bun_url::file_url_from_string(&bun_core::String::clone_utf8(
+                    &[dir_to_use, import_path.filename].concat(),
+                ));
+                // The URL is in a string with single quotes.
+                strings::split(&url.to_utf8(), b"'")
+                    .collect::<Vec<_>>()
+                    .join(&b"%27"[..])
+            });
+            let (url, dir, filename): (&[u8], &[u8], &[u8]) = match &macro_url {
+                Some(url) => (url, b"", b""),
+                None => (b"", dir_to_use, import_path.filename),
+            };
+
             let mut cursor = std::io::Cursor::new(&mut entry.code_buffer[label_len..]);
             write!(
                 &mut cursor,
                 "//Auto-generated file\n\
                  var Macros;\n\
                  try {{\n\
-                 \x20 Macros = await import('{}{}');\n\
+                 \x20 Macros = await import('{}{}{}');\n\
                  }} catch (err) {{\n\
                  \x20  console.error(\"Error importing macro\");\n\
                  \x20  throw err;\n\
@@ -241,15 +260,16 @@ impl MacroEntryPoint {
                  }}\n\
                  \n\
                  Bun.registerMacro({}, Macros['{}']);",
+                BStr::new(url),
                 bun_fmt::fmt_path_u8(
-                    dir_to_use,
+                    dir,
                     bun_fmt::PathFormatOptions {
                         escape_backslashes: true,
                         ..Default::default()
                     }
                 ),
                 bun_fmt::fmt_path_u8(
-                    import_path.filename,
+                    filename,
                     bun_fmt::PathFormatOptions {
                         escape_backslashes: true,
                         ..Default::default()

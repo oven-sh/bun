@@ -1244,6 +1244,31 @@ describe("cron execution mode", () => {
     expect(exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/7928. Windows does not allow `?` in a file name.
+  test.skipIf(isWindows).each(["cr?on", "cron?"])("runs a script in the folder %s", async folder => {
+    using dir = tempDir("bun-cron-test", {
+      [`${folder}/scheduled.ts`]: `
+        import { name } from "./dep.ts";
+        export default {
+          scheduled(controller: any) {
+            console.log(name, controller.cron, import.meta.dir.split("/").pop());
+          }
+        };
+      `,
+      [`${folder}/dep.ts`]: `export const name = "dep.ts";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--cron-title=my-job", "--cron-period=30 2 * * 1", `${dir}/${folder}/scheduled.ts`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `dep.ts 30 2 * * 1 ${folder}\n`, stderr: "", exitCode: 0 });
+  });
+
   test("handles async scheduled handler", async () => {
     using dir = tempDir("bun-cron-test", {
       "async-scheduled.ts": `

@@ -3533,6 +3533,7 @@ extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject*);
+extern "C" uint32_t Bun__VM__moduleKeyPathLength(void* bunVM, const BunString* key);
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap)
@@ -3545,6 +3546,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     if (!useImportMap)
         RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
 
+    // The path of a file URL and a name that nothing imports (a test file, a preload, Module.runMain) are paths, not specifiers.
+    bool isPath = false;
     WTF::String keyString;
     if (key.isString()) {
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
@@ -3567,6 +3570,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
                 keyString = url.fileSystemPath();
+                isPath = true;
             } else {
                 keyString = moduleName;
             }
@@ -3581,6 +3585,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     if (referrer && referrer.isString()) {
         referrerString = referrer.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        isPath = true;
     }
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
@@ -3594,20 +3600,16 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     ErrorableString res;
     BunString keyZ = Bun::toString(keyString);
     BunString referrerZ = Bun::toString(referrerString);
-    BunString queryZ = BunStringEmpty;
-    Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
+    if (isPath) [[unlikely]]
+        Zig__GlobalObject__resolvePath(&res, globalObject, &keyZ, &referrerZ);
+    else
+        Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ);
     RETURN_IF_EXCEPTION(scope, {});
     if (!res.success) {
         throwException(scope, res.result.err, globalObject);
         return {};
     }
-    auto resolved = res.result.value.transferToWTFString();
-    auto query = queryZ.transferToWTFString();
-
-    if (!query.isEmpty()) {
-        return Identifier::fromString(vm, makeString(resolved, query));
-    }
-    return Identifier::fromString(vm, resolved);
+    return Identifier::fromString(vm, res.result.value.transferToWTFString());
 }
 
 JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSModuleLoader* loader, JSValue key, JSValue referrer, RefPtr<JSC::ScriptFetcher> fetcher, bool useImportMap)
@@ -3730,11 +3732,12 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     if (scope.exception()) [[unlikely]]
         return rejectedInternalPromise(globalObject, scope.exception()->value());
 
-    if (moduleKey.endsWith(".node"_s)) {
+    auto moduleKeyBun = Bun::toString(moduleKey);
+    // ".node" at the end of a `?query` is not an addon's.
+    if (moduleKey.endsWith(".node"_s) && Bun__VM__moduleKeyPathLength(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), &moduleKeyBun) == moduleKey.length()) {
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
-    auto moduleKeyBun = Bun::toString(moduleKey);
     auto& sourceString = vm.propertyNames->undefinedKeyword.string();
     auto typeAttributeString = String();
 
@@ -4240,7 +4243,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
-    auto* importMeta = Zig::ImportMetaObject::create(globalObject, key);
+    auto* importMeta = Zig::ImportMetaObject::create(globalObject, key, record->sourceCode().provider());
     importMeta->setModuleGraph(globalObject->vm(), Bun::moduleGraphOfLoader(globalObject, loader));
     return importMeta;
 }

@@ -294,6 +294,7 @@ pub struct VirtualMachine {
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
     pub(crate) resolved_path_dups: Vec<Box<[u8]>>,
+    module_key_query: ModuleKeyQuery,
     pending_internal_promise: crate::strong::Optional,
     pub pending_internal_promise_reported_at: u32,
     pub(crate) hot_reload_deferred: bool,
@@ -3242,6 +3243,7 @@ impl VirtualMachine {
                 .write(core::mem::ManuallyDrop::new(crate::VmHandle::new(vm)));
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
+            addr_of_mut!((*vm).module_key_query).write(ModuleKeyQuery::default());
             addr_of_mut!((*vm).macros).write(Default::default());
             addr_of_mut!((*vm).macro_entry_points).write(Default::default());
             addr_of_mut!((*vm).auto_killer).write(Default::default());
@@ -3941,18 +3943,20 @@ pub enum ResolveMode {
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
+    /// `Esm`, for a string that is a filesystem path and not a specifier: what has no importer, the path of a file URL, what a plugin answers.
+    Path,
 }
 
 impl ResolveMode {
     #[inline]
     pub fn is_esm(self) -> bool {
-        matches!(self, Self::Esm)
+        matches!(self, Self::Esm | Self::Path)
     }
 
     #[inline]
     pub fn import_kind(self) -> bun_ast::ImportKind {
         match self {
-            Self::Esm => bun_ast::ImportKind::Stmt,
+            Self::Esm | Self::Path => bun_ast::ImportKind::Stmt,
             Self::Require => bun_ast::ImportKind::Require,
             Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
         }
@@ -3981,6 +3985,14 @@ pub struct ResolveFunctionResult {
     pub(crate) query_string: &'static [u8],
 }
 
+/// The last module key with a `?` that a resolve decided about, and the length of its `<path>`.
+#[derive(Default)]
+pub struct ModuleKeyQuery {
+    key: bun_core::String,
+    /// In code units of `key`.
+    path_len: u32,
+}
+
 /// Per-thread `BufferPrinter` used when printing transpiled module source.
 #[thread_local]
 pub(crate) static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::BufferPrinter>>> =
@@ -3995,23 +4007,6 @@ pub(crate) static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::Buffe
 /// the JS thread.
 #[thread_local]
 static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
-
-fn normalize_specifier_for_resolution<'a>(
-    specifier_: &'a [u8],
-    query_string: &mut &'a [u8],
-) -> &'a [u8] {
-    // In a `data:` URL everything after the comma is the payload; a `?` is
-    // part of the data, not a query string.
-    if bun_core::strings::has_prefix_comptime(specifier_, b"data:") {
-        return specifier_;
-    }
-    if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
-        *query_string = &specifier_[i..];
-        &specifier_[..i]
-    } else {
-        specifier_
-    }
-}
 
 /// Heap-backed so only a pointer lives in TLS; see test/js/bun/binary/tls-segment-size.
 #[thread_local]
@@ -5088,6 +5083,94 @@ impl VirtualMachine {
         slice
     }
 
+    /// `<path><query>`, the key of a module asked for with a query: [`module_key_path_len`](Self::module_key_path_len) then answers for it with the length of `path`.
+    pub fn join_module_key(
+        &mut self,
+        path: &bun_core::String,
+        query: &bun_core::String,
+    ) -> bun_core::String {
+        let (key, path_len) =
+            if path.is_8bit() && !path.is_utf8() && query.is_8bit() && !query.is_utf8() {
+                let (path, query) = (path.latin1(), query.latin1());
+                let (key, joined) =
+                    bun_core::String::create_uninitialized_latin1(path.len() + query.len());
+                if joined.len() == path.len() + query.len() {
+                    joined[..path.len()].copy_from_slice(path);
+                    joined[path.len()..].copy_from_slice(query);
+                }
+                (key, path.len())
+            } else {
+                let path = path.to_utf8();
+                let mut joined = path.to_vec();
+                joined.extend_from_slice(&query.to_utf8());
+                (
+                    bun_core::String::clone_utf8(&joined),
+                    bun_core::strings::element_length_utf8_into_utf16(&path),
+                )
+            };
+        self.module_key_query = ModuleKeyQuery {
+            key: key.clone(),
+            path_len: path_len as u32,
+        };
+        key
+    }
+
+    /// Byte length of `<path>` in the module key `<path>` or `<path>?<query>`.
+    #[inline]
+    pub fn module_key_path_len(&mut self, key: &[u8]) -> usize {
+        match bun_core::strings::index_of_char_usize(key, b'?') {
+            Some(first) => self.module_key_path_len_from(key, first),
+            None => key.len(),
+        }
+    }
+
+    /// [`module_key_path_len`](Self::module_key_path_len) of a `key` with a `?`, the first at `first`: what the last resolve decided for it, or else up to the first `?` that is not in the name of a file or folder the resolver knows.
+    #[inline(never)]
+    fn module_key_path_len_from(&mut self, key: &[u8], first: usize) -> usize {
+        if self.module_key_query.key.eql_utf8(key) {
+            // A code unit is a byte in a key that is all ASCII. In any other key they are counted.
+            let units = self.module_key_query.path_len as usize;
+            if self.module_key_query.key.length() == key.len() {
+                return units;
+            }
+            let mut seen = 0;
+            for (offset, byte) in key.iter().enumerate() {
+                if byte & 0xC0 != 0x80 {
+                    if seen == units {
+                        return offset;
+                    }
+                    seen += if *byte >= 0xF0 { 2 } else { 1 };
+                }
+            }
+            return key.len();
+        }
+        // In a `data:` URL everything after the comma is the payload.
+        if bun_core::strings::has_prefix_comptime(key, b"data:") {
+            return key.len();
+        }
+        if cfg!(windows) || !bun_paths::is_absolute(key) {
+            return first;
+        }
+        self.transpiler
+            .resolver
+            .query_start_in_path(b"", key, first)
+            .unwrap_or(key.len())
+    }
+
+    /// [`module_key_path_len`](Self::module_key_path_len) in code units of `key`.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__moduleKeyPathLength(
+        vm: &mut VirtualMachine,
+        key: &bun_core::String,
+    ) -> u32 {
+        if vm.module_key_query.key.eql(key) {
+            return vm.module_key_query.path_len;
+        }
+        let key_utf8 = key.to_utf8();
+        let path_len = vm.module_key_path_len(&key_utf8);
+        bun_core::strings::element_length_utf8_into_utf16(&key_utf8[..path_len]) as u32
+    }
+
     /// Note: `is_a_file_path` is a runtime
     /// arg to avoid duplicating the body for both monomorphizations.
     pub(crate) fn _resolve(
@@ -5095,7 +5178,7 @@ impl VirtualMachine {
         ret: &mut ResolveFunctionResult,
         specifier: &[u8],
         source: &[u8],
-        is_esm: bool,
+        mode: ResolveMode,
         is_a_file_path: bool,
         global_cache: bun_resolver::GlobalCache,
     ) -> crate::CrateResult<()> {
@@ -5155,8 +5238,6 @@ impl VirtualMachine {
         }
 
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
-        let mut query_string: &[u8] = b"";
-        let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
@@ -5177,12 +5258,38 @@ impl VirtualMachine {
             top_level_dir
         };
 
+        // The writer of the string decides what a `?` is. An ES specifier is a URL: its first `?` starts the query. Every other string is a path, with a query after it or not: a `?` is part of a name that exists.
+        let mut query_string: &[u8] = b"";
+        let mut normalized_specifier = specifier;
+        let mut question_mark_in_path: Option<usize> = None;
+        let first = bun_core::strings::index_of_char_usize(specifier, b'?');
+        // In a `data:` URL everything after the comma is the payload.
+        if let Some(first) = first
+            && !bun_core::strings::has_prefix_comptime(specifier, b"data:")
+        {
+            let mut query = Some(first);
+            if !cfg!(windows)
+                && (is_special_source || mode != ResolveMode::Esm)
+                && !bun_resolver::is_package_path(specifier)
+            {
+                question_mark_in_path = Some(first);
+                query =
+                    self.transpiler
+                        .resolver
+                        .query_start_in_path(source_to_use, specifier, first);
+            }
+            if let Some(query) = query {
+                query_string = &specifier[query..];
+                normalized_specifier = &specifier[..query];
+            }
+        }
+
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
         let result: bun_resolver::Result = loop {
-            let import_kind = if is_esm {
+            let import_kind = if mode.is_esm() {
                 bun_ast::ImportKind::Stmt
             } else {
                 bun_ast::ImportKind::Require
@@ -5245,6 +5352,16 @@ impl VirtualMachine {
                     if self.transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     ) {
+                        // The name with the `?` may be newer than the listing that was read.
+                        if let Some(first) = question_mark_in_path {
+                            let query = self
+                                .transpiler
+                                .resolver
+                                .query_start_in_path(source_to_use, specifier, first)
+                                .unwrap_or(specifier.len());
+                            query_string = &specifier[query..];
+                            normalized_specifier = &specifier[..query];
+                        }
                         continue;
                     }
                     return Err(crate::CrateError::ModuleNotFound);
@@ -5266,6 +5383,14 @@ impl VirtualMachine {
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        // A `?` of the specifier is part of a name in `ret.path`: the loader reads that decision, whatever the folder listings say then.
+        if first.is_some_and(|first| first < normalized_specifier.len()) {
+            let key = bun_core::String::clone_utf8(ret.path);
+            self.module_key_query = ModuleKeyQuery {
+                path_len: key.length() as u32,
+                key,
+            };
+        }
 
         Ok(())
     }
@@ -5312,7 +5437,12 @@ impl VirtualMachine {
                         &answer,
                         source,
                         query_string,
-                        mode,
+                        // A plugin writes a path, not the specifier of the import.
+                        if mode.is_esm() {
+                            ResolveMode::Path
+                        } else {
+                            mode
+                        },
                         global_cache,
                     )?;
                     // Not on disk, for an `onLoad` to serve.
@@ -5483,7 +5613,7 @@ impl VirtualMachine {
             &mut result,
             specifier_utf8.slice(),
             normalize_source(source_utf8.slice()),
-            mode.is_esm(),
+            mode,
             IS_A_FILE_PATH,
             global_cache,
         );
@@ -5597,6 +5727,7 @@ impl VirtualMachine {
         unsafe { self.transpiler.deinit() };
 
         drop(core::mem::take(&mut self.resolved_path_dups));
+        drop(core::mem::take(&mut self.module_key_query));
         drop(core::mem::take(&mut self.main_resolved_path));
 
         self.overridden_main.deinit();
@@ -7734,10 +7865,8 @@ fn run_on_resolve(
     };
     // The importer's key ends in the query it was imported with.
     let importer = importer.to_utf8();
-    let importer = match bun_core::strings::index_of_char_usize(&importer, b'?') {
-        Some(query) => &importer[..query],
-        None => &importer[..],
-    };
+    // SAFETY: per-thread VM is live (caller is on the JS thread).
+    let importer = &importer[..unsafe { &mut *global.bun_vm_ptr() }.module_key_path_len(&importer)];
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
         &bun_core::String::from_bytes(if namespace == b"file" { b"" } else { namespace }),
         &bun_core::String::borrow_utf8(path),

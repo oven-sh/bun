@@ -468,6 +468,8 @@ declare module "bun" {
 
     /**
      * Sets the maximum number of bytes that can be buffered on a single connection.
+     * `send()` drops a message and returns `0` while more than this is buffered.
+     * Set to `0` to disable the limit.
      *
      * @default 1024 * 1024 * 16 // 16 MB
      */

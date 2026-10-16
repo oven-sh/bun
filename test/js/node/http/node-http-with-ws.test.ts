@@ -975,3 +975,86 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
     });
   });
 });
+
+// The built-in ws server sends through a ServerWebSocket. A burst larger than
+// the kernel socket buffer puts the rest into the uWS backpressure buffer. npm
+// ws never drops or re-sends a frame in that state, and close() goes out behind
+// the buffered frames.
+describe("the built-in ws server under send backpressure", () => {
+  type Received = { count: number; bad: number; closed: Promise<{ code: number; reason: string }> };
+
+  function collect(client: WebSocket, size: number): Received {
+    const closed = Promise.withResolvers<{ code: number; reason: string }>();
+    const received: Received = { count: 0, bad: 0, closed: closed.promise };
+    client.binaryType = "arraybuffer";
+    client.onmessage = ({ data }) => {
+      const bytes = new Uint8Array(data as ArrayBuffer);
+      if (bytes.byteLength !== size || bytes[0] !== received.count % 256) received.bad++;
+      received.count++;
+    };
+    client.onclose = ev => closed.resolve({ code: ev.code, reason: ev.reason });
+    return received;
+  }
+
+  test("a burst of large frames arrives once and in order", async () => {
+    const FRAMES = 32;
+    const SIZE = 1 << 20;
+    await using server = http.createServer();
+    const wss = new WebSocketServer({ noServer: true });
+    const connected = Promise.withResolvers<WsWebSocket>();
+    server.on("upgrade", (req, socket, head) => {
+      wss.handleUpgrade(req, socket, head, ws => {
+        for (let i = 0; i < FRAMES; i++) ws.send(Buffer.alloc(SIZE, i));
+        connected.resolve(ws);
+      });
+    });
+    const port = await listen(server);
+
+    const client = new WebSocket(`ws://127.0.0.1:${port}/`);
+    const received = collect(client, SIZE);
+    const serverWs = await connected.promise;
+    try {
+      expect(serverWs.bufferedAmount).toBeGreaterThan(0);
+      const last = new Promise<void>(resolve => {
+        const onmessage = client.onmessage!;
+        client.onmessage = ev => {
+          onmessage.call(client, ev);
+          if (received.count === FRAMES) resolve();
+        };
+      });
+      await last;
+      expect({ count: received.count, bad: received.bad, bufferedAmount: serverWs.bufferedAmount }).toEqual({
+        count: FRAMES,
+        bad: 0,
+        bufferedAmount: 0,
+      });
+    } finally {
+      client.close();
+      await received.closed;
+      await closeWebSocketServer(wss);
+    }
+  });
+
+  test("close() after a burst delivers every frame and then the close code", async () => {
+    const FRAMES = 200;
+    const SIZE = 64 * 1024;
+    await using server = http.createServer();
+    const wss = new WebSocketServer({ noServer: true });
+    server.on("upgrade", (req, socket, head) => {
+      wss.handleUpgrade(req, socket, head, ws => {
+        for (let i = 0; i < FRAMES; i++) ws.send(Buffer.alloc(SIZE, i));
+        ws.close(4001, "done");
+      });
+    });
+    const port = await listen(server);
+
+    const client = new WebSocket(`ws://127.0.0.1:${port}/`);
+    const received = collect(client, SIZE);
+    try {
+      expect(await received.closed).toEqual({ code: 4001, reason: "done" });
+      expect({ count: received.count, bad: received.bad }).toEqual({ count: FRAMES, bad: 0 });
+    } finally {
+      await closeWebSocketServer(wss);
+    }
+  });
+});

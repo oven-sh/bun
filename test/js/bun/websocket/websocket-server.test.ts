@@ -2643,3 +2643,42 @@ describe.concurrent("request handlers run to completion before the callbacks the
     expect(order).toEqual(["close()", "rest of handler", "microtask"]);
   });
 });
+
+// A burst that overflows the kernel socket buffer leaves frames in the uWS
+// backpressure buffer. A close() right after it must go out behind them. The
+// upgrade path used to send the TCP FIN as soon as the open handler returned.
+it("close() in open() after a burst under backpressure delivers every frame, then the close code", async () => {
+  const FRAMES = 200;
+  const SIZE = 64 * 1024;
+  await using server = serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response("not a websocket", { status: 400 });
+    },
+    websocket: {
+      backpressureLimit: 0,
+      open(ws) {
+        for (let i = 0; i < FRAMES; i++) ws.send(Buffer.alloc(SIZE, i));
+        ws.close(4001, "done");
+      },
+      message() {},
+    },
+  });
+
+  const closed = Promise.withResolvers<{ code: number; reason: string }>();
+  let count = 0;
+  let bad = 0;
+  const client = new WebSocket(server.url.href.replace(/^http/, "ws"));
+  client.binaryType = "arraybuffer";
+  client.onmessage = ({ data }) => {
+    const bytes = new Uint8Array(data as ArrayBuffer);
+    if (bytes.byteLength !== SIZE || bytes[0] !== count % 256) bad++;
+    count++;
+  };
+  client.onclose = ev => closed.resolve({ code: ev.code, reason: ev.reason });
+
+  expect(await closed.promise).toEqual({ code: 4001, reason: "done" });
+  expect({ count, bad }).toEqual({ count: FRAMES, bad: 0 });
+});

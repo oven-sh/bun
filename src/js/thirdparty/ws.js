@@ -967,11 +967,9 @@ const CLOSED = 2;
 class BunWebSocketMocked extends EventEmitter {
   #ws;
   #state;
-  #enquedMessages = [];
   #url;
   #protocol;
   #extensions;
-  #bufferedAmount = 0;
   // The default of the ServerWebSocket. The setter keeps both sides in sync.
   #binaryType = "nodebuffer";
 
@@ -985,14 +983,12 @@ class BunWebSocketMocked extends EventEmitter {
     this.#ws = null;
     this.#state = ReadyState_CONNECTING;
     this.#url = url;
-    this.#bufferedAmount = 0;
     this.#protocol = protocol;
     this.#extensions = extensions;
 
     const message = this.#message.bind(this);
     const open = this.#open.bind(this);
     const close = this.#close.bind(this);
-    const drain = this.#drain.bind(this);
     const ping = this.#ping.bind(this);
     const pong = this.#pong.bind(this);
 
@@ -1000,7 +996,6 @@ class BunWebSocketMocked extends EventEmitter {
       message, // a message is received
       open, // a socket is opened
       close, // a socket is closed
-      drain, // the socket is ready to receive more data
       ping, // a ping is received
       pong, // a pong is received
     };
@@ -1041,8 +1036,6 @@ class BunWebSocketMocked extends EventEmitter {
     this.#ws = ws;
     this.#state = ReadyState_OPEN;
     this.emit("open", this);
-    // first drain event
-    this.#drain(ws);
   }
 
   #close(ws, code, reason) {
@@ -1050,23 +1043,6 @@ class BunWebSocketMocked extends EventEmitter {
     this.#ws = null;
 
     this.emit("close", code, reason);
-  }
-
-  #drain(ws) {
-    let chunk;
-    while ((chunk = this.#enquedMessages[0]) && this.#state === 1) {
-      const [data, compress, cb] = chunk;
-      const written = ws.send(data, compress);
-      if (written < 1) {
-        // backpressure wait until next drain event
-        return;
-      }
-
-      this.#bufferedAmount -= chunk.length;
-      this.#enquedMessages.shift();
-
-      if (typeof cb === "function") queueMicrotask(cb);
-    }
   }
 
   ping(data, mask, cb) {
@@ -1123,28 +1099,19 @@ class BunWebSocketMocked extends EventEmitter {
       opts = undefined;
     }
 
-    if (this.#state === ReadyState_OPEN) {
-      const compress = opts?.compress;
-      data = normalizeData(data, opts);
-      // send returns:
-      // 1+ - The number of bytes sent is always the byte length of the data never less
-      // 0 - dropped due to backpressure (not sent)
-      // -1 - enqueue the data internaly
-      // we dont need to do anything with the return value here
-      const written = this.#ws.send(data, compress);
-      if (written === 0) {
-        // dropped
-        this.#enquedMessages.push([data, compress, cb]);
-        this.#bufferedAmount += data.length;
-        return;
-      }
-
-      if (typeof cb === "function") process.nextTick(cb);
-    } else if (this.#state === ReadyState_CONNECTING) {
-      // not connected yet
-      this.#enquedMessages.push([data, opts?.compress, cb]);
-      this.#bufferedAmount += data.length;
+    const state = this.#state;
+    if (state === ReadyState_CONNECTING) {
+      throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
     }
+
+    if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
+
+    // The server runs with backpressureLimit 0, so the ServerWebSocket either
+    // writes the frame or buffers it in order. It never drops a frame.
+    this.#ws.send(normalizeData(data, opts), opts?.compress);
+
+    // deviation: this should be called once the data is written, not immediately
+    if (typeof cb === "function") process.nextTick(cb);
   }
 
   close(code, reason) {
@@ -1208,7 +1175,9 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   get bufferedAmount() {
-    return this.#bufferedAmount ?? 0;
+    // #ws is null before open and after close.
+    const ws = this.#ws;
+    return ws ? ws.getBufferedAmount() : 0;
   }
   /**
    * Set up the socket and the internal resources.

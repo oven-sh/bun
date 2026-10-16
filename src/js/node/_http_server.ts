@@ -728,6 +728,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       reusePort,
       // Bindings to be used for WS Server
       websocket: {
+        // npm ws buffers without a limit in the net.Socket. 0 disables the uWS
+        // limit, so send() never drops a frame and the wrapper needs no queue.
+        backpressureLimit: 0,
         open(ws) {
           ws.data.open(ws);
         },
@@ -736,9 +739,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         },
         close(ws, code, reason) {
           ws.data.close(ws, code, reason);
-        },
-        drain(ws) {
-          ws.data.drain(ws);
         },
         ping(ws, data) {
           ws.data.ping(ws, data);

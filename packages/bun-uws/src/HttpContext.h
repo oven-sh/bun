@@ -851,8 +851,10 @@ private:
             /* Uncork here as well (note: what if we failed to uncork and we then pub/sub before we even upgraded?) */
             auto [written, failed] = asyncSocket->uncork();
 
-            /* If we succeeded in uncorking, check if we have sent WebSocket FIN */
-            if (!failed) {
+            /* If we succeeded in uncorking and nothing is buffered, check if we have sent WebSocket FIN.
+             * uncork() does not fail on a socket the open handler already uncorked under backpressure
+             * (WebSocket::send fast path), so check the buffer like the ws data and drain handlers do. */
+            if (!failed && asyncSocket->getBufferedAmount() == 0) {
                 WebSocketData *webSocketData = (WebSocketData *) asyncSocket->getAsyncSocketData();
                 if (webSocketData->isShuttingDown) {
                     /* In that case, also send TCP FIN (this is similar to what we have in ws drain handler) */

@@ -2600,13 +2600,14 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
+      const pending = this.pending;
       const writable = this._writableState;
       // node resets at once, unless code 0 waits for a write in flight on an ended writable: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2033-L2040
       const queuedReset =
-        this.pending &&
+        pending &&
         (!writable.ending || code !== NGHTTP2_NO_ERROR || !writable.writing) &&
         (session as ClientHttp2Session)[kConnectFlushed];
-      if (!queuedReset && (this.pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL)) {
+      if (!queuedReset && (pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL)) {
         // For other rstCodes _destroy ends the readable so 'end' is suppressed.
         this.push(null);
       }
@@ -6452,7 +6453,7 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitEventNT, req, "ready");
     }
     // The queue can empty with no request submitted: no stream event follows to complete a close().
-    this.#maybeDestroy();
+    if (this.#closed) this.#maybeDestroy();
   }
   static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
     return new ClientHttp2Session(url, options, listener);

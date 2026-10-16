@@ -2901,8 +2901,9 @@ Socket.prototype.setNoDelay = function setNoDelay(enable = true) {
   return this;
 };
 
-// Where Node keeps the value in the net.Socket. EINVAL: a unix socket. EBADF when not connecting: a handle with no fd, which is TLS over a stream, or a handle that closed once both sides ended.
+// Where Node keeps the value in the net.Socket. EBADF when not connecting: a handle with no fd, which is TLS over a stream, or a handle that closed once both sides ended.
 function keepsTypeOfService(socket, errno) {
+  // EINVAL is a unix socket. A kernel EINVAL on an IP socket, which Node throws, looks the same here.
   return errno === -22 /* UV_EINVAL */ || (errno === -9 /* UV_EBADF */ && !socket.connecting);
 }
 

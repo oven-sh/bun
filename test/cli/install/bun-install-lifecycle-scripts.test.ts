@@ -3734,7 +3734,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     });
     await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", dependencies: { other: "1.0.0" } }));
     expect((await ctx.bun("install")).exitCode).toBe(0);
-    await writeFile(ctx.installed(record), "-x\n".repeat(1 << 17));
+    await writeFile(ctx.installed(record), Buffer.alloc(3 << 17, "-x\n"));
     await writeFile(ctx.packageJson, JSON.stringify({ ...trusted, dependencies: { held: "1.0.0", other: "1.0.0" } }));
 
     await using proc = spawn({

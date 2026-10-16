@@ -2356,17 +2356,7 @@ impl<'a> PrefixedPath<'a> {
     }
 }
 
-/// Joins a public path (`prefix`) with an output-relative path (`suffix`) the
-/// way esbuild's `joinWithPublicPath` does: a leading `./` on `suffix` is
-/// dropped, and exactly one `/` separates a non-empty `prefix` from `suffix`.
-///
-/// ```text
-/// ["", "./out.js"]                      => "./out.js"
-/// ["", "../out.js"]                     => "../out.js"
-/// ["https://example.com/", "/out.js"]   => "https://example.com/out.js"
-/// ["https://example.com", "./out.js"]   => "https://example.com/out.js"
-/// ["/foo/", "bar.js"]                   => "/foo/bar.js"
-/// ```
+/// `prefix` + `suffix` with exactly one `/` between them, as esbuild's `joinWithPublicPath`; an empty `prefix` gives `./x` or `../x`.
 pub fn cheap_prefix_normalizer<'a>(prefix: &'a [u8], suffix: &'a [u8]) -> PrefixedPath<'a> {
     if prefix.is_empty() {
         let path = strings::remove_leading_dot_slash(suffix);

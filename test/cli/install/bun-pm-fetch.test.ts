@@ -240,6 +240,42 @@ it("should report when all packages are already cached", async () => {
   expect(await exists(join(package_dir, "node_modules"))).toBe(false);
 });
 
+describe.each([
+  { title: "--dry-run", flags: ["--dry-run"], bunfig: "" },
+  { title: "dryRun = true in bunfig.toml", flags: [], bunfig: "dryRun = true\n" },
+])("$title", ({ flags, bunfig }) => {
+  it.each(["with", "without"])(
+    "counts what the cache lacks and downloads none of it, %s a lockfile",
+    async lockfile => {
+      const urls: string[] = [];
+      setHandler(dummyRegistry(urls));
+      await writeProject();
+      if (lockfile === "with") {
+        expect((await runBun(["install"], { BUN_INSTALL_CACHE_DIR: cacheDir() })).exitCode).toBe(0);
+        await rm(cacheDir(), { recursive: true, force: true });
+        await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+      }
+      await writeBunfig(binaryLockfile + bunfig);
+      const before = await projectFiles();
+      urls.length = 0;
+
+      const { stdout, stderr, exitCode } = await fetchIntoCache(cacheDir(), flags);
+      expect(stdout).toMatchInlineSnapshot(`
+        "bun pm fetch <version> (<revision>)
+
+        Would fetch 1 package into cache
+        Cache: <cache>"
+      `);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      expect(urls).toEqual(lockfile === "with" ? [] : [`${root_url}/bar`]);
+      expect(await cachedPackages(cacheDir())).toBe(0);
+      expect(await projectFiles()).toEqual(before);
+    },
+  );
+});
+
 it.each([
   ["--no-summary", expect.not.stringContaining("error:")],
   ["--silent", ""],

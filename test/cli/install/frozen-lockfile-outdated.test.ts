@@ -478,7 +478,7 @@ describe.concurrent("--frozen-lockfile still passes on", () => {
     ["an override", { dependencies: { "no-deps": "^1.0.0" }, overrides: { "no-deps": "2.0.0" } }, "no-deps@2.0.0"],
     ["a prerelease that latest points at", { dependencies: { "prereleases-1": "*" } }, "prereleases-1@1.0.0-future."],
     ["a peer", { peerDependencies: { "no-deps": "^1.0.0" }, dependencies: { "no-deps": "2.0.0" } }, "no-deps@2.0.0"],
-    // It never resolved. bun.lock binds rows by name, so it reads back as the root's no-deps.
+    // It never resolved, and the root's no-deps has its name.
     [
       "an optional dependency that no version satisfies",
       { workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } },

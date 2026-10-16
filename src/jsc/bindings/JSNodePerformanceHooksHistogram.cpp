@@ -28,6 +28,26 @@ namespace Bun {
 
 using namespace JSC;
 
+extern "C" EventLoopDelayMonitor* EventLoopDelayMonitor__create(EventLoopDelayHistogramData*, int32_t resolutionMilliseconds);
+extern "C" bool EventLoopDelayMonitor__enable(EventLoopDelayMonitor*);
+extern "C" bool EventLoopDelayMonitor__disable(EventLoopDelayMonitor*);
+extern "C" void EventLoopDelayMonitor__destroy(EventLoopDelayMonitor*);
+
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(EventLoopDelayHistogramData);
+
+EventLoopDelayHistogramData::~EventLoopDelayHistogramData()
+{
+    // Before ~HistogramData frees the samples: the timer that writes them goes first.
+    if (monitor)
+        EventLoopDelayMonitor__destroy(monitor);
+}
+
+// The monitor's timer calls this on every tick.
+extern "C" void EventLoopDelayHistogramData__recordDelta(EventLoopDelayHistogramData* data)
+{
+    data->recordDelta();
+}
+
 const ClassInfo JSNodePerformanceHooksHistogram::s_info = { "RecordableHistogram"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodePerformanceHooksHistogram) };
 
 void JSNodePerformanceHooksHistogram::finishCreation(VM& vm)
@@ -36,7 +56,7 @@ void JSNodePerformanceHooksHistogram::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
-JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm, Structure* structure, JSGlobalObject* globalObject, int64_t lowest, int64_t highest, int figures)
+JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm, Structure* structure, JSGlobalObject* globalObject, int64_t lowest, int64_t highest, int figures, std::optional<int32_t> eventLoopDelayResolution)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -46,9 +66,15 @@ JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm,
         throwTypeError(globalObject, scope, "Failed to initialize histogram"_s);
         return nullptr;
     }
-    auto histogramData = HistogramData(raw_histogram);
 
-    JSNodePerformanceHooksHistogram* ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure, std::move(histogramData));
+    JSNodePerformanceHooksHistogram* ptr;
+    if (eventLoopDelayResolution) {
+        auto histogramData = makeUnique<EventLoopDelayHistogramData>(raw_histogram, *eventLoopDelayResolution);
+        ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure, std::move(histogramData));
+    } else {
+        auto histogramData = HistogramData(raw_histogram);
+        ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure, std::move(histogramData));
+    }
     ptr->finishCreation(vm);
     if (ptr->m_histogramData.histogram) {
         ptr->m_extraMemorySizeForGC = hdr_get_memory_size(ptr->m_histogramData.histogram);
@@ -64,8 +90,8 @@ void JSNodePerformanceHooksHistogram::destroy(JSCell* cell)
 
 JSNodePerformanceHooksHistogram::~JSNodePerformanceHooksHistogram()
 {
-    // The shared_ptr will handle the destruction of HistogramData,
-    // which in turn calls hdr_close via HDRHistogramPointer.
+    if (isEventLoopDelay())
+        delete &eventLoopDelayData();
 }
 
 template<typename Visitor>
@@ -99,44 +125,58 @@ JSC::Structure* JSNodePerformanceHooksHistogram::createStructure(JSC::VM& vm, JS
     return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
 }
 
-bool JSNodePerformanceHooksHistogram::record(int64_t value)
+bool HistogramData::record(int64_t value)
 {
-    if (!m_histogramData.histogram) return false;
+    if (!histogram) return false;
 
     // Try to record in the HDR histogram first
-    bool recorded = hdr_record_value(m_histogramData.histogram, value);
+    bool recorded = hdr_record_value(histogram, value);
 
     if (recorded) {
         // Value was within range - count it and update min/max
-        m_histogramData.totalCount++;
+        totalCount++;
 
         // Update manual min/max tracking for in-range values only
-        if (value < m_histogramData.manualMin) {
-            m_histogramData.manualMin = value;
+        if (value < manualMin) {
+            manualMin = value;
         }
-        if (value > m_histogramData.manualMax) {
-            m_histogramData.manualMax = value;
+        if (value > manualMax) {
+            manualMax = value;
         }
     } else {
         // Value was out of range
-        m_histogramData.exceedsCount++;
+        exceedsCount++;
     }
 
     return true;
 }
 
-uint64_t JSNodePerformanceHooksHistogram::recordDelta(JSGlobalObject* globalObject)
+uint64_t HistogramData::recordDelta()
 {
     auto now = WTF::MonotonicTime::now();
     uint64_t nowNs = static_cast<uint64_t>(now.secondsSinceEpoch().milliseconds() * 1000000.0);
 
     uint64_t delta = 0;
-    if (m_histogramData.prevDeltaTime != 0) {
-        delta = nowNs - m_histogramData.prevDeltaTime;
+    if (prevDeltaTime != 0) {
+        delta = nowNs - prevDeltaTime;
         record(delta);
     }
-    m_histogramData.prevDeltaTime = nowNs;
+    prevDeltaTime = nowNs;
     return delta;
+}
+
+bool JSNodePerformanceHooksHistogram::enableEventLoopDelay()
+{
+    auto& data = eventLoopDelayData();
+    if (!data.monitor)
+        data.monitor = EventLoopDelayMonitor__create(&data, data.resolution);
+    return EventLoopDelayMonitor__enable(data.monitor);
+}
+
+bool JSNodePerformanceHooksHistogram::disableEventLoopDelay()
+{
+    auto* monitor = eventLoopDelayData().monitor;
+    return monitor && EventLoopDelayMonitor__disable(monitor);
 }
 
 void JSNodePerformanceHooksHistogram::reset()

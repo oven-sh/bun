@@ -20,8 +20,6 @@ pub(crate) use bun_event_loop::EventLoopTimer::{
 // TODO: remove this alias once the lower tier switches to `bun_core::Timespec`.
 pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
 
-use crate::jsc::JSValue;
-
 // ─── JS-facing surface (`impl All { set_timeout / clear_* / … }`) ────────────
 // Named `timer` so codegen (`generated_js2native.rs`) resolves
 // `crate::timer::timer::internal_bindings::timer_clock_ms` per the
@@ -241,7 +239,8 @@ pub(crate) mod immediate_object;
 mod date_header_timer_draft;
 
 #[path = "EventLoopDelayMonitor.rs"]
-mod event_loop_delay_monitor_draft;
+mod event_loop_delay_monitor;
+pub(crate) use event_loop_delay_monitor::EventLoopDelayMonitor;
 
 // ─── TimerHeap ───────────────────────────────────────────────────────────────
 // Real intrusive pairing-heap (meld/remove/combine_siblings) implemented in
@@ -343,10 +342,10 @@ impl Maps {
 // host fns see the same nominal type.
 pub(crate) use crate::test_runner::timers::fake_timers::FakeTimers;
 
-// ─── DateHeaderTimer / EventLoopDelayMonitor (struct-only) ───────────────────
-// Method bodies (`enable`/`run`) call `vm.timer.*` and `vm.uws_loop()` which
-// need `VirtualMachine.timer: All` (currently `()` in bun_jsc). Struct shape
-// is real so `All` embeds them by value with the correct layout.
+// ─── DateHeaderTimer (struct-only) ───────────────────────────────────────────
+// The method body (`run`) calls `vm.timer.*` and `vm.uws_loop()` which need
+// `VirtualMachine.timer: All` (currently `()` in bun_jsc). Struct shape is
+// real so `All` embeds it by value with the correct layout.
 
 pub(crate) struct DateHeaderTimer {
     pub(crate) event_loop_timer: EventLoopTimer,
@@ -395,125 +394,6 @@ impl DateHeaderTimer {
             // overlaps `date_header_timer`, which `self` aliases.
             unsafe { (*Self::timer_all()).insert(elt) };
         }
-    }
-}
-
-pub(crate) struct EventLoopDelayMonitor {
-    /// Weak, so a leaked monitor does not pin the retired `--isolate` realm.
-    /// `stop_active_handles` drops it before `~VM` (`All` outlives the heap).
-    histogram: bun_jsc::Weak<()>,
-    pub(crate) event_loop_timer: EventLoopTimer,
-    pub(crate) resolution_ms: i32,
-    pub(crate) last_fire_ns: u64,
-    pub(crate) enabled: bool,
-}
-impl Default for EventLoopDelayMonitor {
-    fn default() -> Self {
-        Self {
-            histogram: bun_jsc::Weak::default(),
-            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::EventLoopDelayMonitor),
-            resolution_ms: 10,
-            last_fire_ns: 0,
-            enabled: false,
-        }
-    }
-}
-impl EventLoopDelayMonitor {
-    #[inline]
-    fn timer_all() -> *mut All {
-        crate::jsc_hooks::timer_all()
-    }
-
-    fn enable(
-        &mut self,
-        vm: &mut bun_jsc::virtual_machine::VirtualMachine,
-        histogram: JSValue,
-        resolution_ms: i32,
-    ) {
-        self.disable();
-        self.histogram = bun_jsc::Weak::create_passive(histogram, vm.global());
-        self.resolution_ms = resolution_ms;
-        self.enabled = true;
-
-        // Schedule timer
-        let now = Timespec::now(TimespecMockMode::ForceRealTime);
-        let next = now.add_ms(i64::from(resolution_ms));
-        self.event_loop_timer.next = ElTimespec {
-            sec: next.sec,
-            nsec: next.nsec,
-        };
-        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: single JS thread; nothing `All::insert` touches overlaps
-        // `event_loop_delay`, which `self` aliases.
-        unsafe { (*Self::timer_all()).insert(elt) };
-    }
-
-    pub(crate) fn disable(&mut self) {
-        if !self.enabled {
-            return;
-        }
-        self.enabled = false;
-        self.histogram = bun_jsc::Weak::default();
-        self.last_fire_ns = 0;
-        // FIRED (not linked) when called from `on_fire`.
-        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: see `enable` — disjoint-field access on `All`.
-            unsafe { (*Self::timer_all()).remove(elt) };
-        }
-    }
-
-    /// Record `now - last_fire_ns`
-    /// into the JS histogram and reschedule.
-    pub(crate) fn on_fire(
-        &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
-        now: &bun_event_loop::EventLoopTimer::Timespec,
-    ) {
-        self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        if !self.enabled {
-            return;
-        }
-        let Some(histogram) = self.histogram.get() else {
-            self.disable();
-            return;
-        };
-
-        let now_ns = now.ns();
-        if self.last_fire_ns > 0 {
-            let expected_ns = u64::try_from(self.resolution_ms)
-                .expect("int cast")
-                .saturating_mul(1_000_000);
-            let actual_ns = now_ns - self.last_fire_ns;
-
-            if actual_ns > expected_ns {
-                let delay_ns =
-                    i64::try_from(actual_ns.saturating_sub(expected_ns)).expect("int cast");
-                unsafe extern "C" {
-                    safe fn JSNodePerformanceHooksHistogram_recordDelay(
-                        histogram: JSValue,
-                        delay_ns: i64,
-                    );
-                }
-                JSNodePerformanceHooksHistogram_recordDelay(histogram, delay_ns);
-            }
-        }
-
-        self.last_fire_ns = now_ns;
-
-        // Reschedule
-        let next = Timespec {
-            sec: now.sec,
-            nsec: now.nsec,
-        }
-        .add_ms(i64::from(self.resolution_ms));
-        self.event_loop_timer.next = ElTimespec {
-            sec: next.sec,
-            nsec: next.nsec,
-        };
-        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: see `enable` — disjoint-field access on `All`.
-        unsafe { (*Self::timer_all()).insert(elt) };
     }
 }
 
@@ -598,7 +478,6 @@ pub(crate) struct All {
     pub(crate) immediate_ref_count: i32,
     #[cfg(windows)]
     pub(crate) uv_idle: bun_sys::windows::libuv::uv_idle_t,
-    pub(crate) event_loop_delay: EventLoopDelayMonitor,
     pub(crate) fake_timers: FakeTimers,
     pub(crate) maps: Maps,
     pub(crate) date_header_timer: DateHeaderTimer,
@@ -620,7 +499,6 @@ impl All {
             immediate_ref_count: 0,
             #[cfg(windows)]
             uv_idle: bun_core::ffi::zeroed(),
-            event_loop_delay: EventLoopDelayMonitor::default(),
             fake_timers: FakeTimers::default(),
             maps: Maps::default(),
             date_header_timer: DateHeaderTimer::default(),

@@ -109,4 +109,15 @@ void setupJSNodePerformanceHooksHistogramClassStructure(LazyClassStructure::Init
     init.setConstructor(constructor);
 }
 
+Structure* createJSNodePerformanceHooksELDHistogramStructure(VM& vm, JSGlobalObject* globalObject)
+{
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSObject* histogramPrototype = zigGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.prototype(zigGlobalObject);
+
+    auto* prototypeStructure = JSNodePerformanceHooksELDHistogramPrototype::createStructure(vm, globalObject, histogramPrototype);
+    auto* prototype = JSNodePerformanceHooksELDHistogramPrototype::create(vm, globalObject, prototypeStructure);
+
+    return JSNodePerformanceHooksHistogram::createStructure(vm, globalObject, prototype);
+}
+
 } // namespace Bun

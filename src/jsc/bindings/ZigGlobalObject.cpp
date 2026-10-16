@@ -2432,6 +2432,9 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_utilInspectOptionsStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::createUtilInspectOptionsStructure(init.vm, init.owner));
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_JSNodePerformanceHooksELDHistogramStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             init.set(Bun::createJSNodePerformanceHooksELDHistogramStructure(init.vm, init.owner));
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_jsonlParseResultStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              // { values, read, done, error } — 4 properties at fixed offsets for fast allocation
              Structure* structure = init.owner->structureCache().emptyObjectStructureForPrototype(init.owner, init.owner->objectPrototype(), 4);

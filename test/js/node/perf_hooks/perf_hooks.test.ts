@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { heapStats } from "bun:jsc";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isDebug } from "harness";
 import net from "net";
-import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
+import perf, { monitorEventLoopDelay, PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
 
 test("stubs", () => {
   expect(perf.performance.nodeTiming).toBeObject();
@@ -364,4 +365,238 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
   expect(result.indexOption).toBe("PerformanceMark {");
   expect(result.polluted).toBe("PerformanceMark {");
   expect(exitCode).toBe(0);
+});
+
+// What each monitorEventLoopDelay() call returns is in test/js/bun/perf_hooks/histogram.test.ts,
+// which also runs on node. These cases need Bun's APIs.
+describe("monitorEventLoopDelay", () => {
+  /** Yields to the timers until `condition()` is true. An enabled monitor adds a sample on every tick after its first. */
+  async function until(condition: () => boolean) {
+    const deadline = performance.now() + 2000;
+    while (!condition() && performance.now() < deadline) await Bun.sleep(1);
+  }
+  /** Keeps the thread busy, so no timer runs. */
+  function block(milliseconds: number) {
+    for (const end = performance.now() + milliseconds; performance.now() < end; );
+  }
+
+  test("a tick that comes late is not followed by a short sample", async () => {
+    const resolution = 20;
+    const monitor = monitorEventLoopDelay({ resolution });
+    // Both timers are overdue when the loop runs them, the slow one first: the monitor's first
+    // tick comes 2 resolutions late.
+    setTimeout(() => block(2 * resolution), 1);
+    monitor.enable();
+    block(resolution + 5);
+    try {
+      await until(() => monitor.count >= 2);
+    } finally {
+      monitor.disable();
+    }
+    expect(monitor.count).toBeGreaterThanOrEqual(2);
+    // The next tick is a resolution after the late one. node counts from libuv's cached loop
+    // time, which can be a resolution behind the late tick: its next tick then comes at once and
+    // adds a sample near 0.
+    expect(monitor.min).toBeGreaterThanOrEqual(0.9 * resolution * 1e6);
+  });
+
+  // At 1 ms the monitors tick until the GC sweeps them. At the largest resolution no tick comes.
+  // Either way only the histogram's destructor takes the timer out of the heap.
+  test.each([1, 2 ** 31 - 1])("an enabled monitor that nothing references is collected (%d ms)", async resolution => {
+    const last = monitorEventLoopDelay({ resolution: 1 });
+    Bun.gc(true);
+    const baseline = heapStats().objectTypeCounts.RecordableHistogram ?? 0;
+
+    const distinct = (() => {
+      const monitors = Array.from({ length: 50 }, () => {
+        const monitor = monitorEventLoopDelay({ resolution });
+        monitor.enable();
+        return monitor;
+      });
+      return new Set(monitors).size;
+    })();
+    expect(distinct).toBe(50);
+    await expectMaxObjectTypeCount(expect, "RecordableHistogram", baseline + 5);
+
+    // The timer heap is intact: a monitor enabled now still ticks.
+    last.enable();
+    try {
+      await until(() => last.count >= 3);
+      expect(last.count).toBeGreaterThanOrEqual(3);
+    } finally {
+      last.disable();
+    }
+  });
+
+  describe("the Bun.ModuleGraph whose script enabled a monitor stops it", () => {
+    test("when the graph is disposed, and the host's monitor goes on", async () => {
+      const host = monitorEventLoopDelay({ resolution: 1 });
+      const graph = new Bun.ModuleGraph();
+      const inGraph = graph.run(() => {
+        const monitor = monitorEventLoopDelay({ resolution: 1 });
+        monitor.enable();
+        return monitor;
+      });
+      host.enable();
+      try {
+        await until(() => host.count > 0 && inGraph.count > 0);
+        expect(inGraph.count).toBeGreaterThan(0);
+
+        graph.dispose();
+        const stoppedAt = inGraph.count;
+        const before = host.count;
+        await until(() => host.count >= before + 5);
+        expect({ host: host.count >= before + 5, inGraph: inGraph.count, inGraphDisable: inGraph.disable() }).toEqual({
+          host: true,
+          inGraph: stoppedAt,
+          inGraphDisable: false,
+        });
+      } finally {
+        host.disable();
+        inGraph.disable();
+        graph.dispose();
+      }
+    });
+
+    test("not a monitor that the host enabled again after the graph", async () => {
+      const graph = new Bun.ModuleGraph();
+      const monitor = graph.run(() => {
+        const monitor = monitorEventLoopDelay({ resolution: 1 });
+        monitor.enable();
+        return monitor;
+      });
+      try {
+        expect([monitor.disable(), monitor.enable()]).toEqual([true, true]);
+        graph.dispose();
+        const before = monitor.count;
+        await until(() => monitor.count >= before + 3);
+        expect({ samples: monitor.count >= before + 3, disable: monitor.disable() }).toEqual({
+          samples: true,
+          disable: true,
+        });
+      } finally {
+        monitor.disable();
+        graph.dispose();
+      }
+    });
+
+    test("also a monitor of the host's that the graph enabled again", async () => {
+      const monitor = monitorEventLoopDelay({ resolution: 1 });
+      const witness = monitorEventLoopDelay({ resolution: 1 });
+      const graph = new Bun.ModuleGraph();
+      try {
+        expect([monitor.enable(), monitor.disable(), graph.run(() => monitor.enable())]).toEqual([true, true, true]);
+        witness.enable();
+        graph.dispose();
+        const stoppedAt = monitor.count;
+        const before = witness.count;
+        await until(() => witness.count >= before + 5);
+        expect({ witness: witness.count >= before + 5, count: monitor.count, disable: monitor.disable() }).toEqual({
+          witness: true,
+          count: stoppedAt,
+          disable: false,
+        });
+      } finally {
+        monitor.disable();
+        witness.disable();
+        graph.dispose();
+      }
+    });
+
+    test("also a monitor that script of the disposed graph enables later", async () => {
+      const witness = monitorEventLoopDelay({ resolution: 1 });
+      const graph = new Bun.ModuleGraph();
+      let late: ReturnType<typeof monitorEventLoopDelay> | undefined;
+      let lateEnable: boolean | undefined;
+      const { promise: gate, resolve } = Promise.withResolvers<void>();
+      graph.run(() => {
+        gate.then(() => {
+          late = monitorEventLoopDelay({ resolution: 1 });
+          lateEnable = late.enable();
+        });
+      });
+      graph.dispose();
+      resolve();
+      witness.enable();
+      try {
+        await until(() => witness.count >= 5);
+        expect({ witness: witness.count >= 5, lateEnable, count: late?.count, disable: late?.disable() }).toEqual({
+          witness: true,
+          lateEnable: true,
+          count: 0,
+          disable: false,
+        });
+      } finally {
+        witness.disable();
+        late?.disable();
+      }
+    });
+  });
+
+  test(
+    "terminating a Worker with enabled monitors leaves the main thread's monitor running",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Worker } = require("node:worker_threads");
+         const { monitorEventLoopDelay } = require("node:perf_hooks");
+         const host = monitorEventLoopDelay({ resolution: 1 });
+         host.enable();
+         const worker = new Worker(
+           \`const { parentPort } = require("node:worker_threads");
+             const { monitorEventLoopDelay } = require("node:perf_hooks");
+             const monitors = [1, 2, 3].map(resolution => monitorEventLoopDelay({ resolution }));
+             for (const monitor of monitors) monitor.enable();
+             const report = () => monitors.every(monitor => monitor.count > 0) ? parentPort.postMessage("sampling") : setTimeout(report, 1);
+             report();\`,
+           { eval: true },
+         );
+         worker.once("message", async () => {
+           await worker.terminate();
+           const before = host.count;
+           const report = () => host.count >= before + 5 ? console.log("host still samples") : setTimeout(report, 1);
+           report();
+         });`,
+        ],
+        // The main thread's VM is destroyed too, so its enabled monitor goes through teardown as well.
+        env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "host still samples\n", stderr: "", exitCode: 0 });
+    },
+    // A debug build takes seconds to start a Worker.
+    isDebug ? 30_000 : 5_000,
+  );
+
+  test("a resolution above int32 is accepted, and enabled monitors do not keep the process alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { monitorEventLoopDelay } = require("node:perf_hooks");
+         const far = [2 ** 31, 2 ** 32, 2 ** 32 + 1, Number.MAX_SAFE_INTEGER].map(resolution => monitorEventLoopDelay({ resolution }));
+         const enabled = far.map(monitor => monitor.enable());
+         const near = monitorEventLoopDelay({ resolution: 1 });
+         near.enable();
+         const report = () =>
+           near.count >= 5
+             ? console.log(JSON.stringify({ enabled, counts: far.map(monitor => monitor.count) }))
+             : setTimeout(report, 1);
+         report();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ enabled: [true, true, true, true], counts: [0, 0, 0, 0] }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

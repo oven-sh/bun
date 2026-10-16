@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { inspect } from "node:util";
-import { createHistogram } from "perf_hooks";
+import { createHistogram, monitorEventLoopDelay } from "perf_hooks";
 
 describe("Histogram", () => {
   test("basic histogram creation and initial state", () => {
@@ -581,5 +581,190 @@ describe("Histogram", () => {
     const inspected = inspect(h);
 
     assert.ok(inspected.includes("Histogram"));
+  });
+});
+
+// Every case passes on node too: `node --test test/js/bun/perf_hooks/histogram.test.ts`.
+describe("monitorEventLoopDelay", () => {
+  /** Yields to the timers until `condition()` is true. An enabled monitor adds a sample on every tick after its first. */
+  async function until(condition: () => boolean) {
+    const deadline = performance.now() + 2000;
+    while (!condition() && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 1));
+  }
+  /** Keeps the thread busy, so no timer runs. */
+  function block(milliseconds: number) {
+    for (const end = performance.now() + milliseconds; performance.now() < end; );
+  }
+
+  test("each call returns its own monitor", async () => {
+    const [a, b, c, d] = Array.from({ length: 4 }, () => monitorEventLoopDelay({ resolution: 1 }));
+    try {
+      const result: Record<string, boolean> = { sameObject: a === b, aEnable: a.enable(), bDisable: b.disable() };
+      const before = a.count;
+      await until(() => a.count >= before + 3);
+      result.aStillSamples = a.count >= before + 3;
+      result.aDisable = a.disable();
+
+      result.cEnable = c.enable();
+      result.dEnable = d.enable();
+      await until(() => c.count > 0 && d.count > 0);
+      d.reset();
+      result.cKeepsItsSamples = c.count > 0;
+
+      assert.deepStrictEqual(result, {
+        sameObject: false,
+        aEnable: true,
+        // b was never enabled, and disabling it leaves a alone.
+        bDisable: false,
+        aStillSamples: true,
+        aDisable: true,
+        cEnable: true,
+        dEnable: true,
+        cKeepsItsSamples: true,
+      });
+    } finally {
+      for (const monitor of [a, b, c, d]) monitor.disable();
+    }
+  });
+
+  test("a monitor keeps the resolution it was made with", async () => {
+    const monitor = monitorEventLoopDelay({ resolution: 1 });
+    // Made later and never enabled.
+    monitorEventLoopDelay({ resolution: 60_000 });
+    monitor.enable();
+    try {
+      await until(() => monitor.count >= 3);
+      assert.ok(monitor.count >= 3);
+    } finally {
+      monitor.disable();
+    }
+  });
+
+  test("enable() and disable() answer for their own monitor and keep its samples", async () => {
+    const monitor = monitorEventLoopDelay({ resolution: 1 });
+    try {
+      assert.deepStrictEqual(
+        [monitor.disable(), monitor.enable(), monitor.enable(), monitor.disable(), monitor.disable()],
+        [false, true, false, true, false],
+      );
+
+      monitor.enable();
+      await until(() => monitor.count >= 2);
+      monitor.disable();
+      const kept = monitor.count;
+      assert.ok(kept >= 2);
+
+      // 50 ms pass with the monitor off.
+      block(50);
+      monitor.enable();
+      const afterEnable = monitor.count;
+      await until(() => monitor.count > kept);
+      // enable() resets nothing. A sample is the time since the monitor's previous tick, so the
+      // first one after the pause spans it.
+      assert.deepStrictEqual(
+        { afterEnable, spansThePause: monitor.max >= 50e6 },
+        { afterEnable: kept, spansThePause: true },
+      );
+    } finally {
+      monitor.disable();
+    }
+  });
+
+  test("a sample is the whole time between two ticks", async () => {
+    const resolution = 10;
+    const monitor = monitorEventLoopDelay({ resolution });
+    monitor.enable();
+    try {
+      await until(() => monitor.count >= 20);
+    } finally {
+      monitor.disable();
+    }
+    assert.ok(monitor.count >= 20);
+    // Not the time above the resolution, which is near 0 on an idle loop.
+    assert.ok(monitor.percentile(50) >= 0.9 * resolution * 1e6, `median ${monitor.percentile(50)} ns`);
+  });
+
+  test("reset() also forgets the previous tick, so the next tick adds no sample", async () => {
+    const resolution = 50;
+    const monitor = monitorEventLoopDelay({ resolution });
+    monitor.enable();
+    try {
+      await until(() => monitor.count >= 1);
+      assert.ok(monitor.count >= 1);
+
+      monitor.reset();
+      // The next tick is now overdue. The one after it is a resolution away.
+      block(resolution + 10);
+      await new Promise(resolve => setTimeout(resolve, 1));
+      assert.strictEqual(monitor.count, 0);
+
+      await until(() => monitor.count >= 1);
+      assert.ok(monitor.count >= 1);
+    } finally {
+      monitor.disable();
+    }
+  });
+
+  test("the methods of an ELDHistogram are on its prototype and check their receiver", () => {
+    const monitor = monitorEventLoopDelay();
+    const other = monitorEventLoopDelay();
+    const prototype = Object.getPrototypeOf(monitor);
+    const { enable, disable } = monitor;
+    const ELDHistogram: any = monitor.constructor;
+    try {
+      assert.deepStrictEqual(Object.getOwnPropertyNames(monitor), []);
+      assert.deepStrictEqual(Reflect.ownKeys(prototype), ["constructor", "enable", "disable", Symbol.dispose]);
+      assert.deepStrictEqual(Object.getOwnPropertyDescriptor(prototype, "enable"), {
+        value: enable,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+      assert.deepStrictEqual(
+        [ELDHistogram.name, ELDHistogram.prototype === prototype, Object.getPrototypeOf(prototype).constructor.name],
+        ["ELDHistogram", true, "Histogram"],
+      );
+      assert.throws(() => new ELDHistogram(), { name: "TypeError", code: "ERR_ILLEGAL_CONSTRUCTOR" });
+      assert.throws(() => ELDHistogram(), {
+        name: "TypeError",
+        message: "Class constructor ELDHistogram cannot be invoked without 'new'",
+      });
+
+      const invalidThis = {
+        name: "TypeError",
+        code: "ERR_INVALID_THIS",
+        message: 'Value of "this" must be of type ELDHistogram',
+      };
+      for (const receiver of [{}, createHistogram()]) {
+        assert.throws(() => enable.call(receiver as any), invalidThis);
+        assert.throws(() => disable.call(receiver as any), invalidThis);
+      }
+      // The receiver decides which monitor a call is for.
+      assert.deepStrictEqual([enable.call(other), monitor.disable(), other.disable()], [true, false, true]);
+
+      const dispose = monitor[Symbol.dispose];
+      assert.notStrictEqual(dispose, disable);
+      monitor.enable();
+      assert.deepStrictEqual([dispose.call(monitor), monitor.disable()], [undefined, false]);
+      // It calls `this.disable()`, whatever that is.
+      const calls: unknown[] = [];
+      dispose.call({ disable: (...args: unknown[]) => calls.push(args) } as any);
+      assert.deepStrictEqual(calls, [[]]);
+      assert.throws(() => dispose.call(createHistogram() as any), {
+        name: "TypeError",
+        message: "this.disable is not a function",
+      });
+
+      let scoped: typeof monitor;
+      {
+        using inner = monitorEventLoopDelay();
+        inner.enable();
+        scoped = inner;
+      }
+      assert.strictEqual(scoped.disable(), false);
+    } finally {
+      monitor.disable();
+      other.disable();
+    }
   });
 });

@@ -898,13 +898,13 @@ describe.concurrent("bun test --isolate", () => {
   });
 
   test("with --isolate, a leaked monitorEventLoopDelay() is disabled before next file", async () => {
-    // The monitor is per thread while its histogram belongs to the file's
-    // global. A file that enables it and never disables it used to leave the
-    // monitor recording into the collected histogram of the retired global for
-    // the rest of the run. Two things are observable from the next file: a
-    // fresh histogram that reuses the freed cell receives the stale records,
-    // and the next file's own enable() is a no-op because the monitor is still
-    // marked enabled, so its histogram never records anything.
+    // A file enables a monitor and never disables it. When the monitor was one
+    // per thread, it went on recording into the collected histogram of the
+    // retired global for the rest of the run, and two things were observable
+    // from the next file: a fresh histogram that reused the freed cell
+    // received the stale records, and the file's own enable() was a no-op, so
+    // its histogram never recorded anything. Each histogram now owns its
+    // monitor, and the swap stops the monitors that the file's context enabled.
     const monitorFixtures = {
       "a-monitor.test.ts": `
         import { test, expect } from "bun:test";
@@ -1632,9 +1632,9 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
 //   sets and plugin callback lists were held through Strong handles, so any
 //   file that created a mock or registered a plugin formed an uncollectable
 //   root -> realm object -> global cycle (#31771's linear growth in practice).
-// - monitorEventLoopDelay().enable(): the per-thread monitor holds the file's
-//   histogram. It is disabled at the swap and only ever holds the histogram
-//   weakly, so an enabled monitor must not keep the file's global alive.
+// - monitorEventLoopDelay().enable(): the histogram owns its monitor, and the
+//   monitor's timer has no reference to the histogram. It is stopped at the
+//   swap, so an enabled monitor must not keep the file's global alive.
 //
 // Each fixture runs 8 isolated files that leak one handle apiece, forces a
 // full GC, and counts live GlobalObject cells. Pinned globals accumulate

@@ -134,9 +134,9 @@ pub(crate) fn runtime_state() -> *mut RuntimeState {
 /// with no high tier, or `Bun__Timer__getNextID` racing init).
 ///
 /// Returns `*mut` (NOT `&mut`) so callers that are themselves fields of `All`
-/// (`DateHeaderTimer`, `EventLoopDelayMonitor`, `FakeTimers`) can dereference
-/// per-field under `// SAFETY:` without forming an aliased `&mut All` while
-/// `&mut self` is live (raw-ptr-per-field re-entry pattern, see `auto_tick`).
+/// (`DateHeaderTimer`, `FakeTimers`) can dereference per-field under
+/// `// SAFETY:` without forming an aliased `&mut All` while `&mut self` is
+/// live (raw-ptr-per-field re-entry pattern, see `auto_tick`).
 #[inline]
 pub(crate) fn timer_all() -> *mut timer::All {
     let state = runtime_state();
@@ -1763,11 +1763,6 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: bun_jsc::StopReason) -> 
             // SAFETY: as above; only touches `fake_timers.active` and the
             // `CURRENT_TIME` static.
             unsafe { (*all).fake_timers.reset_for_isolation(global) };
-        }
-        if !all.is_null() {
-            // SAFETY: as above; `disable` borrows only `event_loop_delay` and
-            // reaches the heap through `timer_all()` (disjoint-field access).
-            unsafe { (*all).event_loop_delay.disable() };
         }
     }
     vm.stop_context_handles(reason)

@@ -16,6 +16,7 @@
 #include <hdr/hdr_histogram.h>
 #include <memory>
 #include <limits>
+#include <optional>
 
 namespace Bun {
 
@@ -49,8 +50,9 @@ JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigI
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_createHistogram);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_enableEventLoopDelay);
-JSC_DECLARE_HOST_FUNCTION(jsFunction_disableEventLoopDelay);
+
+// The interval timer of a monitorEventLoopDelay() histogram (src/runtime/timer/EventLoopDelayMonitor.rs).
+struct EventLoopDelayMonitor;
 
 class HistogramData {
 public:
@@ -90,6 +92,26 @@ public:
         other.manualMin = std::numeric_limits<int64_t>::max();
         other.manualMax = 0;
     }
+
+    bool record(int64_t value);
+    uint64_t recordDelta();
+};
+
+// The samples of a monitorEventLoopDelay() histogram. They are outside the GC heap, so the
+// monitor's timer, which writes them, holds no pointer to a cell.
+struct EventLoopDelayHistogramData final : HistogramData {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(EventLoopDelayHistogramData);
+
+    EventLoopDelayHistogramData(hdr_histogram* histogram, int32_t resolution)
+        : HistogramData(histogram)
+        , resolution(resolution)
+    {
+    }
+
+    ~EventLoopDelayHistogramData();
+
+    int32_t resolution; // milliseconds
+    EventLoopDelayMonitor* monitor { nullptr }; // created by the first enable()
 };
 
 class JSNodePerformanceHooksHistogram final : public JSC::JSDestructibleObject {
@@ -98,7 +120,8 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
-    HistogramData m_histogramData;
+    // The cell's own storage for createHistogram(), an EventLoopDelayHistogramData for monitorEventLoopDelay().
+    HistogramData& m_histogramData;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
@@ -108,7 +131,8 @@ public:
         JSC::JSGlobalObject* globalObject,
         int64_t lowest,
         int64_t highest,
-        int figures);
+        int figures,
+        std::optional<int32_t> eventLoopDelayResolution = std::nullopt);
 
     void finishCreation(JSC::VM& vm);
     static void destroy(JSC::JSCell*);
@@ -132,7 +156,15 @@ public:
 
     JSNodePerformanceHooksHistogram(JSC::VM& vm, JSC::Structure* structure, HistogramData&& histogramData)
         : Base(vm, structure)
-        , m_histogramData(std::move(histogramData))
+        , m_histogramData(m_inlineHistogramData)
+        , m_inlineHistogramData(std::move(histogramData))
+    {
+    }
+
+    JSNodePerformanceHooksHistogram(JSC::VM& vm, JSC::Structure* structure, std::unique_ptr<EventLoopDelayHistogramData>&& histogramData)
+        : Base(vm, structure)
+        , m_histogramData(*histogramData.release())
+        , m_inlineHistogramData(nullptr)
     {
     }
 
@@ -140,8 +172,8 @@ public:
 
     hdr_histogram& histogram() { return *m_histogramData.histogram; }
 
-    bool record(int64_t value);
-    uint64_t recordDelta(JSGlobalObject* globalObject);
+    bool record(int64_t value) { return m_histogramData.record(value); }
+    uint64_t recordDelta(JSGlobalObject*) { return m_histogramData.recordDelta(); }
     void reset();
     int64_t getMin() const;
     int64_t getMax() const;
@@ -156,10 +188,23 @@ public:
 
     // std::shared_ptr<HistogramData> getHistogramDataForCloning() const;
 
+    // monitorEventLoopDelay() histograms. `enable` and `disable` return what the JS methods return.
+    bool isEventLoopDelay() const { return &m_histogramData != &m_inlineHistogramData; }
+    bool enableEventLoopDelay();
+    bool disableEventLoopDelay();
+
 private:
+    EventLoopDelayHistogramData& eventLoopDelayData()
+    {
+        ASSERT(isEventLoopDelay());
+        return static_cast<EventLoopDelayHistogramData&>(m_histogramData);
+    }
+
+    HistogramData m_inlineHistogramData;
     uint16_t m_extraMemorySizeForGC = 0;
 };
 
 void setupJSNodePerformanceHooksHistogramClassStructure(JSC::LazyClassStructure::Initializer& init);
+JSC::Structure* createJSNodePerformanceHooksELDHistogramStructure(JSC::VM&, JSC::JSGlobalObject*);
 
 } // namespace Bun

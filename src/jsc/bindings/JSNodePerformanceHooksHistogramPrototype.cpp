@@ -423,107 +423,121 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_createHistogram, (JSGlobalObject * globalObj
     return JSValue::encode(histogram);
 }
 
-// Extern declarations for the native timer implementation
-extern "C" void Timer_enableEventLoopDelayMonitoring(void* vm, JSC::EncodedJSValue histogram, int32_t resolution);
-extern "C" void Timer_disableEventLoopDelayMonitoring();
-
-// Create histogram for event loop delay monitoring
+// perf_hooks.monitorEventLoopDelay(): the caller has validated `resolution` as an integer >= 1.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    int32_t resolution = 10; // default 10ms
-    if (callFrame->argumentCount() > 0) {
-        resolution = callFrame->argument(0).toInt32(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
+    JSValue resolutionValue = callFrame->argument(0);
+    ASSERT(resolutionValue.isNumber());
+    // node keeps a resolution of up to 2^53 - 1 ms (nodejs/node@2ce7a73fec). Here the largest
+    // interval is the one of setTimeout(), 2^31 - 1 ms (24.8 days), and a monitor above it samples
+    // at that interval.
+    int32_t resolution = static_cast<int32_t>(std::clamp(resolutionValue.asNumber(), 1.0, static_cast<double>(std::numeric_limits<int32_t>::max())));
 
-        if (resolution < 1) {
-            throwRangeError(globalObject, scope, "Resolution must be >= 1"_s);
-            return JSValue::encode(jsUndefined());
-        }
-    }
-
-    // Create histogram with range for event loop delays (1ns to 1 hour)
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(zigGlobalObject);
+    Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksELDHistogramStructure.get(zigGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // node's range: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/node_perf.cc#L298
+    // A sample is a whole interval, so a lower `highest` would drop every sample of a monitor
+    // whose resolution is above it.
     JSNodePerformanceHooksHistogram* histogram = JSNodePerformanceHooksHistogram::create(
         vm, structure, globalObject,
-        1, // lowest: 1 nanosecond
-        3600000000000LL, // highest: 1 hour in nanoseconds
-        3 // figures: 3 significant digits
-    );
-
+        1000, // lowest: 1 microsecond in nanoseconds
+        std::numeric_limits<int64_t>::max(), // highest
+        3, // figures: 3 significant digits
+        resolution);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(histogram);
 }
 
-// Enable event loop delay monitoring
-JSC_DEFINE_HOST_FUNCTION(jsFunction_enableEventLoopDelay, (JSGlobalObject * globalObject, CallFrame* callFrame))
+static JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksELDHistogramProtoFuncEnable);
+static JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksELDHistogramProtoFuncDisable);
+static JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksELDHistogramProtoFuncDispose);
+static JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksELDHistogramConstructorCall);
+static JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksELDHistogramConstructorConstruct);
+
+static JSNodePerformanceHooksHistogram* toEventLoopDelayHistogram(JSValue thisValue)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 2) {
-        throwTypeError(globalObject, scope, "Missing arguments"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSValue histogramValue = callFrame->argument(0);
-    JSNodePerformanceHooksHistogram* histogram = dynamicDowncast<JSNodePerformanceHooksHistogram>(histogramValue);
-
-    if (!histogram) {
-        throwTypeError(globalObject, scope, "Invalid histogram"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    int32_t resolution = callFrame->argument(1).toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Reset histogram data on enable
-    histogram->reset();
-
-    // Enable the event loop delay monitor in the native timer implementation
-    Timer_enableEventLoopDelayMonitoring(bunVM(globalObject), JSValue::encode(histogram), resolution);
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    auto* histogram = dynamicDowncast<JSNodePerformanceHooksHistogram>(thisValue);
+    return histogram && histogram->isEventLoopDelay() ? histogram : nullptr;
 }
 
-// Disable event loop delay monitoring
-JSC_DEFINE_HOST_FUNCTION(jsFunction_disableEventLoopDelay, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksELDHistogramProtoFuncEnable, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    auto* histogram = toEventLoopDelayHistogram(callFrame->thisValue());
+    if (!histogram) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "ELDHistogram"_s);
+
+    return JSValue::encode(jsBoolean(histogram->enableEventLoopDelay()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksELDHistogramProtoFuncDisable, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    auto* histogram = toEventLoopDelayHistogram(callFrame->thisValue());
+    if (!histogram) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, globalObject, "ELDHistogram"_s);
+
+    return JSValue::encode(jsBoolean(histogram->disableEventLoopDelay()));
+}
+
+// `[SymbolDispose]() { this.disable(); }`
+// https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/perf/event_loop_delay.js#L70-L72
+JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksELDHistogramProtoFuncDispose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (callFrame->argumentCount() < 1) {
-        throwTypeError(globalObject, scope, "Missing histogram argument"_s);
-        return JSValue::encode(jsUndefined());
-    }
+    JSValue thisValue = callFrame->thisValue();
+    JSValue disable = thisValue.get(globalObject, Identifier::fromString(vm, "disable"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    auto callData = JSC::getCallData(disable);
+    if (callData.type == CallData::Type::None) [[unlikely]]
+        return throwVMTypeError(globalObject, scope, "this.disable is not a function"_s);
 
-    JSValue histogramValue = callFrame->argument(0);
-    JSNodePerformanceHooksHistogram* histogram = dynamicDowncast<JSNodePerformanceHooksHistogram>(histogramValue);
-
-    if (!histogram) {
-        throwTypeError(globalObject, scope, "Invalid histogram"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    // Call into native code to disable monitoring
-    Timer_disableEventLoopDelayMonitoring();
-
+    JSC::profiledCall(globalObject, ProfilingReason::API, disable, callData, thisValue, ArgList());
+    RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
-// Extern function for native code to record delays
-extern "C" void JSNodePerformanceHooksHistogram_recordDelay(JSC::EncodedJSValue histogram, int64_t delay_ns)
+JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksELDHistogramConstructorCall, (JSGlobalObject * globalObject, CallFrame*))
 {
-    if (!histogram || delay_ns <= 0) return;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    return throwVMTypeError(globalObject, scope, "Class constructor ELDHistogram cannot be invoked without 'new'"_s);
+}
 
-    auto* hist = uncheckedDowncast<JSNodePerformanceHooksHistogram>(JSValue::decode(histogram));
-    hist->record(delay_ns);
+JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksELDHistogramConstructorConstruct, (JSGlobalObject * globalObject, CallFrame*))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    return Bun::throwError(globalObject, scope, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s);
+}
+
+static const HashTableValue JSNodePerformanceHooksELDHistogramPrototypeTableValues[] = {
+    { "enable"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksELDHistogramProtoFuncEnable, 0 } },
+    { "disable"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksELDHistogramProtoFuncDisable, 0 } },
+};
+
+const ClassInfo JSNodePerformanceHooksELDHistogramPrototype::s_info = { "ELDHistogram"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodePerformanceHooksELDHistogramPrototype) };
+
+void JSNodePerformanceHooksELDHistogramPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+
+    auto* constructor = JSFunction::create(vm, globalObject, 0, "ELDHistogram"_s, jsNodePerformanceHooksELDHistogramConstructorCall, ImplementationVisibility::Public, NoIntrinsic, jsNodePerformanceHooksELDHistogramConstructorConstruct);
+    constructor->putDirect(vm, vm.propertyNames->prototype, this, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirect(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
+
+    Bun::reifyStaticPropertyTable(vm, JSNodePerformanceHooksHistogram::info(), JSNodePerformanceHooksELDHistogramPrototypeTableValues, *this);
+
+    auto* dispose = JSFunction::create(vm, globalObject, 0, "[Symbol.dispose]"_s, jsNodePerformanceHooksELDHistogramProtoFuncDispose, ImplementationVisibility::Public);
+    putDirect(vm, vm.propertyNames->disposeSymbol, dispose, static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
 } // namespace Bun

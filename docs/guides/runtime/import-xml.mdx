@@ -42,20 +42,20 @@ console.log(Number(config.server["@timeout"])); // => 30
 
 ---
 
-For parsing XML strings at runtime, use `Bun.XML.parse()`:
+For parsing XML strings at runtime, use `Bun.XML.parse()`. The result is typed as a generic document, so give it the shape you expect:
 
 ```ts config.ts icon="/icons/typescript.svg"
-const data = Bun.XML.parse(`
+const { user } = Bun.XML.parse(`
   <user id="7">
     <name>John Doe</name>
     <hobby>reading</hobby>
     <hobby>coding</hobby>
   </user>
-`);
+`) as { user: { "@id": string; name: string; hobby: string[] } };
 
-console.log(data.user.name); // => "John Doe"
-console.log(data.user.hobby); // => ["reading", "coding"]
-console.log(data.user["@id"]); // => "7"
+console.log(user.name); // => "John Doe"
+console.log(user.hobby); // => ["reading", "coding"]
+console.log(user["@id"]); // => "7"
 ```
 
 ---

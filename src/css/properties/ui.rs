@@ -1,10 +1,12 @@
 #![warn(unused_must_use)]
 use crate as css;
 
-use css::css_properties::Property;
+use bun_alloc::ArenaVecExt as _;
+use css::css_properties::custom::{TokenList, TokenOrValue};
+use css::css_properties::{Property, PropertyId};
 use css::{PrintErr, Printer, PropertyHandlerContext};
 
-use css::css_values::ident::DashedIdent;
+use css::css_values::ident::{DashedIdent, is_reserved_custom_ident};
 
 // bumpalo::Bump re-export (CSS is an arena crate)
 
@@ -22,66 +24,76 @@ bitflags::bitflags! {
 }
 
 impl ColorScheme {
-    // Consumes only the keywords it knows (`normal | [ light | dark | <custom-ident> ]+ && only?`
-    // minus the custom idents). Anything else, including a css-wide keyword, is left
-    // in the input so that `Property::parse` fails `expect_exhausted` and keeps the
-    // declaration as `Property::Unparsed` instead of collapsing it to `normal`.
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<ColorScheme> {
+    /// Reads `normal | [ light | dark | <custom-ident> ]+ && only?` from the
+    /// identifiers of a value. Returns the flags and whether one identifier is a
+    /// `<custom-ident>`, or `None` when the identifiers are not a valid value.
+    fn from_idents<'a>(idents: impl Iterator<Item = &'a [u8]>) -> Option<(ColorScheme, bool)> {
         let mut res = ColorScheme::empty();
-        let mut has_any = false;
+        let mut has_custom_ident = false;
+        let mut count: usize = 0;
+        // Set by `normal`, and by an `only` that follows the schemes.
+        let mut is_complete = false;
 
-        if input
-            .try_parse(|input| input.expect_ident_matching(b"normal"))
-            .is_ok()
-        {
-            return Ok(res);
-        }
-
-        if input
-            .try_parse(|input| input.expect_ident_matching(b"only"))
-            .is_ok()
-        {
-            res.insert(ColorScheme::ONLY);
-            has_any = true;
-        }
-
-        loop {
-            if input
-                .try_parse(|input| input.expect_ident_matching(b"light"))
-                .is_ok()
-            {
-                res.insert(ColorScheme::LIGHT);
-                has_any = true;
-                continue;
+        for ident in idents {
+            if is_complete {
+                return None;
             }
+            css::match_ignore_ascii_case! { ident, {
+                b"light" => res.insert(ColorScheme::LIGHT),
+                b"dark" => res.insert(ColorScheme::DARK),
+                b"only" => {
+                    if res.contains(ColorScheme::ONLY) {
+                        return None;
+                    }
+                    res.insert(ColorScheme::ONLY);
+                    is_complete = count != 0;
+                },
+                b"normal" => {
+                    if count != 0 {
+                        return None;
+                    }
+                    is_complete = true;
+                },
+                _ => {
+                    if is_reserved_custom_ident(ident) {
+                        return None;
+                    }
+                    has_custom_ident = true;
+                },
+            }}
+            count += 1;
+        }
 
-            if input
-                .try_parse(|input| input.expect_ident_matching(b"dark"))
-                .is_ok()
-            {
-                res.insert(ColorScheme::DARK);
-                has_any = true;
-                continue;
+        (count != 0).then_some((res, has_custom_ident))
+    }
+
+    // Only a value made of the four keywords is typed. A `<custom-ident>` or a
+    // css-wide keyword fails here, so `Property::parse` keeps the declaration as
+    // `Property::Unparsed` and it prints as written (parcel-bundler/lightningcss#1152).
+    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<ColorScheme> {
+        let idents =
+            core::iter::from_fn(|| input.try_parse(|input| input.expect_ident_cloned()).ok());
+        match Self::from_idents(idents) {
+            Some((color_scheme, false)) => Ok(color_scheme),
+            _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
+        }
+    }
+
+    /// The flags of a value that `parse` left unparsed because it has a
+    /// `<custom-ident>` (`light foo`).
+    fn from_unparsed(value: &TokenList) -> Option<ColorScheme> {
+        let mut is_ident_list = true;
+        let idents = value.v.iter().filter_map(|token| match token {
+            TokenOrValue::Token(css::Token::Ident(ident)) => Some(*ident),
+            TokenOrValue::DashedIdent(ident) => Some(ident.v()),
+            TokenOrValue::Token(css::Token::Whitespace(_)) => None,
+            _ => {
+                is_ident_list = false;
+                None
             }
-
-            break;
-        }
-
-        // `only` is allowed at the start or the end.
-        if !res.contains(ColorScheme::ONLY)
-            && input
-                .try_parse(|input| input.expect_ident_matching(b"only"))
-                .is_ok()
-        {
-            res.insert(ColorScheme::ONLY);
-            has_any = true;
-        }
-
-        if has_any {
-            return Ok(res);
-        }
-
-        Err(input.new_custom_error(css::ParserError::invalid_value))
+        });
+        let (color_scheme, _) = Self::from_idents(idents)?;
+        is_ident_list.then_some(color_scheme)
     }
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -122,38 +134,45 @@ impl ColorSchemeHandler {
         dest: &mut css::DeclarationList,
         context: &mut PropertyHandlerContext,
     ) -> bool {
-        match property {
-            Property::ColorScheme(color_scheme_) => {
-                let color_scheme: ColorScheme = *color_scheme_;
-                if !context
-                    .targets
-                    .is_compatible(css::compat::Feature::LightDark)
-                {
-                    if color_scheme.contains(ColorScheme::LIGHT) {
-                        dest.push(define_var(b"--buncss-light", css::Token::Ident(b"initial")));
-                        dest.push(define_var(b"--buncss-dark", css::Token::Whitespace(b" ")));
-
-                        if color_scheme.contains(ColorScheme::DARK) {
-                            context.add_dark_rule(define_var(
-                                b"--buncss-light",
-                                css::Token::Whitespace(b" "),
-                            ));
-                            context.add_dark_rule(define_var(
-                                b"--buncss-dark",
-                                css::Token::Ident(b"initial"),
-                            ));
-                        }
-                    } else if color_scheme.contains(ColorScheme::DARK) {
-                        dest.push(define_var(b"--buncss-light", css::Token::Whitespace(b" ")));
-                        dest.push(define_var(b"--buncss-dark", css::Token::Ident(b"initial")));
-                    }
+        let color_scheme = match property {
+            Property::ColorScheme(color_scheme) => *color_scheme,
+            Property::Unparsed(unparsed)
+                if matches!(unparsed.property_id, PropertyId::ColorScheme) =>
+            {
+                match ColorScheme::from_unparsed(&unparsed.value) {
+                    Some(color_scheme) => color_scheme,
+                    None => return false,
                 }
-                // ColorScheme is `Copy` (bitflags u8), so reconstruct the variant directly.
-                dest.push(Property::ColorScheme(color_scheme));
-                true
             }
-            _ => false,
+            _ => return false,
+        };
+
+        if !context
+            .targets
+            .is_compatible(css::compat::Feature::LightDark)
+        {
+            if color_scheme.contains(ColorScheme::LIGHT) {
+                dest.push(define_var(b"--buncss-light", css::Token::Ident(b"initial")));
+                dest.push(define_var(b"--buncss-dark", css::Token::Whitespace(b" ")));
+
+                if color_scheme.contains(ColorScheme::DARK) {
+                    context
+                        .add_dark_rule(define_var(b"--buncss-light", css::Token::Whitespace(b" ")));
+                    context
+                        .add_dark_rule(define_var(b"--buncss-dark", css::Token::Ident(b"initial")));
+                }
+            } else if color_scheme.contains(ColorScheme::DARK) {
+                dest.push(define_var(b"--buncss-light", css::Token::Whitespace(b" ")));
+                dest.push(define_var(b"--buncss-dark", css::Token::Ident(b"initial")));
+            }
         }
+
+        let arena = dest.bump();
+        dest.push(match property {
+            Property::ColorScheme(_) => Property::ColorScheme(color_scheme),
+            _ => property.deep_clone(arena),
+        });
+        true
     }
 
     pub(crate) fn finalize(

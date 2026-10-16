@@ -7781,6 +7781,98 @@ describe("css tests", () => {
       { firefox: Some(120 << 16) },
     );
 
+    // A value with a <custom-ident> is kept as written. It still selects a scheme,
+    // so it defines the variables that a lowered light-dark() reads.
+    prefix_test(
+      ".foo { color-scheme: light foo; }",
+      `.foo {
+          --buncss-light: initial;
+          --buncss-dark: ;
+          color-scheme: light foo;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: foo dark; }",
+      `.foo {
+          --buncss-light: ;
+          --buncss-dark: initial;
+          color-scheme: foo dark;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: only foo DARK --bar; }",
+      `.foo {
+          --buncss-light: ;
+          --buncss-dark: initial;
+          color-scheme: only foo DARK --bar;
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: light dark foo only; }",
+      `.foo {
+          --buncss-light: initial;
+          --buncss-dark: ;
+          color-scheme: light dark foo only;
+        }
+
+        @media (prefers-color-scheme: dark) {
+          .foo {
+            --buncss-light: ;
+            --buncss-dark: initial;
+          }
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: light foo; color: light-dark(red, blue); }",
+      `.foo {
+          --buncss-light: initial;
+          --buncss-dark: ;
+          color-scheme: light foo;
+          color: var(--buncss-light, red) var(--buncss-dark, #00f);
+        }
+        `,
+      { chrome: Some(90 << 16) },
+    );
+    prefix_test(
+      ".foo { color-scheme: light foo; }",
+      `.foo {
+          color-scheme: light foo;
+        }
+        `,
+      { firefox: Some(120 << 16) },
+    );
+    // No scheme to select, or not a valid value (a browser drops the declaration):
+    // the value defines no variables.
+    for (const value of [
+      "foo bar",
+      "only foo",
+      "light normal",
+      "light only dark",
+      "only light only",
+      "light inherit",
+      "light default",
+      "light 5px",
+      "light, dark",
+      "light var(--x)",
+    ]) {
+      prefix_test(
+        `.foo { color-scheme: ${value}; }`,
+        `.foo {
+          color-scheme: ${value};
+        }
+        `,
+        { chrome: Some(90 << 16) },
+      );
+    }
+
     minify_test(".foo { color: light-dark(yellow, red); }", ".foo{color:light-dark(#ff0,red)}");
     minify_test(
       ".foo { color: light-dark(light-dark(yellow, red), light-dark(yellow, red)); }",

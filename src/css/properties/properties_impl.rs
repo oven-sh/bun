@@ -43,10 +43,14 @@ impl PropertyId {
     pub(crate) fn parse_custom_ident(input: &mut css::Parser) -> css::Result<PropertyId> {
         let location = input.current_source_location();
         let name = input.expect_ident_cloned()?;
-        if css::css_values::ident::is_reserved_custom_ident(name) {
+        let id = property_id_mixin::from_string(name);
+        // No property has a reserved name, so only an unknown name needs the check.
+        if matches!(id, PropertyId::Custom(_))
+            && css::css_values::ident::is_reserved_custom_ident(name)
+        {
             return Err(location.new_unexpected_token_error(css::Token::Ident(name)));
         }
-        Ok(property_id_mixin::from_string(name))
+        Ok(id)
     }
 }
 

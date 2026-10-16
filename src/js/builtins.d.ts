@@ -275,7 +275,7 @@ declare function $internalRequire(
   parent: JSCommonJSModule,
   requireMap: RequireMap,
   pathLength: number,
-): TODO;
+): any;
 declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
 declare function $isAbsolute(): TODO;
 declare function $join(): TODO;

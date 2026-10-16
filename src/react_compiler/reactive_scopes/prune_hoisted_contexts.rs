@@ -168,6 +168,9 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                             // References to hoisted functions are now "safe" as
                             // variable assignments have finished.
                             state.uninitialized.remove(lvalue_id);
+                            // Not in upstream (facebook/react#37834 is open): a declaration in
+                            // this block would shadow the `let` that the scope declares.
+                            lvalue.kind = InstructionKind::Reassign;
                         }
                     } else {
                         return Err(cold_todo(

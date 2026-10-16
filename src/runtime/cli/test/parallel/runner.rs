@@ -8,7 +8,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_core::{Global, Output};
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{ExitHandler, VirtualMachine};
 use bun_options_types::context::MacroOptions;
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
@@ -484,9 +484,7 @@ pub(crate) struct WorkerCommands {
     pub(crate) pending_path: Vec<u8>,
     /// EOF, error, `.shutdown`, or a corrupt frame.
     pub(crate) done: bool,
-    /// Set while the `--isolate` swap tears a finished file down. The swap
-    /// closes what the file left open, which can raise errors in a file whose
-    /// code throws nothing, so an error that fires then is not counted.
+    /// Set during the `--isolate` swap: an error that its teardown raises is printed, not counted.
     pub(crate) in_isolation_swap: core::cell::Cell<bool>,
 }
 
@@ -686,9 +684,11 @@ pub(crate) fn run_as_worker(
     vm_ref.run_with_api_lock(|| {
         // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
         unsafe {
-            (*vm).on_exit();
-            // An `exit` listener that throws sends an `UnownedError` frame.
+            // An `exit` listener that throws sends a frame, and nothing may turn the loop after `on_exit()`.
+            ExitHandler::dispatch_on_exit(&*vm);
             drain_pending_writes(&*vm, &wloop.cmds.channel);
+            // The listeners do not run again: `Process::m_isExiting` is set.
+            (*vm).on_exit();
             (*vm).global_exit()
         }
     });
@@ -782,8 +782,7 @@ pub(crate) fn worker_emit_test_done(
     cmds.send(wf.finish());
 }
 
-/// Whether an error that fires with no active file is counted: in a worker,
-/// outside the isolation swap. Its count still reaches the coordinator.
+/// Whether an error with no active file is counted: in a worker, outside the isolation swap.
 pub(crate) fn worker_counts_unowned_errors() -> bool {
     // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
     let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
@@ -793,9 +792,7 @@ pub(crate) fn worker_counts_unowned_errors() -> bool {
     !unsafe { (*cmds_ptr).in_isolation_swap.get() }
 }
 
-/// Called from `TestRunner::report_unowned` for an error that no test owns. A
-/// worker hands the count to the coordinator, which owns the summary and the
-/// exit code. Returns false when this process is not a worker.
+/// Hands one unowned error to the coordinator. Returns false when this process is not a worker.
 pub(crate) fn worker_emit_unowned_error() -> bool {
     // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
     let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
@@ -803,9 +800,7 @@ pub(crate) fn worker_emit_unowned_error() -> bool {
     };
     // [u32 payload_len = 0][u8 kind]
     const FRAME: [u8; 5] = [0, 0, 0, 0, frame::Kind::UnownedError as u8];
-    // SAFETY: `cmds_ptr` was set in `WorkerLoop::begin` and its pointee outlives
-    // every caller (the process exits before it is dropped). This runs inside
-    // the error hook, so only a `&Channel` is formed (`send` takes `&self`).
+    // SAFETY: the pointee outlives every caller (see `worker_emit_test_done`); only a `&Channel` is formed.
     unsafe { (*cmds_ptr).channel.send(&FRAME) };
     true
 }

@@ -94,7 +94,7 @@ test.skipIf(!hasHook)(
 
 // A worker turns its event loop while it has no file: between two files, after its last one until
 // the coordinator tells it to exit, and while it exits. No test owns an error that fires there.
-describe("--parallel: an error that no test owns", () => {
+describe.concurrent("--parallel: an error that no test owns", () => {
   const test1 = (body: string) =>
     `import {test,expect} from "bun:test"; test("t", () => { ${body} expect(1).toBe(1); });`;
   const good = test1("");
@@ -137,7 +137,7 @@ describe("--parallel: an error that no test owns", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return {
       printed: stderr.match(/^error: LATE$/gm)?.length ?? 0,
       banners: stderr.match(/^# Unhandled error between tests$/gm)?.length ?? 0,

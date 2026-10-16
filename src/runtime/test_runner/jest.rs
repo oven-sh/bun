@@ -152,9 +152,7 @@ pub(crate) struct TestRunner<'a> {
 }
 
 impl<'a> TestRunner<'a> {
-    /// Prints and counts an uncaught error or unhandled rejection that no test
-    /// owns: one between tests or in a `describe` callback, or one that fires
-    /// in a `--parallel` worker that has no file. No other code counts one.
+    /// Prints and counts an uncaught error or unhandled rejection that no test owns.
     pub(crate) fn report_unowned(
         vm: &mut VirtualMachine,
         value: JSValue,
@@ -164,9 +162,7 @@ impl<'a> TestRunner<'a> {
         if !crate::cli::test::parallel_runner::worker_emit_unowned_error()
             && let Some(runner) = Jest::runner_ptr()
         {
-            // SAFETY: JS thread only. Callers hold borrows of `bun_test_root` (a
-            // sibling field), so the field is written through the raw pointer
-            // and no `&mut TestRunner` is formed.
+            // SAFETY: JS thread only; a raw field write, because callers hold borrows of `bun_test_root`.
             unsafe { (*runner.as_ptr()).unhandled_errors_between_tests += 1 };
         }
 

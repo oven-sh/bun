@@ -485,9 +485,7 @@ impl<'a> Coordinator<'a> {
                     return;
                 }
 
-                // Reshaped for borrowck — `summary()` mutably borrows
-                // `self.reporter`, so `bail_out()` must run after the summary
-                // borrow is released.
+                // `summary()` borrows `self.reporter`, so `bail_out()` runs after this block.
                 {
                     let summary = self.reporter.summary();
                     summary.pass += pass;

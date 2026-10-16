@@ -82,6 +82,9 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.i32.validateInteger().wrap).toThrow(".wrap is another way");
   expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
   expect(() => b.array(b.null)).toThrow("an array of nothing but null");
+  for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any }), b.class({ rustPath: "T" })]) {
+    expect(() => b.array(element)).toThrow("an array is a Vec, where the GC does not see JS values");
+  }
   expect(() => b.dictionary({ fooBar: b.bool, foo_bar: b.bool })).toThrow("two fields are both foo_bar");
   expect(() => b.union({ "a-b": b.bool })).toThrow("an alternative is named in camelCase");
   expect(() => b.enumeration(["self"])).toThrow("Self cannot name anything in Rust");

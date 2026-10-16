@@ -1030,6 +1030,10 @@ export class ArrayType extends Type {
       "b.bufferSource.bytes is only for an argument: it is read after everything else is converted",
     );
     assert(!(element instanceof UnitType), "an array of nothing but null");
+    assert(
+      !element.holdsJSValue,
+      "an array is a Vec, where the GC does not see JS values: take or return b.any and go through the array in Rust",
+    );
     this.element = element;
     const markConvertedByValue = (type: Type) => {
       if (type instanceof DictionaryType) type.convertedByValue = true;
@@ -1038,7 +1042,6 @@ export class ArrayType extends Type {
     markConvertedByValue(element);
   }
   get idlType(): string {
-    assert(!this.element.holdsJSValue, "an array argument cannot hold JS values: the GC does not scan it");
     assert(
       !this.element.borrowsFrame,
       "an array argument cannot hold borrowed views; use b.string or b.string.utf8.owned",

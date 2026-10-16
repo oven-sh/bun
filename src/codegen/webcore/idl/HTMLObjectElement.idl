@@ -1,0 +1,55 @@
+/*
+ * Copyright (C) 2006-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2006 Samuel Weinig <sam.weinig@gmail.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ */
+
+// https://html.spec.whatwg.org/multipage/iframe-embed-object.html#htmlobjectelement
+[
+    Exposed=Window
+] interface HTMLObjectElement : HTMLElement {
+    [CEReactions=NotNeeded, ReflectURL] attribute USVString data;
+    [CEReactions=NotNeeded, Reflect] attribute DOMString type;
+    [CEReactions=NotNeeded, Reflect] attribute DOMString name;
+    [ImplementedAs=formForBindings] readonly attribute HTMLFormElement? form;
+    [CEReactions=NotNeeded, Reflect] attribute DOMString width;
+    [CEReactions=NotNeeded, Reflect] attribute DOMString height;
+    readonly attribute Document? contentDocument;
+    readonly attribute Window? contentWindow;
+    Document? getSVGDocument();
+
+    readonly attribute boolean willValidate;
+    readonly attribute ValidityState validity;
+    readonly attribute DOMString validationMessage;
+    boolean checkValidity();
+    boolean reportValidity();
+    undefined setCustomValidity(DOMString error);
+
+    // https://html.spec.whatwg.org/multipage/obsolete.html#HTMLObjectElement-partial
+    // FIXME: Move these to their own IDL file HTMLObjectElement+Obsolete.idl.
+    [CEReactions=NotNeeded, Reflect] attribute DOMString align;
+    [CEReactions=NotNeeded, Reflect] attribute DOMString archive;
+    [CEReactions=NotNeeded, Reflect] attribute DOMString code;
+    [CEReactions=NotNeeded, Reflect] attribute boolean declare;
+    [CEReactions=NotNeeded, Reflect] attribute unsigned long hspace;
+    [CEReactions=NotNeeded, Reflect] attribute DOMString standby;
+    [CEReactions=NotNeeded, Reflect] attribute unsigned long vspace;
+    [CEReactions=NotNeeded, ReflectURL] attribute USVString codeBase;
+    [CEReactions=NotNeeded, Reflect] attribute DOMString codeType;
+    [CEReactions=NotNeeded, Reflect] attribute DOMString useMap;
+    [CEReactions=NotNeeded, Reflect] attribute [LegacyNullToEmptyString] DOMString border;
+};

@@ -64,6 +64,8 @@ public:
     bool wasRemoved() const { return m_wasRemoved; }
     bool resistsStopPropagation() const { return m_resistStopPropagation; }
 
+    Options options() const { return { m_useCapture, m_isPassive, m_isOnce, m_resistStopPropagation }; }
+
     void markAsRemoved();
 
     // Associates this listener with the abort algorithm that was registered
@@ -91,7 +93,7 @@ private:
     bool m_wasRemoved : 1;
     bool m_resistStopPropagation : 1;
     uint32_t m_abortAlgorithmIdentifier { 0 };
-    Ref<EventListener> m_callback;
+    const Ref<EventListener> m_callback;
     WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData> m_abortSignal;
 };
 

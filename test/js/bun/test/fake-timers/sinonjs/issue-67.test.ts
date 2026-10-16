@@ -4,7 +4,7 @@ import { FakeTimers, assert, sinon } from "./helpers/setup-tests";
 
 describe("issue #67", function () {
   // see https://nodejs.org/api/timers.html
-  it.failing("should overflow to 1 on very big timeouts", function () {
+  it("should overflow to 1 on very big timeouts", function () {
     const clock = FakeTimers.install();
     const stub1 = sinon.stub();
     const stub2 = sinon.stub();
@@ -23,7 +23,7 @@ describe("issue #67", function () {
     clock.uninstall();
   });
 
-  it.failing("should overflow to interval 1 on very big timeouts", function () {
+  it("should overflow to interval 1 on very big timeouts", function () {
     const clock = FakeTimers.install();
     const stub = sinon.stub();
 

@@ -2,6 +2,7 @@
 #include "MessagePort.h"
 #include "MessagePortPipe.h"
 #include "ScriptExecutionContext.h"
+#include "ZigGlobalObject.h"
 #include <wtf/Locker.h>
 
 namespace WebCore {

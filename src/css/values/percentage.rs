@@ -41,7 +41,7 @@ impl Percentage {
             int_value,
         };
 
-        if self.v != 0.0 && self.v.abs() < 0.01 {
+        if self.v != 0.0 && self.v.abs() < 0.01 && dest.cssom.is_none() {
             let mut backing = [0u8; 32];
             let mut fbs = css::serializer::FixedBufWriter::new_mut(&mut backing);
             if percent.to_css_generic(&mut fbs).is_err() {
@@ -326,13 +326,7 @@ impl<D> DimensionPercentage<D> {
         let mut a = self;
         let mut b = other;
 
-        if a.is_zero() {
-            return b;
-        }
-        if b.is_zero() {
-            return a;
-        }
-
+        // A zero stays: `calc(0% + 0px)` is still a percentage, which `0px` is not.
         if a.is_sign_negative() && b.is_sign_positive() {
             core::mem::swap(&mut a, &mut b);
         }

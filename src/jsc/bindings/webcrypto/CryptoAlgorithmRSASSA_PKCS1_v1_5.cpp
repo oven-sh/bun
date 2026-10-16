@@ -85,7 +85,7 @@ void CryptoAlgorithmRSASSA_PKCS1_v1_5::generateKey(const CryptoAlgorithmParamete
     const auto& rsaParameters = downcast<CryptoAlgorithmRsaHashedKeyGenParams>(parameters);
 
     if (usages & (CryptoKeyUsageDecrypt | CryptoKeyUsageEncrypt | CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
-        exceptionCallback(SyntaxError, "Unsupported key usage for a RSA key"_s);
+        exceptionCallback(JSSyntaxError, "Unsupported key usage for a RSA key"_s);
         return;
     }
 
@@ -113,7 +113,7 @@ void CryptoAlgorithmRSASSA_PKCS1_v1_5::importKey(CryptoKeyFormat format, KeyData
         JsonWebKey key = WTF::move(std::get<JsonWebKey>(data));
 
         if (usages && ((!key.d.isNull() && (usages ^ CryptoKeyUsageSign)) || (key.d.isNull() && (usages ^ CryptoKeyUsageVerify)))) {
-            exceptionCallback(SyntaxError, "Unsupported key usage for an RSASSA-PKCS1-v1_5 key"_s);
+            exceptionCallback(JSSyntaxError, "Unsupported key usage for an RSASSA-PKCS1-v1_5 key"_s);
             return;
         }
         if (usages && !key.use.isNull() && key.use != "sig"_s) {
@@ -156,7 +156,7 @@ void CryptoAlgorithmRSASSA_PKCS1_v1_5::importKey(CryptoKeyFormat format, KeyData
     }
     case CryptoKeyFormat::Spki: {
         if (usages && (usages ^ CryptoKeyUsageVerify)) {
-            exceptionCallback(SyntaxError, "Unsupported key usage for an RSASSA-PKCS1-v1_5 key"_s);
+            exceptionCallback(JSSyntaxError, "Unsupported key usage for an RSASSA-PKCS1-v1_5 key"_s);
             return;
         }
         // FIXME: <webkit.org/b/165436>
@@ -165,7 +165,7 @@ void CryptoAlgorithmRSASSA_PKCS1_v1_5::importKey(CryptoKeyFormat format, KeyData
     }
     case CryptoKeyFormat::Pkcs8: {
         if (usages && (usages ^ CryptoKeyUsageSign)) {
-            exceptionCallback(SyntaxError, "Unsupported key usage for an RSASSA-PKCS1-v1_5 key"_s);
+            exceptionCallback(JSSyntaxError, "Unsupported key usage for an RSASSA-PKCS1-v1_5 key"_s);
             return;
         }
         // FIXME: <webkit.org/b/165436>

@@ -104,7 +104,7 @@ pub(crate) struct Request {
     reported_estimated_size: Cell<usize>,
 }
 
-// A `#[repr(C)]` 4-byte struct for direct
+// A `#[repr(C)]` 5-byte struct for direct
 // field access — `Request` is only ever passed to C++ by **pointer** with size
 // reported via the codegen'd `Request__ZigStructSize`, so the absolute size is
 // not ABI-locked. `#[repr(C)]` + `assert_ffi_layout!` make the layout
@@ -116,9 +116,10 @@ pub(crate) struct Flags {
     pub(crate) cache: FetchCacheMode,
     pub(crate) mode: FetchRequestMode,
     pub(crate) https: bool,
+    pub(crate) keepalive: bool,
 }
 
-bun_core::assert_ffi_layout!(Flags, 4, 1; redirect @ 0, cache @ 1, mode @ 2, https @ 3);
+bun_core::assert_ffi_layout!(Flags, 5, 1; redirect @ 0, cache @ 1, mode @ 2, https @ 3, keepalive @ 4);
 
 impl Default for Flags {
     fn default() -> Self {
@@ -127,6 +128,7 @@ impl Default for Flags {
             cache: FetchCacheMode::Default,
             mode: FetchRequestMode::Cors,
             https: false,
+            keepalive: false,
         }
     }
 }
@@ -749,6 +751,10 @@ impl Request {
         fetch_redirect_to_js(self.flags.redirect, global_this)
     }
 
+    pub(crate) fn get_keepalive(&self, _: &JSGlobalObject) -> JSValue {
+        JSValue::js_boolean(self.flags.keepalive)
+    }
+
     pub(crate) fn get_referrer(&self, global_object: &JSGlobalObject) -> JSValue {
         if let Some(headers_ref) = self.headers_mut().as_mut() {
             if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
@@ -963,7 +969,7 @@ enum Fields {
     Redirect,
     Cache,
     // Integrity,
-    // Keepalive,
+    Keepalive,
     Signal,
     // Proxy,
     // Timeout,
@@ -1114,6 +1120,11 @@ impl Request {
                         fields.insert(Fields::Redirect);
                     }
 
+                    if !fields.contains(Fields::Keepalive) {
+                        req.flags.keepalive = request.flags.keepalive;
+                        fields.insert(Fields::Keepalive);
+                    }
+
                     if !fields.contains(Fields::Cache) {
                         req.flags.cache = request.flags.cache;
                         fields.insert(Fields::Cache);
@@ -1200,22 +1211,27 @@ impl Request {
                 }
             }
 
+            if !fields.contains(Fields::Keepalive) {
+                match value.get(cx.global(), "keepalive") {
+                    Ok(Some(keepalive)) => {
+                        req.flags.keepalive = keepalive.to_boolean();
+                        fields.insert(Fields::Keepalive);
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
+            }
+
             if !fields.contains(Fields::Body) {
                 match value.fast_get(cx.global(), bun_jsc::BuiltinName::Body) {
                     Ok(Some(body_)) => {
                         fields.insert(Fields::Body);
                         // fetch spec Request(init): `keepalive: true` with a ReadableStream
                         // body throws before body extraction (Node's message is "keepalive").
-                        if crate::webcore::ReadableStream::is_readable_stream(body_) {
-                            match value.get(cx.global(), "keepalive") {
-                                Ok(Some(keepalive)) if keepalive.to_boolean() => {
-                                    bail!(Err(cx
-                                        .global()
-                                        .throw_type_error(format_args!("keepalive"))));
-                                }
-                                Ok(_) => {}
-                                Err(e) => bail!(Err(e)),
-                            }
+                        if req.flags.keepalive
+                            && crate::webcore::ReadableStream::is_readable_stream(body_)
+                        {
+                            bail!(Err(cx.global().throw_type_error(format_args!("keepalive"))));
                         }
                         match BodyValue::from_js(cx.global(), body_) {
                             Ok(v) => {

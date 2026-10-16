@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
+use super::Received;
 use super::get_signature;
 use super::throw;
 
@@ -9,10 +10,7 @@ pub(crate) fn to_match_snapshot(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // reshaped for borrowck — post-match cleanup is expressed by
-    // wrapping `this` in a scopeguard so `post_match` runs on every exit path while we still
-    // deref through the guard for the body.
-    let this = scopeguard::guard(this, |this| this.post_match(global));
+    let this = this.post_match_guard(global);
 
     let this_value = frame.this();
     let arguments: &[JSValue] = frame.arguments();
@@ -95,5 +93,5 @@ pub(crate) fn to_match_snapshot(
         "<green>properties<r><d>, <r>hint",
     )?;
 
-    Expect::snapshot(&**this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
+    Expect::snapshot(&this, global, Received::Value(value), property_matchers, hint.slice(), "toMatchSnapshot")
 }

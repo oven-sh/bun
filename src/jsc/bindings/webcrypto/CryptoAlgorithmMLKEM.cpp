@@ -65,14 +65,14 @@ static std::optional<size_t> mlKemPrivOnlyPkcs8Length(CryptoAlgorithmIdentifier 
 void CryptoAlgorithmMLKEM::generateKey(const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
     if (usages & ~allMlKemUsages) {
-        exceptionCallback(SyntaxError, makeString("Unsupported key usage for an "_s, mlKemName(m_identifier), " key"_s));
+        exceptionCallback(JSSyntaxError, makeString("Unsupported key usage for an "_s, mlKemName(m_identifier), " key"_s));
         return;
     }
 
     CryptoKeyUsageBitmap privateUsages = usages & privateMlKemUsages;
     CryptoKeyUsageBitmap publicUsages = usages & publicMlKemUsages;
     if (!privateUsages) {
-        exceptionCallback(SyntaxError, "Usages cannot be empty when creating a key."_s);
+        exceptionCallback(JSSyntaxError, "Usages cannot be empty when creating a key."_s);
         return;
     }
 

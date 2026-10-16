@@ -25,11 +25,12 @@
 
 #pragma once
 
+#include <JavaScriptCore/GetVM.h>
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/PureNaN.h>
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMExceptionHandling.h"
-#include <JavaScriptCore/JSCJSValueInlines.h>
-#include <JavaScriptCore/PureNaN.h>
 
 namespace WebCore {
 
@@ -37,278 +38,190 @@ namespace WebCore {
 // The conversion fails if the value cannot be converted to a number or, if EnforceRange is specified,
 // the value is outside the range of the destination integer type.
 
-template<typename T> T convertToInteger(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int8_t convertToInteger<int8_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint8_t convertToInteger<uint8_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int16_t convertToInteger<int16_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint16_t convertToInteger<uint16_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int32_t convertToInteger<int32_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint32_t convertToInteger<uint32_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int64_t convertToInteger<int64_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint64_t convertToInteger<uint64_t>(JSC::JSGlobalObject&, JSC::JSValue);
+template<typename IDL> ConversionResult<IDL> convertToInteger(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLByte> convertToInteger<IDLByte>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLOctet> convertToInteger<IDLOctet>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLShort> convertToInteger<IDLShort>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLUnsignedShort> convertToInteger<IDLUnsignedShort>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLLong> convertToInteger<IDLLong>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLUnsignedLong> convertToInteger<IDLUnsignedLong>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLLongLong> convertToInteger<IDLLongLong>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLUnsignedLongLong> convertToInteger<IDLUnsignedLongLong>(JSC::JSGlobalObject&, JSC::JSValue);
 
 // `x` truncated, or a TypeError if that is not in the range.
 double enforceRange(JSC::JSGlobalObject&, double x, double minimum, double maximum);
 
-template<typename T> T convertToIntegerEnforceRange(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int8_t convertToIntegerEnforceRange<int8_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint8_t convertToIntegerEnforceRange<uint8_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int16_t convertToIntegerEnforceRange<int16_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint16_t convertToIntegerEnforceRange<uint16_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int32_t convertToIntegerEnforceRange<int32_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint32_t convertToIntegerEnforceRange<uint32_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int64_t convertToIntegerEnforceRange<int64_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint64_t convertToIntegerEnforceRange<uint64_t>(JSC::JSGlobalObject&, JSC::JSValue);
+template<typename IDL> ConversionResult<IDL> convertToIntegerEnforceRange(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLByte> convertToIntegerEnforceRange<IDLByte>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLOctet> convertToIntegerEnforceRange<IDLOctet>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLShort> convertToIntegerEnforceRange<IDLShort>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLUnsignedShort> convertToIntegerEnforceRange<IDLUnsignedShort>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLLong> convertToIntegerEnforceRange<IDLLong>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLUnsignedLong> convertToIntegerEnforceRange<IDLUnsignedLong>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLLongLong> convertToIntegerEnforceRange<IDLLongLong>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLUnsignedLongLong> convertToIntegerEnforceRange<IDLUnsignedLongLong>(JSC::JSGlobalObject&, JSC::JSValue);
 
-template<typename T> T convertToIntegerClamp(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int8_t convertToIntegerClamp<int8_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint8_t convertToIntegerClamp<uint8_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int16_t convertToIntegerClamp<int16_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint16_t convertToIntegerClamp<uint16_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int32_t convertToIntegerClamp<int32_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint32_t convertToIntegerClamp<uint32_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int64_t convertToIntegerClamp<int64_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint64_t convertToIntegerClamp<uint64_t>(JSC::JSGlobalObject&, JSC::JSValue);
+template<typename IDL> ConversionResult<IDL> convertToIntegerClamp(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLByte> convertToIntegerClamp<IDLByte>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLOctet> convertToIntegerClamp<IDLOctet>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLShort> convertToIntegerClamp<IDLShort>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLUnsignedShort> convertToIntegerClamp<IDLUnsignedShort>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLLong> convertToIntegerClamp<IDLLong>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLUnsignedLong> convertToIntegerClamp<IDLUnsignedLong>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLLongLong> convertToIntegerClamp<IDLLongLong>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> WEBCORE_EXPORT ConversionResult<IDLUnsignedLongLong> convertToIntegerClamp<IDLUnsignedLongLong>(JSC::JSGlobalObject&, JSC::JSValue);
+
+namespace Detail {
+
+template<typename IDL> struct IntegerConverter : DefaultConverter<IDL> {
+    using Result = ConversionResult<IDL>;
+
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        return convertToInteger<IDL>(lexicalGlobalObject, value);
+    }
+
+    static inline Result convert(JSC::JSGlobalObject&, JSC::ThrowScope&, double number)
+        requires std::same_as<IDL, IDLLong>
+    {
+        return JSC::toInt32(number);
+    }
+};
+
+template<typename IDL> struct JSNumberConverter : DefaultConverter<IDL> {
+    using Type = typename IDL::ImplementationType;
+
+    static constexpr bool needsState = false;
+    static constexpr bool needsGlobalObject = false;
+
+    static JSC::JSValue convert(Type value)
+    {
+        return JSC::jsNumber(value);
+    }
+};
+
+}
 
 // MARK: -
 // MARK: Integer types
 
-template<> struct Converter<IDLByte> : DefaultConverter<IDLByte> {
-    static int8_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return convertToInteger<int8_t>(lexicalGlobalObject, value);
-    }
-};
+template<> struct Converter<IDLByte> : Detail::IntegerConverter<IDLByte> {};
+template<> struct Converter<IDLOctet> : Detail::IntegerConverter<IDLOctet> {};
+template<> struct Converter<IDLShort> : Detail::IntegerConverter<IDLShort> {};
+template<> struct Converter<IDLUnsignedShort> : Detail::IntegerConverter<IDLUnsignedShort> {};
+template<> struct Converter<IDLLong> : Detail::IntegerConverter<IDLLong> {};
+template<> struct Converter<IDLUnsignedLong> : Detail::IntegerConverter<IDLUnsignedLong> {};
+template<> struct Converter<IDLLongLong> : Detail::IntegerConverter<IDLLongLong> {};
+template<> struct Converter<IDLUnsignedLongLong> : Detail::IntegerConverter<IDLUnsignedLongLong> {};
 
-template<> struct JSConverter<IDLByte> {
-    using Type = typename IDLByte::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
-template<> struct Converter<IDLOctet> : DefaultConverter<IDLOctet> {
-    static uint8_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return convertToInteger<uint8_t>(lexicalGlobalObject, value);
-    }
-};
-
-template<> struct JSConverter<IDLOctet> {
-    using Type = typename IDLOctet::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
-template<> struct Converter<IDLShort> : DefaultConverter<IDLShort> {
-    static int16_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return convertToInteger<int16_t>(lexicalGlobalObject, value);
-    }
-};
-
-template<> struct JSConverter<IDLShort> {
-    using Type = typename IDLShort::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
-template<> struct Converter<IDLUnsignedShort> : DefaultConverter<IDLUnsignedShort> {
-    static uint16_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return convertToInteger<uint16_t>(lexicalGlobalObject, value);
-    }
-};
-
-template<> struct JSConverter<IDLUnsignedShort> {
-    using Type = typename IDLUnsignedShort::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
-template<> struct Converter<IDLLong> : DefaultConverter<IDLLong> {
-    static int32_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return convertToInteger<int32_t>(lexicalGlobalObject, value);
-    }
-};
-
-template<> struct JSConverter<IDLLong> {
-    using Type = typename IDLLong::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
-template<> struct Converter<IDLUnsignedLong> : DefaultConverter<IDLUnsignedLong> {
-    static uint32_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return convertToInteger<uint32_t>(lexicalGlobalObject, value);
-    }
-};
-
-template<> struct JSConverter<IDLUnsignedLong> {
-    using Type = typename IDLUnsignedLong::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
-template<> struct Converter<IDLLongLong> : DefaultConverter<IDLLongLong> {
-    static int64_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return convertToInteger<int64_t>(lexicalGlobalObject, value);
-    }
-};
-
-template<> struct JSConverter<IDLLongLong> {
-    using Type = typename IDLLongLong::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
-template<> struct Converter<IDLUnsignedLongLong> : DefaultConverter<IDLUnsignedLongLong> {
-    static uint64_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return convertToInteger<uint64_t>(lexicalGlobalObject, value);
-    }
-};
-
-template<> struct JSConverter<IDLUnsignedLongLong> {
-    using Type = typename IDLUnsignedLongLong::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
+template<> struct JSConverter<IDLByte> : Detail::JSNumberConverter<IDLByte> {};
+template<> struct JSConverter<IDLOctet> : Detail::JSNumberConverter<IDLOctet> {};
+template<> struct JSConverter<IDLShort> : Detail::JSNumberConverter<IDLShort> {};
+template<> struct JSConverter<IDLUnsignedShort> : Detail::JSNumberConverter<IDLUnsignedShort> {};
+template<> struct JSConverter<IDLLong> : Detail::JSNumberConverter<IDLLong> {};
+template<> struct JSConverter<IDLUnsignedLong> : Detail::JSNumberConverter<IDLUnsignedLong> {};
+template<> struct JSConverter<IDLLongLong> : Detail::JSNumberConverter<IDLLongLong> {};
+template<> struct JSConverter<IDLUnsignedLongLong> : Detail::JSNumberConverter<IDLUnsignedLongLong> {};
 
 // MARK: -
 // MARK: Annotated Integer types
 
-template<typename T> struct Converter<IDLClampAdaptor<T>> : DefaultConverter<IDLClampAdaptor<T>> {
-    using ReturnType = typename IDLClampAdaptor<T>::ImplementationType;
+template<typename IDL> struct Converter<IDLClampAdaptor<IDL>> : DefaultConverter<IDLClampAdaptor<IDL>> {
+    using ReturnType = typename IDLClampAdaptor<IDL>::ImplementationType;
+    using Result = ConversionResult<IDLClampAdaptor<IDL>>;
 
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
-        return convertToIntegerClamp<ReturnType>(lexicalGlobalObject, value);
+        return convertToIntegerClamp<IDL>(lexicalGlobalObject, value);
     }
 };
 
-template<typename T> struct JSConverter<IDLClampAdaptor<T>> {
-    using Type = typename IDLClampAdaptor<T>::ImplementationType;
+template<typename IDL> struct JSConverter<IDLClampAdaptor<IDL>> {
+    using Type = typename IDLClampAdaptor<IDL>::ImplementationType;
 
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;
 
     static JSC::JSValue convert(Type value)
     {
-        return JSConverter<T>::convert(value);
+        return toJS<IDL>(value);
     }
 };
 
-template<typename T> struct Converter<IDLEnforceRangeAdaptor<T>> : DefaultConverter<IDLEnforceRangeAdaptor<T>> {
-    using ReturnType = typename IDLEnforceRangeAdaptor<T>::ImplementationType;
+template<typename IDL> struct Converter<IDLEnforceRangeAdaptor<IDL>> : DefaultConverter<IDLEnforceRangeAdaptor<IDL>> {
+    using ReturnType = typename IDLEnforceRangeAdaptor<IDL>::ImplementationType;
+    using Result = ConversionResult<IDLEnforceRangeAdaptor<IDL>>;
 
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
-        return convertToIntegerEnforceRange<ReturnType>(lexicalGlobalObject, value);
+        return convertToIntegerEnforceRange<IDL>(lexicalGlobalObject, value);
     }
 };
 
-template<typename T> struct JSConverter<IDLEnforceRangeAdaptor<T>> {
-    using Type = typename IDLEnforceRangeAdaptor<T>::ImplementationType;
+template<typename IDL> struct JSConverter<IDLEnforceRangeAdaptor<IDL>> {
+    using Type = typename IDLEnforceRangeAdaptor<IDL>::ImplementationType;
 
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;
 
     static JSC::JSValue convert(Type value)
     {
-        return JSConverter<T>::convert(value);
+        return toJS<IDL>(value);
     }
 };
 
 // MARK: -
 // MARK: Floating point types
 
+template<> struct JSConverter<IDLFloat> : Detail::JSNumberConverter<IDLFloat> {};
+template<> struct JSConverter<IDLUnrestrictedFloat> : Detail::JSNumberConverter<IDLUnrestrictedFloat> {};
+
 template<> struct Converter<IDLFloat> : DefaultConverter<IDLFloat> {
-    static float convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    using Result = ConversionResult<IDLFloat>;
+
+    static inline Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, double number)
     {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
+        if (!std::isfinite(number)) [[unlikely]] {
+            throwNonFiniteTypeError(lexicalGlobalObject, scope);
+            return Result::exception();
+        }
+        return static_cast<float>(number);
+    }
+
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         double number = value.toNumber(&lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, 0.0);
+        RETURN_IF_EXCEPTION(scope, Result::exception());
+        if (!std::isfinite(number)) [[unlikely]] {
+            throwNonFiniteTypeError(lexicalGlobalObject, scope);
+            return Result::exception();
+        }
         if (number < std::numeric_limits<float>::lowest() || number > std::numeric_limits<float>::max()) [[unlikely]] {
             throwTypeError(&lexicalGlobalObject, scope, "The provided value is outside the range of a float"_s);
-            return 0.0;
+            return Result::exception();
         }
-        if (!std::isfinite(number)) [[unlikely]]
-            throwNonFiniteTypeError(lexicalGlobalObject, scope);
         return static_cast<float>(number);
     }
 };
 
-template<> struct JSConverter<IDLFloat> {
-    using Type = typename IDLFloat::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
 template<> struct Converter<IDLUnrestrictedFloat> : DefaultConverter<IDLUnrestrictedFloat> {
-    static float convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    using Result = ConversionResult<IDLUnrestrictedFloat>;
+
+    static inline Result convert(JSC::JSGlobalObject&, JSC::ThrowScope&, double number)
     {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
+        return static_cast<float>(number);
+    }
+
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
+
         double number = value.toNumber(&lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, 0.0);
+
+        RETURN_IF_EXCEPTION(scope, Result::exception());
 
         if (number < std::numeric_limits<float>::lowest()) [[unlikely]]
             return -std::numeric_limits<float>::infinity();
@@ -318,27 +231,31 @@ template<> struct Converter<IDLUnrestrictedFloat> : DefaultConverter<IDLUnrestri
     }
 };
 
-template<> struct JSConverter<IDLUnrestrictedFloat> {
-    using Type = typename IDLUnrestrictedFloat::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
 template<> struct Converter<IDLDouble> : DefaultConverter<IDLDouble> {
-    static double convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    using Result = ConversionResult<IDLDouble>;
+
+    static inline Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, double number)
     {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        double number = value.toNumber(&lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, 0.0);
-        if (!std::isfinite(number)) [[unlikely]]
+        if (!std::isfinite(number)) [[unlikely]] {
             throwNonFiniteTypeError(lexicalGlobalObject, scope);
+            return Result::exception();
+        }
+        return number;
+    }
+
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        double number = value.toNumber(&lexicalGlobalObject);
+
+        RETURN_IF_EXCEPTION(scope, Result::exception());
+
+        if (!std::isfinite(number)) [[unlikely]] {
+            throwNonFiniteTypeError(lexicalGlobalObject, scope);
+            return Result::exception();
+        }
         return number;
     }
 };
@@ -349,17 +266,27 @@ template<> struct JSConverter<IDLDouble> {
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;
 
-    static JSC::JSValue convert(Type value)
-    {
-        ASSERT(!std::isnan(value));
-        return JSC::jsNumber(value);
-    }
+    WEBCORE_EXPORT static JSC::JSValue convert(Type);
 };
 
 template<> struct Converter<IDLUnrestrictedDouble> : DefaultConverter<IDLUnrestrictedDouble> {
-    static double convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    using Result = ConversionResult<IDLUnrestrictedDouble>;
+
+    static inline Result convert(JSC::JSGlobalObject&, JSC::ThrowScope&, double number)
     {
-        return value.toNumber(&lexicalGlobalObject);
+        return number;
+    }
+
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        double number = value.toNumber(&lexicalGlobalObject);
+
+        RETURN_IF_EXCEPTION(scope, Result::exception());
+
+        return number;
     }
 };
 
@@ -369,16 +296,10 @@ template<> struct JSConverter<IDLUnrestrictedDouble> {
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;
 
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(JSC::purifyNaN(value));
-    }
+    WEBCORE_EXPORT static JSC::JSValue convert(Type);
 
     // Add overload for MediaTime.
-    static JSC::JSValue convert(const MediaTime& value)
-    {
-        return JSC::jsNumber(JSC::purifyNaN(value.toDouble()));
-    }
+    WEBCORE_EXPORT static JSC::JSValue convert(const MediaTime&);
 };
 
 } // namespace WebCore

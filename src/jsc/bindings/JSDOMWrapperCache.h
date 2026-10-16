@@ -45,13 +45,13 @@ JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, JSC::ArrayBuffer*);
 
 template<typename DOMClass> inline constexpr bool hasInlineWrapperCache = std::is_base_of_v<ScriptWrappable, DOMClass> || std::is_same_v<DOMClass, JSC::ArrayBuffer>;
 
-JSDOMObject* getInlineCachedWrapper(DOMWrapperWorld&, ScriptWrappable*);
+JSC::JSObject* getInlineCachedWrapper(DOMWrapperWorld&, ScriptWrappable*);
 JSC::JSArrayBuffer* getInlineCachedWrapper(DOMWrapperWorld&, JSC::ArrayBuffer*);
 
-void setInlineCachedWrapper(DOMWrapperWorld&, ScriptWrappable*, JSDOMObject* wrapper, JSC::WeakHandleOwner* wrapperOwner);
+void setInlineCachedWrapper(DOMWrapperWorld&, ScriptWrappable*, JSC::JSObject* wrapper, JSC::WeakHandleOwner* wrapperOwner);
 void setInlineCachedWrapper(DOMWrapperWorld&, JSC::ArrayBuffer*, JSC::JSArrayBuffer* wrapper, JSC::WeakHandleOwner* wrapperOwner);
 
-void clearInlineCachedWrapper(DOMWrapperWorld&, ScriptWrappable*, JSDOMObject* wrapper);
+void clearInlineCachedWrapper(DOMWrapperWorld&, ScriptWrappable*, JSC::JSObject* wrapper);
 void clearInlineCachedWrapper(DOMWrapperWorld&, JSC::ArrayBuffer*, JSC::JSArrayBuffer* wrapper);
 
 template<typename DOMClass> JSC::JSObject* getCachedWrapper(DOMWrapperWorld&, DOMClass&);
@@ -91,7 +91,7 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld& world, JSC::ArrayBuff
     return static_cast<WebCoreTypedArrayController*>(world.vm().m_typedArrayController.get())->wrapperOwner();
 }
 
-inline JSDOMObject* getInlineCachedWrapper(DOMWrapperWorld& world, ScriptWrappable* domObject)
+inline JSC::JSObject* getInlineCachedWrapper(DOMWrapperWorld& world, ScriptWrappable* domObject)
 {
     if (!world.isNormal())
         return nullptr;
@@ -105,7 +105,7 @@ inline JSC::JSArrayBuffer* getInlineCachedWrapper(DOMWrapperWorld& world, JSC::A
     return buffer->m_wrapper.get();
 }
 
-inline void setInlineCachedWrapper(DOMWrapperWorld& world, ScriptWrappable* domObject, JSDOMObject* wrapper, JSC::WeakHandleOwner* wrapperOwner)
+inline void setInlineCachedWrapper(DOMWrapperWorld& world, ScriptWrappable* domObject, JSC::JSObject* wrapper, JSC::WeakHandleOwner* wrapperOwner)
 {
     if (!world.isNormal())
         return;
@@ -119,7 +119,7 @@ inline void setInlineCachedWrapper(DOMWrapperWorld& world, JSC::ArrayBuffer* dom
     domObject->m_wrapper = JSC::Weak<JSC::JSArrayBuffer>(wrapper, wrapperOwner, &world);
 }
 
-inline void clearInlineCachedWrapper(DOMWrapperWorld& world, ScriptWrappable* domObject, JSDOMObject* wrapper)
+inline void clearInlineCachedWrapper(DOMWrapperWorld& world, ScriptWrappable* domObject, JSC::JSObject* wrapper)
 {
     if (!world.isNormal())
         return;
@@ -178,6 +178,19 @@ template<typename DOMClass> inline JSC::JSValue wrap(JSC::JSGlobalObject* lexica
 
 // The subclass path (`Reflect.construct` / `class extends`), shared across wrapper classes. nullptr on exception.
 JSC::Structure* subclassStructure(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, JSC::Structure* (*baseStructure)(JSC::VM&, JSDOMGlobalObject&));
+
+// What upstream's generated constructors call after they made the wrapper. Bun's own take structureForNewTarget() first.
+template<typename DOMClass> inline void setSubclassStructureIfNeeded(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSC::JSObject* jsObject)
+{
+    using WrapperClass = typename JSDOMWrapperConverterTraits<DOMClass>::WrapperClass;
+
+    JSC::JSValue newTarget = callFrame->newTarget();
+    if (!newTarget || newTarget == callFrame->jsCallee())
+        return;
+
+    if (auto* structure = subclassStructure(lexicalGlobalObject, callFrame, getDOMStructure<WrapperClass>))
+        jsObject->setStructure(JSC::getVM(lexicalGlobalObject), structure);
+}
 
 // The Structure a constructor makes its wrapper with. nullptr on exception: the subclass path reads
 // `new.target.prototype`, which can run script and throw. So a constructor takes it before X::create()

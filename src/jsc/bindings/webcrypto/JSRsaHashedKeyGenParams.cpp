@@ -37,7 +37,7 @@ using namespace JSC;
 
 #if ENABLE(WEB_CRYPTO)
 
-template<> CryptoAlgorithmRsaHashedKeyGenParams convertDictionary<CryptoAlgorithmRsaHashedKeyGenParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<CryptoAlgorithmRsaHashedKeyGenParams>> convertDictionary<CryptoAlgorithmRsaHashedKeyGenParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -84,8 +84,9 @@ template<> CryptoAlgorithmRsaHashedKeyGenParams convertDictionary<CryptoAlgorith
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!publicExponentValue.isUndefined()) {
-        result.publicExponent = convert<IDLUint8Array>(lexicalGlobalObject, publicExponentValue);
+        auto publicExponentConversionResult = convert<IDLUint8Array>(lexicalGlobalObject, publicExponentValue);
         RETURN_IF_EXCEPTION(throwScope, {});
+        result.publicExponent = publicExponentConversionResult.releaseReturnValue();
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "publicExponent"_s, "RsaHashedKeyGenParams"_s, "Uint8Array"_s);
         return {};

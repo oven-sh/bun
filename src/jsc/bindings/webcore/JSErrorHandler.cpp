@@ -38,6 +38,7 @@
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertStrings.h"
 #include "JSEvent.h"
+#include "JSWindow.h"
 #include <JavaScriptCore/JSLock.h>
 #include <wtf/Ref.h>
 
@@ -80,15 +81,8 @@ void JSErrorHandler::handleEvent(ScriptExecutionContext& scriptExecutionContext,
     if (callData.type != CallData::Type::None) {
         Ref<JSErrorHandler> protectedThis(*this);
 
-        RefPtr<Event> savedEvent;
-        // auto* jsFunctionWindow = dynamicDowncast<JSDOMWindow>( jsFunction->globalObject());
-        // if (jsFunctionWindow) {
-        //     savedEvent = jsFunctionWindow->currentEvent();
-
-        //     // window.event should not be set when the target is inside a shadow tree, as per the DOM specification.
-        //     if (!event.currentTargetIsInShadowTree())
-        //         jsFunctionWindow->setCurrentEvent(&event);
-        // }
+        RefPtr window = Window::forEventTarget(event.currentTarget());
+        Window::CurrentEventScope currentEventScope(window.get(), event);
 
         auto& errorEvent = downcast<ErrorEvent>(event);
 
@@ -103,14 +97,14 @@ void JSErrorHandler::handleEvent(ScriptExecutionContext& scriptExecutionContext,
         // JSExecState::instrumentFunction(&scriptExecutionContext, callData);
 
         NakedPtr<JSC::Exception> exception;
-        JSValue returnValue = JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, jsFunction, callData, globalObject, args, exception);
+        JSValue thisValue = window ? toJS(globalObject, globalObject, *window) : JSValue(globalObject);
+        JSValue returnValue = JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, jsFunction, callData, thisValue, args, exception);
 
         // InspectorInstrumentation::didCallFunction(&scriptExecutionContext);
 
-        // if (jsFunctionWindow)
-        //     jsFunctionWindow->setCurrentEvent(savedEvent.get());
-
-        if (exception)
+        if (exception && window)
+            window->reportException(*globalObject, *exception);
+        else if (exception)
             reportException(globalObject, exception);
         else {
             if (returnValue.isTrue())

@@ -60,10 +60,6 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 {
     // The WeakPtrFactory must be initialized on the owning thread.
     EventTarget::initializeWeakPtrFactory();
-    // Any port with a 'message' listener refs the event loop (matching node: a
-    // listening port keeps its thread alive until closed or unref'd); otherwise a
-    // buffered message could be lost if its listener is added late.
-    onDidChangeListener = &MessagePort::onDidChangeListenerImpl;
 }
 
 MessagePort::~MessagePort()
@@ -498,27 +494,6 @@ void MessagePort::updateListenerEventLoopRef()
     m_listenerLoopRefActive = shouldHold;
 }
 
-void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
-{
-    if (eventType != eventNames().messageEvent)
-        return;
-
-    auto& port = static_cast<MessagePort&>(self);
-    switch (kind) {
-    case Add:
-        port.m_messageEventCount++;
-        break;
-    case Remove:
-        if (port.m_messageEventCount > 0)
-            port.m_messageEventCount--;
-        break;
-    case Clear:
-        port.m_messageEventCount = 0;
-        break;
-    }
-    port.updateListenerEventLoopRef();
-}
-
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
     if (eventType == eventNames().messageEvent) {
@@ -539,17 +514,39 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
                 m_pipe->registerCloseContext(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
         }
     }
-    return EventTarget::addEventListener(eventType, WTF::move(listener), options);
+    if (!EventTarget::addEventListener(eventType, WTF::move(listener), options))
+        return false;
+
+    // Any port with a 'message' listener refs the event loop (matching node: a
+    // listening port keeps its thread alive until closed or unref'd); otherwise a
+    // buffered message could be lost if its listener is added late.
+    if (eventType == eventNames().messageEvent) {
+        m_messageEventCount++;
+        updateListenerEventLoopRef();
+    }
+    return true;
 }
 
 bool MessagePort::removeEventListener(const AtomString& eventType, EventListener& listener, const EventListenerOptions& options)
 {
     auto result = EventTarget::removeEventListener(eventType, listener, options);
+    if (result && eventType == eventNames().messageEvent) {
+        if (m_messageEventCount > 0)
+            m_messageEventCount--;
+        updateListenerEventLoopRef();
+    }
     if (!hasEventListeners(eventNames().messageEvent))
         m_hasMessageEventListener = false;
     if (!hasEventListeners(eventNames().closeEvent))
         m_hasCloseEventListener.store(false, std::memory_order_release);
     return result;
+}
+
+void MessagePort::removeAllEventListeners()
+{
+    EventTarget::removeAllEventListeners();
+    m_messageEventCount = 0;
+    updateListenerEventLoopRef();
 }
 
 WebCoreOpaqueRoot root(MessagePort* port)

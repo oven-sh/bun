@@ -1,0 +1,121 @@
+/*
+ * Copyright (C) 2015, 2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2023 Tetsuharu Ohzeki <tetsuharu.ohzeki@gmail.com>
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ */
+
+// https://html.spec.whatwg.org/multipage/webappapis.html#globaleventhandlers
+interface mixin GlobalEventHandlers {
+    // Commented out event handlers are defined by HTML but are not yet implemented.
+
+    attribute EventHandler onabort;
+    attribute EventHandler onauxclick;
+    attribute EventHandler onbeforeinput;
+    [EnabledBySetting=HiddenUntilFoundEnabled] attribute EventHandler onbeforematch;
+    attribute EventHandler onbeforetoggle;
+    attribute EventHandler onblur;
+    attribute EventHandler oncancel;
+    attribute EventHandler oncanplay;
+    attribute EventHandler oncanplaythrough;
+    attribute EventHandler onchange;
+    attribute EventHandler onclick;
+    attribute EventHandler onclose;
+    attribute EventHandler oncommand;
+    attribute EventHandler oncontentvisibilityautostatechange;
+    // attribute EventHandler oncontextlost;
+    attribute EventHandler oncontextmenu;
+    // attribute EventHandler oncontextrestored;
+    attribute EventHandler oncopy;
+    attribute EventHandler oncuechange;
+    attribute EventHandler oncut;
+    attribute EventHandler ondblclick;
+    attribute EventHandler ondrag;
+    attribute EventHandler ondragend;
+    attribute EventHandler ondragenter;
+    attribute EventHandler ondragleave;
+    attribute EventHandler ondragover;
+    attribute EventHandler ondragstart;
+    attribute EventHandler ondrop;
+    attribute EventHandler ondurationchange;
+    attribute EventHandler onemptied;
+    attribute EventHandler onended;
+    attribute OnErrorEventHandler onerror;
+    attribute EventHandler onfocus;
+    attribute EventHandler onformdata;
+    attribute EventHandler oninput;
+    attribute EventHandler oninvalid;
+    attribute EventHandler onkeydown;
+    attribute EventHandler onkeypress;
+    attribute EventHandler onkeyup;
+    attribute EventHandler onload;
+    attribute EventHandler onloadeddata;
+    attribute EventHandler onloadedmetadata;
+    attribute EventHandler onloadstart;
+    attribute EventHandler onmousedown;
+    [LegacyLenientThis] attribute EventHandler onmouseenter;
+    [LegacyLenientThis] attribute EventHandler onmouseleave;
+    attribute EventHandler onmousemove;
+    attribute EventHandler onmouseout;
+    attribute EventHandler onmouseover;
+    attribute EventHandler onmouseup;
+    attribute EventHandler onpaste;
+    attribute EventHandler onpause;
+    attribute EventHandler onplay;
+    attribute EventHandler onplaying;
+    attribute EventHandler onprogress;
+    attribute EventHandler onratechange;
+    attribute EventHandler onreset;
+    attribute EventHandler onresize;
+    attribute EventHandler onscroll;
+    [EnabledBySetting=ScrollendEventEnabled] attribute EventHandler onscrollend;
+    attribute EventHandler onsecuritypolicyviolation;
+    attribute EventHandler onseeked;
+    attribute EventHandler onseeking;
+    attribute EventHandler onselect;
+    attribute EventHandler onslotchange;
+    attribute EventHandler onstalled;
+    attribute EventHandler onsubmit;
+    attribute EventHandler onsuspend;
+    attribute EventHandler ontimeupdate;
+    attribute EventHandler ontoggle;
+    attribute EventHandler onvolumechange;
+    attribute EventHandler onwaiting;
+    [ImplementedAs=onwebkitAnimationEnd] attribute EventHandler onwebkitanimationend;
+    [ImplementedAs=onwebkitAnimationIteration] attribute EventHandler onwebkitanimationiteration;
+    [ImplementedAs=onwebkitAnimationStart] attribute EventHandler onwebkitanimationstart;
+    [ImplementedAs=onwebkitTransitionEnd] attribute EventHandler onwebkittransitionend;
+    attribute EventHandler onwheel;
+
+    // Non-standard additions.
+
+    attribute EventHandler onmousewheel;
+    attribute EventHandler ontouchcancel;
+    attribute EventHandler ontouchend;
+    attribute EventHandler ontouchmove;
+    attribute EventHandler ontouchstart;
+    [NotEnumerable] attribute EventHandler onwebkitmouseforcechanged;
+    [NotEnumerable] attribute EventHandler onwebkitmouseforcedown;
+    [NotEnumerable] attribute EventHandler onwebkitmouseforcewillbegin;
+    [NotEnumerable] attribute EventHandler onwebkitmouseforceup;
+};

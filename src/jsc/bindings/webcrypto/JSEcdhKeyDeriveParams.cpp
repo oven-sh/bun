@@ -34,7 +34,7 @@ using namespace JSC;
 
 #if ENABLE(WEB_CRYPTO)
 
-template<> CryptoAlgorithmEcdhKeyDeriveParams convertDictionary<CryptoAlgorithmEcdhKeyDeriveParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<CryptoAlgorithmEcdhKeyDeriveParams>> convertDictionary<CryptoAlgorithmEcdhKeyDeriveParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -67,8 +67,9 @@ template<> CryptoAlgorithmEcdhKeyDeriveParams convertDictionary<CryptoAlgorithmE
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!publicKeyValue.isUndefined()) {
-        result.publicKey = convert<IDLInterface<CryptoKey>>(lexicalGlobalObject, publicKeyValue, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwDictionaryMemberTypeError(lexicalGlobalObject, scope, "publicKey"_s, "EcdhKeyDeriveParams"_s, "CryptoKey"_s); });
+        auto publicKeyConversionResult = convert<IDLInterface<CryptoKey>>(lexicalGlobalObject, publicKeyValue, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwDictionaryMemberTypeError(lexicalGlobalObject, scope, "publicKey"_s, "EcdhKeyDeriveParams"_s, "CryptoKey"_s); });
         RETURN_IF_EXCEPTION(throwScope, {});
+        result.publicKey = publicKeyConversionResult.releaseReturnValue();
     } else {
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "publicKey"_s, "EcdhKeyDeriveParams"_s, "CryptoKey"_s);
         return {};

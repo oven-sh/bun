@@ -3750,6 +3750,56 @@ describe("rmdirSync", () => {
   });
 });
 
+it("streams, cp, glob and watchFile take a URL of another implementation", async () => {
+  using dir = tempDir("fs-foreign-url", { "a.txt": "a" });
+  function foreignURL(name: string) {
+    const { href, protocol, hostname, pathname } = Bun.pathToFileURL(join(String(dir), name));
+    return { href, protocol, hostname, pathname } as URL;
+  }
+  expect(Buffer.concat(await createReadStream(foreignURL("a.txt")).toArray()).toString()).toBe("a");
+  await new Promise<void>(resolve => createWriteStream(foreignURL("b.txt")).end("b", resolve));
+  fs.cpSync(foreignURL("a.txt"), foreignURL("c.txt"));
+  expect(fs.globSync("*.txt", { cwd: foreignURL("") }).sort()).toEqual(["a.txt", "b.txt", "c.txt"]);
+  expect(readFileSync(join(String(dir), "b.txt"), "utf8")).toBe("b");
+  expect(readFileSync(join(String(dir), "c.txt"), "utf8")).toBe("a");
+  fs.watchFile(foreignURL("a.txt"), () => {});
+  fs.unwatchFile(foreignURL("a.txt"));
+});
+
+it("streams and cp do not take a URL of another implementation whose pathname is not a string", async () => {
+  using dir = tempDir("fs-foreign-url-pathname", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("node:fs");
+      const url = { href: "file:///5", protocol: "file:", hostname: "", pathname: 5 };
+      const uses = {
+        createWriteStream: () => fs.createWriteStream(url).on("error", () => {}).end("written"),
+        createReadStream: () => fs.createReadStream(url).on("error", () => {}),
+        cpSync: () => fs.cpSync(url, "copy"),
+      };
+      for (const name in uses) {
+        try {
+          uses[name]();
+          console.log(name, "took it");
+        } catch (error) {
+          console.log(name, error.code);
+        }
+      }
+      process.on("exit", () => console.log(fs.readdirSync(".")));`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const code = isWindows ? "ERR_INVALID_FILE_URL_PATH" : "ERR_INVALID_ARG_TYPE";
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`createWriteStream ${code}\ncreateReadStream ${code}\ncpSync ${code}\n[]\n`);
+  expect(exitCode).toBe(0);
+});
+
 describe("createReadStream", () => {
   it("works (1 chunk)", async () => {
     return await new Promise((resolve, reject) => {

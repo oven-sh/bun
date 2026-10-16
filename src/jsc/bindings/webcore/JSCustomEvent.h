@@ -83,6 +83,6 @@ template<> struct JSDOMWrapperConverterTraits<CustomEvent> {
     using WrapperClass = JSCustomEvent;
     using ToWrappedReturnType = CustomEvent*;
 };
-template<> CustomEvent::Init convertDictionary<CustomEvent::Init>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<CustomEvent::Init>> convertDictionary<CustomEvent::Init>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

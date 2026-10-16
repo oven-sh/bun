@@ -61,6 +61,7 @@ pub(crate) struct Result<'a> {
 /// Filter `test_files` in place to only the entries whose module graph
 /// reaches a changed file. On success, `test_files` is compacted (preserving
 /// order) and the new length is returned via `Result.test_files`.
+#[optimize(size)]
 pub(crate) fn filter<'a>(
     ctx: &Command::Context,
     vm: &mut VirtualMachine,

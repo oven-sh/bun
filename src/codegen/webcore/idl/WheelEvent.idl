@@ -1,0 +1,56 @@
+/*
+ * Copyright (C) 2006-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2006 Samuel Weinig <sam.weinig@gmail.com>
+ * Copyright (C) 2013 Samsung Electronics. All rights reserved.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public License
+ * along with this library; see the file COPYING.LIB.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ */
+
+// https://w3c.github.io/uievents/#interface-wheelevent
+
+[
+    Exposed=Window
+] interface WheelEvent : MouseEvent {
+    constructor([AtomString] DOMString type, optional WheelEventInit eventInitDict = {});
+
+    // DeltaModeCode
+    const unsigned long DOM_DELTA_PIXEL = 0x00;
+    const unsigned long DOM_DELTA_LINE = 0x01;
+    const unsigned long DOM_DELTA_PAGE = 0x02;
+
+    readonly attribute double deltaX;
+    readonly attribute double deltaY;
+    readonly attribute double deltaZ;
+    readonly attribute unsigned long deltaMode;
+
+    // Legacy MouseWheelEvent API replaced by standard WheelEvent API.
+    readonly attribute long wheelDeltaX;
+    readonly attribute long wheelDeltaY;
+    readonly attribute long wheelDelta;
+
+};
+
+// https://w3c.github.io/uievents/#idl-wheeleventinit
+dictionary WheelEventInit : MouseEventInit {
+    double deltaX = 0.0;
+    double deltaY = 0.0;
+    double deltaZ = 0.0;
+    unsigned long deltaMode = 0;
+
+    // Legacy members that we still support for backward compatibility.
+    long wheelDeltaX = 0;
+    long wheelDeltaY = 0;
+};

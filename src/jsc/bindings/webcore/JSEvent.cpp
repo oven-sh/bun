@@ -158,14 +158,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventDOMConstructor::c
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+    AtomString type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     if (!argument1.value().isUndefinedOrNull() && !argument1.value().isObject() && !argument1.value().isCallable()) {
         Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "options"_s, "object"_s, argument1.value());
     }
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto eventInitDict = convert<IDLDictionary<EventInit>>(*lexicalGlobalObject, argument1.value());
+    EventInit eventInitDict = convert<IDLDictionary<EventInit>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     auto* structure = structureForNewTarget<Event>(lexicalGlobalObject, callFrame);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -421,7 +421,7 @@ static inline JSValue jsEvent_isTrustedGetter(JSGlobalObject& lexicalGlobalObjec
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLBoolean>(lexicalGlobalObject, throwScope, impl.isTrusted())));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLBoolean>(lexicalGlobalObject, throwScope, impl.isTrustedForBindings())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsEvent_isTrusted, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
@@ -496,7 +496,7 @@ static inline JSC::EncodedJSValue jsEventPrototypeFunction_composedPathBody(JSC:
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<EventTarget>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.composedPath())));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<EventTarget>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.composedPath(*lexicalGlobalObject))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventPrototypeFunction_composedPath, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -559,7 +559,7 @@ static inline JSC::EncodedJSValue jsEventPrototypeFunction_initEventBody(JSC::JS
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+    AtomString type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto bubbles = convert<IDLBoolean>(*lexicalGlobalObject, argument1.value());
@@ -580,6 +580,28 @@ JSC::GCClient::IsoSubspace* JSEvent::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSEvent, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForEvent, m_subspaceForEvent));
 }
 
+template<typename Visitor>
+void JSEvent::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSEvent>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
+}
+
+DEFINE_VISIT_CHILDREN(JSEvent);
+
+template<typename Visitor>
+void JSEvent::visitOutputConstraints(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSEvent>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitOutputConstraints(thisObject, visitor);
+    thisObject->visitAdditionalChildrenInGCThread(visitor);
+}
+
+template void JSEvent::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
+template void JSEvent::visitOutputConstraints(JSCell*, SlotVisitor&);
 void JSEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = uncheckedDowncast<JSEvent>(cell);

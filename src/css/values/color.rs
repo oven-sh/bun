@@ -29,6 +29,30 @@ pub struct RGBA {
 }
 
 impl RGBA {
+    /// <https://drafts.csswg.org/css-color-4/#serializing-sRGB-values>. `names` has the keywords the author wrote.
+    fn to_css_for_cssom(self, names: &[(RGBA, &[u8])], dest: &mut Printer) -> Result<(), PrintErr> {
+        if let Some((_, name)) = names.iter().find(|(color, _)| *color == self) {
+            return dest.write_str(name);
+        }
+        if self.alpha == 255 {
+            return dest.write_fmt(format_args!(
+                "rgb({}, {}, {})",
+                self.red, self.green, self.blue
+            ));
+        }
+        dest.write_fmt(format_args!(
+            "rgba({}, {}, {}, ",
+            self.red, self.green, self.blue
+        ))?;
+        // Try first with two decimal places, then with three.
+        let mut rounded_alpha = (self.alpha_f32() * 100.0).round() / 100.0;
+        if clamp_unit_f32(rounded_alpha) != self.alpha {
+            rounded_alpha = (self.alpha_f32() * 1000.0).round() / 1000.0;
+        }
+        CSSNumberFns::to_css(rounded_alpha, dest)?;
+        dest.write_char(b')')
+    }
+
     #[inline]
     pub(crate) fn new(red: u8, green: u8, blue: u8, alpha: f32) -> RGBA {
         RGBA {
@@ -432,6 +456,13 @@ impl CssColor {
 
     /// Serialize this color to CSS text via `dest`.
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        if let Some(names) = dest.cssom {
+            match self {
+                CssColor::CurrentColor => return dest.write_str("currentcolor"),
+                CssColor::Rgba(color) => return color.to_css_for_cssom(names, dest),
+                _ => {}
+            }
+        }
         match self {
             CssColor::CurrentColor => dest.write_str("currentColor"),
             CssColor::Rgba(color) => {
@@ -2622,6 +2653,9 @@ pub(crate) fn write_components(
     dest.write_char(b'(')?;
     if a.is_nan() {
         dest.write_str("none")?;
+    } else if dest.cssom.is_some() {
+        // A number: 0 to 100 for lab() and lch(), 0 to 1 for oklab() and oklch().
+        CSSNumberFns::to_css(if name.starts_with("ok") { a } else { a * 100.0 }, dest)?;
     } else {
         Percentage { v: a }.to_css(dest)?;
     }

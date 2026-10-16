@@ -33,7 +33,7 @@
 namespace WebCore {
 using namespace JSC;
 
-template<> CryptoAlgorithmMlDsaParams convertDictionary<CryptoAlgorithmMlDsaParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<CryptoAlgorithmMlDsaParams>> convertDictionary<CryptoAlgorithmMlDsaParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -66,7 +66,7 @@ template<> CryptoAlgorithmMlDsaParams convertDictionary<CryptoAlgorithmMlDsaPara
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!contextValue.isUndefined()) {
-        result.context = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(lexicalGlobalObject, contextValue);
+        result.context = BufferSource(convert<IDLBufferSource>(lexicalGlobalObject, contextValue)).variant();
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     return result;

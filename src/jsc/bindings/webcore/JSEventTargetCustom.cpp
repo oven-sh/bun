@@ -80,7 +80,7 @@ JSEventTargetWrapper jsEventTargetCast(VM& vm, JSValue thisValue)
 template<typename Visitor>
 void JSEventTarget::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().visitJSEventListeners(visitor);
+    wrapped().visitJSEventListenersInGCThread(visitor);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSEventTarget);

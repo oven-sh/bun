@@ -27,6 +27,7 @@
 #include "config.h"
 #include "ActiveDOMObject.h"
 
+#include "ContextDestructionObserverInlines.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/MainThread.h>
 

@@ -1,0 +1,225 @@
+// https://html.spec.whatwg.org/multipage/nav-history-apis.html#the-window-object
+// A window is an ordinary object here, not the global object, so its members are on Window.prototype.
+[
+    Exposed=Window,
+    CustomGetOwnPropertyNames,
+    CustomGetOwnPropertySlot,
+    CustomIsReachable,
+    CustomToJSObject,
+    JSCustomMarkFunction,
+    JSCustomToNativeObject,
+] interface Window : EventTarget {
+    [CallWith=CurrentScriptExecutionContext] constructor(optional WindowOptions options = {});
+
+    // the current browsing context
+    readonly attribute Window window;
+    [Replaceable, ImplementedAs=window] readonly attribute Window self;
+    readonly attribute Document document;
+    attribute DOMString name;
+    [PutForwards=href] readonly attribute Location location;
+    readonly attribute History history;
+    readonly attribute Navigator navigator;
+    [ImplementedAs=ensureCustomElementRegistry] readonly attribute CustomElementRegistry customElements;
+    attribute DOMString status;
+    undefined close();
+    readonly attribute boolean closed;
+    [ImplementedAs=doNothing] undefined stop();
+    [ImplementedAs=doNothing] undefined focus();
+    [ImplementedAs=doNothing] undefined blur();
+
+    // other browsing contexts
+    [Replaceable, CustomGetter] readonly attribute Window frames;
+    [Replaceable] readonly attribute unsigned long length;
+    readonly attribute Window? top;
+    [Replaceable] readonly attribute Window? opener;
+    [Replaceable] readonly attribute Window? parent;
+    readonly attribute Element? frameElement;
+    Window? open(optional USVString url = "", optional DOMString target = "_blank", optional [LegacyNullToEmptyString] DOMString features = "");
+
+    // user prompts
+    [ImplementedAs=doNothing] undefined alert();
+    [ImplementedAs=doNothing] undefined confirm();
+    [ImplementedAs=doNothing] undefined prompt();
+    [ImplementedAs=doNothing] undefined print();
+
+    [CallWith=CurrentGlobalObject] undefined postMessage(any message, optional (USVString or WindowPostMessageOptions) options = {}, optional sequence<object> transfer = []);
+
+    // https://html.spec.whatwg.org/multipage/webappapis.html#windoworworkerglobalscope-mixin
+    [CallWith=CurrentGlobalObject] undefined reportError(any error);
+
+    // https://dom.spec.whatwg.org/#interface-window-extensions
+    [Replaceable, CustomGetter] readonly attribute any event;
+
+    // https://html.spec.whatwg.org/multipage/imagebitmap-and-animations.html#animation-frames
+    unsigned long requestAnimationFrame(RequestAnimationFrameCallback callback);
+    undefined cancelAnimationFrame(unsigned long handle);
+
+    // https://w3c.github.io/selection-api/#extensions-to-window-interface
+    DOMSelection getSelection();
+
+    // https://html.spec.whatwg.org/multipage/webappapis.html#windoworworkerglobalscope-mixin
+    [Replaceable] readonly attribute USVString origin;
+    readonly attribute boolean isSecureContext;
+
+    // https://html.spec.whatwg.org/multipage/webstorage.html
+    readonly attribute Storage localStorage;
+    readonly attribute Storage sessionStorage;
+
+    // https://drafts.csswg.org/cssom/#extensions-to-the-window-interface
+    [NewObject] CSSStyleDeclaration getComputedStyle(Element element, optional USVString? pseudoElement = null);
+
+    // https://drafts.csswg.org/cssom-view/#extensions-to-the-window-interface
+    [NewObject] MediaQueryList matchMedia(USVString query);
+    [Replaceable] readonly attribute Screen screen;
+    [ImplementedAs=doNothing] undefined moveTo();
+    [ImplementedAs=doNothing] undefined moveBy();
+    [ImplementedAs=doNothing] undefined resizeTo();
+    [ImplementedAs=doNothing] undefined resizeBy();
+    [Replaceable] readonly attribute long innerWidth;
+    [Replaceable] readonly attribute long innerHeight;
+    [Replaceable] readonly attribute double scrollX;
+    [Replaceable, ImplementedAs=scrollX] readonly attribute double pageXOffset;
+    [Replaceable] readonly attribute double scrollY;
+    [Replaceable, ImplementedAs=scrollY] readonly attribute double pageYOffset;
+    [ImplementedAs=doNothing] undefined scroll();
+    [ImplementedAs=doNothing] undefined scrollTo();
+    [ImplementedAs=doNothing] undefined scrollBy();
+    [Replaceable] readonly attribute long screenX;
+    [Replaceable, ImplementedAs=screenX] readonly attribute long screenLeft;
+    [Replaceable] readonly attribute long screenY;
+    [Replaceable, ImplementedAs=screenY] readonly attribute long screenTop;
+    [Replaceable, ImplementedAs=innerWidth] readonly attribute long outerWidth;
+    [Replaceable, ImplementedAs=innerHeight] readonly attribute long outerHeight;
+    [Replaceable] readonly attribute double devicePixelRatio;
+
+    // https://html.spec.whatwg.org/multipage/webappapis.html#globaleventhandlers
+    // The lines of upstream's mixins: genidl.sh has no supplemental dependencies for this file, so `includes` would add nothing.
+    attribute EventHandler onabort;
+    attribute EventHandler onauxclick;
+    attribute EventHandler onbeforeinput;
+    attribute EventHandler onbeforematch;
+    attribute EventHandler onbeforetoggle;
+    attribute EventHandler onblur;
+    attribute EventHandler oncancel;
+    attribute EventHandler oncanplay;
+    attribute EventHandler oncanplaythrough;
+    attribute EventHandler onchange;
+    attribute EventHandler onclick;
+    attribute EventHandler onclose;
+    attribute EventHandler oncommand;
+    attribute EventHandler oncontentvisibilityautostatechange;
+    attribute EventHandler oncontextmenu;
+    attribute EventHandler oncopy;
+    attribute EventHandler oncuechange;
+    attribute EventHandler oncut;
+    attribute EventHandler ondblclick;
+    attribute EventHandler ondrag;
+    attribute EventHandler ondragend;
+    attribute EventHandler ondragenter;
+    attribute EventHandler ondragleave;
+    attribute EventHandler ondragover;
+    attribute EventHandler ondragstart;
+    attribute EventHandler ondrop;
+    attribute EventHandler ondurationchange;
+    attribute EventHandler onemptied;
+    attribute EventHandler onended;
+    [WindowEventHandler] attribute OnErrorEventHandler onerror;
+    attribute EventHandler onfocus;
+    attribute EventHandler onformdata;
+    attribute EventHandler oninput;
+    attribute EventHandler oninvalid;
+    attribute EventHandler onkeydown;
+    attribute EventHandler onkeypress;
+    attribute EventHandler onkeyup;
+    attribute EventHandler onload;
+    attribute EventHandler onloadeddata;
+    attribute EventHandler onloadedmetadata;
+    attribute EventHandler onloadstart;
+    attribute EventHandler onmousedown;
+    [LegacyLenientThis] attribute EventHandler onmouseenter;
+    [LegacyLenientThis] attribute EventHandler onmouseleave;
+    attribute EventHandler onmousemove;
+    attribute EventHandler onmouseout;
+    attribute EventHandler onmouseover;
+    attribute EventHandler onmouseup;
+    attribute EventHandler onpaste;
+    attribute EventHandler onpause;
+    attribute EventHandler onplay;
+    attribute EventHandler onplaying;
+    attribute EventHandler onprogress;
+    attribute EventHandler onratechange;
+    attribute EventHandler onreset;
+    attribute EventHandler onresize;
+    attribute EventHandler onscroll;
+    attribute EventHandler onscrollend;
+    attribute EventHandler onsecuritypolicyviolation;
+    attribute EventHandler onseeked;
+    attribute EventHandler onseeking;
+    attribute EventHandler onselect;
+    attribute EventHandler onslotchange;
+    attribute EventHandler onstalled;
+    attribute EventHandler onsubmit;
+    attribute EventHandler onsuspend;
+    attribute EventHandler ontimeupdate;
+    attribute EventHandler ontoggle;
+    attribute EventHandler ontouchcancel;
+    attribute EventHandler ontouchend;
+    attribute EventHandler ontouchmove;
+    attribute EventHandler ontouchstart;
+    attribute EventHandler onvolumechange;
+    attribute EventHandler onwaiting;
+    [ImplementedAs=onwebkitAnimationEnd] attribute EventHandler onwebkitanimationend;
+    [ImplementedAs=onwebkitAnimationIteration] attribute EventHandler onwebkitanimationiteration;
+    [ImplementedAs=onwebkitAnimationStart] attribute EventHandler onwebkitanimationstart;
+    [ImplementedAs=onwebkitTransitionEnd] attribute EventHandler onwebkittransitionend;
+    attribute EventHandler onwheel;
+    attribute EventHandler ongotpointercapture;
+    attribute EventHandler onlostpointercapture;
+    attribute EventHandler onpointerdown;
+    attribute EventHandler onpointermove;
+    attribute EventHandler onpointerup;
+    attribute EventHandler onpointercancel;
+    attribute EventHandler onpointerover;
+    attribute EventHandler onpointerout;
+    attribute EventHandler onpointerenter;
+    attribute EventHandler onpointerleave;
+    attribute EventHandler onselectstart;
+    attribute EventHandler onselectionchange;
+    attribute EventHandler onanimationstart;
+    attribute EventHandler onanimationiteration;
+    attribute EventHandler onanimationend;
+    attribute EventHandler onanimationcancel;
+    attribute EventHandler ontransitionrun;
+    attribute EventHandler ontransitionstart;
+    attribute EventHandler ontransitionend;
+    attribute EventHandler ontransitioncancel;
+
+    // https://html.spec.whatwg.org/multipage/webappapis.html#windoweventhandlers
+    attribute EventHandler onafterprint;
+    attribute EventHandler onbeforeprint;
+    attribute EventHandler onbeforeunload;
+    attribute EventHandler onhashchange;
+    attribute EventHandler onlanguagechange;
+    attribute EventHandler onmessage;
+    attribute EventHandler onmessageerror;
+    attribute EventHandler onoffline;
+    attribute EventHandler ononline;
+    attribute EventHandler onpagehide;
+    attribute EventHandler onpagereveal;
+    attribute EventHandler onpageshow;
+    attribute EventHandler onpageswap;
+    attribute EventHandler onpopstate;
+    attribute EventHandler onrejectionhandled;
+    attribute EventHandler onstorage;
+    attribute EventHandler onunhandledrejection;
+    attribute EventHandler onunload;
+};
+
+dictionary WindowOptions {
+    USVString url = "about:blank";
+};
+
+dictionary WindowPostMessageOptions {
+    USVString targetOrigin = "/";
+    sequence<object> transfer = [];
+};

@@ -1,0 +1,27 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`concurrent > block > a 1`] = `"block a"`;
+
+exports[`concurrent > block > b 1`] = `"block b"`;
+
+exports[`concurrent > first 1`] = `"first a"`;
+
+exports[`concurrent > first 2`] = `"first b"`;
+
+exports[`concurrent > second > hinted 1`] = `"second b"`;
+
+exports[`concurrent > second 1`] = `"second a"`;
+
+exports[`concurrent > second 2`] = `[Error: concurrent error]`;
+
+exports[`concurrent > third 1`] = `
+{
+  "third": true,
+}
+`;
+
+exports[`concurrent > third 2`] = `"concurrent > third"`;
+
+exports[`ctx.expect in a plain test 1`] = `"plain"`;
+
+exports[`ctx.expect in a plain test 2`] = `"global"`;

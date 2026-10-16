@@ -112,6 +112,10 @@ bitflags::bitflags! {
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;
 
+pub const fn is_test_module(path: &[u8]) -> bool {
+    matches!(path, b"bun:test" | b"vitest" | b"@jest/globals")
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub enum Tag {

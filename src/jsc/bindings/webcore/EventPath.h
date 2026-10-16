@@ -23,17 +23,56 @@
 #include "EventContext.h"
 #include <wtf/Forward.h>
 #include <wtf/Vector.h>
+#include <wtf/WeakPtr.h>
+
+namespace WebCore {
+class EventPath;
+}
+
+namespace WTF {
+template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
+template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::EventPath> : std::true_type {};
+}
 
 namespace WebCore {
 
-class EventPath {
+class Touch;
+
+class EventPath : public CanMakeSingleThreadWeakPtr<EventPath> {
 public:
+    EventPath(Node& origin, Event&);
+    explicit EventPath(std::span<EventTarget* const>);
     explicit EventPath(EventTarget&);
+
+    bool isEmpty() const { return m_path.isEmpty(); }
+    size_t size() const { return m_path.size(); }
+    const EventContext& contextAt(size_t i) const { return m_path[i]; }
+    EventContext& contextAt(size_t i) { return m_path[i]; }
+    const EventContext& last() const { return m_path.last(); }
+    EventContext& last() { return m_path.last(); }
+
+    void adjustForDisabledFormControl();
 
     Vector<Ref<EventTarget>> computePathUnclosedToTarget(const EventTarget&) const;
 
+    static Node* eventTargetRespectingTargetRules(Node&);
+
 private:
-    Vector<EventContext, 16> m_path;
+    void buildPath(Node& origin, Event&);
+    void setRelatedTarget(Node& origin, Node&);
+
+#if ENABLE(TOUCH_EVENTS)
+    void retargetTouch(EventContext::TouchListType, const Touch&);
+    void retargetTouchList(EventContext::TouchListType, const TouchList*);
+    void retargetTouchLists(const TouchEvent&);
+#endif
+
+    Vector<EventContext, 32> m_path;
 };
+
+inline Node* EventPath::eventTargetRespectingTargetRules(Node& referenceNode)
+{
+    return &referenceNode;
+}
 
 } // namespace WebCore

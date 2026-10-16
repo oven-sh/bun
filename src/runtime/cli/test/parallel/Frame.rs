@@ -16,8 +16,8 @@ pub(crate) enum Kind {
     /// u64 elapsed_ns, u32 line, str name, u32 n × {str scope_name,
     /// u32 scope_line}, u32 has_failure [, str name, str message, str body]
     TestDone,
-    /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
-    /// files, unhandled; u64 elapsed_ns
+    /// 10 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
+    /// files, shuffled, unhandled; u64 elapsed_ns
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,

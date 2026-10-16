@@ -5,7 +5,7 @@ use core::ffi::c_char;
 use bun_core::EncodedSlice;
 use bun_core::env_var;
 use bun_core::{self, Environment, Global};
-use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult};
 
 // Both materialize the array on first access through `Bun__Process__createArgv`
 // / `createExecArgv` below, which return zero with the exception pending.
@@ -53,6 +53,18 @@ pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::St
 }
 
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
+
+/// `process.stdout._handle.setBlocking(blocking)`. Like libuv's `uv_stream_set_blocking`, returns 0 or a negative errno.
+pub(crate) fn set_stdio_blocking(_: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [fd, blocking] = frame.arguments_as_array::<2>();
+    let fd = bun_sys::Fd::from_uv(fd.to_int32());
+    Ok(JSValue::js_number_from_int32(
+        match bun_sys::update_nonblocking(fd, !blocking.to_boolean()) {
+            Ok(()) => 0,
+            Err(err) => -i32::from(err.errno),
+        },
+    ))
+}
 
 pub(crate) fn get_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
     bun_jsc::call_zero_is_throw(global, || Bun__Process__getArgv(global))

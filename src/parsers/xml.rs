@@ -36,6 +36,9 @@ use bun_simdutf_sys::simdutf;
 use crate::xml_index::StructuralIndex;
 use crate::xml_index::byte_class::{CLASS_ALWAYS, CLASS_GT, CLASS_LT, CLASS_TAG, XML_BYTE_CLASS};
 
+#[path = "xml_dom.rs"]
+mod dom;
+
 /// Scalar stop classes for the contexts that skip ahead (see `Scanner::next_stop`).
 const STOP_CONTENT: u8 = CLASS_LT | CLASS_GT | CLASS_ALWAYS;
 const STOP_ATT_VALUE: u8 = CLASS_LT | CLASS_GT | CLASS_ALWAYS | CLASS_TAG;
@@ -522,6 +525,8 @@ enum Kind<'a, U: Unit> {
     /// Character data with CDATA sections, references and included entities
     /// folded in.
     Text(&'a [U]),
+    /// A CDATA section's text, when `Scanner::for_dom` keeps it apart from `Text`.
+    CData(&'a [U]),
     /// A character that cannot start any token; always an error, which the
     /// parser reports along with what it expected there.
     Unexpected(u32),
@@ -587,6 +592,7 @@ impl<U: Unit> core::fmt::Display for KindDisplay<'_, U> {
             Kind::StartTag(n) => name(f, "<", n, ""),
             Kind::EndTag(n) => name(f, "</", n, ""),
             Kind::Text(_) => f.write_str("text"),
+            Kind::CData(_) => f.write_str("a CDATA section"),
             Kind::Unexpected(cp) => match char::from_u32(cp) {
                 Some(c) if c.is_ascii_graphic() => write!(f, "'{}'", c),
                 Some(c) if !c.is_control() => write!(f, "'{}' (U+{:04X})", c, cp),
@@ -691,10 +697,31 @@ fn predefined_entity<U: Unit>(name: &[U]) -> Option<u8> {
     }
 }
 
+/// The doctypes whose external subset declares HTML's named character references: https://html.spec.whatwg.org/multipage/xhtml.html#parsing-xhtml-documents and two more that WebKit knows.
+const HTML_ENTITIES_PUBLIC_IDS: [&[u8]; 11] = [
+    b"-//W3C//DTD XHTML 1.0 Transitional//EN",
+    b"-//W3C//DTD XHTML 1.1//EN",
+    b"-//W3C//DTD XHTML 1.0 Strict//EN",
+    b"-//W3C//DTD XHTML 1.0 Frameset//EN",
+    b"-//W3C//DTD XHTML Basic 1.0//EN",
+    b"-//W3C//DTD XHTML 1.1 plus MathML 2.0//EN",
+    b"-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN",
+    b"-//W3C//DTD MathML 2.0//EN",
+    b"-//WAPFORUM//DTD XHTML Mobile 1.0//EN",
+    b"-//WAPFORUM//DTD XHTML Mobile 1.1//EN",
+    b"-//WAPFORUM//DTD XHTML Mobile 1.2//EN",
+];
+
+/// Returns false if HTML has no `&name;`. Otherwise writes its one or two code points, the second 0 if there is one.
+type HtmlEntityLookup<U> =
+    unsafe extern "C" fn(name: *const U, name_length: usize, code_points: *mut [u32; 2]) -> bool;
+
 /// What a general entity reference contributes where it is included.
 enum Resolved<'a, U: Unit> {
     /// A predefined entity's character.
     Byte(u8),
+    /// A named character reference of HTML. The second is 0 if there is one.
+    CodePoints([u32; 2]),
     /// Replacement text to scan in a new input frame.
     Text(&'a [U]),
     /// Nothing known: the reference itself is kept as character data.
@@ -776,6 +803,13 @@ struct Scanner<'a, 'log, U: Unit> {
     /// tokens (the node tree keeps them) instead of vanishing inside a text
     /// run.
     keep_markup: bool,
+    /// The result is a DOM tree, as a browser builds it: a CDATA section is a token of its own, a reference to an entity that no declaration read here declares is an error, and an external entity is empty.
+    for_dom: bool,
+    /// For a document whose doctype is one of `HTML_ENTITIES_PUBLIC_IDS`.
+    html_entities: Option<HtmlEntityLookup<U>>,
+    doctype_declares_html_entities: bool,
+    /// Where the error was found, in code units of the buffer that is scanned.
+    error_pos: usize,
     /// The current token: `next` / `next_content` write it in place.
     tok: Token<'a, U>,
     /// A `>` was read as literal data since the last `<`: the index producer
@@ -867,6 +901,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
     }
 
     fn err_fmt(&mut self, pos: usize, args: core::fmt::Arguments<'_>) -> PErr {
+        self.error_pos = pos;
         let loc = self.loc(pos);
         self.log.add_error_fmt_opts(
             args,
@@ -935,6 +970,14 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
 
     fn err_invalid_char(&mut self) -> PErr {
         self.err_here("Invalid character in XML:")
+    }
+
+    /// Namespaces in XML §7: only the names of elements and attributes may have a colon. Their colons are for the DOM to check.
+    fn check_no_colon(&mut self, pos: usize, what: &'static str, name: &[U]) -> PResult<()> {
+        if self.for_dom && find_ascii(name, b":").is_some() {
+            return Err(self.err_named(pos, what, name, " cannot have a colon in it"));
+        }
+        Ok(())
     }
 
     // ── byte cursor ────────────────────────────────────────────────────────
@@ -1117,7 +1160,18 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         if let Some(c) = predefined_entity(name) {
             return Ok(Resolved::Byte(c));
         }
-        match self.entities.general.get(name).copied() {
+        let declared = self.entities.general.get(name).copied();
+        if declared.is_none()
+            && self.doctype_declares_html_entities
+            && let Some(lookup) = self.html_entities
+        {
+            let mut code_points = [0u32; 2];
+            // SAFETY: `name` is valid for reads of `name.len()` units and `code_points` for a write, which is all the callback asks.
+            if unsafe { lookup(name.as_ptr(), name.len(), &raw mut code_points) } {
+                return Ok(Resolved::CodePoints(code_points));
+            }
+        }
+        match declared {
             Some(EntityValue::Internal(text)) => Ok(Resolved::Text(text)),
             // WFC: No External Entity References.
             Some(EntityValue::External) if in_attribute => Err(self.err_named(
@@ -1140,7 +1194,10 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
             // may live in the part of the DTD that is not loaded, an
             // undeclared entity is only a validity error, and the reference
             // is kept as written.
-            None if self.standalone || !(self.has_external_subset || self.saw_pe_reference) => {
+            None if self.standalone
+                || self.for_dom
+                || !(self.has_external_subset || self.saw_pe_reference) =>
+            {
                 Err(self.err_named(ref_pos, "Entity", name, " is not declared"))
             }
             None => Ok(Resolved::Unexpanded),
@@ -1500,6 +1557,15 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         Ok(())
     }
 
+    /// See `Resolved::CodePoints`.
+    fn push_code_points(&self, buf: &mut ArenaVec<'a, U>, code_points: [u32; 2]) -> PResult<()> {
+        self.push_code_point(buf, code_points[0])?;
+        if code_points[1] != 0 {
+            self.push_code_point(buf, code_points[1])?;
+        }
+        Ok(())
+    }
+
     /// Copies the borrowed run `src[start..end]` into a buffer the first
     /// time decoding has to diverge from the source bytes.
     fn materialize<'b>(
@@ -1624,6 +1690,9 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                             .scan_reference_name("Expected an entity name after '&' but found")?;
                         match self.resolve_general_entity(name, ref_pos, true)? {
                             Resolved::Byte(byte) => b.push(U::ascii(byte)),
+                            Resolved::CodePoints(code_points) => {
+                                self.push_code_points(b, code_points)?
+                            }
                             Resolved::Text(text) => {
                                 self.push_frame(text, FrameKind::Literal, (name, false), ref_pos)?
                             }
@@ -1835,6 +1904,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                 "'<?xml' is reserved for the XML declaration, which is only allowed at the very start of the document",
             ));
         }
+        self.check_no_colon(start_pos, "Processing instruction target", target)?;
         if self.starts_with(b"?>") {
             self.pos += 2;
             return Ok(Some((target, &[])));
@@ -2279,6 +2349,23 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                             return Ok(());
                         }
                         start = self.pos;
+                    } else if self.for_dom && next == b'!' && self.starts_with(b"<![CDATA[") {
+                        if have_text!() {
+                            // The section is a token of its own; the run ends here.
+                            self.finish_text(start, buf, text_pos);
+                            return Ok(());
+                        }
+                        let frame = self.frame_id;
+                        let mut section = ArenaVec::with_capacity_in(32, self.bump);
+                        self.pos += 9;
+                        self.scan_cdata(pos, &mut section)?;
+                        self.tok = Token {
+                            kind: Kind::CData(section.into_bump_slice()),
+                            pos,
+                            frame,
+                            spaced: false,
+                        };
+                        return Ok(());
                     } else if next == b'!' && self.starts_with(b"<![CDATA[") {
                         let mut b = match buf.take() {
                             Some(mut b) => {
@@ -2338,9 +2425,13 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                             .scan_reference_name("Expected an entity name after '&' but found")?;
                         match self.resolve_general_entity(name, ref_pos, false)? {
                             Resolved::Byte(byte) => b.push(U::ascii(byte)),
+                            Resolved::CodePoints(code_points) => {
+                                self.push_code_points(b, code_points)?
+                            }
                             Resolved::Text(text) => {
                                 self.push_frame(text, FrameKind::Content, (name, false), ref_pos)?
                             }
+                            Resolved::Unexpanded if self.for_dom => {}
                             Resolved::Unexpanded => Self::push_reference(b, name),
                         }
                         start = self.pos;
@@ -2396,19 +2487,41 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
 /// Receives the document structure from the parser — attributes already
 /// deduplicated, normalized and defaulted — and builds the rows.
 trait Sink<'a, U: Unit> {
+    type Output;
     /// `begin_element`, any number of `attribute`s; then content (`text`
     /// and child elements); then `end_element`.
-    fn begin_element(&mut self, name: &'a [U], loc: Loc);
+    /// `pos` is where the start tag is, as for `Scanner::error_pos`.
+    fn begin_element(&mut self, name: &'a [U], loc: Loc, pos: usize);
     fn attribute(&mut self, name: &'a [U], value: &'a [U]);
     fn text(&mut self, text: &'a [U], loc: Loc);
+    /// Only called when `Scanner::for_dom`.
+    fn cdata(&mut self, _text: &'a [U]) {}
     /// Only called when `Scanner::keep_markup`.
     fn comment(&mut self, _text: &'a [U], _loc: Loc) {}
     fn pi(&mut self, _target: &'a [U], _data: &'a [U], _loc: Loc) {}
     fn end_element(&mut self);
     /// `text` (the element's only content) then `end_element`, in one step.
     fn end_leaf(&mut self, text: &'a [U], loc: Loc);
+    /// What stands outside the root element. The texts are empty unless `Scanner::keep_markup`.
+    fn xml_declaration(
+        &mut self,
+        _version: &'a [U],
+        _encoding: Option<&'a [U]>,
+        _standalone: Option<bool>,
+    ) {
+    }
+    fn doctype(&mut self, _name: &'a [U], _external_id: ExternalId<'a, U>) {}
+    fn misc_comment(&mut self, _text: &'a [U]) {}
+    fn misc_pi(&mut self, _target: &'a [U], _data: &'a [U]) {}
     /// Called once, after the root element has ended.
-    fn finish(&mut self) -> Expr;
+    fn finish(&mut self) -> Self::Output;
+}
+
+/// `ExternalID` (§4.2.2 [75]). An identifier that is not there is empty.
+#[derive(Copy, Clone)]
+struct ExternalId<'a, U: Unit> {
+    public_id: &'a [U],
+    system_id: &'a [U],
 }
 
 /// Rows staged for the tape, in the two columns the tape appends them as.
@@ -2840,8 +2953,10 @@ impl<'a, U: Unit> CompactSink<'a, U> {
 }
 
 impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
+    type Output = Expr;
+
     #[inline]
-    fn begin_element(&mut self, name: &'a [U], loc: Loc) {
+    fn begin_element(&mut self, name: &'a [U], loc: Loc, _pos: usize) {
         self.stack.push(CompactFrame {
             name,
             loc,
@@ -2967,8 +3082,10 @@ impl<'a, U: Unit> NodeSink<'a, U> {
 }
 
 impl<'a, U: Unit> Sink<'a, U> for NodeSink<'a, U> {
+    type Output = Expr;
+
     #[inline]
-    fn begin_element(&mut self, name: &'a [U], loc: Loc) {
+    fn begin_element(&mut self, name: &'a [U], loc: Loc, _pos: usize) {
         self.stack.push(NodeFrame {
             name,
             loc,
@@ -3158,6 +3275,10 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                 cursor: 0,
                 latin1: options.encoding == InputEncoding::Latin1,
                 keep_markup: !options.compact,
+                for_dom: false,
+                html_entities: None,
+                doctype_declares_html_entities: false,
+                error_pos: 0,
                 tok: Token {
                     kind: Kind::Eof(None),
                     pos: 0,
@@ -3268,7 +3389,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     // ── document ───────────────────────────────────────────────────────────
 
     /// `document ::= prolog element Misc*` (§2.1 [1]).
-    fn parse_document(mut self) -> PResult<Expr> {
+    fn parse_document(&mut self) -> PResult<S::Output> {
         // An XML declaration has to be read before the encoding it declares
         // can be applied and the input validated (its tokens are checked
         // against ASCII names and values, so nothing mis-decoded survives).
@@ -3296,7 +3417,8 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         let mut seen_doctype = false;
         loop {
             match self.scanner.tok.kind {
-                Kind::Comment(_) | Kind::Pi(..) => {}
+                Kind::Comment(text) => self.sink.misc_comment(text),
+                Kind::Pi(target, data) => self.sink.misc_pi(target, data),
                 Kind::Decl(DeclKind::Doctype) if !seen_doctype => {
                     seen_doctype = true;
                     self.parse_doctype()?;
@@ -3331,7 +3453,8 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         loop {
             self.advance()?;
             match self.scanner.tok.kind {
-                Kind::Comment(_) | Kind::Pi(..) => {}
+                Kind::Comment(text) => self.sink.misc_comment(text),
+                Kind::Pi(target, data) => self.sink.misc_pi(target, data),
                 Kind::Eof(_) => break,
                 Kind::StartTag(_) => {
                     return Err(self
@@ -3406,10 +3529,11 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         }
 
         // SDDecl.
+        let mut standalone = None;
         if let Some((value, pos)) = self.parse_pseudo_attribute(b"standalone")? {
             match value {
-                v if eq_ascii(v, b"yes") => self.scanner.standalone = true,
-                v if eq_ascii(v, b"no") => {}
+                v if eq_ascii(v, b"yes") => standalone = Some(true),
+                v if eq_ascii(v, b"no") => standalone = Some(false),
                 _ => {
                     return Err(self.scanner.err_named(
                         pos,
@@ -3420,6 +3544,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                 }
             }
         }
+        self.scanner.standalone = standalone == Some(true);
 
         // S? '?>'
         match self.scanner.tok.kind {
@@ -3461,6 +3586,8 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         if let Some((name, pos)) = encoding {
             self.scanner.apply_declared_encoding(name, pos)?;
         }
+        self.sink
+            .xml_declaration(version, encoding.map(|(name, _)| name), standalone);
         Ok(())
     }
 
@@ -3492,15 +3619,23 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     fn parse_doctype(&mut self) -> PResult<()> {
         self.in_dtd = true;
         self.advance()?;
-        self.expect_name("the document type name")?;
+        let name = self.expect_name("the document type name")?;
         self.require_spaced()?;
         self.advance()?;
+        let mut external_id = ExternalId {
+            public_id: &[],
+            system_id: &[],
+        };
         if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC"))
         {
             self.require_spaced()?;
-            self.parse_external_id(false)?;
+            external_id = self.parse_external_id(false)?;
             self.scanner.has_external_subset = true;
+            self.scanner.doctype_declares_html_entities = HTML_ENTITIES_PUBLIC_IDS
+                .iter()
+                .any(|id| eq_ascii(external_id.public_id, id));
         }
+        self.sink.doctype(name, external_id);
         match self.scanner.tok.kind {
             Kind::Gt => {}
             Kind::BracketOpen => {
@@ -3520,29 +3655,40 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
 
     /// `ExternalID` (§4.2.2 [75]) — or, for a NOTATION (`notation`, [83]),
     /// also a `PublicID` without system identifier; the current token is
-    /// `SYSTEM` or `PUBLIC`. The identifiers are checked and dropped (nothing
+    /// `SYSTEM` or `PUBLIC`. The identifiers are only checked (nothing
     /// external is read). Ends on the token after the last literal.
-    fn parse_external_id(&mut self, notation: bool) -> PResult<()> {
+    fn parse_external_id(&mut self, notation: bool) -> PResult<ExternalId<'a, U>> {
         if matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM")) {
             self.advance_literal(Literal::System)?;
-            if !matches!(self.scanner.tok.kind, Kind::Literal(_)) {
+            let Kind::Literal(system_id) = self.scanner.tok.kind else {
                 return Err(self.unexpected("a quoted system identifier after SYSTEM"));
-            }
+            };
             self.require_spaced()?;
-            return self.advance();
+            self.advance()?;
+            return Ok(ExternalId {
+                public_id: &[],
+                system_id,
+            });
         }
         self.advance_literal(Literal::Pubid)?;
-        if !matches!(self.scanner.tok.kind, Kind::Literal(_)) {
+        let Kind::Literal(public_id) = self.scanner.tok.kind else {
             return Err(self.unexpected("a quoted public identifier after PUBLIC"));
-        }
+        };
         self.require_spaced()?;
         self.advance_literal(Literal::System)?;
-        if matches!(self.scanner.tok.kind, Kind::Literal(_)) {
+        if let Kind::Literal(system_id) = self.scanner.tok.kind {
             self.require_spaced()?;
-            return self.advance();
+            self.advance()?;
+            return Ok(ExternalId {
+                public_id,
+                system_id,
+            });
         }
         if notation {
-            return Ok(());
+            return Ok(ExternalId {
+                public_id,
+                system_id: &[],
+            });
         }
         Err(self.unexpected("a quoted system identifier after the public identifier"))
     }
@@ -3879,6 +4025,8 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             "an entity name or '%' after '<!ENTITY'"
         })?;
         self.require_spaced()?;
+        self.scanner
+            .check_no_colon(self.scanner.tok.pos, "Entity name", name)?;
 
         self.advance_literal(Literal::EntityValue)?;
         let value = match self.scanner.tok.kind {
@@ -3926,8 +4074,10 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     /// Returns the frame of its `>`.
     fn parse_notation_decl(&mut self) -> PResult<u32> {
         self.advance()?;
-        self.expect_name("a notation name after '<!NOTATION'")?;
+        let name = self.expect_name("a notation name after '<!NOTATION'")?;
         self.require_spaced()?;
+        self.scanner
+            .check_no_colon(self.scanner.tok.pos, "Notation name", name)?;
         self.advance()?;
         if !matches!(self.scanner.tok.kind, Kind::Name(n) if eq_ascii(n, b"SYSTEM") || eq_ascii(n, b"PUBLIC"))
         {
@@ -3959,6 +4109,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                     let loc = self.scanner.loc(self.scanner.tok.pos);
                     self.sink.text(text, loc);
                 }
+                Kind::CData(text) => self.sink.cdata(text),
                 Kind::StartTag(_) => self.open_element()?,
                 Kind::EndTag(end_name) => {
                     let pos = self.scanner.tok.pos;
@@ -4004,7 +4155,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
             return Err(self.stack_overflow());
         }
         let loc = self.scanner.loc(pos);
-        self.sink.begin_element(name, loc);
+        self.sink.begin_element(name, loc, pos);
         let empty = self.parse_attributes(name)?;
         if empty {
             self.sink.end_element();

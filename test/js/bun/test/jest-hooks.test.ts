@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 let hooks_run: string[] = [];
 
@@ -246,6 +247,30 @@ describe("test jest hooks in bun-test", () => {
     it("should have called afterEach for previous test", () => {
       expect(beforeEachCalled).toEqual(2); // Called once just before this test
       expect(afterEachCalled).toEqual(1);
+    });
+  });
+});
+
+describe("registered inside AsyncLocalStorage.run()", () => {
+  const storage = new AsyncLocalStorage<string>();
+  const seen: (string | undefined)[] = [];
+  storage.run("store", () => {
+    beforeAll(() => void seen.push(storage.getStore()));
+    beforeEach(() => void seen.push(storage.getStore()));
+
+    it("a callback without a parameter isn't waited for as one that takes done", (...args) => {
+      expect(args).toEqual([]);
+      expect([...seen, storage.getStore()]).toEqual(["store", "store", "store"]);
+    });
+
+    it("a callback with a parameter is given done", done => {
+      expect(storage.getStore()).toBe("store");
+      done();
+    });
+
+    it.each([[1, 2]])("so is one with a parameter past the row's values", (a, b, done) => {
+      expect([a, b, storage.getStore()]).toEqual([1, 2, "store"]);
+      done();
     });
   });
 });

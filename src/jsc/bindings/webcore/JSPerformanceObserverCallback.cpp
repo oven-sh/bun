@@ -54,7 +54,7 @@ JSPerformanceObserverCallback::~JSPerformanceObserverCallback()
 #endif
 }
 
-CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverCallback::handleEvent(typename IDLInterface<PerformanceObserver>::ParameterType thisObject, typename IDLInterface<PerformanceObserverEntryList>::ParameterType entries, typename IDLInterface<PerformanceObserver>::ParameterType observer)
+CallbackResult<typename IDLUndefined::CallbackReturnType> JSPerformanceObserverCallback::handleEvent(typename IDLInterface<PerformanceObserver>::ParameterType thisObject, typename IDLInterface<PerformanceObserverEntryList>::ParameterType entries, typename IDLInterface<PerformanceObserver>::ParameterType observer)
 {
     if (!canInvokeCallback())
         return CallbackResultType::UnableToExecute;
@@ -86,14 +86,14 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
     return {};
 }
 
-void JSPerformanceObserverCallback::visitJSFunction(JSC::AbstractSlotVisitor& visitor)
+void JSPerformanceObserverCallback::visitJSFunctionInGCThread(JSC::AbstractSlotVisitor& visitor)
 {
-    m_data->visitJSFunction(visitor);
+    m_data->visitJSFunctionInGCThread(visitor);
 }
 
-void JSPerformanceObserverCallback::visitJSFunction(JSC::SlotVisitor& visitor)
+void JSPerformanceObserverCallback::visitJSFunctionInGCThread(JSC::SlotVisitor& visitor)
 {
-    m_data->visitJSFunction(visitor);
+    m_data->visitJSFunctionInGCThread(visitor);
 }
 
 } // namespace WebCore

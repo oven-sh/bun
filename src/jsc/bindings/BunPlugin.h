@@ -2,8 +2,10 @@
 
 #include "root.h"
 #include "headers-handwritten.h"
+#include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Strong.h>
+#include <wtf/ListHashSet.h>
 #include "helpers.h"
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
@@ -82,7 +84,46 @@ public:
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
-        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path);
+        // Set right before requestImportModule(), to tell moduleLoaderResolve() it's a script's import(), which can't use NUL-prefixed keys.
+        bool isResolvingImportCall = false;
+        struct RunningModuleMock {
+            JSC::Strong<JSC::JSObject> mock;
+            // The factory's source file, and every module imported from it (transitively) since the factory was called.
+            String file;
+            WTF::UncheckedKeyHashSet<String> importChain;
+            // importChain keys that have a query, with it stripped, because import() names its importer without the query.
+            WTF::UncheckedKeyHashSet<String> importChainWithoutQuery;
+            // Chain modules with an import redirected to the original or a copy. Evicted once the factory stops running.
+            Vector<String> givenTheOriginal;
+            // isWaitingForModule()'s cache.
+            WTF::UncheckedKeyHashSet<String> waitingModules;
+        };
+        Vector<RunningModuleMock> runningModuleMocks = {};
+        // Preload mocks that the running test file replaced or removed. Restored when the file ends.
+        Vector<JSC::Strong<JSC::JSObject>> displacedPreloadModuleMocks = {};
+        // Modules a preload loaded that the running test file evicted. Restored when the file ends.
+        WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadModules = {};
+        WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> evictedPreloadCommonJSModules = {};
+        // Starts at 1 so that a missing testFileOfModule entry (0) means a preload fetched the module.
+        unsigned testFile = 1;
+        // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
+        WTF::UncheckedKeyHashSet<String> modulesThatMocked = {};
+        WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
+        WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
+        // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepModuleMockOfLoadInFlight).
+        VirtualModuleMap moduleMocksBeingLoaded = {};
+        // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
+        WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
+
+        struct Matches {
+            JSC::JSString* path { nullptr };
+            JSC::MarkedArgumentBuffer callbacks;
+            size_t next { 0 };
+        };
+
+        JSC::JSValue run(JSC::JSGlobalObject* globalObject, const String& key, Matches& matches);
+        // Calls callbacks while `answer` is null or undefined. Returns an object, a pending or rejected promise, or empty if all declined.
+        static JSC::JSValue ask(JSC::JSGlobalObject* globalObject, Matches& matches, JSC::JSValue answer);
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
@@ -96,6 +137,10 @@ public:
             delete virtualModules;
             virtualModules = nullptr;
             mustDoExpensiveRelativeLookup = false;
+            displacedPreloadModuleMocks.clear();
+            runningModuleMocks.clear();
+            moduleMocksBeingLoaded.clear();
+            loadedByImportActual.clear();
         }
 
         ~OnLoad()
@@ -122,7 +167,29 @@ class GlobalObject;
 
 } // namespace Zig
 
+namespace JSC {
+class JSModuleNamespaceObject;
+class JSSourceCode;
+}
+
 namespace Bun {
-JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock);
+JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad);
+JSC::JSValue findModuleMock(Zig::GlobalObject*, const BunString* specifier);
+// Returns null if the factory has settled or the generated ES module will call it (never when `synchronous`), else a promise for that.
+JSC::JSPromise* runModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, bool synchronous);
+// False if the mock was replaced or removed before its factory was called.
+bool isModuleMockInUse(Zig::GlobalObject*, JSC::JSObject* moduleMock);
+// The exports, or a JSCommonJSModule that has them as `module.exports`. Null until the factory settles.
+JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
+JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key, const String& typeAttribute);
+// Whether sourceCodeOfModuleMock() generated module `key`. Its import specifiers are NUL-prefixed registry keys.
+bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
+// Redirects what a running factory imports: the mocked module to its original, and a module that waits for the mock to a private copy, or if it's a mock, to a module that doesn't wait.
+String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
+String keyOfImportByPackage(Zig::GlobalObject*, const String& key, const String& importer);
+JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
+// Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
+void evictModulesThatHaveLoaded(Zig::GlobalObject*);
+void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

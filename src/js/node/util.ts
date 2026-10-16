@@ -45,7 +45,7 @@ function lazyInspectModule() {
 
 var debugs = {};
 var debugEnvRegex = /^$/;
-const NODE_DEBUG = process.env.NODE_DEBUG;
+const NODE_DEBUG = Bun.env.NODE_DEBUG;
 if (NODE_DEBUG) {
   debugEnv = NODE_DEBUG;
   debugEnv = debugEnv

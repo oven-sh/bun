@@ -84,6 +84,18 @@ public:
         DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
     }
 
+    void resolveWithJSValue(JSC::JSValue resolution)
+    {
+        if (shouldIgnoreRequestToFulfill())
+            return;
+
+        ASSERT(deferred());
+        ASSERT(globalObject());
+        auto* lexicalGlobalObject = globalObject();
+        JSC::JSLockHolder locker(lexicalGlobalObject);
+        resolve(*lexicalGlobalObject, resolution);
+    }
+
     void resolve()
     {
         if (shouldIgnoreRequestToFulfill())

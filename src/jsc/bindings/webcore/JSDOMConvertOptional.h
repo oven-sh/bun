@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,66 +25,124 @@
 
 #pragma once
 
+#include "BunIDLConvertBase.h"
 #include "IDLTypes.h"
-#include "JSDOMConvertNullable.h"
+#include "JSDOMConvertBase.h"
+#include "JSDOMGlobalObject.h"
 
 namespace WebCore {
 
-template<typename T> struct Converter<IDLOptional<T>> : DefaultConverter<IDLOptional<T>> {
-    using ReturnType = typename Converter<IDLNullable<T>>::ReturnType;
+// `IDLOptional` is just like `IDLNullable`, but used in places that where the type is implicitly optional,
+// like optional arguments to functions without default values, or non-required members of dictionaries
+// without default values.
+//
+// As such, rather than checking `isUndefinedOrNull()`, IDLOptional uses `isUndefined()` matching what
+// is needed in those cases.
 
-    static constexpr bool conversionHasSideEffects = WebCore::Converter<T>::conversionHasSideEffects;
+template<typename IDL> struct Converter<IDLOptional<IDL>> : DefaultConverter<IDLOptional<IDL>> {
+    using Result = ConversionResult<IDLOptional<IDL>>;
+    using ReturnType = typename DefaultConverter<IDLOptional<IDL>>::ReturnType;
 
+    static constexpr bool conversionHasSideEffects = Converter<IDL>::conversionHasSideEffects;
     static constexpr bool takesContext = true;
 
     template<Bun::IDLConversionContext Ctx>
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, Ctx& ctx)
     {
         if (value.isUndefined())
-            return T::nullValue();
-        return Bun::convertIDL<T>(lexicalGlobalObject, value, ctx);
+            return IDL::nullValue();
+        return Bun::convertIDL<IDL>(lexicalGlobalObject, value, ctx);
     }
 
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
         if (value.isUndefined())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value);
+            return { IDL::nullValue() };
+        return WebCore::convert<IDL>(lexicalGlobalObject, value);
     }
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSC::JSObject& thisObject)
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSC::JSObject& thisObject)
     {
         if (value.isUndefined())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value, thisObject);
+            return { IDL::nullValue() };
+        return WebCore::convert<IDL>(lexicalGlobalObject, value, thisObject);
     }
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject)
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject)
     {
         if (value.isUndefined())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value, globalObject);
+            return { IDL::nullValue() };
+        return WebCore::convert<IDL>(lexicalGlobalObject, value, globalObject);
     }
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-        requires(!Bun::IDLConversionContext<std::decay_t<ExceptionThrower>>)
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower)
+    template<ExceptionThrowerFunctor ExceptionThrower = DefaultExceptionThrower>
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, NOESCAPE ExceptionThrower&& exceptionThrower)
     {
         if (value.isUndefined())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
+            return { IDL::nullValue() };
+        return WebCore::convert<IDL>(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
     }
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSC::JSObject& thisObject, ExceptionThrower&& exceptionThrower)
+    template<ExceptionThrowerFunctor ExceptionThrower = DefaultExceptionThrower>
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSC::JSObject& thisObject, NOESCAPE ExceptionThrower&& exceptionThrower)
     {
         if (value.isUndefined())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value, thisObject, std::forward<ExceptionThrower>(exceptionThrower));
+            return { IDL::nullValue() };
+        return WebCore::convert<IDL>(lexicalGlobalObject, value, thisObject, std::forward<ExceptionThrower>(exceptionThrower));
     }
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, ExceptionThrower&& exceptionThrower)
+    template<ExceptionThrowerFunctor ExceptionThrower = DefaultExceptionThrower>
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, NOESCAPE ExceptionThrower&& exceptionThrower)
     {
         if (value.isUndefined())
-            return T::nullValue();
-        return Converter<T>::convert(lexicalGlobalObject, value, globalObject, std::forward<ExceptionThrower>(exceptionThrower));
+            return { IDL::nullValue() };
+        return WebCore::convert<IDL>(lexicalGlobalObject, value, globalObject, std::forward<ExceptionThrower>(exceptionThrower));
     }
 };
+
+// MARK: Helper functions for invoking an optional conversion.
+
+template<typename IDL, DefaultValueFunctor<IDL> DefaultValueFunctor>
+ConversionResult<IDL> convertOptionalWithDefault(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, NOESCAPE const DefaultValueFunctor& defaultValue)
+{
+    if (value.isUndefined())
+        return defaultValue();
+    return convert<IDL>(lexicalGlobalObject, value);
+}
+
+template<typename IDL, DefaultValueFunctor<IDL> DefaultValueFunctor>
+ConversionResult<IDL> convertOptionalWithDefault(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSC::JSObject& thisObject, NOESCAPE const DefaultValueFunctor& defaultValue)
+{
+    if (value.isUndefined())
+        return defaultValue();
+    return convert<IDL>(lexicalGlobalObject, value, thisObject);
+}
+
+template<typename IDL, DefaultValueFunctor<IDL> DefaultValueFunctor>
+ConversionResult<IDL> convertOptionalWithDefault(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, NOESCAPE const DefaultValueFunctor& defaultValue)
+{
+    if (value.isUndefined())
+        return defaultValue();
+    return convert<IDL>(lexicalGlobalObject, value, globalObject);
+}
+
+template<typename IDL, DefaultValueFunctor<IDL> DefaultValueFunctor, ExceptionThrowerFunctor ExceptionThrower>
+ConversionResult<IDL> convertOptionalWithDefault(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, NOESCAPE const DefaultValueFunctor& defaultValue, NOESCAPE ExceptionThrower&& exceptionThrower)
+{
+    if (value.isUndefined())
+        return defaultValue();
+    return convert<IDL>(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
+}
+
+template<typename IDL, DefaultValueFunctor<IDL> DefaultValueFunctor, ExceptionThrowerFunctor ExceptionThrower>
+ConversionResult<IDL> convertOptionalWithDefault(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSC::JSObject& thisObject, NOESCAPE const DefaultValueFunctor& defaultValue, NOESCAPE ExceptionThrower&& exceptionThrower)
+{
+    if (value.isUndefined())
+        return defaultValue();
+    return convert<IDL>(lexicalGlobalObject, value, thisObject, std::forward<ExceptionThrower>(exceptionThrower));
+}
+
+template<typename IDL, DefaultValueFunctor<IDL> DefaultValueFunctor, ExceptionThrowerFunctor ExceptionThrower>
+ConversionResult<IDL> convertOptionalWithDefault(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, NOESCAPE const DefaultValueFunctor& defaultValue, NOESCAPE ExceptionThrower&& exceptionThrower)
+{
+    if (value.isUndefined())
+        return defaultValue();
+    return convert<IDL>(lexicalGlobalObject, value, globalObject, std::forward<ExceptionThrower>(exceptionThrower));
+}
 
 } // namespace WebCore

@@ -41,6 +41,7 @@
 #include "Event.h"
 #include "EventListener.h"
 #include "EventNames.h"
+#include "EventTargetInlines.h"
 #include "MessageEvent.h"
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/ArrayBuffer.h>
@@ -216,13 +217,13 @@ static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl
 
     URL url { proxyUrl };
     if (!url.isValid())
-        return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
+        return Exception { JSSyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
 
     // Only HTTP CONNECT proxies are supported. Reject socks5://, ftp://, etc. up front
     // instead of silently sending an HTTP CONNECT request to a non-HTTP proxy, matching
     // fetch()'s UnsupportedProxyProtocol behaviour.
     if (!url.protocolIsInHTTPFamily())
-        return Exception { SyntaxError, makeString("Unsupported proxy protocol \""_s, url.protocol(), "\" (expected \"http\" or \"https\")"_s) };
+        return Exception { JSSyntaxError, makeString("Unsupported proxy protocol \""_s, url.protocol(), "\" (expected \"http\" or \"https\")"_s) };
 
     ProxyConfig config;
     config.host = url.host().toString();
@@ -287,7 +288,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers)
 {
     if (url.isNull())
-        return Exception { SyntaxError };
+        return Exception { JSSyntaxError };
 
     auto socket = adoptRef(*new WebSocket(context));
     socket->suspendIfNeeded();
@@ -307,7 +308,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
 {
     if (url.isNull())
-        return Exception { SyntaxError };
+        return Exception { JSSyntaxError };
 
     auto proxyConfigResult = setupProxy(proxyUrl, WTF::move(proxyHeaders));
     if (proxyConfigResult.hasException())
@@ -331,7 +332,7 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate)
 {
     if (url.isNull())
-        return Exception { SyntaxError };
+        return Exception { JSSyntaxError };
 
     auto proxyConfigResult = setupProxy(proxyUrl, WTF::move(proxyHeaders));
     if (proxyConfigResult.hasException())
@@ -420,7 +421,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     if (!m_url.isValid()) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-        return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
+        return Exception { JSSyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
     }
 
     bool is_unix = m_url.protocolIs("ws+unix"_s) || m_url.protocolIs("wss+unix"_s);
@@ -429,12 +430,12 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure && !is_unix) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-        return Exception { SyntaxError, makeString("Wrong url scheme for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
+        return Exception { JSSyntaxError, makeString("Wrong url scheme for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
     }
     if (m_url.hasFragmentIdentifier()) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-        return Exception { SyntaxError, makeString("URL has fragment component "_s, m_url.stringCenterEllipsizedToLength()) };
+        return Exception { JSSyntaxError, makeString("URL has fragment component "_s, m_url.stringCenterEllipsizedToLength()) };
     }
 
     // FIXME: There is a disagreement about restriction of subprotocols between WebSocket API and hybi-10 protocol
@@ -448,7 +449,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         if (!isValidProtocolString(protocol)) {
             // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
             m_state = CLOSED;
-            return Exception { SyntaxError, makeString("Wrong protocol for WebSocket '"_s, encodeProtocolString(protocol), "'"_s) };
+            return Exception { JSSyntaxError, makeString("Wrong protocol for WebSocket '"_s, encodeProtocolString(protocol), "'"_s) };
         }
     }
     HashSet<String> visited;
@@ -456,7 +457,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         if (!visited.add(protocol).isNewEntry) {
             // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
             m_state = CLOSED;
-            return Exception { SyntaxError, makeString("WebSocket protocols contain duplicates:"_s, encodeProtocolString(protocol), "'"_s) };
+            return Exception { JSSyntaxError, makeString("WebSocket protocols contain duplicates:"_s, encodeProtocolString(protocol), "'"_s) };
         }
     }
 
@@ -479,7 +480,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         auto pathname = m_url.path();
         if (pathname.isEmpty()) {
             m_state = CLOSED;
-            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
+            return Exception { JSSyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
         }
         size_t colon = pathname.find(':');
         if (colon == notFound) {
@@ -499,7 +500,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         }
         if (unixSocketPathString.isEmpty()) {
             m_state = CLOSED;
-            return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
+            return Exception { JSSyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength(), " (missing unix socket path)"_s) };
         }
         // Host header defaults to "localhost" over a unix socket, matching
         // Node's http.request({ socketPath }) and the npm `ws` package.
@@ -841,7 +842,7 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
         // The limit is on the UTF-8 encoding of the reason, not its UTF-16 length.
         auto utf8Reason = reason.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
         if (utf8Reason.length() > maxReasonSizeInBytes)
-            return Exception { SyntaxError, makeString("The close reason must not be greater than "_s, maxReasonSizeInBytes, " UTF-8 bytes. Received "_s, utf8Reason.length(), " bytes."_s) };
+            return Exception { JSSyntaxError, makeString("The close reason must not be greater than "_s, maxReasonSizeInBytes, " UTF-8 bytes. Received "_s, utf8Reason.length(), " bytes."_s) };
     }
     int code = optionalCode ? optionalCode.value() : static_cast<int>(1000);
 
@@ -1192,12 +1193,12 @@ ExceptionOr<void> WebSocket::setBinaryType(const String& binaryType)
         return {};
     }
     // scriptExecutionContext()->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "'" + binaryType + "' is not a valid value for binaryType; binaryType remains unchanged.");
-    return Exception { SyntaxError, makeString("'"_s, binaryType, "' is not a valid value for binaryType; binaryType remains unchanged."_s) };
+    return Exception { JSSyntaxError, makeString("'"_s, binaryType, "' is not a valid value for binaryType; binaryType remains unchanged."_s) };
 }
 
-EventTargetInterface WebSocket::eventTargetInterface() const
+enum EventTargetInterfaceType WebSocket::eventTargetInterface() const
 {
-    return WebSocketEventTargetInterfaceType;
+    return EventTargetInterfaceType::WebSocket;
 }
 
 ScriptExecutionContext* WebSocket::scriptExecutionContext() const

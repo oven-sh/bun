@@ -91,6 +91,12 @@ pub fn vm_queue_task_after_yield(this: &VirtualMachine, task: *mut crate::cpp_ta
         .enqueue_task_after_yield(Task::init(task));
 }
 
+// HOST_EXPORT(Bun__VM__loopIterationNumber, c)
+pub fn vm_loop_iteration_number(this: &VirtualMachine) -> u64 {
+    // SAFETY: `usockets_loop()` returns this thread's live loop.
+    unsafe { (*this.event_loop_mut().usockets_loop()).iteration_number() }
+}
+
 /// Off-thread counterpart of [`vm_queue_task`] (`postTaskConcurrently`: the
 /// debugger and signal threads, work no script initiated), so it lands on the
 /// regular loop: see [`crate::VmHandle::post_cpp_task`].

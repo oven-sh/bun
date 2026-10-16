@@ -4,7 +4,7 @@
 
 namespace WebCore {
 
-template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, BufferEncodingType);
+template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, BufferEncodingType);
 
 template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType>(JSC::JSGlobalObject&, JSValue);
 std::optional<BufferEncodingType> parseEnumerationAllowBuffer(JSC::JSGlobalObject&, JSValue);

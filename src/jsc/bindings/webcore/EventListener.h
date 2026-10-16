@@ -20,7 +20,8 @@
 
 #pragma once
 
-#include <wtf/RefCounted.h>
+#include <cstdint>
+#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/WeakPtr.h>
 
 namespace JSC {
@@ -35,9 +36,9 @@ class ScriptExecutionContext;
 class Event;
 class EventTarget;
 
-class EventListener : public RefCounted<EventListener>, public CanMakeWeakPtr<EventListener> {
+class EventListener : public RefCountedAndCanMakeWeakPtr<EventListener> {
 public:
-    enum Type {
+    enum Type : uint8_t {
         JSEventListenerType,
         ImageEventListenerType,
         ObjCEventListenerType,
@@ -46,29 +47,25 @@ public:
         GObjectEventListenerType,
         NativeEventListenerType,
         SVGTRefTargetEventListenerType,
-        PDFDocumentEventListenerType,
+        PDFJSDocumentEventListenerType,
     };
 
     virtual ~EventListener() = default;
-    virtual bool operator==(const EventListener&) const = 0;
+    virtual bool operator==(const EventListener& other) const { return this == &other; }
+
     virtual void handleEvent(ScriptExecutionContext&, Event&) = 0;
 
-    virtual void visitJSFunction(JSC::AbstractSlotVisitor&) {}
-    virtual void visitJSFunction(JSC::SlotVisitor&) {}
+    virtual void visitJSFunctionInGCThread(JSC::AbstractSlotVisitor&) {}
+    virtual void visitJSFunctionInGCThread(JSC::SlotVisitor&) {}
 
     virtual bool isAttribute() const { return false; }
     Type type() const { return m_type; }
 
 #if ASSERT_ENABLED
-    virtual void checkValidityForEventTarget(EventTarget&)
-    {
-    }
+    virtual void checkValidityForEventTarget(EventTarget&) {}
 #endif
 
-    virtual JSC::JSObject* jsFunction() const
-    {
-        return nullptr;
-    }
+    virtual JSC::JSObject* jsFunction() const { return nullptr; }
     virtual JSC::JSObject* wrapper() const { return nullptr; }
 
 protected:

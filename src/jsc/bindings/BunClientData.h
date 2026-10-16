@@ -50,6 +50,7 @@ class ExtendedDOMClientIsoSubspaces;
 class ExtendedDOMIsoSubspaces;
 class JSBuiltinFunctions;
 
+class DOMClientData;
 class DOMWrapperWorld;
 }
 
@@ -84,6 +85,7 @@ class GlobalObject;
 
 namespace Bun {
 class StrongRootBlock;
+struct IsolatedInternalModule;
 
 // JSC measures the live size of the heap at the end of each collection, but only
 // publishes it per scope: an eden collection updates
@@ -232,6 +234,13 @@ public:
     }
 
     WebCore::DOMWrapperWorld& normalWorld() { return *m_normalWorld; }
+    // Created on first use, so a VM that never touches the DOM doesn't pay for it.
+    WebCore::DOMClientData& domClientData()
+    {
+        if (m_domClientData) [[likely]]
+            return *m_domClientData;
+        return createDOMClientData();
+    }
 
     JSC::GCClient::IsoSubspace& domConstructorSpace() { return m_domConstructorSpace; }
 
@@ -259,6 +268,9 @@ public:
     // The VM's default (first) Zig::GlobalObject: what defaultGlobalObject(JSC::VM&) returns on threads whose thread-local
     // default is not this VM's, e.g. the collector thread running a collection's end phase. gcProtect'ed for the VM's life.
     JSC::JSGlobalObject* defaultGlobalObject { nullptr };
+
+    // `bun test --isolate` loads DOM packages into this global, which outlives the test files. gcProtect'ed for the VM's life.
+    JSC::JSGlobalObject* testEnvironmentRealm { nullptr };
 
     // Idle full collections GarbageCollectionController requested that have not finished (see
     // Bun__JSC_onBeforeWait). Counted up on the JS thread, down at the end of each one's end phase, on either thread.
@@ -303,6 +315,7 @@ public:
     // only owner once the previous global is GC'd, so a weak map would empty
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
+    Vector<Bun::IsolatedInternalModule> isolationInternalModules;
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
 
@@ -340,6 +353,10 @@ private:
     std::unique_ptr<JSHeapData, JSHeapDataDeleter> m_heapData;
 
     RefPtr<WebCore::DOMWrapperWorld> m_normalWorld;
+    // Out of line: domClientData() is inlined into every function with a CustomElementReactionStack.
+    NEVER_INLINE WebCore::DOMClientData& createDOMClientData();
+
+    std::unique_ptr<WebCore::DOMClientData> m_domClientData;
     JSC::GCClient::IsoSubspace m_domConstructorSpace;
     JSC::GCClient::IsoSubspace m_domNamespaceObjectSpace;
 

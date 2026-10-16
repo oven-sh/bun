@@ -181,7 +181,7 @@ JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUIntBE);
 
 extern "C" EncodedJSValue WebCore_BufferEncodingType_toJS(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding)
 {
-    return JSC::JSValue::encode(WebCore::convertEnumerationToJS(*lexicalGlobalObject, encoding));
+    return JSC::JSValue::encode(WebCore::convertEnumerationToJS(lexicalGlobalObject->vm(), encoding));
 }
 
 namespace Bun {

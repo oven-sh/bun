@@ -2,14 +2,14 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::throw;
 use super::Expect;
+use super::Received;
 
 pub(crate) fn to_throw_error_matching_inline_snapshot(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // The guard owns the &mut, Derefs to it, and runs post_match on Drop.
-    let this = scopeguard::guard(this, |t| t.post_match(global));
+    let this = this.post_match_guard(global);
 
     let this_value = frame.this();
     let arguments: &[JSValue] = frame.arguments();
@@ -64,7 +64,7 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
         "toThrowErrorMatchingInlineSnapshot",
         "<green>properties<r><d>, <r>hint",
     )?;
-    let Some(value) = this.fn_to_err_string_or_undefined(global, received)? else {
+    let (Some(thrown), _) = this.get_value_as_to_throw(global, received)? else {
         let signature = Expect::get_signature("toThrowErrorMatchingInlineSnapshot", "", false);
         return throw!(
             this,
@@ -75,10 +75,10 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
     };
 
     Expect::inline_snapshot(
-        &**this,
+        &this,
         global,
         frame,
-        value,
+        Received::Thrown(thrown),
         None,
         expected_slice,
         "toThrowErrorMatchingInlineSnapshot",

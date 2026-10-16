@@ -30,6 +30,10 @@
 
 #include "config.h"
 #include "DOMFormData.h"
+#include "ContextDestructionObserverInlines.h"
+#include "ExceptionOr.h"
+#include "HTMLFormControlElement.h"
+#include "HTMLFormElement.h"
 #include "wtf/DebugHeap.h"
 #include <wtf/URLParser.h>
 
@@ -45,6 +49,35 @@ DOMFormData::DOMFormData(ScriptExecutionContext* context)
 Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context)
 {
     return adoptRef(*new DOMFormData(context));
+}
+
+ExceptionOr<Ref<DOMFormData>> DOMFormData::create(ScriptExecutionContext& context, HTMLFormElement* form, HTMLElement* submitter)
+{
+    Ref formData = adoptRef(*new DOMFormData(&context));
+    if (!form)
+        return formData;
+
+    RefPtr<HTMLFormControlElement> control;
+    if (submitter) {
+        control = dynamicDowncast<HTMLFormControlElement>(*submitter);
+        if (!control || !control->isSubmitButton())
+            return Exception { ExceptionCode::TypeError, "The specified element is not a submit button."_s };
+        if (control->form() != form)
+            return Exception { ExceptionCode::NotFoundError, "The specified element is not owned by this form element."_s };
+    }
+    auto result = form->constructEntryList(control.copyRef(), WTF::move(formData));
+
+    if (!result)
+        return Exception { ExceptionCode::InvalidStateError, "Already constructing Form entry list."_s };
+
+    return result.releaseNonNull();
+}
+
+Ref<DOMFormData> DOMFormData::clone() const
+{
+    auto newFormData = adoptRef(*new DOMFormData(scriptExecutionContext()));
+    newFormData->m_items = m_items;
+    return newFormData;
 }
 
 Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context, const StringView& urlEncodedString)

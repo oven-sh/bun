@@ -2697,7 +2697,7 @@ bool JSStatementSync::bindParams(JSGlobalObject* globalObject, ThrowScope& scope
             }
 
             PropertyNameArrayBuilder keys(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            named->getOwnPropertyNames(named, globalObject, keys, DontEnumPropertiesMode::Exclude);
+            named->methodTable()->getOwnPropertyNames(named, globalObject, keys, DontEnumPropertiesMode::Exclude);
             RETURN_IF_EXCEPTION(scope, false);
             for (auto& key : keys) {
                 WTF::String keyStr = key.string();

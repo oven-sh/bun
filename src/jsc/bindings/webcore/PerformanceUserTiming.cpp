@@ -81,12 +81,6 @@ ExceptionOr<Ref<PerformanceMark>> PerformanceUserTiming::mark(JSC::JSGlobalObjec
 {
     auto& context = *m_performance.scriptExecutionContext();
 
-    std::optional<MonotonicTime> timestamp;
-    if (markOptions && markOptions->startTime)
-        timestamp = m_performance.monotonicTimeFromRelativeTime(*markOptions->startTime);
-
-    // InspectorInstrumentation::performanceMark(context.get(), markName, timestamp, nullptr);
-
     auto mark = PerformanceMark::create(globalObject, context, markName, WTF::move(markOptions));
     if (mark.hasException())
         return mark.releaseException();
@@ -102,9 +96,9 @@ void PerformanceUserTiming::clearMarks(const String& markName)
     m_markCounter = 0;
 }
 
-ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const std::variant<String, double>& mark) const
+ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const Variant<String, double>& mark) const
 {
-    return std::visit([&](auto& value) {
+    return WTF::visit([&](auto& value) {
         return convertMarkToTimestamp(value);
     },
         mark);
@@ -120,7 +114,7 @@ ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(const String& 
     auto message = tryMakeString("No mark named '"_s, mark, "' exists"_s);
     if (!message) [[unlikely]]
         return Exception { OutOfMemoryError };
-    return Exception { SyntaxError, WTF::move(message) };
+    return Exception { JSSyntaxError, WTF::move(message) };
 }
 
 ExceptionOr<double> PerformanceUserTiming::convertMarkToTimestamp(double mark) const
@@ -234,7 +228,7 @@ static bool hasStartOrEnd(const PerformanceMeasureOptions& measureOptions)
 ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGlobalObject& globalObject, const String& measureName, std::optional<StartOrMeasureOptions>&& startOrMeasureOptions, const String& endMark)
 {
     if (startOrMeasureOptions) {
-        return std::visit(
+        return WTF::visit(
             WTF::makeVisitor(
                 [&](const PerformanceMeasureOptions& measureOptions) -> ExceptionOr<Ref<PerformanceMeasure>> {
                     if (hasStartOrEnd(measureOptions)) {

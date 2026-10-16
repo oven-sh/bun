@@ -2,7 +2,9 @@
 #include "Bindgen/IDLConvertBase.h"
 #include "Bindgen/IDLConvertNumbers.h"
 #include "Bindgen/IDLTypes.h"
+#include "BunIDLConvertSequence.h"
 #include "JSDOMConvert.h"
+#include "JSDOMConvertOptional.h"
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>

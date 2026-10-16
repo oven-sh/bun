@@ -14,7 +14,7 @@
 // through the JSWebView* already held in the Weak<> maps.
 
 #include "root.h"
-#include "ContextDestructionObserver.h"
+#include "ContextDestructionObserverInlines.h"
 #include "EventTarget.h"
 #include "EventTargetInterfaces.h"
 #include "ScriptExecutionContext.h"
@@ -44,7 +44,7 @@ private:
     {
     }
 
-    WebCore::EventTargetInterface eventTargetInterface() const final { return WebCore::BunWebViewEventTargetInterfaceType; }
+    enum WebCore::EventTargetInterfaceType eventTargetInterface() const final { return WebCore::EventTargetInterfaceType::BunWebView; }
     WebCore::ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
 
     void refEventTarget() final { ref(); }

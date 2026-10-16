@@ -64,9 +64,9 @@ String convertEnumerationToString(CryptoKeyUsage enumerationValue)
     return values[static_cast<size_t>(enumerationValue)];
 }
 
-template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, CryptoKeyUsage enumerationValue)
+template<> JSString* convertEnumerationToJS(VM& vm, CryptoKeyUsage enumerationValue)
 {
-    return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
+    return jsStringWithCache(vm, convertEnumerationToString(enumerationValue));
 }
 
 template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlobalObject& lexicalGlobalObject, JSValue value)

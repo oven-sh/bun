@@ -76,6 +76,6 @@ template<> struct JSDOMWrapperConverterTraits<CloseEvent> {
     using WrapperClass = JSCloseEvent;
     using ToWrappedReturnType = CloseEvent*;
 };
-template<> CloseEvent::Init convertDictionary<CloseEvent::Init>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<CloseEvent::Init>> convertDictionary<CloseEvent::Init>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

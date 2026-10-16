@@ -39,6 +39,11 @@ DOMWrapperWorld::DOMWrapperWorld(JSC::VM& vm, Type type, const String& name)
     // static_cast<JSVMClientData*>(clientData)->rememberWorld(*this);
 }
 
+DOMWrapperWorld& mainThreadNormalWorldSingleton()
+{
+    return clientData(defaultGlobalObject()->vm())->normalWorld();
+}
+
 DOMWrapperWorld::~DOMWrapperWorld()
 {
     VM::ClientData* clientData = m_vm.clientData;

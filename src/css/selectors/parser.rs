@@ -852,6 +852,7 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
             .components
             .push(GenericComponent::Combinator(wombo_combo));
         selector.components.push(scope);
+        selector.specificity_and_flags.flags |= SelectorFlags::HAS_RELATIVE_ANCHOR;
     }
 
     Ok(selector)
@@ -880,6 +881,11 @@ pub enum PseudoClass {
     Dir {
         /// A direction.
         direction: Direction,
+    },
+    /// `:dir()` with an identifier other than `ltr` and `rtl`. It is valid and matches nothing.
+    UnknownDir {
+        /// The identifier.
+        name: Str,
     },
 
     // https://drafts.csswg.org/selectors-4/#useraction-pseudos
@@ -937,6 +943,11 @@ pub enum PseudoClass {
 
     /// The [:defined](https://drafts.csswg.org/selectors-4/#the-defined-pseudo) pseudo class.
     Defined,
+    /// The [:state()](https://html.spec.whatwg.org/multipage/semantics-other.html#selector-custom) pseudo class.
+    State {
+        /// The name of the custom state.
+        name: Str,
+    },
 
     /// https://drafts.csswg.org/selectors-4/#location
     /// The [:any-link](https://drafts.csswg.org/selectors-4/#the-any-link-pseudo) pseudo class.
@@ -1360,8 +1371,14 @@ impl<'a> SelectorParser<'a> {
                 })?;
                 return Ok(PseudoClass::Lang { languages });
             },
-            b"dir" => PseudoClass::Dir {
-                direction: Direction::parse(parser)?,
+            b"dir" => match parser.try_parse(Direction::parse) {
+                Ok(direction) => PseudoClass::Dir { direction },
+                Err(_) => PseudoClass::UnknownDir {
+                    name: parser.expect_ident_cloned()?,
+                },
+            },
+            b"state" => PseudoClass::State {
+                name: parser.expect_ident_cloned()?,
             },
             b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
                 selector: Box::new(Selector::parse(self, parser)?),
@@ -1419,7 +1436,13 @@ impl<'a> SelectorParser<'a> {
 
     /// The error recovery that selector lists inside :is() and :where() have.
     fn is_and_where_error_recovery(&self) -> ParseErrorRecovery {
-        let _ = self;
+        if self
+            .options
+            .flags
+            .contains(css::ParserFlags::UNFORGIVING_SELECTORS)
+        {
+            return ParseErrorRecovery::DiscardList;
+        }
         ParseErrorRecovery::IgnoreInvalidSelector
     }
 
@@ -1847,6 +1870,12 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
 
     pub(crate) fn has_pseudo_element(&self) -> bool {
         self.specificity_and_flags.has_pseudo_element()
+    }
+
+    pub(crate) fn has_relative_anchor(&self) -> bool {
+        self.specificity_and_flags
+            .flags
+            .contains(SelectorFlags::HAS_RELATIVE_ANCHOR)
     }
 
     /// Returns count of simple selectors and combinators in the Selector.
@@ -2538,7 +2567,7 @@ impl NthSelectorData {
             dest.write_str("-n")
         } else if self.b == 0 {
             dest.write_fmt(format_args!("{}n", self.a))
-        } else if self.a == 2 && self.b == 1 {
+        } else if self.a == 2 && self.b == 1 && dest.cssom.is_none() {
             dest.write_str("odd")
         } else if self.a == 0 {
             dest.write_fmt(format_args!("{}", self.b))
@@ -2676,7 +2705,7 @@ impl SelectorParsingState {
     }
 
     pub(crate) fn allows_custom_functional_pseudo_classes(self) -> bool {
-        !self.after_any_pseudo()
+        !self.intersects(Self::AFTER_SLOTTED | Self::AFTER_PSEUDO_ELEMENT)
     }
 }
 
@@ -2707,6 +2736,8 @@ bitflags::bitflags! {
         const HAS_PSEUDO = 1 << 0;
         const HAS_SLOTTED = 1 << 1;
         const HAS_PART = 1 << 2;
+        /// `parse_relative_selector` added the leftmost component for a leading combinator: `:has(> a)`, not `:has(:scope > a)`.
+        const HAS_RELATIVE_ANCHOR = 1 << 3;
     }
 }
 
@@ -3506,17 +3537,8 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
 
     let value: Impl::AttrValue = std::ptr::from_ref::<[u8]>(value_str);
     let (local_name_lower, local_name_is_ascii_lowercase): (Impl::LocalName, bool) = 'brk: {
-        let first_uppercase = 'a: {
-            for (i, &b) in local_name.iter().enumerate() {
-                if b >= b'A' && b <= b'Z' {
-                    break 'a Some(i);
-                }
-            }
-            None
-        };
-        if let Some(first_uppercase) = first_uppercase {
-            let str_ = &local_name[first_uppercase..];
-            let lowered: *const [u8] = arena_lowercase(input.arena(), str_);
+        if local_name.iter().any(|b| b.is_ascii_uppercase()) {
+            let lowered: *const [u8] = arena_lowercase(input.arena(), local_name);
             break 'brk (Ident { v: lowered }, false);
         } else {
             break 'brk (
@@ -3529,7 +3551,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
     };
     let case_sensitivity: attrs::ParsedCaseSensitivity =
         attribute_flags.to_case_sensitivity(local_name_lower.v(), namespace.is_some());
-    if namespace.is_some() && !local_name_is_ascii_lowercase {
+    if namespace.is_some() || !local_name_is_ascii_lowercase {
         Ok(GenericComponent::AttributeOther(Box::new(
             attrs::AttrSelectorWithOptionalNamespace::<Impl> {
                 namespace,
@@ -4107,8 +4129,8 @@ bun_core::comptime_string_set! {
         b"direction",
         b"scrolling",
         b"valuetype",
-        b"http_equiv",
-        b"accept_charset",
+        b"http-equiv",
+        b"accept-charset",
     };
 }
 

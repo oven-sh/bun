@@ -73,7 +73,7 @@ void IdentifierEventListenerMap::visitJSEventListeners(Visitor& visitor)
     Locker locker { m_lock };
     for (auto& entry : m_entries) {
         for (auto& eventListener : entry.second)
-            eventListener->callback().visitJSFunction(visitor);
+            eventListener->callback().visitJSFunctionInGCThread(visitor);
     }
 }
 

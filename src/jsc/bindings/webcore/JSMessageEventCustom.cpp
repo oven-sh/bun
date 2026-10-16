@@ -71,6 +71,7 @@ template<typename Visitor>
 void JSMessageEvent::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
     wrapped().jsData().visit(visitor);
+    wrapped().jsSource().visit(visitor);
     wrapped().cachedData().visit(visitor);
     wrapped().cachedPorts().visit(visitor);
 }

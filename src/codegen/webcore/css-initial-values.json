@@ -1,0 +1,2669 @@
+{
+  "accent-color": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "caret-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "direction": {
+    "webkit": "ltr",
+    "chromium": "ltr",
+    "firefox": "ltr"
+  },
+  "display": {
+    "webkit": "inline",
+    "chromium": "inline",
+    "firefox": "inline"
+  },
+  "field-sizing": {
+    "webkit": "fixed",
+    "chromium": "fixed",
+    "firefox": "fixed"
+  },
+  "font-family": {
+    "webkit": "-webkit-standard",
+    "chromium": "\"Times New Roman\"",
+    "firefox": "serif"
+  },
+  "font-size": {
+    "webkit": "16px",
+    "chromium": "16px",
+    "firefox": "16px"
+  },
+  "font-size-adjust": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "font-style": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "font-weight": {
+    "webkit": "400",
+    "chromium": "400",
+    "firefox": "400"
+  },
+  "font-width": {
+    "webkit": "100%",
+    "firefox": "100%"
+  },
+  "text-box": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "text-box-edge": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "text-box-trim": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "text-rendering": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "font-feature-settings": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "font-variation-settings": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "font-kerning": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "font-palette": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "-webkit-font-smoothing": {
+    "webkit": "auto",
+    "chromium": "auto"
+  },
+  "font-variant-ligatures": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "font-variant-position": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "font-variant-caps": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "font-variant-numeric": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "font-variant-alternates": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "font-variant-east-asian": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "font-variant-emoji": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "font-synthesis": {
+    "webkit": "weight style small-caps",
+    "chromium": "weight style small-caps",
+    "firefox": "weight style small-caps position"
+  },
+  "font-synthesis-weight": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "font-synthesis-style": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "font-synthesis-small-caps": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "font-optical-sizing": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "font": {
+    "webkit": "16px -webkit-standard",
+    "chromium": "16px \"Times New Roman\"",
+    "firefox": "16px serif"
+  },
+  "font-variant": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "-webkit-locale": {
+    "webkit": "auto",
+    "chromium": "auto"
+  },
+  "text-orientation": {
+    "webkit": "mixed",
+    "chromium": "mixed",
+    "firefox": "mixed"
+  },
+  "-webkit-text-orientation": {
+    "webkit": "mixed",
+    "chromium": "vertical-right"
+  },
+  "text-autospace": {
+    "webkit": "no-autospace",
+    "chromium": "no-autospace",
+    "firefox": "no-autospace"
+  },
+  "writing-mode": {
+    "webkit": "horizontal-tb",
+    "chromium": "horizontal-tb",
+    "firefox": "horizontal-tb"
+  },
+  "-webkit-text-zoom": {
+    "webkit": "normal"
+  },
+  "zoom": {
+    "webkit": "1",
+    "chromium": "1",
+    "firefox": "1"
+  },
+  "ruby-position": {
+    "webkit": "over",
+    "chromium": "over",
+    "firefox": "alternate"
+  },
+  "-webkit-ruby-position": {
+    "webkit": "before",
+    "chromium": "before"
+  },
+  "alignment-baseline": {
+    "webkit": "baseline",
+    "chromium": "auto",
+    "firefox": "baseline"
+  },
+  "all": {
+    "webkit": "",
+    "chromium": "",
+    "firefox": ""
+  },
+  "animation": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "animation-composition": {
+    "webkit": "replace",
+    "chromium": "replace",
+    "firefox": "replace"
+  },
+  "animation-delay": {
+    "webkit": "0s",
+    "chromium": "0s",
+    "firefox": "0s"
+  },
+  "animation-direction": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "animation-duration": {
+    "webkit": "0s",
+    "chromium": "0s",
+    "firefox": "0s"
+  },
+  "animation-fill-mode": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "animation-iteration-count": {
+    "webkit": "1",
+    "chromium": "1",
+    "firefox": "1"
+  },
+  "animation-name": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "animation-play-state": {
+    "webkit": "running",
+    "chromium": "running",
+    "firefox": "running"
+  },
+  "animation-range": {
+    "webkit": "normal",
+    "chromium": "normal"
+  },
+  "animation-range-start": {
+    "webkit": "normal",
+    "chromium": "normal"
+  },
+  "animation-range-end": {
+    "webkit": "normal",
+    "chromium": "normal"
+  },
+  "animation-timeline": {
+    "webkit": "auto",
+    "chromium": "auto"
+  },
+  "animation-timing-function": {
+    "webkit": "ease",
+    "chromium": "ease",
+    "firefox": "ease"
+  },
+  "background": {
+    "webkit": "rgba(0, 0, 0, 0) none repeat scroll 0% 0% / auto padding-box border-box",
+    "chromium": "rgba(0, 0, 0, 0) none repeat scroll 0% 0% / auto padding-box border-box",
+    "firefox": "none"
+  },
+  "background-attachment": {
+    "webkit": "scroll",
+    "chromium": "scroll",
+    "firefox": "scroll"
+  },
+  "background-blend-mode": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "background-clip": {
+    "webkit": "border-box",
+    "chromium": "border-box",
+    "firefox": "border-box"
+  },
+  "background-color": {
+    "webkit": "rgba(0, 0, 0, 0)",
+    "chromium": "rgba(0, 0, 0, 0)",
+    "firefox": "rgba(0, 0, 0, 0)"
+  },
+  "background-image": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "background-origin": {
+    "webkit": "padding-box",
+    "chromium": "padding-box",
+    "firefox": "padding-box"
+  },
+  "background-position": {
+    "webkit": "0% 0%",
+    "chromium": "0% 0%",
+    "firefox": "0% 0%"
+  },
+  "background-position-x": {
+    "webkit": "0%",
+    "chromium": "0%",
+    "firefox": "0%"
+  },
+  "background-position-y": {
+    "webkit": "0%",
+    "chromium": "0%",
+    "firefox": "0%"
+  },
+  "background-repeat": {
+    "webkit": "repeat",
+    "chromium": "repeat",
+    "firefox": "repeat"
+  },
+  "background-size": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "baseline-shift": {
+    "webkit": "baseline",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "block-size": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "border": {
+    "webkit": "0px none rgb(0, 0, 0)",
+    "chromium": "0px none rgb(0, 0, 0)",
+    "firefox": "0px rgb(0, 0, 0)"
+  },
+  "border-block": {
+    "webkit": "0px none rgb(0, 0, 0)",
+    "chromium": "0px none rgb(0, 0, 0)",
+    "firefox": "0px rgb(0, 0, 0)"
+  },
+  "border-block-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "border-block-end": {
+    "webkit": "0px none rgb(0, 0, 0)",
+    "chromium": "0px none rgb(0, 0, 0)",
+    "firefox": "0px rgb(0, 0, 0)"
+  },
+  "border-block-end-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "border-block-end-radius": {},
+  "border-block-end-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-block-end-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-block-start": {
+    "webkit": "0px none rgb(0, 0, 0)",
+    "chromium": "0px none rgb(0, 0, 0)",
+    "firefox": "0px rgb(0, 0, 0)"
+  },
+  "border-block-start-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "border-block-start-radius": {},
+  "border-block-start-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-block-start-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-block-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-block-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-bottom": {
+    "webkit": "0px none rgb(0, 0, 0)",
+    "chromium": "0px none rgb(0, 0, 0)",
+    "firefox": "0px rgb(0, 0, 0)"
+  },
+  "border-bottom-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "border-bottom-radius": {},
+  "border-bottom-left-radius": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-bottom-right-radius": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-bottom-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-bottom-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-collapse": {
+    "webkit": "separate",
+    "chromium": "separate",
+    "firefox": "separate"
+  },
+  "border-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "border-end-end-radius": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-end-start-radius": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-image": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-image-outset": {
+    "webkit": "0",
+    "chromium": "0",
+    "firefox": "0"
+  },
+  "border-image-repeat": {
+    "webkit": "stretch",
+    "chromium": "stretch",
+    "firefox": "stretch"
+  },
+  "border-image-slice": {
+    "webkit": "100%",
+    "chromium": "100%",
+    "firefox": "100%"
+  },
+  "border-image-source": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-image-width": {
+    "webkit": "1",
+    "chromium": "1",
+    "firefox": "1"
+  },
+  "border-inline": {
+    "webkit": "0px none rgb(0, 0, 0)",
+    "chromium": "0px none rgb(0, 0, 0)",
+    "firefox": "0px rgb(0, 0, 0)"
+  },
+  "border-inline-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "border-inline-end": {
+    "webkit": "0px none rgb(0, 0, 0)",
+    "chromium": "0px none rgb(0, 0, 0)",
+    "firefox": "0px rgb(0, 0, 0)"
+  },
+  "border-inline-end-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "border-inline-end-radius": {},
+  "border-inline-end-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-inline-end-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-inline-start": {
+    "webkit": "0px none rgb(0, 0, 0)",
+    "chromium": "0px none rgb(0, 0, 0)",
+    "firefox": "0px rgb(0, 0, 0)"
+  },
+  "border-inline-start-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "border-inline-start-radius": {},
+  "border-inline-start-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-inline-start-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-inline-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-inline-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-left": {
+    "webkit": "0px none rgb(0, 0, 0)",
+    "chromium": "0px none rgb(0, 0, 0)",
+    "firefox": "0px rgb(0, 0, 0)"
+  },
+  "border-left-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "border-left-radius": {},
+  "border-left-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-left-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-radius": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-right": {
+    "webkit": "0px none rgb(0, 0, 0)",
+    "chromium": "0px none rgb(0, 0, 0)",
+    "firefox": "0px rgb(0, 0, 0)"
+  },
+  "border-right-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "border-right-radius": {},
+  "border-right-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-right-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-spacing": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-start-end-radius": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-start-start-radius": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-top": {
+    "webkit": "0px none rgb(0, 0, 0)",
+    "chromium": "0px none rgb(0, 0, 0)",
+    "firefox": "0px rgb(0, 0, 0)"
+  },
+  "border-top-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "border-top-left-radius": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-top-radius": {},
+  "border-top-right-radius": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-top-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "border-top-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "border-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "bottom": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "box-shadow": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "box-sizing": {
+    "webkit": "content-box",
+    "chromium": "content-box",
+    "firefox": "content-box"
+  },
+  "break-after": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "break-before": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "break-inside": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "buffered-rendering": {
+    "webkit": "auto",
+    "chromium": "auto"
+  },
+  "caption-side": {
+    "webkit": "top",
+    "chromium": "top",
+    "firefox": "top"
+  },
+  "clear": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "clip": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "clip-path": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "clip-rule": {
+    "webkit": "nonzero",
+    "chromium": "nonzero",
+    "firefox": "nonzero"
+  },
+  "color-interpolation": {
+    "webkit": "srgb",
+    "chromium": "srgb",
+    "firefox": "srgb"
+  },
+  "color-interpolation-filters": {
+    "webkit": "linearrgb",
+    "chromium": "linearrgb",
+    "firefox": "linearrgb"
+  },
+  "content": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "corner-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-top-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-right-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-bottom-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-left-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-block-start-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-block-end-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-inline-start-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-inline-end-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-top-left-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-top-right-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-bottom-left-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-bottom-right-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-start-start-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-start-end-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-end-start-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "corner-end-end-shape": {
+    "webkit": "superellipse(1)",
+    "chromium": "superellipse(1)"
+  },
+  "counter-increment": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "counter-reset": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "counter-set": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "cursor": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "cx": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "cy": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "d": {
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "dominant-baseline": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "empty-cells": {
+    "webkit": "show",
+    "chromium": "show",
+    "firefox": "show"
+  },
+  "fill": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "fill-opacity": {
+    "webkit": "1",
+    "chromium": "1",
+    "firefox": "1"
+  },
+  "fill-rule": {
+    "webkit": "nonzero",
+    "chromium": "nonzero",
+    "firefox": "nonzero"
+  },
+  "float": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "flood-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "flood-opacity": {
+    "webkit": "1",
+    "chromium": "1",
+    "firefox": "1"
+  },
+  "glyph-orientation-vertical": {
+    "webkit": "auto"
+  },
+  "hanging-punctuation": {
+    "webkit": "none"
+  },
+  "height": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "image-orientation": {
+    "webkit": "from-image",
+    "chromium": "from-image",
+    "firefox": "from-image"
+  },
+  "image-rendering": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "inline-size": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "inset": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "inset-block": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "inset-block-end": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "inset-block-start": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "inset-inline": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "inset-inline-end": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "inset-inline-start": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "interpolate-size": {
+    "chromium": "numeric-only"
+  },
+  "left": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "letter-spacing": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "lighting-color": {
+    "webkit": "rgb(255, 255, 255)",
+    "chromium": "rgb(255, 255, 255)",
+    "firefox": "rgb(255, 255, 255)"
+  },
+  "line-height": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "link-parameters": {
+    "webkit": "none"
+  },
+  "list-style": {
+    "webkit": "outside none disc",
+    "chromium": "outside none disc",
+    "firefox": "outside"
+  },
+  "list-style-image": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "list-style-position": {
+    "webkit": "outside",
+    "chromium": "outside",
+    "firefox": "outside"
+  },
+  "list-style-type": {
+    "webkit": "disc",
+    "chromium": "disc",
+    "firefox": "disc"
+  },
+  "margin": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "margin-block": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "margin-block-end": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "margin-block-start": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "margin-bottom": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "margin-inline": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "margin-inline-end": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "margin-inline-start": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "margin-left": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "margin-right": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "margin-top": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "margin-trim": {
+    "webkit": "none",
+    "chromium": "none"
+  },
+  "marker": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "marker-end": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "marker-mid": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "marker-start": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "mask": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "mask-border": {
+    "webkit": "none"
+  },
+  "mask-border-outset": {
+    "webkit": "0"
+  },
+  "mask-border-repeat": {
+    "webkit": "stretch"
+  },
+  "mask-border-slice": {
+    "webkit": "0"
+  },
+  "mask-border-source": {
+    "webkit": "none"
+  },
+  "mask-border-width": {
+    "webkit": "auto"
+  },
+  "mask-clip": {
+    "webkit": "border-box",
+    "chromium": "border-box",
+    "firefox": "border-box"
+  },
+  "mask-composite": {
+    "webkit": "add",
+    "chromium": "add",
+    "firefox": "add"
+  },
+  "mask-image": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "mask-mode": {
+    "webkit": "match-source",
+    "chromium": "match-source",
+    "firefox": "match-source"
+  },
+  "mask-origin": {
+    "webkit": "border-box",
+    "chromium": "border-box",
+    "firefox": "border-box"
+  },
+  "mask-position": {
+    "webkit": "0% 0%",
+    "chromium": "0% 0%",
+    "firefox": "0% 0%"
+  },
+  "-webkit-mask-position": {
+    "webkit": "0% 0%",
+    "chromium": "0% 0%",
+    "firefox": "0% 0%"
+  },
+  "-webkit-mask-position-x": {
+    "webkit": "0%",
+    "chromium": "0%",
+    "firefox": "0%"
+  },
+  "-webkit-mask-position-y": {
+    "webkit": "0%",
+    "chromium": "0%",
+    "firefox": "0%"
+  },
+  "mask-repeat": {
+    "webkit": "repeat",
+    "chromium": "repeat",
+    "firefox": "repeat"
+  },
+  "mask-size": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "mask-type": {
+    "webkit": "luminance",
+    "chromium": "luminance",
+    "firefox": "luminance"
+  },
+  "math-depth": {
+    "webkit": "0",
+    "chromium": "0",
+    "firefox": "0"
+  },
+  "math-shift": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "math-style": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "max-block-size": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "max-height": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "max-inline-size": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "max-width": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "min-block-size": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "min-height": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "min-inline-size": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "min-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "object-fit": {
+    "webkit": "fill",
+    "chromium": "fill",
+    "firefox": "fill"
+  },
+  "object-position": {
+    "webkit": "50% 50%",
+    "chromium": "50% 50%",
+    "firefox": "50% 50%"
+  },
+  "object-view-box": {
+    "webkit": "none",
+    "chromium": "none"
+  },
+  "offset-path": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "offset-distance": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "offset-position": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "offset-anchor": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "offset-rotate": {
+    "webkit": "auto 0deg",
+    "chromium": "auto 0deg",
+    "firefox": "auto"
+  },
+  "offset": {
+    "webkit": "auto",
+    "chromium": "none 0px auto 0deg",
+    "firefox": "normal"
+  },
+  "opacity": {
+    "webkit": "1",
+    "chromium": "1",
+    "firefox": "1"
+  },
+  "orphans": {
+    "webkit": "2",
+    "chromium": "2"
+  },
+  "outline": {
+    "webkit": "3px none rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0) none 3px",
+    "firefox": "rgb(0, 0, 0) 3px"
+  },
+  "outline-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "outline-offset": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "outline-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "outline-width": {
+    "webkit": "3px",
+    "chromium": "3px",
+    "firefox": "3px"
+  },
+  "overflow": {
+    "webkit": "visible",
+    "chromium": "visible",
+    "firefox": "visible"
+  },
+  "overflow-anchor": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "overflow-wrap": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "overflow-x": {
+    "webkit": "visible",
+    "chromium": "visible",
+    "firefox": "visible"
+  },
+  "overflow-y": {
+    "webkit": "visible",
+    "chromium": "visible",
+    "firefox": "visible"
+  },
+  "overflow-inline": {
+    "webkit": "visible",
+    "chromium": "visible",
+    "firefox": "visible"
+  },
+  "overflow-block": {
+    "webkit": "visible",
+    "chromium": "visible",
+    "firefox": "visible"
+  },
+  "overflow-clip-margin": {
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "overscroll-behavior": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "overscroll-behavior-x": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "overscroll-behavior-y": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "overscroll-behavior-inline": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "overscroll-behavior-block": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "padding": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "padding-block": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "padding-block-end": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "padding-block-start": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "padding-bottom": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "padding-inline": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "padding-inline-end": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "padding-inline-start": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "padding-left": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "padding-right": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "padding-top": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "page": {
+    "webkit": "",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "page-break-after": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "page-break-before": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "page-break-inside": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "paint-order": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "pointer-events": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "position": {
+    "webkit": "static",
+    "chromium": "static",
+    "firefox": "static"
+  },
+  "quotes": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "r": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "resize": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "right": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "ruby-align": {
+    "webkit": "space-around",
+    "chromium": "space-around",
+    "firefox": "space-around"
+  },
+  "ruby-overhang": {
+    "webkit": "auto",
+    "chromium": "auto"
+  },
+  "rx": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "ry": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "shape-rendering": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "stop-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "stop-opacity": {
+    "webkit": "1",
+    "chromium": "1",
+    "firefox": "1"
+  },
+  "stroke": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "stroke-dasharray": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "stroke-dashoffset": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "stroke-linecap": {
+    "webkit": "butt",
+    "chromium": "butt",
+    "firefox": "butt"
+  },
+  "stroke-linejoin": {
+    "webkit": "miter",
+    "chromium": "miter",
+    "firefox": "miter"
+  },
+  "stroke-miterlimit": {
+    "webkit": "4",
+    "chromium": "4",
+    "firefox": "4"
+  },
+  "stroke-opacity": {
+    "webkit": "1",
+    "chromium": "1",
+    "firefox": "1"
+  },
+  "stroke-color": {
+    "webkit": "rgba(0, 0, 0, 0)"
+  },
+  "stroke-width": {
+    "webkit": "1px",
+    "chromium": "1px",
+    "firefox": "1px"
+  },
+  "speak-as": {
+    "webkit": "normal",
+    "chromium": ""
+  },
+  "table-layout": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "tab-size": {
+    "webkit": "8",
+    "chromium": "8",
+    "firefox": "8"
+  },
+  "text-align": {
+    "webkit": "start",
+    "chromium": "start",
+    "firefox": "start"
+  },
+  "text-align-last": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "text-anchor": {
+    "webkit": "start",
+    "chromium": "start",
+    "firefox": "start"
+  },
+  "text-indent": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "text-justify": {
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "text-overflow": {
+    "webkit": "clip",
+    "chromium": "clip",
+    "firefox": "clip"
+  },
+  "text-shadow": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "text-transform": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "text-wrap": {
+    "webkit": "wrap",
+    "chromium": "wrap",
+    "firefox": "wrap"
+  },
+  "text-wrap-mode": {
+    "webkit": "wrap",
+    "chromium": "wrap",
+    "firefox": "wrap"
+  },
+  "text-wrap-style": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "top": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "transition": {
+    "webkit": "all",
+    "chromium": "all",
+    "firefox": "all"
+  },
+  "transition-behavior": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "transition-delay": {
+    "webkit": "0s",
+    "chromium": "0s",
+    "firefox": "0s"
+  },
+  "transition-duration": {
+    "webkit": "0s",
+    "chromium": "0s",
+    "firefox": "0s"
+  },
+  "transition-property": {
+    "webkit": "all",
+    "chromium": "all",
+    "firefox": "all"
+  },
+  "transition-timing-function": {
+    "webkit": "ease",
+    "chromium": "ease",
+    "firefox": "ease"
+  },
+  "unicode-bidi": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "vector-effect": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "vertical-align": {
+    "webkit": "baseline",
+    "chromium": "baseline",
+    "firefox": "baseline"
+  },
+  "visibility": {
+    "webkit": "visible",
+    "chromium": "visible",
+    "firefox": "visible"
+  },
+  "white-space": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "white-space-collapse": {
+    "webkit": "collapse",
+    "chromium": "collapse",
+    "firefox": "collapse"
+  },
+  "white-space-trim": {
+    "webkit": "none"
+  },
+  "widows": {
+    "webkit": "2",
+    "chromium": "2"
+  },
+  "width": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "will-change": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "word-break": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "word-spacing": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "wrap-inside": {
+    "webkit": "auto"
+  },
+  "x": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "y": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "z-index": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "appearance": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "aspect-ratio": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "contain-intrinsic-size": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "contain-intrinsic-height": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "contain-intrinsic-width": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "contain-intrinsic-block-size": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "contain-intrinsic-inline-size": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "contain": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "container": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "container-name": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "container-type": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "content-visibility": {
+    "webkit": "visible",
+    "chromium": "visible",
+    "firefox": "visible"
+  },
+  "backface-visibility": {
+    "webkit": "visible",
+    "chromium": "visible",
+    "firefox": "visible"
+  },
+  "-webkit-background-clip": {
+    "webkit": "border-box",
+    "chromium": "border-box",
+    "firefox": "border-box"
+  },
+  "-webkit-background-origin": {
+    "webkit": "padding-box",
+    "chromium": "padding-box",
+    "firefox": "padding-box"
+  },
+  "-webkit-background-size": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "-webkit-border-horizontal-spacing": {
+    "webkit": "0px",
+    "chromium": "0px"
+  },
+  "-webkit-border-image": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "-webkit-border-radius": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "-webkit-border-vertical-spacing": {
+    "webkit": "0px",
+    "chromium": "0px"
+  },
+  "-webkit-box-align": {
+    "webkit": "stretch",
+    "chromium": "stretch",
+    "firefox": "stretch"
+  },
+  "-webkit-box-direction": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "-webkit-box-flex": {
+    "webkit": "0",
+    "chromium": "0",
+    "firefox": "0"
+  },
+  "-webkit-box-flex-group": {
+    "webkit": "1"
+  },
+  "-webkit-box-lines": {
+    "webkit": "single"
+  },
+  "-webkit-box-ordinal-group": {
+    "webkit": "1",
+    "chromium": "1",
+    "firefox": "1"
+  },
+  "-webkit-box-orient": {
+    "webkit": "horizontal",
+    "chromium": "horizontal",
+    "firefox": "horizontal"
+  },
+  "-webkit-box-pack": {
+    "webkit": "start",
+    "chromium": "start",
+    "firefox": "start"
+  },
+  "-webkit-box-reflect": {
+    "webkit": "none",
+    "chromium": "none"
+  },
+  "-webkit-box-shadow": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "-webkit-column-axis": {
+    "webkit": "auto"
+  },
+  "-webkit-column-break-after": {
+    "webkit": "auto",
+    "chromium": "auto"
+  },
+  "-webkit-column-break-before": {
+    "webkit": "auto",
+    "chromium": "auto"
+  },
+  "-webkit-column-break-inside": {
+    "webkit": "auto",
+    "chromium": "auto"
+  },
+  "column-count": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "column-fill": {
+    "webkit": "balance",
+    "chromium": "balance",
+    "firefox": "balance"
+  },
+  "column-gap": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "row-gap": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "gap": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "-webkit-column-progression": {
+    "webkit": "normal"
+  },
+  "column-rule": {
+    "webkit": "3px none rgb(0, 0, 0)",
+    "chromium": "3px rgb(0, 0, 0)",
+    "firefox": "3px none rgb(0, 0, 0)"
+  },
+  "column-rule-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "column-rule-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "column-rule-width": {
+    "webkit": "3px",
+    "chromium": "3px",
+    "firefox": "3px"
+  },
+  "column-span": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "column-width": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "columns": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "-webkit-box-decoration-break": {
+    "webkit": "slice",
+    "chromium": "slice"
+  },
+  "mix-blend-mode": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "isolation": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "filter": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "align-content": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "align-items": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "align-self": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "flex": {
+    "webkit": "0 1 auto",
+    "chromium": "0 1 auto",
+    "firefox": "0 1 auto"
+  },
+  "flex-basis": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "flex-direction": {
+    "webkit": "row",
+    "chromium": "row",
+    "firefox": "row"
+  },
+  "flex-flow": {
+    "webkit": "row",
+    "chromium": "row nowrap",
+    "firefox": "row"
+  },
+  "flex-grow": {
+    "webkit": "0",
+    "chromium": "0",
+    "firefox": "0"
+  },
+  "flex-shrink": {
+    "webkit": "1",
+    "chromium": "1",
+    "firefox": "1"
+  },
+  "flex-wrap": {
+    "webkit": "nowrap",
+    "chromium": "nowrap",
+    "firefox": "nowrap"
+  },
+  "justify-content": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "-webkit-backdrop-filter": {
+    "webkit": "none"
+  },
+  "backdrop-filter": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "justify-self": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "justify-items": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "place-content": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "place-items": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "place-self": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "grid": {
+    "webkit": "none / none / none / normal / auto / auto",
+    "chromium": "none / none / none / row / auto / auto",
+    "firefox": "none"
+  },
+  "grid-area": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "grid-auto-columns": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "grid-auto-rows": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "grid-column-end": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "grid-column-start": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "grid-template": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "grid-template-columns": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "grid-template-rows": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "grid-row-end": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "grid-row-start": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "grid-column": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "grid-row": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "grid-template-areas": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "grid-auto-flow": {
+    "webkit": "normal",
+    "chromium": "row",
+    "firefox": "row"
+  },
+  "fit-tolerance": {
+    "webkit": "normal"
+  },
+  "hyphenate-character": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "-webkit-hyphenate-limit-after": {
+    "webkit": "auto"
+  },
+  "-webkit-hyphenate-limit-before": {
+    "webkit": "auto"
+  },
+  "hyphenate-limit-lines": {
+    "webkit": "no-limit"
+  },
+  "hyphenate-limit-chars": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "hyphens": {
+    "webkit": "manual",
+    "chromium": "manual",
+    "firefox": "manual"
+  },
+  "-webkit-initial-letter": {
+    "webkit": "normal"
+  },
+  "-webkit-line-box-contain": {
+    "webkit": "block inline replaced"
+  },
+  "-webkit-line-align": {
+    "webkit": "none"
+  },
+  "line-break": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "-webkit-line-clamp": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "-webkit-line-grid": {
+    "webkit": "none"
+  },
+  "-webkit-line-snap": {
+    "webkit": "none"
+  },
+  "-webkit-mask": {
+    "webkit": "",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "-webkit-mask-box-image": {
+    "webkit": "none",
+    "chromium": "none"
+  },
+  "-webkit-mask-clip": {
+    "webkit": "border-box",
+    "chromium": "border-box",
+    "firefox": "border-box"
+  },
+  "-webkit-mask-composite": {
+    "webkit": "source-over",
+    "chromium": "add",
+    "firefox": "add"
+  },
+  "-webkit-mask-source-type": {
+    "webkit": "alpha"
+  },
+  "-webkit-nbsp-mode": {
+    "webkit": "normal"
+  },
+  "color-scheme": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "order": {
+    "webkit": "0",
+    "chromium": "0",
+    "firefox": "0"
+  },
+  "perspective": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "-webkit-perspective": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "perspective-origin": {
+    "webkit": "0px 0px",
+    "chromium": "0px 0px",
+    "firefox": "0px 0px"
+  },
+  "perspective-origin-x": {
+    "webkit": ""
+  },
+  "perspective-origin-y": {
+    "webkit": ""
+  },
+  "print-color-adjust": {
+    "webkit": "economy",
+    "chromium": "economy",
+    "firefox": "economy"
+  },
+  "-webkit-rtl-ordering": {
+    "webkit": "logical",
+    "chromium": "logical"
+  },
+  "-webkit-text-combine": {
+    "webkit": "none",
+    "chromium": "none"
+  },
+  "text-combine-upright": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "text-decoration": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "text-decoration-line": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "text-decoration-style": {
+    "webkit": "solid",
+    "chromium": "solid",
+    "firefox": "solid"
+  },
+  "text-decoration-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "text-decoration-skip": {
+    "webkit": "auto"
+  },
+  "text-decoration-skip-ink": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "text-underline-position": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "text-underline-offset": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "text-decoration-thickness": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "text-decoration-inset": {
+    "webkit": "0px",
+    "firefox": "0px"
+  },
+  "-webkit-text-decorations-in-effect": {
+    "webkit": "none",
+    "chromium": "none"
+  },
+  "text-emphasis": {
+    "webkit": "none rgb(0, 0, 0)",
+    "chromium": "none rgb(0, 0, 0)",
+    "firefox": "none rgb(0, 0, 0)"
+  },
+  "text-emphasis-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "text-emphasis-position": {
+    "webkit": "over",
+    "chromium": "over",
+    "firefox": "auto"
+  },
+  "text-emphasis-style": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "-webkit-text-fill-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "-webkit-text-security": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "-webkit-text-stroke": {
+    "webkit": "0px rgb(0, 0, 0)",
+    "chromium": "0px rgb(0, 0, 0)",
+    "firefox": "0px rgb(0, 0, 0)"
+  },
+  "-webkit-text-stroke-color": {
+    "webkit": "rgb(0, 0, 0)",
+    "chromium": "rgb(0, 0, 0)",
+    "firefox": "rgb(0, 0, 0)"
+  },
+  "-webkit-text-stroke-width": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "transform": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "transform-box": {
+    "webkit": "view-box",
+    "chromium": "view-box",
+    "firefox": "view-box"
+  },
+  "transform-origin": {
+    "webkit": "0px 0px",
+    "chromium": "0px 0px",
+    "firefox": "0px 0px"
+  },
+  "transform-origin-x": {
+    "webkit": ""
+  },
+  "transform-origin-y": {
+    "webkit": ""
+  },
+  "transform-origin-z": {
+    "webkit": ""
+  },
+  "transform-style": {
+    "webkit": "flat",
+    "chromium": "flat",
+    "firefox": "flat"
+  },
+  "translate": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "scale": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "rotate": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "-webkit-user-drag": {
+    "webkit": "auto",
+    "chromium": "auto"
+  },
+  "-webkit-user-modify": {
+    "webkit": "read-only",
+    "chromium": "read-only"
+  },
+  "-webkit-user-select": {
+    "webkit": "text",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "user-select": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-behavior": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-margin": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "scroll-margin-bottom": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "scroll-margin-left": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "scroll-margin-right": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "scroll-margin-top": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "scroll-margin-inline-start": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "scroll-margin-block-start": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "scroll-margin-inline-end": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "scroll-margin-block-end": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "scroll-margin-block": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "scroll-margin-inline": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "scroll-padding": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-padding-bottom": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-padding-left": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-padding-right": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-padding-top": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-padding-inline-start": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-padding-block-start": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-padding-inline-end": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-padding-block-end": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-padding-block": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-padding-inline": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scroll-snap-align": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "scroll-snap-type": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "scroll-snap-stop": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "scroll-timeline": {
+    "webkit": "none",
+    "chromium": "none"
+  },
+  "scroll-timeline-axis": {
+    "webkit": "block",
+    "chromium": "block"
+  },
+  "scroll-timeline-name": {
+    "webkit": "none",
+    "chromium": "none"
+  },
+  "scrollbar-color": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scrollbar-gutter": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "scrollbar-width": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "none"
+  },
+  "shape-outside": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "shape-margin": {
+    "webkit": "0px",
+    "chromium": "0px",
+    "firefox": "0px"
+  },
+  "shape-image-threshold": {
+    "webkit": "0",
+    "chromium": "0",
+    "firefox": "0"
+  },
+  "timeline-scope": {
+    "webkit": "none",
+    "chromium": "none"
+  },
+  "view-timeline": {
+    "webkit": "none",
+    "chromium": "none"
+  },
+  "view-timeline-axis": {
+    "webkit": "block",
+    "chromium": "block"
+  },
+  "view-timeline-inset": {
+    "webkit": "auto",
+    "chromium": "auto"
+  },
+  "view-timeline-name": {
+    "webkit": "none",
+    "chromium": "none"
+  },
+  "view-transition-class": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "view-transition-name": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "anchor-name": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "anchor-scope": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "position-anchor": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "position-area": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "position-try": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "position-try-order": {
+    "webkit": "normal",
+    "chromium": "normal",
+    "firefox": "normal"
+  },
+  "position-try-fallbacks": {
+    "webkit": "none",
+    "chromium": "none",
+    "firefox": "none"
+  },
+  "position-visibility": {
+    "webkit": "anchors-visible",
+    "chromium": "anchors-visible",
+    "firefox": "anchors-visible"
+  },
+  "-webkit-tap-highlight-color": {
+    "webkit": "rgba(0, 0, 0, 0.4)",
+    "chromium": "rgba(0, 0, 0, 0.18)"
+  },
+  "touch-action": {
+    "webkit": "auto",
+    "chromium": "auto",
+    "firefox": "auto"
+  },
+  "size": {
+    "webkit": "auto",
+    "chromium": ""
+  },
+  "min-size": {
+    "webkit": "0px"
+  },
+  "max-size": {
+    "webkit": "none"
+  }
+}

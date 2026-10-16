@@ -197,18 +197,17 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
 }
 
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
-// it to the Worker object. `thrown` is the JSC::Exception when the thrower still had it, whose stack
-// says where it was thrown, else the value.
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue thrown)
+// it to the Worker object. `errorValue` is the event's `error`. `thrown` is what came up: the
+// JSC::Exception when the thrower still had it, whose stack says where it was thrown, else the value.
+extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue, JSC::EncodedJSValue thrown)
 {
     String messageStr = message.transferToWTFString();
 
-    // Script only ever sees the value, never the JSC::Exception.
-    JSC::JSValue error = JSC::JSValue::decode(thrown);
-    auto* exception = dynamicDowncast<JSC::Exception>(error);
+    JSC::JSValue thrownValue = JSC::JSValue::decode(thrown);
+    auto* exception = dynamicDowncast<JSC::Exception>(thrownValue);
     if (exception)
-        error = exception->value();
-    ScriptPosition position = scriptPositionOfThrownValue(*globalObject, error, exception);
+        thrownValue = exception->value();
+    ScriptPosition position = scriptPositionOfThrownValue(*globalObject, thrownValue, exception);
 
     ErrorEvent::Init init;
     init.message = messageStr;
@@ -216,11 +215,11 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.filename = isAbsolutePath(position.sourceURL) ? URL::fileURLWithFileSystemPath(position.sourceURL).string() : position.sourceURL;
     init.lineno = position.line;
     init.colno = position.column;
-    init.error = error;
+    init.error = JSC::JSValue::decode(errorValue);
     init.cancelable = false;
     init.bubbles = false;
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    proxy->postErrorToWorkerObject(*globalObject, messageStr, init.filename, init.lineno, init.colno, error);
+    proxy->postErrorToWorkerObject(*globalObject, messageStr, init.filename, init.lineno, init.colno, init.error);
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);

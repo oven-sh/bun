@@ -166,11 +166,13 @@ unsafe extern "C" {
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
     safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
-    /// `thrown` may be the `JSC::Exception` cell that carries the value.
+    /// `error` is the event's `error`. `thrown` is what came up, which may be the
+    /// `JSC::Exception` cell that carries it: its stack says where.
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         proxy: *mut c_void,
         message: BunString,
+        error: JSValue,
         thrown: JSValue,
     );
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
@@ -1128,7 +1130,7 @@ impl WebWorker {
             }
         };
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
-            WebWorker__dispatchError(global, self.messaging_proxy, str, err)
+            WebWorker__dispatchError(global, self.messaging_proxy, str, err, err)
         });
         if let Err(e) = dispatch {
             let _ = crate::task::report_error_or_terminate(global, e);
@@ -1155,7 +1157,6 @@ fn on_unhandled_rejection(
     let mut error_instance = error_instance_or_exception
         .to_error()
         .unwrap_or(error_instance_or_exception);
-    let thrown_value = error_instance;
 
     // A parse failure rejects with a BuildMessage, which doesn't survive structured
     // clone. Node reports a SyntaxError; build a real one from the formatted parse
@@ -1187,10 +1188,13 @@ fn on_unhandled_rejection(
             ..Default::default()
         },
     );
-    if let Err(err) = format_result {
-        error_instance = global_object.take_exception(err);
-    }
     // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
+    // Anything else that formatting threw costs only the text: the value stays the error.
+    if let Err(err) = format_result
+        && global_object.take_exception(err).is_termination_exception()
+    {
+        return;
+    }
     if error_instance.is_termination_exception() {
         return;
     }
@@ -1206,14 +1210,14 @@ fn on_unhandled_rejection(
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
     let error_message = BunString::clone_utf8(&array);
-    // The JSC::Exception, when that is what arrived, says where its value was thrown.
-    let thrown = if error_instance == thrown_value {
-        error_instance_or_exception
-    } else {
-        error_instance
-    };
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
-        WebWorker__dispatchError(global_object, worker.messaging_proxy, error_message, thrown);
+        WebWorker__dispatchError(
+            global_object,
+            worker.messaging_proxy,
+            error_message,
+            error_instance,
+            error_instance_or_exception,
+        );
     })
     .is_err()
     {

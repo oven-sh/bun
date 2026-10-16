@@ -4,27 +4,27 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 
+// A worker whose source starts with this line also posts what the 'error' event on its own global scope says.
+const reportInside = `self.addEventListener("error", ({ filename, lineno, colno }) => postMessage({ filename, lineno, colno }));\n`;
+const blobURL = (source: string) => URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+
+// What the 'error' event on the Worker object says, and everything the worker posted before it closed.
+async function errorEvents(url: string | URL, post?: unknown) {
+  const worker = new Worker(url);
+  const posted: any[] = [];
+  worker.onmessage = event => posted.push(event.data);
+  const { promise, resolve, reject } = Promise.withResolvers<ErrorEvent>();
+  worker.addEventListener("error", resolve, { once: true });
+  const closed = once(worker, "close");
+  closed.then(() => reject(new Error("the worker closed without an 'error' event")));
+  if (post !== undefined) worker.postMessage(post);
+  const { message, filename, lineno, colno, error } = await promise;
+  await closed;
+  return { parent: { filename, lineno, colno }, message, error, posted };
+}
+
 // https://github.com/oven-sh/bun/issues/23473
-describe("a Worker's 'error' event says where the error is from", () => {
-  // A worker whose source starts with this line also posts what the 'error' event on its own global scope says.
-  const reportInside = `self.addEventListener("error", ({ filename, lineno, colno }) => postMessage({ filename, lineno, colno }));\n`;
-  const blobURL = (source: string) => URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
-
-  // What the 'error' event on the Worker object says, and everything the worker posted before it closed.
-  async function errorEvents(url: string | URL, post?: unknown) {
-    const worker = new Worker(url);
-    const posted: any[] = [];
-    worker.onmessage = event => posted.push(event.data);
-    const { promise, resolve, reject } = Promise.withResolvers<ErrorEvent>();
-    worker.addEventListener("error", resolve, { once: true });
-    const closed = once(worker, "close");
-    closed.then(() => reject(new Error("the worker closed without an 'error' event")));
-    if (post !== undefined) worker.postMessage(post);
-    const { message, filename, lineno, colno, error } = await promise;
-    await closed;
-    return { parent: { filename, lineno, colno }, message, error, posted };
-  }
-
+describe.concurrent("a Worker's 'error' event says where the error is from", () => {
   test("an Error thrown at the top level: where the script made it", async () => {
     const url = blobURL(reportInside + `\nthrow new TypeError("Hello, world!")`);
     const where = { filename: url, lineno: 3, colno: 11 };
@@ -263,6 +263,17 @@ onerror = function(message, location, line, col)
     expect({ parent, inside }).toEqual({ parent: where, inside: where });
   });
 
+  test("a module that does not parse, required under a timer: the script's require()", async () => {
+    using dir = tempDir("worker-error-event", {
+      "worker.cjs": `${reportInside}function load() {\n  return require("./broken.cjs");\n}\nsetTimeout(load, 1);\n`,
+      "broken.cjs": `const y = ;\n`,
+    });
+    const url = pathToFileURL(path.join(String(dir), "worker.cjs")).href;
+    const where = { filename: url, lineno: 3, colno: 3 };
+    const { parent, error, posted } = await errorEvents(url);
+    expect({ parent, error, posted }).toEqual({ parent: where, error: null, posted: [where] });
+  });
+
   test("a data: URL worker's throw: that URL", async () => {
     const url = "data:text/javascript,throw new Error('from a data URL')";
     const { parent, error, posted } = await errorEvents(url);
@@ -281,12 +292,44 @@ onerror = function(message, location, line, col)
     expect(message).toContain("SyntaxError");
   });
 
+  test("a value whose console rendering throws: still that value, to a listener in the worker", async () => {
+    // What the rendering threw reached that listener as event.error, as a JSC::Exception: touching
+    // it ended the process.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const source = \`
+          const thrown = { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("the rendering threw"); } };
+          self.addEventListener("error", event => postMessage([event.error === thrown, String(event.error)]));
+          throw thrown;\`;
+        const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
+        worker.onmessage = event => console.log("inside", ...event.data);
+        worker.onerror = event => console.log("parent", event.error);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `inside true [object Object]\nparent null\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// One at a time: each builds an executable. That copies the runtime, which takes most of a test's time
+// on a debug or sanitizer build.
+describe("a Worker's 'error' event in a compiled executable", () => {
   // As in `stack`: a frame of an executable is in the bundle, unless a source map names its source.
-  // Building an executable copies the runtime, which takes most of a test's time on a debug or sanitizer build.
   test.skipIf(isDebug || isASAN).each([
     ["with a source map: the source and its line", "inline" as const, "thrower.ts", 4],
     ["without a source map: the bundle", "none" as const, "worker.js", undefined],
-  ])("in a compiled executable %s", async (_, sourcemap, file, line) => {
+  ])("%s", async (_, sourcemap, file, line) => {
     using dir = tempDir("worker-error-event-compile", {
       "main.ts": `const worker = new Worker(new URL("./worker.ts", import.meta.url).href);\nworker.onerror = ({ filename, lineno }) => console.log(JSON.stringify({ filename, lineno }));\n`,
       "worker.ts": `import { thrower } from "./lib/thrower.ts";\nthrower();\n`,
@@ -306,33 +349,5 @@ onerror = function(message, location, line, col)
     expect(filename).toEndWith(file);
     if (line === undefined) expect(lineno).toBeGreaterThan(0);
     else expect(lineno).toBe(line);
-  });
-
-  test("a value whose console rendering throws, to a listener in the worker that reads event.error", async () => {
-    // What the rendering threw reached that listener as event.error, as a JSC::Exception: touching
-    // it ended the process.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const source = \`
-          self.addEventListener("error", event => postMessage(String(event.error)));
-          throw { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("the rendering threw"); } };\`;
-        const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
-        worker.onmessage = event => console.log("inside", event.data);
-        worker.onerror = event => console.log("parent", event.error);
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: `inside Error: the rendering threw\nparent null\n`,
-      stderr: "",
-      exitCode: 0,
-    });
   });
 });

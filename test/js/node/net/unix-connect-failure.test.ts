@@ -305,6 +305,44 @@ describe("a unix socket connect that fails at connect(2)", () => {
     assert.deepStrictEqual({ destroyedOnReturn, events }, { destroyedOnReturn: true, events: ["error EINVAL"] });
   });
 
+  // The kernel reads sun_path as a C string, so a dial of this name reaches the listener of the name before the NUL.
+  posixTest("a name with a NUL fails inside connect() and dials nothing", async () => {
+    const live = path.join(makeDir(), "live.sock");
+    let connections = 0;
+    let onProbe = () => {};
+    const server = net.createServer(connection => {
+      connections++;
+      connection.on("error", () => {});
+      // Only the probe writes. The accept queue is in order: every earlier connection is counted by then.
+      connection.on("data", () => onProbe());
+    });
+    await new Promise<void>(resolve => server.listen(live, resolve));
+    try {
+      const events: string[] = [];
+      const socket = net.connect(live + "\0ignored");
+      const destroyedOnReturn = socket.destroyed;
+      socket.on("connectionAttemptFailed", () => events.push("connectionAttemptFailed"));
+      socket.on("connect", () => {
+        events.push("connect");
+        socket.destroy();
+      });
+      socket.on("error", (e: NodeJS.ErrnoException) => events.push(`error ${e.code}`));
+      await closeOf(socket);
+      const probe = net.connect(live, () => probe.write("probe"));
+      await new Promise<void>((resolve, reject) => {
+        onProbe = resolve;
+        probe.on("error", reject);
+      });
+      probe.destroy();
+      assert.deepStrictEqual(
+        { destroyedOnReturn, events, connections: connections - 1 },
+        { destroyedOnReturn: true, events: ["error EINVAL"], connections: 0 },
+      );
+    } finally {
+      server.close();
+    }
+  });
+
   posixTest("runs its listeners in the async context of the connect() call", async () => {
     const storage = new AsyncLocalStorage<string>();
     const seen: Record<string, string | undefined> = {};
@@ -566,9 +604,15 @@ describe("a unix socket connect that fails at connect(2)", () => {
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (harness) {
   const node = harness.nodeExe();
+  // A Node.js that does not strip types by default cannot load this file.
+  const stripsTypes =
+    !!node &&
+    Bun.spawnSync({ cmd: [node, "-p", "process.features.typescript"], env: harness.bunEnv })
+      .stdout.toString()
+      .trim() === "strip";
 
   describe("Node.js compatibility", () => {
-    (node ? test : test.skip)("all tests pass in Node.js", async () => {
+    (stripsTypes ? test : test.skip)("all tests pass in Node.js", async () => {
       // A direct run: `node --test` forks a second process per file, and node:test exits non-zero on a failure anyway.
       await using proc = Bun.spawn({
         cmd: [node!, fileURLToPath(import.meta.url)],

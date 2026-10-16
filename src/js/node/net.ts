@@ -197,6 +197,7 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
+const StringPrototypeIncludes = String.prototype.includes;
 const reportError = globalThis.reportError;
 
 let uvBinding;
@@ -1910,6 +1911,10 @@ function kConnectTcp(self, addressType, req, address, port) {
 
 function kConnectPipe(self, req, address) {
   $debug("SocketHandle.kConnectPipe");
+  // uv_pipe_connect2 refuses a NUL in the name, except in a Linux abstract name, which starts with one: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/pipe.c#L34-L46
+  if (StringPrototypeIncludes.$call(address, "\0") && (process.platform !== "linux" || address[0] !== "\0"))
+    return uv().UV_EINVAL;
+  traceConnectStart(req, address);
   // Read before the dial: ticks can run inside it, and one of them can call connect() again.
   const earlierConnectPending = self[kEarlierConnectPending];
   const data = { self, req };
@@ -3437,7 +3442,6 @@ function internalConnect(self, options, address, port?, addressType?, localAddre
     req.tls = tls;
     req.pauseOnConnect = options.pauseOnConnect;
 
-    traceConnectStart(req, address);
     err = kConnectPipe(self, req, address);
   }
 

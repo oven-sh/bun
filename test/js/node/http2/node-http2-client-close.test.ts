@@ -5,12 +5,17 @@
  * Once the peer's half has ended (END_STREAM on a HEADERS frame, or a server push, which has no
  * inbound half) the readable already has its EOF, so 'end' comes first for every code.
  *
+ * A client request that waits for a stream slot (the peer's SETTINGS_MAX_CONCURRENT_STREAMS) and is
+ * reset with close(code) before a slot opens is never sent. The last sections cover it.
+ *
  * Works with both:
  *   bun bd test test/js/node/http2/node-http2-client-close.test.ts
  *   node --test test/js/node/http2/node-http2-client-close.test.ts
  */
 import assert from "node:assert";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { execFile } from "node:child_process";
+import diagnosticsChannel from "node:diagnostics_channel";
 import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
@@ -328,23 +333,50 @@ for (const [site, table] of [
 }
 
 // A client request that waits for a stream slot: the session is at the peer's
-// SETTINGS_MAX_CONCURRENT_STREAMS, so its HEADERS frame is not sent yet. close(code) cancels it in
-// place. Nothing is written for it, and it closes with that code when a slot opens.
+// SETTINGS_MAX_CONCURRENT_STREAMS, so its HEADERS frame is not sent yet. close(code) resets it in
+// the queue: no frame is written for it, and it closes with that code when a slot opens. node gives
+// such a request its id at once and keeps its HEADERS frame back in nghttp2, where a reset drops it.
+
+const isBun = typeof Bun !== "undefined";
+// node 24.22 and 26.10 settle a write in flight inside _destroy(), with the error of the destroy
+// and before 'close' (nodejs/node#66016). An older node fails it with ECANCELED after 'close'.
+const writeSettlesInDestroy = (() => {
+  if (isBun) return true;
+  const [major, minor] = process.versions.node.split(".").map(Number);
+  return major > 26 || (major === 26 && minor >= 10) || (major === 24 && minor >= 22);
+})();
+// node finishes the writable of a request that has no body inside request(). Bun finishes it when
+// the request is sent, or when close(code) resets it in the queue.
+const finishedInRequest = isBun ? [] : ["finish"];
+// An older node does not publish the http2.client.stream.* channels.
+const channelTest = isBun || Number(process.versions.node.split(".")[0]) >= 26 ? test : test.skip;
 
 const KEYS = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+
+// The child of the "listener that throws" test. A debug build of Bun needs seconds to load
+// node:http2, so the child starts here and the tests before that one run meanwhile. This file also
+// runs under node: the child is process.execPath, not bunExe() of "harness".
+const listenerThrows = new Promise<{ stdout: string; stderr: string; exit: unknown }>(resolve => {
+  const fixture = path.join(import.meta.dirname, "node-http2-client-close-listener-throws.fixture.js");
+  execFile(process.execPath, [fixture], { env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" } }, (err, stdout, stderr) =>
+    resolve({ stdout: stdout.trim(), stderr: err ? stderr : "", exit: err ? (err.code ?? err.signal) : 0 }),
+  );
+});
 
 type FramePeerOptions = {
   secure?: boolean;
   // The peer's SETTINGS_MAX_CONCURRENT_STREAMS.
   limit?: number;
+  // The first `held` requests get no answer until answer(id). The default is `limit`.
+  held?: number;
   // Send SETTINGS when the connection opens, before the client preface.
   eagerSettings?: boolean;
 };
 
 // A raw HTTP/2 peer, h2c or h2 over TLS. It records the HEADERS, DATA and RST_STREAM frames that
-// the client sends. The first `limit` requests get no answer until answer(id). Every later request
-// is answered at once with 200 and END_STREAM.
-async function framePeer({ secure = false, limit = 1, eagerSettings = false }: FramePeerOptions = {}) {
+// the client sends. Each request after the first `held` ones gets 200 with END_STREAM when it is
+// complete.
+async function framePeer({ secure = false, limit = 1, held = limit, eagerSettings = false }: FramePeerOptions = {}) {
   const FRAME = { DATA: 0, HEADERS: 1, RST_STREAM: 3, SETTINGS: 4, PING: 6, GOAWAY: 7 };
   const ACK = 0x1;
   const END_STREAM = 0x1;
@@ -368,9 +400,12 @@ async function framePeer({ secure = false, limit = 1, eagerSettings = false }: F
   const status200 = Buffer.from([0x88]);
 
   const frames: string[] = [];
+  const unanswered = new Set<number>();
   let socket: net.Socket | undefined;
+  let wake = () => {};
   const disconnected = Promise.withResolvers<void>();
   const answer = (id: number, body?: string) => {
+    unanswered.delete(id);
     if (body === undefined) {
       socket!.write(frame(FRAME.HEADERS, END_STREAM | END_HEADERS, id, status200));
     } else {
@@ -380,9 +415,12 @@ async function framePeer({ secure = false, limit = 1, eagerSettings = false }: F
   };
   const onConnection = (s: net.Socket) => {
     socket = s;
+    // node keeps Nagle's algorithm on for a net.Socket: without this line the run under node
+    // waits for a delayed ACK in most tests. Bun never delays.
+    s.setNoDelay(true);
     let buffered = Buffer.alloc(0);
     let sawPreface = false;
-    let held = 0;
+    let requests = 0;
     s.on("error", () => {});
     s.on("close", () => disconnected.resolve());
     if (eagerSettings) s.write(maxConcurrentStreams(limit));
@@ -407,16 +445,15 @@ async function framePeer({ secure = false, limit = 1, eagerSettings = false }: F
           if (!(flags & ACK)) s.write(frame(FRAME.SETTINGS, ACK, 0));
         } else if (type === FRAME.PING) {
           if (!(flags & ACK)) s.write(frame(FRAME.PING, ACK, 0, payload));
-        } else if (type === FRAME.DATA) {
-          frames.push(`DATA ${id}${endStream}`);
         } else if (type === FRAME.RST_STREAM) {
           frames.push(`RST_STREAM ${id} code=${payload.readUInt32BE(0)}`);
-        } else if (type === FRAME.HEADERS) {
-          frames.push(`HEADERS ${id}${endStream}`);
-          if (held < limit) held++;
-          else answer(id);
+        } else if (type === FRAME.HEADERS || type === FRAME.DATA) {
+          frames.push(`${type === FRAME.HEADERS ? "HEADERS" : "DATA"} ${id}${endStream}`);
+          if (type === FRAME.HEADERS && requests++ < held) unanswered.add(id);
+          if (endStream && !unanswered.has(id)) answer(id);
         }
       }
+      wake();
     });
   };
   const server = secure
@@ -434,10 +471,14 @@ async function framePeer({ secure = false, limit = 1, eagerSettings = false }: F
     port,
     // What the client sent, for example "HEADERS 1 END_STREAM" or "RST_STREAM 3 code=8".
     frames,
+    // Resolves when `entry` is in `frames`.
+    async saw(entry: string) {
+      while (!frames.includes(entry)) await new Promise<void>(resolve => (wake = resolve));
+    },
     // The connection is closed: `frames` is complete.
     disconnected: disconnected.promise,
     answer,
-    raiseLimit: (streams: number) => socket!.write(maxConcurrentStreams(streams)),
+    setLimit: (streams: number) => socket!.write(maxConcurrentStreams(streams)),
     goaway(code: number, lastStreamId: number) {
       const payload = Buffer.alloc(8);
       payload.writeUInt32BE(lastStreamId, 0);
@@ -464,22 +505,28 @@ function peerCaughtUp(session: http2.ClientHttp2Session): Promise<void> {
 
 type Watched = { stream: http2.ClientHttp2Stream; events: string[]; closed: Promise<void> };
 
-function watchRequest(stream: http2.ClientHttp2Stream): Watched {
+// Records the events of a request in the order they fire.
+function watchRequest(stream: http2.ClientHttp2Stream, { read = true } = {}): Watched {
   const events: string[] = [];
   const { promise: closed, resolve } = Promise.withResolvers<void>();
-  stream.on("aborted", () => events.push("aborted"));
+  for (const name of ["aborted", "finish", "end"]) stream.on(name, () => events.push(name));
   stream.on("response", headers => events.push("response:" + headers[":status"]));
-  stream.on("end", () => events.push("end"));
   stream.on("error", e => events.push("error:" + (e as NodeJS.ErrnoException).code));
   stream.on("close", () => {
     events.push("close:" + stream.rstCode);
     resolve();
   });
-  stream.resume();
+  if (read) stream.resume();
   return { stream, events, closed };
 }
 
+// The events of a request without a body that the peer answers.
+const SERVED = ["finish", "response:200", "end", "close:0"];
+
 const headersOf = (...requests: Watched[]) => requests.map(({ stream }) => `HEADERS ${stream.id} END_STREAM`);
+
+const writeCallback = (events: string[]) => (err?: Error | null) =>
+  events.push("write:" + (err ? (err as NodeJS.ErrnoException).code : "ok"));
 
 type AtLimit = { peer: FramePeer; session: http2.ClientHttp2Session; holders: Watched[] };
 
@@ -503,112 +550,229 @@ async function atStreamLimit(options: FramePeerOptions, body: (at: AtLimit) => P
   }
 }
 
-type WaitingRequest = "GET" | "POST, ended" | "POST, not ended";
+type GiveUp = {
+  name: string;
+  method?: "POST";
+  // Runs in the tick of request().
+  send?: (request: http2.ClientHttp2Stream, events: string[]) => void;
+  // Runs while the holder has the only slot.
+  giveUp: (request: http2.ClientHttp2Stream, events: string[], abort: AbortController) => void;
+  // The events of the request while the holder still has the slot...
+  waiting: string[];
+  // ...and all of its events.
+  closed: string[];
+};
 
-// A request waits for the only stream slot and the caller gives it up. A second request is made
-// behind it. Then the peer answers the holder. Returns what the peer received.
-async function giveUpWaitingRequest(
-  secure: boolean,
-  kind: WaitingRequest,
-  giveUp: (waiting: http2.ClientHttp2Stream, abort: AbortController) => void,
-) {
-  const result = {
-    frames: [] as string[],
-    expectedFrames: [] as string[],
-    waiting: [] as string[],
-    next: [] as string[],
-  };
+// close(code) resets the request in the queue. It has no event of its end before a slot opens.
+const resets: GiveUp[] = [
+  {
+    name: "close(CANCEL), GET",
+    giveUp: request => request.close(NGHTTP2_CANCEL),
+    waiting: ["finish"],
+    closed: ["finish", "end", "close:8"],
+  },
+  {
+    name: "close(INTERNAL_ERROR), GET",
+    giveUp: request => request.close(NGHTTP2_INTERNAL_ERROR),
+    waiting: ["finish"],
+    closed: ["finish", "error:ERR_HTTP2_STREAM_ERROR", "close:2"],
+  },
+  {
+    name: "close(), GET",
+    giveUp: request => request.close(),
+    waiting: ["finish"],
+    closed: ["finish", "end", "close:0"],
+  },
+  {
+    name: "close(CANCEL, callback), GET",
+    giveUp: (request, events) => request.close(NGHTTP2_CANCEL, () => events.push("close callback")),
+    waiting: ["finish"],
+    closed: ["finish", "end", "close:8", "close callback"],
+  },
+  {
+    name: "close(CANCEL), POST with end(body)",
+    method: "POST",
+    send: request => request.end("body"),
+    giveUp: request => request.close(NGHTTP2_CANCEL),
+    waiting: [],
+    closed: ["end", "close:8"],
+  },
+  {
+    name: "close(INTERNAL_ERROR), POST with end(body)",
+    method: "POST",
+    send: request => request.end("body"),
+    giveUp: request => request.close(NGHTTP2_INTERNAL_ERROR),
+    waiting: [],
+    closed: ["error:ERR_HTTP2_STREAM_ERROR", "close:2"],
+  },
+  {
+    name: "close(), POST with end()",
+    method: "POST",
+    send: request => request.end(),
+    giveUp: request => request.close(),
+    waiting: ["finish"],
+    closed: ["finish", "end", "close:0"],
+  },
+  // The body is never sent. The callback of its write() runs when the request closes.
+  {
+    name: "close(CANCEL), POST with write(body)",
+    method: "POST",
+    send: (request, events) => request.write("body", writeCallback(events)),
+    giveUp: request => request.close(NGHTTP2_CANCEL),
+    waiting: ["aborted"],
+    closed: writeSettlesInDestroy
+      ? ["aborted", "write:ok", "end", "close:8"]
+      : ["aborted", "end", "close:8", "write:ECANCELED"],
+  },
+  {
+    name: "close(INTERNAL_ERROR), POST with write(body)",
+    method: "POST",
+    send: (request, events) => request.write("body", writeCallback(events)),
+    giveUp: request => request.close(NGHTTP2_INTERNAL_ERROR),
+    waiting: ["aborted"],
+    closed: writeSettlesInDestroy
+      ? ["aborted", "write:ERR_HTTP2_STREAM_ERROR", "error:ERR_HTTP2_STREAM_ERROR", "close:2"]
+      : ["aborted", "error:ERR_HTTP2_STREAM_ERROR", "close:2", "write:ECANCELED"],
+  },
+];
+
+// destroy() and a signal abort take the request out of the queue at once.
+const destroys: GiveUp[] = [
+  {
+    name: "destroy(), GET",
+    giveUp: request => request.destroy(),
+    waiting: [...finishedInRequest, "end", "close:0"],
+    closed: [...finishedInRequest, "end", "close:0"],
+  },
+  {
+    name: "destroy(), POST with write(body)",
+    method: "POST",
+    send: request => request.write("body"),
+    giveUp: request => request.destroy(),
+    waiting: ["aborted", "end", "close:0"],
+    closed: ["aborted", "end", "close:0"],
+  },
+  {
+    name: "signal abort, GET",
+    giveUp: (_request, _events, abort) => abort.abort(),
+    waiting: [...finishedInRequest, "error:ABORT_ERR", "close:8"],
+    closed: [...finishedInRequest, "error:ABORT_ERR", "close:8"],
+  },
+];
+
+// A request waits for the only stream slot and the caller gives it up. A second request waits
+// behind it. Then the peer answers the holder, and a third request is made.
+async function giveUpWaitingRequest(secure: boolean, row: GiveUp) {
   await atStreamLimit({ secure }, async ({ peer, session, holders: [holder] }) => {
     const abort = new AbortController();
     const waiting = watchRequest(
-      session.request({ ":path": "/waiting", ":method": kind === "GET" ? "GET" : "POST" }, { signal: abort.signal }),
+      session.request({ ":path": "/waiting", ":method": row.method ?? "GET" }, { signal: abort.signal }),
     );
-    if (kind === "POST, ended") waiting.stream.end("body");
-    if (kind === "POST, not ended") {
-      waiting.stream.write("body", err =>
-        waiting.events.push("write:" + (err as NodeJS.ErrnoException | null | undefined)?.code),
-      );
-    }
+    row.send?.(waiting.stream, waiting.events);
     await peerCaughtUp(session);
-    assert.deepStrictEqual(peer.frames, headersOf(holder));
 
-    giveUp(waiting.stream, abort);
+    row.giveUp(waiting.stream, waiting.events, abort);
     const next = watchRequest(session.request({ ":path": "/next" }));
     await peerCaughtUp(session);
-    assert.deepStrictEqual(peer.frames, headersOf(holder));
+    const whileHolderHasSlot = { frames: [...peer.frames], waiting: [...waiting.events] };
 
     peer.answer(holder.stream.id!);
     await Promise.all([holder.closed, waiting.closed, next.closed]);
+    const later = watchRequest(session.request({ ":path": "/later" }));
+    await later.closed;
     await peerCaughtUp(session);
-    result.frames = peer.frames;
-    result.expectedFrames = headersOf(holder, next);
-    result.waiting = waiting.events;
-    result.next = next.events;
+    assert.deepStrictEqual(
+      { whileHolderHasSlot, frames: peer.frames, waiting: waiting.events, next: next.events, later: later.events },
+      {
+        whileHolderHasSlot: { frames: headersOf(holder), waiting: row.waiting },
+        // No frame has the id of the request that was given up.
+        frames: headersOf(holder, next, later),
+        waiting: row.closed,
+        next: SERVED,
+        later: SERVED,
+      },
+    );
   });
-  return result;
 }
 
 for (const secure of [false, true]) {
-  describe(`close(code) on a request that waits for a stream slot${secure ? ", TLS" : ""}`, () => {
-    for (const [label, kind, args, expected] of [
-      ["close(CANCEL), GET", "GET", [NGHTTP2_CANCEL], ["end", "close:8"]],
-      ["close(CANCEL), ended POST", "POST, ended", [NGHTTP2_CANCEL], ["end", "close:8"]],
-      ["close(INTERNAL_ERROR), GET", "GET", [NGHTTP2_INTERNAL_ERROR], ["error:ERR_HTTP2_STREAM_ERROR", "close:2"]],
-      [
-        "close(INTERNAL_ERROR), ended POST",
-        "POST, ended",
-        [NGHTTP2_INTERNAL_ERROR],
-        ["error:ERR_HTTP2_STREAM_ERROR", "close:2"],
-      ],
-      ["close(), GET", "GET", [], ["end", "close:0"]],
-      // The write that waits for the stream id completes with an error, after 'close'.
-      [
-        "close(CANCEL), POST that is not ended",
-        "POST, not ended",
-        [NGHTTP2_CANCEL],
-        ["aborted", "end", "close:8", "write:ECANCELED"],
-      ],
-    ] as const) {
-      test(label, async () => {
-        const result = await giveUpWaitingRequest(secure, kind, waiting => waiting.close(...args));
-        assert.deepStrictEqual(result.frames, result.expectedFrames);
-        assert.deepStrictEqual(result.waiting, expected);
-        assert.deepStrictEqual(result.next, ["response:200", "end", "close:0"]);
-      });
+  describe(`a request that waits for a stream slot and is given up${secure ? ", TLS" : ""}`, () => {
+    for (const row of [...resets, ...destroys]) {
+      test(row.name, () => giveUpWaitingRequest(secure, row));
     }
 
-    test("close(CANCEL, callback), GET", async () => {
-      let calls = 0;
-      const result = await giveUpWaitingRequest(secure, "GET", waiting => waiting.close(NGHTTP2_CANCEL, () => calls++));
-      assert.deepStrictEqual(result.frames, result.expectedFrames);
-      assert.deepStrictEqual(result.waiting, ["end", "close:8"]);
-      assert.strictEqual(calls, 1);
-    });
+    // node 26 never emits 'close' for this request (nodejs/node#63249), so only the frames are
+    // asserted: the reset drops the request, as it does for every other code.
+    test("close(), POST with write(body)", async () => {
+      await atStreamLimit({ secure }, async ({ peer, session, holders: [holder] }) => {
+        const waiting = watchRequest(session.request({ ":path": "/waiting", ":method": "POST" }));
+        waiting.stream.write("body");
+        await peerCaughtUp(session);
+        waiting.stream.close();
+        const next = watchRequest(session.request({ ":path": "/next" }));
+        await peerCaughtUp(session);
+        const whileHolderHasSlot = [...peer.frames];
 
-    test("destroy(), GET", async () => {
-      const result = await giveUpWaitingRequest(secure, "GET", waiting => waiting.destroy());
-      assert.deepStrictEqual(result.frames, result.expectedFrames);
-      assert.deepStrictEqual(result.waiting, ["end", "close:0"]);
-      assert.deepStrictEqual(result.next, ["response:200", "end", "close:0"]);
-    });
-
-    test("destroy(), POST that is not ended", async () => {
-      const result = await giveUpWaitingRequest(secure, "POST, not ended", waiting => waiting.destroy());
-      assert.deepStrictEqual(result.frames, result.expectedFrames);
-      assert.deepStrictEqual(result.waiting, ["aborted", "end", "close:0", "write:ECANCELED"]);
-    });
-
-    test("signal abort, GET", async () => {
-      const result = await giveUpWaitingRequest(secure, "GET", (_, abort) => abort.abort());
-      assert.deepStrictEqual(result.frames, result.expectedFrames);
-      assert.deepStrictEqual(result.waiting, ["error:ABORT_ERR", "close:8"]);
-      assert.deepStrictEqual(result.next, ["response:200", "end", "close:0"]);
+        peer.answer(holder.stream.id!);
+        await Promise.all([holder.closed, next.closed]);
+        await peerCaughtUp(session);
+        assert.deepStrictEqual(
+          { whileHolderHasSlot, frames: peer.frames, next: next.events },
+          { whileHolderHasSlot: headersOf(holder), frames: headersOf(holder, next), next: SERVED },
+        );
+      });
     });
   });
 }
 
-describe("a request that close(code) cancelled while it waited for a stream slot", () => {
-  test("limit 2: the next request takes the slot", async () => {
+// close() with NGHTTP2_NO_ERROR on a request that has ended and still has a body write in flight:
+// node resets it after 'finish', so the request is sent first. Bun sends it too.
+describe("close() on an ended request that waits for a stream slot with a body to send", () => {
+  for (const [name, send] of [
+    ["end(body)", request => request.end("body")],
+    [
+      "write(''), end()",
+      request => {
+        request.write("");
+        request.end();
+      },
+    ],
+  ] as [string, (request: http2.ClientHttp2Stream) => void][]) {
+    test(`${name}, close()`, async () => {
+      // The peer does not answer the request either: only the reset of the client closes it.
+      await atStreamLimit({ held: 2 }, async ({ peer, session, holders: [holder] }) => {
+        const waiting = watchRequest(session.request({ ":path": "/waiting", ":method": "POST" }));
+        send(waiting.stream);
+        await peerCaughtUp(session);
+        waiting.stream.close();
+        await peerCaughtUp(session);
+        const whileHolderHasSlot = [...peer.frames];
+
+        peer.answer(holder.stream.id!);
+        await Promise.all([holder.closed, waiting.closed]);
+        const id = waiting.stream.id!;
+        await peer.saw(`RST_STREAM ${id} code=0`);
+        await peerCaughtUp(session);
+        assert.deepStrictEqual(
+          {
+            whileHolderHasSlot,
+            // node sends one DATA frame for each write and one for END_STREAM, and Bun one in all.
+            frames: peer.frames.filter(entry => entry !== `DATA ${id}`),
+            rstCode: waiting.stream.rstCode,
+          },
+          {
+            whileHolderHasSlot: headersOf(holder),
+            frames: [...headersOf(holder), `HEADERS ${id}`, `DATA ${id} END_STREAM`, `RST_STREAM ${id} code=0`],
+            rstCode: NGHTTP2_NO_ERROR,
+          },
+        );
+      });
+    });
+  }
+});
+
+describe("a request that close(code) reset while it waited for a stream slot", () => {
+  test("limit 2: the request behind it takes the slot", async () => {
     await atStreamLimit({ limit: 2 }, async ({ peer, session, holders }) => {
       const waiting = watchRequest(session.request({ ":path": "/waiting" }));
       await peerCaughtUp(session);
@@ -618,25 +782,85 @@ describe("a request that close(code) cancelled while it waited for a stream slot
       peer.answer(holders[0].stream.id!);
       await Promise.all([holders[0].closed, waiting.closed, next.closed]);
       await peerCaughtUp(session);
-      assert.deepStrictEqual(peer.frames, headersOf(...holders, next));
-      assert.deepStrictEqual(waiting.events, ["end", "close:8"]);
-      assert.deepStrictEqual(next.events, ["response:200", "end", "close:0"]);
+      assert.deepStrictEqual(
+        { frames: peer.frames, waiting: waiting.events, next: next.events },
+        { frames: headersOf(...holders, next), waiting: ["finish", "end", "close:8"], next: SERVED },
+      );
     });
   });
 
-  test("a request queued behind it before the close takes the slot", async () => {
+  test("one free slot closes three of them in queue order, and serves the request behind them", async () => {
     await atStreamLimit({}, async ({ peer, session, holders: [holder] }) => {
-      const waiting = watchRequest(session.request({ ":path": "/waiting" }));
+      const codes = [NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR];
+      const order: string[] = [];
+      const reset = codes.map(code => {
+        const request = watchRequest(session.request({ ":path": "/reset" }));
+        request.stream.on("close", () => order.push("close:" + code));
+        return request;
+      });
       const behind = watchRequest(session.request({ ":path": "/behind" }));
+      await peerCaughtUp(session);
+      reset.forEach((request, i) => request.stream.close(codes[i]));
+      await peerCaughtUp(session);
+      const whileHolderHasSlot = [...order];
+
+      peer.answer(holder.stream.id!);
+      await Promise.all([holder.closed, ...reset.map(request => request.closed), behind.closed]);
+      await peerCaughtUp(session);
+      assert.deepStrictEqual(
+        {
+          whileHolderHasSlot,
+          frames: peer.frames,
+          order,
+          reset: reset.map(({ events }) => events),
+          behind: behind.events,
+        },
+        {
+          whileHolderHasSlot: [],
+          frames: headersOf(holder, behind),
+          order: ["close:0", "close:8", "close:2"],
+          reset: [
+            ["finish", "end", "close:0"],
+            ["finish", "end", "close:8"],
+            ["finish", "error:ERR_HTTP2_STREAM_ERROR", "close:2"],
+          ],
+          behind: SERVED,
+        },
+      );
+    });
+  });
+
+  test("has no event while the request ahead of it has the slot", async () => {
+    await atStreamLimit({ held: 2 }, async ({ peer, session, holders: [holder] }) => {
+      const ahead = watchRequest(session.request({ ":path": "/ahead" }));
+      const waiting = watchRequest(session.request({ ":path": "/waiting" }));
       await peerCaughtUp(session);
       waiting.stream.close(NGHTTP2_CANCEL);
 
       peer.answer(holder.stream.id!);
-      await Promise.all([holder.closed, waiting.closed, behind.closed]);
+      await holder.closed;
+      await peer.saw(headersOf(ahead)[0]);
       await peerCaughtUp(session);
-      assert.deepStrictEqual(peer.frames, headersOf(holder, behind));
-      assert.deepStrictEqual(waiting.events, ["end", "close:8"]);
-      assert.deepStrictEqual(behind.events, ["response:200", "end", "close:0"]);
+      const behindOpenRequest = { frames: [...peer.frames], waiting: [...waiting.events] };
+      // A SETTINGS frame with the same limit runs the queue again, and there is still no slot.
+      const settings = once(session, "remoteSettings");
+      peer.setLimit(1);
+      await settings;
+      await peerCaughtUp(session);
+      const afterSettings = [...waiting.events];
+
+      peer.answer(ahead.stream.id!);
+      await Promise.all([ahead.closed, waiting.closed]);
+      await peerCaughtUp(session);
+      assert.deepStrictEqual(
+        { behindOpenRequest, afterSettings, frames: peer.frames, waiting: waiting.events },
+        {
+          behindOpenRequest: { frames: headersOf(holder, ahead), waiting: ["finish"] },
+          afterSettings: ["finish"],
+          frames: headersOf(holder, ahead),
+          waiting: ["finish", "end", "close:8"],
+        },
+      );
     });
   });
 
@@ -646,132 +870,57 @@ describe("a request that close(code) cancelled while it waited for a stream slot
       await peerCaughtUp(session);
       waiting.stream.close(NGHTTP2_CANCEL);
       const next = watchRequest(session.request({ ":path": "/next" }));
+      await peerCaughtUp(session);
+      const beforeSettings = [...waiting.events];
 
-      peer.raiseLimit(2);
+      peer.setLimit(2);
       await Promise.all([waiting.closed, next.closed]);
       await peerCaughtUp(session);
-      assert.deepStrictEqual(peer.frames, headersOf(holder, next));
-      assert.deepStrictEqual(waiting.events, ["end", "close:8"]);
-      assert.deepStrictEqual(next.events, ["response:200", "end", "close:0"]);
-      assert.deepStrictEqual(holder.events, []);
+      assert.deepStrictEqual(
+        { beforeSettings, frames: peer.frames, waiting: waiting.events, next: next.events, holder: holder.events },
+        {
+          beforeSettings: ["finish"],
+          frames: headersOf(holder, next),
+          waiting: ["finish", "end", "close:8"],
+          next: SERVED,
+          holder: ["finish"],
+        },
+      );
     });
   });
 
-  test("does not keep session.close() from completing", async () => {
+  test("closes after the request that had the slot", async () => {
     await atStreamLimit({}, async ({ peer, session, holders: [holder] }) => {
+      const log: string[] = [];
+      holder.stream.on("close", () => log.push("holder close"));
       const waiting = watchRequest(session.request({ ":path": "/waiting" }));
+      for (const name of ["end", "close"]) waiting.stream.on(name, () => log.push("waiting " + name));
       await peerCaughtUp(session);
       waiting.stream.close(NGHTTP2_CANCEL);
 
-      const sessionClosed = once(session, "close");
-      session.close();
       peer.answer(holder.stream.id!);
-      await Promise.all([sessionClosed, holder.closed, waiting.closed, peer.disconnected]);
-      assert.deepStrictEqual(peer.frames, headersOf(holder));
-      assert.deepStrictEqual(waiting.events, ["end", "close:8"]);
+      await waiting.closed;
+      assert.deepStrictEqual(log, ["holder close", "waiting end", "waiting close"]);
     });
   });
 
-  test("does not keep session.close() from completing when the holder's response is read late", async () => {
-    await atStreamLimit({}, async ({ peer, session, holders: [holder] }) => {
-      holder.stream.pause();
-      const waiting = watchRequest(session.request({ ":path": "/waiting" }));
-      await peerCaughtUp(session);
-      waiting.stream.close(NGHTTP2_CANCEL);
-
-      // The session has the whole response of the holder. Nothing has read its body.
-      peer.answer(holder.stream.id!, "body");
-      await peerCaughtUp(session);
-      const sessionClosed = once(session, "close");
-      session.close();
-      holder.stream.resume();
-      await Promise.all([sessionClosed, holder.closed, waiting.closed, peer.disconnected]);
-      assert.deepStrictEqual(peer.frames, headersOf(holder));
-      assert.deepStrictEqual(waiting.events, ["end", "close:8"]);
-    });
-  });
-
-  test("is not sent when request() ran before 'connect' on a connected socket", async () => {
-    const peer = await framePeer({ eagerSettings: true });
-    const socket = net.connect(peer.port, "127.0.0.1");
-    try {
-      await once(socket, "connect");
-      // The socket holds the peer's SETTINGS frame before the session exists.
-      while (socket.readableLength === 0) await new Promise(resolve => setImmediate(resolve));
-      const session = peer.connect({ createConnection: () => socket });
-      session.on("error", () => {});
-      const started = Promise.withResolvers<[Watched, Watched]>();
-      session.once("remoteSettings", () => {
-        const holder = watchRequest(session.request({ ":path": "/holder" }));
-        const waiting = watchRequest(session.request({ ":path": "/waiting" }));
-        waiting.stream.close(NGHTTP2_CANCEL);
-        started.resolve([holder, waiting]);
-      });
-      const [holder, waiting] = await started.promise;
-      const next = watchRequest(session.request({ ":path": "/next" }));
-      await peerCaughtUp(session);
-      assert.deepStrictEqual(peer.frames, headersOf(holder));
-
-      peer.answer(holder.stream.id!);
-      await Promise.all([holder.closed, waiting.closed, next.closed]);
-      await peerCaughtUp(session);
-      assert.deepStrictEqual(peer.frames, headersOf(holder, next));
-      assert.deepStrictEqual(waiting.events, ["end", "close:8"]);
-      session.destroy();
-    } finally {
-      socket.destroy();
-      peer.close();
-    }
-  });
-
-  // The session ends while the request is still queued. The request keeps the code of close().
-  const sessionError = Object.assign(new Error("session error"), { code: "E_SESSION" });
-  for (const [label, code, endSession, expected] of [
-    ["session.destroy()", NGHTTP2_CANCEL, ({ session }) => session.destroy(), ["end", "close:8"]],
-    [
-      "session.destroy()",
-      NGHTTP2_INTERNAL_ERROR,
-      ({ session }) => session.destroy(),
-      ["error:ERR_HTTP2_STREAM_ERROR", "close:2"],
-    ],
-    [
-      "session.destroy(error)",
-      NGHTTP2_CANCEL,
-      ({ session }) => session.destroy(sessionError),
-      ["error:E_SESSION", "close:8"],
-    ],
-    [
-      "session.destroy(error)",
-      NGHTTP2_NO_ERROR,
-      ({ session }) => session.destroy(sessionError),
-      ["error:E_SESSION", "close:0"],
-    ],
-    [
-      "a GOAWAY frame with an error code",
-      NGHTTP2_CANCEL,
-      ({ peer, holders: [holder] }) => peer.goaway(NGHTTP2_ENHANCE_YOUR_CALM, holder.stream.id!),
-      ["error:ERR_HTTP2_SESSION_ERROR", "close:8"],
-    ],
-    [
-      "a GOAWAY frame with NO_ERROR and the answer to the holder",
-      NGHTTP2_CANCEL,
-      ({ peer, holders: [holder] }) => {
-        peer.goaway(NGHTTP2_NO_ERROR, holder.stream.id!);
-        peer.answer(holder.stream.id!);
-      },
-      ["end", "close:8"],
-    ],
-    ["the end of the connection", NGHTTP2_CANCEL, ({ peer }) => peer.end(), ["end", "close:8"]],
-  ] as [string, number, (at: AtLimit) => void, string[]][]) {
-    test(`close(${code}), then ${label}`, async () => {
-      await atStreamLimit({}, async at => {
-        const waiting = watchRequest(at.session.request({ ":path": "/waiting" }));
-        await peerCaughtUp(at.session);
+  for (const [code, expected] of [
+    [NGHTTP2_NO_ERROR, ["finish", "end", "close:0"]],
+    [NGHTTP2_CANCEL, ["finish", "close:8"]],
+  ] as [number, string[]][]) {
+    test(`close(${code}) on a request that nothing reads`, async () => {
+      await atStreamLimit({}, async ({ peer, session, holders: [holder] }) => {
+        const waiting = watchRequest(session.request({ ":path": "/waiting" }), { read: false });
+        await peerCaughtUp(session);
         waiting.stream.close(code);
-        endSession(at);
-        await Promise.all([waiting.closed, at.peer.disconnected]);
-        assert.deepStrictEqual(waiting.events, expected);
-        assert.deepStrictEqual(at.peer.frames, headersOf(...at.holders));
+
+        peer.answer(holder.stream.id!);
+        await Promise.all([holder.closed, waiting.closed]);
+        await peerCaughtUp(session);
+        assert.deepStrictEqual(
+          { frames: peer.frames, waiting: waiting.events },
+          { frames: headersOf(holder), waiting: expected },
+        );
       });
     });
   }
@@ -791,6 +940,351 @@ describe("a request that close(code) cancelled while it waited for a stream slot
       assert.deepStrictEqual(stores, ["request()", "request()"]);
     });
   });
+
+  test("is not sent on a socket that was connected before connect()", async () => {
+    const peer = await framePeer({ eagerSettings: true });
+    const socket = net.connect(peer.port, "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      const session = peer.connect({ createConnection: () => socket });
+      session.on("error", () => {});
+      await Promise.all([once(session, "connect"), once(session, "remoteSettings")]);
+      const holder = watchRequest(session.request({ ":path": "/holder" }));
+      const waiting = watchRequest(session.request({ ":path": "/waiting" }));
+      waiting.stream.close(NGHTTP2_CANCEL);
+      const next = watchRequest(session.request({ ":path": "/next" }));
+      await peerCaughtUp(session);
+      const whileHolderHasSlot = [...peer.frames];
+
+      peer.answer(holder.stream.id!);
+      await Promise.all([holder.closed, waiting.closed, next.closed]);
+      await peerCaughtUp(session);
+      assert.deepStrictEqual(
+        { whileHolderHasSlot, frames: peer.frames, waiting: waiting.events },
+        {
+          whileHolderHasSlot: headersOf(holder),
+          frames: headersOf(holder, next),
+          waiting: ["finish", "end", "close:8"],
+        },
+      );
+      session.destroy();
+    } finally {
+      socket.destroy();
+      peer.close();
+    }
+  });
+
+  // A server with one stream slot, and a client that cancels the request that waits for it.
+  test("never reaches the 'stream' listener of a server", async () => {
+    const server = http2.createServer({ settings: { maxConcurrentStreams: 1 } });
+    const seen: string[] = [];
+    const holding = Promise.withResolvers<http2.ServerHttp2Stream>();
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
+      stream.on("error", () => {});
+      seen.push(headers[":path"] as string);
+      if (headers[":path"] === "/hold") return holding.resolve(stream);
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    const port = await listen(server as unknown as net.Server);
+    const session = http2.connect(`http://127.0.0.1:${port}`);
+    session.on("error", () => {});
+    try {
+      await once(session, "remoteSettings");
+      const hold = watchRequest(session.request({ ":path": "/hold" }));
+      const held = await holding.promise;
+      const cancelled = watchRequest(session.request({ ":path": "/cancelled" }));
+      cancelled.stream.close(NGHTTP2_CANCEL);
+      const last = watchRequest(session.request({ ":path": "/last" }));
+      held.respond({ ":status": 200 });
+      held.end("late");
+      await Promise.all([hold.closed, cancelled.closed, last.closed]);
+      assert.deepStrictEqual(
+        { seen, cancelled: cancelled.events, last: last.events },
+        { seen: ["/hold", "/last"], cancelled: ["finish", "end", "close:8"], last: SERVED },
+      );
+    } finally {
+      session.destroy();
+      server.close();
+    }
+  });
+
+  // A listener that throws is an uncaught exception, in node too. The child process handles it.
+  test("does not stop the queue when one of its listeners throws", async () => {
+    // The request behind it is answered, and it was not sent.
+    assert.deepStrictEqual(await listenerThrows, {
+      stdout: JSON.stringify({ seen: ["/hold", "/last"], uncaught: ["readable listener"] }),
+      stderr: "",
+      exit: 0,
+    });
+  });
+});
+
+// session.close() completes when no stream is open and the queue is empty.
+describe("session.close() with a request that waits for a stream slot", () => {
+  test("completes after a request that close(code) reset", async () => {
+    await atStreamLimit({}, async ({ peer, session, holders: [holder] }) => {
+      const waiting = watchRequest(session.request({ ":path": "/waiting" }));
+      await peerCaughtUp(session);
+      waiting.stream.close(NGHTTP2_CANCEL);
+
+      const sessionClosed = once(session, "close");
+      session.close();
+      peer.answer(holder.stream.id!);
+      await Promise.all([sessionClosed, holder.closed, waiting.closed, peer.disconnected]);
+      assert.deepStrictEqual(
+        { frames: peer.frames, waiting: waiting.events },
+        { frames: headersOf(holder), waiting: ["finish", "end", "close:8"] },
+      );
+    });
+  });
+
+  // The session has the whole response of the holder, and nothing has read its body: the holder
+  // still has the slot. When it closes, the queue empties and no request is sent.
+  for (const [name, giveUp, expected] of [
+    ["close(CANCEL)", request => request.close(NGHTTP2_CANCEL), ["finish", "end", "close:8"]],
+    ["destroy()", request => request.destroy(), [...finishedInRequest, "end", "close:0"]],
+    ["a signal abort", (_request, abort) => abort.abort(), [...finishedInRequest, "error:ABORT_ERR", "close:8"]],
+  ] as [string, (request: http2.ClientHttp2Stream, abort: AbortController) => void, string[]][]) {
+    test(`completes when ${name} took the last request out of the queue`, async () => {
+      await atStreamLimit({}, async ({ peer, session, holders: [holder] }) => {
+        holder.stream.pause();
+        const abort = new AbortController();
+        const waiting = watchRequest(session.request({ ":path": "/waiting" }, { signal: abort.signal }));
+        await peerCaughtUp(session);
+        giveUp(waiting.stream, abort);
+
+        peer.answer(holder.stream.id!, "body");
+        await peerCaughtUp(session);
+        const sessionClosed = once(session, "close");
+        session.close();
+        holder.stream.resume();
+        await Promise.all([sessionClosed, holder.closed, waiting.closed, peer.disconnected]);
+        assert.deepStrictEqual(
+          { frames: peer.frames, waiting: waiting.events },
+          { frames: headersOf(holder), waiting: expected },
+        );
+      });
+    });
+  }
+
+  test("does not end the session while another request is open", async () => {
+    await atStreamLimit({ limit: 2 }, async ({ peer, session, holders: [first, second] }) => {
+      const waiting = watchRequest(session.request({ ":path": "/waiting" }));
+      await peerCaughtUp(session);
+      waiting.stream.close(NGHTTP2_CANCEL);
+
+      const sessionClosed = once(session, "close");
+      session.close();
+      peer.answer(first.stream.id!);
+      await Promise.all([first.closed, waiting.closed]);
+      // A session that ends here does so within one turn of the event loop. node rejects a ping() after close().
+      for (let turn = 0; turn < 2; turn++) await new Promise(resolve => setImmediate(resolve));
+      const destroyedWhileOpen = session.destroyed;
+      peer.answer(second.stream.id!);
+      await Promise.all([sessionClosed, second.closed, peer.disconnected]);
+      assert.deepStrictEqual(
+        { destroyedWhileOpen, frames: peer.frames, second: second.events },
+        { destroyedWhileOpen: false, frames: headersOf(first, second), second: SERVED },
+      );
+    });
+  });
+});
+
+// The session ends while the request still waits. node has an open stream for it: the request
+// keeps the code of close(code), and gets the error of the session if there is one.
+describe("close(code) on a request that waits for a stream slot, then the session ends", () => {
+  const sessionError = Object.assign(new Error("session error"), { code: "E_SESSION" });
+  for (const [label, code, endSession, expected] of [
+    ["session.destroy()", NGHTTP2_CANCEL, ({ session }) => session.destroy(), ["finish", "end", "close:8"]],
+    [
+      "session.destroy()",
+      NGHTTP2_INTERNAL_ERROR,
+      ({ session }) => session.destroy(),
+      ["finish", "error:ERR_HTTP2_STREAM_ERROR", "close:2"],
+    ],
+    [
+      "session.destroy(error)",
+      NGHTTP2_CANCEL,
+      ({ session }) => session.destroy(sessionError),
+      ["finish", "error:E_SESSION", "close:8"],
+    ],
+    [
+      "session.destroy(error)",
+      NGHTTP2_NO_ERROR,
+      ({ session }) => session.destroy(sessionError),
+      ["finish", "error:E_SESSION", "close:0"],
+    ],
+    [
+      "a GOAWAY frame with an error code",
+      NGHTTP2_CANCEL,
+      ({ peer, holders: [holder] }) => peer.goaway(NGHTTP2_ENHANCE_YOUR_CALM, holder.stream.id!),
+      ["finish", "error:ERR_HTTP2_SESSION_ERROR", "close:8"],
+    ],
+    [
+      "a GOAWAY frame with NO_ERROR and the answer to the holder",
+      NGHTTP2_CANCEL,
+      ({ peer, holders: [holder] }) => {
+        peer.goaway(NGHTTP2_NO_ERROR, holder.stream.id!);
+        peer.answer(holder.stream.id!);
+      },
+      ["finish", "end", "close:8"],
+    ],
+    ["the end of the connection", NGHTTP2_CANCEL, ({ peer }) => peer.end(), ["finish", "end", "close:8"]],
+  ] as [string, number, (at: AtLimit) => void, string[]][]) {
+    test(`close(${code}), then ${label}`, async () => {
+      await atStreamLimit({}, async at => {
+        const waiting = watchRequest(at.session.request({ ":path": "/waiting" }));
+        await peerCaughtUp(at.session);
+        waiting.stream.close(code);
+        endSession(at);
+        await Promise.all([waiting.closed, at.peer.disconnected]);
+        assert.deepStrictEqual(
+          { frames: at.peer.frames, waiting: waiting.events },
+          { frames: headersOf(...at.holders), waiting: expected },
+        );
+      });
+    });
+  }
+
+  test("close(CANCEL), then session.destroy(error): an 'error' listener that is added after it gets the error", async () => {
+    await atStreamLimit({}, async ({ peer, session, holders }) => {
+      const waiting = session.request({ ":path": "/waiting" });
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      waiting.on("close", () => {
+        events.push("close:" + waiting.rstCode);
+        closed.resolve();
+      });
+      waiting.resume();
+      await peerCaughtUp(session);
+      waiting.close(NGHTTP2_CANCEL);
+      session.destroy(sessionError);
+      waiting.on("error", e => events.push("error:" + (e as NodeJS.ErrnoException).code));
+      await Promise.all([closed.promise, peer.disconnected]);
+      assert.deepStrictEqual(
+        { frames: peer.frames, events },
+        { frames: headersOf(...holders), events: ["error:E_SESSION", "close:8"] },
+      );
+    });
+  });
+
+  // node keeps the request until a slot opens, and with a limit of 0 none does. Bun closes it when
+  // the GOAWAY frame arrives, so the session can end.
+  test("close(CANCEL), then a GOAWAY frame with NO_ERROR while no slot opens", { skip: !isBun }, async () => {
+    await atStreamLimit({ limit: 0 }, async ({ peer, session }) => {
+      const waiting = watchRequest(session.request({ ":path": "/waiting" }));
+      await peerCaughtUp(session);
+      waiting.stream.close(NGHTTP2_CANCEL, () => waiting.events.push("close callback"));
+      const sessionClosed = once(session, "close");
+      peer.goaway(NGHTTP2_NO_ERROR, 0);
+      await Promise.all([waiting.closed, sessionClosed]);
+      assert.deepStrictEqual(
+        { frames: peer.frames, waiting: waiting.events },
+        { frames: [], waiting: ["finish", "end", "close:8", "close callback"] },
+      );
+    });
+  });
+});
+
+// node submits a reset with NGHTTP2_CANCEL late in two cases: close(code) runs in a callback of
+// the session, or the same tick first resets the request that has the slot. The HEADERS frame of
+// the request that waits is then sent before its reset. Bun resets the request at close(code)
+// and sends nothing for it.
+describe("close(CANCEL) on a request that waits for a stream slot, where node sends the request first", () => {
+  for (const [name, act] of [
+    [
+      "the request that has the slot is closed first in the same tick",
+      ({ holders: [holder] }, waiting) => {
+        holder.stream.close(NGHTTP2_CANCEL);
+        waiting.close(NGHTTP2_CANCEL);
+      },
+    ],
+    [
+      "in the 'response' listener of the request that has the slot",
+      ({ peer, holders: [holder] }, waiting) => {
+        holder.stream.on("response", () => waiting.close(NGHTTP2_CANCEL));
+        peer.answer(holder.stream.id!);
+      },
+    ],
+  ] as [string, (at: AtLimit, waiting: http2.ClientHttp2Stream) => void][]) {
+    test(name, async () => {
+      await atStreamLimit({}, async at => {
+        const { peer, session } = at;
+        const waiting = watchRequest(session.request({ ":path": "/waiting" }));
+        await peerCaughtUp(session);
+        // Not in a callback of the session, where node holds every reset with NGHTTP2_CANCEL back.
+        await new Promise(resolve => setImmediate(resolve));
+        const sentBefore = peer.frames.length;
+        act(at, waiting.stream);
+        await waiting.closed;
+        if (!isBun) await peer.saw("RST_STREAM 3 code=8");
+        const later = watchRequest(session.request({ ":path": "/later" }));
+        await later.closed;
+        await peerCaughtUp(session);
+        assert.deepStrictEqual(
+          {
+            frames: peer.frames.slice(sentBefore).filter(entry => !entry.startsWith("RST_STREAM 1 ")),
+            waiting: waiting.events,
+            later: later.events,
+          },
+          {
+            frames: isBun ? headersOf(later) : ["HEADERS 3 END_STREAM", "RST_STREAM 3 code=8", ...headersOf(later)],
+            waiting: ["finish", "end", "close:8"],
+            later: SERVED,
+          },
+        );
+      });
+    });
+  }
+});
+
+// The reset of another code is submitted at once, in node too: nothing is sent.
+describe("close(code) on a request that waits for a stream slot, in the 'response' listener of the request that has the slot", () => {
+  for (const [code, expected] of [
+    [NGHTTP2_NO_ERROR, ["finish", "end", "close:0"]],
+    [NGHTTP2_INTERNAL_ERROR, ["finish", "error:ERR_HTTP2_STREAM_ERROR", "close:2"]],
+  ] as [number, string[]][]) {
+    test(`close(${code})`, async () => {
+      await atStreamLimit({}, async ({ peer, session, holders: [holder] }) => {
+        const waiting = watchRequest(session.request({ ":path": "/waiting" }));
+        await peerCaughtUp(session);
+        holder.stream.on("response", () => waiting.stream.close(code));
+        peer.answer(holder.stream.id!);
+        await Promise.all([holder.closed, waiting.closed]);
+        const later = watchRequest(session.request({ ":path": "/later" }));
+        await later.closed;
+        await peerCaughtUp(session);
+        assert.deepStrictEqual(
+          { frames: peer.frames, waiting: waiting.events, later: later.events },
+          { frames: headersOf(holder, later), waiting: expected, later: SERVED },
+        );
+      });
+    });
+  }
+});
+
+// The slot is free before a 'close' listener of the request that had it runs: the request that
+// waited is sent by then, and the reset follows its HEADERS frame.
+test("close(CANCEL) in the 'close' listener of the request that had the slot resets a request that is sent", async () => {
+  // The peer does not answer the request either: only the reset of the client closes it.
+  await atStreamLimit({ held: 2 }, async ({ peer, session, holders: [holder] }) => {
+    const waiting = watchRequest(session.request({ ":path": "/waiting" }));
+    await peerCaughtUp(session);
+    holder.stream.on("close", () => waiting.stream.close(NGHTTP2_CANCEL));
+    peer.answer(holder.stream.id!);
+    await waiting.closed;
+    const id = waiting.stream.id!;
+    await peer.saw(`RST_STREAM ${id} code=8`);
+    await peerCaughtUp(session);
+    assert.deepStrictEqual(
+      { frames: peer.frames, rstCode: waiting.stream.rstCode },
+      {
+        frames: [...headersOf(holder), `HEADERS ${id} END_STREAM`, `RST_STREAM ${id} code=8`],
+        rstCode: NGHTTP2_CANCEL,
+      },
+    );
+  });
 });
 
 // A request made before the socket connects is still sent: node sends its HEADERS, then the reset.
@@ -805,10 +1299,87 @@ describe("close(code) on a request made before the session connects", () => {
         assert.strictEqual(request.stream.pending, true);
         request.stream.close(code);
         await request.closed;
+        await peer.saw(`RST_STREAM 1 code=${code}`);
         await peerCaughtUp(session);
         assert.deepStrictEqual(peer.frames, ["HEADERS 1 END_STREAM", `RST_STREAM 1 code=${code}`]);
       } finally {
         session.destroy();
+        peer.close();
+      }
+    });
+  }
+
+  // The socket is connected and holds the SETTINGS frame of the peer before the session exists.
+  // The request is made before the session handles the connect, and a slot is free for it.
+  for (const code of [NGHTTP2_NO_ERROR, NGHTTP2_CANCEL]) {
+    test(`close(${code}) in the tick of connect() on a connected socket sends HEADERS, then RST_STREAM`, async () => {
+      const peer = await framePeer({ eagerSettings: true });
+      const socket = net.connect(peer.port, "127.0.0.1");
+      try {
+        await once(socket, "connect");
+        while (socket.readableLength === 0) await new Promise(resolve => setImmediate(resolve));
+        const session = peer.connect({ createConnection: () => socket });
+        session.on("error", () => {});
+        const request = watchRequest(session.request({ ":path": "/" }));
+        request.stream.close(code);
+        await request.closed;
+        const reset = `RST_STREAM 1 code=${code}`;
+        await peer.saw(reset);
+        await peerCaughtUp(session);
+        assert.deepStrictEqual(
+          // Bun can write the reset a second time when it destroys the request.
+          { frames: peer.frames.slice(0, 2), rest: peer.frames.slice(2).filter(entry => entry !== reset) },
+          { frames: ["HEADERS 1 END_STREAM", reset], rest: [] },
+        );
+        session.destroy();
+      } finally {
+        socket.destroy();
+        peer.close();
+      }
+    });
+  }
+
+  // Both requests are made before the connect. The session sends the first one, and a subscriber
+  // closes the second one at that moment: it is sent too, and its reset follows.
+  channelTest("close(CANCEL) while the session sends the requests that waited for the connect", async () => {
+    // The peer answers neither request: only the reset of the client closes the second one.
+    const peer = await framePeer({ limit: 10, held: 2 });
+    const session = peer.connect();
+    session.on("error", () => {});
+    const first = watchRequest(session.request({ ":path": "/first" }));
+    const second = watchRequest(session.request({ ":path": "/second" }));
+    const onStart = (message: unknown) => {
+      if ((message as { stream: http2.ClientHttp2Stream }).stream === first.stream) second.stream.close(NGHTTP2_CANCEL);
+    };
+    diagnosticsChannel.subscribe("http2.client.stream.start", onStart);
+    try {
+      await second.closed;
+      await peer.saw("RST_STREAM 3 code=8");
+      await peerCaughtUp(session);
+      assert.deepStrictEqual(peer.frames, ["HEADERS 1 END_STREAM", "HEADERS 3 END_STREAM", "RST_STREAM 3 code=8"]);
+    } finally {
+      diagnosticsChannel.unsubscribe("http2.client.stream.start", onStart);
+      session.destroy();
+      peer.close();
+    }
+  });
+
+  // The request is not in the session's streams yet: session.destroy() cancels it, as before.
+  for (const [code, error] of [
+    [NGHTTP2_CANCEL, undefined],
+    [NGHTTP2_INTERNAL_ERROR, new Error("session error")],
+  ] as [number, Error | undefined][]) {
+    test(`close(${code}), then session.destroy(${error ? "error" : ""})`, async () => {
+      const peer = await framePeer();
+      const session = peer.connect();
+      session.on("error", () => {});
+      try {
+        const request = watchRequest(session.request({ ":path": "/" }));
+        request.stream.close(code);
+        session.destroy(error);
+        await request.closed;
+        assert.deepStrictEqual(request.events, ["error:ERR_HTTP2_STREAM_CANCEL", `close:${code}`]);
+      } finally {
         peer.close();
       }
     });

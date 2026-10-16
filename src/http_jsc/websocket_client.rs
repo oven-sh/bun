@@ -1184,7 +1184,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         // RFC 6455 7.1.1: the server closes the TCP connection first, within reason.
         match self.tunnel() {
             Some(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
-            None => self.tcp.get().set_timeout(close_timeout_seconds()),
+            None => self
+                .tcp
+                .get()
+                .set_timeout_or_long_timeout(close_timeout_seconds()),
         }
     }
 

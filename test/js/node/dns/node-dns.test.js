@@ -1079,7 +1079,7 @@ describe("query cache", () => {
     });
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
-    const resolver = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+    const resolver = new dns_promises.Resolver({ timeout: 5000, tries: 1 });
     resolver.setServers(["127.0.0.1:" + socket.address().port]);
     return { socket, state, resolver };
   }
@@ -1088,7 +1088,8 @@ describe("query cache", () => {
     const { socket, state, resolver } = await startFakeServer();
     try {
       const name = "_challenge.app.example.test";
-      await expect(resolver.resolveTxt(name)).rejects.toThrow();
+      // Bun reports a NODATA answer as ENOTFOUND. A timeout would be ETIMEOUT.
+      await expect(resolver.resolveTxt(name)).rejects.toMatchObject({ code: "ENOTFOUND" });
       expect(state.queries).toBe(1);
       state.live = true;
       expect(await resolver.resolveTxt(name)).toEqual([["token"]]);

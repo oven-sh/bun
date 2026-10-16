@@ -500,6 +500,32 @@ test.concurrent(
   },
 );
 
+test.concurrent(
+  "a vi.doMock() factory that waits for a test doesn't keep the file that imported the module from loading",
+  async () => {
+    await expectFixturesToPass(
+      {
+        "a.ts": `export const a = "real-a";`,
+        "held.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        import * as ns from "./a";
+
+        const gate = Promise.withResolvers();
+        const patched = vi.doMock("./a", async () => (await gate.promise, { a: "mocked-a" }));
+
+        test("which lets it go", async () => {
+          expect(ns.a).toBe("real-a");
+          gate.resolve();
+          await patched;
+          expect((await import("./a")).a).toBe("mocked-a");
+        });
+      `,
+      },
+      1,
+    );
+  },
+);
+
 test.concurrent("mock.module() of a module whose import() is still loading its dependencies", async () => {
   using dir = tempDir("mock-module-import-in-flight", {
     "a.ts": `import "./dependency"; export const a = "real-a";`,
@@ -5899,11 +5925,105 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
         ),
         ...linked("nothing of the original", `vi.mock("./tax", () => ${whole});` + statement, whollyMocked),
         ...linked("mock.module", `mock.module("./tax", () => ${whole});` + expression, whollyMocked),
+        ...linked(
+          "importOriginal, the module imports the one that mocks it",
+          spreadsOriginal + statement,
+          partlyMocked,
+          `import "./mocks-tax";`,
+        ),
       },
-      7,
+      8,
       args,
     );
   });
+
+  test("every file that imports the module that mocks gets the mock", async () => {
+    const file = `
+      import { price } from "./mocks-tax";
+      import { expect, test } from "bun:test";
+      import * as tax from "./tax";
+      test("the mock", () => expect([tax.currency, price(10)]).toEqual(["USD", "12 USD"]));
+    `;
+    const { "shared/linked.test.ts": _, ...shared } = linked("shared", spreadsOriginal + statement, "[]");
+    await expectFixturesToPass({ ...shared, "shared/first.test.ts": file, "shared/second.test.ts": file }, 2);
+  });
+
+  test.each([[[]], [["--isolate"]]])("a package is patched for the modules that have yet to run %j", async args => {
+    const file = `
+      import "./mocks-rates";
+      import { expect, test, vi } from "bun:test";
+      import * as esm from "esm-rates";
+      import * as cjs from "cjs-rates";
+      import { rates } from "./invoice";
+      test("the file and what it imports get the mock", async () => {
+        expect([esm.base, esm.rate(), cjs.base, cjs.rate(), rates()]).toEqual([0.2, "mock", 0.2, "mock", ["mock", "mock"]]);
+        expect([(await vi.importActual("esm-rates")).rate(), (await vi.importActual("cjs-rates")).rate()]).toEqual(["real", "real"]);
+        expect(globalThis.evaluationsOfRates).toEqual(["cjs-rates", "esm-rates"]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "node_modules/esm-rates/package.json": `{ "name": "esm-rates", "type": "module", "main": "index.js" }`,
+        "node_modules/esm-rates/index.js": `(globalThis.evaluationsOfRates ??= []).push("esm-rates"); export const base = 0.2; export function rate() { return "real"; }`,
+        "node_modules/cjs-rates/package.json": `{ "name": "cjs-rates", "main": "index.js" }`,
+        "node_modules/cjs-rates/index.js": `(globalThis.evaluationsOfRates ??= []).push("cjs-rates"); exports.base = 0.2; exports.rate = function rate() { return "real"; };`,
+        "invoice.ts": `
+          import { rate as esm } from "esm-rates";
+          import { rate as cjs } from "cjs-rates";
+          export const rates = () => [esm(), cjs()];
+        `,
+        "mocks-rates.ts": `
+          import { vi } from "bun:test";
+          vi.mock("esm-rates", async importOriginal => ({ ...(await importOriginal()), rate: () => "mock" }));
+          vi.mock("cjs-rates", async importOriginal => ({ ...(await importOriginal()), rate: () => "mock" }));
+        `,
+        "first.test.ts": file,
+        "second.test.ts": file,
+        // The file that calls vi.doMock() has run its imports, so it keeps the real package, as in Vitest.
+        "third.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as esm from "esm-rates";
+          const factory = vi.fn(() => ({ rate: () => "mock" }));
+          vi.doMock("esm-rates", factory);
+          test("the file that mocks it itself keeps what it imported", async () => {
+            expect([esm.rate(), factory.mock.calls.length]).toEqual(["real", 0]);
+            expect([(await import("esm-rates")).rate(), factory.mock.calls.length]).toEqual(["mock", 1]);
+          });
+        `,
+      },
+      3,
+      args,
+    );
+  });
+
+  test.each([[[]], [["--isolate"]]])(
+    "a module that a preload loaded is patched for the modules that have yet to run %j",
+    async args => {
+      await expectFixturesToPass(
+        {
+          "tax.ts": `export const rate = 0.2; export let currency = "EUR";`,
+          "preload.ts": `globalThis.preloaded = await import("./tax");`,
+          "mocks-tax.ts": `
+          import { vi } from "bun:test";
+          vi.mock("./tax", async importOriginal => ({ ...(await importOriginal()), currency: "USD" }));
+        `,
+          "first.test.ts": `
+          import "./mocks-tax";
+          import { expect, test } from "bun:test";
+          import * as tax from "./tax";
+          test("the file gets the mock", () => expect([tax.rate, tax.currency]).toEqual([0.2, "USD"]));
+        `,
+          "second.test.ts": `
+          import { expect, test } from "bun:test";
+          import * as tax from "./tax";
+          test("the next file gets what the preload loaded", () => expect([tax.currency, tax === preloaded]).toEqual(["EUR", true]));
+        `,
+        },
+        2,
+        ["--preload", "./preload.ts", ...args],
+      );
+    },
+  );
 
   test("isn't evaluated ahead of an import that is being evaluated, or if it is the module of an earlier mock", async () => {
     await expectFixturesToPass(

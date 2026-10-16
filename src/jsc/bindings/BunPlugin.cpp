@@ -478,6 +478,7 @@ public:
     // Stops waiting for a pending factory: fulfills run()'s promise, so waiters continue with whatever the module is now.
     void giveUp(Zig::GlobalObject* globalObject);
     bool isHoisted() const { return function == ModuleMockFunction::ViMock || function == ModuleMockFunction::JestMock; }
+    bool isOfVitest() const { return function == ModuleMockFunction::ViMock || function == ModuleMockFunction::ViDoMock; }
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -1653,7 +1654,7 @@ bool JSModuleMock::getOwnPropertySlot(JSObject* object, JSC::JSGlobalObject* glo
     }
 
     // Like Vitest, vi.mock() and vi.doMock() throw on an export the factory left out. For mock.module() and jest.mock() it's undefined.
-    if (mock->function != ModuleMockFunction::ViMock && mock->function != ModuleMockFunction::ViDoMock)
+    if (!mock->isOfVitest())
         return false;
     // Promise resolution probes `then` and CommonJS interop probes `__esModule`, so those must not throw.
     JSValue factory = mock->factory.get();
@@ -2247,7 +2248,7 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     LoadedModule loaded = findLoadedModule(globalObject, mock->specifier.get());
     RETURN_IF_EXCEPTION(scope, );
     keepModuleMockOfLoadInFlight(globalObject, mock, specifier, loaded);
-    if ((mock->function == ModuleMockFunction::ViMock || mock->function == ModuleMockFunction::ViDoMock) && isInNodeModules(specifier))
+    if (mock->isOfVitest() && isInNodeModules(specifier))
         evict.packagesToBringBack.append(specifier);
 
     JSObject* saved = mock->originalExportsOfEvictedModule ? mock->originalExportsOfEvictedModule.get() : mock->originalExports.get();
@@ -2448,6 +2449,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisposeModuleMock, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsUndefined());
 }
 
+// Whether a module outside node_modules is linked to `record` and has yet to run. `running` is the one that asks.
+static bool isImportedByModuleYetToRun(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, const String& running)
+{
+    for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
+        auto* importer = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+        if (!importer || importer->status() < JSC::CyclicModuleRecord::Status::Linked || importer->status() > JSC::CyclicModuleRecord::Status::Evaluating)
+            continue;
+        String key(mapKey.first);
+        if (key == running || isInNodeModules(key))
+            continue;
+        for (auto& loaded : importer->loadedModules().values()) {
+            if (loaded.m_module.get() == record)
+                return true;
+        }
+    }
+    return false;
+}
+
 __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, ModuleMockFunction function)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -2514,7 +2533,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), factory, specifierString, writtenString, function);
     mock->spy = spy;
     mock->isFromPreload = JSMock__isInPreload(globalObject);
-    globalObject->onLoadPlugins.hasTestFileMockedModules |= !mock->isFromPreload;
+    if (!mock->isFromPreload)
+        globalObject->onLoadPlugins.modulesThatMocked.add(callerPath(vm, callframe));
     // Nothing a builtin imports can import the mock back, so it never needs the generated module.
     if (exists && !isBuiltinModuleKey(specifier)) {
         auto* factoryFunction = factory ? dynamicDowncast<JSC::JSFunction>(factory) : nullptr;
@@ -2535,7 +2555,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // and the preload's module is restored when the file ends. mock.module() and jest.mock() patch it in place.
     // Nor does it patch a package, which vi.resetModules() leaves loaded, or what vi.importActual() returned: the factory has to stay lazy.
     bool staysTheOriginal = globalObject->onLoadPlugins.loadedByImportActual.remove(specifier) || isInNodeModules(specifier);
-    bool leavesLoadedModuleAlone = (function == ModuleMockFunction::ViMock || function == ModuleMockFunction::ViDoMock) && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && (!globalObject->onLoadPlugins.testFileOfModule.get(specifier) || staysTheOriginal);
+    bool leavesLoadedModuleAlone = mock->isOfVitest() && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && (!globalObject->onLoadPlugins.testFileOfModule.get(specifier) || staysTheOriginal);
+    // In Vitest a module that has yet to run imports it after this call, and gets the mock. Here it is linked already, so only a patch reaches it.
+    if (leavesLoadedModuleAlone && loaded.esmNamespace && isImportedByModuleYetToRun(globalObject, loaded.esmNamespace->moduleRecord(), callerPath(vm, callframe)))
+        leavesLoadedModuleAlone = false;
     if (leavesLoadedModuleAlone && previous && !previous->isFromPreload) {
         unmockModule(globalObject, previous, specifier);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2978,6 +3001,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__forgetPendingModulePatches(Zig::
     forEachPendingModulePatch(globalObject, [](JSModuleMock* mock) { mock->hasPendingPatch = false; });
 }
 
+extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__forgetPendingModulePatchesOfVitest(Zig::GlobalObject* globalObject)
+{
+    forEachPendingModulePatch(globalObject, [](JSModuleMock* mock) { mock->hasPendingPatch = !mock->isOfVitest(); });
+}
+
 __attribute__((minsize)) static void giveBackPreloadModules(Zig::GlobalObject* globalObject)
 {
     auto& plugins = globalObject->onLoadPlugins;
@@ -3118,16 +3146,29 @@ extern "C" void JSMock__replaceModuleOfTestFile(Zig::GlobalObject* globalObject,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto& plugins = globalObject->onLoadPlugins;
     giveBackPreloadModules(globalObject);
     if (scope.exception()) [[unlikely]]
         (void)scope.tryClearException();
-    if (!std::exchange(globalObject->onLoadPlugins.hasTestFileMockedModules, false))
+    auto modulesThatMocked = std::exchange(plugins.modulesThatMocked, {});
+    if (modulesThatMocked.isEmpty())
         return;
-    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, path->toWTFString()));
+    String testFile = path->toWTFString();
+    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, testFile));
     auto* record = entry ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
-    if (!record || record->status() != JSC::CyclicModuleRecord::Status::Evaluated || record->evaluationError())
-        return;
-    replaceModuleWithItsExports(globalObject, record);
+    if (record && record->status() == JSC::CyclicModuleRecord::Status::Evaluated && !record->evaluationError()) {
+        replaceModuleWithItsExports(globalObject, record);
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+    }
+
+    // Their mocks are undone, so the next file that imports them has to run them again. Nothing loads a preload's modules again.
+    Vector<String> modulesToRunAgain;
+    for (auto& key : modulesThatMocked) {
+        if (key != testFile && plugins.testFileOfModule.get(key))
+            modulesToRunAgain.append(key);
+    }
+    evictModulesAndTheirImporters(globalObject, WTF::move(modulesToRunAgain));
     if (scope.exception()) [[unlikely]]
         (void)scope.tryClearException();
 }
@@ -3918,8 +3959,9 @@ String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, 
     if (!Zig::isInNodeModules(importer) || Zig::isBuiltinModuleKey(key))
         return key;
     auto* mock = Zig::registeredModuleMock(globalObject, key);
-    bool isOfVitest = mock && (mock->function == Zig::ModuleMockFunction::ViMock || mock->function == Zig::ModuleMockFunction::ViDoMock);
-    return isOfVitest ? Zig::originalModuleKey(key) : key;
+    // A module that was patched in place is the only instance there is.
+    bool hasOriginal = mock && mock->isOfVitest() && !mock->originalExports && !mock->originalCommonJSExports;
+    return hasOriginal ? Zig::originalModuleKey(key) : key;
 }
 
 __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
@@ -3956,10 +3998,10 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
             bool isFactory = importer == running.file && (!Zig::registeredModuleMock(globalObject, mocked) || Zig::isStillRegisteredModuleMock(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())));
             if (!isInChain && !isFactory && (isImporterBeingLoaded || !running.importChainWithoutQuery.contains(importer)))
                 continue;
-            // An evaluated module is patched in place: nothing waits for this factory, and the patch reaches whatever imports it meanwhile.
+            // A module that was linked as itself is patched in place: nothing waits for this factory, and the patch reaches whatever imports it meanwhile.
             if (auto* entry = isESM ? Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), mocked)) : nullptr; entry && entry->record()) {
                 auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
-                if (!cyclic || cyclic->isSCCEvaluated())
+                if (!cyclic || cyclic->isSCCEvaluated() || (!cyclic->hasLiveExports() && cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked))
                     continue;
             }
             String instead = given == mocked ? Zig::originalModuleKey(given) : given;

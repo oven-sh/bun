@@ -3117,7 +3117,11 @@ impl TestCommand {
                     .event_loop_ref()
                     .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasPendingModulePatches(global));
                 if patched == Err(TopLevelWaitError::NothingLeft) {
-                    promise = Self::never_settled(global, "A mock.module() factory", file_path);
+                    // As in Vitest, a vi.mock() or vi.doMock() factory may wait for something a test does.
+                    bun_jsc::cpp::JSMock__forgetPendingModulePatchesOfVitest(global);
+                    if bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
+                        promise = Self::never_settled(global, "A mock.module() factory", file_path);
+                    }
                 }
             }
 

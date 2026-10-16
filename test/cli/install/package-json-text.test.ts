@@ -289,7 +289,7 @@ describe.concurrent("where an edit puts a member", () => {
   });
 
   test("a // comment that is laid out again still ends its line", async () => {
-    expect(await edited(`{ "name": // the name\n "app", "n": 1 }`, "set", "version=1.0.0")).toBe(
+    expect(await edited(`{ "name": // the name\n"app", "n": 1 }`, "set", "version=1.0.0")).toBe(
       `{\n  "name": // the name\n  "app",\n  "n": 1,\n  "version": "1.0.0"\n}`,
     );
   });

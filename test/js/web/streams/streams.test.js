@@ -3916,9 +3916,12 @@ describe("a direct stream's text sink keeps its text when it refuses a string", 
     expect(result).toEqual({ stdout: { rejected: outOfMemory, wroteTooLong: false }, stderr: "", exitCode: 0 });
   });
 
-  test.concurrent("new Response(async generator).text() throws the error into the generator", async () => {
+  // The consumer gets the error of the refused chunk. The generator is closed with return(): its
+  // finally block runs, and its catch block does not.
+  test.concurrent("new Response(async generator).text() closes the generator after the refused chunk", async () => {
     const result = await runInSubprocess(`
-      let thrown = null;
+      let caught = null;
+      let closed = false;
       let yieldedTooLong = false;
       async function* body() {
         for (const letter of "abc") yield chunk(letter);
@@ -3926,14 +3929,16 @@ describe("a direct stream's text sink keeps its text when it refuses a string", 
           yield tooLong;
           yieldedTooLong = true;
         } catch (e) {
-          thrown = describeError(e);
+          caught = describeError(e);
           throw e;
+        } finally {
+          closed = true;
         }
       }
-      console.log(JSON.stringify({ ...(await settle(new Response(body()).text())), thrown, yieldedTooLong }));
+      console.log(JSON.stringify({ ...(await settle(new Response(body()).text())), caught, closed, yieldedTooLong }));
     `);
     expect(result).toEqual({
-      stdout: { rejected: outOfMemory, thrown: outOfMemory, yieldedTooLong: false },
+      stdout: { rejected: outOfMemory, caught: null, closed: true, yieldedTooLong: false },
       stderr: "",
       exitCode: 0,
     });

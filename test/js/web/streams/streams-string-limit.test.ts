@@ -356,20 +356,23 @@ describe.skipIf(!isASAN)("a direct stream's text sink throws when its text canno
     expect(result).toEqual({ stdout: { rejected: error, closedWith: error }, exitCode: 0 });
   });
 
+  // The body is closed with return(): its finally block runs, and its catch block does not.
   test.concurrent("new Response(async generator).text() after the refused chunk", async () => {
     const result = await runWithCap(`
-      let thrown = null;
+      let caught = null, closed = false;
       async function* body() {
         try {
           for (;;) yield latin1();
         } catch (e) {
-          thrown = describeError(e);
+          caught = describeError(e);
           throw e;
+        } finally {
+          closed = true;
         }
       }
-      console.log(JSON.stringify({ ...(await settle(new Response(body()).text())), thrown }));
+      console.log(JSON.stringify({ ...(await settle(new Response(body()).text())), caught, closed }));
     `);
-    expect(result).toEqual({ stdout: { rejected: outOfMemory, thrown: outOfMemory }, exitCode: 0 });
+    expect(result).toEqual({ stdout: { rejected: outOfMemory, caught: null, closed: true }, exitCode: 0 });
   });
 
   // The builder of the sink can keep the buffer that it could not grow. The sink has no use for
@@ -501,25 +504,28 @@ describe.skipIf(!enoughMemory)("a direct stream's text sink throws when its text
 });
 
 // The body of a Response is a direct stream. The error of the chunk that the sink refuses goes to
-// the generator and to the consumer. The stream then fails, and its sink has no text to build.
+// the consumer, and the generator is closed with return(). The stream then fails, and its sink has
+// no text to build.
 test.skipIf(!enoughMemory)("new Response(async generator).text() with a 16-bit character after 513 MiB", async () => {
   const { stdout, stderr, exitCode } = await run(`
     const megabyte = Buffer.alloc(2 ** 20, "x").toString("latin1");
-    let thrown = null;
+    let caught = null, closed = false;
     async function* body() {
       try {
         for (let i = 0; i < 513; i++) yield megabyte;
         yield "\\u20AC";
       } catch (e) {
-        thrown = e.name + ": " + e.message;
+        caught = e.name + ": " + e.message;
         throw e;
+      } finally {
+        closed = true;
       }
     }
     const rejected = await new Response(body()).text().then(() => "resolved", e => e.name + ": " + e.message);
-    console.log(JSON.stringify({ rejected, thrown }));
+    console.log(JSON.stringify({ rejected, caught, closed }));
   `);
   expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-    stdout: { rejected: outOfMemory, thrown: outOfMemory },
+    stdout: { rejected: outOfMemory, caught: null, closed: true },
     stderr: "",
     exitCode: 0,
   });

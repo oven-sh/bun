@@ -976,8 +976,7 @@ describe("Bun.build", () => {
       outputs: [output],
     } = await Bun.build({ entrypoints: [join(String(dir), "index.js")] });
 
-    // The prototype of an output does not inherit from Blob.prototype. A method added there
-    // needs an entry in JSBundler.classes.ts too, or a place in this list.
+    // A method added to Blob.prototype needs an entry in JSBundler.classes.ts, or a place in this list.
     const missing = Object.getOwnPropertyNames(Blob.prototype).filter(name => !(name in output));
     expect(missing.sort()).toEqual([
       // Bun.file()

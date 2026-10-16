@@ -41,9 +41,7 @@ export default [
     // receiver's slot; it must never reach through JSBlob's layout here.
     values: ["stream"],
     proto: {
-      // bun-types declares `BuildArtifact extends Blob`, and this prototype does
-      // not inherit from `Blob.prototype`: an output has a member of the `Blob`
-      // type only if it is listed here.
+      // Not inherited from `Blob.prototype` (#16374): an output has only the Blob members listed here.
       text: { fn: "getText" },
       json: { fn: "getJSON" },
       arrayBuffer: { fn: "getArrayBuffer" },

@@ -54,8 +54,7 @@ public:
         return createAdopted(Blob__dupeFromJS(JSValue::encode(impl)));
     }
 
-    // Whether `create(value)` gives a Blob: `value` is a Blob, or an output of `Bun.build()`,
-    // which wraps one. An overload that takes a Blob dispatches on this.
+    // Whether `create(value)` gives a Blob: a Blob, or a `Bun.build()` output, which wraps one.
     static bool canCreate(JSC::JSValue value)
     {
         return Blob__canDupeFromJS(JSValue::encode(value));

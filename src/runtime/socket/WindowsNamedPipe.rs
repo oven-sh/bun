@@ -411,6 +411,7 @@ impl WindowsNamedPipe {
 
     /// The answer to `Handlers::on_server_name`, or `handle.resumeSNI(...)` for an asynchronous SNICallback.
     pub(crate) fn sni_resolve(&self, ctx: Option<boringssl::OwnedSslCtx>, refuse: bool) {
+        let _keep_alive = self.keep_alive();
         let _ = self.with_wrapper(|w| w.sni_resolve(ctx, refuse));
     }
 

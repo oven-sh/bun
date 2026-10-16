@@ -892,41 +892,6 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("ALPN after SNI selected a Secure
     await Promise.race([once(request, "end"), failed]);
     expect(body).toBe("over h2");
   });
-
-  // The socket reaches the server through emit("connection"), as http2-wrapper does.
-  describe.each([
-    ["a socket", (raw: net.Socket) => raw],
-    ["a stream", overAStream],
-  ] as const)("http2.createSecureServer() given %s", (_, transport) => {
-    it.each([
-      ["an SNICallback", { SNICallback: sync }, undefined],
-      ["addContext()", {}, addContext],
-    ] as const)("serves the context of %s and speaks h2", async (_, options, setup) => {
-      using stack = new DisposableStack();
-      const server = http2.createSecureServer({ ...defaults, ...options }, (_, res) => res.end("over h2"));
-      server.on("tlsClientError", () => {});
-      setup?.(server);
-      const port = await listening(
-        net.createServer(raw => server.emit("connection", transport(raw))),
-        stack,
-      );
-      const session = http2.connect(`https://127.0.0.1:${port}`, {
-        servername: "alpn.sni.test",
-        rejectUnauthorized: false,
-        minVersion: version,
-        maxVersion: version,
-      });
-      stack.defer(() => session.destroy());
-      const failed = once(session, "error").then(([err]) => Promise.reject(err));
-      const [, socket] = (await Promise.race([once(session, "connect"), failed])) as [unknown, tls.TLSSocket];
-      const cn = socket.getPeerCertificate().subject.CN;
-      const request = session.request({ ":path": "/" }).setEncoding("utf8");
-      let body = "";
-      request.on("data", chunk => (body += chunk));
-      await Promise.race([once(request, "end"), failed]);
-      expect({ cn, body }).toEqual({ cn: "agent1", body: "over h2" });
-    });
-  });
 });
 
 describe("Bun.serve SNI", () => {

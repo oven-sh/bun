@@ -27,6 +27,9 @@
 // that shares its tail with every other capture.
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
+const noteAsyncLocalStorage = $newCppFunction("NodeAsyncHooks.cpp", "jsNoteAsyncLocalStorage", 3);
+let numberOfStoragesNoted = 0;
+let sampleFrame: Frame | undefined;
 const { validateFunction, validateString, validateObject } = require("internal/validators");
 // SameValue in pure operators. Node compares stores with the primordial
 // ObjectIs; capturing Object.is here would still inherit a patch applied
@@ -220,6 +223,13 @@ class AsyncLocalStorage<T = any> {
       }
     }
     setAsyncHooksEnabled(true);
+    if (numberOfStoragesNoted < 8 && new.target === AsyncLocalStorage) {
+      if (numberOfStoragesNoted++ === 0) {
+        sampleFrame = newFrame(undefined!, undefined, undefined, undefined);
+        new AsyncLocalStorage({ defaultValue: sampleFrame });
+      }
+      noteAsyncLocalStorage(this, sampleFrame, originalGetStore);
+    }
 
     // In debug mode assign every AsyncLocalStorage a unique ID
     if (IS_BUN_DEVELOPMENT) {
@@ -348,6 +358,8 @@ class AsyncLocalStorage<T = any> {
   // observable from outside the AsyncLocalStorage implementation.
   _propagate(_resource, _triggerResource, _type) {}
 }
+
+const originalGetStore = AsyncLocalStorage.prototype.getStore;
 
 if (IS_BUN_DEVELOPMENT) {
   AsyncLocalStorage.prototype[Bun.inspect.custom] = function (depth, options) {

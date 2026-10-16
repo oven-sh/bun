@@ -135,6 +135,7 @@ pub struct Options {
     pub is_javascript: bool,
     /// `.json`: `parseJSONText`. With `is_javascript` and `is_jsx`, as `initializeState` has it.
     pub is_json: bool,
+    pub is_typescript_under_a_javascript_name: bool,
     /// The top level is not an await context.
     pub await_is_a_name: bool,
     /// For oxc, in a file whose name does not say what it is: until something says that it is a module, an `await` at the top
@@ -150,6 +151,9 @@ pub struct Options {
     pub bigint_names_are_digits: bool,
     /// Not the whole text is parsed.
     pub part: Option<Part>,
+    /// Records what a formatter needs to attach comments to nodes: `enclosing_node`, `preceding_node` and `following_node` of
+    /// `hir::Comment`, and the HTML-like comments of a script.
+    pub attach_comments: bool,
 }
 
 /// A part of a text, as acorn's `parseExpressionAt` reads one: nothing is said about what follows it, and nothing of that

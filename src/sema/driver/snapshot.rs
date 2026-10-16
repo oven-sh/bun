@@ -191,7 +191,7 @@ impl Snapshot {
         let code = reader.list()?;
         let script_kinds = reader.kinds()?;
         let script_kinds_by_extension = reader.kinds()?;
-        let already_read = (0..reader.count()?).map(|_| Some((reader.bytes()?, reader.bytes()?))).collect::<Option<_>>()?;
+        let already_read = (0..reader.count()?).map(|_| Some((reader.bytes()?, reader.bytes()?.into()))).collect::<Option<_>>()?;
         let resolved = (0..reader.count()?).map(|_| Some(((reader.bytes()?, reader.bytes()?), reader.bytes()?))).collect::<Option<_>>()?;
         let dropped_imports = (0..reader.count()?).map(|_| Some((reader.bytes()?, reader.bytes()?))).collect::<Option<_>>()?;
         let texts = (0..reader.count()?).map(|_| Some((reader.bytes()?, reader.bytes()?))).collect::<Option<_>>()?;

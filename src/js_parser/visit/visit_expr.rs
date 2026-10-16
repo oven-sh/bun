@@ -1830,6 +1830,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_should_fold_typescript_constant_expressions = true;
         p.should_fold_typescript_constant_expressions = true;
 
+        if !p.written_names.is_empty() && !p.is_control_flow_dead && e_.import_record_index == u32::MAX {
+            Self::add_files_held_by_name(p, &e_.expr, bun_ast::ImportKind::Dynamic);
+        }
         p.visit_expr(&mut e_.expr);
         p.visit_expr(&mut e_.options);
 
@@ -1885,6 +1888,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if !p.own_require_names.is_empty() && !p.is_control_flow_dead {
             Self::add_file_required_by_own_require(p, &e_);
+        }
+        if p.options.compiles_requires_made_by_create_require
+            && !p.is_control_flow_dead
+            && let (Data::EIdentifier(target), [argument]) = (e_.target.data, e_.args.slice())
+            && !matches!(argument.data, Data::EString(..))
+            && p.load_name_from_ref(target.ref_) == b"require"
+        {
+            Self::add_files_written_from_own_folder(p, argument, 0);
+        }
+        if p.options.compiles_requires_made_by_create_require && p.options.keeps_reexport_only_modules && !p.is_control_flow_dead {
+            Self::add_file_required_through_the_module_object(p, &e_);
         }
         p.call_target = e_.target.data;
 
@@ -2539,12 +2553,195 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    fn add_files_written_from_own_folder(p: &mut Self, specifier: &Expr, depth: u32) {
+        if let Data::EIf(choice) = specifier.data {
+            if depth < 64 {
+                Self::add_files_written_from_own_folder(p, &choice.yes, depth + 1);
+                Self::add_files_written_from_own_folder(p, &choice.no, depth + 1);
+            }
+            return;
+        }
+        if let Data::EBinary(choice) = specifier.data
+            && matches!(choice.op, Op::BinLogicalOr | Op::BinNullishCoalescing)
+        {
+            if depth < 64 {
+                Self::add_files_written_from_own_folder(p, &choice.left, depth + 1);
+                Self::add_files_written_from_own_folder(p, &choice.right, depth + 1);
+            }
+            return;
+        }
+        if depth > 0 && p.options.keeps_reexport_only_modules && matches!(specifier.data, Data::EString(..)) {
+            return Self::add_files_named_by(p, specifier);
+        }
+        if !p.written_names.is_empty() && matches!(specifier.data, Data::EIdentifier(..)) {
+            Self::add_files_held_by_name(p, specifier, bun_ast::ImportKind::Require);
+        }
+        if let Some(text) = p.text_from_own_folder(specifier, 0) {
+            let text = p.arena.alloc_slice_copy(&text);
+            let index = p.add_import_record(bun_ast::ImportKind::Require, specifier.loc, text);
+            p.import_records.items_mut()[index as usize]
+                .flags
+                .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+        }
+    }
+
+    fn written_text(&self, e: &Expr, depth: u32) -> Option<Vec<u8>> {
+        if depth > 64 {
+            return None;
+        }
+        match e.data {
+            Data::EString(string) => string.string(self.arena).ok().map(<[u8]>::to_vec),
+            Data::EBinary(sum) if sum.op == Op::BinAdd => {
+                let mut text = self.written_text(&sum.left, depth + 1)?;
+                text.extend(self.written_text(&sum.right, depth + 1)?);
+                Some(text)
+            }
+            Data::ETemplate(template) if template.tag.is_none() => {
+                let E::TemplateContents::Cooked(head) = &template.head else {
+                    return None;
+                };
+                let mut text = head.string(self.arena).ok()?.to_vec();
+                for part in template.parts() {
+                    let E::TemplateContents::Cooked(tail) = &part.tail else {
+                        return None;
+                    };
+                    text.extend(self.written_text(&part.value, depth + 1)?);
+                    text.extend_from_slice(tail.string(self.arena).ok()?);
+                }
+                Some(text)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn text_from_own_folder(&self, e: &Expr, depth: u32) -> Option<Vec<u8>> {
+        if depth > 64 {
+            return None;
+        }
+        let is_named = |e: &Expr, name: &[u8]| match e.data {
+            Data::EIdentifier(identifier) => self.load_name_from_ref(identifier.ref_) == name,
+            _ => false,
+        };
+        let text = match e.data {
+            Data::EIdentifier(..) if is_named(e, b"__dirname") => b".".to_vec(),
+            Data::EDot(dot)
+                if matches!(dot.target.data, Data::EImportMeta(..))
+                    && matches!(dot.name.slice(), b"dirname" | b"dir") =>
+            {
+                b".".to_vec()
+            }
+            Data::EBinary(sum) if sum.op == Op::BinAdd => {
+                let mut text = self.text_from_own_folder(&sum.left, depth + 1)?;
+                text.extend(self.written_text(&sum.right, depth + 1)?);
+                text
+            }
+            Data::ETemplate(template) if template.tag.is_none() => {
+                let (E::TemplateContents::Cooked(head), [first, rest @ ..]) = (&template.head, template.parts()) else {
+                    return None;
+                };
+                if !head.string(self.arena).ok()?.is_empty() {
+                    return None;
+                }
+                let mut text = self.text_from_own_folder(&first.value, depth + 1)?;
+                let E::TemplateContents::Cooked(tail) = &first.tail else {
+                    return None;
+                };
+                text.extend_from_slice(tail.string(self.arena).ok()?);
+                for part in rest {
+                    let E::TemplateContents::Cooked(tail) = &part.tail else {
+                        return None;
+                    };
+                    text.extend(self.written_text(&part.value, depth + 1)?);
+                    text.extend_from_slice(tail.string(self.arena).ok()?);
+                }
+                text
+            }
+            Data::ECall(call) => {
+                let [first, rest @ ..] = call.args.slice() else {
+                    return None;
+                };
+                let name: &[u8] = match call.target.data {
+                    Data::EIdentifier(identifier) => self.load_name_from_ref(identifier.ref_),
+                    Data::EDot(dot) if is_named(&dot.target, b"require") => {
+                        let text = self.written_text(first, depth + 1)?;
+                        let is_resolve = dot.name.slice() == b"resolve" && rest.is_empty();
+                        return (is_resolve && (text.starts_with(b"./") || text.starts_with(b"../"))).then_some(text);
+                    }
+                    Data::EDot(dot) => dot.name.slice(),
+                    _ => return None,
+                };
+                if !matches!(name, b"join" | b"resolve") {
+                    return None;
+                }
+                let mut text = self.text_from_own_folder(first, depth + 1)?;
+                for part in rest {
+                    let part = self.written_text(part, depth + 1)?;
+                    if part.starts_with(b"/") {
+                        return None;
+                    }
+                    text.push(b'/');
+                    text.extend(part);
+                }
+                text
+            }
+            _ => return None,
+        };
+        (depth > 0 || text.starts_with(b"./") || text.starts_with(b"../")).then_some(text)
+    }
+
+    fn add_file_required_through_the_module_object(p: &mut Self, e_: &E::Call) {
+        if let (Data::EIdentifier(callee), [specifier, ..]) = (e_.target.data, e_.args.slice()) {
+            let name = p.load_name_from_ref(callee.ref_);
+            if name != b"require" && bun_core::strings::contains(name, b"quire") && !p.own_require_names.contains(&name) {
+                Self::add_files_named_by(p, specifier);
+            }
+            return;
+        }
+        let Data::EDot(callee) = e_.target.data else {
+            return;
+        };
+        let is_module = |e: &Expr| matches!(e.data, Data::EIdentifier(identifier) if p.load_name_from_ref(identifier.ref_) == b"module");
+        let says_require = |e: &Expr| matches!(e.data, Data::EIdentifier(identifier) if bun_core::strings::contains(p.load_name_from_ref(identifier.ref_), b"equire"));
+        let specifier = match (callee.name.slice(), e_.args.slice()) {
+            (b"require", [specifier]) if is_module(&callee.target) => specifier,
+            (b"call", [receiver, specifier]) if is_module(receiver) => specifier,
+            (b"resolve", [specifier, ..]) if says_require(&callee.target) => specifier,
+            (b"resolve" | b"resolveSync", [specifier, ..]) if matches!(callee.target.data, Data::EImportMeta(..)) => {
+                if let Data::EString(string) = specifier.data
+                    && let Ok(text) = string.string(p.arena)
+                {
+                    let index = p.add_import_record(bun_ast::ImportKind::Dynamic, specifier.loc, text);
+                    p.import_records.items_mut()[index as usize]
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
+                }
+                return;
+            }
+            _ => return,
+        };
+        Self::add_files_named_by(p, specifier);
+    }
+
     fn add_file_required_by_own_require(p: &mut Self, e_: &E::Call) {
         let (Data::EIdentifier(target), [argument]) = (e_.target.data, e_.args.slice()) else {
             return;
         };
         if p.own_require_names.contains(&p.load_name_from_ref(target.ref_)) {
             Self::add_files_named_by(p, argument);
+        }
+    }
+
+    fn add_files_held_by_name(p: &mut Self, specifier: &Expr, kind: bun_ast::ImportKind) {
+        let Data::EIdentifier(identifier) = specifier.data else {
+            return;
+        };
+        let name = p.load_name_from_ref(identifier.ref_);
+        let texts: Vec<&'a [u8]> = p.written_names.iter().filter(|held| held.0 == name).map(|held| held.1).collect();
+        for text in texts {
+            let index = p.add_import_record(kind, specifier.loc, text);
+            p.import_records.items_mut()[index as usize]
+                .flags
+                .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
         }
     }
 
@@ -2618,6 +2815,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     | bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
             );
         };
+        if p.options.compiles_requires_made_by_create_require {
+            let held = match url.data {
+                Data::EIdentifier(identifier) => {
+                    let name = p.load_name_from_ref(identifier.ref_);
+                    p.paths_from_own_folder.iter().find(|path| path.0 == name).map(|path| path.1)
+                }
+                _ => None,
+            };
+            let written = p.text_from_own_folder(&url, 0).map(|text| &*p.arena.alloc_slice_copy(&text));
+            if let Some(text) = written.or(held) {
+                add(p, bun_ast::ImportKind::EntryPointBuild, url.loc, text);
+                return;
+            }
+        }
         if let Data::EString(path) = url.data {
             if let Ok(text) = path.string(p.arena)
                 && is_path(text)

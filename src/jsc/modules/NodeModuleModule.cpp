@@ -704,7 +704,7 @@ static void setModuleWrapper(Zig::GlobalObject* global, JSC::ThrowScope& scope, 
 {
     bool isOverride = start != commonJSDefaultWrapperStart || end != commonJSDefaultWrapperEnd;
     if (isOverride) [[unlikely]] {
-        RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(global, scope);
+        THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(global, scope);
     }
     global->hasOverriddenModuleWrapper = isOverride;
     if (isOverride) [[unlikely]]
@@ -995,7 +995,7 @@ _pathCache              getPathCacheObject                PropertyCallback
 _preloadModules         jsFunctionPreloadModules          Function 0
 _resolveFilename        nodeModuleResolveFilename         CustomAccessor
 _resolveLookupPaths     jsFunctionResolveLookupPaths      Function 2
-_stat                   &Generated::NodeModuleModule::js_stat Function 1
+_stat                   &Bun::Bindgen::Generated::NodeModuleModule::jsStat Function 1
 builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1

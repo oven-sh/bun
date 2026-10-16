@@ -54,6 +54,7 @@ declare namespace SV {
   type Thrown = any; // what a catch clause holds, a rejection's reason, an error's cause
   type StreamListener = any; // { next, throw, return }: born 620 1109 2622 OR THE USER'S | A PLUGIN'S (Stream.on is public): read by a computed name (787 793). undefined in Stream.listeners where one left
   type Deserialized = any; // what deserialization builds and hands back, and what lies in the deserializer's refs
+  interface MadeObject { [key: string]: any } // `{}` or `Object.create(null)` that deserializeObject has just made: applyObjectFlag freezes it, or an array. Were its parameter `any`, the compiler would have to take every layout of the program for one that may be frozen, and every store to a field would ask
   type GivenRefs = any; // compileJSON's | fromJSON's source.m
   type GivenNode = any; // A NODE THAT CAME IN FROM OUTSIDE: born here once, or what JSON.parse made of one (2 to 6 of the 12 members: JSON drops undefined), or garbage. SECTION E
   type GivenRecord = any; // a given node's p | e: { k, v }

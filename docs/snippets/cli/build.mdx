@@ -170,6 +170,11 @@ bun build <entry points>
   Type check the entry points and everything they import. Nothing is bundled if there are type errors
 </ParamField>
 
+<ParamField path="--dts" type="boolean">
+  Write TypeScript declaration files (<code>.d.ts</code>) to <code>--outdir</code>, and each output file with its types
+  kept, for <code>--aot</code>. Implies <code>--check</code>
+</ParamField>
+
 <ParamField path="--watch" type="boolean">
   Rebuild automatically when files change
 </ParamField>
@@ -210,6 +215,11 @@ bun build <entry points>
 <ParamField path="--aot-explain" type="string">
   With <code>--aot</code>: print a report. <code>throws</code> lists every type check that can fail when the program
   runs
+</ParamField>
+
+<ParamField path="--aot-huge-heap" type="boolean">
+  With <code>--aot</code>: let each thread have more than 32 GB of objects. The executable uses more memory and runs
+  slower
 </ParamField>
 
 <ParamField path="--no-compile-function-source" type="boolean">

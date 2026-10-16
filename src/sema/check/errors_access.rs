@@ -995,7 +995,14 @@ impl<'p> Checker<'p, '_> {
             frame.drops_reported = dropped;
         }
         self.forget_marked_frames();
+        let reported = self.reported.len();
         self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
+        // `NodeCheckFlagsTypeChecked`: tsgo reports for a node once. What it reports while a loop is analysed, with the
+        // types collected so far, is the report: the walk does not make another with the final type.
+        if self.is_in_flow_loop() {
+            self.log_reported_in_flow_loop(reported, file, e);
+            self.non_existent_properties.insert((file, e), true);
+        }
     }
 
     /// `getSuggestedSymbolForNonexistentProperty` for the name in `e` and the apparent type that

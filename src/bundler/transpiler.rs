@@ -1464,6 +1464,7 @@ impl<'a> Transpiler<'a> {
                     jsx: to_parser_jsx_pragma(jsx),
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
+                    keep_directives: false,
                     preserve_unused_imports_ts: false,
                     use_define_for_class_fields: this_parse.use_define_for_class_fields,
                     suppress_warnings_about_weird_code: true,
@@ -2941,20 +2942,48 @@ impl<'a> Transpiler<'a> {
                 // `result.ast` above. (`bun build` is one-shot — `self.arena`
                 // here is `cli_arena()` and lives for the process.)
                 let print_arena: &Arena = self.arena;
-                output_file.size = match self.options.target {
-                    options::Target::Browser | options::Target::Node => {
-                        self.print(print_arena, result, &mut writer, js_printer::Format::Esm)?
-                    }
+                let format = match self.options.target {
+                    options::Target::Browser | options::Target::Node => js_printer::Format::Esm,
                     options::Target::Bun
                     | options::Target::BunMacro
                     | options::Target::ServerComponentsSsr
-                    | options::Target::BunBuiltins => self.print(
-                        print_arena,
-                        result,
-                        &mut writer,
-                        js_printer::Format::EsmAscii,
-                    )?,
+                    | options::Target::BunBuiltins => js_printer::Format::EsmAscii,
                 };
+                if self.options.write_sound_files.is_some() {
+                    struct ChunkCollector(Option<bun_sourcemap::Chunk>);
+                    impl js_printer::OnSourceMapChunk for ChunkCollector {
+                        fn on_source_map_chunk(&mut self, chunk: bun_sourcemap::Chunk, _: &bun_ast::Source) -> js_printer::Result<()> {
+                            self.0 = Some(chunk);
+                            Ok(())
+                        }
+                    }
+                    let mut collector = ChunkCollector(None);
+                    let source_text: Box<[u8]> = Box::from(result.source.contents());
+                    output_file.size = self.print_with_source_map(print_arena, result, &mut writer, format, js_printer::SourceMapHandler::for_(&mut collector), None)?;
+                    let mut mappings = bun_core::MutableString::init_empty();
+                    match collector.0 {
+                        Some(chunk) if self.options.target.is_bun() => bun_sourcemap::InternalSourceMap { data: chunk.buffer.list.as_ptr() }.append_vlq_to(&mut mappings),
+                        Some(chunk) => mappings = chunk.buffer,
+                        None => {}
+                    }
+                    let mut json = bun_core::MutableString::init_empty();
+                    let pieces: [(&[u8], &[u8]); 3] = [(b"{\"version\":3,\"sources\":[", file_path_text), (b"],\"sourcesContent\":[", &source_text), (b"],\"mappings\":", mappings.list.as_slice())];
+                    for (label, text) in pieces {
+                        let _ = json.append(label);
+                        let _ = bun_core::quote_for_json(text, &mut json, false);
+                    }
+                    let _ = json.append(b",\"names\":[]}");
+                    let mut source_map = options::OutputFile::zero_value();
+                    source_map.loader = options::Loader::Json;
+                    source_map.output_kind = options::OutputKind::Sourcemap;
+                    source_map.dest_path = [file_path_text, b".map"].concat().into_boxed_slice();
+                    source_map.size = json.list.len();
+                    source_map.value = crate::output_file::Value::Buffer { bytes: json.list.as_slice().into() };
+                    output_file.source_map_index = self.output_files.len() as u32;
+                    self.output_files.push(source_map);
+                } else {
+                    output_file.size = self.print(print_arena, result, &mut writer, format)?;
+                }
                 output_file.value = crate::output_file::Value::Buffer {
                     bytes: writer.ctx.written().to_vec().into_boxed_slice(),
                 };

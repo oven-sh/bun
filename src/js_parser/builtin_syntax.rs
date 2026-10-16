@@ -291,6 +291,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 call.target = self.private_identifier(b"lazy", target_loc);
                 call.args = ExprNodeList::init_one(self.number(id, loc));
             }
+            Macro::Undefined => {
+                *e = self.new_expr(E::Undefined {}, loc);
+            }
             Macro::DebugLog => {
                 call.target = self.unresolved_identifier(b"$debug_log", target_loc);
                 *e = self.in_development(manifest, *e, loc);

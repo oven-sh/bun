@@ -101,7 +101,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let finished = self.operation(fx, "CloneObjectAfter", &[built]);
         fx.b.func.values[finished.idx()].ty = fx.b.func.values[built.idx()].ty;
-        fx.b.func.values[finished.idx()].prediction = fx.b.func.values[built.idx()].prediction;
+        let prediction = fx.b.func.prediction(built);
+        fx.b.func.values[finished.idx()].set_prediction(prediction);
         if let Some(&checked) = fx.checked.get(built) {
             fx.checked.insert(finished, checked);
         }
@@ -313,6 +314,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let outer = std::mem::replace(&mut fx.b.pos, self.hir(fx.file)[e].pos);
             self.unary(fx, e, if matches!(op, hir::UnOp::PostInc) { hir::UnOp::PreInc } else { hir::UnOp::PreDec }, operand);
             fx.b.pos = outer;
+            return;
+        }
+        if fx.is_typed && e.is_some() && matches!(self.hir(fx.file)[e].kind, ExprKind::Ident(_)) {
+            self.expr_tested_first(fx, e);
             return;
         }
         self.expr_unheld(fx, e);
@@ -542,7 +547,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let checked = self.type_of_value(fx, e);
             let claimed = self.ty_of_expression(fx, e, checked);
             if claimed != self.out.tys.anything {
-                fx.b.func.values[value.idx()].prediction = Prediction::Field(claimed);
+                fx.b.func.values[value.idx()].set_prediction(Prediction::Field(claimed));
             }
             return value;
         }
@@ -560,7 +565,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let (ty, anything) = (self.ty(fx, read), self.out.tys.anything);
         if fx.is_typed && ty != anything {
             let read = &mut fx.b.func.values[read.idx()];
-            (read.ty, read.prediction) = (anything, Prediction::Field(ty));
+            read.ty = anything;
+            read.set_prediction(Prediction::Field(ty));
         }
     }
 
@@ -692,10 +698,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 if let Some(place) = place
                     && matches!(fx.b.func.op(made), Some(Op::NewArray(_)))
-                    && matches!(fx.b.func.values[made.idx()].prediction, Prediction::None)
+                    && matches!(fx.b.func.values[made.idx()].prediction(), Prediction::None)
                     && self.out.tys.get(place).parts.iter().filter(|part| matches!(part, Part::Array(_))).count() == 1
                 {
-                    fx.b.func.values[made.idx()].prediction = Prediction::Ty(place);
+                    fx.b.func.values[made.idx()].set_prediction(Prediction::Ty(place));
                 }
                 array
             }
@@ -777,6 +783,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let holder = obj;
                 let obj = self.operand(fx, obj);
                 let key = self.expr(fx, index);
+                if self.c.reads_sloppy_arguments_by_any_key(fx.file, e) {
+                    return self.get_from_sloppy_arguments(fx, e, obj, key);
+                }
                 let value = self.get_by_key(fx, e, obj, key);
                 self.predict_by_key(fx, value, holder)
             }
@@ -955,6 +964,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 if is_arrow && matches!(self.c.receiver_of_arrow(fx.file, fx.func), Receiver::Instance(_) | Receiver::Static(_)) {
                     return self.emit(fx, Op::Undefined);
                 }
+                if self.is_commonjs(fx.file) && (fx.func.is_none() || is_arrow && self.c.receiver_of_arrow(fx.file, fx.func) == Receiver::None) {
+                    return self.emit(fx, Op::Undefined);
+                }
                 self.unsupported(fx, node.pos, "`new.target` in an arrow function")
             }
         }
@@ -978,8 +990,33 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let is_node_mode = self.exports_an_object(imported) && self.is_node_mode(fx.file, imported);
             let func = self.dynamic_import_of(imported, is_node_mode);
             let Some(options) = options else {
+                if self.second_form_of(imported).is_none() {
+                    self.emit_importer(fx, imported, true);
+                    return self.emit_throwing(fx, Op::CallDirect { func, args: Args::new() });
+                }
+                let is_read = self.variable_of_program("require.cache is read");
+                let known = self.emit(fx, Op::GlobalGet(is_read));
+                let undefined = self.emit(fx, Op::Undefined);
+                let is_unread = self.emit(fx, Op::StrictEq { a: known, b: undefined });
+                let (unread, read, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+                let result = self.new_temporary(fx);
+                self.branch(fx, is_unread, unread, read);
+                fx.b.seal(unread);
+                fx.b.seal(read);
+                fx.b.switch_to(read);
+                let specifier = self.str(text);
+                let specifier = self.emit(fx, Op::Str(specifier));
+                let promise = self.import_from_the_host(fx, specifier, None);
+                self.write(fx, result, promise);
+                fx.b.jump(join);
+                fx.b.switch_to(unread);
                 self.emit_importer(fx, imported, true);
-                return self.emit_throwing(fx, Op::CallDirect { func, args: Args::new() });
+                let promise = self.emit_throwing(fx, Op::CallDirect { func, args: Args::new() });
+                self.write(fx, result, promise);
+                fx.b.jump(join);
+                fx.b.seal(join);
+                fx.b.switch_to(join);
+                return self.read(fx, result);
             };
             let options = self.expr(fx, options);
             let import = self.emit(fx, Op::FuncRef(func));
@@ -1237,10 +1274,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             return self.read_global(fx, name, is_typeof);
         }
-        let mut value = match e {
-            Some(e) => self.read_reference(fx, sym, e),
-            None => self.read_sym(fx, sym, pos),
+        let replaced = if self.shared.modules_that_may_be_replaced.is_empty() || !self.files.flags(found).contains(SymFlags::ALIAS) {
+            Vec::new()
+        } else {
+            let passed = match self.exports_passed_by_imports.get(&found) {
+                Some(known) => known.clone(),
+                None => {
+                    let passed = self.exports_passed_by(found);
+                    self.exports_passed_by_imports.insert(found, passed.clone());
+                    passed
+                }
+            };
+            self.overrides_of_replaced_modules(passed, sym)
         };
+        let mut value = self.read_behind_replaced_modules(fx, &replaced, sym, e, pos);
         if let Some(e) = e {
             let narrowed = self.fit_to_expression(fx, value, e);
             // What follows and reads the variable finds it as it is looked at here. Not what a cast has made of it for where it goes: that
@@ -1262,6 +1309,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn read_global(&mut self, fx: &mut Fx, name: Atom, is_typeof: bool) -> V {
         if let Some(value) = self.read_global_of_builtin_module(fx, name) {
             return value;
+        }
+        if let Some((holder, member)) = self.c.global_that_may_be_overridden(self.c.atoms().bytes(name)) {
+            let global = self.override_of_member_of_global(holder, member);
+            let name = self.str(name);
+            return self.unless_overridden(fx, global, ExprId::NONE, |_, _, known| known, |this, fx| this.emit_throwing(fx, Op::FreeGet { name, is_typeof }));
         }
         match self.c.atoms().bytes(name) {
             b"undefined" => self.emit(fx, Op::Undefined),
@@ -1393,6 +1445,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(join);
         fx.b.switch_to(join);
         self.read(fx, step)
+    }
+
+    pub(crate) fn clear_async_iterator_result(&mut self, fx: &mut Fx, next_method: V, result: V) {
+        let name = self.out.strs.intern(b"ClearAsyncIteratorResult");
+        let cleared = self.emit(fx, Op::Operation { name, args: [next_method, result].into_iter().collect() });
+        fx.b.func.values[cleared.idx()].ty = self.known.undefined;
     }
 
     /// `yield* iterable`, as the specification spells it out: every resumption is forwarded to the inner iterator.
@@ -1537,6 +1595,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.jump(exit);
         fx.b.switch_to(unwrap);
         let value = self.emit_throwing(fx, Op::PropGet { obj: step, name: value_name });
+        if is_async {
+            self.clear_async_iterator_result(fx, next_method, step);
+        }
         self.write(fx, yielded, value);
         fx.b.jump(suspend);
         fx.b.seal(suspend);
@@ -1581,6 +1642,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let ExprKind::Ident(enum_name) = self.hir(fx.file)[obj].kind else { return None };
         let sym = self.c.binding_of_identifier(fx.file, obj, enum_name)?;
         let sym = self.value_symbol(sym);
+        if sym.file != fx.file && self.c.may_be_overridden(sym) {
+            return None;
+        }
         let sym = if self.files.flags(sym).intersects(SymFlags::ENUM) { sym } else { self.c.const_enum_typing(fx.file, obj)? };
         let member = self.files.export(sym, name)?;
         let (file, Decl::EnumMember(id)) = self.value_declaration(member)? else { return None };
@@ -1594,6 +1658,31 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.emit(fx, Op::Str(s))
             }
         })
+    }
+
+    fn member_of_deferred_namespace(&mut self, fx: &mut Fx, obj: ExprId, name: Atom) -> Option<Sym> {
+        let ExprKind::Ident(namespace) = self.hir(fx.file)[obj].kind else { return None };
+        if self.shared.modules_deferred.is_empty() || self.c.atoms().bytes(name) == b"then" {
+            return None;
+        }
+        let alias = self.c.binding_of_identifier(fx.file, obj, namespace).filter(|&alias| self.is_import(alias))?;
+        let super::ImportSource::DeferredNamespace(module) = self.import_source(alias) else { return None };
+        let member = self.binding_exported_as(module, name).filter(|&member| self.has_value_at_runtime(member))?;
+        self.emit_module_evaluation(fx, module);
+        Some(member)
+    }
+
+    fn is_handed_its_module_namespace(&mut self, fx: &Fx, obj: ExprId, member: Sym) -> bool {
+        let member = self.value_symbol(member);
+        let inspects_this = match self.function_declared_as(member) {
+            _ if self.c.may_be_overridden(member) => true,
+            Some((file, func)) => self.c.inspects_this(file, func),
+            None => match self.c.initializer_of_const(member) {
+                Some((file, init)) => matches!(self.hir(file)[init].kind, ExprKind::Fn(func) if self.hir(file)[func].kind != hir::FnKind::Arrow && self.c.inspects_this(file, func)),
+                None => false,
+            },
+        };
+        inspects_this && matches!(self.hir(fx.file)[obj].kind, ExprKind::Ident(_)) && self.names_module_namespace(fx, obj)
     }
 
     /// The export a member access on `import * as ns` names.
@@ -1621,6 +1710,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         matches!(self.value_declaration(sym), Some((_, Decl::File))).then_some(sym)
     }
 
+    fn module_named_as_namespace(&mut self, fx: &Fx, obj: ExprId) -> Option<FileId> {
+        let named = self.skip_assertions(fx, obj);
+        let sym = self.namespace_for_expr(fx, named)?;
+        matches!(self.value_declaration(sym), Some((_, Decl::File))).then_some(sym.file)
+    }
+
     fn names_module_namespace(&mut self, fx: &Fx, obj: ExprId) -> bool {
         let named = self.skip_assertions(fx, obj);
         let sym = self.namespace_for_expr(fx, named);
@@ -1638,7 +1733,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             _ => return None,
         };
         // An ambient namespace (`Reflect`, `Intl`) is an object of the host, and `exports` is an object.
-        if self.is_ambient(sym) || self.exports_an_object(sym.file) {
+        if self.is_ambient(sym) || self.exports_an_object(sym.file) || self.c.may_be_overridden(sym) {
             return None;
         }
         let is_file = matches!(self.value_declaration(sym), Some((_, Decl::File)));
@@ -1652,6 +1747,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let Some(value) = self.exports_expression(fx, e) {
             return value;
         }
+        if let Some((holder, member)) = self.c.member_of_global_that_may_be_overridden(fx.file, e) {
+            let global = self.override_of_member_of_global(holder, member);
+            return self.unless_overridden(fx, global, e, |_, _, known| known, |this, fx| this.member_of_global_as_compiled(fx, holder, member).1);
+        }
         if matches!(self.hir(fx.file)[e].kind, ExprKind::Dot { chain: Chain::No, .. })
             && let Some(constant) = self.enum_member(fx, obj, name)
         {
@@ -1661,6 +1760,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return value;
         }
         if let Some(member) = self.namespace_member(fx, obj, name) {
+            let value = match self.module_named_as_namespace(fx, obj) {
+                Some(module) => self.read_export_of_module(fx, module, name, member, pos),
+                None => self.read_sym(fx, member, pos),
+            };
+            return self.fit_to_expression(fx, value, e);
+        }
+        if matches!(self.hir(fx.file)[e].kind, ExprKind::Dot { chain: Chain::No, .. })
+            && let Some(member) = self.member_of_deferred_namespace(fx, obj, name)
+        {
             let value = self.read_sym(fx, member, pos);
             return self.fit_to_expression(fx, value, e);
         }
@@ -1704,8 +1812,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Some(class) => class,
             None => self.chain_operand(fx, e, obj, bail),
         };
+        let holders = self.c.holders_of_member_that_may_be_overridden(name);
+        let member = name;
         let name = self.str(name);
-        let value = self.emit_throwing(fx, Op::PropGet { obj, name });
+        let mut value = self.emit_throwing(fx, Op::PropGet { obj, name });
+        if !holders.is_empty() {
+            value = self.spy_in_the_place_of_member(fx, value, &holders, member);
+        }
         // It stands in a test position, or goes straight to where nothing is expected of it.
         if fx.sink.is_some_and(|sink| sink.e == e && (sink.want.id.is_none() || sink.want.id == self.out.tys.anything)) {
             self.leave_unheld(fx, value);
@@ -1726,7 +1839,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let mut names = Vec::with_capacity(literals.len());
         for literal in literals {
             match literal {
-                check::Literal::String(text) if Self::is_field_name(self.c.atoms().bytes(text)) => names.push(self.str(text)),
+                check::Literal::String(text) if Self::is_field_name(self.c.atoms().bytes(text)) => {
+                    if self.c.is_written_in_code(text) {
+                        names.push(self.str(text));
+                    }
+                }
                 _ => return Vec::new(),
             }
         }
@@ -1765,6 +1882,35 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.switch_to(otherwise);
         }
         let value = self.emit_throwing(fx, Op::ElemGet { obj, key });
+        fx.b.write(result, value);
+        fx.b.jump(join);
+        fx.b.seal(join);
+        fx.b.switch_to(join);
+        let value = fx.b.read(result);
+        self.fit_to_expression(fx, value, e)
+    }
+
+    fn get_from_sloppy_arguments(&mut self, fx: &mut Fx, e: ExprId, obj: V, key: V) -> V {
+        let (is_number, otherwise, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+        let result = self.new_temporary(fx);
+        let kind = self.emit(fx, Op::TypeOf(key));
+        let number = self.out.strs.intern(b"number");
+        let number = self.emit(fx, Op::Str(number));
+        let test = self.emit(fx, Op::StrictEq { a: kind, b: number });
+        self.branch(fx, test, is_number, otherwise);
+        fx.b.seal(is_number);
+        fx.b.seal(otherwise);
+        fx.b.switch_to(is_number);
+        let index = self.emit_throwing(fx, Op::Coerce { value: key, to: self.known.number, why: Why::Flow });
+        let value = self.emit_throwing(fx, Op::ElemGet { obj, key: index });
+        fx.b.write(result, value);
+        fx.b.jump(join);
+        fx.b.switch_to(otherwise);
+        let callee = self.closure_that_runs(fx);
+        let count = self.hir(fx.file)[fx.func].params.iter().count() as i64;
+        let count = self.emit(fx, Op::Int(count));
+        let mapped = self.operation(fx, "CreateMappedArguments", &[fx.all_arguments, callee, count]);
+        let value = self.emit_throwing(fx, Op::ElemGet { obj: mapped, key });
         fx.b.write(result, value);
         fx.b.jump(join);
         fx.b.seal(join);
@@ -2052,7 +2198,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         methods.filter(|&function| self.c.captures_of_fn(fx.file, function).contains(&Capture::HomeObject(function))).collect()
     }
 
+    fn note_layout_of_literal_that_no_typed_place_sees(&mut self, fx: &Fx, e: ExprId, layout: LayoutId) {
+        let Some(&made) = self.layout_types.get(&layout) else { return };
+        if self.c.is_handed_straight_to_what_says_nothing(fx.file, e) {
+            self.c.note_foreign(made, TypeId::ANY);
+        }
+        self.c.note_what_a_literal_is_made_as(fx.file, e, made);
+    }
+
     fn object_literal(&mut self, fx: &mut Fx, e: ExprId, props: Span<PropId>) -> V {
+        if fx.is_typed && props.iter().any(|p| matches!(self.hir(fx.file)[p].kind, PropKind::Getter | PropKind::Setter)) {
+            let own = self.c.type_of_expr(fx.file, e);
+            self.c.note_literal_with_accessors(own);
+        }
         if !self.methods_needing_home_object(fx, props).is_empty() {
             return self.emit_dynamic_object_literal(fx, props);
         }
@@ -2066,12 +2224,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && !is_dynamic
             && let Some(layout) = self.layout_cloned_by_literal(fx, e, props)
         {
+            self.note_layout_of_literal_that_no_typed_place_sees(fx, e, layout);
             return self.emit_clone_with_stores(fx, layout, props);
         }
         if !is_plain
             && !is_dynamic
             && let Some(layout) = self.layout_cloned_after_names(fx, e, props)
         {
+            self.note_layout_of_literal_that_no_typed_place_sees(fx, e, layout);
             return self.emit_clone_after_names(fx, layout, props);
         }
         if self.is_copy_left_ordinary(fx, e, props) {
@@ -2152,6 +2312,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     }
                 }
             }
+            self.note_layout_of_literal_that_no_typed_place_sees(fx, e, layout);
             let made = self.layout_types.get(&layout).copied();
             let discriminant = made.and_then(|made| self.c.discriminant_of_object_literal(fx.file, e, made)).map(|name| self.str(name));
             // See `layout_with_more`: those that have a field come first.
@@ -2479,7 +2640,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.note_allocation(layout);
         let clone = self.operation(fx, "CloneObjectAfter", &operands);
         fx.checked.insert(clone, copied);
-        fx.b.func.values[clone.idx()].prediction = Prediction::Ty(self.ty_of(copied));
+        fx.b.func.values[clone.idx()].set_prediction(Prediction::Ty(self.ty_of(copied)));
         self.fit_fresh(fx, clone, copied)
     }
 
@@ -2666,7 +2827,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     clone = self.operation(fx, "CloneObjectWith", &operands);
                 }
                 fx.checked.insert(clone, copied);
-                fx.b.func.values[clone.idx()].prediction = Prediction::Ty(self.ty_of(copied));
+                fx.b.func.values[clone.idx()].set_prediction(Prediction::Ty(self.ty_of(copied)));
                 continue;
             }
             self.store_onto(fx, layout, clone, p);
@@ -2683,7 +2844,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn spread_namespace_exports(&mut self, fx: &mut Fx, operand: ExprId) -> Option<Vec<(Atom, V)>> {
         let sym = self.spread_namespace_module(fx, operand)?;
         let members = self.members_of_namespace(sym);
-        Some(members.into_iter().map(|(name, source)| (name, self.read_member_of_namespace(fx, source))).collect())
+        let read = |this: &mut Self, fx: &mut Fx, name: Atom, source: super::ImportSource| match source {
+            super::ImportSource::Declaration(member) => {
+                let member = this.value_symbol_of_export(member);
+                this.read_export_of_module(fx, sym.file, name, member, 0)
+            }
+            _ => this.read_member_of_namespace(fx, source),
+        };
+        Some(members.into_iter().map(|(name, source)| (name, read(self, fx, name, source))).collect())
     }
 
     fn define_fields(&mut self, fx: &mut Fx, obj: V, fields: Vec<(Atom, V)>) {
@@ -2779,7 +2947,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let source = self.expr(fx, hir[only].value);
             let copy = self.operation(fx, "CloneObject", &[source]);
             if matches!(self.c.data(copied), TypeData::TypeParam(..)) {
-                fx.b.func.values[copy.idx()].prediction = Prediction::Ty(self.ty(fx, source));
+                let prediction = Prediction::Ty(self.ty(fx, source));
+                fx.b.func.values[copy.idx()].set_prediction(prediction);
             }
             fx.checked.insert(copy, copied);
             return copy;
@@ -2796,7 +2965,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         {
             let source = self.expr(fx, hir[first].value);
             let copy = self.operation(fx, "CloneObject", &[source]);
-            fx.b.func.values[copy.idx()].prediction = Prediction::Ty(self.ty(fx, source));
+            let prediction = Prediction::Ty(self.ty(fx, source));
+            fx.b.func.values[copy.idx()].set_prediction(prediction);
             for p in props.iter().skip(1) {
                 let PropKey::Name(name) = hir[p].key else {
                     self.spread_onto_ordinary(fx, copy, hir[p].value);
@@ -3067,34 +3237,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.expr(fx, e)
     }
 
-    fn override_named_by(&mut self, file: FileId, e: ExprId) -> Option<GlobalId> {
-        if !self.shared.constants.has_test_globals {
-            return None;
-        }
-        let ExprKind::Ident(name) = self.hir(file)[e].kind else { return None };
-        let sym = self.c.binding_of_identifier(file, e, name)?;
-        let sym = self.value_symbol(sym);
-        self.override_of(sym)
-    }
-
-    fn direct_call_unless_overridden(&mut self, fx: &mut Fx, global: Option<GlobalId>, func: FuncId, args: &[V], e: ExprId) -> V {
-        let Some(global) = global else { return self.direct_call(fx, func, V::NONE, args, e) };
-        self.unless_overridden(
-            fx,
-            global,
-            e,
-            |this, fx, callee| {
-                let receiver = this.emit(fx, Op::Undefined);
-                let value = this.emit_throwing(fx, Op::Call { callee, this: receiver, args: args.iter().copied().collect() });
-                if fx.calls_in_tail_position.contains(&e) {
-                    this.mark_call_in_tail_position(fx, value);
-                }
-                value
-            },
-            |this, fx| this.direct_call(fx, func, V::NONE, args, e),
-        )
-    }
-
     /// The function of the program an expression names, if nothing else can be its value.
     fn function_for_expr(&mut self, fx: &Fx, e: ExprId) -> Option<FuncId> {
         let ExprKind::Ident(name) = self.hir(fx.file)[e].kind else { return None };
@@ -3103,7 +3245,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let sym = self.c.binding_of_identifier(fx.file, e, name)?;
         let sym = self.value_symbol(sym);
-        if self.namespace_seen_through(fx, e, sym).is_some() {
+        if self.namespace_seen_through(fx, e, sym).is_some() || self.c.may_be_overridden_at(sym, fx.file, e) {
             return None;
         }
         // `const f = () => ..`: whoever sees `f` has what the function captures.
@@ -3139,7 +3281,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let array = self.emit_throwing(fx, Op::NewArray(rest));
             let place = self.out.funcs[func.idx()].params[named];
             if place.is_some() && self.out.tys.get(place).parts.iter().filter(|part| matches!(part, Part::Array(_))).count() == 1 {
-                fx.b.func.values[array.idx()].prediction = Prediction::Ty(place);
+                fx.b.func.values[array.idx()].set_prediction(Prediction::Ty(place));
             }
             packed.push(array);
             args = &packed;
@@ -3243,7 +3385,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let c = &hir[call];
         let ExprKind::Ident(name) = hir[c.callee].kind else { return None };
         let (&first, rest) = self.c.atoms().bytes(name).strip_prefix(b"$")?.split_first()?;
-        let operation = format!("{}{}", first.to_ascii_uppercase() as char, String::from_utf8_lossy(rest));
+        let operation = format!("{}{}", first.to_ascii_uppercase() as char, bstr::BStr::new(rest));
         let args = self.arguments(fx, c.args)?;
         Some(self.operation(fx, &operation, &args))
     }
@@ -3512,7 +3654,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.operation(fx, "NativeBinding", &[id])
             }
             // Of a debug build. The arguments are not evaluated.
-            Ok(Some(Macro::DebugLog)) => self.emit(fx, Op::Undefined),
+            Ok(Some(Macro::DebugLog | Macro::Undefined)) => self.emit(fx, Op::Undefined),
             Ok(Some(Macro::Assert)) => self.emit(fx, Op::Bool(true)),
             Ok(Some(Macro::PromiseStatus(status))) => {
                 let callee = self.private_global(fx, b"peekPromiseStatus");
@@ -3688,18 +3830,44 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let Some(value) = self.exports_expression(fx, e) {
             return value;
         }
+        if c.chain == Chain::No
+            && let Some((holder, member)) = self.c.member_of_global_that_may_be_overridden(fx.file, c.callee)
+        {
+            let this = self.member_of_global_as_compiled(fx, holder, member).0;
+            let callee = self.expr(fx, c.callee);
+            let value = self.emit_call_by_signature(fx, e, callee, this, c.args);
+            return self.fit_to_expression(fx, value, e);
+        }
+        let holders = match hir[c.callee].kind {
+            ExprKind::Dot { name, .. } => self.c.holders_of_member_that_may_be_overridden(name),
+            _ => Vec::new(),
+        };
+        if !holders.is_empty()
+            && let ExprKind::Dot { obj, name, chain, .. } = hir[c.callee].kind
+            && (chain == Chain::No || hir::parentheses_around(hir, c.callee).is_empty())
+            && !matches!(hir[obj].kind, ExprKind::Super)
+            && self.namespace_member(fx, obj, name).is_none()
+        {
+            let this = if chain == Chain::No { self.expr(fx, obj) } else { self.chain_operand(fx, c.callee, obj, bail) };
+            let property = self.str(name);
+            let callee = self.emit_throwing(fx, Op::PropGet { obj: this, name: property });
+            self.end_chain_if_nullish(fx, c.chain, callee, bail);
+            let callee = self.spy_in_the_place_of_member(fx, callee, &holders, name);
+            let value = self.emit_call_by_signature(fx, e, callee, this, c.args);
+            return self.fit_to_expression(fx, value, e);
+        }
         // Whatever is stored under the name does not look at `this`.
         if let Some(global) = self.export_variable_named_by(fx, self.skip_assertions(fx, c.callee)) {
             let callee = self.emit(fx, Op::GlobalGet(global));
             let callee = self.predict_expression(fx, callee, c.callee);
             self.end_chain_if_nullish(fx, c.chain, callee, bail);
             let this = self.emit(fx, Op::Undefined);
-            let value = self.emit_call(fx, callee, this, c.args);
+            let value = self.emit_call_by_signature(fx, e, callee, this, c.args);
             return self.fit_to_expression(fx, value, e);
         }
         if let Some(value) = self.require_call(fx, call) {
             if let ExprKind::String(specifier) = hir[hir.id_at(c.args, 0)].kind
-                && let Some(file) = self.imported_file(fx.file, specifier)
+                && let Some(file) = self.required_file(fx.file, specifier)
             {
                 self.note_value_of_json_module(fx, file, e);
             }
@@ -3746,8 +3914,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let value = self.operation(fx, "Apply", &[callee, this, args]);
                 return self.fit_to_expression(fx, value, e);
             };
-            let global = self.override_named_by(fx.file, c.callee);
-            return self.direct_call_unless_overridden(fx, global, func, &args, e);
+            return self.direct_call(fx, func, V::NONE, &args, e);
         }
         // `(a.b)(..)`: parentheses yield the reference, so `a` is `this`. All they do is end an optional chain.
         if let ExprKind::Dot { obj, name, chain, .. } = hir[c.callee].kind
@@ -3764,8 +3931,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if let Some((member, _)) = lazy {
                 self.check_turn_of_lazy_variable(fx, member, c.callee);
             }
-            if let Some(member) = self.namespace_member(fx, obj, name)
+            let deferred = if chain == Chain::No && c.chain == Chain::No { self.member_of_deferred_namespace(fx, obj, name) } else { None };
+            if let Some(member) = self.namespace_member(fx, obj, name).or(deferred).filter(|&member| !self.c.may_be_overridden(member))
                 && let Some(func) = lazy.map(|(_, func)| func).or_else(|| self.function_of_symbol(fx, member))
+                && !self.is_handed_its_module_namespace(fx, obj, member)
             {
                 let Some(args) = self.arguments(fx, c.args) else {
                     if let Some(value) = self.direct_call_with_spread(fx, func, c.args, e) {
@@ -3777,12 +3946,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let value = self.operation(fx, "Apply", &[callee, this, args]);
                     return self.fit_to_expression(fx, value, e);
                 };
-                let global = self.override_of(member);
-                return self.direct_call_unless_overridden(fx, global, func, &args, e);
+                return self.direct_call(fx, func, V::NONE, &args, e);
             }
-            if let Some(member) = self.namespace_member(fx, obj, name) {
+            if let Some(member) = self.namespace_member(fx, obj, name).or(deferred) {
                 // A binding that holds a function: `export const f = () => ..`.
-                let callee = self.read_sym(fx, member, pos);
+                let callee = match self.module_named_as_namespace(fx, obj) {
+                    Some(module) => self.read_export_of_module(fx, module, name, member, pos),
+                    None => self.read_sym(fx, member, pos),
+                };
                 let callee = self.predict_expression(fx, callee, c.callee);
                 if c.chain == Chain::Start {
                     let is_nullish = self.emit(fx, Op::IsNullish(callee));
@@ -3791,8 +3962,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     fx.b.seal(next);
                     fx.b.switch_to(next);
                 }
-                let this = self.emit(fx, Op::Undefined);
-                let value = self.emit_call(fx, callee, this, c.args);
+                let this = if self.is_handed_its_module_namespace(fx, obj, member) { self.expr(fx, obj) } else { self.emit(fx, Op::Undefined) };
+                let value = self.emit_call_by_signature(fx, e, callee, this, c.args);
                 return self.fit_to_expression(fx, value, e);
             }
             if chain == Chain::No
@@ -3803,7 +3974,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let name = self.c.atoms().bytes(name);
                 let callee = self.member_of_imported_namespace(fx, importer, file, name);
                 let callee = self.predict_expression(fx, callee, c.callee);
-                let value = self.emit_call(fx, callee, this, c.args);
+                let value = self.emit_call_by_signature(fx, e, callee, this, c.args);
                 return self.fit_to_expression(fx, value, e);
             }
             if matches!(hir[obj].kind, ExprKind::Super) {
@@ -3811,7 +3982,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let callee = self.super_get(fx, name, pos);
                 self.end_chain_if_nullish(fx, c.chain, callee, bail);
                 let this = self.this(fx, pos);
-                let value = self.emit_call(fx, callee, this, c.args);
+                let value = self.emit_call_by_signature(fx, e, callee, this, c.args);
                 return self.fit_to_expression(fx, value, e);
             }
             if let Some(member) = self.static_member(fx, obj, name)
@@ -3831,7 +4002,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 let callee = self.static_get(fx, member, pos);
                 self.end_chain_if_nullish(fx, c.chain, callee, bail);
-                let value = self.emit_call(fx, callee, obj, c.args);
+                let value = self.emit_call_by_signature(fx, e, callee, obj, c.args);
                 return self.fit_to_expression(fx, value, e);
             }
             let private = self.private_key(fx, name);
@@ -3845,8 +4016,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             };
             if let Some(key) = private {
                 let callee = self.private_get(fx, obj, key);
+                let callee = self.predict_private_method(fx, callee, name);
                 self.end_chain_if_nullish(fx, c.chain, callee, bail);
-                let value = self.emit_call(fx, callee, obj, c.args);
+                let value = self.emit_call_by_signature(fx, e, callee, obj, c.args);
                 return self.fit_to_expression(fx, value, e);
             }
             let name = self.str(name);
@@ -3856,6 +4028,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let primitives = if self.shared.constants.logs_type_errors { PrimitiveArgs::LoggedAtCall } else { PrimitiveArgs::Reject };
                 let args = self.arguments_for(fx, c.args, primitives).unwrap_or_default();
                 let value = self.emit_throwing(fx, Op::CallMethod { obj, name, args });
+                if fx.is_typed {
+                    fx.b.func.values[value.idx()].signature = self.signature_resolved_for(fx, e);
+                }
                 return self.fit_to_expression(fx, value, e);
             }
             let callee = self.emit_throwing(fx, Op::PropGet { obj, name });
@@ -3868,7 +4043,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.seal(next);
                 fx.b.switch_to(next);
             }
-            let value = self.emit_call(fx, callee, obj, c.args);
+            let value = self.emit_call_by_signature(fx, e, callee, obj, c.args);
             return self.fit_to_expression(fx, value, e);
         }
         if let ExprKind::Index { obj, index, .. } = hir[c.callee].kind
@@ -3879,7 +4054,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let callee = self.super_get_by_key(fx, key, pos);
             self.end_chain_if_nullish(fx, c.chain, callee, bail);
             let this = self.this(fx, pos);
-            let value = self.emit_call(fx, callee, this, c.args);
+            let value = self.emit_call_by_signature(fx, e, callee, this, c.args);
             return self.fit_to_expression(fx, value, e);
         }
         // `obj[key](..)`: `obj` is `this`.
@@ -3889,7 +4064,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         {
             let obj = if chain == Chain::No { self.expr(fx, obj) } else { self.chain_operand(fx, c.callee, obj, bail) };
             let key = self.expr(fx, index);
-            let callee = self.emit_throwing(fx, Op::ElemGet { obj, key });
+            let mut callee = self.emit_throwing(fx, Op::ElemGet { obj, key });
+            for (holder, member) in self.c.members_of_globals_that_may_be_overridden().to_vec() {
+                callee = self.spy_in_the_place_of_member(fx, callee, &[holder], member);
+            }
             if c.chain == Chain::Start {
                 let is_nullish = self.emit(fx, Op::IsNullish(callee));
                 let next = fx.b.new_block();
@@ -3897,7 +4075,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.seal(next);
                 fx.b.switch_to(next);
             }
-            let value = self.emit_call(fx, callee, obj, c.args);
+            let value = self.emit_call_by_signature(fx, e, callee, obj, c.args);
             return self.fit_to_expression(fx, value, e);
         }
         if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[c.callee].kind
@@ -3917,7 +4095,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.seal(next);
                 fx.b.switch_to(next);
             }
-            let value = self.emit_call(fx, callee, this, c.args);
+            let value = self.emit_call_by_signature(fx, e, callee, this, c.args);
             return self.fit_to_expression(fx, value, e);
         }
         let callee = self.chain_operand(fx, e, c.callee, bail);
@@ -3931,7 +4109,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let value = self.emit_throwing(fx, Op::Call { callee, this, args });
             return self.fit_to_expression(fx, value, e);
         }
-        let value = self.emit_call(fx, callee, this, c.args);
+        let value = self.emit_call_by_signature(fx, e, callee, this, c.args);
         self.fit_to_expression(fx, value, e)
     }
 
@@ -4172,12 +4350,51 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
+    fn emit_call_by_signature(&mut self, fx: &mut Fx, whole: ExprId, callee: V, this: V, args: IdList<ExprId>) -> V {
+        let value = self.emit_call(fx, callee, this, args);
+        if fx.is_typed && matches!(fx.b.func.op(value), Some(Op::Call { .. })) {
+            fx.b.func.values[value.idx()].signature = self.signature_resolved_for(fx, whole);
+        }
+        value
+    }
+
+    fn ty_as_described_so_far(&mut self, ty: TypeId) -> Option<TyId> {
+        if let Some(&known) = self.tys.get(&(ty, 0)) {
+            return Some(known);
+        }
+        let makes_no_layout = matches!(
+            self.c.data(ty),
+            TypeData::Intrinsic(_) | TypeData::StringLit { .. } | TypeData::BigIntLit { .. } | TypeData::BoolLit { .. } | TypeData::NumberLit { .. } | TypeData::EnumLit { .. } | TypeData::Enum { .. } | TypeData::UniqueSymbol { .. } | TypeData::Fns { .. }
+        );
+        if makes_no_layout { Some(self.ty_of(ty)) } else { None }
+    }
+
+    fn signature_resolved_for(&mut self, fx: &Fx, whole: ExprId) -> TyId {
+        let Some(sig) = self.c.resolved_signature(fx.file, whole).sig else { return TyId::NONE };
+        let parameters: Vec<(TypeId, bool, bool)> = self.c.sig_params(sig).iter().map(|parameter| (parameter.ty, parameter.optional, parameter.rest)).collect();
+        let least = parameters.iter().take_while(|parameter| !parameter.1 && !parameter.2).count();
+        let has_rest = parameters.iter().any(|parameter| parameter.2);
+        let result = self.c.sig_return(sig);
+        let mut described = smallvec::SmallVec::new();
+        for ty in std::iter::once(result).chain(parameters.into_iter().map(|parameter| parameter.0)) {
+            let Some(as_declared) = self.ty_as_described_so_far(ty) else { return TyId::NONE };
+            let mut as_kept = self.out.tys.get(as_declared).clone().nilable();
+            if as_kept.any_object || !as_kept.parts.is_empty() {
+                as_kept.parts.clear();
+                as_kept.any_object = true;
+                as_kept.any_function = true;
+            }
+            described.push(self.out.tys.intern(as_kept));
+        }
+        let name = self.out.strs.intern(format!("(signature {least} {})", u8::from(has_rest)).as_bytes());
+        self.out.tys.intern(crate::declared::Declared::part(Part::Global(name, described)))
+    }
+
     fn new_expression(&mut self, fx: &mut Fx, e: ExprId, call: CallId) -> V {
         let hir = self.hir(fx.file);
         let c = &hir[call];
         fx.b.pos = self.last_pos(fx, c.callee);
-        if self.override_named_by(fx.file, c.callee).is_none()
-            && let Some(class) = self.class_for_expr(fx.file, c.callee)
+        if let Some(class) = self.class_for_expr(fx.file, c.callee)
             && let Some(value) = self.construct_class(fx, c.callee, class, c.args)
         {
             return self.fit_to_expression(fx, value, e);
@@ -4281,6 +4498,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     ExprKind::Dot { obj, name, .. } => {
                         fx.b.pos = self.access_pos(fx, operand);
                         let obj = self.chain_operand(fx, operand, obj, bail);
+                        let obj = self.receiver_as_the_text_says(fx, obj, operand);
                         let name = self.str(name);
                         self.emit_throwing(fx, Op::PropDelete { obj, name })
                     }
@@ -4868,7 +5086,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if !matches!(self.hir(fx.file)[self.skip_assertions(fx, obj)].kind, ExprKind::ImportMeta) {
             return None;
         }
-        if let Some(text) = self.own_path(fx.file, self.c.atoms().bytes(name)) {
+        if let Some(mut text) = self.own_path(fx.file, self.c.atoms().bytes(name)) {
+            if self.c.atoms().bytes(name) != b"url" {
+                text.truncate(bun_core::strings::index_of_char_usize(&text, b'?').unwrap_or(text.len()));
+            }
             let text = self.out.strs.intern(&text);
             let value = self.emit(fx, Op::Str(text));
             return Some(self.fit_to_expression(fx, value, e));
@@ -4972,6 +5193,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.c.is_untyped(receiver)
     }
 
+    fn receiver_as_the_text_says(&mut self, fx: &mut Fx, obj: V, e: ExprId) -> V {
+        if !fx.is_typed || !self.is_stored_from_untyped_code(fx, e) {
+            return obj;
+        }
+        let Some(layout) = self.out.tys.get(self.ty(fx, obj)).only_layout() else { return obj };
+        let Some(&laid_out) = self.layout_types.get(&layout) else { return obj };
+        if !self.c.is_type_nobody_wrote(laid_out) {
+            return obj;
+        }
+        let anything = self.out.tys.anything;
+        self.emit(fx, Op::Coerce { value: obj, to: anything, why: Why::Upcast })
+    }
+
     /// What a store to the reference holds the value to, where that is a type that is written down.
     fn held_by(&mut self, fx: &Fx, target: &Reference) -> Option<(Ty, Why)> {
         if !fx.is_typed {
@@ -5017,6 +5251,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn store_here(&mut self, fx: &mut Fx, target: &Reference, value: V, pos: u32) {
         match *target {
             Reference::Prop { obj, name, e } => {
+                let obj = self.receiver_as_the_text_says(fx, obj, e);
                 // A store from untyped code only makes sure, as the run time does where it is not seen through. It makes nothing of an object of
                 // the program. Plain data it copies.
                 let value = match self.field_stored_to(self.ty(fx, obj), name) {
@@ -5041,10 +5276,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 self.static_set(fx, member, value, pos)
             }
-            Reference::Variable(sym) => self.write_sym(fx, sym, value, pos),
+            Reference::Variable(sym) => self.overwrite_sym(fx, sym, value, pos),
             Reference::Export { global, held, name } => {
                 self.check_holder_of_exports(fx, held, name);
                 self.emit(fx, Op::GlobalSet(global, value));
+                if name == Atom::NONE {
+                    self.emit_module_exports_for_host(fx, global);
+                }
             }
             Reference::Other(e) => self.put_value_to_binding_or_pattern(fx, e, value),
         }
@@ -5236,7 +5474,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if expected != Prediction::None {
             let to = self.ty(fx, key);
             key = self.emit(fx, Op::Coerce { value: key, to, why: Why::Upcast });
-            fx.b.func.values[key.idx()].prediction = expected;
+            fx.b.func.values[key.idx()].set_prediction(expected);
         }
         Reference::Elem { obj, key, e }
     }

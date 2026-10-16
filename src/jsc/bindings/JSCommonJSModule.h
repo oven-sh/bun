@@ -132,6 +132,7 @@ public:
     JSValue filename() { return m_filename.get(); }
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    bool evaluateCompiledWrapper(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSValue wrapper);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

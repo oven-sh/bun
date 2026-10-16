@@ -35,6 +35,7 @@ pub(super) struct Shared {
     /// `prototype_property_names`
     prototype_property_names: OnceLock<FxHashSet<Atom>>,
     stores_of_checked_texts: OnceLock<FxHashMap<Atom, Vec<(FileId, ExprId)>>>,
+    method_assignments_by_name: OnceLock<FxHashMap<Atom, Vec<(FileId, ClassId)>>>,
 }
 
 #[derive(Default)]
@@ -1646,6 +1647,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && let Some(defines) = self.store_to_access(file, e)
                 && matters(name, defines)
                 && !self.is_bound_to_its_object(file, e)
+                && !self.is_assignment_to_method_field(file, e)
             {
                 self.add_store_to_method(file, obj, name, defines, out);
             }
@@ -1709,6 +1711,95 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
+    }
+
+    fn method_assignment_in_class(&self, file: FileId, e: ExprId) -> Option<(ClassId, Atom)> {
+        let hir = self.hir(file);
+        let ExprKind::Dot { obj, name, .. } = hir[e].kind else { return None };
+        let bytes = self.atoms().bytes(name);
+        if !matches!(hir[obj].kind, ExprKind::This) || self.store_to_access(file, e) != Some(false) || bytes == b"__proto__" || bytes == b"constructor" || !bytes.first().is_some_and(|first| !first.is_ascii_digit()) {
+            return None;
+        }
+        let declarations = self.classes_declaring_methods().get(&name)?;
+        if declarations.iter().any(|declaration| declaration.is_accessor) {
+            return None;
+        }
+        let Some(Ok(function)) = self.this_container(file, obj) else { return None };
+        let FnOwner::Member(member) = self.bound(file).fns[function.idx()].owner else { return None };
+        let MemberOwner::Class(class) = self.bound(file).member_owner[member.idx()] else { return None };
+        (!hir[member].flags.contains(Flags::STATIC)).then_some((class, name))
+    }
+
+    fn method_assignments_by_name(&self) -> &'p FxHashMap<Atom, Vec<(FileId, ClassId)>> {
+        self.p.aot.classes.method_assignments_by_name.get_or_init(|| {
+            let mut found: FxHashMap<Atom, Vec<(FileId, ClassId)>> = FxHashMap::default();
+            for file in self.files_declaring_classes().into_iter().filter(|&file| self.is_compiled(file) && !self.is_untyped_file(file)) {
+                for &e in self.exprs_by_kind_of(file).of(ExprTag::Dot) {
+                    if let Some((class, name)) = self.method_assignment_in_class(file, e) {
+                        let classes = found.entry(name).or_default();
+                        if !classes.contains(&(file, class)) {
+                            classes.push((file, class));
+                        }
+                    }
+                }
+            }
+            found
+        })
+    }
+
+    fn class_declares_method(&self, class: (FileId, ClassId), name: Atom) -> bool {
+        self.classes_declaring_methods().get(&name).is_some_and(|declarations| declarations.iter().any(|declaration| declaration.class == class && !declaration.is_static))
+    }
+
+    fn is_assignment_to_method_field(&mut self, file: FileId, e: ExprId) -> bool {
+        if self.is_untyped_file(file) || !self.is_compiled(file) {
+            return false;
+        }
+        let Some((class, name)) = self.method_assignment_in_class(file, e) else { return false };
+        let mut at = (file, class);
+        for _ in 0..256 {
+            if self.class_declares_method(at, name) {
+                return true;
+            }
+            match self.superclass_of(at.0, at.1) {
+                Superclass::Known(extended) => at = extended,
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    pub fn methods_with_fields(&mut self, file: FileId, class: ClassId) -> Vec<Atom> {
+        let storing = self.method_assignments_by_name();
+        if storing.is_empty() {
+            return Vec::new();
+        }
+        let hir = self.hir(file);
+        let mut found: Vec<Atom> = Vec::new();
+        for member in hir[class].members.iter() {
+            let PropKey::Name(name) = hir[member].key else { continue };
+            let Some(classes) = storing.get(&name) else { continue };
+            if found.contains(&name) || !self.class_declares_method((file, class), name) {
+                continue;
+            }
+            let is_stored_to = classes.iter().any(|&storing| {
+                let mut at = storing;
+                for _ in 0..256 {
+                    if at == (file, class) {
+                        return true;
+                    }
+                    match self.superclass_of(at.0, at.1) {
+                        Superclass::Known(extended) => at = extended,
+                        _ => return false,
+                    }
+                }
+                false
+            });
+            if is_stored_to {
+                found.push(name);
+            }
+        }
+        found
     }
 
     /// Whether `e` is the object of `e.name`, and that property is only read there.

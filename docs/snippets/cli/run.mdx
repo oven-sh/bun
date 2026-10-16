@@ -82,6 +82,10 @@ bun run <file or script>
   line to stderr and continue
 </ParamField>
 
+<ParamField path="--aot-huge-heap" type="boolean">
+  With <code>--aot</code>: let each thread have more than 32 GB of objects. The program uses more memory and runs slower
+</ParamField>
+
 <ParamField path="--aot-audit" type="boolean">
   Run normally and log the places where the program would behave differently under <code>--aot</code>
 </ParamField>

@@ -13,6 +13,8 @@ use crate::util::{FxHashMap, FxHashSet};
 pub mod argument_use {
     /// Something may tell it from another object: it is compared, used as a key, looked into, constructed with.
     pub const OBSERVED: u8 = 1 << 0;
+    pub const ESCAPES: u8 = 1 << 1;
+    pub const ALL: u8 = OBSERVED | ESCAPES;
 }
 
 #[derive(Default)]
@@ -64,7 +66,7 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    fn references_to(&self, file: FileId, symbol: SymbolId) -> Option<&'p [ExprId]> {
+    pub(super) fn references_to(&self, file: FileId, symbol: SymbolId) -> Option<&'p [ExprId]> {
         let bound = self.bound(file);
         let [Decl::Param(pat) | Decl::Var(pat)] = *bound.symbols.get(symbol.idx())?.decls.as_slice() else { return None };
         matches!(bound.pat_parent[pat.idx()], PatParent::Param(_) | PatParent::Var(_)).then(|| self.uses_in_file(file).of_parameters.get(&symbol).map_or(&[][..], Vec::as_slice))
@@ -103,7 +105,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(assumed) = self.assumption(Query::ArgumentUse(file, p)) {
             return assumed as u8;
         }
-        let (found, is_final) = self.solve(Query::ArgumentUse(file, p), 0, u64::from(argument_use::OBSERVED), |c| u64::from(c.find_use_of_argument(file, p)));
+        let (found, is_final) = self.solve(Query::ArgumentUse(file, p), 0, u64::from(argument_use::ALL), |c| u64::from(c.find_use_of_argument(file, p)));
         if is_final {
             self.aot.escape.of_parameters.insert((file, p), found as u8);
         }
@@ -118,13 +120,21 @@ impl<'p, 's> Checker<'p, 's> {
         let is_plain = matches!(hir[pat].kind, PatKind::Ident(_)) && !hir[p].flags.contains(Flags::REST) && func.is_some() && symbol.is_some();
         // What is stored to the parameter is read like the argument. The `arguments` object is another way to the argument.
         if !is_plain || uses.using_arguments.contains(&func) || !bound.assignments_to(symbol).is_empty() || self.is_stored_through_casts(file, symbol) {
-            return argument_use::OBSERVED;
+            return argument_use::ALL;
         }
-        let Some(references) = self.references_to(file, symbol) else { return argument_use::OBSERVED };
+        let is_coroutine = hir[func].flags.contains(Flags::ASYNC) || hir[func].flags.contains(Flags::GENERATOR);
+        self.use_of_binding(file, symbol, func, 0) | if is_coroutine { argument_use::ESCAPES } else { 0 }
+    }
+
+    fn use_of_binding(&mut self, file: FileId, symbol: SymbolId, func: FnId, alias_depth: u32) -> u8 {
+        let Some(references) = self.references_to(file, symbol) else { return argument_use::ALL };
         let mut found = 0;
         for &e in references {
-            found |= self.use_of_value(file, e);
-            if found & argument_use::OBSERVED != 0 {
+            found |= self.use_of_value_at_depth(file, e, alias_depth);
+            if self.enclosing_fn_of_expr(file, e).unwrap_or(FnId::NONE) != func {
+                found |= argument_use::ESCAPES;
+            }
+            if found == argument_use::ALL {
                 break;
             }
         }
@@ -132,7 +142,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// What is done with the value of the expression where it stands.
-    pub(super) fn use_of_value(&mut self, file: FileId, mut e: ExprId) -> u8 {
+    pub(super) fn use_of_value(&mut self, file: FileId, e: ExprId) -> u8 {
+        self.use_of_value_at_depth(file, e, 0)
+    }
+
+    fn use_of_value_at_depth(&mut self, file: FileId, mut e: ExprId, alias_depth: u32) -> u8 {
+        const MAX_ALIAS_DEPTH: u32 = 4;
         let (hir, bound) = (self.hir(file), self.bound(file));
         loop {
             let parent = match bound.expr_parent[e.idx()] {
@@ -141,10 +156,14 @@ impl<'p, 's> Checker<'p, 's> {
                     return match hir[stmt].kind {
                         StmtKind::Expr(_) => 0,
                         StmtKind::If { test, .. } | StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } | StmtKind::For { test, .. } if test == e => 0,
-                        _ => argument_use::OBSERVED,
+                        _ => argument_use::ALL,
                     };
                 }
-                _ => return argument_use::OBSERVED,
+                Parent::VarInit(d) if hir[d].kind == VarKind::Const && matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) && alias_depth < MAX_ALIAS_DEPTH && !self.has_direct_eval(file) => {
+                    let func = self.enclosing_fn_of_expr(file, e).unwrap_or(FnId::NONE);
+                    return argument_use::OBSERVED | self.use_of_binding(file, bound.pat_symbol[hir[d].pat.idx()], func, alias_depth + 1);
+                }
+                _ => return argument_use::ALL,
             };
             match hir[parent].kind {
                 // They yield the value itself.
@@ -162,7 +181,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ExprKind::Unary { op: UnOp::Not | UnOp::Typeof | UnOp::Void, .. } => return 0,
                 ExprKind::Call(call) if hir[call].callee == e => return 0,
                 ExprKind::Call(call) => return self.use_of_argument_at(file, call, e),
-                _ => return argument_use::OBSERVED,
+                _ => return argument_use::ALL,
             }
             e = parent;
         }
@@ -190,16 +209,37 @@ impl<'p, 's> Checker<'p, 's> {
                 break;
             }
         }
-        let Some(index) = index else { return argument_use::OBSERVED };
+        let Some(index) = index else { return argument_use::ALL };
         if let Yielded { callee: Callee::One(of, func), is_predicted: false, .. } = self.callee_yielded_by(file, hir[call].callee, 0) {
             let params = self.hir(of)[func].params;
             return match params.iter().nth(index) {
                 Some(p) => self.use_of_argument(of, p),
                 // Nothing names it.
                 None if !self.uses_in_file(of).using_arguments.contains(&func) && !params.iter().next_back().is_some_and(|last| self.hir(of)[last].flags.contains(Flags::REST)) => 0,
-                None => argument_use::OBSERVED,
+                None => argument_use::ALL,
             };
         }
-        argument_use::OBSERVED
+        if self.is_only_called_before_builtin_returns(file, hir[call].callee, index) {
+            return argument_use::OBSERVED;
+        }
+        argument_use::ALL
+    }
+
+    fn is_only_called_before_builtin_returns(&mut self, file: FileId, callee: ExprId, index: usize) -> bool {
+        let ExprKind::Dot { obj, name, .. } = self.hir(file)[callee].kind else { return false };
+        let (callback_index, is_string_method) = match self.atoms().bytes(name) {
+            b"every" | b"filter" | b"find" | b"findIndex" | b"findLast" | b"findLastIndex" | b"flatMap" | b"forEach" | b"map" | b"reduce" | b"reduceRight" | b"some" | b"sort" | b"toSorted" => (0, false),
+            b"replace" | b"replaceAll" => (1, true),
+            _ => return false,
+        };
+        if index != callback_index {
+            return false;
+        }
+        let receiver = self.type_of_expr(file, obj);
+        self.parts(receiver).iter().all(|&part| {
+            part.is_undefined()
+                || part.is_null()
+                || if is_string_method { self.is_string_like(part) } else { self.is_array_or_tuple(part) || self.is_instance_of_global(part, &[b"Map", b"Set", b"ReadonlyMap", b"ReadonlySet"]) }
+        })
     }
 }

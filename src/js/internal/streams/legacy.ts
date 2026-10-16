@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const EE = require("node:events");

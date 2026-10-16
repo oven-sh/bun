@@ -100,7 +100,7 @@ fn find_path_inner(
     .ok())
 }
 
-pub fn stat(path: &[u8]) -> i32 {
+pub(crate) fn stat(path: &[u8]) -> i32 {
     // PERF: `exists_at_type`
     // takes a `&ZStr`, so we copy into a NUL-terminated heap buffer here.
     let zpath = bun_core::ZBox::from_bytes(path);

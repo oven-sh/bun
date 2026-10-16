@@ -81,6 +81,8 @@ struct Reading<'a> {
     every_file_is_a_module: bool,
     bigint_names_are_digits: bool,
     jsdoc: JsDoc,
+    /// `Options::attach_comments`
+    attach_comments: bool,
 }
 
 /// `path` has the extension of JSON, and nobody says what else the file is.
@@ -188,6 +190,8 @@ fn file_of(
     file_read_as(scratch, how, text, atoms, false)
 }
 
+const MODULES_OF_THE_RUNTIME: &[u8] = b"/$bun/js/";
+
 /// `file_of`, in the dialect that `how` has. `refuses_await`: an `await` expression at the top level is an error.
 fn file_read_as(
     scratch: &mut Scratch,
@@ -211,6 +215,7 @@ fn file_read_as(
         is_jsx: is_js || is_json || script_kind == Some(ScriptKind::Tsx),
         is_javascript: is_js || is_json,
         is_json,
+        is_typescript_under_a_javascript_name: !is_js && !by_name && !path.starts_with(MODULES_OF_THE_RUNTIME) && ScriptKind::from_file_name(path).is_some_and(ScriptKind::is_javascript),
         // `flow-parser` reads it as a name outside an async function, in a module too.
         await_is_a_name: is_json
             || (is_ecmascript || dialect.oxc) && dialect.script
@@ -223,6 +228,7 @@ fn file_read_as(
         dialect,
         bigint_names_are_digits: how.bigint_names_are_digits,
         part: None,
+        attach_comments: how.attach_comments,
     };
     let once = |options, scratch: &mut Scratch| match atoms {
         Some(atoms) => crate::parse(text, options, atoms, scratch),
@@ -355,6 +361,7 @@ pub fn summarize<'s>(
         every_file_is_a_module,
         bigint_names_are_digits,
         jsdoc: JsDoc::Read,
+        attach_comments: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         let scratch = all[0].get_or_insert_default();
@@ -406,6 +413,7 @@ pub fn summarize_in<'s>(
         every_file_is_a_module,
         bigint_names_are_digits: false,
         jsdoc: JsDoc::Ignored,
+        attach_comments: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         parse_into_arena(all[0].get_or_insert_default(), how, memory, text, atoms)
@@ -460,6 +468,7 @@ pub fn with_summary<R>(
         atoms,
         experimental_decorators,
         every_file_is_a_module,
+        false,
         |file, atoms| match file {
             Summary::InArena(mut file) => {
                 file.text = std::borrow::Cow::Borrowed(text);
@@ -486,6 +495,7 @@ pub fn with_summary_in_place<'s, R>(
     atoms: &dyn Intern,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    attach_comments: bool,
     then: impl FnOnce(Summary<'_, 's>, &dyn Intern) -> R,
 ) -> R {
     let how = Reading {
@@ -496,6 +506,7 @@ pub fn with_summary_in_place<'s, R>(
         every_file_is_a_module,
         bigint_names_are_digits: false,
         jsdoc: JsDoc::Ignored,
+        attach_comments,
     };
     // `then` may parse another text.
     let mut scratch = take_scratch();
@@ -573,6 +584,7 @@ impl<'t> Parts<'t> {
                 until,
                 ..part
             }),
+            attach_comments: true,
             ..Default::default()
         };
         // Where it ends.

@@ -437,7 +437,7 @@ impl Types<'_> {
     fn get(&self, id: TyId) -> &Declared {
         let at = id.idx();
         match self.frozen {
-            _ if at < self.of_the_program.list.len() => &self.of_the_program.list[at],
+            _ if at < self.of_the_program.list.len() => self.of_the_program.get_widened(id),
             Some(frozen) if at < self.added.first => &frozen.list[at - frozen.first],
             _ => &self.added.list[at - self.added.first],
         }
@@ -1769,9 +1769,9 @@ fn text_of(program: &Program, ty: &Declared, depth: u32) -> String {
             } else {
                 let layout = &program.layouts[layout.idx()];
                 if layout.name.is_some() && !program.strs.get(layout.name).is_empty() {
-                    String::from_utf8_lossy(program.strs.get(layout.name)).into_owned()
+                    bstr::BStr::new(program.strs.get(layout.name)).to_string()
                 } else {
-                    let names: Vec<String> = layout.fields.iter().take(4).map(|field| String::from_utf8_lossy(program.strs.get(field.name)).into_owned()).collect();
+                    let names: Vec<String> = layout.fields.iter().take(4).map(|field| bstr::BStr::new(program.strs.get(field.name)).to_string()).collect();
                     format!("{{ {}{} }}", names.join(", "), if layout.fields.len() > 4 { ", ..." } else { "" })
                 }
             });
@@ -1780,7 +1780,7 @@ fn text_of(program: &Program, ty: &Declared, depth: u32) -> String {
     for part in &ty.parts {
         match part {
             Part::Class(_) => {}
-            Part::Global(name, _) => parts.push(String::from_utf8_lossy(program.strs.get(*name)).into_owned()),
+            Part::Global(name, _) => parts.push(bstr::BStr::new(program.strs.get(*name)).to_string()),
             Part::Array(element) if depth < 2 && element.is_some() => {
                 let element = text_of(program, program.tys.get(*element), depth + 1);
                 parts.push(if element.contains(" | ") { format!("({element})[]") } else { format!("{element}[]") });
@@ -1815,7 +1815,7 @@ fn text_of(program: &Program, ty: &Declared, depth: u32) -> String {
 }
 
 fn quoted(text: &[u8]) -> String {
-    let shown = String::from_utf8_lossy(&text[..text.len().min(24)]).into_owned();
+    let shown = bstr::BStr::new(&text[..text.len().min(24)]).to_string();
     format!("{:?}{}", shown, if text.len() > 24 { ".." } else { "" })
 }
 
@@ -1844,7 +1844,7 @@ struct Report<'a, 'b> {
 impl<'a> Report<'a, '_> {
     fn name_of_function(&self, func: &Func) -> String {
         let name = if func.name.is_some() { self.flow.program.strs.get(func.name) } else { b"" };
-        if name.is_empty() { "a function".to_owned() } else { format!("`{}`", String::from_utf8_lossy(name)) }
+        if name.is_empty() { "a function".to_owned() } else { format!("`{}`", bstr::BStr::new(name)) }
     }
 
     fn origin_behind_call(&self, origin: u32) -> u32 {
@@ -1891,9 +1891,9 @@ impl<'a> Report<'a, '_> {
     fn describe_callee(&self, func: &Func, callee: V) -> String {
         let strs = &self.flow.program.strs;
         match func.op(before_casts(func, callee)) {
-            Some(&Op::FreeGet { name, .. }) => String::from_utf8_lossy(strs.get(name)).into_owned(),
-            Some(&Op::PropGet { obj, name }) => format!("{}.{}", self.describe_callee(func, obj), String::from_utf8_lossy(strs.get(name))),
-            Some(&Op::GlobalGet(global)) if self.flow.program.globals[global.idx()].name.is_some() => String::from_utf8_lossy(strs.get(self.flow.program.globals[global.idx()].name)).into_owned(),
+            Some(&Op::FreeGet { name, .. }) => bstr::BStr::new(strs.get(name)).to_string(),
+            Some(&Op::PropGet { obj, name }) => format!("{}.{}", self.describe_callee(func, obj), bstr::BStr::new(strs.get(name))),
+            Some(&Op::GlobalGet(global)) if self.flow.program.globals[global.idx()].name.is_some() => bstr::BStr::new(strs.get(self.flow.program.globals[global.idx()].name)).to_string(),
             _ => "..".to_owned(),
         }
     }
@@ -1902,7 +1902,7 @@ impl<'a> Report<'a, '_> {
         let (index, v) = self.locate(origin.checked_sub(1)?)?;
         let func = &self.flow.program.funcs[index];
         let strs = &self.flow.program.strs;
-        let text = |name: StrId| if name.is_some() { String::from_utf8_lossy(strs.get(name)).into_owned() } else { "..".to_owned() };
+        let text = |name: StrId| if name.is_some() { bstr::BStr::new(strs.get(name)).to_string() } else { "..".to_owned() };
         let what = match &func.values[v.idx()].def {
             Def::Param(..) => format!("a parameter of {}, which callers that the compiler does not see may call", self.name_of_function(func)),
             Def::Op(Op::CallMethod { obj, name, .. }) => format!("{}.{}(..)", self.describe_callee(func, *obj), text(*name)),
@@ -1943,7 +1943,7 @@ impl<'a> Report<'a, '_> {
         let Some((index, v)) = origin.checked_sub(1).and_then(|node| self.locate(node)) else { return (DoorKind::Other, String::new()) };
         let program = self.flow.program;
         let func = &program.funcs[index];
-        let text = |name: StrId| if name.is_some() { String::from_utf8_lossy(program.strs.get(name)).into_owned() } else { "..".to_owned() };
+        let text = |name: StrId| if name.is_some() { bstr::BStr::new(program.strs.get(name)).to_string() } else { "..".to_owned() };
         let path = if func.module.is_some() { text(program.modules[func.module.idx()].display_path) } else { "..".to_owned() };
         if let Some((_, inside)) = path.rsplit_once("node_modules/") {
             let mut names = inside.split('/');
@@ -2018,7 +2018,7 @@ impl<'a> Report<'a, '_> {
             Op::Int(value) => value.to_string(),
             &Op::Double(bits) => format!("{}", f64::from_bits(bits)),
             &Op::Str(text) => quoted(self.flow.program.strs.get(text)),
-            &Op::BigInt(text) => format!("{}n", String::from_utf8_lossy(self.flow.program.strs.get(text))),
+            &Op::BigInt(text) => format!("{}n", bstr::BStr::new(self.flow.program.strs.get(text))),
             _ => return None,
         })
     }
@@ -2195,7 +2195,7 @@ impl<'a> Report<'a, '_> {
 
     fn text_of_use(&self, func: &Func, used: Use) -> String {
         let program = self.flow.program;
-        let text = |name: StrId| if name.is_some() { String::from_utf8_lossy(program.strs.get(name)).into_owned() } else { String::new() };
+        let text = |name: StrId| if name.is_some() { bstr::BStr::new(program.strs.get(name)).to_string() } else { String::new() };
         match used {
             Use::ArgumentOf(number, called) => format!("argument {} of {}", number + 1, self.name_of_function(&program.funcs[called.idx()])),
             Use::Annotation => "the annotation".to_owned(),
@@ -2248,7 +2248,7 @@ impl<'a> Report<'a, '_> {
         let (door_kind, door) = self.door_of(origin);
         let is_behind_cast = self.handed_over.is_none() && matches!(origin.checked_sub(1).and_then(|node| self.locate(node)), Some((of, cast)) if matches!(self.flow.program.funcs[of].op(cast), Some(Op::Coerce { .. })));
         let is_behind_cast = is_behind_cast || tier == Tier::Assertion && self.is_deferred_cast(func);
-        let door = if door.is_empty() && tier == Tier::Outside && func.module.is_some() { format!("values typed `any` in {}", String::from_utf8_lossy(self.flow.program.strs.get(self.flow.program.modules[func.module.idx()].display_path))) } else { door };
+        let door = if door.is_empty() && tier == Tier::Outside && func.module.is_some() { format!("values typed `any` in {}", bstr::BStr::new(self.flow.program.strs.get(self.flow.program.modules[func.module.idx()].display_path))) } else { door };
         let ordinal = self.ordinal.take();
         let origin = self.handed_over.take().or_else(|| self.origin(origin));
         let what = match if ordinal.is_some() { None } else { func.op(self.at) } {
@@ -2270,7 +2270,7 @@ impl<'a> Report<'a, '_> {
         let function = if func.kind == FuncKind::Module {
             "module".to_owned()
         } else if func.name.is_some() && !self.flow.program.strs.get(func.name).is_empty() {
-            String::from_utf8_lossy(self.flow.program.strs.get(func.name)).into_owned()
+            bstr::BStr::new(self.flow.program.strs.get(func.name)).to_string()
         } else {
             "<anonymous>".to_owned()
         };
@@ -2380,7 +2380,7 @@ impl<'a> Report<'a, '_> {
                             break 'checks;
                         }
                         let detail = match (why, kind) {
-                            (Why::NonNull(text), _) if text.is_some() => format!("`{}!`", String::from_utf8_lossy(program.strs.get(text))),
+                            (Why::NonNull(text), _) if text.is_some() => format!("`{}!`", bstr::BStr::new(program.strs.get(text))),
                             (Why::Claim, Kind::As) => "a value that the cast let through is used as the type of the cast".to_owned(),
                             _ => self.text_of_use(func, used),
                         };
@@ -2452,7 +2452,7 @@ impl<'a> Report<'a, '_> {
                     &Op::PropSet { obj, name, value } => self.look_at_store(index, func, facts, keys, pos, obj, Some(name), Some(value)),
                     &Op::PropDelete { obj, name } => self.look_at_store(index, func, facts, keys, pos, obj, Some(name), None),
                     &Op::FreeSet { name, value } if global_object().refuses(program.strs.get(name), Change::Assign) && !self.is_current_value(index, global_object(), program.strs.get(name), value) => {
-                        let shown = String::from_utf8_lossy(program.strs.get(name)).into_owned();
+                        let shown = bstr::BStr::new(program.strs.get(name)).to_string();
                         self.name = Some("global-binding-write");
                         self.add(func, pos, Kind::BuiltinWrite, Verdict::Wrong, String::new(), String::new(), format!("`{shown}` cannot be replaced"), 0);
                     }
@@ -2530,7 +2530,7 @@ impl<'a> Report<'a, '_> {
                             && program.funcs[read_of.idx()].has(func_flags::IS_SLOPPY)
                             && program.funcs[read_of.idx()].kind == FuncKind::Plain
                         {
-                            let shown = String::from_utf8_lossy(program.strs.get(name)).into_owned();
+                            let shown = bstr::BStr::new(program.strs.get(name)).to_string();
                             self.add(func, pos, Kind::Caller, Verdict::Wrong, String::new(), String::new(), format!("`.{shown}` of a function is read"), 0);
                         }
                     }
@@ -2562,10 +2562,10 @@ impl<'a> Report<'a, '_> {
         if !holder.refuses(name, change) {
             return None;
         }
-        let shown = if holder.is_global_object() { format!("`globalThis.{}`", String::from_utf8_lossy(name)) } else { String::from_utf8_lossy(&locked_builtins::shown(holder, name)).into_owned() };
+        let shown = if holder.is_global_object() { format!("`globalThis.{}`", bstr::BStr::new(name)) } else { bstr::BStr::new(&locked_builtins::shown(holder, name)).to_string() };
         let why = match holder.would_shadow(name, change) {
             _ if !holder.takes_new_properties => "built-in prototypes are frozen".to_owned(),
-            Some(inherited) => format!("it would hide {}, and built-ins cannot be replaced", String::from_utf8_lossy(&locked_builtins::shown(inherited, name))),
+            Some(inherited) => format!("it would hide {}, and built-ins cannot be replaced", bstr::BStr::new(&locked_builtins::shown(inherited, name))),
             None => "built-ins cannot be replaced".to_owned(),
         };
         Some((kind, shown, why))
@@ -2614,7 +2614,7 @@ impl<'a> Report<'a, '_> {
     fn look_at_store(&mut self, index: usize, func: &Func, facts: &Facts, keys: &mut Keys, pos: u32, obj: V, name: Option<StrId>, value: Option<V>) {
         let program = self.flow.program;
         let context = self.flow.origin_of(index, obj) & CONTEXTUAL;
-        let shown = name.map_or_else(String::new, |name| String::from_utf8_lossy(program.strs.get(name)).into_owned());
+        let shown = name.map_or_else(String::new, |name| bstr::BStr::new(program.strs.get(name)).to_string());
         let verb = if value.is_some() { "assigned" } else { "deleted" };
         if let (Some(name), Some(value)) = (name, value) {
             let static_setter = self.find_static_member(index, obj, name, MethodKind::Setter);
@@ -2737,7 +2737,7 @@ impl<'a> Report<'a, '_> {
                 if verdict == Verdict::Fine {
                     continue;
                 }
-                let (shown, through, made) = (String::from_utf8_lossy(program.strs.get(name)).into_owned(), text_of(program, &Declared::part(Part::Class(view)), 0), text_of(program, &Declared::part(Part::Class(member)), 0));
+                let (shown, through, made) = (bstr::BStr::new(program.strs.get(name)).to_string(), text_of(program, &Declared::part(Part::Class(view)), 0), text_of(program, &Declared::part(Part::Class(member)), 0));
                 let found = text_of(program, &stored, 0);
                 self.add(func, pos, Kind::Field, verdict, text_of(program, &wanted, 0), found, format!("`{shown}` is stored through {through}, and the object may have been created as {made}, which declares a narrower type for it"), 0);
                 return;
@@ -2930,7 +2930,7 @@ impl<'a> Report<'a, '_> {
             {
                 match program.strs.get(name) {
                     b"call" => self.add_parameters_handed_what_says_nothing(func, pos, called, args.get(1..).unwrap_or_default(), "this call"),
-                    b"apply" | b"bind" => self.look_at_functions_handed(index, func, pos, &[obj], &format!("`{}`", String::from_utf8_lossy(program.strs.get(name)))),
+                    b"apply" | b"bind" => self.look_at_functions_handed(index, func, pos, &[obj], &format!("`{}`", bstr::BStr::new(program.strs.get(name)))),
                     _ => {}
                 }
             }
@@ -2986,14 +2986,14 @@ impl<'a> Report<'a, '_> {
             return self.add(func, pos, Kind::Result, Verdict::Unknown, String::new(), String::new(), "`Reflect.construct` with a different new.target: a TypeScript constructor function accepts a new.target only if its `prototype` belongs to such a function".to_owned(), 0);
         }
         if holder == b"Reflect" && matches!(called, b"apply" | b"construct") {
-            return self.look_at_functions_handed(index, func, pos, args.get(..1).unwrap_or_default(), &format!("`Reflect.{}`", String::from_utf8_lossy(called)));
+            return self.look_at_functions_handed(index, func, pos, args.get(..1).unwrap_or_default(), &format!("`Reflect.{}`", bstr::BStr::new(called)));
         }
         if !matches!(called, b"defineProperty" | b"defineProperties" | b"setPrototypeOf" | b"assign" | b"set" | b"deleteProperty") {
             return;
         }
         let Some(&target) = args.first() else { return };
         let context = self.flow.origin_of(index, target) & CONTEXTUAL;
-        let shown = format!("{}.{}", String::from_utf8_lossy(holder), String::from_utf8_lossy(called));
+        let shown = format!("{}.{}", bstr::BStr::new(holder), bstr::BStr::new(called));
         if let Some(changed) = self.flow.holder_of(index, target) {
             let what = if holder == b"Reflect" { "returns false where plain JavaScript returns true" } else { "throws" };
             let written = if changed.is_global_object() { "globalThis" } else { changed.name };
@@ -3222,7 +3222,7 @@ impl Asked {
                 continue;
             }
             let path = program.strs.get(program.modules[func.module.idx()].display_path);
-            if path.starts_with(b".bun-aot-prelude/") || path.windows(18).any(|window| window == b"/.bun-aot-prelude/") {
+            if path.starts_with(b".bun-aot-prelude/") || bun_core::strings::contains(path, b"/.bun-aot-prelude/") {
                 continue;
             }
             let (reached, mut keys) = report.flow.run(index);
@@ -3304,7 +3304,7 @@ fn find(program: &Program, logs_type_errors: bool, in_parallel: InParallel<'_>) 
 
 pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, lists_all: bool, line_and_column: &dyn Fn(u32, u32) -> (u32, u32), in_parallel: InParallel<'_>) -> Vec<String> {
     let (sites, fine, rounds, throws_either_way, [prepared, settled, looked]) = find(program, logs_type_errors, in_parallel);
-    let path_of = |module: u32| String::from_utf8_lossy(program.strs.get(program.modules[module as usize].display_path)).into_owned();
+    let path_of = |module: u32| bstr::BStr::new(program.strs.get(program.modules[module as usize].display_path)).to_string();
     let mut lines = Vec::new();
     let mut ordinals: FxHashMap<(u32, u32, &'static str), usize> = FxHashMap::default();
     let mut listed = [0usize; 4];

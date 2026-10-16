@@ -888,7 +888,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
     let is_compile = bundler.transpiler.options.compile_mode.is_executable();
-    if root_path.len() > 0 && !is_compile {
+    if root_path.len() > 0 && !is_compile && bundler.transpiler.options.write_sound_files.is_none() {
         write_output_files_to_disk(
             c,
             root_path,
@@ -1806,7 +1806,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 }
 
 fn with_tokens_of_aot(source_map: &[u8], tokens: &[u8]) -> Box<[u8]> {
-    let end = source_map.iter().rposition(|&byte| byte == b'}').unwrap_or(source_map.len());
+    let end = strings::last_index_of_char(source_map, b'}').unwrap_or(source_map.len());
     let body = source_map[..end].trim_ascii_end();
     [body, b",\n  \"x_bun_aot\": ", tokens, b"\n", &source_map[end..]].concat().into_boxed_slice()
 }
@@ -2135,12 +2135,12 @@ use crate::options::SourceMapOption;
 use crate::output_file::{BakeExtra, BakeRouteKind};
 
 struct SourceMapsByEntryOffset {
-    maps: std::collections::HashMap<u32, (Box<[u8]>, Vec<Box<[u8]>>)>,
+    maps: bun_collections::HashMap<u32, (Box<[u8]>, Vec<Box<[u8]>>)>,
 }
 
 impl SourceMapsByEntryOffset {
     fn of(output_files: &[options::OutputFile]) -> Self {
-        let mut maps = std::collections::HashMap::new();
+        let mut maps = bun_collections::HashMap::new();
         for file in output_files {
             if file.source_map_index == u32::MAX || file.bytecode_index == u32::MAX {
                 continue;

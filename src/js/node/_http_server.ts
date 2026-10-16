@@ -60,24 +60,22 @@ const {
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
   kOutHeaders,
+  kErrored,
+  kHighWaterMark,
+  kSocket,
+  kRejectNonStandardBodyWrites,
+  kUniqueHeaders,
+  kReqShouldKeepAlive,
+  kIncomingMessage,
   onDataIncomingMessage,
   http1ServerPipeline,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
 
-const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
-const {
-  OutgoingMessage,
-  kErrored,
-  kHighWaterMark,
-  kSocket,
-  kRejectNonStandardBodyWrites,
-  kUniqueHeaders,
-  parseUniqueHeadersOption,
-} = require("node:_http_outgoing");
+const { IncomingMessage } = require("node:_http_incoming");
+const { OutgoingMessage, parseUniqueHeadersOption } = require("node:_http_outgoing");
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
-const { kIncomingMessage } = require("node:_http_common");
 let http1Fallback;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");

@@ -101,6 +101,7 @@ JSValue fetchESMSourceCodeAsync(
     BunString* typeAttribute);
 
 bool hasFilesOfCompiledProgram(JSC::JSGlobalObject*);
+JSC::JSObject* compiledRuntimeHelpers(JSC::JSGlobalObject*, const String& key);
 JSC::JSPromise* importFileOfCompiledProgram(Zig::GlobalObject*, JSC::JSModuleLoader*, const String& name, const String& referrer);
 JSC::JSSourceCode* sourceOfFileOfCompiledProgram(Zig::GlobalObject*, const String& key);
 JSC::JSPromise* sourceOfFileOfCompiledProgramThatAwaits(Zig::GlobalObject*, const String& key);
@@ -108,6 +109,9 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionSourceOfCompiledNamespace);
 bool overrideExportOfCompiledNamespace(Zig::GlobalObject*, JSC::JSObject* namespaceObject, const JSC::Identifier& name, JSC::JSValue);
 JSC::JSObject* compiledNamespaceBehind(Zig::GlobalObject*, JSC::JSObject* namespaceObject);
 bool overrideExportsOfCompiledModule(Zig::GlobalObject*, const String& path, JSC::JSObject* exports);
+bool overrideBuiltinOfCompiledProgram(Zig::GlobalObject*, JSC::JSValue builtin, JSC::JSValue);
+bool isModuleMocked(Zig::GlobalObject*, const String& path);
+JSC::JSValue overrideOfBuiltinInCompiledProgram(Zig::GlobalObject*, JSC::JSValue builtin);
 void noteThatRequireCacheIsRead(Zig::GlobalObject*);
 void evictCompiledModule(Zig::GlobalObject*, const String& path);
 JSC::JSObject* namespaceOfEvaluatedCompiledModule(Zig::GlobalObject*, const String& path);

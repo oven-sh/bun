@@ -238,9 +238,19 @@ pub fn is_module_exports_inside_parentheses(hir: &File, e: ExprId) -> bool {
 
 /// `GetAssignmentDeclarationKind`, for the kinds that only JavaScript has.
 pub fn assignment_declaration_kind(hir: &File, e: ExprId) -> JsDeclarationKind {
-    if !hir.is_js {
+    if hir.is_js {
+        return assignment_declaration_kind_in_javascript(hir, e);
+    }
+    if !hir.is_annotated_javascript() {
         return JsDeclarationKind::None;
     }
+    match assignment_declaration_kind_in_javascript(hir, e) {
+        JsDeclarationKind::ThisProperty | JsDeclarationKind::ObjectDefinePropertyValue => JsDeclarationKind::None,
+        exported => exported,
+    }
+}
+
+fn assignment_declaration_kind_in_javascript(hir: &File, e: ExprId) -> JsDeclarationKind {
     let (target, value) = match hir[e].kind {
         ExprKind::Assign {
             op: None,
@@ -1228,7 +1238,7 @@ impl<S: Storage> BoundIn<S> {
     /// text of `PropertyNameOrName()`, `NONE` if that is neither an identifier nor a string
     /// literal.
     pub fn required_by(&self, hir: &File, pat: PatId) -> Option<(Atom, Option<Atom>)> {
-        if !hir.is_js {
+        if !hir.is_js && !hir.is_annotated_javascript() {
             return None;
         }
         let (pattern, property_name) = match self.pat_parent[pat.idx()] {
@@ -1575,6 +1585,11 @@ impl Bound<'_> {
             ModuleInstanceState::Instantiated => true,
             ModuleInstanceState::ConstEnumOnly => preserve_const_enums,
         }
+    }
+
+    /// Whether the file has a `typeof x` type.
+    pub(crate) fn has_type_queries(&self) -> bool {
+        !self.type_query_operands.is_empty()
     }
 
     /// `IsInTypeQuery`: the type of `e` is queried, but `e` is not read.

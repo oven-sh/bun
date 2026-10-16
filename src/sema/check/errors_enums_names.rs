@@ -101,7 +101,7 @@ impl Checker<'_, '_> {
                 || matches!(hir.kind(node), Kind::Identifier | Kind::QualifiedName)
                     && is_in_right_side_of_import_or_export_assignment(hir, node)
                 || matches!(hir.kind(parent), Kind::TypeQuery | Kind::ExportSpecifier);
-            if !ok {
+            if !ok && !crate::direct_eval::is_inserted(&hir.text, hir[e].pos) {
                 self.error(file, node, 2475, &[]);
             }
             // Imports of ambient `const` enums are checked in `checkAliasSymbol`.

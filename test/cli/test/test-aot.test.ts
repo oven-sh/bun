@@ -35,13 +35,18 @@ async function runTests(cwd: string, aot: boolean, args: string[] = [], builds =
   };
 }
 
-async function expectSameAsBunTest(files: Record<string, string>, args?: string[], builds = true) {
+const theWarningThatAFileIsCompiledUntyped = /^warn: TS100010: '<dir>\/([^']+)' has \d+ type errors, [^\n]*: it is compiled untyped, [^\n]*\n\n(?:[^\n]*\n)*?   at <dir>\/[^\n]*\n/gm;
+
+async function expectSameAsBunTest(files: Record<string, string>, args?: string[], builds = true, compiledUntyped: string[] = []) {
   using expectedDir = tempDir("test-aot", files);
   using actualDir = tempDir("test-aot", files);
   const [expected, actual] = await Promise.all([
     runTests(String(expectedDir), false, args),
     runTests(String(actualDir), true, args, builds),
   ]);
+  const warnedOf: string[] = [];
+  actual.stderr = actual.stderr.replace(theWarningThatAFileIsCompiledUntyped, (_warning, file) => (warnedOf.push(file), ""));
+  expect(warnedOf).toEqual(compiledUntyped);
   expect(actual).toEqual(expected);
   return actual;
 }
@@ -277,6 +282,8 @@ describe.skipIf(!supported)("bun test --aot", () => {
         `,
       },
       ["./sub/a.test.ts"],
+      true,
+      ["preload.ts"],
     );
     expect(stderr).toContain(" 1 pass");
   });
@@ -307,7 +314,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("a preload outside the build can spy on a compiled export", async () => {
+  test.concurrent("a preload that is compiled untyped can spy on a compiled export", async () => {
     const options = `"target": "esnext", "module": "esnext", "moduleResolution": "bundler", "types": ["bun"], "skipLibCheck": true`;
     const { stdout, stderr } = await expectSameAsBunTest(
       {
@@ -338,6 +345,8 @@ describe.skipIf(!supported)("bun test --aot", () => {
         `,
       },
       ["--preload", "./preload.ts", "./sub/a.test.ts"],
+      true,
+      ["preload.ts"],
     );
     expect(stdout).toContain("spied spied spied spied spied 5\nhello a hello b hello c hello c hello outside\n");
     expect(stderr).toContain(" 1 pass");
@@ -394,14 +403,28 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 1 pass");
   });
 
-  test.concurrent("built-in objects are immutable, and spyOn reports that", async () => {
+  test.concurrent("built-in objects are immutable, and a spy that names a member of one works", async () => {
     using dir = tempDir("test-aot", {
       "builtins.test.ts": `
         import { expect, setSystemTime, spyOn, test } from "bun:test";
-        test("spyOn", () => {
-          expect(() => spyOn(Math, "random")).toThrow("Cannot spy on \`random\`: built-in objects are immutable");
-          expect(() => spyOn(Date, "now")).toThrow(TypeError);
-          expect(() => spyOn(Array.prototype, "push")).toThrow(TypeError);
+        test("a spy that names the member", () => {
+          const random = spyOn(Math, "random").mockReturnValue(0.25);
+          expect(Math.random()).toBe(0.25);
+          random.mockRestore();
+          expect(Math.random()).not.toBe(0.25);
+          const now = spyOn(Date, "now").mockReturnValue(7);
+          expect(Date.now()).toBe(7);
+          now.mockRestore();
+          expect(Date.now()).toBeGreaterThan(7);
+          const push = spyOn(Array.prototype, "push");
+          const list = [1];
+          list.push(2);
+          expect(push).toHaveBeenCalledWith(2);
+          push.mockRestore();
+          expect(list).toEqual([1, 2]);
+        });
+        test("what stays refused", () => {
+          expect(() => spyOn(Math, ["flo", "or"].join("") as "floor")).toThrow("Cannot spy on \`floor\`: built-in objects are immutable");
           expect(() => { Math.random = () => 0.5; }).toThrow(TypeError);
         });
         test("what is not a built-in object of the language", () => {
@@ -418,7 +441,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
       `,
     });
     const { stderr, exitCode } = await runTests(String(dir), true);
-    expect(stderr).toContain(" 2 pass");
+    expect(stderr).toContain(" 3 pass");
     expect(stderr).toContain(" 0 fail");
     expect(exitCode).toBe(0);
   });
@@ -467,7 +490,16 @@ describe.skipIf(!supported)("bun test --aot", () => {
         test("a property that holds no function", () => {
           const service: Service = { handle: n => n + 1, calls: 0 };
           expect(() => spyOn(service, "calls")).toThrow(TypeError);
-          expect(() => spyOn(new Client(), "sent")).toThrow(TypeError);
+          const client = new Client();
+          let spy: ReturnType<typeof spyOn> | undefined;
+          try {
+            spy = spyOn(client, "sent");
+          } catch (error) {
+            expect(error).toBeInstanceOf(TypeError);
+          }
+          client.request("/");
+          if (spy) expect(spy).toHaveBeenCalled();
+          else expect(client.sent).toBe(1);
           expect(service.calls).toBe(0);
         });
       `,

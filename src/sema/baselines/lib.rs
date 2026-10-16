@@ -42,7 +42,7 @@ pub fn read_file(path: &str) -> Option<Vec<u8>> {
 }
 
 /// Its directory is created if there is none.
-fn write_file(path: &str, contents: &[u8]) -> bun_sys::Maybe<()> {
+pub fn write_file(path: &str, contents: &[u8]) -> bun_sys::Maybe<()> {
     if let Some(end) = rfind(path, "/").filter(|&end| end > 0) {
         bun_sys::mkdir_recursive(&path.as_bytes()[..end])?;
     }

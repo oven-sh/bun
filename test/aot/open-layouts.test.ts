@@ -43,4 +43,14 @@ describe.skipIf(!!unsupported)("compile/aot/open-layouts", () => {
     slot(async () => {
       expect(await openAmong("data-held-to-a-union.ts", ["Settings", "Small", "Tree"])).toEqual(["Settings", "Small", "Tree"]);
     }), 600_000);
+
+  test("a constructor function that is cast to a type with its own call signature opens no type", () =>
+    slot(async () => {
+      expect(await openAmong("a-constructor-function-cast-to-its-own-signatures.ts", ["State", "Task", "Request"])).toEqual([]);
+    }), 600_000);
+
+  test("a constructor function that leaves typed code takes what it is handed there", () =>
+    slot(async () => {
+      expect(await openAmong("a-constructor-function-that-leaves-typed-code.ts", ["State", "Request"])).toContain("State");
+    }), 600_000);
 });

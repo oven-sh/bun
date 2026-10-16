@@ -240,7 +240,7 @@ mod _impl {
                 // cannot be handed on to another Worker.
                 if !bun_core::CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD
                     && bun_core::code_generation_from_strings()
-                        == bun_core::CodeGenerationFromStrings::Disallowed
+                        == bun_core::CodeGenerationFromStrings::Strict
                 {
                     array.push(
                         global_object,

@@ -50,7 +50,7 @@ asyncContext	Value
 asyncDisposableStackFieldCapability	Value
 asyncDisposableStackFieldState	Value
 asyncFromSyncIteratorCreate	Call
-bindgenFn	Call
+bindgen	Call
 bunNativePtr	Member
 bundleError	Call
 call	Member
@@ -70,6 +70,7 @@ debug	Call
 debug	Value
 defaultAsyncFromAsyncArrayLike	Value
 defaultAsyncFromAsyncIterator	Value
+defaultAsyncFromAsyncIteratorWithNext	Value
 defineProperty	Member
 delete	Member
 deleteByValSloppy	Call
@@ -164,6 +165,7 @@ newPromise	Call
 newRejectedPromise	Call
 newResolvedPromise	Call
 newRustFunction	Call
+onEndCallbacks	Member
 orderedHashTableSentinel	Value
 overridableRequire	Value
 overriddenName	Value

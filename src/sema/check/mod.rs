@@ -789,6 +789,7 @@ impl<'s> Program<'s> {
             is_emitting: false,
             cached_by_emit: Vec::new(),
             reported: Vec::new(),
+            is_checking_in_flow_loop: false,
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
             never_in_progress_from: Vec::new(),
@@ -836,6 +837,7 @@ impl<'s> Program<'s> {
             has_ambient_context: false,
             suggestions_among_globals: Default::default(),
             alias_symbols: Default::default(),
+            could_contain_type_variables: Default::default(),
             has_compared_without_total_order: std::cell::Cell::new(false),
             totally_ordered_unions: Default::default(),
             evolving_arrays_grown: Default::default(),
@@ -944,6 +946,9 @@ struct Scope {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Query {
     Expr(FileId, ExprId),
+    /// Never entered. The owner of what `getTypeOfExpression` of the expression reports while a loop is analysed: every task
+    /// that analyses the loop reports it, and the final check of the expression, which owns `Expr`, does not.
+    ExprInFlowLoop(FileId, ExprId),
     Symbol(Sym),
     Declared(Sym),
     Return(FileId, FnId),
@@ -1018,7 +1023,7 @@ impl Query {
     #[inline]
     fn syntax(self) -> Option<(FileId, usize)> {
         Some(match self {
-            Query::Expr(file, _) => (file, 0),
+            Query::Expr(file, _) | Query::ExprInFlowLoop(file, _) => (file, 0),
             Query::Call(file, _) => (file, 1),
             Query::LiteralProp(file, _) => (file, 2),
             Query::Return(file, _) => (file, 3),
@@ -1169,6 +1174,10 @@ struct QueryFrame {
 pub enum Requested {
     /// `GetSyntacticDiagnostics`: the diagnostics of the parser and the scanner.
     Syntactic,
+    /// The same, for a caller that then asks for the types it needs, as typescript-eslint and tsgolint do, and reads no
+    /// diagnostics. A file that can be too large for control flow analysis (2563) is checked as under `All`: the check
+    /// disables the analysis for one block at a time, and stores the types of the rest before anything asks.
+    Types,
     /// .. and `GetDeclarationDiagnostics`. The declaration transformer queries the checker only
     /// about what the file exports.
     Declaration,
@@ -1508,6 +1517,9 @@ pub struct Checker<'p, 's> {
     cached_by_emit: Vec<ExprId>,
     /// The diagnostics reported for the queries in progress, and with none in progress: see `sink`.
     reported: Vec<Reported>,
+    /// `check_expression` runs for `check_expression_in_flow_loop`, maybe in a file that is not that of the task. It notes
+    /// nothing for the end of `checkSourceFile`, which is for the walk of the file to do, and checks the calls that it visits.
+    is_checking_in_flow_loop: bool,
     /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over
     /// all nodes of a kind do visit them.
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
@@ -1596,6 +1608,8 @@ pub struct Checker<'p, 's> {
     suggestions_among_globals: errors::SuggestionsAmongGlobals,
     /// `t.alias.symbol` by type: see `alias_symbol_of_type`.
     alias_symbols: std::cell::RefCell<FxHashMap<TypeId, Option<Sym>>>,
+    /// What `could_contain_type_variables` has found, by type.
+    could_contain_type_variables: std::cell::RefCell<FxHashMap<TypeId, bool>>,
     /// Set by `compare_type_names` where `CompareTypes` is not transitive.
     has_compared_without_total_order: std::cell::Cell<bool>,
     totally_ordered_unions: std::cell::RefCell<crate::util::FxHashSet<TypeId>>,
@@ -2902,6 +2916,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// caller: an instantiation limit was hit, or the native stack ran low.
     fn cuts(&self) -> u64 {
         self.limits + self.times_cut_short.get()
+    }
+
+    /// Changes whenever a query is refused or a computation is cut short. The same before and after: what was computed in
+    /// between is whole, and may be kept longer than the frames around it.
+    fn interruptions(&self) -> (u64, u64, u64) {
+        (self.unmarked_refusals, self.cuts(), self.refused_at)
     }
 
     /// A result that was cut short has been read. Records the same marks as recomputing it would,

@@ -3,9 +3,273 @@
 
 use crate::declared::DeclaredTable;
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
-use smallvec::SmallVec;
+use std::ptr::NonNull;
 
-pub type Args = SmallVec<[V; 4]>;
+/// A list of values in eight bytes: a pointer to its length, its capacity and the values, none while it is empty. Most operations and
+/// most targets have none.
+pub struct Args(Option<NonNull<ArgsHead>>);
+
+/// The values follow it.
+#[repr(C)]
+struct ArgsHead {
+    len: u32,
+    cap: u32,
+}
+
+const _: () = assert!(size_of::<Args>() == 8 && align_of::<V>() <= align_of::<ArgsHead>());
+
+// SAFETY: it owns its block, as a `Vec<V>` does.
+unsafe impl Send for Args {}
+// SAFETY: the same.
+unsafe impl Sync for Args {}
+
+impl Args {
+    pub const fn new() -> Args {
+        Args(None)
+    }
+    pub fn with_capacity(cap: usize) -> Args {
+        let mut list = Args::new();
+        list.reserve(cap);
+        list
+    }
+    pub fn from_slice(values: &[V]) -> Args {
+        let mut list = Args::new();
+        list.extend_from_slice(values);
+        list
+    }
+    fn layout(cap: usize) -> std::alloc::Layout {
+        std::alloc::Layout::from_size_align(size_of::<ArgsHead>() + cap * size_of::<V>(), align_of::<ArgsHead>()).expect("a list of values")
+    }
+    pub fn capacity(&self) -> usize {
+        // SAFETY: the head is initialized as long as there is a block.
+        self.0.map_or(0, |head| unsafe { head.as_ref() }.cap as usize)
+    }
+    pub fn reserve(&mut self, more: usize) {
+        let (len, cap) = (self.len(), self.capacity());
+        let wanted = len + more;
+        if wanted <= cap {
+            return;
+        }
+        let new_cap = wanted.max(cap + cap / 2).max(2);
+        assert!(new_cap <= u32::MAX as usize);
+        // SAFETY: the block was allocated with `layout(cap)`. The new size is not 0.
+        let block = unsafe {
+            match self.0 {
+                Some(head) => std::alloc::realloc(head.as_ptr().cast(), Args::layout(cap), Args::layout(new_cap).size()),
+                None => std::alloc::alloc(Args::layout(new_cap)),
+            }
+        };
+        let Some(head) = NonNull::new(block.cast::<ArgsHead>()) else { std::alloc::handle_alloc_error(Args::layout(new_cap)) };
+        // SAFETY: the block has room for a head.
+        unsafe { head.write(ArgsHead { len: len as u32, cap: new_cap as u32 }) };
+        self.0 = Some(head);
+    }
+    fn set_len(&mut self, len: usize) {
+        if let Some(mut head) = self.0 {
+            // SAFETY: the head is initialized. The callers have initialized the values below `len`.
+            unsafe { head.as_mut() }.len = len as u32;
+        }
+    }
+    pub fn push(&mut self, value: V) {
+        self.extend_from_slice(&[value]);
+    }
+    pub fn extend_from_slice(&mut self, values: &[V]) {
+        if values.is_empty() {
+            return;
+        }
+        let len = self.len();
+        self.reserve(values.len());
+        let head = self.0.expect("room was made");
+        // SAFETY: there is room for `values.len()` more behind the first `len`. `values` is borrowed, so it is no part of this list.
+        unsafe { std::ptr::copy_nonoverlapping(values.as_ptr(), head.as_ptr().add(1).cast::<V>().add(len), values.len()) };
+        self.set_len(len + values.len());
+    }
+    pub fn pop(&mut self) -> Option<V> {
+        let last = *self.last()?;
+        self.set_len(self.len() - 1);
+        Some(last)
+    }
+    pub fn truncate(&mut self, len: usize) {
+        if len < self.len() {
+            self.set_len(len);
+        }
+    }
+    pub fn clear(&mut self) {
+        self.truncate(0);
+    }
+    pub fn insert(&mut self, at: usize, value: V) {
+        self.push(value);
+        self[at..].rotate_right(1);
+    }
+    pub fn remove(&mut self, at: usize) -> V {
+        let value = self[at];
+        self[at..].rotate_left(1);
+        self.set_len(self.len() - 1);
+        value
+    }
+    pub fn retain(&mut self, mut keep: impl FnMut(&mut V) -> bool) {
+        let mut kept = 0;
+        for at in 0..self.len() {
+            let mut value = self[at];
+            if keep(&mut value) {
+                self[kept] = value;
+                kept += 1;
+            }
+        }
+        self.set_len(kept);
+    }
+    pub fn as_slice(&self) -> &[V] {
+        self
+    }
+    pub fn as_mut_slice(&mut self) -> &mut [V] {
+        self
+    }
+    pub fn into_vec(self) -> Vec<V> {
+        self.to_vec()
+    }
+}
+
+impl Drop for Args {
+    fn drop(&mut self) {
+        if let Some(head) = self.0 {
+            // SAFETY: the block was allocated with this layout.
+            unsafe { std::alloc::dealloc(head.as_ptr().cast(), Args::layout(self.capacity())) };
+        }
+    }
+}
+
+impl std::ops::Deref for Args {
+    type Target = [V];
+    fn deref(&self) -> &[V] {
+        match self.0 {
+            // SAFETY: `len` values behind the head are initialized.
+            Some(head) => unsafe { std::slice::from_raw_parts(head.as_ptr().add(1).cast::<V>(), head.as_ref().len as usize) },
+            None => &[],
+        }
+    }
+}
+
+impl std::ops::DerefMut for Args {
+    fn deref_mut(&mut self) -> &mut [V] {
+        match self.0 {
+            // SAFETY: `len` values behind the head are initialized, and the list is borrowed mutably.
+            Some(head) => unsafe { std::slice::from_raw_parts_mut(head.as_ptr().add(1).cast::<V>(), head.as_ref().len as usize) },
+            None => &mut [],
+        }
+    }
+}
+
+impl Default for Args {
+    fn default() -> Args {
+        Args::new()
+    }
+}
+
+impl Clone for Args {
+    fn clone(&self) -> Args {
+        Args::from_slice(self)
+    }
+}
+
+impl PartialEq for Args {
+    fn eq(&self, other: &Args) -> bool {
+        **self == **other
+    }
+}
+
+impl Eq for Args {}
+
+impl std::hash::Hash for Args {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (**self).hash(state);
+    }
+}
+
+impl std::fmt::Debug for Args {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        (**self).fmt(f)
+    }
+}
+
+impl Extend<V> for Args {
+    fn extend<I: IntoIterator<Item = V>>(&mut self, values: I) {
+        let values = values.into_iter();
+        self.reserve(values.size_hint().0);
+        for value in values {
+            self.push(value);
+        }
+    }
+}
+
+impl FromIterator<V> for Args {
+    fn from_iter<I: IntoIterator<Item = V>>(values: I) -> Args {
+        let mut list = Args::new();
+        list.extend(values);
+        list
+    }
+}
+
+impl From<Vec<V>> for Args {
+    fn from(values: Vec<V>) -> Args {
+        Args::from_slice(&values)
+    }
+}
+
+impl From<&[V]> for Args {
+    fn from(values: &[V]) -> Args {
+        Args::from_slice(values)
+    }
+}
+
+impl<const N: usize> From<[V; N]> for Args {
+    fn from(values: [V; N]) -> Args {
+        Args::from_slice(&values)
+    }
+}
+
+pub struct ArgsIntoIter {
+    list: Args,
+    next: usize,
+}
+
+impl Iterator for ArgsIntoIter {
+    type Item = V;
+    fn next(&mut self) -> Option<V> {
+        let value = *self.list.get(self.next)?;
+        self.next += 1;
+        Some(value)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let left = self.list.len() - self.next;
+        (left, Some(left))
+    }
+}
+
+impl ExactSizeIterator for ArgsIntoIter {}
+
+impl IntoIterator for Args {
+    type Item = V;
+    type IntoIter = ArgsIntoIter;
+    fn into_iter(self) -> ArgsIntoIter {
+        ArgsIntoIter { list: self, next: 0 }
+    }
+}
+
+impl<'a> IntoIterator for &'a Args {
+    type Item = &'a V;
+    type IntoIter = std::slice::Iter<'a, V>;
+    fn into_iter(self) -> std::slice::Iter<'a, V> {
+        self.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Args {
+    type Item = &'a mut V;
+    type IntoIter = std::slice::IterMut<'a, V>;
+    fn into_iter(self) -> std::slice::IterMut<'a, V> {
+        self.iter_mut()
+    }
+}
 
 #[derive(Default)]
 pub struct Strs {
@@ -18,6 +282,9 @@ pub struct Strs {
 impl Strs {
     pub fn with_room_for(strings: usize) -> Strs {
         Strs { bytes: Vec::new(), ends: Vec::with_capacity(strings), hashes: Vec::with_capacity(strings), ids: hashbrown::HashTable::with_capacity(strings) }
+    }
+    pub fn with_room_for_bytes(strings: usize, bytes: usize) -> Strs {
+        Strs { bytes: Vec::with_capacity(bytes), ..Strs::with_room_for(strings) }
     }
     pub fn hash_of(bytes: &[u8]) -> u64 {
         std::hash::BuildHasher::hash_one(&rustc_hash::FxBuildHasher, bytes)
@@ -588,9 +855,66 @@ pub struct Value {
     pub pos: u32,
     /// What it is.
     pub ty: TyId,
-    pub prediction: Prediction,
-    pub finds_initialized: bool,
-    pub is_in_tail_position: bool,
+    prediction_and_flags: u32,
+    pub signature: TyId,
+}
+
+const _: () = assert!(size_of::<Value>() == 40);
+
+impl Value {
+    const INDEX_BITS: u32 = 27;
+    const FINDS_INITIALIZED: u32 = 1 << 30;
+    const IS_IN_TAIL_POSITION: u32 = 1 << 31;
+
+    #[inline]
+    pub fn new(def: Def, pos: u32, ty: TyId) -> Value {
+        Value { def, pos, ty, prediction_and_flags: 0, signature: TyId::NONE }
+    }
+
+    #[inline]
+    pub fn prediction(&self) -> Prediction {
+        let index = self.prediction_and_flags & ((1 << Self::INDEX_BITS) - 1);
+        match self.prediction_and_flags >> Self::INDEX_BITS & 7 {
+            1 => Prediction::Ty(TyId(index)),
+            2 => Prediction::Closure(FuncId(index)),
+            3 => Prediction::ByKey(StrId(index)),
+            4 => Prediction::Field(TyId(index)),
+            _ => Prediction::None,
+        }
+    }
+
+    #[inline]
+    pub fn set_prediction(&mut self, prediction: Prediction) {
+        let (kind, index) = match prediction {
+            Prediction::None => (0, 0),
+            Prediction::Ty(ty) => (1, ty.0),
+            Prediction::Closure(func) => (2, func.0),
+            Prediction::ByKey(property) => (3, property.0),
+            Prediction::Field(ty) => (4, ty.0),
+        };
+        let packed = if index < 1 << Self::INDEX_BITS { kind << Self::INDEX_BITS | index } else { 0 };
+        self.prediction_and_flags = self.prediction_and_flags & (Self::FINDS_INITIALIZED | Self::IS_IN_TAIL_POSITION) | packed;
+    }
+
+    #[inline]
+    pub fn finds_initialized(&self) -> bool {
+        self.prediction_and_flags & Self::FINDS_INITIALIZED != 0
+    }
+
+    #[inline]
+    pub fn set_finds_initialized(&mut self, finds_initialized: bool) {
+        self.prediction_and_flags = self.prediction_and_flags & !Self::FINDS_INITIALIZED | if finds_initialized { Self::FINDS_INITIALIZED } else { 0 };
+    }
+
+    #[inline]
+    pub fn is_in_tail_position(&self) -> bool {
+        self.prediction_and_flags & Self::IS_IN_TAIL_POSITION != 0
+    }
+
+    #[inline]
+    pub fn set_is_in_tail_position(&mut self, is_in_tail_position: bool) {
+        self.prediction_and_flags = self.prediction_and_flags & !Self::IS_IN_TAIL_POSITION | if is_in_tail_position { Self::IS_IN_TAIL_POSITION } else { 0 };
+    }
 }
 
 #[derive(Default, Clone)]
@@ -657,7 +981,7 @@ impl Func {
     }
     #[inline]
     pub fn prediction(&self, v: V) -> Prediction {
-        self.values[v.idx()].prediction
+        self.values[v.idx()].prediction()
     }
     pub fn add_block(&mut self) -> BlockId {
         self.blocks.push(Block::default());
@@ -666,13 +990,13 @@ impl Func {
     pub fn add_param(&mut self, block: BlockId, ty: TyId) -> V {
         let index = self.blocks[block.idx()].params.len() as u32;
         let v = V::new(self.values.len());
-        self.values.push(Value { def: Def::Param(block, index), pos: 0, ty, prediction: Prediction::None, finds_initialized: false, is_in_tail_position: false });
+        self.values.push(Value::new(Def::Param(block, index), 0, ty));
         self.blocks[block.idx()].params.push(v);
         v
     }
     pub fn add_value(&mut self, op: Op, pos: u32, ty: TyId) -> V {
         let v = V::new(self.values.len());
-        self.values.push(Value { def: Def::Op(op), pos, ty, prediction: Prediction::None, finds_initialized: false, is_in_tail_position: false });
+        self.values.push(Value::new(Def::Op(op), pos, ty));
         v
     }
     pub fn append(&mut self, block: BlockId, op: Op, pos: u32, ty: TyId) -> V {

@@ -2536,7 +2536,7 @@ private:
         if (is8Bit) {
             if ((end - ptr) < static_cast<int>(length))
                 return false;
-            str = String { std::span { ptr, length } };
+            str = String { std::span { byteCast<Latin1Character>(ptr), length } };
             ptr += length;
             return true;
         }
@@ -4552,6 +4552,30 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             }
         }
 
+        auto collectFieldsOfCompiledObject = [&](JSObject* compiledObject, WTF::Vector<SimpleInMemoryPropertyTableEntry>& properties) -> bool {
+            bool isSimple = true;
+            bool isCompiledObject = JSC::AOT::Typed::forEachOwnPropertyOfCompiledObject(compiledObject, [&](UniquedStringImpl& name, JSValue fieldValue) {
+                if (name.isSymbol())
+                    return true;
+                if (!fieldValue.isCell()) {
+                    properties.append({ Bun::threadShareableCopy(name), fieldValue });
+                    return true;
+                }
+                if (!fieldValue.isString()) {
+                    isSimple = false;
+                    return false;
+                }
+                String stringValue = asString(fieldValue)->value(&lexicalGlobalObject);
+                if (scope.exception()) {
+                    isSimple = false;
+                    return false;
+                }
+                properties.append({ Bun::threadShareableCopy(name), Bun::toCrossThreadShareable(stringValue) });
+                return true;
+            });
+            return isCompiledObject && isSimple;
+        };
+
         if (canUseStringFastPath) {
             JSC::JSString* jsString = asString(value);
             String stringValue = jsString->value(&lexicalGlobalObject);
@@ -4631,15 +4655,17 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
                             break;
                         }
                         auto* objStructure = obj->structure();
-                        if (!isObjectFastPathCandidate(objStructure)) {
+                        WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
+                        bool isPlainCandidate = isObjectFastPathCandidate(objStructure);
+                        if (!isPlainCandidate && !collectFieldsOfCompiledObject(obj, properties)) {
+                            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
                             ok = false;
                             break;
                         }
 
                         // Collect properties (same logic as SimpleObject fast path)
-                        WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
                         bool objOk = true;
-                        objStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                        if (isPlainCandidate) objStructure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                             JSValue propValue = obj->getDirect(entry.offset());
                             if (propValue.isCell()) {
                                 if (!propValue.isString()) {
@@ -4747,6 +4773,12 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             if (canUseObjectFastPath) {
                 return SerializedScriptValue::createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(properties)));
             }
+        } else if (object && !array) {
+            WTF::Vector<SimpleInMemoryPropertyTableEntry> properties;
+            bool isSimple = collectFieldsOfCompiledObject(object, properties);
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            if (isSimple)
+                return SerializedScriptValue::createObjectFastPath(WTF::FixedVector<SimpleInMemoryPropertyTableEntry>(WTF::move(properties)));
         }
     }
 

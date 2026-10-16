@@ -385,7 +385,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {
             argv.push(lit(b"--disallow-code-generation-from-strings\0"));
         }
-        bun_core::CodeGenerationFromStrings::Disallowed => {
+        bun_core::CodeGenerationFromStrings::Strict => {
             argv.push(lit(b"--disallow-code-generation-from-strings=strict\0"));
         }
     }

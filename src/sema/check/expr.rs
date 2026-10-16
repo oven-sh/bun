@@ -2056,7 +2056,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// program itself.
     pub(super) fn is_commonjs_require(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
-        if !hir.is_js || crate::bind::required_specifier(hir, e).is_none() {
+        if !hir.is_js && !hir.is_annotated_javascript() || crate::bind::required_specifier(hir, e).is_none() {
             return false;
         }
         let ExprKind::Call(c) = hir[e].kind else {
@@ -2263,7 +2263,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 // `RequireSymbol`
                 known::require
-                    if self.hir(file).is_js
+                    if (self.hir(file).is_js || self.hir(file).is_annotated_javascript())
                         && matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(call) if crate::bind::require_argument(self.hir(file), call).is_some()) =>
                 {
                     TypeId::ANY
@@ -4474,6 +4474,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => !self.stack.iter().any(|&q| self.is_resolution(q)),
         };
         if asks_for_the_type_alone {
+            self.resolve_type_queries_within(file, node);
             let outer = self.looked_at_type_node.replace((file, node));
             self.type_from_node(file, node);
             self.looked_at_type_node = outer;
@@ -4488,6 +4489,39 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn look_at_type_nodes(&mut self, file: FileId, nodes: IdList<TypeNodeId>) {
         for node in self.hir(file).ids(nodes) {
             self.look_at_type_node(file, node);
+        }
+    }
+
+    /// `checkSourceElement` visits the children of a type node before it asks for the type of the node. The flow analysis of
+    /// the `x` of a `typeof x` in a loop gets to `node` again, which is not in progress then, and the type that `node` gets
+    /// there is kept: `x = cond ? b : ((null! as (typeof x)["p"]), a)`.
+    fn resolve_type_queries_within(&mut self, file: FileId, node: TypeNodeId) {
+        // FOR SPEED: most files have no `typeof` type, and most type nodes here are a name.
+        if !self.bound(file).has_type_queries()
+            || matches!(self.hir(file)[node].kind, TypeNodeKind::Ref { args, .. } if args.is_empty())
+        {
+            return;
+        }
+        let hir = self.hir(file);
+        let mut pending: SmallVec<[Node; 8]> = SmallVec::from_slice(&[hir.node(node)]);
+        while let Some(at) = pending.pop() {
+            if let NodeData::Type(inner) = hir.data(at)
+                && matches!(hir[inner].kind, TypeNodeKind::Typeof { .. })
+            {
+                if inner != node {
+                    // `c.currentNode`, where an error at a limit is reported.
+                    let outer = self.looked_at_type_node.replace((file, inner));
+                    self.type_from_node(file, inner);
+                    self.looked_at_type_node = outer;
+                }
+                continue;
+            }
+            let from = pending.len();
+            hir.for_each_child(at, &mut |child| {
+                pending.push(child);
+                false
+            });
+            pending[from..].reverse();
         }
     }
 
@@ -5450,9 +5484,12 @@ impl<'p, 's> Checker<'p, 's> {
                 // operand types may be narrower than the final ones. Outside one this check also
                 // stands for the later one in the normal mode, so it reports.
                 let (l, r) = self.check_operands(file, left, right);
-                let is_in_flow_loop = (self.flow_loops.last())
-                    .is_some_and(|pushed| self.is_flow_loop_visible(pushed.5));
-                if !(is_in_flow_loop && self.is_checked_type_only(file, e)) {
+                if let Some(pushed_at) = self.flow_loop_pushed_at()
+                    && self.is_checked_type_only(file, e)
+                {
+                    // What has not reported is not stored: the check in the normal mode comes here again.
+                    self.taint_from(pushed_at);
+                } else {
                     let hir = self.hir(file);
                     let is_equality = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
                     // A JavaScript file reports only `===` and `!==`.

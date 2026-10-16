@@ -1,4 +1,6 @@
 // What only a plain object, a Map, a Set, their tables or a rope holds on to survives collections: few and many properties, properties deleted, numbered properties, tables from empty to very large, keys that are no strings, ropes of two and three parts and parts of strings.
+const shell = globalThis as any;
+const collect: (full: boolean) => void = shell.Bun ? (full: boolean) => shell.Bun.gc(full) : (full: boolean) => (full ? shell.fullGC() : shell.edenGC());
 type Leaf = { tag: string; n: number };
 let made = 0;
 function leaf(tag: string): Leaf {
@@ -95,10 +97,10 @@ for (let round = 0; round < 8; round++) {
   }
   kept.push(ropes(60), table(5000), names(9000), mixedKeys(3000));
   for (let i = 0; i < 20000; i++) leaf("garbage");
-  Bun.gc(round % 2 === 0);
+  collect(round % 2 === 0);
   if (round % 3 === 2) kept.splice(0, kept.length >> 1);
   for (let i = 0; i < 20000; i++) plain(2);
-  Bun.gc(true);
+  collect(true);
   let sum = 0;
   for (const value of kept) sum = (sum + sumOf(value)) % 1000000007;
   console.log(round, kept.length, sum);

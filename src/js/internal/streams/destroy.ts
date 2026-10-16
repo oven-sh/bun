@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const { aggregateTwoErrors } = require("internal/errors");

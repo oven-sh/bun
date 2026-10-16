@@ -471,6 +471,10 @@ pub struct ByNode<K, V: Packed, P: Policy = Frozen, A: Alloc = Global> {
 }
 
 impl<K: NodeKey, V: Packed, P: Policy, A: Alloc> ByNode<K, V, P, A> {
+    pub(crate) fn release_pages(&self) {
+        crate::util::memory::release_pages(&self.cells);
+    }
+
     /// How many keys share a cell.
     const PER_CELL: usize = if V::BITS != 0 {
         size_of::<V::Cell>() * 8 / V::BITS as usize
@@ -1217,6 +1221,13 @@ impl<'a, 's> Share<'a, 's> {
         match &mut self.payload {
             Payload::Whole(entries) => entries,
             Payload::Part(_) => unreachable!(),
+        }
+    }
+
+    /// Frees the entries, which have been applied. Those of a table with several parts stay: the other parts read them.
+    pub(crate) fn release(&mut self) {
+        if let Payload::Whole(entries) = &mut self.payload {
+            entries.handed = Handed::Cells(Vec::new());
         }
     }
 }

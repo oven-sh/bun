@@ -76,7 +76,7 @@ impl Program {
         };
         for (i, declared) in self.tys.list.iter().enumerate().filter(|&(i, _)| shows_type(i)) {
             let _ = write!(o, "type #{i}:");
-            for (bit, name) in ["undefined", "null", "false", "true", "number", "string", "symbol", "bigint"].iter().enumerate() {
+            for (bit, name) in ["undefined", "null", "false", "true", "number", "string", "symbol", "bigint", "literal"].iter().enumerate() {
                 if declared.prims & (1 << bit) != 0 {
                     let _ = write!(o, " {name}");
                 }
@@ -377,7 +377,7 @@ impl Program {
                         o.push(' ');
                         list(o, r.args);
                     }
-                    if func.values[v.idx()].is_in_tail_position {
+                    if func.values[v.idx()].is_in_tail_position() {
                         o.push_str(" tail");
                     }
                     o.push('\n');

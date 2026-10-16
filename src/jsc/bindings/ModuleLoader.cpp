@@ -3,7 +3,6 @@
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
-#include "CodeGenerationFromStrings.h"
 #include "JavaScriptCore/Identifier.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>
@@ -289,13 +288,6 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         return result;
     }
 
-    // Source a plugin supplies is a string made into script. What it supplies for a loader of
-    // data (json, toml, ...) or as an object is not.
-    if (Bun::mayNotMakeScriptFromStrings() && (loader == BunLoaderTypeJS || loader == BunLoaderTypeJSX || loader == BunLoaderTypeTS || loader == BunLoaderTypeTSX)) [[unlikely]] {
-        result.value.error = Bun::createCodeGenerationFromStringsError(globalObject);
-        return result;
-    }
-
     result.value.sourceText.loader = loader;
     result.value.sourceText.value = JSValue {};
     result.value.sourceText.string = {};
@@ -545,6 +537,11 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
     if (Bun__fetchBuiltinModule(bunVM, globalObject, specifier, res)) {
         ASSERT(res->success);
 
+        JSObject* helpers = compiledRuntimeHelpers(globalObject, specifier->toWTFString(BunString::ZeroCopy));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (helpers)
+            return { Kind::Exports, helpers };
+
         auto tag = res->result.value.tag;
         switch (tag) {
         // require("bun")
@@ -653,8 +650,19 @@ void evaluateCommonJSCustomExtension(
 }
 
 static constexpr uint32_t filesOfCompiledProgramByPath = 0x7fffffff;
+static constexpr uint32_t runtimeHelpersOfCompiledProgram = 0x7ffffffe;
 
-enum class AskedOfCompiledProgram : int32_t { Require = 0, Import = 1, Namespace = 2, RequireWithNonDefaultLoader = 12 };
+JSC::JSObject* compiledRuntimeHelpers(JSC::JSGlobalObject* globalObject, const String& key)
+{
+    if (key != "bun:wrap"_s || !JSC::AOT::Typed::hasBuiltinModule(globalObject, runtimeHelpersOfCompiledProgram)) [[likely]]
+        return nullptr;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSValue helpers = JSC::AOT::Typed::evaluateBuiltinModule(globalObject, runtimeHelpersOfCompiledProgram);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return helpers.getObject();
+}
+
+enum class AskedOfCompiledProgram : int32_t { Require = 0, Import = 1, Namespace = 2, RequireWithNonDefaultLoader = 12, Wrapper = 13 };
 
 extern "C" bool NodeModuleModule__usesNonDefaultLoader(Zig::GlobalObject*, const BunString* path);
 
@@ -695,11 +703,27 @@ static bool isFileOfCompiledProgram(Zig::GlobalObject* globalObject, const Strin
     return number && number.isInt32();
 }
 
+static bool evaluateFileOfCompiledProgramAgain(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue wrapper = askCompiledProgramForFile(globalObject, path, target, AskedOfCompiledProgram::Wrapper);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!wrapper.isCallable())
+        return false;
+    RELEASE_AND_RETURN(scope, target->evaluateCompiledWrapper(vm, globalObject, wrapper));
+}
+
 static bool evaluateFileOfCompiledProgram(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path)
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     BunString pathString = Bun::toString(path);
     bool usesNonDefaultLoader = globalObject->hasOverriddenModuleWrapper || NodeModuleModule__usesNonDefaultLoader(globalObject, &pathString);
-    return askCompiledProgramForFile(globalObject, path, target, usesNonDefaultLoader ? AskedOfCompiledProgram::RequireWithNonDefaultLoader : AskedOfCompiledProgram::Require).isTrue();
+    JSValue hasRun = askCompiledProgramForFile(globalObject, path, target, usesNonDefaultLoader ? AskedOfCompiledProgram::RequireWithNonDefaultLoader : AskedOfCompiledProgram::Require);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (hasRun.isTrue() || usesNonDefaultLoader)
+        return hasRun.isTrue();
+    RELEASE_AND_RETURN(scope, evaluateFileOfCompiledProgramAgain(globalObject, target, path));
 }
 
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path, bool isTypeScriptLoader)
@@ -709,8 +733,15 @@ bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject* globalObject, JSCom
     bool isTypeScriptFile = path.endsWith(".ts"_s) || path.endsWith(".tsx"_s) || path.endsWith(".mts"_s) || path.endsWith(".cts"_s);
     if (isTypeScriptFile != isTypeScriptLoader)
         return false;
-    if (!askCompiledProgramForFile(globalObject, path, target, AskedOfCompiledProgram::Require).isTrue())
-        return false;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSValue hasRun = askCompiledProgramForFile(globalObject, path, target, AskedOfCompiledProgram::Require);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!hasRun.isTrue()) {
+        bool hasRunAgain = evaluateFileOfCompiledProgramAgain(globalObject, target, path);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!hasRunAgain)
+            return false;
+    }
     target->hasEvaluated = true;
     return true;
 }
@@ -750,9 +781,31 @@ bool overrideExportOfCompiledNamespace(Zig::GlobalObject* globalObject, JSC::JSO
     RETURN_IF_EXCEPTION(scope, false);
     if (!number.isInt32())
         return false;
-    JSValue isDone = askCompiledProgram(globalObject, number, jsString(vm, name.string()), 3, value);
+    JSValue isDone = askCompiledProgram(globalObject, number, jsString(vm, name.string()), value ? 3 : 22, value ? value : jsUndefined());
     RETURN_IF_EXCEPTION(scope, false);
     return isDone.isTrue();
+}
+
+bool overrideBuiltinOfCompiledProgram(Zig::GlobalObject* globalObject, JSC::JSValue builtin, JSC::JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!hasFilesOfCompiledProgram(globalObject))
+        return false;
+    JSValue isDone = askCompiledProgram(globalObject, jsNumber(-1), builtin, 20, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    return isDone.isTrue();
+}
+
+JSC::JSValue overrideOfBuiltinInCompiledProgram(Zig::GlobalObject* globalObject, JSC::JSValue builtin)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!hasFilesOfCompiledProgram(globalObject))
+        return jsNull();
+    JSValue found = askCompiledProgram(globalObject, jsNumber(-1), builtin, 21, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    return found.isTrue() ? jsUndefined() : found.isCell() ? found : jsNull();
 }
 
 JSC::JSObject* compiledNamespaceBehind(Zig::GlobalObject* globalObject, JSC::JSObject* object)
@@ -878,6 +931,12 @@ bool overrideExportsOfCompiledModule(Zig::GlobalObject* globalObject, const Stri
     return true;
 }
 
+bool isModuleMocked(Zig::GlobalObject* globalObject, const String& path)
+{
+    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
+    return virtualModules && virtualModules->contains(path);
+}
+
 bool hasFilesOfCompiledProgram(JSC::JSGlobalObject* globalObject)
 {
     static const bool has = JSC::AOT::Typed::hasBuiltinModule(globalObject, filesOfCompiledProgramByPath);
@@ -987,11 +1046,7 @@ JSValue fetchCommonJSModule(
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (Bun::isDataOrBlobURL(specifierWtfString)) [[unlikely]] {
-        RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, scope, {});
-    }
-
-    if (hasFilesOfCompiledProgram(globalObject) && !target->moduleGraph()) [[unlikely]] {
+    if (hasFilesOfCompiledProgram(globalObject) && !target->moduleGraph() && !isModuleMocked(globalObject, specifierWtfString)) [[unlikely]] {
         bool hasRun = evaluateFileOfCompiledProgram(globalObject, target, specifierWtfString);
         RETURN_IF_EXCEPTION(scope, {});
         if (hasRun) {
@@ -1170,9 +1225,6 @@ JSValue fetchCommonJSModuleNonBuiltin(
 {
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
-    if (Bun::isDataOrBlobURL(specifierWtfString)) [[unlikely]] {
-        RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, scope, {});
-    }
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     if (res->success && res->result.value.isCommonJSModule) {
         if constexpr (isExtension) {
@@ -1363,9 +1415,6 @@ static JSValue fetchESMSourceCode(
         }
     };
 
-    if (Bun::mayNotMakeScriptFromStrings() && Bun::isDataOrBlobURL(specifier->toWTFString(BunString::ZeroCopy))) [[unlikely]]
-        return reject(Bun::createCodeGenerationFromStringsError(globalObject));
-
     bool wasModuleMock = false;
 
     // When "bun test" is enabled, allow users to override builtin modules
@@ -1400,6 +1449,11 @@ static JSValue fetchESMSourceCode(
         }
 
         auto moduleKey = specifier->toWTFString(BunString::ZeroCopy);
+
+        JSObject* helpers = compiledRuntimeHelpers(globalObject, moduleKey);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (helpers)
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateSourceOfCompiledNamespace(helpers), JSC::SourceOrigin(), moduleKey)))));
 
         // bun:wrap and a few other builtins return real JS source (not a
         // synthetic generator). Their providers are identical across globals,

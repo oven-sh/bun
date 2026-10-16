@@ -85,6 +85,33 @@ const folders = typedVersions();
 
 test("there are typed versions", () => {
   expect(folders.length).toBeGreaterThan(10);
+  expect(folders.map(folder => relative(home, folder).replaceAll("\\", "/"))).toContain("react/19.3.1");
+  expect(folders.map(folder => relative(home, folder).replaceAll("\\", "/"))).toContain("react-dom/19.3.1");
+});
+
+test("react's compiler-runtime is typed at the installed file's own path", () => {
+  const versions = folders.filter(folder => json(join(folder, "sound.json")).name === "react");
+  expect(versions.length).toBeGreaterThan(10);
+  for (const folder of versions) {
+    const manifest = json(join(folder, "sound.json"));
+    expect(manifest.sound).toBe(2);
+    expect(manifest.lay).toHaveProperty(["cjs/react-compiler-runtime.production.js"]);
+    expect(Object.keys(manifest.lay)).not.toContain("compiler-runtime.js");
+    expect(readFileSync(join(folder, "lay", "cjs", "react-compiler-runtime.production.js"), "utf8")).toContain(
+      "exports.c = function (size: number): any[] {",
+    );
+  }
+});
+
+test.each(["19.3.0", "19.3.1"])("react-dom %s constructs a request without a cast through unknown", version => {
+  const lay = join(home, "react-dom", version, "lay");
+  const texts = filesUnder(lay).filter(path => path.endsWith(".ts"));
+  expect(texts.length).toBe(2);
+  for (const path of texts) {
+    const text = readFileSync(join(lay, path), "utf8");
+    expect(text).toContain("new (RequestInstance as FZ.RequestConstructor)(");
+    expect(text).not.toContain(" as unknown as ");
+  }
 });
 
 test.skipIf(!existsSync(join(home, "..", "..", ".gitattributes")))(
@@ -96,13 +123,19 @@ test.skipIf(!existsSync(join(home, "..", "..", ".gitattributes")))(
   },
 );
 
+test("no typed text freezes a value of which its type says nothing", () => {
+  const text = readFileSync(join(home, "seroval", "1.6.9", "lay", "dist", "index.sound.ts"), "utf8");
+  expect(text).toContain("function applyObjectFlag(obj: any[] | SV.MadeObject, flag: SV.Given): SV.Deserialized {");
+  expect(text).toContain("export interface MadeObject { [key: string]: any }");
+});
+
 describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"), folder]))("%s", (where, folder) => {
   const manifest = json(join(folder, "sound.json"));
   const { name, version } = manifest;
 
   test("the manifest has the expected format", () => {
     expect(Object.keys(manifest).sort()).toEqual(["basis", "lay", "name", "needs", "sound", "version", "when"]);
-    expect(manifest.sound).toBe(1);
+    expect([1, 2]).toContain(manifest.sound);
     expect(`${name}/${version}`).toBe(where);
     expect(manifest.needs).toBeArray();
     expect(Object.keys(manifest.lay)).not.toBeEmpty();

@@ -114,7 +114,7 @@ export function built(build: { stderr: string; exitCode: number }) {
 
 let executables = 0;
 
-async function run(path: string, beside: string, folder: string, buildEnv: Record<string, string>) {
+async function run(path: string, beside: string, folder: string, buildEnv: Record<string, string>, runEnv: Record<string, string>) {
   const options: { build?: string[]; env?: Record<string, string>; reference?: "compiled"; skipInShell?: string } = existsSync(beside + ".json")
     ? JSON.parse(readFileSync(beside + ".json", "utf8"))
     : {};
@@ -133,7 +133,7 @@ async function run(path: string, beside: string, folder: string, buildEnv: Recor
     }
     built(build);
 
-    const ran = await spawned([executable], cwd, { ...env, BUN_AOT_VERBOSE: "1" });
+    const ran = await spawned([executable], cwd, { ...env, ...runEnv, BUN_AOT_VERBOSE: "1" });
     expect(ran.signal).toBeNull();
     // The executable really ran compiled code and did not fall back to the embedded source.
     expect(ran.stderr).toContain("[aot] module: ");
@@ -159,7 +159,7 @@ const hash = (path: string) => BigInt(Bun.hash(relative(root, path).replaceAll("
 const isQuick = (path: string) => (hash(path) >> 8n) % 10n === 0n;
 const besideOf = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
 
-function define(title: string, chosen: string[], buildEnv: Record<string, string>) {
+function define(title: string, chosen: string[], buildEnv: Record<string, string>, runEnv: Record<string, string> = {}) {
   const folder = String(tempDir("aot-programs", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
@@ -172,7 +172,7 @@ function define(title: string, chosen: string[], buildEnv: Record<string, string
       const name = relative(root, beside).replaceAll("\\", "/");
       if (existsSync(beside + ".todo.txt")) test.todo(name);
       // The child processes have their own time limits; this one also covers the wait for a free slot.
-      else test(name, () => slot(() => run(path, beside, folder, buildEnv)), 600_000);
+      else test(name, () => slot(() => run(path, beside, folder, buildEnv, runEnv)), 600_000);
     }
   });
 }
@@ -192,9 +192,9 @@ export function programs(topic: string, part = 1, parts = 1) {
 
 /**
  * Runs the quick subset of all topics once more, built with a JavaScriptCore option that forces the compiler down a path which
- * small programs otherwise never take. AOT_PROGRAMS=<text> selects other programs, as above.
+ * small programs otherwise never take. AOT_PROGRAMS=<text> selects other programs, as above. `runEnv` is set where the executable runs.
  */
-export function variant(label: string, buildEnv: Record<string, string>) {
+export function variant(label: string, buildEnv: Record<string, string>, runEnv: Record<string, string> = {}) {
   const all: string[] = [];
   find(root, all);
   define(
@@ -206,5 +206,6 @@ export function variant(label: string, buildEnv: Record<string, string>) {
       // Nothing is compiled for a program that the build rejects.
       .filter(path => !existsSync(besideOf(path) + ".build-errors.txt") && !existsSync(besideOf(path) + ".todo.txt")),
     buildEnv,
+    runEnv,
   );
 }

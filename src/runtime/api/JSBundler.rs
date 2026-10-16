@@ -152,6 +152,8 @@ pub(crate) mod js_bundler {
         pub(crate) module_preload: bool,
         /// `check`: see `BundleOptions::type_check`.
         pub(crate) check: bool,
+        pub(crate) dts: bool,
+        pub(crate) is_root_given: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -221,6 +223,8 @@ pub(crate) mod js_bundler {
                 fold_chunks: true,
                 module_preload: true,
                 check: false,
+                dts: false,
+                is_root_given: false,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -1003,6 +1007,9 @@ pub(crate) mod js_bundler {
             if let Some(check) = config.get_boolean_loose(global_this, "check")? {
                 this.check = check;
             }
+            if let Some(dts) = config.get_boolean_loose(global_this, "dts")? {
+                this.dts = dts;
+            }
             if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
                 && let Some(fold_chunks) =
                     config.get_boolean_loose(global_this, "foldChunksForTesting")?
@@ -1108,6 +1115,7 @@ pub(crate) mod js_bundler {
             {
                 let path: Utf8Bytes = 'brk: {
                     if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
+                        this.is_root_given = true;
                         break 'brk slice;
                     }
 

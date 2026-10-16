@@ -57,6 +57,18 @@ If you group errors by message, in Sentry for example, expect new groups for the
 
 With `--minify`, the names of functions, classes, variables and private members, the names of types in error messages and the paths of your source files become short tokens. The executable does not contain the originals. A name that a property or a string of your program also spells stays, as in any minified bundle, so a method keeps its name. Lines and columns stay those of your sources. `--keep-names` keeps everything.
 
+Code that `--define` or a feature flag removes leaves no text behind, even if your types still mention it:
+
+```ts
+type Mode = "plain" | "debug";
+interface Options {
+  mode: Mode;
+  trace?: boolean;
+}
+```
+
+If the build removes every expression that produces `"debug"` or compares with it, and everything that touches `trace`, the executable contains neither word. For `"debug"` it keeps a hash, so that `JSON.parse('{"mode":"debug"}') as Options` is still recognized as an `Options`. A hash cannot be read or searched for, but someone who guesses the string can confirm the guess. The same goes for the source of a regular expression that your program assembles at run time.
+
 ```txt
 RangeError: bad id -1
       at find (bA:3:27)
@@ -82,7 +94,7 @@ To read such a trace, build with `--sourcemap=external`, or `sourcemap: "externa
 }
 ```
 
-A token is a lowercase letter followed by letters and digits, at least one of which is a capital. It is never a name that your program also uses. So you can replace every token in a text, whether the text is a stack trace or an error message:
+A token is a lowercase letter followed by letters and digits, at least one of which is a capital. It never has four letters in a row, so it does not spell a word, and it is never a name that your program also uses. So you can replace every token in a text, whether the text is a stack trace or an error message:
 
 ```ts restore.ts icon="/icons/typescript.svg"
 const { tokens } = (await Bun.file(process.argv[2]).json()).x_bun_aot;
@@ -208,9 +220,11 @@ Libraries that trace by replacing functions, such as OpenTelemetry's instrumenta
 
 To wrap a method of one of your own classes, use a subclass or a `Proxy`, or assign to the method in TypeScript: `Db.prototype.query = traced(Db.prototype.query)`.
 
-In an executable, as in any bundle, the modules of your program are resolved when you build. `Module._load`, `Module.prototype.require` and `module.register` are not asked for them. They are asked for built-in modules such as `node:os`.
+In an executable, as in any bundle, the modules of your program are resolved when you build. `Module._load`, `Module.prototype.require` and `module.register` are not asked for them. They are asked for built-in modules such as `node:os`. A CommonJS module that throws while it loads is not evaluated again: the next `require()` returns what it had exported by then, as in an executable built without `--aot`.
 
-`bun run --aot` and `bun test --aot` run next to your source files, so the CommonJS hooks apply to your own modules too: handlers in `require.extensions`, a replaced `Module.prototype.require` or `Module._resolveFilename`, and a changed `Module.wrapper`. `require.cache` lists your modules as it does without `--aot`, and a module you delete from it is evaluated again by the next `import()` or `require()`. One thing differs: a compiled ES module has a single set of top-level variables, so functions you kept from its earlier evaluation see the variables of the new one.
+`bun run --aot` and `bun test --aot` run next to your source files, so the CommonJS hooks apply to your own modules too: handlers in `require.extensions`, a replaced `Module.prototype.require` or `Module._resolveFilename`, and a changed `Module.wrapper`. `require.cache` lists your modules as it does without `--aot`, and a module you delete from it is evaluated again by the next `import()` or `require()`. A CommonJS module that throws while it loads is evaluated again by the next `require()`.
+
+One thing differs for a module that is evaluated a second time. A CommonJS module that you deleted from `require.cache`, or that failed by a `throw` statement at its own top level, starts over with variables, functions and classes of its own, as without `--aot`. A compiled ES module, and a CommonJS module whose load failed inside a call or inside a module it requires, has a single set of top-level variables: functions you kept from its earlier evaluation, in a registry or as a listener, see the variables of the new one.
 
 In `bun test --aot`, `mock.module()`, `setSystemTime()` and fake timers work. `spyOn()` throws a `TypeError` for a method of a TypeScript class, on the prototype or on an instance. `--coverage` is ignored, and Bun prints a warning: compiled code is not counted. Measure coverage without `--aot`.
 

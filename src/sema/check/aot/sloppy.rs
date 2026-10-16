@@ -38,6 +38,14 @@ impl<'p, 's> Checker<'p, 's> {
         (name.ends_with(b".cjs") || name.ends_with(b".js")) && self.is_in_commonjs_package(file)
     }
 
+    pub fn is_unmarked_commonjs(&self, file: FileId) -> bool {
+        let hir = self.hir(file);
+        if !hir.is_js || hir.has_module_syntax && !hir.is_module_by_decree || !self.files().module(file).file_name().ends_with(b".js") {
+            return false;
+        }
+        self.is_in_commonjs_package(file) || self.starts_with_use_strict(file, hir.body) && !self.is_in_module_package(file)
+    }
+
     /// Whether the code of the function is sloppy.
     pub fn is_sloppy_function(&self, file: FileId, func: FnId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));

@@ -20,6 +20,7 @@ use crate::types::{ComponentsId, Follow, Lanes, Literalness, MapperId, Origin, P
 use crate::util::FxHashMap;
 use crate::util::memory::Cells;
 use std::hash::Hash;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// 128 bits. Two types with one identity are taken for the same type.
@@ -59,6 +60,26 @@ pub(super) struct Shared {
     sigs: Identities,
     mappers: Identities,
     components: Identities,
+    names_of_files: OnceLock<Vec<Identity>>,
+}
+
+impl Shared {
+    fn name_of_file(&self, file: FileId) -> Identity {
+        match self.names_of_files.get().and_then(|names| names.get(file.idx())) {
+            Some(&name) => name,
+            None => [u64::from(file.0), 0],
+        }
+    }
+}
+
+fn rest_within<'a>(name: &'a [u8], directory: &[u8], is_case_sensitive: bool) -> Option<&'a [u8]> {
+    let directory = directory.strip_suffix(b"/").unwrap_or(directory);
+    if directory.is_empty() || name.len() <= directory.len() || name[directory.len()] != b'/' {
+        return None;
+    }
+    let (start, rest) = name.split_at(directory.len());
+    let is_same = if is_case_sensitive { start == directory } else { start.eq_ignore_ascii_case(directory) };
+    is_same.then_some(&rest[1..])
 }
 
 /// What takes the checker to say: how a record would look to every task.
@@ -209,7 +230,8 @@ impl Visitor for Identify<'_, '_, '_, '_> {
     }
 
     fn file(&mut self, file: FileId) {
-        self.lanes.add(u64::from(file.0));
+        let name = self.known.shared.name_of_file(file);
+        self.add(name);
     }
 
     fn plain<T: Hash + ?Sized>(&mut self, value: &T) {
@@ -490,6 +512,21 @@ impl Checker<'_, '_> {
         let mut state = std::mem::take(&mut self.aot.identity);
         self.aot.identity.named_within = std::mem::take(&mut state.named_within);
         let program = self.p;
+        program.aot.identity.names_of_files.get_or_init(|| {
+            let files = &program.files;
+            let directories = [&files.options.current_directory[..], &files.options.lib_dir[..]];
+            (0..files.modules.len() as u32)
+                .map(|number| {
+                    let name = files.module(FileId(number)).file_name();
+                    let within = (0..directories.len()).find_map(|which| Some((which, rest_within(name, directories[which], files.is_case_sensitive)?)));
+                    let (which, shown) = within.unwrap_or((directories.len(), name));
+                    let mut lanes = Lanes::START;
+                    lanes.add(which as u64);
+                    shown.hash(&mut lanes);
+                    lanes.0
+                })
+                .collect()
+        });
         let result = walk(records, &mut Known { state: &mut state, checker: self, shared: &program.aot.identity, times_checker_was_asked: 0 });
         state.named_within = std::mem::take(&mut self.aot.identity.named_within);
         self.aot.identity = state;
@@ -649,7 +686,7 @@ mod tests {
     }
 
     fn with<T>(records: Records<'_, '_>, state: &mut State, walk: impl FnOnce(&mut Known<'_>) -> T) -> T {
-        walk(&mut Known { state, checker: &mut AsItIs(records.types), shared: &Shared::default(), times_checker_was_asked: 0 })
+        walk(&mut Known { state, checker: &mut AsItIs(records.types), shared: &super::Shared::default(), times_checker_was_asked: 0 })
     }
 
     fn forwards(count: usize, work: &(dyn Fn(usize) + Sync)) {
@@ -719,6 +756,24 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    fn number_of_a_file_does_not_matter() {
+        let session = Session::new();
+        let shared = Shared { atoms: Interner::new_in(&session), types: TypeStore::new_in(&session) };
+        let own = OwnStore::new_in(session.arena());
+        let records = shared.records(&own);
+        let literal_in = |file: u32| records.types.intern(TypeData::Anon { origin: Origin::TypeLiteral(FileId(file), TypeNodeId(5)), mapper: MapperId::IDENTITY });
+        let of = |names: Vec<Identity>, ty: TypeId| {
+            let named = super::Shared::default();
+            named.names_of_files.set(names).unwrap();
+            records.of_type(&mut Known { state: &mut State::default(), checker: &mut AsItIs(records.types), shared: &named, times_checker_was_asked: 0 }, ty)
+        };
+        let (name, other) = ([7, 8], [9, 10]);
+        assert_eq!(of(vec![name, other], literal_in(0)), of(vec![other, name], literal_in(1)));
+        assert_ne!(of(vec![name, other], literal_in(0)), of(vec![name, other], literal_in(1)));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn a_member_counts_once() {
         let session = Session::new();
         let shared = Shared { atoms: Interner::new_in(&session), types: TypeStore::new_in(&session) };
@@ -740,38 +795,6 @@ mod tests {
         assert_eq!(alone, with(records, &mut known, |known| records.of_type(known, one)));
         let mut of_union = |members: &[TypeId]| with(records, &mut known, |known| records.of_type(known, types.intern(TypeData::Union(types.list(members)))));
         assert_eq!(of_union(&[one, c]), of_union(&[c, twin, one]));
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn finds_path_to_first_difference() {
-        let session = Session::new();
-        let shared = Shared { atoms: Interner::new_in(&session), types: TypeStore::new_in(&session) };
-        let own = OwnStore::new_in(session.arena());
-        let records = shared.records(&own);
-        let types = records.types;
-        let (a, b, c) = (literal_at(records, 1), literal_at(records, 2), literal_at(records, 3));
-        let around = |members: &[TypeId]| types.intern(TypeData::Keyof(types.intern(TypeData::Intersection(types.list(members)))));
-        let mut known = State::default();
-        let mut way_between = |here: TypeId, kept: TypeId| {
-            with(records, &mut known, |known| {
-                let lists = (records.list(known, |list| records.walk_type(here, list)), records.list(known, |list| records.walk_type(kept, list)));
-                let mut way = Vec::new();
-                records.add_divergence(known, &lists.0, &lists.1, true, &mut way);
-                way
-            })
-        };
-        assert!(way_between(around(&[a, b]), around(&[a, b])).is_empty());
-        let way = way_between(around(&[a, b]), around(&[a, b, c]));
-        assert!(way[0].ends_with("a type, here an intersection, kept an intersection"), "{way:?}");
-        assert!(way[1].contains("plain data, here `usize` 0200000000000000, kept `usize` 0300000000000000"), "{way:?}");
-        assert!(way[2].starts_with("all of it: here ["), "{way:?}");
-        // `c` is told from `a` and from `b`.
-        assert_eq!(way.iter().filter(|step| step.starts_with("only kept: ")).count(), 2, "{way:?}");
-        assert!(way.iter().all(|step| !step.starts_with("only here: ")), "{way:?}");
-        let way = way_between(around(&[a, b]), around(&[a, c]));
-        assert!(way[1].ends_with("a type, here a type literal, kept a type literal"), "{way:?}");
-        assert!(way[2].contains("plain data, here `TypeNodeId` 02000000, kept `TypeNodeId` 03000000"), "{way:?}");
     }
 
     #[test]

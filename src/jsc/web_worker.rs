@@ -1325,6 +1325,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
         .path_const()
         .expect("resolve_entry_point rejects disabled results")
         .text;
+    // SAFETY: per fn contract; `standalone_module_graph` is a read-only field.
     if let Some(graph) = unsafe { (*parent).standalone_module_graph }
         && let Some(name) = graph.find_by_source_path(path)
     {

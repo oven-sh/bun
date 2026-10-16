@@ -10,6 +10,8 @@
 #include "wtf/Assertions.h"
 
 #include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/Nodes.h>
+#include <JavaScriptCore/Parser.h>
 #include <wtf/Scope.h>
 #include <wtf/text/StringHash.h>
 #include <sys/stat.h>
@@ -254,6 +256,23 @@ extern "C" void Bun__destroyBytecodeCacheVM()
     JSC::JSLockHolder locker(*vm);
     s_builtinNamesForBytecodeCache = nullptr;
     vm->derefSuppressingSaferCPPChecking();
+}
+
+extern "C" bool Bun__checkSyntaxOfModuleText(const BunString* sourceURL, const BunString* text, bool isModule, BunString* message, uint32_t* offset)
+{
+    JSC::VM& vm = vmForBytecodeCache();
+    JSC::JSLockHolder locker(vm);
+    JSC::SourceCode sourceCode = JSC::makeSource(text->toWTFString(), toSourceOrigin(sourceURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    JSC::ParserError error;
+    if (isModule)
+        JSC::parseRootNode<JSC::ModuleProgramNode>(vm, sourceCode, JSC::ImplementationVisibility::Public, JSC::JSParserBuiltinMode::NotBuiltin, JSC::StrictModeLexicallyScopedFeature, JSC::JSParserScriptMode::Module, JSC::SourceParseMode::ModuleAnalyzeMode, error);
+    else
+        JSC::checkSyntax(vm, sourceCode, error);
+    if (error.type() != JSC::ParserError::SyntaxError)
+        return true;
+    *message = Bun::toStringRef(error.message());
+    *offset = std::max(0, error.token().m_startPosition.offset);
+    return false;
 }
 
 extern "C" JSC::EncoderStringTable* Bun__EncoderStringTable__create()
@@ -600,6 +619,11 @@ extern "C" bool Bun__AOT__isCompiledEntryPoint(uint32_t module)
 #else
     return false;
 #endif
+}
+
+extern "C" void Bun__AOT__useWideReferences()
+{
+    JSC::Options::useAOTWideReferences() = true;
 }
 
 extern "C" size_t Bun__AOT__imageAlignment()

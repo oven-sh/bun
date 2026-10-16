@@ -415,7 +415,7 @@ class AssertionError extends Error {
     return `${this.name} [${this.code}]: ${this.message}`;
   }
 
-  [inspect.custom](recurseTimes, ctx) {
+  [(inspect as any).custom](recurseTimes, ctx) {
     // Long strings should not be fully inspected.
     const tmpActual = this.actual;
     const tmpExpected = this.expected;

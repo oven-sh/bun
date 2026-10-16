@@ -16,7 +16,7 @@ use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeKind, SymFlags};
 use crate::check::Checker;
 use crate::check::errors_names_and_exports::root_declaration;
 use crate::atom::Atom;
-use crate::hir::{BinOp, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind};
+use crate::hir::{BinOp, Chain, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind};
 use crate::program::{FileId, Sym};
 use crate::util::FxHashMap;
 
@@ -264,6 +264,38 @@ impl<'p, 's> Checker<'p, 's> {
         Some(OnlyFunction { file, func, may_be_nil: stored.may_be_nil || self.starts_undefined(sym), outermost: sym, is_predicted })
     }
 
+    pub fn class_stored_once_to_variable(&self, sym: Sym) -> Option<(FileId, ClassId)> {
+        let (file, decl) = self.declaration_of_variable(sym)?;
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if self.only_declares(file) || !self.files().module(file).is_module() {
+            return None;
+        }
+        let local = bound.symbol_of_declaration(decl);
+        let symbol = bound.symbols.get(local.idx())?;
+        let Decl::Var(pat) = decl else { return None };
+        let PatParent::Var(d) = root_declaration(bound, pat) else { return None };
+        let declared_by = bound.var_stmt[d.idx()];
+        let is_declared_by_statement = declared_by.some().is_some_and(|stmt| matches!(hir[stmt].kind, StmtKind::Var(_)));
+        if !is_declared_by_statement
+            || symbol.flags.contains(SymFlags::MERGED)
+            || symbol.decls.len() != 1
+            || hir[d].flags.contains(Flags::AMBIENT)
+            || hir[d].pat != pat
+            || hir[d].init.is_none()
+            || self.is_stored_to_otherwise(file, declared_by, bound.modifier_flags(hir, decl).contains(Flags::EXPORT))
+            || self.is_stored_through_casts(file, local)
+            || !bound.assignments_to(local).is_empty()
+        {
+            return None;
+        }
+        let mut init = hir[d].init;
+        while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) = hir[init].kind {
+            init = expr;
+        }
+        let ExprKind::Class(class) = hir[init].kind else { return None };
+        (!self.files().has_decorator(file, class)).then_some((file, class))
+    }
+
     fn is_made_anew_by_a_second_body(&self, file: FileId, func: FnId, sym: Sym) -> bool {
         if self.is_untyped_file(file) {
             return false;
@@ -429,7 +461,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let sym = self.symbol_of_identifier(file, hir[call].callee, name)?;
         let sym = if self.files().flags(sym).contains(SymFlags::ALIAS) { self.files().resolve_alias(sym)? } else { sym };
-        if self.is_stored_to_through_cast(sym) {
+        if self.is_stored_to_through_cast(sym) || self.may_be_overridden(sym) {
             return None;
         }
         let (of, func) = match self.function_declared_as(sym) {
@@ -540,7 +572,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Ident(name) => {
                 let Some(sym) = self.symbol_of_identifier(file, e, name) else { return unknown };
                 let sym = if self.files().flags(sym).contains(SymFlags::ALIAS) && !self.is_value_beside_imported_type(sym) { self.files().resolve_alias(sym) } else { Some(sym) };
-                match sym.and_then(|sym| self.only_function_of_variable(sym)) {
+                match sym.filter(|&sym| !self.may_be_overridden_at(sym, file, e)).and_then(|sym| self.only_function_of_variable(sym)) {
                     Some(only) => {
                         if let Some(came_by) = &mut self.aot.callees.came_by {
                             came_by.push(only.outermost);
@@ -621,6 +653,9 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Ident(variable) => {
                 let sym = self.symbol_of_identifier(file, e, variable)?;
                 let sym = if self.files().flags(sym).contains(SymFlags::ALIAS) { self.files().resolve_alias(sym)? } else { sym };
+                if self.may_be_overridden(sym) {
+                    return None;
+                }
                 if let Some((of, exported)) = self.expression_exported_as(sym) {
                     return if self.only_declares(of) { None } else { self.literal_produced_by(of, exported, depth + 1) };
                 }

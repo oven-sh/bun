@@ -10,7 +10,8 @@ use crate::id::{TyId, V};
 use crate::ir::{Args, LayoutKind, Op, Prediction, Why};
 use bun_sema::bind::{Decl, PatParent, required_specifier};
 use bun_sema::check::{Checker, CodeOfImport};
-use bun_sema::hir::{ExprId, FileKind, ParamId, PatId, PatKind, PropKey};
+use bun_sema::atom::Atom;
+use bun_sema::hir::{ExprId, FileKind, Flags, MemberKind, ParamId, PatId, PatKind, PropKey};
 use bun_sema::program::{FileId, Sym};
 use bun_sema::types::{TypeData, TypeId};
 use smallvec::SmallVec;
@@ -52,7 +53,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             _ => return None,
         };
         let specifier = required_specifier(hir, hir[declaration].init)?;
-        Some(CodeOfImport::Export(self.imported_file(file, specifier)?, name))
+        Some(CodeOfImport::Export(self.required_file(file, specifier)?, name))
     }
 
     /// In a JavaScript function no value is known for an object, an array or a function, not even one that has just been made. By such a
@@ -158,6 +159,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
+    pub(crate) fn predict_private_method(&mut self, fx: &mut Fx, value: V, name: Atom) -> V {
+        let Some(class) = self.class_of_private_name(name) else { return value };
+        let hir = self.hir(fx.file);
+        let method = hir[class].members.iter().find(|&member| {
+            let m = &hir[member];
+            m.kind == MemberKind::Method && m.func.is_some() && !m.flags.contains(Flags::STATIC) && matches!(m.key, PropKey::Private(declared) if declared == name)
+        });
+        match method {
+            Some(member) => {
+                let prediction = Prediction::Closure(self.name_function(fx.file, hir[member].func));
+                self.expect(fx, value, prediction)
+            }
+            None => value,
+        }
+    }
+
     /// `value`: what `holder[key]` yields. Where nothing else is expected of it and `holder` is the dictionary that is held under a property: what the program stores there under the key.
     pub(crate) fn predict_by_key(&mut self, fx: &mut Fx, value: V, holder: ExprId) -> V {
         if !matches!(fx.b.func.op(value), Some(Op::ElemGet { .. })) || fx.b.func.prediction(value) != Prediction::None || !self.takes_prediction(fx, value) {
@@ -242,7 +259,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let is_just_created = value.idx() + 1 == fx.b.func.values.len();
         let is_created_for_it = !matches!(fx.b.func.op(value), None | Some(Op::Coerce { .. }));
         if is_just_created && (so_far == Prediction::None || is_created_for_it) {
-            fx.b.func.values[value.idx()].prediction = prediction;
+            fx.b.func.values[value.idx()].set_prediction(prediction);
             return value;
         }
         if let (Prediction::Ty(expected), Prediction::Ty(so_far)) = (prediction, so_far)
@@ -289,7 +306,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return seen;
         }
         let seen = self.emit(fx, Op::Coerce { value, to: ty, why: Why::Upcast });
-        fx.b.func.values[seen.idx()].prediction = prediction;
+        fx.b.func.values[seen.idx()].set_prediction(prediction);
         fx.expected.insert((fx.b.block, value, prediction), seen);
         seen
     }

@@ -6,7 +6,7 @@ an iterator whose next throws: returned; rejected TypeError
 a list of records, the second is a number: returned; fulfilled 2
 a list of records, the last of 300 lacks a field: returned; fulfilled 300
 a list of records, right: returned; fulfilled 2
-a record in a record, wrong: returned; rejected TypeError
+a record in a record, wrong: returned; fulfilled 1
 a record in a record, right: returned; fulfilled 1
 a list of lists, one of them a string: returned; fulfilled 3
 map: returned; rejected TypeError

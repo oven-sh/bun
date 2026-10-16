@@ -63,7 +63,8 @@ impl<'a> Written<'a> {
             source: f.file().slice(source),
             has_comment_for_default: false,
         };
-        if f.comments().has_comment_before(source.start) {
+        let before_source = Span::new(statement.span().start, source.start);
+        if f.comments().has_comment_in_span(before_source) {
             let keyword_end = statement.span().start + "import".len() as u32;
             // Without a `from`, everything is after it.
             let mut is_after_from = import.is_side_effect();
@@ -74,18 +75,18 @@ impl<'a> Written<'a> {
             };
             let comment = f
                 .comments()
-                .comments_in(Span::before(position, source))
+                .comments_in_span(Span::before(position, source))
                 .iter()
                 .find(|comment| {
                     is_after_from |= bun_core::strings::contains(
-                        f.file().slice(Span::before(position, comment.span)),
+                        f.file().slice(Span::before(position, comment.span())),
                         b"from",
                     );
-                    position = comment.span.end;
+                    position = comment.span().end;
                     is_after_from
                 });
             if let Some(comment) = comment {
-                let text = f.file().slice(comment.span);
+                let text = f.file().slice(comment.span());
                 written.source = bun_core::strings::index_of_char_usize(text, b'\n')
                     .map_or(text, |end| text[..end].trim_ascii_end());
             }
@@ -94,7 +95,7 @@ impl<'a> Written<'a> {
                 .filter(|_| import.default().is_none());
             written.has_comment_for_default = star.is_some_and(|star| {
                 !f.comments()
-                    .comments_in(Span::before(keyword_end, star))
+                    .comments_in_span(Span::before(keyword_end, star))
                     .is_empty()
             });
         }
@@ -474,10 +475,8 @@ impl<'a> ImportRun<'a> {
 
     /// An import that is written as it is in the source ends a run.
     fn is_sortable(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
-        let span = statement.span();
         matches!(statement.kind(), StmtKind::Import(_))
-            && !f.comments().is_suppressed(span.start)
-            && !f.comments().has_trailing_suppression_comment(span.end)
+            && !f.comments().is_ignored(statement.as_ast_nodes())
     }
 
     /// To be called before the line break between the previous statement and `next` is written.
@@ -571,21 +570,24 @@ impl<'a> ImportRun<'a> {
         self.line_start = f.elements().len();
 
         // One line at a time. What is left for the statement to write is its own line.
-        let mut comments = f.comments().comments_before(statement.span().start);
+        let mut comments = f.comments().of_node(statement.as_ast_nodes()).leading;
         while let Some(first) = comments.first() {
             // Comments without anything between them belong together.
-            let mut end = first.span.end;
-            let count = 1 + comments[1..]
+            let mut end = first.span().end;
+            let count = 1 + comments
+                .slice(1, usize::MAX)
                 .iter()
-                .take_while(|next| std::mem::replace(&mut end, next.span.end) == next.span.start)
+                .take_while(|next| {
+                    std::mem::replace(&mut end, next.span().end) == next.span().start
+                })
                 .count();
             let (now, later) = comments.split_at(count);
             comments = later;
             write!(f, FormatLeadingComments::Comments(now));
             // oxc does not see the line break after a block comment that the file starts with.
-            let starts_file = |it: &Comment| {
+            let starts_file = |it: Comment<'_>| {
                 it.is_block()
-                    && f.file().text()[..it.span.start as usize]
+                    && f.file().text()[..it.span().start as usize]
                         .trim_ascii()
                         .is_empty()
             };

@@ -34,6 +34,7 @@
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/ArrayBufferView.h"
 #include "JavaScriptCore/ArrayStorage.h"
+#include "JavaScriptCore/SourceProviderCache.h"
 #include "JavaScriptCore/SparseArrayValueMap.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CodeBlock.h"
@@ -2921,7 +2922,7 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
         // bun_sys::Error tags are static literals; "write" and "close" are common strings.
         JSC::JSValue syscall;
         auto staticSyscall = err.syscall.tag == BunStringTag::StaticEncodedSlice && !Zig::isTaggedUTF16Ptr(err.syscall.impl.encoded.ptr)
-            ? std::span<const Latin1Character> { Zig::untag(err.syscall.impl.encoded.ptr), err.syscall.impl.encoded.len }
+            ? std::span<const Latin1Character> { byteCast<Latin1Character>(Zig::untag(err.syscall.impl.encoded.ptr)), err.syscall.impl.encoded.len }
             : std::span<const Latin1Character> {};
         if (equalSpans(staticSyscall, "write"_span8))
             syscall = Bun::commonStrings(vm).writeString();
@@ -3950,7 +3951,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateErrorWithArray(JSC::JSGl
         auto ref = String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string));
         return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::move(ref)));
     } else {
-        auto ref = String(ExternalStringImpl::create({ Zig::untag(str.ptr), str.len }, Zig::untagVoid(str.ptr), free_global_string));
+        auto ref = String(ExternalStringImpl::create({ byteCast<Latin1Character>(Zig::untag(str.ptr)), str.len }, Zig::untagVoid(str.ptr), free_global_string));
         return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::move(ref)));
     }
 }
@@ -4713,7 +4714,7 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
     }
 
     // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
-    const auto propertyString = String(StringImpl::createWithoutCopying({ arg1, arg2 }));
+    const auto propertyString = String(StringImpl::createWithoutCopying({ byteCast<Latin1Character>(arg1), arg2 }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);
 
@@ -4739,7 +4740,7 @@ JSC::EncodedJSValue JSC__JSValue__getPropertyValue(JSC::EncodedJSValue encodedVa
     }
 
     // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
-    const auto propertyString = String(StringImpl::createWithoutCopying({ propertyName, propertyNameLength }));
+    const auto propertyString = String(StringImpl::createWithoutCopying({ byteCast<Latin1Character>(propertyName), propertyNameLength }));
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);
 
@@ -5079,7 +5080,7 @@ BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobal
 bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_t* outLen)
 {
     if (auto info = value.classInfoOrNull()) {
-        *outPtr = info->className.span8().data();
+        *outPtr = byteCast<uint8_t>(info->className.span8().data());
         *outLen = info->className.span8().size();
         return true;
     }
@@ -5195,8 +5196,10 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 
     vm->finalizeSynchronousJSExecution();
 
+    // A full collection only drops the caches that nothing has used since the one before it.
+    vm->sourceProviderCacheMap.clear();
+
     if (sync) {
-        vm->clearSourceProviderCaches();
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
@@ -5904,7 +5907,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         JSC::JSValue propertyValue = jsUndefined();
         if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
             if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                propertyValue = slot.getPureResult();
+                propertyValue = !slot.isCacheableGetter() && object->structure()->compiledLayout() ? JSValue(slot.getterSetter()) : slot.getPureResult();
             } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
                 propertyValue = slot.getValue(globalObject, property);
             } else if (slot.isCustom()) {
@@ -5916,7 +5919,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
                 propertyValue = slot.getValue(globalObject, property);
             }
         } else if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-            propertyValue = slot.getPureResult();
+            propertyValue = !slot.isCacheableGetter() && object->structure()->compiledLayout() ? JSValue(slot.getterSetter()) : slot.getPureResult();
         } else {
             propertyValue = slot.getValue(globalObject, property);
         }
@@ -6640,15 +6643,6 @@ extern "C" EncodedJSValue JSFunction__createFromZig(
         nullptr));
 }
 
-extern "C" EncodedJSValue JSArray__constructArray(
-    JSC::JSGlobalObject* global,
-    const JSValue* values,
-    size_t values_len)
-{
-    return JSValue::encode(
-        JSC::constructArray(global, (ArrayAllocationProfile*)nullptr, values, values_len));
-}
-
 extern "C" EncodedJSValue JSArray__constructEmptyArray(
     JSC::JSGlobalObject* global,
     size_t len)
@@ -7012,7 +7006,9 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
         JSC::SourceTaintedOrigin::Untainted,
         filename,
         WTF::TextPosition(),
-        JSC::SourceProviderSourceType::Program);
+        JSC::SourceProviderSourceType::Program,
+        // What was typed at the terminal, or Bun's own text (`bun lint`): never a JavaScript value.
+        JSC::SourceProvenance::Static);
 
     WTF::NakedPtr<JSC::Exception> evalException;
     JSC::JSValue result = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), evalException);

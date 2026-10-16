@@ -304,6 +304,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) bundler_feature_flag_ref: Ref,
     pub(crate) create_require_names: Vec<&'a [u8]>,
     pub(crate) own_require_names: Vec<&'a [u8]>,
+    pub(crate) paths_from_own_folder: Vec<(&'a [u8], &'a [u8])>,
+    pub(crate) written_names: Vec<(&'a [u8], &'a [u8])>,
     /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
     pub(crate) in_branch_condition: bool,
 
@@ -9881,6 +9883,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bundler_feature_flag_ref: Ref::NONE,
             create_require_names: Vec::new(),
             own_require_names: Vec::new(),
+            paths_from_own_folder: Vec::new(),
+            written_names: Vec::new(),
             in_branch_condition: false,
             has_classic_runtime_warned: false,
             macro_call_count: 0,

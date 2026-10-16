@@ -153,7 +153,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ if depth == 0 => None,
             _ => {
                 let text = &hir.text[hir[e].pos as usize..(hir[e].end as usize).min(hir.text.len())];
-                let text = String::from_utf8_lossy(text);
+                let text = bstr::BStr::new(text).to_string();
                 let mut shown: String = text.chars().take_while(|&c| c != '\n').take(40).collect();
                 if shown.len() < text.len() {
                     shown.push_str("..");

@@ -1114,6 +1114,25 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.type_check = config
             .check
             .then_some(crate::cli::check_command::check_for_bun_build as options::TypeCheck);
+        transpiler.options.emit_declarations = (config.dts && config.compile.is_none())
+            .then_some(crate::cli::check_command::declarations_for_bun_build as options::EmitDeclarations);
+        let unsupported = [
+            (config.minify.syntax || config.minify.whitespace || config.minify.identifiers, "minify"),
+            (config.code_splitting, "splitting"),
+            (config.format != options::Format::Esm, "a format other than esm"),
+            (transpiler.options.source_map == options::SourceMapOption::Inline, "an inline source map"),
+        ];
+        let emits_declarations = config.dts && config.compile.is_none();
+        transpiler.options.leaves_out_sound_files_for = unsupported.iter().find(|(is_set, _)| *is_set && emits_declarations).map(|(_, option)| *option);
+        if emits_declarations && transpiler.options.leaves_out_sound_files_for.is_none() {
+            transpiler.options.emit_declarations = Some(crate::cli::check_command::sound_declarations_for_build);
+            transpiler.options.write_sound_files = Some(crate::cli::check_command::sound_files_for_build);
+            transpiler.options.rolls_up_declarations = !config.is_root_given;
+            if transpiler.options.source_map == options::SourceMapOption::None {
+                transpiler.options.drops_source_maps = true;
+                transpiler.options.source_map = options::SourceMapOption::External;
+            }
+        }
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;

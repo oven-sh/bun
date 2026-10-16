@@ -1,6 +1,6 @@
-// A CommonJS module that throws while it is evaluated, and is asked for again. `require` evaluates it again, as in Node; a failed
-// `import()` is remembered. Each importer prints what every request got and how often the module was evaluated, and is compared with `bun run`.
-// (`bun build --compile` without --aot never evaluates again: it hands out the half-made exports.)
+// A CommonJS module that throws while it is evaluated, and is asked for again. An executable, as any bundle, never evaluates it again:
+// it hands out the half-made exports. Each importer prints what every request got and how often the module was evaluated, and is
+// compared with `bun build --compile` without --aot. (`bun run` evaluates it again at the next `require`, as Node does, and so does `bun run --aot`.)
 import { type Case } from "./run-packages";
 
 const requests = `const say = (what, v) => console.log(what, v);

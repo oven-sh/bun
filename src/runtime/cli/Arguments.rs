@@ -168,6 +168,9 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--aot-type-errors <STR>           With --aot: what to do when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
     ),
+    parse_param!(
+        "--aot-huge-heap                   With --aot: let each thread have more than 32 GB of objects. The program uses more memory and runs slower"
+    ),
     parse_param!("--aot-crash-if-interpreter-is-used"),
     parse_param!("--aot-graph-fd <STR>"),
     parse_param!("--aot-decode-crash-report <STR>"),
@@ -463,6 +466,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--aot-type-errors <STR>          With --aot: what the executable does when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
         ),
+        parse_param!(
+            "--aot-huge-heap                  With --aot: let each thread have more than 32 GB of objects. The executable uses more memory and runs slower"
+        ),
         parse_param!("--aot-crash-if-interpreter-is-used"),
         parse_param!(
             "--compile-run                    (internal) Run what was built in place of this process instead of writing an executable"
@@ -570,6 +576,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
             "--check                          Type check the entry points and what they import. Nothing is bundled if there are type errors"
+        ),
+        parse_param!(
+            "--dts                            Write TypeScript declaration files (.d.ts) to --outdir, and each output file with its types kept, for --aot. Implies --check"
         ),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
@@ -983,6 +992,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.parallel = args.flag(b"--parallel");
         ctx.sequential = args.flag(b"--sequential");
         ctx.no_exit_on_error = args.flag(b"--no-exit-on-error");
+        // Set before bunfig.toml is loaded so that `--silent` hides the warning about an unreadable
+        // bunfig.toml. It is set again below so that the flag overrides `run.silent`.
+        ctx.debug.silent = args.flag(b"--silent");
 
         if let Some(elide_lines) = args.option(b"--elide-lines") {
             if !elide_lines.is_empty() {
@@ -1261,18 +1273,26 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if let Some(user_agent) = args.option(b"--user-agent") {
+            if bun_http::async_http::breaks_header_line(user_agent) {
+                Output::err_generic(
+                    "Invalid value for --user-agent: must not contain a newline or NUL byte",
+                    (),
+                );
+                Global::exit(1);
+            }
             // argv slices returned by `clap::Args::option` borrow
             // process-lifetime `argv` storage.
             let _ = bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.set(user_agent);
         }
 
-        ctx.debug.offline_mode_setting = Some(if args.flag(b"--prefer-offline") {
-            bun_options_types::offline_mode::OfflineMode::Offline
+        // Without a flag, `install.prefer` of bunfig.toml stays.
+        if args.flag(b"--prefer-offline") {
+            ctx.debug.offline_mode_setting =
+                Some(bun_options_types::offline_mode::OfflineMode::Offline);
         } else if args.flag(b"--prefer-latest") {
-            bun_options_types::offline_mode::OfflineMode::Latest
-        } else {
-            bun_options_types::offline_mode::OfflineMode::Online
-        });
+            ctx.debug.offline_mode_setting =
+                Some(bun_options_types::offline_mode::OfflineMode::Latest);
+        }
 
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
@@ -1306,6 +1326,11 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.smol = args.flag(b"--smol");
         ctx.runtime_options.aot = args.flag(b"--aot");
         ctx.runtime_options.aot_crash_if_interpreter_is_used = args.flag(b"--aot-crash-if-interpreter-is-used");
+        ctx.runtime_options.aot_huge_heap = args.flag(b"--aot-huge-heap");
+        if ctx.runtime_options.aot_huge_heap && !ctx.runtime_options.aot && args.option(b"--aot-graph-fd").is_none() {
+            Output::err_generic("--aot-huge-heap requires --aot", ());
+            Global::crash();
+        }
         ctx.runtime_options.aot_logs_type_errors = match args.option(b"--aot-type-errors") {
             None | Some(b"throw") => false,
             Some(b"log") => true,
@@ -2163,6 +2188,7 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.check = args.flag(b"--check");
+    ctx.bundler_options.dts = args.flag(b"--dts");
     ctx.bundler_options.aot = args.flag(b"--aot");
     ctx.bundler_options.aot_explain = slice_to_owned(args.options(b"--aot-explain"));
     if let Some(word) = ctx.bundler_options.aot_explain.iter().find(|word| !bun_aot::Explain::default().set(word)) {
@@ -2566,6 +2592,14 @@ fn parse_build_command_options(
     if ctx.bundler_options.aot_crash_if_interpreter_is_used && !ctx.bundler_options.aot {
         Output::err_generic("--aot-crash-if-interpreter-is-used requires --aot", ());
         Global::crash();
+    }
+    ctx.bundler_options.aot_huge_heap = args.flag(b"--aot-huge-heap");
+    if ctx.bundler_options.aot_huge_heap {
+        if !ctx.bundler_options.aot {
+            Output::err_generic("--aot-huge-heap requires --aot", ());
+            Global::crash();
+        }
+        bun_jsc::compile_with_wide_references();
     }
     if let Some(type_errors) = args.option(b"--aot-type-errors") {
         if !ctx.bundler_options.aot {

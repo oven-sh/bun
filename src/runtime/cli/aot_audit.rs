@@ -1,7 +1,7 @@
 use bun_ast::audited::{AuditedExpression, AuditedFile, AuditedParameter, PrintedAudit};
-use std::collections::HashMap;
+use bun_sema_driver::FxHashMap as HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError};
+use bun_threading::Guarded;
 
 use crate::cli::check_command::{Audited, EntryPoint, audit_before};
 
@@ -47,14 +47,14 @@ impl Trust {
     }
 }
 
-static STATE: Mutex<Option<State>> = Mutex::new(None);
+static STATE: Guarded<Option<State>> = Guarded::new(None);
 static IS_LOOKING_AT_THE_WHOLE: AtomicBool = AtomicBool::new(false);
 static IS_WANTED: AtomicBool = AtomicBool::new(false);
 static LAST_ASKED: AtomicU64 = AtomicU64::new(0);
-static LOOKED_AT_ALONE: Mutex<std::collections::BTreeSet<Vec<u8>>> = Mutex::new(std::collections::BTreeSet::new());
-static IS_LOOKED_AT: std::sync::Condvar = std::sync::Condvar::new();
+static LOOKED_AT_ALONE: Guarded<std::collections::BTreeSet<Vec<u8>>> = Guarded::new(std::collections::BTreeSet::new());
+static IS_LOOKED_AT: bun_threading::Condvar = bun_threading::Condvar::new();
 #[cfg(unix)]
-static CHILD: Mutex<i32> = Mutex::new(0);
+static CHILD: Guarded<i32> = Guarded::new(0);
 
 const HELPER: &str = include_str!("aot_audit.js");
 const HANDED_OVER: &core::ffi::CStr = c"BUN_INTERNAL_AOT_AUDIT_FD";
@@ -82,6 +82,7 @@ unsafe extern "C" {
 fn note(text: &str) {
     let line = format!("[aot] note: {text}\n");
     bun_core::Output::flush();
+    // SAFETY: `line` is readable for `line.len()` bytes.
     unsafe { libc::write(2, line.as_ptr().cast(), line.len()) };
 }
 
@@ -89,7 +90,10 @@ fn log() -> (i32, bool) {
     static LOG: std::sync::OnceLock<(i32, bool)> = std::sync::OnceLock::new();
     *LOG.get_or_init(|| {
         let said = |name: &core::ffi::CStr| {
+            // SAFETY: getenv only reads, and `name` is NUL-terminated.
             let value = unsafe { libc::getenv(name.as_ptr()) };
+            // SAFETY: not null, so a NUL-terminated string, which nothing changes while it is read
+            // here.
             (!value.is_null()).then(|| unsafe { core::ffi::CStr::from_ptr(value) }).filter(|value| !value.is_empty())
         };
         let (descriptor, is_file) = match said(c"BUN_AOT_TYPE_ERROR_LOG") {
@@ -97,6 +101,7 @@ fn log() -> (i32, bool) {
             Some(to) if to == c"stderr" => (2, false),
             Some(to) if to == c"off" => (-1, false),
             #[cfg(unix)]
+            // SAFETY: `path` is NUL-terminated.
             Some(path) => match unsafe { libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_APPEND | libc::O_CREAT | libc::O_CLOEXEC, 0o644) } {
                 -1 => (2, false),
                 opened => (opened, true),
@@ -112,12 +117,14 @@ fn write_record(line: &[u8]) {
     let descriptor = if line.starts_with(b"[aot] note") { 2 } else { log().0 };
     if descriptor >= 0 {
         bun_core::Output::flush();
+        // SAFETY: `line` is readable for `line.len()` bytes.
         unsafe { libc::write(descriptor, line.as_ptr().cast(), line.len() as _) };
     }
 }
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOTAudit__write(line: *const u8, length: usize) {
+    // SAFETY: `line[..length]` is the caller's live buffer.
     write_record(unsafe { core::slice::from_raw_parts(line, length) });
 }
 
@@ -130,7 +137,7 @@ fn start_of_next_token(text: &[u8], mut at: usize) -> usize {
             Some([b'/', b'/', rest @ ..]) => {
                 at += 2 + bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len());
             }
-            Some([b'/', b'*', rest @ ..]) => match rest.windows(2).position(|pair| pair == b"*/") {
+            Some([b'/', b'*', rest @ ..]) => match bun_core::strings::index_of(rest, b"*/") {
                 Some(end) => at += 2 + end + 2,
                 None => return text.len(),
             },
@@ -161,7 +168,7 @@ impl State {
             hash_of_text: hash_of(text),
             ..Default::default()
         };
-        let (mut groups, mut parameters) = (HashMap::new(), HashMap::new());
+        let (mut groups, mut parameters) = (HashMap::default(), HashMap::default());
         for group in &module.groups {
             let id = self.described.len() as u32;
             self.described.push(Described {
@@ -193,19 +200,22 @@ impl State {
             });
         }
         audited.sort();
+        // SAFETY: just allocated. It is freed only by `merge`, and only if it is of a `State` that
+        // nobody has read from yet.
         let audited: &'static AuditedFile = unsafe { &*bun_core::heap::alloc(audited) };
         self.files.insert(native_path(cwd, &module.path), File { audited, groups, parameters });
         audited
     }
 
     fn add_without_sites(&mut self, path: &[u8], hash_of_text: u64) -> &'static AuditedFile {
+        // SAFETY: as in `add`.
         let audited: &'static AuditedFile = unsafe {
             &*bun_core::heap::alloc(AuditedFile {
                 hash_of_text,
                 ..Default::default()
             })
         };
-        self.files.insert(path.to_vec(), File { audited, groups: HashMap::new(), parameters: HashMap::new() });
+        self.files.insert(path.to_vec(), File { audited, groups: HashMap::default(), parameters: HashMap::default() });
         audited
     }
 
@@ -251,11 +261,14 @@ impl State {
                 audited.expressions.extend(theirs.audited.expressions.iter().map(|it| AuditedExpression { next: it.next, start: it.start, id: renumbered(it.id) }));
                 audited.parameters.extend(theirs.audited.parameters.iter().map(|it| AuditedParameter { function: it.function, index: it.index, id: renumbered(it.id) }));
                 audited.sort();
+                // SAFETY: as in `add`.
                 let audited: &'static AuditedFile = unsafe { &*bun_core::heap::alloc(audited) };
                 let groups = theirs.groups.iter().map(|(&key, &id)| (key, renumbered(id))).collect();
                 let parameters = theirs.parameters.iter().map(|(&key, &id)| (key, renumbered(id))).collect();
                 self.files.insert(path, File { audited, groups, parameters });
             }
+            // SAFETY: `found` came out of `State::from_bytes`, which allocated it with
+            // `heap::alloc`, and was handed to nobody else. `theirs` is not used again.
             drop(unsafe { bun_core::heap::take(core::ptr::from_ref(theirs.audited).cast_mut()) });
         }
         self.shapes = shapes;
@@ -264,6 +277,7 @@ impl State {
 
     fn is_renewed(&mut self) {
         self.generation += 1;
+        // SAFETY: it stores the number.
         unsafe { Bun__AOTAudit__setGeneration(self.generation) };
     }
 
@@ -276,7 +290,7 @@ impl State {
             return;
         }
         let shown = bun_aot::audit::quoted_text(&module.path);
-        let mut texts: HashMap<u32, Box<str>> = HashMap::new();
+        let mut texts: HashMap<u32, Box<str>> = HashMap::default();
         for &id in file.groups.values().chain(file.parameters.values()) {
             texts.insert(id, Box::from("{\"steps\":[]}"));
         }
@@ -322,7 +336,7 @@ fn look_at_the_whole(entry_points: &[Vec<u8>], code: &[Vec<u8>], is_for_tests: b
         }
         code.append(&mut found.never_visited);
     };
-    let mut state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut state = STATE.lock();
     let state = state.get_or_insert_with(State::default);
     for path in code {
         if !state.code.contains(&path) {
@@ -344,6 +358,7 @@ fn look_at_the_whole_in_a_child(entry_points: &[Vec<u8>], code: &[Vec<u8>]) -> O
     let fd = unlinked_file_with(&asked.join(&0u8))?;
     let found = (|| {
         let executable = bun_core::self_exe_path().ok()?;
+        #[allow(clippy::disallowed_types)]
         let mut command = std::process::Command::new(std::ffi::OsStr::from_bytes(executable.as_bytes()));
         for argument in bun_core::argv().into_iter().skip(1).filter(|it| !matches!(*it, b"--watch" | b"--hot")) {
             command.arg(std::ffi::OsStr::from_bytes(argument));
@@ -351,6 +366,7 @@ fn look_at_the_whole_in_a_child(entry_points: &[Vec<u8>], code: &[Vec<u8>]) -> O
         command.env(std::ffi::OsStr::from_bytes(LOOKS_FOR_ANOTHER.to_bytes()), fd.to_string());
         command.env_remove(std::ffi::OsStr::from_bytes(HANDED_OVER.to_bytes()));
         command.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        // SAFETY: between fork and exec the closure only calls nice(2), which is async-signal-safe.
         unsafe {
             command.pre_exec(|| {
                 libc::nice(10);
@@ -358,24 +374,29 @@ fn look_at_the_whole_in_a_child(entry_points: &[Vec<u8>], code: &[Vec<u8>]) -> O
             })
         };
         let mut child = command.spawn().ok()?;
-        *CHILD.lock().unwrap_or_else(PoisonError::into_inner) = child.id() as i32;
-        let mut ended: libc::siginfo_t = unsafe { core::mem::zeroed() };
+        *CHILD.lock() = child.id() as i32;
+        // SAFETY: `siginfo_t` is plain data for which all zeros is a valid value.
+        let mut ended: libc::siginfo_t = unsafe { bun_core::ffi::zeroed_unchecked() };
+        // SAFETY: `ended` is a valid out-param.
         while unsafe { libc::waitid(libc::P_PID, child.id() as libc::id_t, &mut ended, libc::WEXITED | libc::WNOWAIT) } == -1 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {}
         {
-            let mut running = CHILD.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut running = CHILD.lock();
             *running = 0;
             let _ = child.wait();
         }
         State::from_bytes(&read_whole(fd)?)
     })();
+    // SAFETY: `fd` is ours, from `unlinked_file_with`, and is not used again.
     unsafe { libc::close(fd) };
     found
 }
 
 #[cfg(unix)]
 fn stop_the_child() {
-    let mut running = CHILD.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut running = CHILD.lock();
     if *running > 0 {
+        // SAFETY: kill(2) takes no pointers. `CHILD` holds the id only while the child has not been
+        // waited for, so it names no other process.
         unsafe { libc::kill(*running, libc::SIGKILL) };
     }
     *running = 0;
@@ -393,14 +414,14 @@ fn look_at_the_whole_in_the_background() {
     if IS_LOOKING_AT_THE_WHOLE.swap(true, Ordering::AcqRel) {
         return;
     }
-    let still_waits = || STATE.lock().unwrap_or_else(PoisonError::into_inner).as_ref().is_some_and(|state| state.waits_for_the_whole);
+    let still_waits = || STATE.lock().as_ref().is_some_and(|state| state.waits_for_the_whole);
     let thread = std::thread::Builder::new().stack_size(64 << 20).spawn(move || {
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Audit"));
         while still_waits() {
             while milliseconds().saturating_sub(LAST_ASKED.load(Ordering::Acquire)) < 300 {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            let Some((entry_points, code, is_for_tests)) = STATE.lock().unwrap_or_else(PoisonError::into_inner).as_mut().map(|state| {
+            let Some((entry_points, code, is_for_tests)) = STATE.lock().as_mut().map(|state| {
                 state.waits_for_the_whole = false;
                 (state.entry_points.clone(), state.code.clone(), state.is_for_tests)
             }) else {
@@ -410,7 +431,7 @@ fn look_at_the_whole_in_the_background() {
             {
                 let _ = is_for_tests;
                 let found = look_at_the_whole_in_a_child(&entry_points, &code);
-                if let (Some(found), Some(state)) = (found, STATE.lock().unwrap_or_else(PoisonError::into_inner).as_mut()) {
+                if let (Some(found), Some(state)) = (found, STATE.lock().as_mut()) {
                     state.merge(found);
                 }
             }
@@ -438,7 +459,7 @@ fn milliseconds() -> u64 {
 }
 
 fn known(path: &[u8], hash: u64) -> Option<Option<&'static AuditedFile>> {
-    let state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+    let state = STATE.lock();
     let Some(state) = state.as_ref() else { return Some(None) };
     match state.files.get(path) {
         Some(file) if file.audited.hash_of_text == hash => Some(Some(file.audited)),
@@ -450,7 +471,7 @@ fn known(path: &[u8], hash: u64) -> Option<Option<&'static AuditedFile>> {
 
 fn look_at_it_alone(path: &[u8], text: &[u8]) -> Option<&'static AuditedFile> {
     let hash = hash_of(text);
-    let mut looked_at = LOOKED_AT_ALONE.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut looked_at = LOOKED_AT_ALONE.lock();
     loop {
         if let Some(found) = known(path, hash) {
             return found;
@@ -467,14 +488,14 @@ fn look_at_it_alone(path: &[u8], text: &[u8]) -> Option<&'static AuditedFile> {
                 return None;
             }
         }
-        looked_at = IS_LOOKED_AT.wait(looked_at).unwrap_or_else(PoisonError::into_inner);
+        IS_LOOKED_AT.wait_guarded(&mut looked_at);
     }
 }
 
 fn look_at_this_alone(path: &[u8], text: &[u8], hash: u64) {
     stop_the_child();
     let (mut entry_points, is_for_tests, is_known_to_the_whole) = {
-        let state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+        let state = STATE.lock();
         state.as_ref().map_or_else(Default::default, |state| (state.entry_points.clone(), state.is_for_tests, state.files.contains_key(path)))
     };
     static NEVER_SEEN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -489,7 +510,7 @@ fn look_at_this_alone(path: &[u8], text: &[u8], hash: u64) {
         if is_told.swap(true, Ordering::AcqRel) {
             return;
         }
-        if let Some(state) = STATE.lock().unwrap_or_else(PoisonError::into_inner).as_mut() {
+        if let Some(state) = STATE.lock().as_mut() {
             let mut is_added = false;
             let falls = !is_known_to_the_whole && found.has_errors;
             for (module, text) in found.modules.iter().filter(|(module, _)| !falls && native_path(&cwd, &module.path) == path) {
@@ -507,7 +528,7 @@ fn look_at_this_alone(path: &[u8], text: &[u8], hash: u64) {
                 state.waits_for_the_whole = true;
             }
         }
-        LOOKED_AT_ALONE.lock().unwrap_or_else(PoisonError::into_inner).remove(path);
+        LOOKED_AT_ALONE.lock().remove(path);
         IS_LOOKED_AT.notify_all();
     };
     let entries: Vec<EntryPoint> = entry_points.iter().map(|path| EntryPoint::file(path)).collect();
@@ -535,14 +556,13 @@ fn table_for(path: &[u8], text: &[u8]) -> Option<&'static AuditedFile> {
 
 fn look_at_what_has_changed() {
     let files: Vec<(Vec<u8>, u64)> = {
-        let state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+        let state = STATE.lock();
         state.as_ref().map_or_else(Vec::new, |state| state.files.iter().map(|(path, file)| (path.clone(), file.audited.hash_of_text)).collect())
     };
     let _ = std::thread::Builder::new().spawn(move || {
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Audit"));
         for (path, hash) in files {
-            let Ok(name) = core::str::from_utf8(&path) else { continue };
-            if let Ok(text) = std::fs::read(name)
+            if let Ok(text) = bun_sys::File::read_from(bun_sys::Fd::cwd(), &path)
                 && hash_of(&text) != hash
             {
                 look_at_it_alone(&path, &text);
@@ -647,7 +667,7 @@ impl State {
                     id: id as u32,
                 });
             }
-            let (mut groups, mut parameters) = (HashMap::new(), HashMap::new());
+            let (mut groups, mut parameters) = (HashMap::default(), HashMap::default());
             for _ in 0..number(input)? {
                 let (span, rest) = (number(input)?, number(input)?);
                 groups.insert(((span >> 32) as u32, span as u32, (rest >> 32) as u32 as i32), rest as u32);
@@ -662,6 +682,7 @@ impl State {
                 });
             }
             audited.sort();
+            // SAFETY: as in `add`.
             let audited: &'static AuditedFile = unsafe { &*bun_core::heap::alloc(audited) };
             state.files.insert(path, File { audited, groups, parameters });
         }
@@ -673,15 +694,19 @@ impl State {
 fn unlinked_file_with(bytes: &[u8]) -> Option<i32> {
     let mut name = bun_bundler::bun_fs::RealFS::tmpdir_path().to_vec();
     name.extend_from_slice(b"/bun-aot-audit-XXXXXX\0");
+    // SAFETY: `name` is writable and ends with "XXXXXX" and a NUL.
     let fd = unsafe { libc::mkstemp(name.as_mut_ptr().cast()) };
     if fd < 0 {
         return None;
     }
+    // SAFETY: `name` is still NUL-terminated: mkstemp replaces the six letters only.
     unsafe { libc::unlink(name.as_ptr().cast()) };
     let mut at = 0;
     while at < bytes.len() {
+        // SAFETY: the rest of `bytes` is readable for that many bytes.
         let written = unsafe { libc::write(fd, bytes[at..].as_ptr().cast(), bytes.len() - at) };
         if written <= 0 {
+            // SAFETY: `fd` is ours and is not used again.
             unsafe { libc::close(fd) };
             return None;
         }
@@ -693,33 +718,40 @@ fn unlinked_file_with(bytes: &[u8]) -> Option<i32> {
 #[cfg(unix)]
 fn hand_over() {
     stop_the_child();
-    let state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+    let state = STATE.lock();
     let Some(state) = state.as_ref() else { return };
     let Some(fd) = unlinked_file_with(&state.to_bytes()) else { return };
     bun_core::keep_open_over_reload(fd);
     let number = std::ffi::CString::new(fd.to_string()).expect("digits");
+    // SAFETY: both strings are NUL-terminated; setenv copies them into libc env storage.
     unsafe { libc::setenv(HANDED_OVER.as_ptr(), number.as_ptr(), 1) };
 }
 
 #[cfg(unix)]
 fn take_what_was_handed_over() -> Option<State> {
+    // SAFETY: getenv only reads, and the name is NUL-terminated.
     let number = unsafe { libc::getenv(HANDED_OVER.as_ptr()) };
     if number.is_null() {
         return None;
     }
+    // SAFETY: not null, so a NUL-terminated string. It is read before the variable is unset below.
     let fd: i32 = unsafe { core::ffi::CStr::from_ptr(number) }.to_str().ok()?.parse().ok()?;
+    // SAFETY: the name is NUL-terminated.
     unsafe { libc::unsetenv(HANDED_OVER.as_ptr()) };
     let bytes = read_whole(fd);
+    // SAFETY: `fd` was kept open over the reload for this read and is not used again.
     unsafe { libc::close(fd) };
     State::from_bytes(&bytes?)
 }
 
 #[cfg(unix)]
 fn read_whole(fd: i32) -> Option<Vec<u8>> {
+    // SAFETY: lseek(2) takes no pointers.
     let length = unsafe { libc::lseek(fd, 0, libc::SEEK_END) };
     let mut bytes = vec![0u8; usize::try_from(length).unwrap_or(0)];
     let mut at = 0;
     while at < bytes.len() {
+        // SAFETY: the rest of `bytes` is writable for that many bytes.
         let read = unsafe { libc::pread(fd, bytes[at..].as_mut_ptr().cast(), bytes.len() - at, at as libc::off_t) };
         if read <= 0 {
             return None;
@@ -731,25 +763,31 @@ fn read_whole(fd: i32) -> Option<Vec<u8>> {
 
 #[cfg(unix)]
 fn look_for_another(is_for_tests: bool) {
+    // SAFETY: getenv only reads, and the name is NUL-terminated.
     let number = unsafe { libc::getenv(LOOKS_FOR_ANOTHER.as_ptr()) };
     if number.is_null() {
         return;
     }
+    // SAFETY: not null, so a NUL-terminated string, which nothing changes.
     let Some(fd) = unsafe { core::ffi::CStr::from_ptr(number) }.to_str().ok().and_then(|it| it.parse::<i32>().ok()) else { return };
     let asked = read_whole(fd).unwrap_or_default();
     let of_kind = |kind: u8| -> Vec<Vec<u8>> { bun_core::strings::split(&asked, b"\0").filter(|it| it.first() == Some(&kind)).map(|it| it[1..].to_vec()).collect() };
     let (entry_points, code) = (of_kind(b'E'), of_kind(b'C'));
     on_a_thread_of_its_own(|| look_at_the_whole(&entry_points, &code, is_for_tests, None, Audited::WholeInTheBackground));
-    let bytes = STATE.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map_or_else(Vec::new, State::to_bytes);
+    let bytes = STATE.lock().as_ref().map_or_else(Vec::new, State::to_bytes);
     let mut at = 0;
+    // SAFETY: ftruncate(2) takes no pointers.
     unsafe { libc::ftruncate(fd, 0) };
     while at < bytes.len() {
+        // SAFETY: the rest of `bytes` is readable for that many bytes.
         let written = unsafe { libc::pwrite(fd, bytes[at..].as_ptr().cast(), bytes.len() - at, at as libc::off_t) };
         if written <= 0 {
+            // SAFETY: _exit(2) has no preconditions.
             unsafe { libc::_exit(1) };
         }
         at += written as usize;
     }
+    // SAFETY: _exit(2) has no preconditions.
     unsafe { libc::_exit(0) };
 }
 
@@ -765,7 +803,7 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
     let handed_over = take_what_was_handed_over();
     let is_handed_over = handed_over.is_some();
     let waits_for_the_whole = handed_over.as_ref().is_some_and(|state| state.waits_for_the_whole);
-    *STATE.lock().unwrap_or_else(PoisonError::into_inner) = Some(State {
+    *STATE.lock() = Some(State {
         entry_points: paths.clone(),
         is_for_tests,
         ..handed_over.unwrap_or_default()
@@ -794,6 +832,7 @@ pub(crate) fn is_on() -> bool {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOTAudit__installFor(global: *mut bun_jsc::JSGlobalObject) {
     let cwd = crate::cli::check_command::working_directory();
+    // SAFETY: `global` is the caller's live global object. C++ copies both texts during the call.
     unsafe { Bun__AOTAudit__install(global, HELPER.as_ptr(), HELPER.len(), cwd.as_ptr(), cwd.len()) };
 }
 
@@ -801,7 +840,7 @@ fn finish(written: &[u8]) -> Option<Box<bun_ast::audited::Finished>> {
     bun_ast::audited::current()?;
     let PrintedAudit { expressions, parameters } = bun_ast::audited::take_printed();
     bun_ast::audited::set_current(None);
-    let state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+    let state = STATE.lock();
     let state = state.as_ref()?;
     let of = |id: u32| state.described.get(id as usize).map_or([0, 1, 0], |it| [it.passes, it.least as u32, it.most as u32]);
     let expressions: Vec<[u32; 6]> = (expressions.iter())
@@ -831,7 +870,9 @@ fn finish(written: &[u8]) -> Option<Box<bun_ast::audited::Finished>> {
 
 pub(crate) fn end_file(written: &[u8]) {
     match finish(written) {
+        // SAFETY: the two lists are valid for the call, and C++ copies them.
         Some(it) => unsafe { Bun__AOTAudit__setPendingSites(it.length_of_what_is_written, it.expressions.as_ptr(), it.expressions.len(), it.parameters.as_ptr(), it.parameters.len()) },
+        // SAFETY: C++ reads neither pointer when the counts are 0.
         None if is_on() => unsafe { Bun__AOTAudit__setPendingSites(0, core::ptr::null(), 0, core::ptr::null(), 0) },
         None => {}
     }
@@ -839,8 +880,9 @@ pub(crate) fn end_file(written: &[u8]) {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOTAudit__describe(id: u32, out: *mut bun_core::String) {
-    let state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+    let state = STATE.lock();
     let text = state.as_ref().and_then(|state| state.described.get(id as usize)).map_or("{\"steps\":[]}", |it| &*it.text);
+    // SAFETY: `out` is the caller's out-parameter, which holds no string yet.
     unsafe { out.write(bun_core::String::clone_utf8(text.as_bytes())) };
 }
 
@@ -863,6 +905,7 @@ pub(crate) extern "C" fn Bun__AOTAudit__writeRefusedChange(
     line: i32,
     column: i32,
 ) {
+    // SAFETY: `kind[..length_of_kind]` is the caller's live buffer.
     let kind = core::str::from_utf8(unsafe { core::slice::from_raw_parts(kind, length_of_kind) }).unwrap_or_default();
     let cwd = crate::cli::check_command::working_directory();
     let path = source_url.to_owned_slice();
@@ -889,12 +932,13 @@ pub(crate) extern "C" fn Bun__AOTAudit__writeRefusedChange(
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOTAudit__describeShape(key: &bun_core::String, out: *mut bun_core::String) {
     let key = key.to_owned_slice();
-    let state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
+    let state = STATE.lock();
     let text = match (state.as_ref(), core::str::from_utf8(&key)) {
         (Some(state), Ok("")) => state.generation.to_string(),
         (_, Ok("format")) => String::from(if log().1 { "json" } else { "text" }),
         (Some(state), Ok(key)) => state.shapes.get(key).map_or_else(|| String::from("null"), |text| text.to_string()),
         _ => String::from("null"),
     };
+    // SAFETY: `out` is the caller's out-parameter, which holds no string yet.
     unsafe { out.write(bun_core::String::clone_utf8(text.as_bytes())) };
 }

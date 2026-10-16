@@ -128,6 +128,53 @@ export async function defaultAsyncFromAsyncIterator(iterator, mapFn, thisArg)
 
 $linkTimeConstant;
 $visibility = "PrivateRecursive";
+export async function defaultAsyncFromAsyncIteratorWithNext(iterator, mapFn, thisArg)
+{
+    "use strict";
+
+    if (!$isObject(iterator))
+        throw new TypeError("Iterator result interface is not an object.");
+
+    var nextMethod = iterator.next;
+
+    var result = this !== $Array && $isConstructor(this) ? new this() : [];
+
+    var k = 0;
+    for (;;) {
+        var nextResult = await nextMethod.$call(iterator);
+        if (!$isObject(nextResult))
+            throw new TypeError("Iterator result interface is not an object.");
+        if (nextResult.done)
+            break;
+
+        var value = nextResult.value;
+        try {
+            if (k >= 9007199254740991)
+                throw new TypeError("Length exceeded the maximum array length");
+            if (mapFn === undefined)
+                $putByValDirect(result, k, value);
+            else
+                $putByValDirect(result, k, await (thisArg === undefined ? mapFn(value, k) : mapFn.$call(thisArg, value, k)));
+        } catch (error) {
+            try {
+                var returnMethod = iterator.return;
+                if (!$isUndefinedOrNull(returnMethod)) {
+                    var returnResult = await returnMethod.$call(iterator);
+                    if (!$isObject(returnResult))
+                        throw new TypeError("Iterator result interface is not an object.");
+                }
+            } catch { }
+            throw error;
+        }
+        k += 1;
+    }
+
+    result.length = k;
+    return result;
+}
+
+$linkTimeConstant;
+$visibility = "PrivateRecursive";
 export async function defaultAsyncFromAsyncArrayLike(asyncItems, mapFn, thisArg)
 {
     "use strict";
@@ -181,8 +228,10 @@ export function fromAsync(asyncItems  /*, mapFn, thisArg */)
             }
         }
 
-        if (!$isUndefinedOrNull(usingAsyncIterator))
-            return $defaultAsyncFromAsyncIterator.$call(this, usingAsyncIterator.$call(asyncItems), mapFn, thisArg);
+        if (!$isUndefinedOrNull(usingAsyncIterator)) {
+            var iterator = usingAsyncIterator.$call(asyncItems);
+            return $defaultAsyncFromAsyncIteratorWithNext.$call(this, iterator, mapFn, thisArg);
+        }
 
         if (!$isUndefinedOrNull(usingSyncIterator)) {
             var iterator = usingSyncIterator.$call(asyncItems);

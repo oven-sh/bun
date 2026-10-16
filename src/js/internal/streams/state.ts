@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const { validateInteger } = require("internal/validators") as typeof import("internal/validators").default;
@@ -88,13 +89,13 @@ interface AfterWriteTickInfo {
 
 // What readable.ts, writable.ts and transform.ts hand to each other without a require cycle.
 class Internals {
-  push: ((stream: any, state: ReadableState, chunk: any, encoding: any) => boolean) | undefined = undefined;
-  pushMethod: Function | undefined = undefined;
+  pushToReadable: ((stream: any, state: ReadableState, chunk: any, encoding: any) => boolean) | undefined = undefined;
+  methodThatPushes: Function | undefined = undefined;
   bindOnwrite: ((stream: any, state: WritableState) => WriteCallback) | undefined = undefined;
   onReadableConstructed: ((stream: any, state: ReadableState) => void) | undefined = undefined;
   onWritableConstructed: ((stream: any, state: WritableState) => void) | undefined = undefined;
-  write: ((stream: any, state: WritableState, chunk: any, encoding: any, cb: any) => any) | undefined = undefined;
-  writeMethod: Function | undefined = undefined;
+  writeToWritable: ((stream: any, state: WritableState, chunk: any, encoding: any, cb: any) => any) | undefined = undefined;
+  methodThatWrites: Function | undefined = undefined;
 }
 
 const internals = new Internals();
@@ -882,9 +883,12 @@ function restoreAttributes(prototype: object) {
     if (name !== "constructor" && name !== "getBuffer") ObjectDefineProperty(prototype, name, { configurable: false });
   }
 }
+function makeEnumerable(prototype: object, name: string) {
+  ObjectDefineProperty(prototype, name, { enumerable: true });
+}
 restoreAttributes(ReadableState.prototype);
 restoreAttributes(WritableState.prototype);
-Object.defineProperty(WritableState.prototype, "getBuffer", { enumerable: true });
+if (!IS_BUN_AOT) makeEnumerable(WritableState.prototype, "getBuffer");
 
 export type { ReadableState, WritableState, BufferedWrite, AfterWriteTickInfo, WriteCallback };
 

@@ -2898,13 +2898,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Err(open) => {
                 // `getTypeFromTypeQueryNode` assigns `links.resolvedType` whatever `flowLoopStack`
-                // holds.
+                // holds, and so does the function of every node around it: `(typeof x)["a"]`.
                 let left_frame = self.left_frame;
-                let stored = if is_type_query {
-                    self.incomplete_flow_result(Query::TypeNode(file, node))
-                } else {
-                    None
-                };
+                let stored = self.incomplete_flow_result(Query::TypeNode(file, node));
                 match stored {
                     Some(stored) => {
                         self.p

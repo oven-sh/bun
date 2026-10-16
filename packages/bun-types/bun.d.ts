@@ -3538,6 +3538,20 @@ declare module "bun" {
     check?: boolean;
 
     /**
+     * Write a TypeScript declaration file (`.d.ts`) for each entry point.
+     * The entry points and everything they import are type checked first, as with `check`.
+     * Equivalent to `--dts` in the CLI.
+     *
+     * Each JavaScript output file is also written once more with its TypeScript types kept
+     * (`index.js` and `index.sound.ts`), and the first line of `index.d.ts` is a comment that names
+     * that file. `bun build --compile --aot` compiles a package from these files, so that it knows
+     * the types inside the package. Every other tool reads `index.d.ts` as before.
+     *
+     * @default false
+     */
+    dts?: boolean;
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *
@@ -4427,7 +4441,7 @@ declare module "bun" {
     path: string;
     loader: Loader;
     hash: string | null;
-    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
+    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode" | "declaration" | "sound";
     sourcemap: BuildArtifact | null;
   }
 
@@ -10714,6 +10728,8 @@ declare module "bun" {
     optionalDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
     optionalPeers?: string[];
+    /** Names in `optionalDependencies` that did not resolve, listed when another package in the lockfile has the name */
+    unresolved?: string[];
     bin?: string | Record<string, string>;
     binDir?: string;
   };
@@ -10726,6 +10742,7 @@ declare module "bun" {
   type BunLockFilePackageInfo = BunLockFileBasePackageInfo & {
     os?: string | string[];
     cpu?: string | string[];
+    hasInstallScript?: true;
     bundled?: true;
   };
 

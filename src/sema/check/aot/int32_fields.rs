@@ -135,11 +135,11 @@ impl Contrary {
     pub fn text(self) -> &'static str {
         match self {
             Contrary::Fraction => "a literal with a fraction",
-            Contrary::Large => "a literal that is no int32",
+            Contrary::Large => "a literal that is not an int32",
             Contrary::Division => "a division",
             Contrary::Power => "`**`",
             Contrary::Unsigned => "an unsigned number of 32 bits",
-            Contrary::MathFunction => "a function of `Math` that yields fractions",
+            Contrary::MathFunction => "a function of `Math` that returns fractions",
             Contrary::Clock => "a time",
             Contrary::ParsedFraction => "`parseFloat`",
             Contrary::FloatArray => "an element of an array of floats",
@@ -411,7 +411,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// A line for each verdict, with the text of the name in the place of the name.
     pub fn explain_int32_fields(&self, verdicts: &[Int32Verdict<&[u8]>]) -> Vec<String> {
         let line_of = |verdict: &Int32Verdict<&[u8]>| {
-            let name = String::from_utf8_lossy(verdict.name);
+            let name = bstr::BStr::new(verdict.name);
             match verdict.contrary {
                 Some((at, why)) => format!("integers: `{name}`: not expected to hold int32s: {} at {}", why.text(), self.place_for_people(at)),
                 None if verdict.is_reached_by_int32 => format!("integers: `{name}`: expected to hold int32s"),

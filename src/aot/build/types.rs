@@ -86,6 +86,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if !result.is_never() && self.c.admits_nil(ty) {
             result.prims |= prim::NULLISH;
         }
+        if depth > 0 {
+            result = result.with_literal_string_widened();
+        }
         let id = self.out.tys.intern(result);
         self.tys.insert((ty, depth), id);
         id
@@ -273,10 +276,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 Intrinsic::Object => Declared::any_object(),
                 _ => Declared::anything(),
             },
-            TypeData::StringLit { .. } => Declared::prims(prim::STRING),
+            TypeData::StringLit { .. } => Declared::prims(prim::LITERAL_STRING),
             TypeData::BigIntLit { .. } => Declared::prims(prim::BIGINT),
             TypeData::BoolLit { value, .. } => Declared::prims(if *value { prim::TRUE } else { prim::FALSE }),
-            TypeData::EnumLit { value: EnumValue::String(_), .. } => Declared::prims(prim::STRING),
+            TypeData::EnumLit { value: EnumValue::String(_), .. } => Declared::prims(prim::LITERAL_STRING),
             // Which integers a value of such a type is, if it is one, the checker says.
             TypeData::NumberLit { .. } | TypeData::EnumLit { value: EnumValue::Number(_), .. } => match self.c.integers_of_type(ty) {
                 Some((least, most)) => Declared::ints(least, most),

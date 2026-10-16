@@ -107,16 +107,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// Whether the operation does nothing that can be told but by what it yields, by the variables it stores to and by the objects in `made`,
     /// which are those that the part has made so far.
-    fn only_creates_values(&self, func: &Func, op: &Op, made: &[V]) -> bool {
+    fn only_creates_values(&self, func: &Func, op: &Op, made_by: &[u32], part: u32) -> bool {
         let is_constant_key = |key: V| matches!(func.op(key), Some(Op::Str(_) | Op::Int(_)));
+        let is_made = |v: V| made_by.get(v.idx()) == Some(&part);
         match op {
             Op::Undefined | Op::Null | Op::Bool(_) | Op::Int(_) | Op::Double(_) | Op::Str(_) | Op::BigInt(_) | Op::FuncRef(_) | Op::Closure { .. } => true,
             Op::New(_) | Op::NewWith { .. } | Op::NewObject | Op::NewArray(_) | Op::GlobalSet(..) => true,
             Op::GlobalGet(global) => !matches!(self.out.globals[global.idx()].initialization, Initialization::Uninitialized),
-            Op::FieldSet { obj, .. } | Op::PropSet { obj, .. } => made.contains(obj),
+            Op::FieldSet { obj, .. } | Op::PropSet { obj, .. } => is_made(*obj),
             Op::Coerce { why: Why::Upcast, .. } => true,
             Op::Operation { name, args } => {
-                matches!(self.out.strs.get(*name), b"DefineField" | b"DefineGetter" | b"DefineSetter") && args.len() >= 3 && made.contains(&args[0]) && is_constant_key(args[1])
+                matches!(self.out.strs.get(*name), b"DefineField" | b"DefineGetter" | b"DefineSetter") && args.len() >= 3 && is_made(args[0]) && is_constant_key(args[1])
             }
             _ => false,
         }
@@ -124,15 +125,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// The statements that are kept apart, in their order.
     pub(crate) fn parts_of(&self, func: &Func, marks: Vec<Mark>) -> Vec<ModulePart> {
+        let values_looked_at = if marks.is_empty() { 0 } else { func.values.len() };
+        let mut place_of = vec![(u32::MAX, 0u32); values_looked_at];
+        if !marks.is_empty() {
+            for (block, of_block) in func.blocks.iter().enumerate() {
+                for (at, &op) in of_block.ops.iter().enumerate().rev() {
+                    place_of[op.idx()] = (block as u32, at as u32);
+                }
+            }
+        }
         let position_after = |block: BlockId, v: V| match v.is_none() {
             true => Some(0),
-            false => func.blocks[block.idx()].ops.iter().position(|&op| op == v).map(|at| at as u32 + 1),
+            false => place_of.get(v.idx()).filter(|place| place.0 == block.0).map(|place| place.1 + 1),
         };
+        let mut made_by = vec![0u32; values_looked_at];
         // By value and by the end of a block: the candidate it is of, counted from 1.
         let mut owner = vec![0u32; func.values.len()];
         let mut owner_of_end = vec![0u32; func.blocks.len()];
         let mut candidates: Vec<Candidate> = Vec::new();
-        for mark in marks {
+        for (number, mark) in marks.into_iter().enumerate() {
+            let number = number as u32 + 1;
             let (Some(start), Some(end)) = (position_after(mark.from, mark.before), position_after(mark.to, mark.last)) else { continue };
             let blocks = (mark.first_block, mark.end_block);
             let is_in_one_block = mark.from == mark.to;
@@ -153,14 +165,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 _ => false,
             });
             let values = part.values(func);
-            let mut made: Vec<V> = Vec::new();
             let only_creates_values = mark.is_removable || values.iter().all(|&v| match &func.values[v.idx()].def {
                     Def::Param(..) => true,
                     Def::Op(op) => {
-                        let is_fine = self.only_creates_values(func, op, &made);
+                        let is_fine = self.only_creates_values(func, op, &made_by, number);
                         // What is looked at as another type is the same object.
-                        if matches!(op, Op::New(_) | Op::NewWith { .. } | Op::NewObject | Op::NewArray(_)) || matches!(op, Op::Coerce { value, .. } if made.contains(value)) {
-                            made.push(v);
+                        if matches!(op, Op::New(_) | Op::NewWith { .. } | Op::NewObject | Op::NewArray(_)) || matches!(op, Op::Coerce { value, .. } if made_by.get(value.idx()) == Some(&number)) {
+                            made_by[v.idx()] = number;
                         }
                         is_fine
                     }

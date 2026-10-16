@@ -963,6 +963,8 @@ impl Run<'_> {
         if let Some(refusal) = loader.refused() {
             return self.refuse_flag(refusal);
         }
+        // Recorded as the loader's mistake, which is printed next.
+        let _ = of_cwd.as_ref().map(|it| loader.check_wildcards(it));
         if let Some(mistake) = loader.mistake() {
             self.out.stderr.extend_from_slice(mistake);
             self.out.exit_code = 2;
@@ -1363,6 +1365,11 @@ impl Run<'_> {
                 Err(Fatal(error)) => return self.fail(&error),
             },
         };
+        for result in &mut results {
+            if LintMessage::hide_claimed(&mut result.messages) {
+                result.counts = Counts::of(&result.messages);
+            }
+        }
         let has_unused = suppressed.has_unused && !options.pass_on_unpruned_suppressions;
         // oxlint reports it like problems, after those of all files.
         let about_suppressions = match is_oxlint {

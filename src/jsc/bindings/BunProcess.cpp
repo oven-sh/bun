@@ -842,7 +842,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, 
         auto str = value.getString(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
         auto policy = WTF::TrailingJunkPolicy::Disallow;
-        auto opt = str.is8Bit() ? WTF::parseInteger<mode_t, uint8_t>(str.span8(), 8, policy) : WTF::parseInteger<mode_t, char16_t>(str.span16(), 8, policy);
+        auto opt = str.is8Bit() ? WTF::parseInteger<mode_t, Latin1Character>(str.span8(), 8, policy) : WTF::parseInteger<mode_t, char16_t>(str.span16(), 8, policy);
         if (!opt.has_value()) return Bun::ERR::INVALID_ARG_VALUE(throwScope, globalObject, "mask"_s, value, "must be a 32-bit unsigned integer or an octal string"_s);
         newUmask = opt.value();
     } else {

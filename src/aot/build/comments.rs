@@ -38,7 +38,7 @@ pub(crate) fn calls_marked_pure(hir: &hir::File<'_>) -> Vec<u32> {
         return Vec::new();
     }
     let token_behind = |at: u32| skip_trivia(text, at as usize) as u32;
-    let mut marked: Vec<u32> = hir.comments.iter().filter(|comment| is_pure_mark(&text[comment.0 as usize..comment.1 as usize])).map(|comment| token_behind(comment.1)).collect();
+    let mut marked: Vec<u32> = hir.comments.iter().filter(|comment| is_pure_mark(&text[comment.pos as usize..comment.end as usize])).map(|comment| token_behind(comment.end)).collect();
     marked.sort_unstable();
     marked.dedup();
     let casts_before_their_operands: Vec<(u32, ExprId, u32)> = (hir.exprs.iter())
@@ -168,9 +168,9 @@ pub(crate) fn functions_with_react_hooks_suppression(hir: &hir::File<'_>, bound:
         return Vec::new();
     }
     let suppressions: Vec<(u32, bool)> = (hir.comments.iter())
-        .filter_map(|comment| Some((comment, is_block_suppression_of_react_hooks(&text[comment.0 as usize..comment.1 as usize])?)))
-        .filter(|(comment, _)| !is_scanned_as_part_of_a_tag(hir, skip_trivia(text, comment.1 as usize) as u32))
-        .map(|(comment, is_block)| (comment.0, is_block))
+        .filter_map(|comment| Some((comment, is_block_suppression_of_react_hooks(&text[comment.pos as usize..comment.end as usize])?)))
+        .filter(|(comment, _)| !is_scanned_as_part_of_a_tag(hir, skip_trivia(text, comment.end as usize) as u32))
+        .map(|(comment, is_block)| (comment.pos, is_block))
         .collect();
     if suppressions.is_empty() {
         return Vec::new();

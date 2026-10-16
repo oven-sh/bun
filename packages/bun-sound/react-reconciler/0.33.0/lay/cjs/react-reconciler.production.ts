@@ -2376,7 +2376,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
       ((current$asQueue = current.updateQueue), queue === current$asQueue)
     ) {
       var newFirst: RR.Update | null = null,
-        newLast: RR.Update | null = null;
+        newLast: RR.Update | null = null as RR.Update | null;
       queue$asUpdate = queue.firstBaseUpdate;
       if (null !== queue$asUpdate) {
         do {
@@ -2452,7 +2452,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
     if (null !== firstBaseUpdate) {
       var newState: RR.State = queue.baseState;
       lastBaseUpdate$asLanes = 0;
-      current$asLast = firstPendingUpdate = lastPendingUpdate$asState = null;
+      current$asLast = (firstPendingUpdate = lastPendingUpdate$asState = null) as RR.Update | null;
       pendingQueue = firstBaseUpdate;
       do {
         var updateLane: RR.Lane = pendingQueue.lane & -536870913,
@@ -2899,7 +2899,7 @@ export default function ($$$config: RR.HostConfig): RR.Reconciler {
     else {
       current$asFirst = baseQueue.next!;
       var newBaseQueueFirst: RR.HookUpdate | null = (baseFirst$asBaseState = null),
-        newBaseQueueLast: RR.HookUpdate | null = null,
+        newBaseQueueLast: RR.HookUpdate | null = null as RR.HookUpdate | null,
         update: RR.HookUpdate | null = current$asFirst,
         didReadFromEntangledAsyncAction$51 = !1;
       do {

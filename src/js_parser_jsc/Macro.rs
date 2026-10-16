@@ -110,6 +110,16 @@ impl MacroContext {
         caller: Expr,
         function_name: &[u8],
     ) -> crate::Result<Expr> {
+        // A macro's entry point is text made here, with names in it from the source that imports the macro, which may be a
+        // string. The engine would refuse it, but nothing catches that rejection.
+        if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Strict {
+            log.add_range_error(
+                Some(source),
+                import_range,
+                b"Macros cannot be used with --disallow-code-generation-from-strings=strict",
+            );
+            return Err(crate::Error::MacroFailed);
+        }
         let _store_guard = DisableStoreReset::new();
         // const is_package_path = isPackagePath(specifier);
         let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {

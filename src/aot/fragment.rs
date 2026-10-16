@@ -20,7 +20,7 @@ use bun_sema::check::{Identity, MethodStore, Noted, NumberFlow};
 use bun_sema::hir::{ClassId, FnId};
 use bun_sema::program::FileId;
 use std::hash::{BuildHasher, Hash};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use bun_threading::Guarded;
 
 // ───────────────────────────── keys ─────────────────────────────
 
@@ -59,6 +59,7 @@ pub enum FuncKey {
     FilesByPath(FileId),
     EvaluationByNumber(FileId),
     ExportVariablesReader(FileId),
+    NamespaceForHost(FileId),
 }
 
 impl FuncKey {
@@ -87,7 +88,8 @@ impl FuncKey {
             | FuncKey::DefaultOfExportedObject(file, _)
             | FuncKey::FilesByPath(file)
             | FuncKey::EvaluationByNumber(file)
-            | FuncKey::ExportVariablesReader(file) => file,
+            | FuncKey::ExportVariablesReader(file)
+            | FuncKey::NamespaceForHost(file) => file,
         }
     }
 }
@@ -519,15 +521,17 @@ fn for_each_id_of_header(func: &mut Func, ids: &mut impl Ids) {
 }
 
 fn for_each_id_of_value(value: &mut Value, ids: &mut impl Ids) {
-    let Value { def, pos: _, ty, prediction, finds_initialized: _, is_in_tail_position: _ } = value;
-    pass!(ids.ty(ty));
-    match prediction {
+    pass!(ids.ty(&mut value.ty));
+    pass!(ids.ty(&mut value.signature));
+    let mut prediction = value.prediction();
+    match &mut prediction {
         Prediction::None => {}
         Prediction::Ty(expected) | Prediction::Field(expected) => pass!(ids.ty(expected)),
         Prediction::Closure(func) => pass!(ids.func(func, Used::Expected)),
         Prediction::ByKey(property) => pass!(ids.str(property)),
     }
-    match def {
+    value.set_prediction(prediction);
+    match &mut value.def {
         Def::Param(..) => {}
         Def::Op(op) => for_each_id_of_op(op, ids),
     }
@@ -873,10 +877,6 @@ fn shard_of(hash: u64) -> usize {
     ((hash ^ (hash >> 32)).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 58) as usize
 }
 
-fn locked<T>(shard: &Mutex<T>) -> MutexGuard<'_, T> {
-    shard.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
 struct InternerShard<K> {
     keys: Vec<K>,
     hashes: Vec<u64>,
@@ -884,18 +884,18 @@ struct InternerShard<K> {
 }
 
 pub struct Interner<K> {
-    shards: Vec<Mutex<InternerShard<K>>>,
+    shards: Vec<Guarded<InternerShard<K>>>,
 }
 
 impl<K: Hash + Eq + Clone> Interner<K> {
     fn new() -> Interner<K> {
-        Interner { shards: (0..SHARDS).map(|_| Mutex::new(InternerShard { keys: Vec::new(), hashes: Vec::new(), ids: hashbrown::HashTable::new() })).collect() }
+        Interner { shards: (0..SHARDS).map(|_| Guarded::new(InternerShard { keys: Vec::new(), hashes: Vec::new(), ids: hashbrown::HashTable::new() })).collect() }
     }
 
     fn intern(&self, key: K) -> u32 {
         let hash = rustc_hash::FxBuildHasher.hash_one(&key);
         let shard_number = shard_of(hash);
-        let mut shard = locked(&self.shards[shard_number]);
+        let mut shard = self.shards[shard_number].lock();
         let InternerShard { keys, hashes, ids } = &mut *shard;
         if let Some(&index) = ids.find(hash, |&index| keys[index as usize] == key) {
             return index * SHARDS as u32 + shard_number as u32;
@@ -910,22 +910,22 @@ impl<K: Hash + Eq + Clone> Interner<K> {
     pub fn find(&self, key: &K) -> Option<u32> {
         let hash = rustc_hash::FxBuildHasher.hash_one(key);
         let shard_number = shard_of(hash);
-        let shard = locked(&self.shards[shard_number]);
+        let shard = self.shards[shard_number].lock();
         let index = *shard.ids.find(hash, |&index| shard.keys[index as usize] == *key)?;
         Some(index * SHARDS as u32 + shard_number as u32)
     }
 
     pub fn key(&self, id: u32) -> K {
-        locked(&self.shards[id as usize % SHARDS]).keys[id as usize / SHARDS].clone()
+        self.shards[id as usize % SHARDS].lock().keys[id as usize / SHARDS].clone()
     }
 
     pub fn bound(&self) -> usize {
-        SHARDS * self.shards.iter().map(|shard| locked(shard).keys.len()).max().unwrap_or(0)
+        SHARDS * self.shards.iter().map(|shard| shard.lock().keys.len()).max().unwrap_or(0)
     }
 }
 
 pub struct ProgramIds {
-    strs: Vec<Mutex<Strs>>,
+    strs: Vec<Guarded<Strs>>,
     tys: Interner<Declared>,
     pub layouts: Interner<LayoutKey>,
     pub globals: Interner<GlobalKey>,
@@ -934,18 +934,18 @@ pub struct ProgramIds {
 
 impl Default for ProgramIds {
     fn default() -> ProgramIds {
-        ProgramIds { strs: (0..SHARDS).map(|_| Mutex::new(Strs::default())).collect(), tys: Interner::new(), layouts: Interner::new(), globals: Interner::new(), funcs: Interner::new() }
+        ProgramIds { strs: (0..SHARDS).map(|_| Guarded::new(Strs::default())).collect(), tys: Interner::new(), layouts: Interner::new(), globals: Interner::new(), funcs: Interner::new() }
     }
 }
 
 impl ProgramIds {
     pub fn str(&self, hash: u64, bytes: &[u8]) -> u32 {
         let shard_number = shard_of(hash);
-        locked(&self.strs[shard_number]).intern_hashed(hash, bytes).0 * SHARDS as u32 + shard_number as u32
+        self.strs[shard_number].lock().intern_hashed(hash, bytes).0 * SHARDS as u32 + shard_number as u32
     }
 
     pub fn bound_of_strs(&self) -> usize {
-        SHARDS * self.strs.iter().map(|shard| locked(shard).len()).max().unwrap_or(0)
+        SHARDS * self.strs.iter().map(|shard| shard.lock().len()).max().unwrap_or(0)
     }
 
     pub fn bound_of_tys(&self) -> usize {
@@ -1023,30 +1023,30 @@ impl Fragment {
 /// a file counts, and takes the place of the one before as a whole. No two tasks have one file at the same time.
 pub struct Fragments {
     /// By `FileId`.
-    by_file: Vec<Mutex<Option<Box<Fragment>>>>,
+    by_file: Vec<Guarded<Option<Box<Fragment>>>>,
     pub program_ids: ProgramIds,
 }
 
 impl Fragments {
     /// `files`: how many the program has.
     pub fn new(files: usize) -> Fragments {
-        Fragments { by_file: (0..files).map(|_| Mutex::new(None)).collect(), program_ids: ProgramIds::default() }
+        Fragments { by_file: (0..files).map(|_| Guarded::new(None)).collect(), program_ids: ProgramIds::default() }
     }
 
     pub fn put(&self, mut fragment: Box<Fragment>) {
         self.program_ids.assign(&mut fragment);
-        let mut place = self.by_file[fragment.file.idx()].lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut place = self.by_file[fragment.file.idx()].lock();
         fragment.times_translated += place.as_ref().map_or(0, |earlier| earlier.times_translated);
         *place = Some(fragment);
     }
 
     pub fn is_any_of(&self, test: &dyn Fn(FileId) -> bool) -> bool {
-        self.by_file.iter().any(|place| place.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref().is_some_and(|fragment| test(fragment.file)))
+        self.by_file.iter().any(|place| place.lock().as_ref().is_some_and(|fragment| test(fragment.file)))
     }
 
     /// Once every task has ended.
     pub fn take(&self) -> Vec<Fragment> {
-        let fragments = self.by_file.iter().filter_map(|place| place.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take());
+        let fragments = self.by_file.iter().filter_map(|place| place.lock().take());
         fragments.map(|fragment| *fragment).collect()
     }
 }

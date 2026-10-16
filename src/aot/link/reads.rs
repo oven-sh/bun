@@ -88,7 +88,7 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
                                 }
                             }
                         }
-                        &Def::Op(Op::PropGet { obj, name }) if value.ty == tys.anything || value.prediction != Prediction::None => {
+                        &Def::Op(Op::PropGet { obj, name }) if value.ty == tys.anything || value.prediction() != Prediction::None => {
                             let receiver = func.ty(obj);
                             if let Some(view) = (if receiver.is_some() { tys.get(receiver).only_layout() } else { None })
                                 && seen.insert((view, name))
@@ -124,7 +124,7 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
         for func in funcs.iter_mut() {
             for number in 0..func.values.len() {
                 match func.values[number].def {
-                    Def::Op(Op::PropGet { obj, name }) if func.values[number].ty == tys.anything || func.values[number].prediction != Prediction::None => {
+                    Def::Op(Op::PropGet { obj, name }) if func.values[number].ty == tys.anything || func.values[number].prediction() != Prediction::None => {
                         let receiver = func.ty(obj);
                         let Some(view) = (if receiver.is_some() { tys.get(receiver).only_layout() } else { None }) else { continue };
                         let held = match known.get(&(view, name)) {
@@ -143,7 +143,7 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
                         let own = func.values[number].ty;
                         if held.is_some() && held != own && (own == tys.anything || own.is_some() && tys.get(held).is_described_within(tys.get(own))) {
                             func.values[number].ty = held;
-                            func.values[number].prediction = Prediction::None;
+                            func.values[number].set_prediction(Prediction::None);
                             reads += 1;
                         }
                     }

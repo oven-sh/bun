@@ -37,7 +37,7 @@ fn main() {
         .take(files)
         .filter_map(|record| record.get(1..1 + record[0] as usize))
         .find_map(|name| name.strip_prefix(b"table-"))
-        .map(|hash| String::from_utf8_lossy(hash).into_owned());
+        .and_then(|hash| String::from_utf8(hash.to_vec()).ok());
     let table = repo.join("src/aot/builtins_generated.rs");
     let current = fs::read_to_string(&table)
         .ok()

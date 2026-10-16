@@ -201,7 +201,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let found = self.c.symbol_of_identifier(file, e, name)?;
         let sym = self.value_symbol(found);
         // What it holds is known. Where it may not hold it yet, the reference is translated, and throws.
-        if self.c.may_be_in_dead_zone(sym, file, e) {
+        if self.c.may_be_in_dead_zone(sym, file, e) || self.c.may_be_overridden_at(sym, file, e) {
             return None;
         }
         if let Some(value) = self.c.constant_held_by(sym) {

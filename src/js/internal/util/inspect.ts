@@ -63,7 +63,6 @@ const DatePrototypeGetTime = Date.prototype.getTime;
 const DatePrototypeToISOString = Date.prototype.toISOString;
 const DatePrototypeToString = Date.prototype.toString;
 const ErrorPrototypeToString = Error.prototype.toString;
-const FunctionPrototypeBind = Function.prototype.bind;
 const FunctionPrototypeToString = Function.prototype.toString;
 const JSONStringify = JSON.stringify;
 const MapPrototypeEntries = Map.prototype.entries;
@@ -87,7 +86,6 @@ const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
 const ObjectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectHasOwn = Object.hasOwn;
-const ObjectIs = Object.is;
 const ObjectKeys = Object.keys;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ObjectPrototypePropertyIsEnumerable = Object.prototype.propertyIsEnumerable;
@@ -168,16 +166,18 @@ const {
   isBoxedPrimitive,
   isDataView,
   isExternal,
-  isMapIterator,
   isModuleNamespaceObject,
   isNativeError,
   isNumberObject,
-  isSetIterator,
   isStringObject,
   isWeakMap,
   isWeakSet,
   isDate,
 } = require("node:util/types");
+
+// previewEntries() reads internal fields of whatever these two accept, so a script must not be able to replace them.
+const isMapIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator", 1);
+const isSetIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator", 1);
 
 function assert(p: unknown, message?: string): void {
   if (!p) throw new (require("internal/errors").AssertionError)(message);
@@ -521,17 +521,22 @@ function getUserContext(ctx: Context): Record<string, any> {
   object.sorted = ctx.sorted;
   object.getters = ctx.getters;
   object.numericSeparator = ctx.numericSeparator;
-  if (ctx.userOptions !== undefined) object.userOptions = ctx.userOptions;
-  if (ctx.circular !== undefined) object.circular = ctx.circular;
-  if (ctx.seenRefs !== undefined) object.seenRefs = ctx.seenRefs;
+  const userOptions = ctx.userOptions;
+  if (userOptions !== undefined) object.userOptions = userOptions;
+  const circular = ctx.circular;
+  if (circular !== undefined) object.circular = circular;
+  const seenRefs = ctx.seenRefs;
+  if (seenRefs !== undefined) object.seenRefs = seenRefs;
   return object;
 }
 
 function stylizeByUser(ctx: Context, str: unknown, styleType: string): unknown {
   const object = getUserContext(ctx);
   const result = (ctx.stylize as any).$call(object, str, styleType);
-  if (typeof object.indentationLvl === "number") ctx.indentationLvl = object.indentationLvl;
-  if (typeof object.currentDepth === "number") ctx.currentDepth = object.currentDepth;
+  const indentationLvl = object.indentationLvl;
+  if (typeof indentationLvl === "number") ctx.indentationLvl = indentationLvl;
+  const currentDepth = object.currentDepth;
+  if (typeof currentDepth === "number") ctx.currentDepth = currentDepth;
   ctx.stylize = object.stylize;
   ctx.isPlain = object.stylize === stylizeNoColor;
   ctx.showHidden = object.showHidden;
@@ -3367,7 +3372,10 @@ const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBun
 const kPerCodePointWidthOptions: Record<string, unknown> = { __proto__: null, perCodePoint: true, countAnsiEscapeCodes: true };
 
 function getStringWidth(str: any, removeControlChars: unknown = true): number {
-  if (typeof str === "string" && str.length <= 32 && isPrintableASCII(str)) return str.length;
+  if (typeof str === "string") {
+    const length = str.length;
+    if (length <= 32 && isPrintableASCII(str)) return length;
+  }
   if (removeControlChars) str = stripVTControlCharacters(str);
   str = StringPrototypeNormalize.$call(str, "NFC");
   // node measures per code point, not grapheme clusters; ANSI was already stripped above.

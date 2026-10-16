@@ -190,7 +190,7 @@ fn at_the_join(func: &Func, noted: &FxHashMap<V, Noted>, value: V, to: TyId, mut
 
 fn quoted(out: &mut String, bytes: &[u8]) {
     out.push('"');
-    for c in String::from_utf8_lossy(bytes).chars() {
+    for c in bstr::BStr::new(bytes).to_string().chars() {
         match c {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
@@ -219,6 +219,7 @@ fn append_member(result: &mut String, has: bool, name: &str) {
 }
 
 fn append_primitives(result: &mut String, prims: u32) {
+    let prims = Declared::prims(prims).with_literal_string_widened().prims;
     let has_both = prims & prim::NULLISH == prim::NULLISH;
     let prims = if has_both && (!result.is_empty() || prims & !prim::NULLISH != 0) { prims & !prim::NULLISH } else { prims };
     append_member(result, prims & prim::BOOLEAN == prim::BOOLEAN, "boolean");
@@ -237,12 +238,12 @@ fn append_primitives(result: &mut String, prims: u32) {
 pub fn name_of_layout(program: &Program, layout: crate::id::LayoutId) -> String {
     let layout = &program.layouts[layout.idx()];
     if layout.name.is_some() && !program.strs.get(layout.name).is_empty() {
-        return String::from_utf8_lossy(program.strs.get(layout.name)).into_owned();
+        return bstr::BStr::new(program.strs.get(layout.name)).to_string();
     }
     let mut result = String::from("{");
     for (i, field) in layout.fields.iter().take(4).enumerate() {
         result.push_str(if i == 0 { " " } else { ", " });
-        result.push_str(&String::from_utf8_lossy(program.strs.get(field.name)));
+        result.push_str(&bstr::BStr::new(program.strs.get(field.name)).to_string());
     }
     result.push_str(if layout.fields.len() > 4 { ", ... }" } else { " }" });
     result
@@ -267,7 +268,7 @@ pub fn describe(program: &Program, ty: TyId) -> String {
                 let text = if element.contains(" | ") { format!("({element})[]") } else { format!("{element}[]") };
                 append_member(&mut result, true, &text);
             }
-            Part::Global(name, _) => append_member(&mut result, true, &String::from_utf8_lossy(program.strs.get(*name))),
+            Part::Global(name, _) => append_member(&mut result, true, &bstr::BStr::new(program.strs.get(*name)).to_string()),
         }
     }
     append_member(&mut result, declared.any_object, "object");
@@ -501,7 +502,11 @@ fn text_of_view(program: &Program, view: crate::id::LayoutId, keys: &[String]) -
     text
 }
 
-fn member_keys<'k>(program: &Program, view: crate::id::LayoutId, keys: &'k [String]) -> Vec<&'k str> {
+fn key_of_what_may_give_up(layout: crate::id::LayoutId) -> String {
+    format!("gives up {}", layout.idx())
+}
+
+fn member_keys(program: &Program, view: crate::id::LayoutId, keys: &[String]) -> Vec<String> {
     let members = &program.layouts[view.idx()].members;
     let becomes_member = |layout: usize| {
         let (mut pending, mut seen) = (vec![layout], vec![layout]);
@@ -518,7 +523,19 @@ fn member_keys<'k>(program: &Program, view: crate::id::LayoutId, keys: &'k [Stri
         }
         false
     };
-    (0..program.layouts.len()).filter(|&layout| program.layouts[layout].kind == LayoutKind::Record && !keys[layout].is_empty() && becomes_member(layout)).map(|layout| keys[layout].as_str()).collect()
+    (0..program.layouts.len())
+        .filter(|&layout| program.layouts[layout].kind == LayoutKind::Record && becomes_member(layout))
+        .filter_map(|layout| {
+            let id = crate::id::LayoutId::new(layout);
+            if !keys[layout].is_empty() {
+                Some(keys[layout].clone())
+            } else if may_give_up(program, id) {
+                Some(key_of_what_may_give_up(id))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn narrows_records(program: &Program, from: &Declared, to: &Declared) -> bool {
@@ -551,13 +568,13 @@ fn passes(program: &Program, declared: &Declared, linked: Option<&Linked>) -> u3
             Part::Class(layout) => !(is_held && is_closed_record(program, *layout)),
             Part::Global(..) => true,
         });
-    declared.prims | if is_any_object_taken { class::OBJECT | class::TAGGED } else { 0 } | if is_any_function_taken { class::FUNCTION } else { 0 }
+    declared.clone().with_literal_string_widened().prims | if is_any_object_taken { class::OBJECT | class::TAGGED } else { 0 } | if is_any_function_taken { class::FUNCTION } else { 0 }
 }
 
 fn write_type(program: &Program, out: &mut String, ty: TyId, depth: u32, linked: Option<&Linked>) {
     let declared = program.tys.get(ty);
     let is_held = is_held_to_members(program, declared, linked);
-    let _ = write!(out, "{{\"p\":{},\"o\":{},\"fn\":{}", declared.prims, declared.any_object, declared.any_function);
+    let _ = write!(out, "{{\"p\":{},\"o\":{},\"fn\":{}", declared.clone().with_literal_string_widened().prims, declared.any_object, declared.any_function);
     if let Some((least, most)) = declared.ints {
         let _ = write!(out, ",\"i\":[{least},{most}]");
     }
@@ -669,7 +686,7 @@ fn calls_entered(program: &Program, func: &Func) -> FxHashMap<V, (u32, usize)> {
 
 fn members_entered(program: &Program, func: &Func) -> FxHashMap<V, String> {
     let mut entered: FxHashMap<V, String> = FxHashMap::default();
-    let member = |layout: crate::id::LayoutId, name: &[u8]| format!("{}.{}", name_of_layout(program, layout), String::from_utf8_lossy(name));
+    let member = |layout: crate::id::LayoutId, name: &[u8]| format!("{}.{}", name_of_layout(program, layout), bstr::BStr::new(name));
     for &v in func.blocks.iter().flat_map(|block| &block.ops) {
         match func.op(v) {
             Some(&Op::FieldSet { value, layout, field, .. }) if program.layouts[layout.idx()].kind != LayoutKind::Environment => {
@@ -846,7 +863,7 @@ fn conversions_behind(func: &Func, v: V) -> Vec<u32> {
 
 pub fn may_give_up(program: &Program, layout: crate::id::LayoutId) -> bool {
     let described = &program.layouts[layout.idx()];
-    described.kind == LayoutKind::Record
+    matches!(described.kind, LayoutKind::Record | LayoutKind::Instance)
         && described.is_allocated
         && described.admits_unchecked_objects()
         && !program.layouts.iter().any(|view| !view.admits_foreign && view.members.contains(&layout))
@@ -855,7 +872,7 @@ pub fn may_give_up(program: &Program, layout: crate::id::LayoutId) -> bool {
 fn keeps_its_fields(program: &Program, layout: crate::id::LayoutId) -> bool {
     let described = &program.layouts[layout.idx()];
     match described.kind {
-        LayoutKind::Instance => described.class_flags & crate::ir::class_flags::IS_LAID_OUT != 0 && described.is_allocated,
+        LayoutKind::Instance => described.class_flags & crate::ir::class_flags::IS_LAID_OUT != 0 && described.is_allocated && !may_give_up(program, layout),
         LayoutKind::Record => described.is_allocated && !may_give_up(program, layout),
         _ => false,
     }
@@ -886,7 +903,7 @@ fn text_of_shape(program: &Program, layout: crate::id::LayoutId, linked: Option<
 fn key_of_shape(program: &Program, layout: crate::id::LayoutId) -> String {
     let described = &program.layouts[layout.idx()];
     match described.kind {
-        LayoutKind::Instance => format!("class {}", String::from_utf8_lossy(program.strs.get(described.name))),
+        LayoutKind::Instance => format!("class {}", bstr::BStr::new(program.strs.get(described.name))),
         _ => format!("record {}", id_of(text_of_shape(program, layout, None).as_bytes(), 0, 0, "", 0)),
     }
 }
@@ -962,6 +979,11 @@ fn rules(program: &Program, func: &Func, v: V, spans: &FxHashMap<V, Span>, opera
         Some(&Op::New(layout)) if keys.is_some() && program.layouts[layout.idx()].kind == LayoutKind::Record && keeps_its_fields(program, layout) => {
             let mut rest = String::from(",\"shape\":");
             quoted(&mut rest, keys.map_or(&b""[..], |keys| keys[layout.idx()].as_bytes()));
+            found.push((Rule { kind: Kind::Made, what: "NewObjectWithShape", rest }, spans.get(&v).copied(), objects_alone));
+        }
+        Some(&Op::New(layout)) if keys.is_some() && program.layouts[layout.idx()].kind == LayoutKind::Record && may_give_up(program, layout) => {
+            let mut rest = String::from(",\"shape\":");
+            quoted(&mut rest, key_of_what_may_give_up(layout).as_bytes());
             found.push((Rule { kind: Kind::Made, what: "NewObjectWithShape", rest }, spans.get(&v).copied(), objects_alone));
         }
         Some(&Op::PropDelete { obj, name }) if !is_seen_through(obj) => {

@@ -28,12 +28,15 @@ a React update costs half the instructions (12,867 K to 6,571 K) and a TanStack 
 
 ## Using one
 
-Either of these; the first wins if both are there.
+One of these; the first that is there wins.
 
 1. **In the project:** copy `<name>/<version>/sound.json` and `<name>/<version>/lay/` to
    `<project root>/.sound/<name>/`. Do not copy `src/`: its ambient `.d.ts` files would be picked up by
    your own tsconfig.
-2. **As a dependency:** install the companion package (`@sound/<name>`, same version number as the
+2. **In the package itself:** nothing to do. A package written in TypeScript and built with `bun build --dts`
+   ships its own typed version: the first line of `index.d.ts` is `// @sound index.sound.ts <sha256 of index.js>`.
+   It has no `sound.json`.
+3. **As a dependency:** install the companion package (`@sound/<name>`, same version number as the
    package it types) and keep it listed in `dependencies` or `devDependencies`. A companion that is
    only there transitively is ignored.
 
@@ -78,7 +81,7 @@ A package for which no typed version is installed is compiled as always, and not
 
 | field | meaning |
 |---|---|
-| `sound` | format number, `1` |
+| `sound` | format number, `1` or `2`. In format `2` a laid `.js`, `.cjs` or `.mjs` file holds TypeScript text: it replaces the installed file at its own path, so nothing about how modules find each other changes, and it is read as TypeScript. A Bun that does not know the format compiles the package as installed |
 | `name`, `version` | must equal the installed package.json's, exactly |
 | `when` | build-time defines that must have these string values. React's entries choose between a production and a development bundle on `NODE_ENV`; the typed text is the production one, so it only applies to production builds |
 | `basis` | installed files that are *not* replaced but that the typed text was derived from: path to sha256. A patched package therefore never gets types written for other bytes |
@@ -117,7 +120,7 @@ export BUN_SEMA_TS_LIB=/path/to/typescript/lib
 The gates work on packages as npm installs them. `trees/installs/<set>/package.json` pins what each tree was last run with:
 
 ```sh
-cd trees/installs/client && bun install      # client, server-19.3.0 .. server-19.0.0, seroval, fuse, sdk-0.112.1, sdk-0.128.0
+cd trees/installs/client && bun install      # client, server-19.3.1 .. server-19.0.0, seroval, fuse, sdk-0.112.1, sdk-0.128.0
 ```
 
 ```sh
@@ -243,6 +246,28 @@ function f(a: RR.Fiber) { /*$*/var a$asQueue: RR.UpdateQueue;/*$*/
   return a$asQueue.shared;        // npm: return a.shared;
 ```
 
+**A variable with two roles opens the records it holds.** A variable without a written type gets the union of everything that is
+stored to it. If one role is `any` (an error, a prop, a child) and another is a record, then `any` reaches the record, and the record and
+all that it holds admit foreign objects: every read of them gets a shape test and a slow path. Ten such variables made typed react-dom 10%
+larger than the untyped package. `--aot-explain=foreign` names the first such place for each record. Give every role its own variable and
+write its type.
+
+**Cast a constructor function without `unknown`.** `new (F as unknown as FConstructor)(..)` hands `F` to `unknown`, and whoever holds an
+`unknown` may call it with anything, so the records among its parameters, `this` included, admit foreign objects. Give the constructor's
+type the function's own call signature next to the construct signature. It is then assignable to the function's type, and TypeScript accepts
+`F as FConstructor`:
+
+```ts
+interface RequestConstructor { new (state: State): Request; (this: Request, state: State): void }
+function RequestInstance(this: Request, state: State) { this.state = state; }
+var request = new (RequestInstance as RequestConstructor)(state);
+```
+
+**Say what is frozen.** Of `Object.freeze(x)`, `Object.seal(x)` or `Object.preventExtensions(x)` with an `x` of type `any` the compiler has to
+assume that `x` may be any laid-out object of the whole program. Every layout then counts as one that may be frozen, and every store to a
+field tests for it: 807 of the 3,520 stores in a TanStack Start server, react-dom's among them, for one line of seroval. Give the operand the
+type of what really arrives. `--aot-explain=alterations` names the first such place under "integrity level".
+
 **Do not lean on the host project.** The text is checked under the user's tsconfig. Without `noImplicitAny`
 TypeScript has no evolving types (`var x;` and `var x = null` are plain `any`), and without `strictNullChecks` a union cannot be
 told apart by `null`: so write the type on every variable and give each role its own. Declare every global that
@@ -252,6 +277,12 @@ library may lack through a marked cast.
 **Entries stay CommonJS if they were.** `tools/cjs_entry.py` keeps npm's own entry text, resolves its
 `NODE_ENV` switch to the production arm and points `require('./cjs/x.js')` at `x.ts`. An ES-module entry would
 turn `import { nameThatDoesNotExist }` from `undefined` into a build error and change what `require()` returns.
+
+**A small CommonJS file is typed where it lies.** In format `2` the typed text takes the place of `cjs/x.production.js` at that path and keeps
+its `exports.name = ..`. The entry, and how an importer finds `name`, stay npm's own, so `import { c } from "react/compiler-runtime"` is still
+resolved when the program is built. Through an entry that hands on the `default` of a typed ES module the importer holds an object and looks
+`c` up by name at every call, some 25 instructions more. `PLACED` in `check.py` lists these files. They are kept as `.cts` under `src/`, and
+`check.py` writes them to `<out>/sound/<name>/`, not into `<out>/node_modules`, where a `.js` file would be read as JavaScript.
 
 **Never lay `x.ts` beside `x.js` when there is an `x.d.ts`.** The checker prefers `x.ts`, and the package's
 public types vanish for its users. Name it `x.sound.ts` (seroval: `dist/index.sound.ts`, and `dist/index.js`

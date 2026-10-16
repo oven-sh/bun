@@ -13,7 +13,8 @@ use bun_sema::check::given::{Jump, NO_JUMP, parameters_handed_elements, NULL, Ed
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use std::sync::{Arc, Mutex, PoisonError};
+use bun_threading::Guarded;
+use std::sync::Arc;
 
 const NIL: u8 = UNDEFINED | NULL;
 
@@ -380,7 +381,7 @@ fn property_deleted_by(func: &Func, op: &Op) -> Option<(V, StrId)> {
     }
 }
 
-pub(super) type FieldsByName = Mutex<FxHashMap<StrId, Arc<[(LayoutId, u32)]>>>;
+pub(super) type FieldsByName = Guarded<FxHashMap<StrId, Arc<[(LayoutId, u32)]>>>;
 
 pub(super) fn fields_by_the_names_that_are_deleted(program: &Program, contents: &[u8], in_parallel: InParallel<'_>) -> FieldsByName {
     let mut runs: Vec<(&[Func], &[u8], Vec<StrId>)> = program.funcs.chunks(FUNCTIONS_OF_A_TASK).zip(contents.chunks(FUNCTIONS_OF_A_TASK)).map(|(funcs, contents)| (funcs, contents, Vec::new())).collect();
@@ -401,7 +402,7 @@ pub(super) fn fields_by_the_names_that_are_deleted(program: &Program, contents: 
             }
         }
     }
-    Mutex::new(found.into_iter().map(|(name, having)| (name, having.into())).collect())
+    Guarded::new(found.into_iter().map(|(name, having)| (name, having.into())).collect())
 }
 
 fn fields_of_any_object(program: &Program, known: &FieldsByName, ty: TyId, name: StrId) -> Arc<[(LayoutId, u32)]> {
@@ -409,12 +410,12 @@ fn fields_of_any_object(program: &Program, known: &FieldsByName, ty: TyId, name:
     if ty.is_none() || ty == program.tys.anything || !program.tys.get(ty).any_object && !program.tys.get(ty).parts.iter().any(accepts_foreign_objects) {
         return Arc::default();
     }
-    if let Some(found) = known.lock().unwrap_or_else(PoisonError::into_inner).get(&name) {
+    if let Some(found) = known.lock().get(&name) {
         return found.clone();
     }
     let of_objects = program.layouts.iter().enumerate().filter(|of| of.1.kind != crate::ir::LayoutKind::Environment);
     let found: Arc<[(LayoutId, u32)]> = of_objects.filter_map(|(index, layout)| Some((LayoutId::new(index), layout.field(name)?))).collect();
-    known.lock().unwrap_or_else(PoisonError::into_inner).insert(name, found.clone());
+    known.lock().insert(name, found.clone());
     found
 }
 
@@ -1397,8 +1398,8 @@ pub(super) fn make_room_for_nil(program: &mut Program, contents: &[u8], fields_b
             let value = &mut func.values[number];
             is_given_room[number] = value.ty.is_some() && value.ty != tys.anything && tys.get(value.ty).prims & prim::NULLISH == 0;
             let is_empty = |view: &Part| matches!(view, Part::Class(view) if view.is_some() && is_empty_view(&layouts[view.idx()]));
-            if nil & STRANGER != 0 && value.ty.is_some() && value.ty != tys.anything && value.prediction == Prediction::None && !tys.get(value.ty).parts.iter().any(is_empty) {
-                value.prediction = Prediction::Ty(value.ty);
+            if nil & STRANGER != 0 && value.ty.is_some() && value.ty != tys.anything && value.prediction() == Prediction::None && !tys.get(value.ty).parts.iter().any(is_empty) {
+                value.set_prediction(Prediction::Ty(value.ty));
             }
             value.ty = with_room(tys, value.ty, nil);
             if let Def::Op(Op::Coerce { to, why, .. }) = &mut value.def {

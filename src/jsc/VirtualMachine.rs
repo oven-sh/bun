@@ -94,6 +94,8 @@ pub struct InitOptions {
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
+    /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
+    pub global_cache: bun_options_types::global_cache::GlobalCache,
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
@@ -118,6 +120,7 @@ impl Default for InitOptions {
             log: None,
             env_loader: None,
             graph: None,
+            global_cache: bun_options_types::global_cache::GlobalCache::disable,
             smol: false,
             eval_mode: false,
             is_main_thread: false,
@@ -541,12 +544,14 @@ pub unsafe extern "C" fn Bun__standaloneModuleSourcePath(
     len: usize,
     out_len: *mut usize,
 ) -> *const u8 {
+    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
     let name = unsafe { bun_core::ffi::slice(name, len) };
     if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
         return core::ptr::null();
     }
     match standalone_module_graph().and_then(|graph| graph.source_path(name)) {
         Some(source_path) => {
+            // SAFETY: `out_len` is the caller's writable out-parameter.
             unsafe { *out_len = source_path.len() };
             source_path.as_ptr()
         }
@@ -612,6 +617,7 @@ pub unsafe extern "C" fn Bun__standaloneModuleIsCompiled(name: *const u8, len: u
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__standaloneSourcesOfCompiledProgram(out_len: *mut usize) -> *const u8 {
     let paths = standalone_module_graph().map_or(&[][..], |graph| graph.sources_of_compiled_program());
+    // SAFETY: `out_len` is the caller's writable out-parameter.
     unsafe { *out_len = paths.len() };
     paths.as_ptr()
 }
@@ -1522,6 +1528,7 @@ impl VirtualMachine {
                 return;
             }
             let (fd, offset_in_file) = graph.aot_image_file().unwrap_or((-1, 0));
+            // SAFETY: `image` is a part of the `'static` graph, which is never unmapped.
             unsafe { Bun__AOT__useImage(image.as_ptr(), image.len(), fd, offset_in_file) };
             bun_analytics::features::aot.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         });
@@ -4943,6 +4950,12 @@ impl VirtualMachine {
         VirtualMachine::get().as_mut().ref_strings.remove(&hash);
     }
 
+    /// Whether what is made of a file on disk is static code (`ResolvedSource::is_static`). A standalone executable is
+    /// stored in itself, so to it a file on disk is not part of the program.
+    pub fn is_file_on_disk_static(in_standalone_executable: bool, path: &[u8]) -> bool {
+        !in_standalone_executable && !path.starts_with(b"data:")
+    }
+
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
     pub fn ref_counted_resolved_source(
         &mut self,
@@ -5585,21 +5598,16 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
             global_cache,
         );
-        if let Err(err_) = resolve_result {
-            let err = err_;
+        if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
-            let msg = log
+            let resolve_msg_index = log
                 .msgs
                 .iter()
-                .find_map(|m| {
-                    if let bun_ast::Metadata::Resolve(_) = &m.metadata {
-                        Some(m.clone())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| {
+                .position(|m| matches!(m.metadata, bun_ast::Metadata::Resolve(_)));
+            let mut msg = match resolve_msg_index {
+                Some(i) => log.msgs[i].clone(),
+                None => {
                     let printed = crate::ResolveMessage::fmt(
                         specifier_utf8.slice(),
                         source_utf8.slice(),
@@ -5615,7 +5623,20 @@ impl VirtualMachine {
                         }),
                         ..Default::default()
                     }
-                });
+                }
+            };
+            // `log` dies with this frame. Deduplicated: `_resolve`'s retry can log a failure twice.
+            let mut notes = core::mem::take(&mut msg.notes).into_vec();
+            for (i, logged) in log.msgs.iter().enumerate() {
+                if Some(i) == resolve_msg_index
+                    || !matches!(logged.kind, bun_ast::Kind::Err | bun_ast::Kind::Warn)
+                    || notes.iter().any(|note| note.text == logged.data.text)
+                {
+                    continue;
+                }
+                notes.push(logged.data.clone());
+            }
+            msg.notes = notes.into_boxed_slice();
             return Ok(Err(crate::ResolveMessage::create(
                 global,
                 &msg,

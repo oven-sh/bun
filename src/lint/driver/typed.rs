@@ -93,7 +93,7 @@ fn check_and_lint(
             b"tsconfig.of-no-project.json",
         );
         let mut already_read = already_read;
-        already_read.insert(config.clone(), OPTIONS_OF_NO_PROJECT.to_vec());
+        already_read.insert(config.clone(), OPTIONS_OF_NO_PROJECT.into());
         check(&left, already_read, Project::This(&config));
     }
     linted
@@ -682,7 +682,7 @@ pub(crate) fn lint(
         let changed = states
             .iter()
             .zip(files)
-            .filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?)));
+            .filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?.into())));
         let linted = check_and_lint(context, environment, files, &pending, changed.collect());
         let mut next = Vec::new();
         for (index, linted) in pending.iter().copied().zip(linted) {

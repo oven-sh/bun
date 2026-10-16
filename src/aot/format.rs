@@ -291,8 +291,8 @@ fn write_uleb128(out: &mut Vec<u8>, mut value: u32) {
 pub fn line_table(text: &[u8], line_starts: &[u32]) -> Vec<u8> {
     let mut table = Vec::new();
     write_uleb128(&mut table, line_starts.len() as u32);
-    for pair in line_starts.windows(2) {
-        write_uleb128(&mut table, pair[1] - pair[0]);
+    for (start, next) in line_starts.iter().zip(line_starts.iter().skip(1)) {
+        write_uleb128(&mut table, next - start);
     }
     let (mut listed, mut number_listed, mut previous) = (Vec::new(), 0, 0);
     let mut characters: Vec<u32> = Vec::new();
@@ -469,22 +469,25 @@ impl FunctionWriter<'_> {
             let (blocks, values) = (self.next_block, self.next_value);
             for (number, value) in func.values.iter().enumerate() {
                 let mut r = record(&value.def);
-                if value.finds_initialized && matches!(r.opcode, Opcode::GetModuleVariable) {
+                if value.finds_initialized() && matches!(r.opcode, Opcode::GetModuleVariable) {
                     r.immediates[1] = VARIABLE_IS_INITIALIZED;
                 }
-                if value.is_in_tail_position && matches!(r.opcode, Opcode::Call | Opcode::CallMethod | Opcode::CallDirect | Opcode::Operation) {
+                if value.is_in_tail_position() && matches!(r.opcode, Opcode::Call | Opcode::CallMethod | Opcode::CallDirect | Opcode::Operation) {
                     r.immediates[1] = CALL_IS_IN_TAIL_POSITION;
                 }
                 if is_marked.get(number) == Some(&true) {
                     r.immediates[1] = 1;
                 }
+                if value.signature.is_some() && matches!(r.opcode, Opcode::Call | Opcode::CallMethod) {
+                    r.immediates[1] = 2 + (value.signature.0 << 1 | u32::from(value.is_in_tail_position()));
+                }
                 let is_labeled = labelled.next_if(|access| access.1.idx() == number).is_some();
                 let place = placed.next_if(|access| access.1.idx() == number).map(|access| access.2);
-                assert!(place.is_none() || matches!(r.opcode, Opcode::GetById | Opcode::PutById), "a place stands on what is no access by name");
+                assert!(place.is_none() || matches!(r.opcode, Opcode::GetById | Opcode::PutById), "a location is attached to something that is not an access by name");
                 assert!(placed.peek().is_none_or(|access| access.1.idx() > number), "two words stand on one access, or the table is not sorted");
-                assert!(!is_labeled || matches!(r.opcode, Opcode::GetById | Opcode::PutById), "a label stands on what is no access by name");
+                assert!(!is_labeled || matches!(r.opcode, Opcode::GetById | Opcode::PutById), "a label is attached to something that is not an access by name");
                 let arguments = self.list(r.args.iter().map(|v| v.0));
-                let prediction = match value.prediction {
+                let prediction = match value.prediction() {
                     Prediction::None => NONE,
                     Prediction::Ty(ty) | Prediction::Field(ty) => ty.0,
                     Prediction::Closure(func) => PREDICTION_IS_CLOSURE | func.0,
@@ -585,15 +588,29 @@ fn site_table(p: &Program) -> Vec<u32> {
 
 enum Slice<'a> {
     Lent(&'a [Func]),
-    Owned(Vec<Func>),
+    Released(&'a mut [Func]),
 }
 
 impl Slice<'_> {
     fn funcs(&self) -> &[Func] {
         match self {
             Slice::Lent(funcs) => funcs,
-            Slice::Owned(funcs) => funcs,
+            Slice::Released(funcs) => funcs,
         }
+    }
+
+    fn release(&mut self) {
+        if let Slice::Released(funcs) = self {
+            for func in funcs.iter_mut() {
+                func.captures = Vec::new();
+                func.params = Vec::new();
+                func.annotated = Vec::new();
+                func.blocks = Vec::new();
+                func.values = Vec::new();
+                func.spans = Vec::new();
+            }
+        }
+        *self = Slice::Lent(&[]);
     }
 }
 
@@ -618,12 +635,7 @@ pub fn write_releasing(p: &mut Program, in_parallel: InParallel<'_>) -> Vec<u8> 
     let table_of_sites = if p.logs_type_errors { site_table(p) } else { Vec::new() };
     let mut funcs = std::mem::take(&mut p.funcs);
     let number = funcs.len();
-    let mut slices = Vec::with_capacity(number.div_ceil(FUNCTIONS_OF_A_SLICE));
-    while !funcs.is_empty() {
-        slices.push(Slice::Owned(funcs.split_off(funcs.len() - 1 - (funcs.len() - 1) % FUNCTIONS_OF_A_SLICE)));
-    }
-    slices.reverse();
-    drop(funcs);
+    let slices = funcs.chunks_mut(FUNCTIONS_OF_A_SLICE).map(Slice::Released).collect();
     write_slices(p, number, slices, table_of_sites, in_parallel)
 }
 
@@ -800,7 +812,7 @@ fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, tabl
     for_each_mut(&mut pieces, in_parallel, &|piece| match piece {
         Piece::Functions(first, funcs, writer) => {
             writer.functions(funcs.funcs(), *first, &p.accesses_of_one_row, marked_values, &p.known_places);
-            **funcs = Slice::Lent(&[]);
+            funcs.release();
         }
         Piece::Words(room, words) if cfg!(target_endian = "little") => {
             // SAFETY: every byte of a `u32` is initialized, and a byte is aligned anywhere.

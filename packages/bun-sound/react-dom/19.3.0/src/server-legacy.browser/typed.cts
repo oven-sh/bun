@@ -3284,7 +3284,7 @@ function resetHooksState(): void {
 function basicStateReducer(state: FZ.HookState, action: FZ.HookState): FZ.HookState {
   return "function" === typeof action ? action(state) : action;
 }
-function useReducer(reducer$given: FZ.Reducer, initialArg$given: FZ.HookState, init$given?: (initialArg: FZ.HookState) => FZ.HookState): FZ.DispatchTuple { /*$*/var reducer, initialArg, init; reducer = reducer$given; initialArg = initialArg$given; init = init$given;/*$*/
+function useReducer(reducer$given: FZ.Reducer, initialArg$given: FZ.HookState, init$given?: (initialArg: FZ.HookState) => FZ.HookState): FZ.DispatchTuple { /*$*/var reducer, initialArg, init; reducer = reducer$given; initialArg = initialArg$given; init = init$given; var init$asUpdate: FZ.Update | null | undefined;/*$*/
   currentlyRenderingComponent = resolveCurrentlyRenderingComponent();
   workInProgressHook = createWorkInProgressHook();
   if (isReRender) {
@@ -3292,12 +3292,12 @@ function useReducer(reducer$given: FZ.Reducer, initialArg$given: FZ.HookState, i
     initialArg = queue.dispatch;
     if (
       null !== renderPhaseUpdates &&
-      ((init = renderPhaseUpdates.get(queue)), void 0 !== init)
+      ((init$asUpdate = renderPhaseUpdates.get(queue)), void 0 !== init$asUpdate)
     ) {
       renderPhaseUpdates.delete(queue);
       queue$asState = workInProgressHook.memoizedState;
-      do (queue$asState = reducer(queue$asState, init.action)), (init = init.next);
-      while (null !== init);
+      do (queue$asState = reducer(queue$asState, init$asUpdate.action)), (init$asUpdate = init$asUpdate.next);
+      while (null !== init$asUpdate);
       workInProgressHook.memoizedState = queue$asState;
       return [queue$asState, initialArg];
     }
@@ -3344,20 +3344,20 @@ function useMemo(nextCreate$given: () => FZ.MemoValue, deps: FZ.HookDeps): FZ.Me
   workInProgressHook.memoizedState = [nextCreate, deps];
   return nextCreate;
 }
-function dispatchAction(componentIdentity$given: FZ.ComponentIdentity, queue$given: FZ.UpdateQueue, action$given: FZ.HookState): void { /*$*/var componentIdentity, queue, action; componentIdentity = componentIdentity$given; queue = queue$given; action = action$given;/*$*/
+function dispatchAction(componentIdentity$given: FZ.ComponentIdentity, queue$given: FZ.UpdateQueue, action$given: FZ.HookState): void { /*$*/var componentIdentity: FZ.ComponentIdentity, queue: FZ.UpdateQueue, action: FZ.HookState; componentIdentity = componentIdentity$given; queue = queue$given; action = action$given; var componentIdentity$asUpdate: FZ.Update; var action$asFirst: FZ.Update | undefined; var queue$asLast: FZ.Update;/*$*/
   if (25 <= numberOfReRenders) throw Error(formatProdErrorMessage(301));
   if (componentIdentity === currentlyRenderingComponent)
     if (
       ((didScheduleRenderPhaseUpdate = !0),
-      (componentIdentity = { action: action, next: null }/*$*/ as FZ.Update/*$*/),
+      (componentIdentity$asUpdate = { action: action, next: null }/*$*/ as FZ.Update/*$*/),
       null === renderPhaseUpdates && (renderPhaseUpdates = new Map()),
-      (action = renderPhaseUpdates.get(queue)),
-      void 0 === action)
+      (action$asFirst = renderPhaseUpdates.get(queue)),
+      void 0 === action$asFirst)
     )
-      renderPhaseUpdates.set(queue, componentIdentity);
+      renderPhaseUpdates.set(queue, componentIdentity$asUpdate);
     else {
-      for (queue = action; null !== queue.next; ) queue = queue.next;
-      queue.next = componentIdentity;
+      for (queue$asLast = action$asFirst; null !== queue$asLast.next; ) queue$asLast = queue$asLast.next;
+      queue$asLast.next = componentIdentity$asUpdate;
     }
 }
 function throwOnUseEffectEventCall() {
@@ -3852,8 +3852,8 @@ function createRequest(
   onShellError: ((error: FZ.Thrown) => void) | undefined,
   onFatalError: ((error: FZ.Thrown) => void) | undefined,
   formState: FZ.ReactFormState
-): FZ.Request { /*$*/var children, resumableState, renderState; children = children$given; resumableState = resumableState$given; renderState = renderState$given;/*$*/
-  resumableState = new (RequestInstance as unknown as FZ.RequestConstructor)(
+): FZ.Request { /*$*/var children, resumableState, renderState; children = children$given; resumableState = resumableState$given; renderState = renderState$given; var children$asTask: FZ.Task;/*$*/
+  resumableState = new (RequestInstance as FZ.RequestConstructor)(
     resumableState,
     renderState,
     rootFormatContext,
@@ -3875,7 +3875,7 @@ function createRequest(
     !1
   );
   renderState.parentFlushed = !0;
-  children = createRenderTask(
+  children$asTask = createRenderTask(
     resumableState,
     null,
     children,
@@ -3892,8 +3892,8 @@ function createRequest(
     null,
     null
   );
-  pushComponentStack(children);
-  resumableState.pingedTasks.push(children);
+  pushComponentStack(children$asTask);
+  resumableState.pingedTasks.push(children$asTask);
   return resumableState;
 }
 var currentRequest: FZ.Request | null = null;
@@ -5039,7 +5039,7 @@ function renderNodeDestructive(request: FZ.Request, task: FZ.Task, node$given: F
       retryNode(request, task),
       (task.componentStack = node));
 }
-function retryNode(request$given: FZ.Request, task: FZ.Task): void { /*$*/var request; request = request$given;/*$*/ /*$*/var node$asIndex: FZ.int32;/*$*/ /*$*/var childIndex$asNodes: FZ.ReplayNode[];/*$*/ /*$*/var childIndex$asString: string;/*$*/ /*$*/var childIndex$asSegment: FZ.Segment | null;/*$*/ /*$*/var key$asKeyPath: FZ.KeyNode;/*$*/ /*$*/var key$asInfo: FZ.ThrownInfo;/*$*/ /*$*/var key$asDigest: FZ.ErrorDigest;/*$*/ /*$*/var type$asNodes: FZ.ReplayNode[];/*$*/ /*$*/var props$asBoundary: FZ.SuspenseBoundary | null;/*$*/ /*$*/var ref$asSlots: FZ.ResumeSlots;/*$*/ /*$*/var name$asNodes: FZ.ReplayNode[];/*$*/ /*$*/var keyOrIndex$asKeyPath: FZ.KeyNode | null;/*$*/ /*$*/var replay$asId: FZ.SegmentId;/*$*/ /*$*/var node$jscomp$0$asSlots: FZ.ResumeSlots;/*$*/ /*$*/var childNodes$asThrown: FZ.Thrown;/*$*/ /*$*/var childNodes$asTask: FZ.Task;/*$*/ /*$*/var childNodes$asInit: FZ.GivenFunction;/*$*/ /*$*/var childNodes$asIterator: FZ.IteratorFn;/*$*/ /*$*/var childSlots$asInfo: FZ.ThrownInfo;/*$*/ /*$*/var childSlots$asChildren: FZ.ReactNode[];/*$*/ /*$*/var currentNode$asRequest: FZ.Request;/*$*/ /*$*/var currentNode$asDigest: FZ.ErrorDigest;/*$*/
+function retryNode(request$given: FZ.Request, task: FZ.Task): void { /*$*/var request: FZ.Request; request = request$given; var request$asError: FZ.Thrown;/*$*/ /*$*/var node$asIndex: FZ.int32;/*$*/ /*$*/var childIndex$asNodes: FZ.ReplayNode[];/*$*/ /*$*/var childIndex$asString: string;/*$*/ /*$*/var childIndex$asSegment: FZ.Segment | null;/*$*/ /*$*/var key$asKeyPath: FZ.KeyNode;/*$*/ /*$*/var key$asInfo: FZ.ThrownInfo;/*$*/ /*$*/var key$asDigest: FZ.ErrorDigest;/*$*/ /*$*/var type$asNodes: FZ.ReplayNode[];/*$*/ /*$*/var props$asBoundary: FZ.SuspenseBoundary | null;/*$*/ /*$*/var ref$asSlots: FZ.ResumeSlots;/*$*/ /*$*/var name$asNodes: FZ.ReplayNode[];/*$*/ /*$*/var keyOrIndex$asKeyPath: FZ.KeyNode | null;/*$*/ /*$*/var replay$asId: FZ.SegmentId;/*$*/ /*$*/var node$jscomp$0$asSlots: FZ.ResumeSlots;/*$*/ /*$*/var childNodes$asThrown: FZ.Thrown;/*$*/ /*$*/var childNodes$asTask: FZ.Task;/*$*/ /*$*/var childNodes$asInit: FZ.GivenFunction;/*$*/ /*$*/var childNodes$asIterator: FZ.IteratorFn;/*$*/ /*$*/var childSlots$asInfo: FZ.ThrownInfo;/*$*/ /*$*/var childSlots$asChildren: FZ.ReactNode[];/*$*/ /*$*/var currentNode$asRequest: FZ.Request;/*$*/ /*$*/var currentNode$asDigest: FZ.ErrorDigest;/*$*/
   var node = task.node,
     childIndex = task.childIndex;
   if (null !== node) {
@@ -5105,14 +5105,14 @@ function retryNode(request$given: FZ.Request, task: FZ.Task): void { /*$*/var re
                       key$asInfo = getThrownInfo(task.componentStack);
                       currentNode$asRequest = request;
                       props$asBoundary = task.blockedBoundary;
-                      request = request.aborted ? request.fatalError : x;
-                      key$asDigest = logRecoverableError(currentNode$asRequest, request, key$asInfo);
+                      request$asError = request.aborted ? request.fatalError : x;
+                      key$asDigest = logRecoverableError(currentNode$asRequest, request$asError, key$asInfo);
                       abortRemainingReplayNodes(
                         currentNode$asRequest,
                         props$asBoundary,
                         childNodes,
                         childSlots,
-                        request,
+                        request$asError,
                         key$asDigest
                       );
                     }
@@ -5303,7 +5303,7 @@ function retryNode(request$given: FZ.Request, task: FZ.Task): void { /*$*/var re
           ));
   }
 }
-function renderChildrenArray(request$given: FZ.Request, task: FZ.Task, children$given: FZ.ReactNode[], childIndex$given: FZ.ChildIndex): void { /*$*/var request, children, childIndex; request = request$given; children = children$given; childIndex = childIndex$given;/*$*/ /*$*/var replay$asTreeContext: FZ.TreeContext;/*$*/ /*$*/var replayNodes$asLength: FZ.int32;/*$*/ /*$*/var j$asSlots: FZ.ResumeSlots;/*$*/ /*$*/var node$asSlots: FZ.ResumeSlots;/*$*/ /*$*/var node$asChild: FZ.ReactNode;/*$*/ /*$*/var thrownInfo$asDigest: FZ.ErrorDigest;/*$*/ /*$*/var boundary$asId: FZ.SegmentId | undefined;/*$*/
+function renderChildrenArray(request$given: FZ.Request, task: FZ.Task, children$given: FZ.ReactNode[], childIndex$given: FZ.ChildIndex): void { /*$*/var request: FZ.Request, children: FZ.ReactNode[], childIndex; request = request$given; var request$asError: FZ.Thrown; var children$asRequest: FZ.Request; children = children$given; childIndex = childIndex$given;/*$*/ /*$*/var replay$asTreeContext: FZ.TreeContext;/*$*/ /*$*/var replayNodes$asLength: FZ.int32;/*$*/ /*$*/var j$asSlots: FZ.ResumeSlots;/*$*/ /*$*/var node$asSlots: FZ.ResumeSlots;/*$*/ /*$*/var node$asChild: FZ.ReactNode;/*$*/ /*$*/var thrownInfo$asDigest: FZ.ErrorDigest;/*$*/ /*$*/var boundary$asId: FZ.SegmentId | undefined;/*$*/
   var prevKeyPath = task.keyPath;
   if (
     -1 !== childIndex &&
@@ -5334,16 +5334,16 @@ function renderChildrenArray(request$given: FZ.Request, task: FZ.Task, children$
             throw x;
           task.replay.pendingTasks--;
           var thrownInfo = getThrownInfo(task.componentStack);
-          children = request;
+          children$asRequest = request;
           var boundary = task.blockedBoundary;
-          request = request.aborted ? request.fatalError : x;
-          thrownInfo$asDigest = logRecoverableError(children, request, thrownInfo);
+          request$asError = request.aborted ? request.fatalError : x;
+          thrownInfo$asDigest = logRecoverableError(children$asRequest, request$asError, thrownInfo);
           abortRemainingReplayNodes(
-            children,
+            children$asRequest,
             boundary,
             childIndex,
             node$asSlots,
-            request,
+            request$asError,
             thrownInfo$asDigest
           );
         }
@@ -6432,7 +6432,7 @@ function flushSegmentContainer(request: FZ.Request, destination: FZ.Destination,
   flushSegment(request, destination, segment, hoistableState);
   return writeEndSegment(destination, segment.parentFormatContext);
 }
-function flushCompletedBoundary(request$given: FZ.Request, destination: FZ.Destination, boundary$given: FZ.SuspenseBoundary): boolean { /*$*/var request, boundary; request = request$given; boundary = boundary$given; var completedSegments$asRow: FZ.SuspenseListRow | null, completedSegments$asResumableState: FZ.ResumableState, completedSegments$asId: string;/*$*/
+function flushCompletedBoundary(request$given: FZ.Request, destination: FZ.Destination, boundary$given: FZ.SuspenseBoundary): boolean { /*$*/var request: FZ.Request, boundary: FZ.SuspenseBoundary; request = request$given; boundary = boundary$given; var request$asRenderState: FZ.RenderState; var boundary$asHoistables: FZ.HoistableState; var boundary$asWritten: boolean; var completedSegments$asRow: FZ.SuspenseListRow | null, completedSegments$asResumableState: FZ.ResumableState, completedSegments$asId: string;/*$*/
   flushedByteSize = boundary.byteSize;
   for (
     var completedSegments = boundary.completedSegments, i: FZ.int32 = 0;
@@ -6457,13 +6457,13 @@ function flushCompletedBoundary(request$given: FZ.Request, destination: FZ.Desti
     request.renderState
   );
   completedSegments$asResumableState = request.resumableState;
-  request = request.renderState;
+  request$asRenderState = request.renderState;
   i = boundary.rootSegmentID;
-  boundary = boundary.contentState;
-  var requiresStyleInsertion = request.stylesToHoist,
+  boundary$asHoistables = boundary.contentState;
+  var requiresStyleInsertion = request$asRenderState.stylesToHoist,
     requiresViewTransitions = 0 !== (completedSegments$asResumableState.instructions & 128);
-  request.stylesToHoist = !1;
-  destination.push(request.startInlineScript);
+  request$asRenderState.stylesToHoist = !1;
+  destination.push(request$asRenderState.startInlineScript);
   destination.push(">");
   requiresStyleInsertion
     ? (0 === (completedSegments$asResumableState.instructions & 4) &&
@@ -6501,17 +6501,17 @@ function flushCompletedBoundary(request$given: FZ.Request, destination: FZ.Desti
         )),
       destination.push('$RC("'));
   completedSegments$asId = i.toString(16);
-  destination.push(request.boundaryPrefix);
+  destination.push(request$asRenderState.boundaryPrefix);
   destination.push(completedSegments$asId);
   destination.push('","');
-  destination.push(request.segmentPrefix);
+  destination.push(request$asRenderState.segmentPrefix);
   destination.push(completedSegments$asId);
   requiresStyleInsertion
     ? (destination.push('",'),
-      writeStyleResourceDependenciesInJS(destination, boundary))
+      writeStyleResourceDependenciesInJS(destination, boundary$asHoistables))
     : destination.push('"');
-  boundary = destination.push(")\x3c/script>");
-  return writeBootstrap(destination, request) && boundary;
+  boundary$asWritten = destination.push(")\x3c/script>");
+  return writeBootstrap(destination, request$asRenderState) && boundary$asWritten;
 }
 function flushPartiallyCompletedSegment(
   request$given: FZ.Request,
@@ -6877,7 +6877,7 @@ function endRenderLifetime(request$given: FZ.Request): void { /*$*/var request; 
   request = request.renderLifetimeController;
   null !== request && request.abort("The render ended.");
 }
-function abort(request: FZ.Request, reason: FZ.Thrown): void {
+function abort(request: FZ.Request, reason: FZ.Thrown): void { /*$*/var reason$asTasks: Set<FZ.Task>;/*$*/
   if (!(request.aborted || (11 !== request.status && 10 !== request.status))) {
     endRenderLifetime(request);
     var isRecoverableReason =
@@ -6895,11 +6895,11 @@ function abort(request: FZ.Request, reason: FZ.Thrown): void {
           ? Error(formatProdErrorMessage(530))
           : reason;
     request.fatalError = reason;
-    reason = request.abortableTasks;
-    reason.forEach(function (task: FZ.Task) {
+    reason$asTasks = request.abortableTasks;
+    reason$asTasks.forEach(function (task: FZ.Task) {
       return abortTask(task, request);
     });
-    finishAbort(request, reason);
+    finishAbort(request, reason$asTasks);
   }
 }
 function addToReplayParent(node: FZ.ReplayNode, parentKeyPath: FZ.KeyNode | null, trackedPostpones: FZ.PostponedHoles): void {

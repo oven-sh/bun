@@ -90,7 +90,7 @@ impl BuildCommand {
 
         let compile_target = &ctx.bundler_options.compile_target;
 
-        if ctx.bundler_options.compile {
+        if ctx.bundler_options.compile && !ctx.bundler_options.compile_run {
             let compile_define_keys = compile_target.define_keys();
             let compile_define_values = compile_target.define_values();
 
@@ -157,7 +157,25 @@ impl BuildCommand {
             .cloned()
             .unwrap_or_default();
 
-        if ctx.bundler_options.check && ctx.bundler_options.transform_only {
+        if ctx.bundler_options.dts && (ctx.bundler_options.outdir.is_empty() || ctx.bundler_options.compile) {
+            Output::err_generic("--dts requires --outdir, and cannot be used with --compile", ());
+            Global::exit(1);
+        }
+        let leaves_out_sound_files_for = {
+            let options = &ctx.bundler_options;
+            let unsupported = [
+                (options.minify_syntax || options.minify_whitespace || options.minify_identifiers, "--minify"),
+                (options.code_splitting, "--splitting"),
+                (options.output_format != options::Format::Esm, "--format other than esm"),
+                (ctx.args.source_map == Some(api::SourceMapMode::Inline), "--sourcemap=inline"),
+            ];
+            unsupported.iter().find(|(is_set, _)| *is_set && options.dts).map(|(_, option)| *option)
+        };
+        let writes_sound_files = ctx.bundler_options.dts && leaves_out_sound_files_for.is_none();
+        this_transpiler.options.leaves_out_sound_files_for = leaves_out_sound_files_for;
+        let mut declaration_files: options::DeclarationFiles = Vec::new();
+        let mut module_types = None;
+        if (ctx.bundler_options.check || ctx.bundler_options.dts) && ctx.bundler_options.transform_only {
             // Nothing is bundled, so nothing has been resolved or read.
             let entry_points = this_transpiler.options.entry_points.iter();
             let checked = options::TypeChecked {
@@ -166,6 +184,7 @@ impl BuildCommand {
                 dropped_imports: &mut std::iter::empty(),
                 without_side_effects: &mut std::iter::empty(),
                 lifted_commonjs: &mut std::iter::empty(),
+                commonjs: &mut std::iter::empty(),
                 statements: &mut std::iter::empty(),
                 texts: &mut std::iter::empty(),
                 assets: &mut std::iter::empty(),
@@ -191,14 +210,31 @@ impl BuildCommand {
                 explains_into_log: false,
                 logs_type_errors: false,
                 early_analysis: None,
+                release_asts: &mut || {},
             };
-            if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
+            let is_checked = match ctx.bundler_options.dts {
+                true if writes_sound_files => {
+                    this_transpiler.options.write_sound_files = Some(crate::cli::check_command::sound_files_for_build);
+                    let declarations = crate::cli::check_command::sound_declarations_for_build(checked, log_ref);
+                    declarations.map(|declarations| (declaration_files, module_types) = (declarations.files, declarations.module_types)).is_some()
+                }
+                true => crate::cli::check_command::declarations_for_build_command(checked, log_ref).map(|declarations| declaration_files = declarations.files).is_some(),
+                false => crate::cli::check_command::check_for_build_command(checked, log_ref),
+            };
+            if !is_checked {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
                     Output::error_writer(),
                 ))?;
                 Output::flush();
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
+        } else if writes_sound_files {
+            this_transpiler.options.emit_declarations = Some(crate::cli::check_command::sound_declarations_for_build);
+            this_transpiler.options.write_sound_files = Some(crate::cli::check_command::sound_files_for_build);
+            this_transpiler.options.rolls_up_declarations = ctx.bundler_options.root_dir.is_empty();
+        } else if ctx.bundler_options.dts {
+            this_transpiler.options.emit_declarations =
+                Some(crate::cli::check_command::declarations_for_build_command);
         } else if ctx.bundler_options.check {
             this_transpiler.options.type_check =
                 Some(crate::cli::check_command::check_for_build_command);
@@ -206,6 +242,10 @@ impl BuildCommand {
 
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
+        if writes_sound_files && !ctx.bundler_options.transform_only && this_transpiler.options.source_map == options::SourceMapOption::None {
+            this_transpiler.options.source_map = options::SourceMapOption::External;
+            this_transpiler.options.drops_source_maps = true;
+        }
 
         this_transpiler.options.compile_mode = if ctx.bundler_options.compile {
             options::CompileMode::Executable
@@ -727,7 +767,54 @@ impl BuildCommand {
                     }
                 }
 
-                break 'brk result.output_files.into_vec();
+                let mut output_files = result.output_files.into_vec();
+                let entry_points: Vec<Box<[u8]>> = output_files.iter().map(|file| Box::from(file.src_path.text)).collect();
+                for (source, text) in declaration_files.drain(..).filter(|(source, _)| entry_points.contains(source)) {
+                    if let Some(path) = options::OutputFile::declaration_path(&this_transpiler.options.root_dir, &source) {
+                        output_files.push(options::OutputFile::declaration(&source, path, text, false));
+                    }
+                }
+                if let Some(option) = leaves_out_sound_files_for {
+                    log_ref.add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: it does not support {option} yet", options::SOUND_FILES_LEFT_OUT));
+                }
+                if let Some(write_sound_files) = this_transpiler.options.write_sound_files {
+                    use bun_paths::resolve_path::{join_abs_string, platform::Auto};
+                    let cwd = bun_resolver::fs::FileSystem::instance().top_level_dir;
+                    let outdir: Vec<u8> = join_abs_string::<Auto>(cwd, &[&ctx.bundler_options.outdir]).to_vec();
+                    let transformed: Vec<(Vec<u8>, &options::OutputFile, &options::OutputFile)> = (output_files.iter())
+                        .filter_map(|file| Some((join_abs_string::<Auto>(&outdir, &[&file.dest_path]).to_vec(), file, output_files.get(file.source_map_index as usize)?)))
+                        .collect();
+                    let written: Vec<options::WrittenJavaScript<'_>> = (transformed.iter())
+                        .map(|(path, file, source_map)| options::WrittenJavaScript { path, text: file.value.as_slice(), source_map: source_map.value.as_slice(), entry_point: None })
+                        .collect();
+                    let request = options::SoundFilesRequest {
+                        cwd,
+                        tsconfig: ctx.args.tsconfig_override.as_deref(),
+                        conditions: &ctx.args.conditions,
+                        loaders: &this_transpiler.options.loaders,
+                        outdir: &outdir,
+                        written: &written,
+                        module_types: module_types.as_deref(),
+                        rolls_up_declarations: false,
+                        keeps_modules_apart: true,
+                    };
+                    let typed = write_sound_files(request, log_ref);
+                    drop(written);
+                    drop(transformed);
+                    for file in output_files.iter_mut() {
+                        file.source_map_index = u32::MAX;
+                    }
+                    output_files.retain(|file| file.output_kind != options::OutputKind::Sourcemap);
+                    let inside_the_outdir = |path: &[u8]| -> Box<[u8]> { path.strip_prefix(&outdir[..]).map_or(path, |inside| inside.strip_prefix(b"/").unwrap_or(inside)).into() };
+                    for file in typed.sound_files {
+                        let beside = inside_the_outdir(&file.declaration_file);
+                        let declarations = output_files.iter_mut().find(|written| written.output_kind == options::OutputKind::Declaration && written.dest_path == beside);
+                        let Some(options::OutputFileValue::Buffer { bytes }) = declarations.map(|written| &mut written.value) else { continue };
+                        *bytes = [&file.mark[..], &bytes[..]].concat().into_boxed_slice();
+                        output_files.push(options::OutputFile::sound(&file.path, inside_the_outdir(&file.path), file.text, false));
+                    }
+                }
+                break 'brk output_files;
             }
 
             if ctx.bundler_options.outdir.is_empty()
@@ -1260,6 +1347,7 @@ impl BuildCommand {
                         | options::OutputKind::PrelinkedModuleGraph => "<d>",
                         options::OutputKind::MetafileJson
                         | options::OutputKind::MetafileMarkdown => "<green>",
+                        options::OutputKind::Declaration | options::OutputKind::Sound => "<d>",
                     }))?;
                 }
 
@@ -1311,6 +1399,8 @@ impl BuildCommand {
                         options::OutputKind::PrelinkedModuleGraph => "module graph",
                         options::OutputKind::MetafileJson => "metafile json",
                         options::OutputKind::MetafileMarkdown => "metafile markdown",
+                        options::OutputKind::Declaration => "declaration",
+                        options::OutputKind::Sound => "sound types",
                     }
                 )?;
                 if Output::enable_ansi_colors_stdout() {

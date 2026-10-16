@@ -975,11 +975,15 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const ltoDefault = release && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
+  // Fuzzilli: coverage does not link with ThinLTO ("undefined symbol:
+  // __sancov_gen_.1"). The copies of an inline function that ThinLTO does not
+  // keep become available_externally, their module-private guards included,
+  // and inlining one leaves a reference to guards that nothing defines.
   // Android, FreeBSD: not enabled (never built that way; untested).
   // Windows arm64: off — oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
   // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers when JSC
   // goes through LTO), so forcing it off also keeps the fetch from 404ing.
-  if ((asan && lto) || abi === "android" || freebsd || (windows && arm64)) {
+  if ((asan && lto) || fuzzilli || abi === "android" || freebsd || (windows && arm64)) {
     lto = false;
   }
 
@@ -1226,11 +1230,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // newer; only `-mmacosx-version-min` decides what the binary runs on).
   let ld64StripSwap: { ld: string; strip: string } | undefined;
   if (darwinCross) {
-    if (webkit === "local") {
-      throw new BuildError("Cross-compiling for macOS requires the prebuilt WebKit (webkit=local needs Xcode's mig)", {
-        hint: "Drop --webkit=local or build on a Mac.",
-      });
-    }
     crossTarget = `${arm64 ? "arm64" : "x86_64"}-apple-macosx`;
     osxDeploymentTarget = partial.osxDeploymentTarget ?? MIN_OSX_DEPLOYMENT_TARGET;
     osxSysroot = resolveMacosSdkPath(partial.macosSdk, cacheDir, cwd);

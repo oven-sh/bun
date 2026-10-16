@@ -273,6 +273,7 @@ public:
     unsigned spyAttributes = 0;
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
+    static constexpr unsigned SpyAttributeBuiltinOfCompiledProgram = 1 << 29;
 
     JSString* jsName()
     {
@@ -388,12 +389,17 @@ public:
         if (!target)
             return;
 
-        if (attributes & SpyAttributeESModuleNamespace) {
+        if (attributes & SpyAttributeBuiltinOfCompiledProgram) {
+            if (!target->isGlobalObject())
+                target->putDirect(this->vm(), identifier, implValue, attributes & ~SpyAttributeBuiltinOfCompiledProgram);
+            Bun::overrideBuiltinOfCompiledProgram(defaultGlobalObject(globalObject), implValue, jsUndefined());
+            RETURN_IF_EXCEPTION(scope, );
+        } else if (attributes & SpyAttributeESModuleNamespace) {
             if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, identifier, implValue);
                 RETURN_IF_EXCEPTION(scope, );
             } else if (JSC::AOT::Typed::isModuleNamespace(target)) {
-                Bun::overrideExportOfCompiledNamespace(defaultGlobalObject(globalObject), target, identifier, jsUndefined());
+                Bun::overrideExportOfCompiledNamespace(defaultGlobalObject(globalObject), target, identifier, JSValue());
                 RETURN_IF_EXCEPTION(scope, );
             }
         } else if (auto index = parseIndex(identifier)) {
@@ -1552,9 +1558,21 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (hasValue && slot.slotBase() == object && object->structure()->inheritorsMayOverrideReadOnlyProperties() && (slot.attributes() & PropertyAttribute::ReadOnly) && (slot.attributes() & PropertyAttribute::DontDelete)) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on `"_s, String(propertyKey.uid()), "`: built-in objects are immutable in ahead-of-time compiled programs, and so are the prototype objects of compiled classes"_s));
-        return {};
+    bool isOverriddenBesideBuiltin = false;
+    if (hasValue && slot.slotBase() == object && (object->structure()->inheritorsMayOverrideReadOnlyProperties() || (object->isGlobalObject() && globalObject->hasImmutableIntrinsics())) && (slot.attributes() & PropertyAttribute::ReadOnly) && (slot.attributes() & PropertyAttribute::DontDelete)) {
+        JSValue builtin = slot.isValue() ? slot.getValue(globalObject, propertyKey) : JSValue();
+        RETURN_IF_EXCEPTION(scope, {});
+        if (builtin && dynamicDowncast<JSMockFunction>(builtin))
+            return JSValue::encode(builtin);
+        JSValue current = builtin && builtin.isCallable() ? Bun::overrideOfBuiltinInCompiledProgram(globalObject, builtin) : jsNull();
+        RETURN_IF_EXCEPTION(scope, {});
+        if (current.isNull()) {
+            throwTypeError(globalObject, scope, makeString("Cannot spy on `"_s, String(propertyKey.uid()), "`: built-in objects are immutable in ahead-of-time compiled programs, and so are the prototype objects of compiled classes"_s));
+            return {};
+        }
+        if (dynamicDowncast<JSMockFunction>(current))
+            return JSValue::encode(current);
+        isOverriddenBesideBuiltin = true;
     }
 
     // easymode: regular property or missing property
@@ -1588,7 +1606,13 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             mock->copyNameAndLength(vm, globalObject, value);
             RETURN_IF_EXCEPTION(scope, {});
 
-            if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
+            if (isOverriddenBesideBuiltin) {
+                Bun::overrideBuiltinOfCompiledProgram(globalObject, value, mock);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!object->isGlobalObject())
+                    object->putDirect(vm, propertyKey, mock, attributes);
+                mock->spyAttributes |= JSMockFunction::SpyAttributeBuiltinOfCompiledProgram;
+            } else if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else if (JSC::AOT::Typed::isModuleNamespace(object)) {

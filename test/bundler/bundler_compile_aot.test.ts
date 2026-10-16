@@ -1325,7 +1325,7 @@ test("image size limit is a build error", async () => {
   using dir = tempDir("compile-aot-too-large", { "entry.ts": `console.log(1);` });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
-    env: { ...bunEnv, BUN_JSC_numberOfAOTStubCopiesForTesting: "60" },
+    env: { ...bunEnv, BUN_JSC_numberOfAOTStubCopiesForTesting: "200" },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",

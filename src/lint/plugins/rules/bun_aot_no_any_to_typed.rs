@@ -28,7 +28,7 @@ fn check<'a>(value: Option<Expr<'a>>, cx: &Cx<'a, AotNoAnyToTyped>) {
         .data("type", found.type_text)
         .hint_with(|| {
             let from = value.ts_node().aot_where_an_any_comes_from();
-            let from = String::from_utf8_lossy(&from);
+            let from = bstr::BStr::new(&from);
             Some(match from.is_empty() {
                 true => "Give the value a type, or validate it where it comes in.".to_owned(),
                 false => format!("It comes from {from}. Give it a type there, or validate it."),

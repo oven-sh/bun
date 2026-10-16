@@ -1,4 +1,6 @@
 // A Map or Set that a loop over an array fills with one entry per turn behaves like any other: order, size, duplicates, deletions, growth after the loop and iteration during it.
+const shell = globalThis as any;
+const collect: (full: boolean) => void = shell.Bun ? (full: boolean) => shell.Bun.gc(full) : (full: boolean) => (full ? shell.fullGC() : shell.edenGC());
 type Item = { name: string; rank: number };
 
 function items(count: number, distinct: number): Item[] {
@@ -124,7 +126,7 @@ console.log(describe(shared));
 
 const kept: Map<string, Item>[] = [];
 for (let round = 0; round < 3000; round++) kept.push(byName(items(round % 37, 1000)));
-Bun.gc(true);
+collect(true);
 let total = 0;
 for (const table of kept) for (const [key, value] of table) total += key.length + value.rank;
 console.log(total);

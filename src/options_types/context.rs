@@ -44,6 +44,8 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
+    /// The path of the first bunfig.toml or .npmrc that exists but could not be read.
+    pub unreadable_config: Option<Box<[u8]>>,
 }
 
 impl Default for ContextData {
@@ -84,6 +86,7 @@ impl Default for ContextData {
             no_exit_on_error: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
+            unreadable_config: None,
         }
     }
 }
@@ -197,6 +200,7 @@ pub struct BundlerOptions {
     pub react_fast_refresh: bool,
     /// `--check`: type check the entry points and what they import, and do not bundle if there are errors.
     pub check: bool,
+    pub dts: bool,
     pub react_compiler: bool,
     pub code_splitting: bool,
     pub split_require: bool,
@@ -242,6 +246,7 @@ pub struct BundlerOptions {
     pub aot_explain: Vec<Box<[u8]>>,
     pub aot: bool,
     pub aot_logs_type_errors: bool,
+    pub aot_huge_heap: bool,
     pub aot_crash_if_interpreter_is_used: bool,
     pub compile_run: bool,
     pub compile_run_args: Vec<Box<[u8]>>,
@@ -271,6 +276,7 @@ impl Default for BundlerOptions {
             server_components: false,
             react_fast_refresh: false,
             check: false,
+            dts: false,
             react_compiler: false,
             code_splitting: false,
             split_require: true,
@@ -311,6 +317,7 @@ impl Default for BundlerOptions {
             aot_explain: Vec::new(),
             aot: false,
             aot_logs_type_errors: false,
+            aot_huge_heap: false,
             aot_crash_if_interpreter_is_used: false,
             compile_run: false,
             compile_run_args: Vec::new(),
@@ -577,6 +584,7 @@ pub struct RuntimeOptions {
     pub smol: bool,
     pub aot: bool,
     pub aot_logs_type_errors: bool,
+    pub aot_huge_heap: bool,
     pub aot_crash_if_interpreter_is_used: bool,
     pub aot_graph_fd: Option<i32>,
     pub aot_decode_crash_report: Option<Box<[u8]>>,
@@ -656,6 +664,7 @@ impl Default for RuntimeOptions {
             smol: false,
             aot: false,
             aot_logs_type_errors: false,
+            aot_huge_heap: false,
             aot_crash_if_interpreter_is_used: false,
             aot_graph_fd: None,
             aot_decode_crash_report: None,

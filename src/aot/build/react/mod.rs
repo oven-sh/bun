@@ -20,7 +20,7 @@ use bun_sema::hir::{self, ExprId, ExprKind, FnBody, FnId, FnKind, PatKind, StmtK
 use bun_sema::program::FileId;
 use bun_sema::util::InParallel;
 use std::collections::BTreeMap;
-use std::sync::{Mutex, PoisonError, RwLock};
+use bun_threading::{Guarded, RwLock};
 
 /// A function in one of the places where the visit pass hands a function to the compiler.
 struct Candidate {
@@ -236,7 +236,7 @@ fn with_dense_locations(dump: &str) -> String {
 /// Where two dumps part.
 fn first_difference(a: &str, b: &str) -> String {
     let same = a.bytes().zip(b.bytes()).take_while(|(a, b)| a == b).count();
-    let excerpt = |text: &str| String::from_utf8_lossy(&text.as_bytes()[same.saturating_sub(40)..text.len().min(same + 40)]).into_owned();
+    let excerpt = |text: &str| bstr::BStr::new(&text.as_bytes()[same.saturating_sub(40)..text.len().min(same + 40)]).to_string();
     format!("`{}` or `{}`", excerpt(a), excerpt(b))
 }
 
@@ -305,19 +305,19 @@ pub struct Report<'a> {
     checks_locations: bool,
     /// `None`: `begin` has not been called.
     shared: RwLock<Option<Shared<'a>>>,
-    files: Mutex<Vec<FileReport>>,
+    files: Guarded<Vec<FileReport>>,
 }
 
 impl<'a> Report<'a> {
     /// `checks_locations`: each function is also compiled with its locations renumbered, which is to make no difference.
     pub fn new(constants: &'a crate::Constants, checks_locations: bool) -> Report<'a> {
-        Report { constants, checks_locations, shared: RwLock::new(None), files: Mutex::new(Vec::new()) }
+        Report { constants, checks_locations, shared: RwLock::new(None), files: Guarded::new(Vec::new()) }
     }
 
     /// `Request::loaded`
     pub fn begin(&self, program: &Checked<'_>, roots: &[FileId], in_parallel: InParallel<'_>) {
-        *self.shared.write().unwrap_or_else(PoisonError::into_inner) = Some(Shared::new(program, &[roots.to_vec()], self.constants, in_parallel));
-        self.files.lock().unwrap_or_else(PoisonError::into_inner).clear();
+        *self.shared.write() = Some(Shared::new(program, &[roots.to_vec()], self.constants, in_parallel));
+        self.files.lock().clear();
     }
 
     /// `Request::after_file`
@@ -326,14 +326,14 @@ impl<'a> Report<'a> {
         if !bun_sema::resolve::is_jsx_file_name(path) || bun_core::strings::contains(path, b"/node_modules/") {
             return;
         }
-        let shared = self.shared.read().unwrap_or_else(PoisonError::into_inner);
+        let shared = self.shared.read();
         let shared = shared.as_ref().expect("`begin` comes first");
         let hir = c.hir(file);
-        let shown = String::from_utf8_lossy(path).into_owned();
+        let shown = bstr::BStr::new(path).to_string();
         let mut report = FileReport { path: shown.clone(), lines: Vec::new(), totals: Totals { files: 1, ..Default::default() }, reasons: Vec::new() };
         if hir.has_parse_diagnostics || hir.has_errors || hir.ran_out_of_stack {
             report.lines.push(format!("{shown}: it does not parse"));
-            self.files.lock().unwrap_or_else(PoisonError::into_inner).push(report);
+            self.files.lock().push(report);
             return;
         }
         let candidates = Discovery { hir, atoms: c.atoms(), path, found: Vec::new() }.run();
@@ -343,7 +343,7 @@ impl<'a> Report<'a> {
 
         let line_of = |pos: u32| bun_core::strings::count_char(&hir.text[..(pos as usize).min(hir.text.len())], b'\n') + 1;
         let title = |candidate: &Candidate| {
-            let name = candidate.name.as_deref().map_or("(anonymous)".into(), String::from_utf8_lossy);
+            let name = candidate.name.as_deref().map_or_else(|| "(anonymous)".to_owned(), |name| bstr::BStr::new(name).to_string());
             format!("{shown}:{}: {name}", line_of(hir[candidate.func].start))
         };
         let totals = &mut report.totals;
@@ -412,12 +412,12 @@ impl<'a> Report<'a> {
             }
         }
         report.lines.insert(0, format!("{shown}: {}", report.totals.summary()));
-        self.files.lock().unwrap_or_else(PoisonError::into_inner).push(report);
+        self.files.lock().push(report);
     }
 
     /// The lines to print, once all files are checked.
     pub fn finish(&self) -> Vec<String> {
-        let mut files = std::mem::take(&mut *self.files.lock().unwrap_or_else(PoisonError::into_inner));
+        let mut files = std::mem::take(&mut *self.files.lock());
         files.sort_by(|a, b| a.path.cmp(&b.path));
         let mut totals = Totals::default();
         let mut reasons: BTreeMap<&str, usize> = BTreeMap::new();

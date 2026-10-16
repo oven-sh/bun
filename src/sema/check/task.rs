@@ -389,6 +389,20 @@ const TABLES_OF_RECORDS: [&str; 30] = [
     "equivalent_base_types",
 ];
 
+impl Program<'_> {
+    pub fn release_tables_of_expressions(&self) {
+        self.expr_types.release_pages();
+        self.context_free_expr_types.release_pages();
+        self.calls.release_pages();
+        self.call_return_types.release_pages();
+        self.calls_before_signatures.release_pages();
+        self.effects_signatures.release_pages();
+        self.resolved_effects_signatures.release_pages();
+        self.flows_too_deep.release_pages();
+        self.deferred_nodes.release_pages();
+    }
+}
+
 /// The `Buffered` tables keyed by an expression. They are most of what a task publishes. Whoever asks about an expression and finds no
 /// entry evaluates it, as a task does with an expression of a file of its own step, going by what the tables keyed by a declaration, a
 /// symbol or a type hold.
@@ -583,6 +597,7 @@ fn publish_tables<'s>(
             let (shares, applied) = (&mut stage.shares, &mut chain.applied);
             let before = applied.published;
             stage.table.apply(stage.part, shares, &mut handles, applied);
+            shares.iter_mut().for_each(Share::release);
             stage.published = applied.published - before;
         }
     });

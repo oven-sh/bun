@@ -686,7 +686,7 @@ impl PreferStringStartsEndsWith {
         let Some((side, text)) = parse_reg_exp(obj) else {
             return;
         };
-        cx.report(call_node, side.message()).fix(|fixer| {
+        cx.report(call_node, side.message()).claims(call_node).fix(|fixer| {
             // tsgolint also fixes what only looks like a `RegExp`, and has `(...a).startsWith("a")` for `...a`.
             if is_oxlint
                 && (tsgolint_parse_reg_exp(obj, true).is_none() || matches!(arg_node.kind(), ExprKind::Spread(_)))

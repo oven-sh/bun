@@ -17,24 +17,19 @@ test/bundler/transpiler/decorators.test.ts  # 2 of 80 builds; lowering many deco
 test/cli/bun.test.ts  # 20 of 80 builds; mac; completions > installs a bunx symlink: the symlink pointed at bin/bun in the temp dir i...
 test/cli/hot/hot.test.ts  # 3 of 80 builds; debian, ubuntu
 test/cli/inspect/inspect.test.ts  # 3 of 80 builds; debian, ubuntu
-test/cli/install/bun-add.test.ts  # 5 of 80 builds
 test/cli/install/bun-audit.test.ts  # 3 of 80 builds; debian, ubuntu
 test/cli/install/bun-install-native-binlink.test.ts  # 2 of 80 builds; debian, windows; timeout
 test/cli/install/bun-install-offline.test.ts  # 6 of 80 builds; alpine
 test/cli/install/bun-install-patch.test.ts  # 1 of 80 builds; ubuntu; timeout
 test/cli/install/bun-install-registry.test.ts  # 26 of 80 builds; manifest conditional requests > If-None-Match: 3 requests instead of 2; failed to open ...
 test/cli/install/bun-install.test.ts  # 1 of 80 builds; ubuntu
-test/cli/install/bun-lock.test.ts  # 34 of 80 builds; peer no published version satisfies > declared by a registry package: a /peer-target re...
 test/cli/install/bun-lockb.test.ts  # 9 of 80 builds
 test/cli/install/bun-patch.test.ts  # 36 of 80 builds; windows
 test/cli/install/bun-prune.test.ts  # 1 of 80 builds; windows
-test/cli/install/bun-security-scanner-matrix-with-node-modules.test.ts  # 1 of 80 builds; debian
 test/cli/install/bun-update.test.ts  # 2 of 80 builds; alpine, ubuntu
 test/cli/install/bun-workspaces.test.ts  # 1 of 80 builds; debian; timeout
 test/cli/install/config-precedence.test.ts  # 4 of 80 builds
-test/cli/install/frozen-lockfile-missing-workspace.test.ts  # 2 of 80 builds; mac, debian
 test/cli/install/hoist.test.ts  # 1 of 80 builds; debian
-test/cli/install/migration/complex-workspace.test.ts  # 1 of 80 builds; mac; error: Failed to install
 test/cli/install/npmrc.test.ts  # 2 of 80 builds; debian, ubuntu
 test/cli/install/public-hoist-pattern.test.ts  # 2 of 80 builds; ubuntu
 test/cli/run/cpu-prof.test.ts  # 4 of 80 builds; windows

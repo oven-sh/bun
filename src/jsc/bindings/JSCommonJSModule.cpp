@@ -71,7 +71,6 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
-#include "CodeGenerationFromStrings.h"
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSLexicalEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -159,7 +158,7 @@ public:
 
 private:
     GraphCommonJSSourceProvider(Ref<JSC::SourceProvider>&& source, unsigned overlayShape)
-        : JSC::SourceProvider(source->sourceOrigin(), String(source->sourceURL()), String(source->preRedirectURL()), source->sourceTaintedOrigin(), source->startPosition(), source->sourceType())
+        : JSC::SourceProvider(source->sourceOrigin(), String(source->sourceURL()), String(source->preRedirectURL()), source->taintedness(), source->startPosition(), source->sourceType(), source->provenance())
         , m_source(WTF::move(source))
         , m_overlayShape(overlayShape)
     {
@@ -169,7 +168,7 @@ private:
     const unsigned m_overlayShape;
 };
 
-static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
+static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename, JSValue compiledWrapper = {})
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     SourceCode code = WTF::move(moduleObject->sourceCode);
@@ -180,7 +179,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     }
 
     // If an exception occurred somewhere else, we might have cleared the source code.
-    if (code.isNull()) [[unlikely]] {
+    if (code.isNull() && !compiledWrapper) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
         return false;
     }
@@ -256,7 +255,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     // overload would swallow the exception, leaving the misleading
     // "function wrapper" TypeError below instead of the real error.
     WTF::NakedPtr<JSC::Exception> wrapperException;
-    JSValue fnValue = JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
+    JSValue fnValue = compiledWrapper ? compiledWrapper : JSC::evaluate(globalObject, code, jsUndefined(), wrapperException);
     if (wrapperException) [[unlikely]] {
         scope.throwException(globalObject, wrapperException.get());
         return false;
@@ -312,9 +311,14 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //
     //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
     //
-    JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
+    JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, compiledWrapper ? exports : JSValue(moduleObject), args);
     RETURN_IF_EXCEPTION(scope, false);
     return true;
+}
+
+bool JSCommonJSModule::evaluateCompiledWrapper(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSValue wrapper)
+{
+    return evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get(), wrapper);
 }
 
 bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
@@ -837,7 +841,6 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, throwScope, {});
 
     String sourceString = callframe->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -1530,6 +1533,8 @@ void JSCommonJSModule::evaluate(
                 globalObject->m_moduleWrapperEnd);
         }
         source.source_code = Bun::toStringRef(string);
+        // The wrapper is a JavaScript value.
+        source.is_static = false;
     }
 
     auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
@@ -1645,6 +1650,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                 source.source_code.transferToWTFString(),
                 globalObject->m_moduleWrapperEnd);
             source.source_code = Bun::toStringRef(concat);
+            // The wrapper is a JavaScript value.
+            source.is_static = false;
         }
 
         auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);

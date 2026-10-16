@@ -36,7 +36,7 @@ use bun_sema::atom::Atom;
 use bun_sema::check::task::Finished;
 use bun_sema::check::{Answer, Checker, CompilerDiagnostic, Identity, Int32Verdict, KindsDeclared, MethodStore, Noted, NumberFlow, Program as Checked, Question, ReplacedMethods, compute_ecma_line_starts, expected_int32};
 use bun_sema::hir::{self, ClassId, Flags, StmtKind};
-use bun_sema::program::{Builtin, FileId};
+use bun_sema::program::{Builtin, FileId, LoadedBy};
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::types::TypeId;
 use bun_sema::util::{InParallel, for_each_mut};
@@ -49,6 +49,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
+mod exports;
 mod nil;
 mod reads;
 mod reuse;
@@ -176,7 +177,7 @@ enum By {
 }
 
 fn text_of(strs: &Strs, name: StrId) -> String {
-    if name.is_none() { String::new() } else { String::from_utf8_lossy(strs.get(name)).into_owned() }
+    if name.is_none() { String::new() } else { bstr::BStr::new(strs.get(name)).to_string() }
 }
 
 fn name_of_func(fragments: &[Fragment], at: At) -> String {
@@ -727,7 +728,7 @@ fn classes_served_by_second_bodies(checked: &Checked<'_>, fragments: &[Fragment]
 /// Takes the part out of the function. Those behind it have been seen to.
 fn take_out(func: &mut Func, part: &ModulePart, anything: TyId) {
     for v in part.values(func) {
-        func.values[v.idx()] = ir::Value { def: Def::Op(Op::Undefined), pos: 0, ty: anything, prediction: Prediction::None, finds_initialized: false, is_in_tail_position: false };
+        func.values[v.idx()] = ir::Value::new(Def::Op(Op::Undefined), 0, anything);
     }
     let ((from, start), (to, end)) = (part.from, part.to);
     if from == to {
@@ -811,11 +812,47 @@ struct Numbering<'a> {
     layout_ids: Vec<LayoutId>,
     global_ids: Vec<GlobalId>,
     module_ids: FxHashMap<FileId, ModuleId>,
+    places_of_records: Vec<u32>,
     /// What has its number and whose definition has not been gone through.
     pending: VecDeque<Pending>,
 }
 
 type Rank = SmallVec<[u64; 4]>;
+
+fn add_rank_of_text(text: &[u8], rank: &mut Rank) {
+    for chunk in text.chunks(8) {
+        let mut word = [0; 8];
+        word[..chunk.len()].copy_from_slice(chunk);
+        rank.push(u64::from_be_bytes(word));
+    }
+    rank.extend([0, text.len() as u64]);
+}
+
+fn places_of_records(fragments: &[Fragment], index: &Index, ids: &ProgramIds) -> Vec<u32> {
+    let mut ranked: Vec<(Rank, u32)> = Vec::new();
+    for id in 0..ids.layouts.bound() as u32 {
+        let Some(at) = index.layout(id) else { continue };
+        let defining = &fragments[at.fragment as usize];
+        let shape = &defining.layouts[at.index as usize];
+        let LayoutKey::Record(identity) = shape.key else { continue };
+        let mut rank = Rank::new();
+        add_rank_of_text(if shape.name.is_none() { &[] } else { defining.strs.get(shape.name) }, &mut rank);
+        if let Some(definition) = &shape.definition {
+            rank.push(definition.layout.fields.len() as u64);
+            for field in &definition.layout.fields {
+                add_rank_of_text(defining.strs.get(field.name), &mut rank);
+            }
+        }
+        rank.extend(identity);
+        ranked.push((rank, id));
+    }
+    ranked.sort_unstable();
+    let mut places = vec![u32::MAX; ids.layouts.bound()];
+    for (place, (_, id)) in ranked.into_iter().enumerate() {
+        places[id as usize] = place as u32;
+    }
+    places
+}
 
 impl<'a> Numbering<'a> {
     fn new(fragments: &'a [Fragment], index: &'a Index, ids: &ProgramIds, func_ids: &[FuncId], in_parallel: InParallel<'_>) -> Numbering<'a> {
@@ -847,6 +884,7 @@ impl<'a> Numbering<'a> {
             layout_ids: vec![LayoutId::NONE; ids.layouts.bound()],
             global_ids: vec![GlobalId::NONE; ids.globals.bound()],
             module_ids: FxHashMap::default(),
+            places_of_records: places_of_records(fragments, index, ids),
             pending: VecDeque::new(),
         }
     }
@@ -889,7 +927,7 @@ impl<'a> Numbering<'a> {
         match part {
             Part::Class(layout) if layout.is_none() => rank.push(0),
             Part::Class(layout) => rank.extend(match fragment.layouts[layout.idx()].key {
-                LayoutKey::Record(identity) => [1, identity[0], identity[1]],
+                LayoutKey::Record(_) => [1, u64::from(self.places_of_records[fragment.program_ids.layouts[layout.idx()] as usize]), 0],
                 LayoutKey::Instance(file, class) => [2, u64::from(file.0), u64::from(class.0)],
                 LayoutKey::ClassEnvironment(file, class) => [3, u64::from(file.0), u64::from(class.0)],
                 LayoutKey::Environment(file, number) => [4, u64::from(file.0), u64::from(number)],
@@ -1258,7 +1296,7 @@ impl TableOfTypes for &mut DeclaredTable {
 fn type_reads_by_what_fields_hold(func: &mut Func, layouts: &[Layout], tys: &mut impl TableOfTypes, views_of: &[Vec<LayoutId>], views_beside: &[OnceLock<Vec<LayoutId>>], known: &mut HeldByFields) -> bool {
     let mut as_it_was: Vec<(usize, TyId, Prediction)> = Vec::new();
     for index in 0..func.values.len() {
-        let Prediction::Field(ty) = func.values[index].prediction else { continue };
+        let Prediction::Field(ty) = func.values[index].prediction() else { continue };
         let read = match func.values[index].def {
             Def::Op(Op::PropGet { obj, name }) => tys.table().get(func.values[obj.idx()].ty).only_layout().map(|view| (view, name)),
             _ => None,
@@ -1326,7 +1364,8 @@ fn type_reads_by_what_fields_hold(func: &mut Func, layouts: &[Layout], tys: &mut
                         let described = more.iter().fold(read_as.clone(), |described, &declared| described.or(tys.table().get(declared)));
                         let Some(held) = tys.number_of(described) else {
                             for (index, ty, prediction) in as_it_was.into_iter().rev() {
-                                (func.values[index].ty, func.values[index].prediction) = (ty, prediction);
+                                func.values[index].ty = ty;
+                                func.values[index].set_prediction(prediction);
                             }
                             return false;
                         };
@@ -1338,14 +1377,16 @@ fn type_reads_by_what_fields_hold(func: &mut Func, layouts: &[Layout], tys: &mut
             },
         };
         let value = &mut func.values[index];
-        as_it_was.push((index, value.ty, value.prediction));
-        (value.ty, value.prediction) = if held == ty {
+        as_it_was.push((index, value.ty, value.prediction()));
+        let prediction;
+        (value.ty, prediction) = if held == ty {
             (ty, Prediction::None)
         } else if held.is_some() && value.ty == tys.table().anything {
             (held, Prediction::Ty(ty))
         } else {
             (value.ty, Prediction::Ty(ty))
         };
+        value.set_prediction(prediction);
     }
     true
 }
@@ -1363,7 +1404,7 @@ pub(crate) mod has {
 fn contents_of(func: &Func, size: Option<StrId>) -> u8 {
     let mut found = 0;
     for value in &func.values {
-        found |= match value.prediction {
+        found |= match value.prediction() {
             Prediction::ByKey(_) => has::PREDICTIONS_BY_KEY,
             Prediction::Field(_) => has::PREDICTIONS_BY_FIELD,
             _ => 0,
@@ -1387,6 +1428,10 @@ const IS_KNOWN: &str = "the index has no function that is only named";
 
 fn spawn_beside_the_pool<'scope, T: Send + 'scope>(scope: &'scope std::thread::Scope<'scope, '_>, work: impl FnOnce() -> T + Send + 'scope) -> std::thread::ScopedJoinHandle<'scope, T> {
     const STACK: usize = 64 << 20;
+    let work = move || {
+        bun_core::StackCheck::configure_thread();
+        work()
+    };
     std::thread::Builder::new().name("AOT link".to_owned()).stack_size(STACK).spawn_scoped(scope, work).expect("a thread of the link could not be started")
 }
 struct FuncIds<'a> {
@@ -1444,8 +1489,8 @@ fn renumber_func(func: &mut Func, maps: &Maps) {
     for_each_id_of_func(func, &mut Renumber(maps));
     // Of a function that is not reached there are no closures to expect.
     for value in &mut func.values {
-        if value.prediction == Prediction::Closure(FuncId::NONE) {
-            value.prediction = Prediction::None;
+        if value.prediction() == Prediction::Closure(FuncId::NONE) {
+            value.set_prediction(Prediction::None);
         }
     }
 }
@@ -1977,9 +2022,9 @@ fn explain_given(program: &Program) -> Vec<String> {
         ("joins", joins),
         ("fields of the layouts that objects are made as", fields),
         ("reads of a property: the receiver", receivers),
-        ("reads of a property: what is read", properties),
+        ("reads of a property: the value read", properties),
         ("reads of an element: the container", containers),
-        ("reads of an element: what is read", elements),
+        ("reads of an element: the value read", elements),
     ];
     let share = |(facts, all): (usize, usize)| format!("{facts} of {all} ({:.1}%)", 100.0 * facts as f64 / all.max(1) as f64);
     let sum = |counted: &[(usize, usize)]| counted.iter().fold((0, 0), |sum, counted| (sum.0 + counted.0, sum.1 + counted.1));
@@ -2214,7 +2259,7 @@ fn code_around(checked: &Checked<'_>, file: FileId, pos: u32) -> Option<String> 
     let functions = (0..hir.fns.len() as u32).map(hir::FnId::from).filter(|&func| !matches!(hir[func].body, hir::FnBody::None));
     if let Some(func) = functions.filter(|&func| hir[func].start <= pos && pos < c.end_of_fn(file, func)).min_by_key(|&func| c.end_of_fn(file, func) - hir[func].start) {
         let name = hir[func].name;
-        return Some(if name.is_some() { String::from_utf8_lossy(checked.files.atoms.bytes(name)).into_owned() } else { String::new() });
+        return Some(if name.is_some() { bstr::BStr::new(checked.files.atoms.bytes(name)).to_string() } else { String::new() });
     }
     let around = hir.ids(hir.body).find(|&stmt| hir[stmt].start <= pos && pos < hir[stmt].loc.end)?;
     let declares_nothing = matches!(
@@ -2374,6 +2419,7 @@ fn link_beside(
         index.by_file.entry(fragment.file).or_insert(number as u32);
     }
     in_parallel(fragments.len(), &|number| index.add(number, &fragments[number]));
+    exports::drop_exports_nobody_reads(&mut fragments, entry_points, in_parallel);
     const FUNCTIONS_OF_AN_OUTLINE: usize = 2048;
     let mut runs: Vec<(usize, usize, &mut [Function], &LocalToProgram, FileId, Outline)> = (fragments.iter_mut().enumerate())
         .flat_map(|(number, fragment)| {
@@ -2432,11 +2478,16 @@ fn link_beside(
                 if let Some(short) = name.strip_prefix(b"node:") {
                     reach.runtime_by_name.insert(short.to_vec(), file);
                 }
-                if matches!(checked.files.module(file).builtin, Some(Builtin::Module(_, true))) {
+                if matches!(checked.files.module(file).builtin, Some(Builtin::Module(_, LoadedBy::NativeCodeOrWrittenName | LoadedBy::ComputedName))) {
                     reach.key(&fragments, &index, evaluation, true);
                 }
             }
         }
+    }
+    let runtime_helpers = checked.files.by_path.get(&crate::prelude::path_of(shown_from, crate::prelude::RUNTIME_HELPERS.0)).map(FuncKey::NamespaceForHost);
+    if let Some((namespace, id)) = runtime_helpers.and_then(|namespace| Some((namespace, index.func_by_key(ids, namespace)?))) {
+        builtin_roots.push((0x7fff_fffe, namespace));
+        reach.key(&fragments, &index, id, true);
     }
     if let Some((files, id)) = entry_points.iter().filter_map(|files| files.first()).map(|&first| FuncKey::FilesByPath(first)).find_map(|files| Some((files, index.func_by_key(ids, files)?))) {
         builtin_roots.push((0x7fff_ffff, files));
@@ -2488,7 +2539,7 @@ fn link_beside(
     let make_line_tables = |line_tables: &mut [(FileId, Vec<u8>, Vec<u8>)]| {
         for_each_mut(line_tables, in_parallel, &|(file, table, shown)| {
             let file = *file;
-            let text = &checked.files.hir(file).text;
+            let text = crate::written_text(checked.files.module(file).file_name(), &checked.files.hir(file).text);
             *table = line_table(text, &compute_ecma_line_starts(text));
             // A module of the runtime is shown by the name the module loader has for it: native code goes by that text.
             let builtin = match checked.files.module(file).builtin {
@@ -2497,7 +2548,7 @@ fn link_beside(
             };
             *shown = match builtin {
                 Some(module) => module.name.to_vec(),
-                None if shows_whole_paths || checked.files.module(file).file_name().starts_with(bun_builtin_syntax::VIRTUAL_ROOT) => checked.files.module(file).file_name().to_vec(),
+                None if shows_whole_paths || checked.files.module(file).file_name().starts_with(bun_builtin_syntax::VIRTUAL_ROOT) => crate::written_path(checked.files.module(file).file_name()).to_vec(),
                 None => get_relative_path_from_directory(shown_from, checked.files.module(file).file_name(), checked.files.is_case_sensitive),
             };
         });
@@ -2628,7 +2679,7 @@ fn link_beside(
         hir.is_js && hir.check_directive.is_none() && checked.files.options.check_js.is_none() && hir::is_in_comment(hir, pos)
     };
     let is_in_declarations_of_package = |(file, _): (FileId, u32)| {
-        checked.files.hir(file).kind == hir::FileKind::Declaration && checked.files.module(file).path.text.windows(14).any(|part| part == b"/node_modules/")
+        checked.files.hir(file).kind == hir::FileKind::Declaration && bun_core::strings::contains(checked.files.module(file).path.text, b"/node_modules/")
     };
     let place_of = |(&place, &is_in_dropped_import): (&(FileId, u32), &bool)| {
         let elsewhere = place_of_error(checked, &fragments, &index, &reach, ids, place, &mut is_imported_for_types).or(is_in_dropped_import.then_some(Elsewhere::DroppedImport));
@@ -2830,7 +2881,7 @@ fn link_beside(
         names.dedup();
     }
     let outlines: Vec<Outline> = fragments.iter_mut().map(|fragment| std::mem::take(&mut fragment.outline)).collect();
-    std::thread::spawn(move || drop(outlines));
+    let _ = std::thread::Builder::new().spawn(move || drop(outlines));
     times.add("number", &mut since);
     let mut lost_with_stores: Vec<(Identity, Problem)> = Vec::new();
     let stores_to_methods: Vec<MethodStore> = (stores_to_methods.into_iter())
@@ -3001,7 +3052,7 @@ fn link_beside(
     program.regexp_literals.dedup();
     // The runtime and the program each go by what their own code stores.
     let ranks_of_files: Vec<u32> = (0..checked.files.modules.len() as u32).map(|file| checked.files.rank_of_file(FileId(file))).collect();
-    let verdicts_on_integers = std::thread::spawn(move || [number_flows, flows_of_runtime].map(|flows| expected_int32(&flows, |file| ranks_of_files[file.idx()])));
+    let verdicts_on_integers = std::thread::Builder::new().spawn(move || [number_flows, flows_of_runtime].map(|flows| expected_int32(&flows, |file| ranks_of_files[file.idx()]))).expect("a thread");
     program.builtin_modules = builtin_roots.iter().filter_map(|(id, root)| Some((*id, func_ids.get(*root)?))).collect();
     program.builtin_functions = builtin_functions.iter().map(|(id, root, visibility)| (*id, func_ids.get(*root).expect("a builtin function that is in the index is reached"), *visibility)).collect();
     let init_of = |file: FileId| func_ids.get(FuncKey::Module(file)).unwrap_or(FuncId::NONE);
@@ -3277,7 +3328,7 @@ fn link_beside(
     membership
     });
     times.add("type texts", &mut since);
-    std::thread::spawn(move || drop((fragments, index, reach, maps, types, seen, included, layout_ids, global_ids)));
+    let _ = std::thread::Builder::new().spawn(move || drop((fragments, index, reach, maps, types, seen, included, layout_ids, global_ids)));
     say("the subtypes are found");
     if ran_out_of_stack || has_run_out || c.take_ran_out_of_stack() {
         problems.push(Problem { file: nowhere, pos: 0, what: "types that are nested too deeply".into() });
@@ -3491,10 +3542,10 @@ fn link_beside(
         let mut runs: Vec<(&mut [Func], &[u8])> = funcs.chunks_mut(FUNCTIONS_OF_A_SLICE).zip(contents.chunks(FUNCTIONS_OF_A_SLICE)).collect();
         for_each_mut(&mut runs, in_parallel, &|(funcs, contents)| {
             for value in funcs.iter_mut().zip(contents.iter()).filter(|function| function.1 & has::PREDICTIONS_BY_KEY != 0).flat_map(|function| &mut function.0.values) {
-                if let Prediction::ByKey(property) = value.prediction
+                if let Prediction::ByKey(property) = value.prediction()
                     && functions_by_key.binary_search_by_key(&property.0, |entry| entry.0.0).is_err()
                 {
-                    value.prediction = Prediction::None;
+                    value.set_prediction(Prediction::None);
                 }
             }
         });
@@ -3525,7 +3576,7 @@ fn link_beside(
             let line = starts.partition_point(|&start| start <= pos).max(1) - 1;
             let text = &checked.files.hir(modules[module as usize]).text;
             let before = &text[(starts[line] as usize).min(text.len())..(pos as usize).min(text.len())];
-            (line as u32 + 1, String::from_utf8_lossy(before).encode_utf16().count() as u32 + 1)
+            (line as u32 + 1, bstr::BStr::new(before).to_string().encode_utf16().count() as u32 + 1)
         };
         let mut asked: Vec<(FuncId, FileId, hir::FnId)> = (keys_of_functions.iter().enumerate())
             .filter_map(|(i, &key)| match key {
@@ -3591,7 +3642,7 @@ fn link_beside(
     let members = membership.sizes.line();
     since = Instant::now();
     let func_ids = func_ids.by_program_id;
-    std::thread::spawn(move || drop((func_ids, str_ids)));
+    let _ = std::thread::Builder::new().spawn(move || drop((func_ids, str_ids)));
     drop((membership, names));
     times.add("free", &mut since);
     Linked { program, problems, members, explained, errors, builtin_modules_left_out, builtin_functions_left_out, found, times }

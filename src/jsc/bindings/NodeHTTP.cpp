@@ -5,6 +5,7 @@
 #include "helpers.h"
 #include "BunClientData.h"
 
+#include <JavaScriptCore/AOTFunction.h>
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -744,6 +745,15 @@ static void NodeHTTPServer__writeHead(
         }
 
         auto* structure = headersObject->structure();
+        auto writeField = [&](UniquedStringImpl& name, JSValue headerValue) -> bool {
+            if (!headerValue.isString() || name.isSymbol())
+                return true;
+            String key = &name;
+            String value = headerValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            writeResponseHeader<isSSL>(response, key, value);
+            return true;
+        };
 
         if (structure->canPerformFastPropertyEnumeration()) {
             structure->forEachProperty(vm, [&](const auto& entry) {
@@ -761,7 +771,7 @@ static void NodeHTTPServer__writeHead(
 
                 return true;
             });
-        } else {
+        } else if (!JSC::AOT::Typed::forEachOwnPropertyOfCompiledObject(headersObject, writeField)) {
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
             headersObject->methodTable()->getOwnPropertyNames(headersObject, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
             RETURN_IF_EXCEPTION(scope, void());

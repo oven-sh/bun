@@ -1069,7 +1069,7 @@ impl Expect {
         }
 
         if needs_write {
-            if crate::cli::ci_info::is_ci() {
+            if bun_core::ci_info::is_ci() {
                 if !update {
                     let signature = Self::get_signature(fn_name, "", false);
                     // Only creating new snapshots can reach here (updating with mismatches errors earlier with diff)

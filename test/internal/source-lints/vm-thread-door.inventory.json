@@ -106,9 +106,6 @@
       "Handed<T>"
     ]
   },
-  "src/runtime/cli/create_command.rs": {
-    "thread spawn": 1
-  },
   "src/runtime/cli/lint_js.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [

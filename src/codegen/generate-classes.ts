@@ -2316,6 +2316,10 @@ ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
             init.setStructure(fns.createStructure(init.vm, init.global, init.prototype));
             if (fns.createConstructor)
                 init.setConstructor(fns.createConstructor(init.vm, init.global, init.prototype));
+#if ENABLE(AOT)
+            if (index == GeneratedLazyClassJSResponse)
+                JSC::AOT::Typed::didCreateReplaceableGlobal(init.global, "Response"_s, init.constructor);
+#endif
         });
     }
 }

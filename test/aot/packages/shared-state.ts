@@ -2,7 +2,7 @@
 import { js, pkg, ts, type Case } from "./run-packages";
 
 const differs =
-  "One module that both imports and requires a package whose \"exports\" give the two a different file is not supported, and the build says so. A property that is added to `module.exports` after the namespace object was made is visible through the namespace.";
+  "A property that is added to `module.exports` after the namespace object was made is visible through the namespace.";
 
 export const cases: Case[] = [
   {

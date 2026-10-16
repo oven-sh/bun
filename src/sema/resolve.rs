@@ -3485,7 +3485,9 @@ impl<'h> Resolver<'h> {
 
     /// Resolves the relative specifier `spec` from `from_dir`.
     fn relative(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
-        self.file_or_directory(&normalize_path_for_cjs_resolution(from_dir, spec), look)
+        let candidate = normalize_path_for_cjs_resolution(from_dir, spec);
+        let code = if look.typescript { self.typescript_under_a_javascript_name(&candidate, look) } else { None };
+        code.or_else(|| self.file_or_directory(&candidate, look))
     }
 
     /// `nodeLoadModuleByRelativeName` with `considerPackageJson`.
@@ -3775,6 +3777,15 @@ impl<'h> Resolver<'h> {
             _ => false,
         };
         is_json.then(|| self.try_file(&[stem, b".json"].concat(), look))?
+    }
+
+    fn typescript_under_a_javascript_name(&self, candidate: &[u8], look: Look) -> Option<Vec<u8>> {
+        [&b""[..], b".js", b".cjs", b".mjs", b"/index.js"].iter().find_map(|ending| {
+            let path = [candidate, *ending].concat();
+            ScriptKind::from_file_name(&path).filter(|kind| kind.is_javascript())?;
+            self.host.script_kind(&path).filter(|kind| !kind.is_javascript())?;
+            self.try_file(&path, look)
+        })
     }
 
     /// `loadFileNameFromPackageJSONField`: the file at `path`, which a `package.json` names. A

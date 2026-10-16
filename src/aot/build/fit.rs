@@ -46,6 +46,7 @@ pub(crate) struct Known {
     pub(crate) counter: TyId,
     pub(crate) numeric: TyId,
     pub(crate) string: TyId,
+    pub(crate) literal_string: TyId,
     pub(crate) bigint: TyId,
     pub(crate) sum: TyId,
     pub(crate) function: TyId,
@@ -68,6 +69,7 @@ impl Known {
             counter: tys.intern(Declared::ints(0, 1 << 52)),
             numeric: tys.intern(Declared::prims(prim::NUMBER | prim::BIGINT)),
             string: tys.intern(Declared::prims(prim::STRING)),
+            literal_string: tys.intern(Declared::prims(prim::LITERAL_STRING)),
             bigint: tys.intern(Declared::prims(prim::BIGINT)),
             sum: tys.intern(Declared::prims(prim::NUMBER | prim::BIGINT | prim::STRING)),
             function: tys.intern(Declared::any_function()),
@@ -342,7 +344,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let primitives = Declared { prims: described.prims, ints: described.ints, ..Declared::default() };
         if self.c.is_prediction_about_outside_data(declared) {
             let expected = self.out.tys.intern(Declared { prims: primitives.prims & !prim::NULLISH, ..primitives });
-            fx.b.func.values[value.idx()].prediction = Prediction::Ty(expected);
+            fx.b.func.values[value.idx()].set_prediction(Prediction::Ty(expected));
             return value;
         }
         let primitives = self.out.tys.intern(primitives);
@@ -379,10 +381,25 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// The value as one of the type. Nothing is done where it is known to be one.
     pub(crate) fn fit(&mut self, fx: &mut Fx, value: V, want: Ty, why: Why) -> V {
+        let value = if want.id.is_none() || self.out.tys.get(want.id).has_literal_string() { value } else { self.widen_literal_string(fx, value) };
         if want.id.is_none() || want.id == self.out.tys.anything || self.out.tys.get(want.id).is_never() {
             return value;
         }
         let (mut value, mut have) = (value, Ty { id: self.ty(fx, value), checked: self.checked(fx, value) });
+        if self.out.tys.get(want.id).has_literal_string() && !self.out.tys.get(have.id).has_literal_string() {
+            if matches!(why, Why::Claim | Why::Flow | Why::NonNull(_) | Why::Upcast | Why::ArgumentClaim(_)) {
+                let as_string = self.out.tys.get(want.id).clone().with_literal_string_widened();
+                let as_string = Ty { id: self.out.tys.intern(as_string), ..want };
+                let held = self.fit(fx, value, as_string, why);
+                return self.fit(fx, held, want, Why::Store);
+            } else if let Some(&Op::Str(text)) = fx.b.func.op(value) {
+                let is_newest = fx.b.func.blocks[fx.b.block.idx()].ops.last() == Some(&value);
+                let literal = if is_newest { value } else { fx.b.emit(Op::Str(text), self.known.literal_string) };
+                fx.b.func.values[literal.idx()].ty = self.known.literal_string;
+                fx.checked.insert(literal, if want.checked != TypeId::UNRESOLVED { want.checked } else { have.checked });
+                return literal;
+            }
+        }
         // What a test leaves of primitives of several kinds keeps the room that those have for an object: where `typeof v` is neither "number" nor "string" the checker takes a
         // `boolean | number | string` for a boolean, by elimination. Whoever looks sees the object. A use asserts: `used_as_its_type`.
         let want = {
@@ -860,7 +877,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let want = Ty { id: self.ty_of(checked), checked };
         if fx.b.func.prediction(value) == Prediction::None && want.id != self.out.tys.anything {
-            fx.b.func.values[value.idx()].prediction = Prediction::Ty(want.id);
+            fx.b.func.values[value.idx()].set_prediction(Prediction::Ty(want.id));
         }
         let held = self.fit(fx, value, want, Why::Cast);
         self.mark_cast_of_what_is_fresh(fx, held, value);
@@ -893,7 +910,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             _ => false,
         };
         if is_call {
-            fx.b.func.values[value.idx()].is_in_tail_position = true;
+            fx.b.func.values[value.idx()].set_is_in_tail_position(true);
         }
     }
 
@@ -1067,7 +1084,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if !is_made_for_another && matches!(fx.b.func.op(value), Some(Op::PropGet { .. })) {
                 self.leave_unheld(fx, value);
             }
-            if fx.is_typed && !is_made_for_another && self.is_checked_at_creation(fx, value) {
+            if fx.is_typed && !is_made_for_another && !is_handed_back && self.is_checked_at_creation(fx, value) {
                 self.problem(fx.file, pos, "this expression (internal error: a predicted type was checked as a declared type; please report it)");
             }
             let predicted = self.predict_expression(fx, value, e);
@@ -1153,6 +1170,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return self.remember_narrowing(fx, value, read.declared, want, e);
         }
         let made = value;
+        if matches!(fx.b.func.op(value), Some(Op::Str(_))) {
+            let as_string = self.out.tys.get_widened(want.id).clone();
+            want.id = self.out.tys.intern(as_string);
+        }
         let value = self.fit(fx, value, want, why);
         let mut written = e;
         while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) = self.hir(fx.file)[written].kind {
@@ -1429,7 +1450,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn push_env(&mut self, fx: &mut Fx, layout: LayoutId, env: V) {
         let var = fx.b.new_var(self.ty_of_layout(layout));
         fx.b.write(var, env);
-        fx.envs.push(super::EnvScope { layout, var });
+        fx.envs.push(super::EnvScope { layout, var, shares_activation_with_previous: false });
     }
 
     /// `value`: what the call `e` has yielded. Where the checker knows what the program goes on with if that is not of the type of `e`, see
@@ -1680,9 +1701,68 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         false
     }
 
+    pub(crate) fn widen_literal_string(&mut self, fx: &mut Fx, value: V) -> V {
+        if value.is_none() || !fx.b.is_open() || !self.out.tys.get(self.ty(fx, value)).has_literal_string() {
+            return value;
+        }
+        let checked = self.checked(fx, value);
+        let as_string = self.out.tys.get(self.ty(fx, value)).clone().with_literal_string_widened();
+        let to = self.out.tys.intern(as_string);
+        if let Some(&held) = fx.fitted.get(&(fx.b.block, value, to)) {
+            return held;
+        }
+        let held = match fx.b.func.op(value) {
+            Some(&Op::Str(text)) => fx.b.emit(Op::Str(text), self.known.string),
+            _ => fx.b.emit(Op::Coerce { value, to, why: Why::Upcast }, to),
+        };
+        fx.fitted.insert((fx.b.block, value, to), held);
+        if checked != TypeId::UNRESOLVED {
+            fx.checked.insert(held, checked);
+        }
+        held
+    }
+
+    fn widen_literal_string_operands(&mut self, fx: &mut Fx, op: Op) -> Op {
+        let mut has_one = false;
+        op.for_each_operand(|operand| has_one |= operand.is_some() && self.out.tys.get(fx.b.func.ty(operand)).has_literal_string());
+        if !has_one {
+            return op;
+        }
+        match op {
+            Op::GlobalSet(..) | Op::FieldSet { .. } | Op::NewWith { .. } | Op::Coerce { .. } | Op::Closure { .. } | Op::ClosureOnce { .. } | Op::CallDirect { .. } | Op::Not(_) | Op::Truthy(_) | Op::IsNullish(_) => op,
+            Op::PropSet { obj, name, value } => Op::PropSet { obj: self.widen_literal_string(fx, obj), name, value },
+            Op::StrictEq { a, b } => {
+                let compares_as_it_is = |this: &Self, other: V| {
+                    let described = this.out.tys.get(fx.b.func.ty(other));
+                    described.has_literal_string() || matches!(fx.b.func.op(other), Some(Op::Str(_))) || !described.has_objects() && described.ints.is_none() && described.prims & !prim::NULLISH == 0
+                };
+                if compares_as_it_is(self, a) && compares_as_it_is(self, b) {
+                    return op;
+                }
+                Op::StrictEq { a: self.widen_literal_string(fx, a), b: self.widen_literal_string(fx, b) }
+            }
+            mut op => {
+                let mut operands: Vec<V> = Vec::new();
+                op.for_each_operand(|operand| operands.push(operand));
+                let mut held: Vec<V> = Vec::with_capacity(operands.len());
+                for operand in operands {
+                    held.push(self.widen_literal_string(fx, operand));
+                }
+                let mut next = held.into_iter();
+                op.for_each_operand_mut(|operand| {
+                    if let Some(held) = next.next() {
+                        *operand = held;
+                    }
+                });
+                op
+            }
+        }
+    }
+
     /// The operands that enter places, as what the places hold. What is stored to a variable of the source has been seen to by
     /// `write_sym`, which knows whether the type of the variable is written down.
     pub(crate) fn fit_operands(&mut self, fx: &mut Fx, op: Op) -> Op {
+        let op = self.widen_literal_string_operands(fx, op);
         let op = match op {
             Op::PropGet { obj, name } => Op::PropGet { obj: self.as_one_view(fx, obj, name), name },
             Op::PropSet { obj, name, value } => Op::PropSet { obj: self.as_one_view(fx, obj, name), name, value },
@@ -1756,7 +1836,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.c.admits_foreign(have.checked, &views);
         }
         let (a, b) = (self.out.tys.get(have.id), self.out.tys.get(want.id));
-        if a.prims & !b.prims != 0 {
+        let lacked = a.prims & !b.prims;
+        if (if b.prims & prim::STRING != 0 { lacked & !prim::LITERAL_STRING } else { lacked }) != 0 {
             return false;
         }
         if let Some((least, most)) = a.ints
@@ -2099,6 +2180,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let mut arguments = hir.ids(hir[call].args);
             if let Some(target) = arguments.next() {
                 let target = self.c.type_of_expr(fx.file, target);
+                let described = self.ty_of(target);
+                if self.types_of_layouts_in(described).is_empty() {
+                    let yielded = self.c.type_of_expr(fx.file, e);
+                    let yielded = self.ty_of(yielded);
+                    for view in self.types_of_layouts_in(yielded) {
+                        self.c.note_foreign(view, target);
+                    }
+                }
                 for source in arguments {
                     let source = self.c.type_of_expr(fx.file, source);
                     for (held, held_as) in self.c.properties_assigned(source, target) {
@@ -2138,6 +2227,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn note_entry_of_type(&mut self, source: TypeId, target: TypeId) {
+        if target.is_never() && !source.is_any() {
+            let entering = self.c.types_held_entering(source, target);
+            if !entering.is_empty() {
+                self.c.descend_into_checked_value();
+                for (held, held_as) in entering {
+                    self.note_entry_of_type(held, held_as);
+                }
+                self.c.come_back_a_level();
+            }
+            return;
+        }
         let (have, want) = (Ty { id: self.ty_of(source), checked: source }, Ty { id: self.ty_of(target), checked: target });
         // What is not within it is tested where it is read, or on the way into the function.
         if !self.is_within(have, want) {

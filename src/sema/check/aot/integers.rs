@@ -969,6 +969,9 @@ impl<'p, 's> Checker<'p, 's> {
                 return None;
             }
         }
+        if self.may_be_overridden(at) {
+            return None;
+        }
         let place = self.place_of_integers(at);
         if !place.is_followed {
             return None;
@@ -1036,6 +1039,7 @@ impl<'p, 's> Checker<'p, 's> {
         let ExprKind::Ident(written) = self.hir(file)[e].kind else { return false };
         self.bound(file).expr_symbol[e.idx()].is_none()
             && self.atoms().bytes(written) == name
+            && self.global_that_may_be_overridden(name).is_none()
             && self.symbol_of_identifier(file, e, written).is_some_and(|found| self.hir(found.file).kind == FileKind::Declaration)
     }
 
@@ -1330,6 +1334,9 @@ impl<'p, 's> Checker<'p, 's> {
         let symbol = bound.symbols.get(at.id.idx())?;
         let uses = self.uses_of_integers_in(file);
         if symbol.flags.contains(SymFlags::MERGED) || uses.stored_through_assertions.contains(&at.id) || uses.has_direct_eval {
+            return None;
+        }
+        if self.may_be_overridden(at) {
             return None;
         }
         if self.commonjs_variable_declared_again(file, symbol.name) == Some(at) {

@@ -405,7 +405,7 @@ pub mod btjs;
 #[path = "CppTask.rs"]
 pub mod cpp_task;
 #[path = "fmt_jsc.rs"]
-pub mod fmt_jsc;
+pub(crate) mod fmt_jsc;
 #[path = "HTTPServerAgent.rs"]
 pub mod http_server_agent;
 #[path = "JSSecrets.rs"]
@@ -458,8 +458,9 @@ pub mod zig_stack_trace;
 pub mod async_module;
 #[path = "bindgen.rs"]
 pub mod bindgen;
+#[cfg(debug_assertions)]
 #[path = "bindgen_test.rs"]
-pub mod bindgen_test;
+pub(crate) mod bindgen_test;
 #[path = "BunCPUProfiler.rs"]
 pub mod bun_cpu_profiler;
 #[path = "BunHeapProfiler.rs"]
@@ -493,6 +494,12 @@ pub struct InitializeOptions {
     pub crash_if_interpreter_is_used: bool,
 }
 
+static COMPILES_WITH_WIDE_REFERENCES: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+pub fn compile_with_wide_references() {
+    COMPILES_WITH_WIDE_REFERENCES.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(options: InitializeOptions) {
     // The counter lives in `bun_core` so this crate doesn't depend on
@@ -514,6 +521,9 @@ pub fn initialize(options: InitializeOptions) {
             options.crash_if_interpreter_is_used,
         )
     };
+    if COMPILES_WITH_WIDE_REFERENCES.swap(false, core::sync::atomic::Ordering::Relaxed) {
+        Bun__AOT__useWideReferences();
+    }
 }
 
 /// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
@@ -1579,15 +1589,13 @@ unsafe extern "C" {
         crash_if_interpreter_is_used: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
+    safe fn Bun__AOT__useWideReferences();
 }
 
 // Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`
-// grows a `.rs` backend (same arrangement as `r#gen` below).
+// grows a `.rs` backend.
 #[path = "generated.rs"]
 pub mod generated;
 
-/// `bun.gen` — bindgen dispatch shims.
-/// Hand-written per-module until `src/codegen/bindgen.ts` grows a `.rs` backend.
-/// (`gen` is a reserved keyword in edition 2024; use `r#gen` at call sites.)
-#[path = "bindings/GeneratedBindings.rs"]
-pub mod r#gen;
+#[path = "generated_bindgen.rs"]
+pub(crate) mod generated_bindgen;

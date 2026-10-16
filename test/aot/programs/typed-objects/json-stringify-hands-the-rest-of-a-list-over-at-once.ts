@@ -1,0 +1,61 @@
+declare const aotOperationCount: (name: string) => number;
+interface Item { id: number; title?: string; price?: number }
+interface Page { total: number; rows: Item[] }
+function whole(i: number): Item {
+    return { id: i, title: "item " + i, price: i + 0.25 };
+}
+function builtUp(i: number): Item {
+    const made: Item = { id: i };
+    if (i & 1) made.price = i + 0.25;
+    made.title = "item " + i;
+    return made;
+}
+function sum(text: string): number {
+    let value = 0;
+    for (let i = 0; i < text.length; i++) value = (value * 31 + text.charCodeAt(i)) | 0;
+    return value;
+}
+function measure(label: string, run: () => string): void {
+    const finished = aotOperationCount("operationAOTTypedJSONFinish");
+    const values = aotOperationCount("operationAOTTypedJSONAppendValue");
+    const rests = aotOperationCount("operationAOTTypedJSONAppendElementsFrom");
+    let text = "";
+    for (let i = 0; i < 100; i++) text = run();
+    console.log(label + ": " + (text.length < 150 ? text : text.length + " characters, " + sum(text)) + ": " + (aotOperationCount("operationAOTTypedJSONFinish") - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTTypedJSONAppendValue") - values) + " values and " + (aotOperationCount("operationAOTTypedJSONAppendElementsFrom") - rests) + " rests of lists handed to the runtime");
+}
+function list(count: number, make: (i: number) => Item): Item[] {
+    const made: Item[] = [];
+    for (let i = 0; i < count; i++) made.push(make(i));
+    return made;
+}
+const allWhole = list(3, whole);
+const allBuiltUp = list(3, builtUp);
+const lastBuiltUp = list(3, i => i === 2 ? builtUp(i) : whole(i));
+const firstBuiltUp = list(3, i => i === 0 ? builtUp(i) : whole(i));
+const one = list(1, builtUp);
+const none: Item[] = [];
+const long = list(400, builtUp);
+const longBehindWhole = list(400, i => i < 200 ? whole(i) : builtUp(i));
+const wide = list(3, builtUp);
+wide[2].title = "中文";
+const withNull: (Item | null)[] = [whole(0), null, builtUp(2), null];
+const extra = list(3, whole);
+(extra[1] as any).more = true;
+const page: Page = { total: 3, rows: allBuiltUp };
+const pages: Page[] = [{ total: 3, rows: allBuiltUp }, { total: 3, rows: allWhole }, { total: 3, rows: lastBuiltUp }];
+const lists: Item[][] = [allWhole, allBuiltUp, lastBuiltUp];
+
+measure("every element as it was born", () => JSON.stringify(allWhole));
+measure("every element built up", () => JSON.stringify(allBuiltUp));
+measure("the last built up", () => JSON.stringify(lastBuiltUp));
+measure("the first built up", () => JSON.stringify(firstBuiltUp));
+measure("one element", () => JSON.stringify(one));
+measure("no element", () => JSON.stringify(none));
+measure("four hundred built up", () => JSON.stringify(long));
+measure("two hundred built up behind two hundred", () => JSON.stringify(longBehindWhole));
+measure("a 16-bit string in the rest", () => JSON.stringify(wide));
+measure("nulls among them", () => JSON.stringify(withNull));
+measure("one with an extra property", () => JSON.stringify(extra));
+measure("in a record", () => JSON.stringify(page));
+measure("in records in a list", () => JSON.stringify(pages));
+measure("lists in a list", () => JSON.stringify(lists));

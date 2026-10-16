@@ -1,4 +1,6 @@
 // After a collection the cells that died are allocated again and those that are alive stay as they are, whichever of their neighbors died: all, none, runs, every second or third.
+const shell = globalThis as any;
+const collect: (full: boolean) => void = shell.Bun ? (full: boolean) => shell.Bun.gc(full) : (full: boolean) => (full ? shell.fullGC() : shell.edenGC());
 type S1 = { a: number };
 type S2 = { a: number; b: number; c: number };
 type S3 = { a: number; b: number; c: number; d: number; e: number };
@@ -69,8 +71,8 @@ for (let round = 0; round < 30; round++) {
     }
   }
   kept = kept.filter((_, index) => patterns[(round + 3) % patterns.length](index)).concat(fresh);
-  if (round % 3 === 0) Bun.gc(true);
-  else Bun.gc(false);
+  if (round % 3 === 0) collect(true);
+  else collect(false);
   for (const item of kept) wrong += Math.abs(check(item.kind, item.seed, item.value));
   console.log(round, kept.length, wrong, made);
 }

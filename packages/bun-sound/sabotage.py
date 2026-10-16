@@ -18,7 +18,7 @@ bad = 0
 for i, (name, due, blind, old, new) in enumerate(S, 1):
     D = '%s/s%d' % (OUT, i); os.makedirs(D + '/packages'); f = D + '/packages/' + P + '/typed.cts'
     if os.path.isdir(H + '/packages/' + P): shutil.copytree(H + '/packages/' + P, D + '/packages/' + P)
-    else: shutil.copytree(H + '/react-reconciler/0.33.0/src', D + '/packages/' + P); os.makedirs(D + '/packages/' + P + '/small'); shutil.copy(H + '/react/19.2.0/src/react-compiler-runtime.ts', D + '/packages/' + P + '/small/')  # in the repository the text lies under <name>/<version>/src
+    else: shutil.copytree(H + '/react-reconciler/0.33.0/src', D + '/packages/' + P)  # in the repository the text lies under <name>/<version>/src
     t = open(f).read()
     if t.count(old) != 1: print('FAIL s%d %s: THE SABOTAGE DID NOT APPLY: the pattern stands %d times' % (i, name, t.count(old))); bad += 1; continue
     open(f, 'w').write(t.replace(old, new))

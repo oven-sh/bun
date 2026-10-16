@@ -92,6 +92,8 @@ pub enum Macro {
     },
     /// `lazy(id)`
     NativeBinding(u32),
+    /// `void 0`
+    Undefined,
     /// `$debug_log(...arguments)` in a debug build, else nothing
     DebugLog,
     /// `$assert(condition, "condition", ...rest)` in a debug build, else nothing
@@ -256,13 +258,14 @@ impl Manifest {
             b"isPromisePending" => Macro::PromiseStatus(0),
             b"isPromiseFulfilled" => Macro::PromiseStatus(1),
             b"isPromiseRejected" => Macro::PromiseStatus(2),
-            b"cpp" | b"rust" | b"newCppFunction" | b"newRustFunction" | b"bindgenFn" => {
+            b"cpp" | b"rust" | b"newCppFunction" | b"newRustFunction" | b"bindgen" => {
                 let [Literal::String(file), Literal::String(symbol), ..] = arguments else {
                     return Err(MacroError::ArgumentsNotLiteral);
                 };
                 let key = native_binding_key(name, file, symbol);
                 match find(&self.native_bindings, &key) {
                     Some(id) => Macro::NativeBinding(id),
+                    None if name == b"bindgen" && file.ends_with(b"_test.bind.ts") => Macro::Undefined,
                     None => return Err(MacroError::UnknownNativeBinding),
                 }
             }
@@ -568,7 +571,7 @@ fn is_macro_name(name: &[u8]) -> bool {
             | b"rust"
             | b"newCppFunction"
             | b"newRustFunction"
-            | b"bindgenFn"
+            | b"bindgen"
     )
 }
 

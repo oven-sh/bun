@@ -1,3 +1,4 @@
+// @ts-check
 // a passthrough stream.
 // basically just the most minimal sort of Transform stream.
 // Every written chunk gets output as-is.

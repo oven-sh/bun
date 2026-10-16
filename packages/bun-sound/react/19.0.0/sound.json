@@ -1,16 +1,11 @@
 {
-  "sound": 1,
+  "sound": 2,
   "name": "react",
   "version": "19.0.0",
-  "when": {
-    "process.env.NODE_ENV": "production"
-  },
-  "basis": {
-    "cjs/react-compiler-runtime.production.js": "f7d518f5c043cd008514b4fd8c665a9d2fa5686bd36c6e7d44d78187c0438700"
-  },
+  "when": {},
+  "basis": {},
   "lay": {
-    "cjs/react-compiler-runtime.production.ts": "new",
-    "compiler-runtime.js": "5c00456a0180b7b6b2366348f7218b0ea2c3a85c7fefe24c18533ed54126f601"
+    "cjs/react-compiler-runtime.production.js": "f7d518f5c043cd008514b4fd8c665a9d2fa5686bd36c6e7d44d78187c0438700"
   },
   "needs": []
 }

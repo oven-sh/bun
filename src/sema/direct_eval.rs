@@ -5,7 +5,7 @@ use crate::util::FxHashSet;
 
 pub const KEY_OF_SCOPE: &[u8] = b"\0eval";
 
-const END_OF_INSERTIONS: &[u8] = b" (bun --aot: where direct evals were given their scopes)";
+pub const END_OF_INSERTIONS: &[u8] = b" (bun --aot: where direct evals were given their scopes)";
 
 fn insertions_noted_in(text: &[u8]) -> Option<(usize, &[u8])> {
     let noted = text.strip_suffix(END_OF_INSERTIONS)?;
@@ -19,7 +19,15 @@ pub fn text_without_note_of_insertions(text: &[u8]) -> &[u8] {
 }
 
 pub fn position_in_source(text: &[u8], pos: u32) -> u32 {
-    let Some((_, noted)) = insertions_noted_in(text) else { return pos };
+    locate_in_source(text, pos).0
+}
+
+pub fn is_inserted(text: &[u8], pos: u32) -> bool {
+    locate_in_source(text, pos).1
+}
+
+fn locate_in_source(text: &[u8], pos: u32) -> (u32, bool) {
+    let Some((_, noted)) = insertions_noted_in(text) else { return (pos, false) };
     let mut inserted = 0;
     for entry in bun_core::strings::split(noted, b" ").filter(|entry| !entry.is_empty()) {
         let mut numbers = bun_core::strings::split(entry, b"+").map(|digits| digits.iter().fold(0u32, |n, c| n.saturating_mul(10).saturating_add(u32::from(c - b'0'))));
@@ -28,11 +36,11 @@ pub fn position_in_source(text: &[u8], pos: u32) -> u32 {
             break;
         }
         if pos < at + inserted + len {
-            return at;
+            return (at, true);
         }
         inserted += len;
     }
-    pos - inserted
+    (pos - inserted, false)
 }
 
 const RESERVED: [&[u8]; 47] = [
@@ -108,6 +116,10 @@ impl<'a, 's> Rewriting<'a, 's> {
         self.hir.exprs.iter().enumerate().any(named)
     }
 
+    fn is_named_by_an_expression(&self, symbol: SymbolId) -> bool {
+        self.hir.exprs.iter().enumerate().any(|(i, e)| matches!(e.kind, ExprKind::Ident(_)) && self.bound.expr_symbol[i] == symbol)
+    }
+
     fn is_assignable(&self, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let of = &bound.symbols[symbol.idx()];
@@ -162,8 +174,9 @@ impl<'a, 's> Rewriting<'a, 's> {
         while scope.is_some() {
             let at = &bound.scopes[scope.idx()];
             for &(name, symbol) in bound.table(at.locals) {
+                let symbol = bound.export_symbol_of_value_symbol_if_exported(symbol);
                 let flags = bound.symbols[symbol.idx()].flags;
-                let is_value = flags.intersects(SymFlags::VALUE) || hir.is_js && flags.contains(SymFlags::ALIAS);
+                let is_value = flags.intersects(SymFlags::VALUE) || flags.contains(SymFlags::ALIAS) && (hir.is_js || self.is_named_by_an_expression(symbol));
                 if is_value && seen.insert(name) && is_name_of_variable(self.atoms.bytes(name)) {
                     names.push((name, symbol));
                 }
@@ -265,12 +278,6 @@ impl<'a, 's> Rewriting<'a, 's> {
         }
         for (name, symbol) in names {
             let name = self.atoms.bytes(name);
-            if !bound.symbols[symbol.idx()].flags.intersects(SymFlags::VALUE & !SymFlags::CONST_ENUM) && !hir.is_js {
-                for part in [&b",get "[..], name, b"(){throw new ReferenceError(\"", name, b" is a const enum: a direct eval does not see it in a program that is compiled ahead of time\")}"] {
-                    text.extend_from_slice(part);
-                }
-                continue;
-            }
             for part in [&b",get "[..], name, b"(){return ", name, b"}"] {
                 text.extend_from_slice(part);
             }

@@ -12,9 +12,9 @@
 use super::kinds::kind;
 use crate::bind::{Parent, SymbolId};
 use crate::check::Checker;
-use crate::hir::{ExprId, ExprKind, FnId, StmtKind, UnOp};
+use crate::hir::{ExprId, ExprKind, FnId, PatKind, StmtKind, UnOp, VarDeclId};
 use crate::program::{FileId, Sym};
-use crate::util::FxHashMap;
+use crate::util::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 
 #[derive(Default)]
@@ -28,6 +28,15 @@ pub(super) struct Mapped {
     pub(super) functions: FxHashMap<FnId, ExprId>,
     /// By parameter of such a function: the function, and which of its parameters it is.
     parameters: FxHashMap<SymbolId, (FnId, u32)>,
+    pub(super) shown_on_demand: FxHashMap<FnId, ExprId>,
+    reads_by_any_key: FxHashSet<ExprId>,
+}
+
+enum UseOfArguments {
+    Harmless,
+    Reads,
+    ReadsByAnyKey(ExprId),
+    Tells,
 }
 
 impl<'p, 's> Checker<'p, 's> {
@@ -48,43 +57,31 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // Those that read what the parameters hold now, and those that can tell whatever the parameters do.
         let (mut reading, mut telling): (FxHashMap<FnId, ExprId>, FxHashMap<FnId, ExprId>) = Default::default();
+        let mut by_any_key: Vec<(FnId, ExprId)> = Vec::new();
         for &e in bound.arguments_objects.iter() {
             let owner = self.owner_of_arguments(file, e);
             if owner.is_none() || !self.has_mapped_arguments(file, owner) {
                 continue;
             }
-            let parent = match bound.expr_parent[e.idx()] {
-                Parent::None => continue,
-                Parent::Expr(parent) if parent.is_some() => parent,
-                _ => {
-                    telling.entry(owner).or_insert(e);
-                    continue;
-                }
+            let aliases = match bound.expr_parent[e.idx()] {
+                Parent::VarInit(declaration) => self.references_to_alias_of_arguments(file, owner, declaration),
+                _ => None,
             };
-            let only_reads = match hir[parent].kind {
-                ExprKind::Dot { obj, name, .. } if obj == e && self.atoms().bytes(name) == b"length" => continue,
-                // By a number: under any other key there may be `callee`.
-                ExprKind::Index { obj, index, .. } if obj == e => {
-                    let is_read = match bound.expr_parent[parent.idx()] {
-                        Parent::Expr(user) if user.is_some() => match hir[user].kind {
-                            ExprKind::Assign { target, .. } => target != parent,
-                            ExprKind::Unary { op, .. } => !matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec | UnOp::Delete),
-                            // It may be part of a pattern that is assigned to.
-                            ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) => false,
-                            _ => true,
-                        },
-                        Parent::VarInit(_) | Parent::FnBody(_) => true,
-                        Parent::Stmt(stmt) if stmt.is_some() => !matches!(hir[stmt].kind, StmtKind::ForIn { .. } | StmtKind::ForOf { .. }),
-                        _ => false,
-                    };
-                    is_read && self.kinds_yielded_by(file, index) == kind::NUMBER
+            for &mention in aliases.unwrap_or(&[e]) {
+                match self.use_of_arguments(file, owner, mention) {
+                    UseOfArguments::Harmless => {}
+                    UseOfArguments::Reads => {
+                        reading.entry(owner).or_insert(e);
+                    }
+                    UseOfArguments::ReadsByAnyKey(read) => {
+                        reading.entry(owner).or_insert(e);
+                        by_any_key.push((owner, read));
+                    }
+                    UseOfArguments::Tells => {
+                        telling.entry(owner).or_insert(e);
+                    }
                 }
-                ExprKind::Spread(_) => true,
-                // `f.apply(x, arguments)`.
-                ExprKind::Call(call) => hir[call].callee != e && matches!(hir[hir[call].callee].kind, ExprKind::Dot { name, .. } if self.atoms().bytes(name) == b"apply"),
-                _ => false,
-            };
-            if only_reads { reading.entry(owner).or_insert(e) } else { telling.entry(owner).or_insert(e) };
+            }
         }
         for (func, e) in reading {
             // A `var` of the name may have an initializer, a function of the name takes its place.
@@ -102,8 +99,66 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
+        for (func, read) in by_any_key {
+            if !telling.contains_key(&func) {
+                found.shown_on_demand.entry(func).or_insert(read);
+                found.reads_by_any_key.insert(read);
+            }
+        }
         found.functions = telling;
         found
+    }
+
+    fn references_to_alias_of_arguments(&self, file: FileId, owner: FnId, declaration: VarDeclId) -> Option<&'p [ExprId]> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let pat = hir[declaration].pat;
+        let symbol = bound.pat_symbol[pat.idx()];
+        if !matches!(hir[pat].kind, PatKind::Ident(_)) || symbol.is_none() || !bound.assignments_to(symbol).is_empty() || self.has_direct_eval(file) {
+            return None;
+        }
+        let references = self.references_to(file, symbol)?;
+        references.iter().all(|&reference| self.enclosing_fn_of_expr(file, reference) == Some(owner)).then_some(references)
+    }
+
+    fn use_of_arguments(&mut self, file: FileId, owner: FnId, e: ExprId) -> UseOfArguments {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let parent = match bound.expr_parent[e.idx()] {
+            Parent::None => return UseOfArguments::Harmless,
+            Parent::Expr(parent) if parent.is_some() => parent,
+            _ => return UseOfArguments::Tells,
+        };
+        let only_reads = match hir[parent].kind {
+            ExprKind::Dot { obj, name, .. } if obj == e && self.atoms().bytes(name) == b"length" => return UseOfArguments::Harmless,
+            ExprKind::Index { obj, index, .. } if obj == e => {
+                let is_read = match bound.expr_parent[parent.idx()] {
+                    Parent::Expr(user) if user.is_some() => match hir[user].kind {
+                        ExprKind::Assign { target, .. } => target != parent,
+                        ExprKind::Unary { op, .. } => !matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec | UnOp::Delete),
+                        // It may be part of a pattern that is assigned to.
+                        ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) => false,
+                        ExprKind::Call(call) => hir[call].callee != parent,
+                        _ => true,
+                    },
+                    Parent::VarInit(_) | Parent::FnBody(_) => true,
+                    Parent::Stmt(stmt) if stmt.is_some() => !matches!(hir[stmt].kind, StmtKind::ForIn { .. } | StmtKind::ForOf { .. }),
+                    _ => false,
+                };
+                // By a number: under any other key there may be `callee`.
+                if is_read && self.kinds_yielded_by(file, index) != kind::NUMBER && self.enclosing_fn_of_expr(file, parent) == Some(owner) {
+                    return UseOfArguments::ReadsByAnyKey(parent);
+                }
+                is_read && self.kinds_yielded_by(file, index) == kind::NUMBER
+            }
+            ExprKind::Spread(_) => true,
+            // `f.apply(x, arguments)`.
+            ExprKind::Call(call) => hir[call].callee != e && matches!(hir[hir[call].callee].kind, ExprKind::Dot { name, .. } if self.atoms().bytes(name) == b"apply"),
+            _ => false,
+        };
+        if only_reads { UseOfArguments::Reads } else { UseOfArguments::Tells }
+    }
+
+    pub fn reads_sloppy_arguments_by_any_key(&mut self, file: FileId, e: ExprId) -> bool {
+        self.hir(file).is_js && self.mapped_arguments_of_file(file).reads_by_any_key.contains(&e)
     }
 
     /// Whether the parameters of the function live in its `arguments` object, which is the mapped one of the language.

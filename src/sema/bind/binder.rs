@@ -1437,7 +1437,7 @@ impl<'f, 's> Binder<'f, 's> {
 
     fn file(&mut self) {
         // `setCommonJSModuleIndicator`: not in a file that imports or exports. To the runtime TypeScript is CommonJS by the same signs.
-        let is_asked = self.f.is_js || self.options.names_make_commonjs && self.f.kind != crate::hir::FileKind::Declaration;
+        let is_asked = self.f.is_js || self.f.is_annotated_javascript() || self.options.names_make_commonjs && self.f.kind != crate::hir::FileKind::Declaration;
         if is_asked && (!self.f.has_module_syntax || self.f.is_module_by_decree) {
             self.b.commonjs_indicator = (0..self.f.exprs.len() as u32).map(ExprId).find(|&e| {
                 require_argument(self.f, e).is_some()
@@ -1451,7 +1451,7 @@ impl<'f, 's> Binder<'f, 's> {
                         && match self.f[e].kind {
                             ExprKind::Ident(known::exports | known::module) => true,
                             // That of the file, for which the runtime's parser writes `exports`.
-                            ExprKind::This => self.f.kind(self.f.get_this_container(self.f.node(e), false, false)) == crate::node::Kind::SourceFile,
+                            ExprKind::This => self.f.kind(self.f.get_this_container(self.f.node(e), false, false)) == crate::node::Kind::SourceFile && !self.f.names_import_meta(),
                             _ => false,
                         }
             });
@@ -1869,7 +1869,13 @@ impl<'f, 's> Binder<'f, 's> {
             {
                 return Some(SymbolId::NONE);
             }
+            // `meaning&ast.SymbolFlagsType`: a type parameter of a class or an interface is one symbol with the member of its
+            // name, which is not in scope.
             if let Some(&symbol) = tables[s.locals.idx()].get(name)
+                && !(matches!(s.kind, ScopeKind::Class(_) | ScopeKind::Interface(_))
+                    && b.symbols[symbol.idx()]
+                        .flags
+                        .contains(SymFlags::TYPE_PARAMETER))
                 && b.symbols[symbol.idx()]
                     .flags
                     .intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)
@@ -4653,7 +4659,7 @@ impl<'f, 's> Binder<'f, 's> {
             }
         }
         // `bind`, `KindCallExpression`: a call in an optional chain is a call expression too.
-        if self.f.is_js && matches!(self.f[id].kind, ExprKind::Call(_)) {
+        if (self.f.is_js || self.f.is_annotated_javascript()) && matches!(self.f[id].kind, ExprKind::Call(_)) {
             match assignment_declaration_kind(self.f, id) {
                 JsDeclarationKind::ObjectDefinePropertyValue => {
                     self.expando_assignments.push((id, self.scope));

@@ -3,7 +3,8 @@
 // program without type annotations. Plain Bun with its JIT is measured for comparison and is never judged.
 //
 //   AOT_PERF=1 bun test test/aot/perf/idioms.test.ts        fails if a compiled form takes more than 10% AND more than 20
-//                                                           instructions per iteration more than ./pins.<os>-<arch>.json says
+//                                                           instructions per iteration more than ./pins.<os>-<arch>.json says,
+//                                                           or more than 25% AND more than 4 instructions more
 //   AOT_PERF=update bun test test/aot/perf/idioms.test.ts   rewrites the pinned numbers, each as soon as it is measured, so
 //                                                           an interrupted run leaves the others unchanged
 //   AOT_PERF_ONLY='^(spread|rest)/' ..                      only the idioms whose path matches the regular expression
@@ -86,7 +87,9 @@ describe.skipIf(!mode || !perf)("compile/aot/perf/idioms", () => {
         if (mode === "update") return void writeFileSync(pinsPath, JSON.stringify({ ...pins, ...measured }, null, 2) + "\n");
         const pin = pins[name];
         expect(pin).toBeDefined();
-        const worse = (["typed", "untyped"] as const).filter(form => now[form] > pin[form] * 1.1 && now[form] > pin[form] + 20);
+        const worse = (["typed", "untyped"] as const).filter(
+          form => (now[form] > pin[form] * 1.1 && now[form] > pin[form] + 20) || (now[form] > pin[form] * 1.25 && now[form] > pin[form] + 4),
+        );
         expect({ worse, now, pin }).toEqual({ worse: [], now, pin });
       },
       600_000,

@@ -1295,7 +1295,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ],
       [
         "<button onclick={() => (\n  open = true\n  // and more\n)}>Open</button>\n",
-        "<button\n  onclick={() =>\n    (open = true)\n  // and more\n  }>Open</button\n>\n",
+        "<button\n  onclick={() =>\n    (open = true)\n    // and more\n  }>Open</button\n>\n",
         "<button\n  onclick={() => (open = true)\n  // and more\n  }>Open</button\n>\n",
         "<button\n  onclick={() => (open = true)}>Open</button\n  // and more\n>\n",
       ],

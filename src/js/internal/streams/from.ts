@@ -1,3 +1,4 @@
+// @ts-check
 const process = globalThis.process;
 const SymbolIterator = Symbol.iterator;
 const SymbolAsyncIterator = Symbol.asyncIterator;

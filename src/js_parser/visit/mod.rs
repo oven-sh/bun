@@ -353,13 +353,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
-                if self.options.compiles_requires_made_by_create_require
-                    && let BData::BIdentifier(id) = decl.binding.data
-                    && self.is_create_require_for_this_file(&val)
-                {
-                    let name = self.load_name_from_ref(id.r#ref);
-                    self.own_require_names.push(name);
-                }
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
@@ -2012,7 +2005,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 StmtData::SEmpty(_) => continue,
 
                 // skip directives for now
-                StmtData::SDirective(_) => continue,
+                StmtData::SDirective(_) if !p.options.keep_directives => continue,
 
                 StmtData::SLocal(local) => {
                     // Merge adjacent local statements

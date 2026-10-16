@@ -1411,10 +1411,11 @@ impl<'p, 's> Checker<'p, 's> {
         if let TypeData::Intersection(parts) = self.data(t) {
             // `Partial<T>[K] & {}` is `T[K] & {}`.
             let has_instantiable = parts.iter().any(|&p| self.is_instantiable(p));
-            let has_nullable_or_empty = parts.iter().any(|&p| {
-                p.is_null() || p.is_undefined() || self.is_empty_anonymous_object_type(p)
-            });
-            if has_instantiable && has_nullable_or_empty {
+            let has_nullable_or_empty = has_instantiable
+                && parts.iter().any(|&p| {
+                    p.is_null() || p.is_undefined() || self.is_empty_anonymous_object_type(p)
+                });
+            if has_nullable_or_empty {
                 let normalized: Vec<TypeId> =
                     parts.iter().map(|&p| self.normalized(p, writing)).collect();
                 if normalized[..] != parts[..] {
@@ -4014,6 +4015,15 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (t, data) = self.mapped_target_with_symbol(t);
         if let TypeData::Intersection(parts) = data
+            && parts.len() >= MEMBERS_OF_A_LARGE_INTERSECTION
+        {
+            let identities: SmallVec<[(TypeId, RecursionId); 16]> = stack
+                .iter()
+                .map(|&on_stack| (on_stack, self.plain_recursion_identity(on_stack)))
+                .collect();
+            return self.is_deeply_nested_among(t, &identities, max_depth);
+        }
+        if let TypeData::Intersection(parts) = data
             && parts
                 .iter()
                 .any(|&p| self.is_deeply_nested_type(p, stack, max_depth))
@@ -4026,6 +4036,41 @@ impl<'p, 's> Checker<'p, 's> {
         for &on_stack in stack {
             if self.has_matching_recursion_identity(on_stack, identity) {
                 // `t.id >= lastTypeId`
+                if last.is_none_or(|last| self.creation_order(on_stack, last).is_ge()) {
+                    count += 1;
+                    if count >= max_depth {
+                        return true;
+                    }
+                }
+                last = Some(on_stack);
+            }
+        }
+        false
+    }
+
+    fn is_deeply_nested_among(
+        &mut self,
+        t: TypeId,
+        identities: &[(TypeId, RecursionId)],
+        max_depth: usize,
+    ) -> bool {
+        let (t, data) = self.mapped_target_with_symbol(t);
+        if let TypeData::Intersection(parts) = data
+            && parts
+                .iter()
+                .any(|&p| self.is_deeply_nested_among(p, identities, max_depth))
+        {
+            return true;
+        }
+        let identity = self.recursion_identity_as(t, data);
+        let mut count = 0;
+        let mut last = None;
+        for &(on_stack, kept) in identities {
+            let matches = match kept == NOT_PLAIN {
+                true => self.has_matching_recursion_identity(on_stack, identity),
+                false => kept == identity,
+            };
+            if matches {
                 if last.is_none_or(|last| self.creation_order(on_stack, last).is_ge()) {
                     count += 1;
                     if count >= max_depth {

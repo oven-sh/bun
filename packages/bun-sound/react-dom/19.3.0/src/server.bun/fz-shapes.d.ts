@@ -150,7 +150,7 @@ declare namespace FZ {
     renderLifetimeController: AbortControllerGiven; // null until attachAbortSignal
     formState: ReactFormState; // null when none
   }
-  /** function RequestInstance(this: FZ.Request, ..) and new (RequestInstance as unknown as FZ.RequestConstructor)(..) */
+  /** function RequestInstance(this: FZ.Request, ..) and new (RequestInstance as FZ.RequestConstructor)(..): with the call signature beside the construct signature the cast needs no `unknown`, through which the function would leave typed code */
   interface RequestConstructor {
     new (
       resumableState: ResumableState,
@@ -165,6 +165,19 @@ declare namespace FZ {
       onFatalError: ((error: Thrown) => void) | undefined,
       formState: ReactFormState
     ): Request;
+    (this: Request,
+      resumableState: ResumableState,
+      renderState: RenderState,
+      rootFormatContext: FormatContext,
+      progressiveChunkSize: number | undefined,
+      onError: ErrorHandler | undefined,
+      onBrowserBailout: BailoutHandler | undefined,
+      onAllReady: (() => void) | undefined,
+      onShellReady: (() => void) | undefined,
+      onShellError: ((error: Thrown) => void) | undefined,
+      onFatalError: ((error: Thrown) => void) | undefined,
+      formState: ReactFormState
+    ): void;
   }
   type ErrorHandler = (error: Thrown, errorInfo: ThrownInfo) => any; // the user's, or defaultErrorHandler. The result: a digest; what is no string | null | undefined is dropped
   type BailoutHandler = (error: Thrown, errorInfo: ThrownInfo) => void; // the user's, or noop

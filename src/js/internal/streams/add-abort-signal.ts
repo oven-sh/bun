@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const { isNodeStream, isWebStream, kControllerErrorFunction } = require("internal/streams/utils");

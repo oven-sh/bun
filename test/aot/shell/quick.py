@@ -132,7 +132,10 @@ def one(program):
     if not os.path.isfile(image):
         return f"NOT COMPILED (exit code {code}): " + " ".join(said.split("\n")[:3])[:300]
 
-    code, output = run([JSC, "--aotImagePath=" + image, HERE + "/prelude.js", "-m", host_module], cwd, 120, env)
+    for name, value in options.get("env", {}).items():
+        if name.startswith("BUN_JSC_"):
+            env[name[len("BUN_"):]] = value
+    code, output = run([JSC, "--aotImagePath=" + image, "-e", open(HERE + "/prelude.js").read(), "-m", host_module], cwd, 120, env)
     output = without_times(output)
     if code is None or code < 0:
         return f"DIFFERS: {'timed out' if code is None else f'died of signal {-code}'}: " + " | ".join(output.strip().split("\n")[-2:])[:220]

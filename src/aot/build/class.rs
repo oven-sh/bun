@@ -221,7 +221,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// The class of the program an expression names, if nothing else can be its value.
     pub(crate) fn class_for_expr(&mut self, file: FileId, e: ExprId) -> Option<(FileId, ClassId)> {
         let sym = self.binding_named_by(file, e)?;
-        if self.is_ambient(sym) || self.is_assigned(sym) {
+        if self.is_ambient(sym) || self.is_assigned(sym) || self.c.may_be_overridden_at(sym, file, e) {
             return None;
         }
         match self.value_declaration(sym)? {
@@ -370,6 +370,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if !fields.iter().any(|field| field.name == text) {
                 implemented.push((fields.len() as u32, instances, name));
                 fields.push(Field::new(text, TyId::NONE, field_flags::OPTIONAL | field_flags::ABSENT_AT_BIRTH));
+            }
+        }
+        for name in self.c.methods_with_fields(file, class) {
+            let text = self.str(name);
+            let fields = &mut self.out.layouts[layout.idx()].fields;
+            if !fields.iter().any(|field| field.name == text) {
+                implemented.push((fields.len() as u32, instances, name));
+                fields.push(Field::new(text, TyId::NONE, field_flags::OPTIONAL | field_flags::ABSENT_AT_BIRTH | field_flags::METHOD));
             }
         }
         let symbol = Sym { file, id: bound.class_symbol[class.idx()] };
@@ -594,7 +602,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let name = self.out.strs.intern(name);
         let variable = self.add_class_variable(scope, key, name, TyId::NONE);
         if scope.env.is_none() {
-            self.out.globals[variable as usize].initialization = ir::Initialization::Undefined;
+            let is_stored_once = matches!(key.2, ClassVariable::PrivateName(_) | ClassVariable::PrivateMethods) && !self.is_evaluated_when_touched(key.0);
+            self.out.globals[variable as usize].initialization = if is_stored_once { ir::Initialization::NeverSeenAndStoredOnce } else { ir::Initialization::Undefined };
         }
         variable
     }
@@ -1689,7 +1698,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// The class that declares `#name`, which need not be the innermost one around the reference. It is in the name, and in the same file.
-    fn class_of_private_name(&self, name: Atom) -> Option<ClassId> {
+    pub(crate) fn class_of_private_name(&self, name: Atom) -> Option<ClassId> {
         let bytes = self.c.atoms().bytes(name);
         if !bytes.starts_with(PRIVATE_NAME_PREFIX) {
             return None;

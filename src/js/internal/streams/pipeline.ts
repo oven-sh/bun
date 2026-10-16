@@ -1,3 +1,4 @@
+// @ts-check
 // Ported from https://github.com/mafintosh/pump with
 // permission from the author, Mathias Buus (@mafintosh).
 
@@ -75,7 +76,7 @@ async function* fromReadable(val) {
 }
 
 async function pumpToNode(iterable, writable, finish, { end }) {
-  let error;
+  let error: any;
   let onresolve: (() => void) | null = null;
 
   const resume = err => {

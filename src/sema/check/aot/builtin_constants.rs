@@ -30,6 +30,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn find_builtin_held_by(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
+        if self.may_be_overridden(sym) {
+            return None;
+        }
         let (file, Decl::Var(pat)) = self.declaration_of_variable(sym)? else { return None };
         let hir = self.hir(file);
         let PatParent::Var(d) = root_declaration(self.bound(file), pat) else { return None };
@@ -53,6 +56,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn find_builtin_or_undefined_in_variable(&mut self, sym: Sym) -> Option<(FileId, ExprId)> {
+        if self.may_be_overridden(sym) {
+            return None;
+        }
         let (file, Decl::Var(pat)) = self.declaration_of_variable(sym)? else { return None };
         let (hir, bound) = (self.hir(file), self.bound(file));
         let PatParent::Var(d) = root_declaration(bound, pat) else { return None };
@@ -128,6 +134,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn is_path_to_builtin_function(&mut self, file: FileId, path: ExprId) -> bool {
+        if self.member_of_global_that_may_be_overridden(file, path).is_some() {
+            return false;
+        }
         let hir = self.hir(file);
         let (of, name) = match hir[path].kind {
             ExprKind::Dot { obj, name, chain: Chain::No, .. } => (obj, self.atoms().bytes(name).to_vec()),

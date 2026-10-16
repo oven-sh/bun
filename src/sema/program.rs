@@ -118,11 +118,18 @@ fn few<T>(list: Vec<T>, arena: &Arena) -> ArenaFew<'_, T> {
     ArenaFew::from_iter_in(list.into_iter(), arena)
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum LoadedBy {
+    RuntimeModulesOnly,
+    NativeCodeOrWrittenName,
+    ComputedName,
+}
+
 /// What a source of the runtime is.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Builtin {
-    /// A module, by its registry id. The flag marks a reachability root: native code or the program can load it by name, including a name computed at run time.
-    Module(u32, bool),
+    /// A module, by its registry id. It is a reachability root unless only modules of the runtime load it.
+    Module(u32, LoadedBy),
     /// Functions that native code and the other sources call by name.
     Functions,
 }
@@ -293,7 +300,7 @@ impl Module<'_> {
     }
 
     pub fn is_restricted_to_fixed_set(&self) -> bool {
-        self.is_only_code && !self.hir.is_js && matches!(self.hir.kind, FileKind::Ts | FileKind::Tsx) && self.builtin.is_none() && self.path.text.windows(14).any(|part| part == b"/node_modules/")
+        self.is_only_code && !self.hir.is_js && matches!(self.hir.kind, FileKind::Ts | FileKind::Tsx) && self.builtin.is_none() && strings::contains(self.path.text, b"/node_modules/")
     }
 
     /// Whether it is host code to whatever is found out about the types of the program: an untyped builtin file. What it does to an object of
@@ -784,6 +791,7 @@ pub struct Run<'u> {
     /// By path.
     parsed: ShardedMap<Vec<u8>, Guarded<Vec<(ParseKey, (usize, u64), &'u Parse<'u>)>>>,
     is_early: bool,
+    early_texts: Guarded<FxHashMap<usize, Vec<u8>>>,
     /// The paths (`tspath.Path`) whose text is not what is on the disk. They are parsed for each program.
     provided: FxHashSet<Vec<u8>>,
     /// Programs run at the same time.
@@ -799,6 +807,7 @@ impl<'u> Run<'u> {
             atoms: Interner::new_in(session),
             parsed: ShardedMap::default(),
             is_early: false,
+            early_texts: Guarded::new(FxHashMap::default()),
             provided,
             overlaps: false,
             parses: AtomicUsize::new(0),
@@ -885,6 +894,17 @@ impl<'u> Run<'u> {
         if !self.is_early {
             rename_private_names(&mut hir, &bound, &self.atoms, path);
         }
+        let mut early_text = None;
+        if self.is_early
+            && let Cow::Owned(text) = &mut hir.text
+            && !text.is_empty()
+        {
+            let text = std::mem::take(text);
+            // SAFETY: the bytes stay where they are until `take_parsed` hands the list to the taker, which gives the parse another
+            // text first, or until the run is dropped, with its session.
+            hir.text = Cow::Borrowed(unsafe { &*std::ptr::from_ref::<[u8]>(&text[..]) });
+            early_text = Some(text);
+        }
         // Nothing drops it.
         keep_list(self.session, &mut hir.text);
         keep_list(self.session, &mut hir.diagnostics);
@@ -895,6 +915,9 @@ impl<'u> Run<'u> {
             bound,
             is_renamed: !self.is_early,
         });
+        if let Some(text) = early_text {
+            self.early_texts.lock().insert(std::ptr::from_ref(parse) as usize, text);
+        }
         of_path.push((key, text_key, parse));
         if let Some(before) = before {
             let more = arena.allocated_bytes().saturating_sub(before);
@@ -910,7 +933,7 @@ impl<'u> Run<'u> {
         (text.len(), hasher.finish())
     }
 
-    fn take_parsed<'s>(&self, host: &dyn Host, path: &[u8], key: ParseKey, text: &[u8]) -> Option<Parse<'s>>
+    fn take_parsed<'s>(&self, host: &dyn Host, path: &[u8], key: ParseKey, text: &[u8]) -> Option<(Parse<'s>, Option<Vec<u8>>)>
     where
         'u: 's,
     {
@@ -921,7 +944,11 @@ impl<'u> Run<'u> {
         let text_key = Self::length_and_hash(text);
         let at = of_path.iter().position(|it| it.0 == key && it.1 == text_key && (it.2.hir.text.is_empty() || *it.2.hir.text == *text))?;
         let parse: &'u Parse<'u> = of_path.swap_remove(at).2;
-        Some(unsafe { std::mem::transmute::<Parse<'u>, Parse<'s>>(std::ptr::read(parse)) })
+        // SAFETY: the pass that filled an early `Run` has ended before a program takes from it, so
+        // the list held the only reference. The entry leaves the list under its lock and the arena
+        // drops nothing, so the value is moved out once. `'u: 's`.
+        let taken = unsafe { std::mem::transmute::<Parse<'u>, Parse<'s>>(std::ptr::read(parse)) };
+        Some((taken, self.early_texts.lock().remove(&(std::ptr::from_ref(parse) as usize))))
     }
 }
 
@@ -2818,9 +2845,10 @@ fn corrected(path: &[u8], mut text: Cow<'static, [u8]>) -> Cow<'static, [u8]> {
         if !path.ends_with(file) || written.len() != right.len() {
             continue;
         }
-        let places: Vec<usize> = text.windows(written.len()).enumerate().filter(|(_, window)| *window == written).map(|(at, _)| at).collect();
-        for at in places {
-            text.to_mut()[at..at + right.len()].copy_from_slice(right);
+        let mut from = 0;
+        while let Some(at) = strings::index_of(&text[from..], written) {
+            text.to_mut()[from + at..from + at + right.len()].copy_from_slice(right);
+            from += at + right.len();
         }
     }
     text
@@ -5838,7 +5866,12 @@ impl<'s> Files<'s> {
                                         specifies_esm,
                                     };
                                     match run.filter(|run| run.is_early).and_then(|run| run.take_parsed(host, path, key, &text)) {
-                                        Some(parse) => parse,
+                                        Some((mut parse, early_text)) => {
+                                            if early_text.is_some() {
+                                                parse.hir.text = text;
+                                            }
+                                            parse
+                                        }
                                         None => {
                                             let (hir, bound) = Self::parse_and_bind(
                                                 arena,
@@ -5883,6 +5916,9 @@ impl<'s> Files<'s> {
                         ),
                     };
                     let loaded = Box::new(loaded);
+                    if options.early_parse_only {
+                        std::thread::yield_now();
+                    }
                     // The sub tasks, except for whatever depends on a file's depth in packages.
                     let found: Vec<(&'r [u8], bool, Option<PackageId<'r>>)> = loaded
                         .references
@@ -6032,7 +6068,7 @@ impl<'s> Files<'s> {
                 }
             };
             hir.has_module_syntax = is_shown || is_decreed;
-            hir.is_module_by_decree = !is_shown && is_decreed;
+            hir.is_module_by_decree = !is_shown && is_decreed || options.bind.names_make_commonjs && has_import_meta && !has_jsx;
         }
         let _binding = Spent::on(host, Phase::Bind);
         let mut bound = bind::bind(&hir, options.bind, atoms, arena);
@@ -6115,7 +6151,12 @@ impl<'s> Files<'s> {
                 };
                 let text = text.unwrap_or_else(|| host.read_source(path));
                 let (mut hir, bound) = match run.take_parsed(host, path, key, &text) {
-                    Some(parse) => (parse.hir, parse.bound),
+                    Some((mut parse, early_text)) => {
+                        if early_text.is_some() {
+                            parse.hir.text = text;
+                        }
+                        (parse.hir, parse.bound)
+                    }
                     None => Self::parse_and_bind(arena, host, key.options, atoms, path, is_lib, specifies_esm, text),
                 };
                 rename_private_names(&mut hir, &bound, atoms, path);
@@ -8072,9 +8113,16 @@ impl<'s> Files<'s> {
                 let held = bound.lookup(s.locals, name).map(|id| self.sym(file, id));
                 let is_export_value_only =
                     held.is_some_and(|sym| self.refused_exports.contains(&sym));
-                let meaning = match is_export_value_only {
-                    true => meaning & SymFlags::VALUE,
-                    false => meaning,
+                // `meaning&ast.SymbolFlagsType`: a type parameter of a class or an interface is one symbol with the member of
+                // its name, which is not in scope.
+                let is_type_parameter =
+                    matches!(s.kind, ScopeKind::Class(_) | ScopeKind::Interface(_))
+                        && held
+                            .is_some_and(|sym| self.flags(sym).contains(SymFlags::TYPE_PARAMETER));
+                let meaning = match (is_export_value_only, is_type_parameter) {
+                    (true, _) => meaning & SymFlags::VALUE,
+                    (false, true) => meaning & SymFlags::TYPE,
+                    (false, false) => meaning,
                 };
                 if let Some(sym) = lookup(SymbolTable::Locals(file, scope), held, meaning)
                     && bound.is_seen_from(from, self.flags(sym), meaning)

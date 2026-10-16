@@ -9,21 +9,5 @@
   },
   "live.namespace.mjs": {
     "errors": "error: Cannot assign to import \"n\"\n"
-  },
-  "two-copies.both.cjs": {
-    "errors": "error: --aot does not support an import specifier that resolves to two different files within one module\n"
-  },
-  "two-copies.both.mjs": {
-    "errors": "error: --aot does not support an import specifier that resolves to two different files within one module\n"
-  },
-  "wrapper.both.cjs": {
-    "errors": "error: --aot does not support an import specifier that resolves to two different files within one module\n"
-  },
-  "wrapper.both.mjs": "compiled",
-  "wrapper.both.ts": {
-    "errors": "error: --aot does not support an import specifier that resolves to two different files within one module\n"
-  },
-  "wrapper.both_require.mjs": {
-    "errors": "error: --aot does not support an import specifier that resolves to two different files within one module\n"
   }
 }

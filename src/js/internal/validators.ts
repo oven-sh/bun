@@ -84,15 +84,15 @@ function validateLinkHeaderValue(hints: unknown): string {
   );
 }
 
-function validateString(value: unknown, name: string): asserts value is string {
+function validateString(value: unknown, name: string): void {
   if (typeof value !== "string") throw $ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 
-function validateFunction(value: unknown, name: string): asserts value is Function {
+function validateFunction(value: unknown, name: string): void {
   if (typeof value !== "function") throw $ERR_INVALID_ARG_TYPE(name, "function", value);
 }
 
-function validateBoolean(value: unknown, name: string): asserts value is boolean {
+function validateBoolean(value: unknown, name: string): void {
   if (typeof value !== "boolean") throw $ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
@@ -146,12 +146,12 @@ const validateEncoding = $newCppFunction("NodeValidator.cpp", "jsFunction_valida
 const validateBufferSlow = $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0);
 const validateOneOfSlow = $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0);
 
-function validateObject(value: unknown, name: string, options?: unknown): asserts value is object {
+function validateObject(value: unknown, name: string, options?: unknown): void {
   if (typeof value === "object" && value !== null && !$isProxyObject(value) && !ArrayIsArray(value)) return;
   return validateObjectSlow(value, name, options);
 }
 
-function validateInteger(value: unknown, name: string, min?: unknown, max?: unknown): asserts value is number {
+function validateInteger(value: unknown, name: string, min?: unknown, max?: unknown): void {
   if (
     typeof value === "number" &&
     NumberIsInteger(value) &&
@@ -162,7 +162,7 @@ function validateInteger(value: unknown, name: string, min?: unknown, max?: unkn
   return validateIntegerSlow(value, name, min, max);
 }
 
-function validateNumber(value: unknown, name: string, min?: unknown, max?: unknown): asserts value is number {
+function validateNumber(value: unknown, name: string, min?: unknown, max?: unknown): void {
   if (
     typeof value === "number" &&
     (min === undefined || (typeof min === "number" && value >= min)) &&
@@ -178,7 +178,7 @@ function validateFiniteNumber(number: unknown, name: string): boolean {
   return validateFiniteNumberSlow(number, name);
 }
 
-function checkRangesOrGetDefault(number: unknown, name: string, lower: unknown, upper: unknown, def?: unknown): unknown {
+function checkRangesOrGetDefault(number: unknown, name: string, lower: unknown, upper: unknown, def?: unknown): any {
   if (number === undefined) return def;
   if (
     typeof number === "number" &&
@@ -202,7 +202,7 @@ function validateAbortSignal(signal: unknown, name: string): void {
   return validateAbortSignalSlow(signal, name);
 }
 
-function validateArray(value: unknown, name: string, minLength?: unknown): asserts value is object {
+function validateArray(value: unknown, name: string, minLength?: unknown): void {
   if (
     $isJSArray(value) &&
     (minLength === undefined || (typeof minLength === "number" && (value as any).length >= minLength))
@@ -211,7 +211,7 @@ function validateArray(value: unknown, name: string, minLength?: unknown): asser
   return validateArraySlow(value, name, minLength);
 }
 
-function validateInt32(value: unknown, name: string, min?: unknown, max?: unknown): asserts value is number {
+function validateInt32(value: unknown, name: string, min?: unknown, max?: unknown): void {
   if (
     typeof value === "number" &&
     (value | 0) === value &&
@@ -222,7 +222,7 @@ function validateInt32(value: unknown, name: string, min?: unknown, max?: unknow
   return validateInt32Slow(value, name, min, max);
 }
 
-function validateUint32(value: unknown, name: string, positive?: unknown): asserts value is number {
+function validateUint32(value: unknown, name: string, positive?: unknown): void {
   if (typeof value === "number" && value >>> 0 === value && (value !== 0 || !positive)) return;
   return validateUint32Slow(value, name, positive);
 }

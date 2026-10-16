@@ -710,6 +710,8 @@ mod elf {
     pub(super) fn make_read_only(base: *mut u8, len: usize) -> crate::Result<()> {
         let header = core::mem::size_of::<u64>();
         let size = (header + len).next_multiple_of(bun_alloc::page_size());
+        // SAFETY: the one caller passes what `get_data` returned: the payload, with its eight bytes
+        // of length ahead of it in the same mapping.
         if unsafe { libc::mprotect(base.sub(header).cast(), size, libc::PROT_READ) } != 0 {
             let errno = bun_errno::SystemErrno::init(i64::from(bun_sys::last_errno()));
             return Err(crate::Error::Sys(
@@ -1035,6 +1037,8 @@ unsafe extern "C" {
 }
 fn find_program_data_string_table(image: &[u8], wanted: &[u8]) -> Option<usize> {
     let mut found = [0usize; 2];
+    // SAFETY: `image` is valid for the call, and `found` has room for the two numbers that C++
+    // writes.
     if !unsafe { Bun__AOT__imageStringTable(image.as_ptr(), image.len(), found.as_mut_ptr()) } {
         return None;
     }
@@ -1289,6 +1293,7 @@ impl StandaloneModuleGraph {
             program_data_indices = Some(record_at + 12);
             record_at += 12 + 4 * modules_list_count;
             if (ptr.offset as usize).saturating_add(ptr.length as usize) <= raw_len {
+                // SAFETY: bounds checked above; a read-only subrange placed by `to_bytes`.
                 aot_image = unsafe { slice_to(raw_const, raw_len, ptr) };
             }
         }
@@ -1366,6 +1371,8 @@ impl StandaloneModuleGraph {
                         LazySourceMap::None
                     },
                     bytecode: if linked_entry_offset.is_some() {
+                        // SAFETY: the payload's bounds were checked when its record was read. See
+                        // the arm below for why it is writable.
                         unsafe { slice_to_mut(raw_ptr, raw_len, linked_bytecode_payload) }
                     } else if module.bytecode.length > 0 && !has_linked_bytecode_payload {
                         // SAFETY: section bytes are a writable 'static allocation; JSC mutates
@@ -1390,6 +1397,8 @@ impl StandaloneModuleGraph {
                         b""
                     },
                     source_path: if source_path_for(i).length > 0 {
+                        // SAFETY: written by `to_bytes` via `append_count_z`: in bounds, with a NUL
+                        // behind it.
                         unsafe { slice_to_z(raw_const, raw_len, source_path_for(i)) }.as_bytes()
                     } else {
                         b""
@@ -2329,7 +2338,7 @@ impl std::io::Write for ChangedBlocksWriter<'_> {
 }
 
 #[cfg(target_os = "linux")]
-static EARLY_TEMPLATE_COPY: std::sync::Mutex<Option<(Vec<u8>, std::thread::JoinHandle<Option<Fd>>)>> = std::sync::Mutex::new(None);
+static EARLY_TEMPLATE_COPY: bun_threading::Guarded<Option<(Vec<u8>, std::thread::JoinHandle<Option<Fd>>)>> = bun_threading::Guarded::new(None);
 
 #[cfg(target_os = "linux")]
 pub fn start_copying_template(target: &CompileTarget, self_exe_path: Option<&[u8]>) {
@@ -2337,13 +2346,13 @@ pub fn start_copying_template(target: &CompileTarget, self_exe_path: Option<&[u8
         return;
     }
     let Ok(self_exe) = bun_core::self_exe_path() else { return };
-    let mut slot = EARLY_TEMPLATE_COPY.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut slot = EARLY_TEMPLATE_COPY.lock();
     if slot.is_some() {
         return;
     }
     let path = self_exe.as_bytes().to_vec();
     let template = bun_core::ZBox::from_vec_with_nul(path.clone());
-    let copy_thread = std::thread::spawn(move || {
+    let copy_thread = std::thread::Builder::new().spawn(move || {
         let fd = Syscall::open(bun_core::zstr!("."), libc::O_TMPFILE | bun_sys::O::RDWR | bun_sys::O::CLOEXEC, 0o600).ok()?;
         let is_copied = Syscall::open(&template, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0).ok().is_some_and(|from| {
             let is_copied = bun_sys::copy_file(from, fd).is_ok();
@@ -2356,6 +2365,9 @@ pub fn start_copying_template(target: &CompileTarget, self_exe_path: Option<&[u8
         }
         Some(fd)
     });
+    let Ok(copy_thread) = copy_thread else {
+        return;
+    };
     *slot = Some((path, copy_thread));
 }
 
@@ -2364,7 +2376,7 @@ pub fn start_copying_template(_: &CompileTarget, _: Option<&[u8]>) {}
 
 #[cfg(target_os = "linux")]
 pub fn discard_early_template_copy() {
-    let unused = EARLY_TEMPLATE_COPY.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+    let unused = EARLY_TEMPLATE_COPY.lock().take();
     if let Some(fd) = unused.and_then(|(_, copy_thread)| copy_thread.join().ok().flatten()) {
         fd.close();
     }
@@ -2375,10 +2387,11 @@ pub fn discard_early_template_copy() {}
 
 #[cfg(target_os = "linux")]
 fn take_early_template_copy(self_exe: &ZStr, name: &ZStr) -> Option<Fd> {
-    let (path, copy_thread) = EARLY_TEMPLATE_COPY.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()?;
+    let (path, copy_thread) = EARLY_TEMPLATE_COPY.lock().take()?;
     let fd = copy_thread.join().ok().flatten()?;
     let fd_path = format!("/proc/self/fd/{}\0", fd.native());
     let is_linked = path == self_exe.as_bytes()
+        // SAFETY: `fd_path` ends with the NUL written above, and `name` is a `ZStr`.
         && unsafe { libc::linkat(libc::AT_FDCWD, fd_path.as_ptr().cast(), libc::AT_FDCWD, name.as_ptr().cast(), libc::AT_SYMLINK_FOLLOW) } == 0;
     if !is_linked {
         fd.close();
@@ -2389,7 +2402,6 @@ fn take_early_template_copy(self_exe: &ZStr, name: &ZStr) -> Option<Fd> {
 
 #[cfg(target_os = "linux")]
 fn offsets_of_privately_modified_pages(private_mapping: &[u8], page_size: usize) -> Option<Vec<usize>> {
-    use std::os::unix::fs::FileExt;
     const IS_PRESENT: u64 = 1 << 63;
     const IS_SWAPPED: u64 = 1 << 62;
     const IS_FILE_PAGE: u64 = 1 << 61;
@@ -2398,7 +2410,10 @@ fn offsets_of_privately_modified_pages(private_mapping: &[u8], page_size: usize)
         return None;
     }
     let mut entries = vec![0u8; private_mapping.len().div_ceil(page_size) * 8];
-    std::fs::File::open("/proc/self/pagemap").ok()?.read_exact_at(&mut entries, (address / page_size * 8) as u64).ok()?;
+    let pagemap = bun_sys::File::open(bun_core::zstr!("/proc/self/pagemap"), bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0).ok()?;
+    if pagemap.pread_all(&mut entries, (address / page_size * 8) as u64).ok()? != entries.len() {
+        return None;
+    }
     let is_modified = |entry: u64| entry & (IS_PRESENT | IS_SWAPPED) != 0 && entry & IS_FILE_PAGE == 0;
     Some(
         (entries.chunks_exact(8).enumerate())
@@ -2410,10 +2425,13 @@ fn offsets_of_privately_modified_pages(private_mapping: &[u8], page_size: usize)
 
 #[cfg(target_os = "linux")]
 unsafe fn copy_changed_blocks(to: *mut u8, from: &[u8], already_written: &[u8]) {
+    // SAFETY: sysconf(3) takes no pointers.
     let page_size = usize::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).unwrap_or(0);
     if let Some(offsets) = offsets_of_privately_modified_pages(from, page_size) {
         for offset in offsets {
             let page = &from[offset..from.len().min(offset + page_size)];
+            // SAFETY: the caller's contract: `to` is writable for `from.len()` bytes and does not
+            // overlap `from`. The page lies within `from`.
             unsafe { core::ptr::copy_nonoverlapping(page.as_ptr(), to.add(offset), page.len()) };
         }
         return;
@@ -2427,6 +2445,8 @@ unsafe fn copy_changed_blocks(to: *mut u8, from: &[u8], already_written: &[u8]) 
             scope.spawn(move || {
                 for (block, (from, already_written)) in from.chunks(BLOCK).zip(already_written.chunks(BLOCK)).enumerate() {
                     if from != already_written {
+                        // SAFETY: as above. The block is at the same offset in `to` as in the
+                        // caller's `from`, and no two threads get the same block.
                         unsafe { core::ptr::copy_nonoverlapping(from.as_ptr(), (to + chunk * chunk_size + block * BLOCK) as *mut u8, from.len()) };
                     }
                 }
@@ -2446,6 +2466,7 @@ fn write_pieces_through_a_mapping(pieces: &[bun_elf::Piece<'_>], fd: Fd, already
     let (Ok(length), Ok(end)) = (usize::try_from(size), libc::off_t::try_from(size)) else {
         return false;
     };
+    // SAFETY: fallocate(2) takes no pointers.
     if length == 0 || unsafe { libc::fallocate(fd.native(), 0, 0, end) } != 0 {
         return false;
     }
@@ -2459,13 +2480,18 @@ fn write_pieces_through_a_mapping(pieces: &[bun_elf::Piece<'_>], fd: Fd, already
             bun_elf::Piece::Length(length) => length,
             bun_elf::Piece::Zeros(count) => {
                 if already_written.is_some() {
+                    // SAFETY: the mapping is as long as all pieces together, and `offset` is the
+                    // sum of those before this one.
                     unsafe { core::ptr::write_bytes(map.add(offset), 0, *count as usize) };
                 }
                 &[]
             }
         };
         match already_written.filter(|already_written| index == 0 && already_written.len() >= bytes.len()) {
+            // SAFETY: as above: the piece fits in the mapping at `offset`. The mapping is new, so
+            // it overlaps nothing.
             Some(already_written) => unsafe { copy_changed_blocks(map.add(offset), bytes, &already_written[..bytes.len()]) },
+            // SAFETY: as above.
             None => unsafe { bun_core::copy_in_parallel(map.add(offset), bytes.as_ptr(), bytes.len()) },
         }
         offset += length_of(piece) as usize;
@@ -2519,6 +2545,7 @@ fn write_elf_in_pieces(original: &mut [u8], payload: &[u8], fd: Fd, already_writ
 #[cfg(unix)]
 fn symbols_of_aot_image(image: &[u8]) -> Option<Vec<u8>> {
     extern "C" fn reserve(table: *mut core::ffi::c_void, size: usize) -> *mut u8 {
+        // SAFETY: `table` is the `&mut table` passed below.
         let table = unsafe { &mut *table.cast::<Vec<u8>>() };
         table.resize(size, 0);
         table.as_mut_ptr()
@@ -2528,11 +2555,15 @@ fn symbols_of_aot_image(image: &[u8]) -> Option<Vec<u8>> {
         image
     } else {
         aligned.resize(image.len().div_ceil(size_of::<u128>()), 0);
+        // SAFETY: `aligned` holds at least `image.len()` initialized bytes, and is not touched
+        // again while `copy` is in use.
         let copy = unsafe { core::slice::from_raw_parts_mut(aligned.as_mut_ptr().cast::<u8>(), image.len()) };
         copy.copy_from_slice(image);
         copy
     };
     let mut table: Vec<u8> = Vec::new();
+    // SAFETY: `image` is valid for the call and aligned as C++ expects. `reserve` gets `table` back
+    // as its context, during the call only.
     if !unsafe { Bun__AOT__symbolsOfImage(image.as_ptr(), image.len(), (&raw mut table).cast(), reserve) } {
         bun_core::scoped_log!(StandaloneModuleGraph, "symbols: the engine lists no functions for this image");
         return None;
@@ -3188,6 +3219,7 @@ pub(crate) fn download_to_path(
                 b"",
                 b"",
                 http_proxy,
+                bun_http::ProxySettings::from_env(env),
                 bun_http::FetchRedirect::Follow,
             ));
             async_http.client.progress_node =
@@ -3726,6 +3758,7 @@ impl StandaloneModuleGraph {
         };
         let graph = Self::from_mapped(base, len)?;
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        // SAFETY: `from_mapped` just allocated `graph` for the life of the process.
         if graph.is_some_and(|graph| !unsafe { &*graph }.aot_image.is_empty()) {
             elf::make_read_only(base, len)?;
         }
@@ -3734,6 +3767,7 @@ impl StandaloneModuleGraph {
 
     #[cfg(unix)]
     pub fn from_fd(fd: Fd) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+        // SAFETY: F_SETFD takes an integer, no pointers.
         unsafe { libc::fcntl(fd.native(), libc::F_SETFD, libc::FD_CLOEXEC) };
         let size = usize::try_from(Syscall::fstat(fd)?.st_size).unwrap_or(0);
         if size <= size_of::<u64>() {
@@ -3748,13 +3782,16 @@ impl StandaloneModuleGraph {
             fd,
             0,
         )?;
+        // SAFETY: the mapping is page-aligned and longer than eight bytes: checked above.
         let len = usize::try_from(u64::from_le(unsafe { map.cast::<u64>().read() })).unwrap_or(usize::MAX);
         if len > size - size_of::<u64>() {
             fd.close();
             return Ok(None);
         }
+        // SAFETY: within the mapping: checked above.
         let graph = Self::from_mapped(unsafe { map.add(size_of::<u64>()) }, len)?;
         if let Some(graph) = graph {
+            // SAFETY: `from_mapped` just allocated `graph`, and nobody else has the pointer yet.
             unsafe { &mut *graph }.file = Some((fd, map.cast_const()));
         }
         Ok(graph)
@@ -4050,6 +4087,8 @@ fn append_aligned(
     string_builder.len += padding;
     let aligned_offset = string_builder.len;
     let room = &mut string_builder.writable()[0..bytecode.len()];
+    // SAFETY: `room` is `bytecode.len()` writable bytes of the builder, which `bytecode` is no part
+    // of.
     unsafe { bun_core::copy_in_parallel(room.as_mut_ptr(), bytecode.as_ptr(), bytecode.len()) };
     string_builder.len += bytecode.len();
     StringPointer {

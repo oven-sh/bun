@@ -1306,6 +1306,74 @@ Type checks the entry points, and everything they import, before Bun writes any 
   </Tab>
 </Tabs>
 
+### dts
+
+Writes the types of a library beside its JavaScript, without running `tsc`: a TypeScript declaration file (`.d.ts`) for each entry point, and the JavaScript once more with its types kept. The entry points and everything they import are type checked first, as with [`check`](#check), and a type error fails the build.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./src/index.ts'],
+      outdir: './dist',
+      dts: true,
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./src/index.ts --outdir ./dist --dts
+    ```
+  </Tab>
+</Tabs>
+
+```txt title="dist" icon="folder-tree"
+dist
+├── index.js         the bundle
+├── index.d.ts       the declarations of all that index.js exports, in one file
+└── index.sound.ts   the bundle again, with its types kept
+```
+
+`index.js` is byte for byte what the build writes without `dts`. `index.d.ts` is what editors, `tsc` and every other tool read, as always. Point `"types"` in `package.json` at it and publish the folder.
+
+With [`root`](#root), or with `--no-bundle`, there is one declaration file for each source file instead, as `tsc --declaration --emitDeclarationOnly` writes them, each where its source file is relative to `root`. The same holds for minified output, code splitting, and formats other than `esm`. Files in `node_modules` get none. In `Bun.build()` the files are in `outputs` with `kind: "declaration"` and `kind: "sound"`.
+
+#### Sound types
+
+`index.sound.ts` is for programs that are compiled with [`bun build --compile --aot`](/bundler/executables). The ahead-of-time compiler turns TypeScript types into machine-level facts: an object whose type is known gets a fixed layout, and reading a property is a load at an offset. A package that ships plain JavaScript gives it nothing to work with. A `.d.ts` file alone does not help: it describes the exports, not the code, and nothing checks that it is true.
+
+`index.sound.ts` is `index.js` with type annotations, interfaces, type aliases, generics and casts put back where they were in the sources, and nothing else changed:
+
+```ts title="dist/index.sound.ts" icon="/icons/typescript.svg"
+// src/greet.ts
+type Options = { name: string };
+function greet(options: Options): string {
+  return "hello " + options.name;
+}
+```
+
+```js title="dist/index.js" icon="/icons/javascript.svg"
+// src/greet.ts
+function greet(options) {
+  return "hello " + options.name;
+}
+```
+
+The build proves that: it erases the types from `index.sound.ts` again and compares the result with `index.js` byte for byte, then type checks `index.sound.ts`.
+
+The declaration file says where the typed file is, in a comment on its first line that other tools ignore, with the sha256 of `index.js`:
+
+```ts title="dist/index.d.ts" icon="/icons/typescript.svg"
+// @sound index.sound.ts 5f2b0c…
+export declare function greet(options: Options): string;
+```
+
+Neither the author nor the user of the package has anything else to do. An `--aot` build looks at the declaration files beside the JavaScript files that the package's `package.json` names (`types`, `exports`, `module`, `main`). Where it finds the comment it compares the sha256 with the installed `index.js`, erases the types itself and compares again, type checks `index.sound.ts` with the program, and compiles it in place of `index.js`. If anything does not match, or the file has a type error under the program's `tsconfig.json`, the package is compiled from `index.js` as before and the build prints one warning. `bun run`, `bun test`, Node.js and builds without `--aot` never read these files.
+
+[Types are enforced](/bundler/executables#ahead-of-time-compilation) in compiled code, and that now holds inside your package too. What TypeScript takes on trust has to be true when it runs: `{} as Options` throws a `TypeError` if the object lacks what `Options` requires, and so does `next!` where `next` is `undefined`, even in `if ((link = next!) !== undefined)`, which plain JavaScript never notices. Run the package's tests with `bun test --aot` before you publish, and see [Adopting `--aot`](/bundler/aot-adoption) for the tools that find such places.
+
+The typed file never fails a build. With `--minify`, `--splitting`, `--sourcemap=inline` or a `--format` other than `esm`, which it does not support yet, and where the types cannot be put back, the declaration files are written as usual, without the comment, and one warning says why `index.sound.ts` is left out. With `--no-bundle` there is a typed file beside each JavaScript file.
+
 ### features
 
 Enable compile-time feature flags for dead code elimination: conditionally include or exclude code paths at bundle time using `import { feature } from "bun:bundle"`.
@@ -1946,6 +2014,14 @@ interface BuildConfig {
    * @default false
    */
   check?: boolean;
+
+  /**
+   * Write a TypeScript declaration file (`.d.ts`) for each entry point, and each JavaScript
+   * output file once more with its types kept, for `--aot`. Equivalent to `--dts` in the CLI.
+   *
+   * @default false
+   */
+  dts?: boolean;
 
   /**
    * Custom tsconfig.json file path to use for path resolution.

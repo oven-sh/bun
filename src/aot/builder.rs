@@ -124,7 +124,7 @@ impl FuncBuilder {
     fn add_param_for(&mut self, var: Var, block: BlockId) -> V {
         let (ty, prediction) = self.vars[var.0 as usize];
         let param = self.func.add_param(block, ty);
-        self.func.values[param.idx()].prediction = prediction;
+        self.func.values[param.idx()].set_prediction(prediction);
         param
     }
 
@@ -391,7 +391,7 @@ impl FuncBuilder {
             self.func.values.pop();
         } else {
             let undefined = self.undefined;
-            self.func.values[param.idx()] = crate::ir::Value { def: crate::ir::Def::Op(Op::Undefined), pos: 0, ty: undefined, prediction: Prediction::None, finds_initialized: false, is_in_tail_position: false };
+            self.func.values[param.idx()] = crate::ir::Value::new(crate::ir::Def::Op(Op::Undefined), 0, undefined);
             self.func.blocks[block.idx()].ops.insert(0, param);
         }
         true

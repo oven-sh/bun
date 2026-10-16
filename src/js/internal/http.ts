@@ -363,6 +363,17 @@ const setMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "setMaxHTT
 const getMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
 const kNeedDrain = Symbol("kNeedDrain");
+const kErrored = Symbol("errored");
+const kHighWaterMark = Symbol("kHighWaterMark");
+const kSocket = Symbol("kSocket");
+const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
+const kUniqueHeaders = Symbol("kUniqueHeaders");
+// Cache slot for the server dispatcher's keep-alive decision (stamped once
+// per request in _http_server.ts); declared in the constructor of IncomingMessage
+// so the stamp never shape-transitions the request.
+const kReqShouldKeepAlive = Symbol("kReqShouldKeepAlive");
+const kIncomingMessage = Symbol("IncomingMessage");
+const kSkipPendingData = Symbol("SkipPendingData");
 const kProxyConfig = Symbol("kProxyConfig");
 const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
 const kPerRequestCheckServerIdentity = Symbol("kPerRequestCheckServerIdentity");
@@ -540,8 +551,11 @@ export {
   isTlsSymbol,
   kAbortController,
   kCloseCallback,
+  kErrored,
   kHandle,
   kHandoffResponse,
+  kHighWaterMark,
+  kIncomingMessage,
   kInternalSocketData,
   kNeedDrain,
   kOnReadParsed,
@@ -550,7 +564,12 @@ export {
   kPerRequestCheckServerIdentity,
   kProxyConfig,
   kRealListen,
+  kRejectNonStandardBodyWrites,
+  kReqShouldKeepAlive,
   kRequest,
+  kSkipPendingData,
+  kSocket,
+  kUniqueHeaders,
   kWaitForProxyTunnel,
   noBodySymbol,
   onDataIncomingMessage,

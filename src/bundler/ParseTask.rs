@@ -2318,7 +2318,7 @@ pub mod parse_worker {
         // `'static` matches `JSAst = BundledAst<'static>`; the arena outlives all
         // reads through the returned ASTs. `arena` is a `*const Bump` field; the
         // deref points outside `*worker_raw`.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
+        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref((*worker_raw).parse_arena()) };
 
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
         let mut transpiler: *mut Transpiler<'static> =
@@ -2829,7 +2829,18 @@ pub mod parse_worker {
                     ParseTaskStage::NeedsParse(e) => e,
                     ParseTaskStage::NeedsSourceCode => unreachable!(),
                 };
+            let bundle_options = &ctx.transpiler().options;
+            let is_parsed_for_the_analysis_alone = bundle_options.compiles_ahead_of_time()
+                && !this.source_index.is_runtime()
+                && this.known_target != options::Target::Browser
+                && this.loader.or_else(|| this.path.loader(&bundle_options.loaders)).is_some_and(|loader| loader.is_javascript_like());
+            if is_parsed_for_the_analysis_alone {
+                worker.enter_scan_arena();
+            }
             let parsed = run_with_source_code(this, worker, &mut step, &mut log, &mut entry);
+            if is_parsed_for_the_analysis_alone {
+                worker.leave_scan_arena();
+            }
             this.stage = ParseTaskStage::NeedsParse(entry);
             match parsed {
                 Ok(ast) => {

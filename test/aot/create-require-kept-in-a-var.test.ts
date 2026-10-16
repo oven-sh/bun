@@ -1,0 +1,82 @@
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+
+// `var __require = /* @__PURE__ */ createRequire(import.meta.url);` is what bundlers write at the head of the ES modules they emit.
+// A `var` or a `let` that is stored to once and never seen before that is as good as a `const`: the names written for it are files of
+// the program. BUN_JSC_crashIfInterpreterIsUsed=1 crashes the program if any of its files is interpreted.
+
+const files = {
+  "node_modules/optional-peer/package.json": `{ "name": "optional-peer", "version": "1.0.0", "main": "index.js" }`,
+  "node_modules/optional-peer/index.js": `exports.name = "the optional peer"; exports.inner = require("./inner.js");`,
+  "node_modules/optional-peer/inner.js": `module.exports = "inner";`,
+  "lib/local.cjs": `exports.name = "local";`,
+};
+
+const compiled: Record<string, string> = {
+  "as-bundlers-write-it.mjs": `import { createRequire } from "module";
+
+//#region rolldown:runtime
+var __require = /* @__PURE__ */ createRequire(import.meta.url);
+
+//#endregion
+let peer = null;
+try {
+	__require.resolve("optional-peer");
+	peer = __require("optional-peer");
+} catch {}
+console.log(peer && peer.name, peer && peer.inner);
+`,
+  "in-a-let.mjs": `import { createRequire } from "node:module";
+let made = createRequire(import.meta.url);
+console.log(made("optional-peer").name, made("./lib/local.cjs").name);
+`,
+  "called-in-a-function.mjs": `import { createRequire } from "node:module";
+var __require = createRequire(import.meta.url);
+function load() { return __require("./lib/local.cjs").name; }
+const later = () => __require("optional-peer").name;
+console.log(load(), later());
+`,
+  "not-there.mjs": `import { createRequire } from "node:module";
+var __require = createRequire(import.meta.url);
+let peer = null;
+try { peer = __require("not-installed"); } catch (error) { console.log(error.code); }
+console.log(peer, __require("./lib/local.cjs").name);
+`,
+};
+
+// What is no constant stays an ordinary variable: the answers are plain Bun's, by whatever runs them.
+const ordinary: Record<string, string> = {
+  "stored-to-again.mjs": `import { createRequire } from "node:module";
+var made = createRequire(import.meta.url);
+console.log(made("./lib/local.cjs").name);
+made = name => "another function got " + name;
+console.log(made("./lib/local.cjs"));
+`,
+  "called-before-it-is-made.mjs": `import { createRequire } from "node:module";
+try { console.log(load()); } catch (error) { console.log(error.name); }
+var made = createRequire(import.meta.url);
+function load() { return made("./lib/local.cjs").name; }
+console.log(load());
+`,
+  "declared-twice.mjs": `import { createRequire } from "node:module";
+var made = createRequire(import.meta.url);
+var made = name => "the second declaration got " + name;
+console.log(made("./lib/local.cjs"));
+`,
+};
+
+describe.concurrent.each(Object.keys({ ...compiled, ...ordinary }))("%s", entry => {
+  test("bun run --aot prints what bun run prints", async () => {
+    using dir = tempDir("create-require-in-a-var", { ...files, [entry]: compiled[entry] ?? ordinary[entry] });
+    const run = async (flags: string[], env: Record<string, string | undefined>) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "run", ...flags, entry], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const plain = await run([], bunEnv);
+    const aot = await run(["--aot"], entry in compiled ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv);
+    expect(plain.exitCode).toBe(0);
+    expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
+    expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+  });
+});

@@ -9,8 +9,8 @@
 use bun_builtin_syntax::{Archive, Reason, Trigger};
 use bun_resolve_builtins::HardcodedModule::{Alias, Cfg};
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::bind::Decl;
-use bun_sema::hir::{BinOp, ExprId, ExprKind, FnBody, SpecifierKind, UnOp};
+use bun_sema::bind::{Decl, Parent};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, FnBody, SpecifierKind, StmtKind, UnOp};
 use bun_sema::program::Module;
 use bun_sema::util::{FxHashMap, FxHashSet};
 
@@ -104,7 +104,7 @@ impl Scan<'_, '_> {
                 || !module.bound.symbols[symbol.idx()].decls.iter().any(|&decl| match decl {
                     Decl::Fn(f) => !matches!(hir[f].body, FnBody::None),
                     Decl::Var(_) | Decl::Class(_) | Decl::Module(_) | Decl::Enum(_) => !hir.is_ambient(hir.node(decl)),
-                    Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_) => false,
+                    Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_) | Decl::CommonJsVariable => false,
                     _ => true,
                 })
         };
@@ -143,6 +143,7 @@ impl Scan<'_, '_> {
                     }
                 }
                 ExprKind::Dot { name, .. } if Some(name) == self.get_builtin_module => self.name(specifier),
+                ExprKind::Dot { obj, name: known::require, .. } if call.args.len() == 1 && matches!(hir[obj].kind, ExprKind::Ident(known::module)) => self.name(specifier),
                 _ => {}
             }
         }
@@ -218,11 +219,23 @@ impl Scan<'_, '_> {
                 match hir[call.callee].kind {
                     ExprKind::Ident(known::require) => _ = is_harmless.insert(call.callee),
                     ExprKind::Dot { name, .. } if Some(name) == self.get_builtin_module => _ = is_harmless.insert(call.callee),
+                    ExprKind::Dot { obj, name: known::require, .. } if call.args.len() == 1 && matches!(hir[obj].kind, ExprKind::Ident(known::module)) => _ = is_harmless.insert(obj),
                     _ => {}
                 }
             }
         }
-        for expr in hir.exprs.iter() {
+        let goes_nowhere = |e: ExprId| match module.bound.expr_parent[e.idx()] {
+            Parent::Expr(around) => match hir[around].kind {
+                ExprKind::Unary { op: UnOp::Not | UnOp::Typeof, .. } | ExprKind::Binary { op: BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq, .. } => true,
+                ExprKind::Binary { op: BinOp::And | BinOp::Or, left, .. } => left == e,
+                ExprKind::Cond { test, .. } => test == e,
+                ExprKind::Dot { obj, name, .. } => obj == e && is_one_of(name, &OF_MODULE),
+                _ => false,
+            },
+            Parent::Stmt(around) => matches!(hir[around].kind, StmtKind::Expr(_) | StmtKind::If { .. } | StmtKind::While { .. } | StmtKind::DoWhile { .. }),
+            _ => false,
+        };
+        for (index, expr) in hir.exprs.iter().enumerate() {
             let (obj, name) = match expr.kind {
                 ExprKind::Dot { obj, name, .. } => (obj, name),
                 ExprKind::Index { obj, index, .. } => match hir[index].kind {
@@ -248,7 +261,7 @@ impl Scan<'_, '_> {
             let may_be_read = match hir[obj].kind {
                 ExprKind::ImportMeta => is_one_of(name, &OF_IMPORT_META),
                 ExprKind::Ident(known::require) => is_one_of(name, &OF_REQUIRE),
-                ExprKind::Ident(known::module) => is_one_of(name, &OF_MODULE),
+                ExprKind::Ident(known::module) => is_one_of(name, &OF_MODULE) || is(name, b"hot") || (is(name, b"parent") || is(name, b"children")) && goes_nowhere(ExprId::from(index as u32)),
                 ExprKind::Ident(object) if self.global_objects.contains(&object) => true,
                 _ => variable_at(obj) == Some(known::Function),
             };

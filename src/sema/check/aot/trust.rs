@@ -205,6 +205,9 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Ident(name) => {
                 let sym = self.symbol_of_identifier(file, e, name)?;
                 let sym = if self.files.flags(sym).contains(SymFlags::ALIAS) { self.files.resolve_alias(sym)? } else { sym };
+                if self.may_be_overridden_at(sym, file, e) {
+                    return Some(Claim::Binding);
+                }
                 match self.claim_of_symbol(sym) {
                     ClaimOfSymbol::IsAmbient => Some(Claim::Binding),
                     ClaimOfSymbol::SaysNothingOfFields => self.is_narrowed_from_untyped(file, e, sym).then_some(Claim::Binding),
@@ -291,6 +294,14 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(self.atoms().bytes(name), b"values" | b"entries") && self.names_global_object(file, obj, b"Object")
     }
 
+    fn is_export_that_may_be_overridden(&mut self, receiver: TypeId, name: Atom) -> bool {
+        let Some(members) = self.members(receiver) else { return false };
+        let Some(prop) = members.resolved.prop(name) else { return false };
+        let PropSource::Symbol(declared) = prop.source else { return false };
+        let declared = if self.files.flags(declared).contains(SymFlags::ALIAS) { self.files.resolve_alias(declared) } else { Some(declared) };
+        declared.is_some_and(|declared| self.may_be_overridden(declared))
+    }
+
     fn is_host_global(&mut self, receiver: TypeId, name: Atom) -> bool {
         if !matches!(self.data(receiver), TypeData::Anon { origin: crate::types::Origin::GlobalThis, .. }) {
             return false;
@@ -349,7 +360,11 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         let (asked, is_settled) = (self.begin_answer(), !self.answers_are_provisional());
-        let found = self.is_unlisted_property(receiver, name) || self.has_predicted_prop(receiver, name) || self.has_member_of_class_without_body(receiver, name) || self.is_host_global(receiver, name);
+        let found = self.is_unlisted_property(receiver, name)
+            || self.has_predicted_prop(receiver, name)
+            || self.has_member_of_class_without_body(receiver, name)
+            || self.is_host_global(receiver, name)
+            || self.is_export_that_may_be_overridden(receiver, name);
         if self.rests_on_no_assumption(asked) && is_settled {
             self.aot.trust.of_properties.insert((receiver, name), found);
         }
@@ -494,7 +509,7 @@ impl<'p, 's> Checker<'p, 's> {
         if name.is_none() || self.files.parent_of_symbol(sym).is_some() {
             return false;
         }
-        is_global_of_the_engine(self.atoms().bytes(name))
+        is_global_of_the_engine(self.atoms().bytes(name)) && self.global_that_may_be_overridden(self.atoms().bytes(name)).is_none()
     }
 
     /// Whether `obj.name` reads a property that `lib.*.d.ts` declares for an object of the engine and the table has no entry for:

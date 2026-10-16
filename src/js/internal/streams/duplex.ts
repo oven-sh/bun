@@ -1,3 +1,4 @@
+// @ts-check
 // a duplex stream is just a stream that is both readable and writable.
 // Since JS doesn't have multiple prototype inheritance, this class
 // prototypically inherits from Readable, and then parasitically from

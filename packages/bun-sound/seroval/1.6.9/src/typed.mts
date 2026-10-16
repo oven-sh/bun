@@ -1320,7 +1320,7 @@ const DEFAULT_MAX_BASE64_LENGTH = 1e6;
 const MIN_NATIVE_BASE64_LENGTH = 512;
 const MAX_BIGINT_LENGTH = 1e4;
 const MAX_REGEXP_SOURCE_LENGTH = 2e4;
-function applyObjectFlag(obj: SV.Deserialized, flag: SV.Given): SV.Deserialized {
+function applyObjectFlag(obj: any[] | SV.MadeObject, flag: SV.Given): SV.Deserialized {
 	switch (flag) {
 		case 3: return Object.freeze(obj);
 		case 1: return Object.preventExtensions(obj);

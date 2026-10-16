@@ -176,10 +176,11 @@ fn assignment_operator(token: T) -> Option<BinOp> {
     })
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn add_expr(&mut self, kind: ExprKind, pos: u32, end: u32) -> ExprId {
         let id = ExprId(self.f.exprs.len() as u32);
+        self.finish_node(NodeData::Expr(id), pos, end);
         self.f.exprs.push(Expr { kind, pos, end });
         id
     }
@@ -410,7 +411,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }) = self.f.exprs.last()
                 && pos == start
             {
-                self.f.exprs.pop();
+                self.pop_expr();
                 return self.simple_arrow_function(
                     name,
                     (pos, end, full),
@@ -1520,6 +1521,119 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
+    fn text_from_own_folder(&mut self, e: ExprId, depth: u32) -> Option<Vec<u8>> {
+        if self.is_too_deep() {
+            return None;
+        }
+        if depth > 64 {
+            return None;
+        }
+        match self.f.exprs.get(e.idx())?.kind {
+            ExprKind::Ident(name) if self.lx.text_of(name) == b"__dirname" => Some(b".".to_vec()),
+            ExprKind::Dot {
+                obj,
+                name,
+                chain: Chain::No,
+                ..
+            } if matches!(self.f.exprs.get(obj.idx())?.kind, ExprKind::ImportMeta)
+                && matches!(self.lx.text_of(name), b"dirname" | b"dir") =>
+            {
+                Some(b".".to_vec())
+            }
+            ExprKind::Binary {
+                op: BinOp::Add,
+                left,
+                right,
+            } => {
+                let mut folded = self.text_from_own_folder(left, depth + 1)?;
+                folded.extend(self.folded_text(right, depth + 1)?);
+                Some(folded)
+            }
+            ExprKind::Template { exprs } if !exprs.is_empty() => {
+                let texts = self.f.template_texts(exprs);
+                if !self.lx.text_of(self.f.id_at(texts, 0)).is_empty() {
+                    return None;
+                }
+                let mut folded = self.text_from_own_folder(self.f.id_at(exprs, 0), depth + 1)?;
+                folded.extend_from_slice(self.lx.text_of(self.f.id_at(texts, 1)));
+                for i in 1..exprs.len() {
+                    folded.extend(self.folded_text(self.f.id_at(exprs, i), depth + 1)?);
+                    folded.extend_from_slice(self.lx.text_of(self.f.id_at(texts, i + 1)));
+                }
+                Some(folded)
+            }
+            ExprKind::Call(call) => {
+                let (callee, args) = (self.f[call].callee, self.f[call].args);
+                let (object, name) = match self.f.exprs.get(callee.idx())?.kind {
+                    ExprKind::Ident(name) => (None, name),
+                    ExprKind::Dot {
+                        obj,
+                        name,
+                        chain: Chain::No,
+                        ..
+                    } => (Some(obj), name),
+                    _ => return None,
+                };
+                if self.f[call].chain != Chain::No || args.is_empty() {
+                    return None;
+                }
+                let is_require = |this: &Self, e: ExprId| {
+                    matches!(
+                        this.f.exprs.get(e.idx()),
+                        Some(Expr {
+                            kind: ExprKind::Ident(bun_sema::atom::known::require),
+                            ..
+                        })
+                    )
+                };
+                if object.is_some_and(|object| is_require(self, object)) {
+                    let is_resolve = self.lx.text_of(name) == b"resolve" && args.len() == 1;
+                    let text = self.folded_text(self.f.id_at(args, 0), depth + 1)?;
+                    return (is_resolve && (text.starts_with(b"./") || text.starts_with(b"../")))
+                        .then_some(text);
+                }
+                if !matches!(self.lx.text_of(name), b"join" | b"resolve") {
+                    return None;
+                }
+                let mut folded = self.text_from_own_folder(self.f.id_at(args, 0), depth + 1)?;
+                for i in 1..args.len() {
+                    let part = self.folded_text(self.f.id_at(args, i), depth + 1)?;
+                    if part.starts_with(b"/") {
+                        return None;
+                    }
+                    folded.push(b'/');
+                    folded.extend(part);
+                }
+                Some(folded)
+            }
+            _ => None,
+        }
+    }
+
+    fn note_path_from_own_folder(&mut self, argument: ExprId, depth: u32) {
+        if self.is_too_deep() {
+            return;
+        }
+        if depth > 64 || self.f.folded_specifiers.iter().any(|folded| folded.0 == argument) {
+            return;
+        }
+        if let Some(&Expr {
+            kind: ExprKind::Cond { yes, no, .. },
+            ..
+        }) = self.f.exprs.get(argument.idx())
+        {
+            self.note_path_from_own_folder(yes, depth + 1);
+            self.note_path_from_own_folder(no, depth + 1);
+            return;
+        }
+        if let Some(folded) = self.text_from_own_folder(argument, 0)
+            && (folded.starts_with(b"./") || folded.starts_with(b"../"))
+        {
+            let folded = self.atom(&folded);
+            self.f.folded_specifiers.push((argument, folded));
+        }
+    }
+
     fn note_folded_specifiers(&mut self, argument: ExprId, depth: u32) {
         if self.is_too_deep() {
             return;
@@ -1647,6 +1761,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     expression = self.element_access(start, expression, chain);
                 }
                 T::Exclamation if !self.newline_before() => {
+                    // `a! /* comment */ !`: the comment is after the node as it is now.
+                    self.before_node_grows();
                     self.next();
                     let end = self.prev_end();
                     if self.options.is_javascript {
@@ -1942,7 +2058,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         chain: Chain,
     ) -> ExprId {
         // `IsRequireCall`
-        let is_require = self.options.is_javascript
+        let is_require = (self.options.is_javascript || self.options.is_typescript_under_a_javascript_name)
             && matches!(
                 self.f.exprs.get(callee.idx()),
                 Some(Expr {
@@ -1964,6 +2080,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         {
             let argument = self.f.id_at(args, 0);
             self.note_folded_specifiers(argument, 0);
+            self.note_path_from_own_folder(argument, 0);
         }
         if is_require && args.len() == 1 {
             let argument = self.f.id_at(args, 0);
@@ -2396,7 +2513,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }) = self.f.exprs.last()
             && !self.is_parenthesized(callee)
         {
-            self.f.exprs.pop();
+            self.pop_expr();
             (callee, type_args) = (expr, written);
         }
         let (args, close_pos) = match self.token() {
@@ -2511,15 +2628,18 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.expect(T::CloseBracket);
                 // `IsDynamicName`: only a bare literal is a name.
                 let is_bare = self.f.parens.len() == parens;
-                let kind = self.f.exprs.get(expression.idx()).map(|it| it.kind);
-                return match kind {
+                let written = self.f.exprs.get(expression.idx()).copied();
+                let literal = written.map_or((0, 0), |it| (it.pos, it.end));
+                return match written.map(|it| it.kind) {
                     Some(ExprKind::String(name)) if is_bare => {
                         self.drop_last_expr(expression);
+                        self.finish_name(literal.0, literal.1);
                         (PropKey::Name(name), NameKind::ComputedString, pos)
                     }
                     Some(ExprKind::Number(n)) if is_bare => {
                         let name = self.number_name(self.f.numbers[n as usize]);
                         self.drop_last_expr(expression);
+                        self.finish_name(literal.0, literal.1);
                         (PropKey::Name(name), NameKind::ComputedNumber, pos)
                     }
                     _ => {
@@ -2592,7 +2712,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if let Some(Expr {
                 kind: ExprKind::Number(n),
                 ..
-            }) = self.f.exprs.pop()
+            }) = self.pop_expr()
                 && n as usize + 1 == self.f.numbers.len()
             {
                 self.f.numbers.pop();
@@ -2701,6 +2821,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if is_generator {
                 fn_flags |= Flags::GENERATOR;
             }
+            let type_parameters = self.pos();
             let func = self.function_rest(
                 fn_kind,
                 fn_flags,
@@ -2713,7 +2834,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 true => self.start_of_parameters(func),
                 false => self.f[func].anchor,
             };
-            self.finish_expr(ExprKind::Fn(func), parameters)
+            let value = self.finish_expr(ExprKind::Fn(func), parameters);
+            // In ESTree it starts at its type parameters: `{ a<T> /* comment */ () {} }`
+            if type_parameters < parameters {
+                self.unfinish_node(NodeData::Expr(value));
+                self.finish_node(NodeData::Expr(value), type_parameters, self.prev_end());
+            }
+            value
         } else if is_identifier && self.token() != T::Colon {
             kind = PropKind::Shorthand;
             let PropKey::Name(name) = key else {

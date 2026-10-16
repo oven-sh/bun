@@ -567,6 +567,23 @@ macro_rules! zstr {
     }};
 }
 
+/// The path of the null device, as a literal that `concat!` accepts. Use it for paths handed to a
+/// child process, because most Windows programs treat `/dev/null` as an ordinary path.
+#[cfg(not(windows))]
+#[macro_export]
+macro_rules! null_device {
+    () => {
+        "/dev/null"
+    };
+}
+#[cfg(windows)]
+#[macro_export]
+macro_rules! null_device {
+    () => {
+        "NUL"
+    };
+}
+
 /// Nomicon-style opaque FFI handle. Expands to a zero-sized `#[repr(C)]`
 /// struct whose address is the only thing Rust ever observes.
 ///
@@ -2826,14 +2843,18 @@ pub unsafe fn copy_in_parallel(to: *mut u8, from: *const u8, len: usize) {
     const LEAST_OF_A_THREAD: usize = 16 << 20;
     let threads = usize::from(get_thread_count()).min(len / LEAST_OF_A_THREAD).min(16);
     if threads < 2 {
+        // SAFETY: the caller's contract is that of `copy_nonoverlapping`.
         return unsafe { core::ptr::copy_nonoverlapping(from, to, len) };
     }
     let share = len.div_ceil(threads).next_multiple_of(1 << 16);
     let (to, from) = (to as usize, from as usize);
     std::thread::scope(|scope| {
         for start in (share..len).step_by(share) {
+            // SAFETY: a part of what the caller's contract covers, and no two threads get the same
+            // part.
             scope.spawn(move || unsafe { core::ptr::copy_nonoverlapping((from + start) as *const u8, (to + start) as *mut u8, share.min(len - start)) });
         }
+        // SAFETY: the first part, which no thread above was given.
         unsafe { core::ptr::copy_nonoverlapping(from as *const u8, to as *mut u8, share.min(len)) };
     });
 }

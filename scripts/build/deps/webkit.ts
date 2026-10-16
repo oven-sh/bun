@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "3d3257150c40a1aabdc5f8b48d5b33d0413674cb";
+export const WEBKIT_VERSION = "b1e30d08cb1428688c5f24109fe4f534096ee2ad";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -12,7 +12,7 @@ export const WEBKIT_VERSION = "3d3257150c40a1aabdc5f8b48d5b33d0413674cb";
  *
  * **prebuilt** (CI and every profile but the `-local` ones): Download tarball
  *   from oven-sh/WebKit releases. Tarball name encodes {os, arch, musl,
- *   debug|lto, asan} — each is a separate ABI. ASAN MUST match bun's setting:
+ *   debug|lto, asan, assertions} — each is a separate ABI — and coverage. ASAN MUST match bun's setting:
  *   WTF::Vector layout changes with ASAN (see WTF/Vector.h:682), so mixing →
  *   silent memory corruption.
  *
@@ -58,6 +58,13 @@ function prebuiltSuffix(cfg: Config): string {
   if (cfg.debug) s += "-debug";
   else if (cfg.lto) s += "-lto";
   if (cfg.asan) s += "-asan";
+  // Built for fuzzing, for this target only (`FUZZING` in oven-sh/WebKit's
+  // .github/scripts/lanes.mjs). Every other combination gets a JSC without
+  // assertions (unless debug or asan) and without coverage.
+  if (cfg.linux && cfg.x64 && cfg.abi === "gnu" && cfg.release && !cfg.lto && !cfg.asan) {
+    if (cfg.assertions) s += "-assertions";
+    if (cfg.fuzzilli) s += "-coverage";
+  }
   return s;
 }
 
@@ -226,7 +233,7 @@ const rows: Row[] = [
   ["ENABLE_EXPERIMENTAL_FEATURES", 0],
   ["ENABLE_FTL_JIT", 1],
   ["ENABLE_FULLSCREEN_API", 1],
-  ["ENABLE_FUZZILLI", c => (c.windows ? undefined : 0)],
+  ["ENABLE_FUZZILLI", c => (c.windows ? undefined : c.fuzzilli ? 1 : 0)],
   ["ENABLE_GAMEPAD", 0],
   ["ENABLE_GEOLOCATION", 1],
   ["ENABLE_GPU_PROCESS", 0],

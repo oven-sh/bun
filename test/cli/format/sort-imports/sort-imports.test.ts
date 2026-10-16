@@ -82,6 +82,18 @@ describe.concurrent("when imports are sorted", () => {
   const unsorted = `import b from "b";\nimport a from "a";\n`;
   const sorted = `import a from "a";\nimport b from "b";\n`;
 
+  test("for oxfmt a comment before the `*` makes a default import of it", async () => {
+    const files = {
+      ".oxfmtrc.json": `{ "sortImports": { "groups": ["wildcard-import", "default-import", "unknown"] } }`,
+      "a.js": 'import d from "d";\nimport /* c */ * as ns from "x";\nimport * as w from "w";\nimport e from "e";\n',
+    };
+    const result = await format(files, ["a.js"]);
+    expect(result.files).toEqual([
+      'import * as w from "w";\n\nimport d from "d";\nimport e from "e";\nimport /* c */ * as ns from "x";\n',
+    ]);
+    expect(result.exitCode).toBe(0);
+  });
+
   test("not without an option that asks for it", async () => {
     const result = await format({ ".prettierrc.json": `{ "semi": true }`, "a.ts": unsorted }, ["a.ts"]);
     expect(result.files).toEqual([unsorted]);

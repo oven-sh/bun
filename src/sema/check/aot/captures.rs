@@ -7,9 +7,21 @@
 //! declares it and in every function that has a copy. A parameter nobody assigns to is the usual case.
 //!
 //! **Any other captured variable lives in an environment**, which is made when its scope is entered: a call of a function, an iteration of a
-//! loop, a block. If one variable of a scope needs that, or there are more than `MOST_COPIES`, all the captured variables of the scope
-//! live there. A block within such a scope that is in no loop of its own is entered at most once each time the scope is, and shares
-//! the environment.
+//! loop, a block. The captured variables of a scope are partitioned by their retainers: the closures, classes and coroutines that can outlive
+//! the activation and refer to them, directly or through what they create or call. If one variable of a partition needs an environment, or
+//! the partition has more than `MOST_COPIES`, the whole partition lives in one environment of its own, so a closure retains only what it can
+//! reach. A block that is in no loop of its own is entered at most once each time the scope around it is, and shares the environment that
+//! the scope has for the same retainers.
+//!
+//! Any partition is correct, so this one is chosen for what it costs. Only the outermost retainers count: a closure created inside another
+//! retainer adds nothing. Closures passed to the same call or stored in the same literal count as one retainer. A closure that is only called
+//! before the activation ends is no retainer, except in an async function or a generator, where every function the body creates or calls
+//! counts. Elsewhere, what a function that is called directly needs stays in one partition, because a direct call passes each capture as an
+//! argument. Everywhere, so does what a function needs that would otherwise have more than `MOST_COPIES` captures: a closure with few captures
+//! is smaller.
+//! The closure of a function declaration is kept in the partition the function needs, if it needs just one. A partition of numbers, booleans
+//! and closures without captures joins a partition that has at least the same retainers. An async function or a generator may itself hold an
+//! environment for a long time, so there a variable that can be copied is copied even if its partition has an environment.
 //!
 //! **The closure of a function declaration is made where the name is first used as a value**, and kept, so that it is the same object
 //! from then on. To keep it is to store to it after an inner function may have seen it. So where an inner function uses the name as a
@@ -50,6 +62,7 @@ pub enum Activation {
     /// An evaluation of a function expression that has a name: it binds the name, which only the function sees, to the closure it makes.
     /// Where an activation is said to have ended: with the activation that evaluates the expression.
     Expression(FnId),
+    Partition(Sym),
 }
 
 /// Whose `this` an arrow function sees.
@@ -162,6 +175,8 @@ struct FileCaptures {
     not_copied: FxHashMap<Sym, NotCopied>,
     /// By activation that has an environment: the variables in it, in the order of their declarations.
     environments: FxHashMap<Activation, Vec<Sym>>,
+    environments_by_activation: FxHashMap<Activation, Vec<Activation>>,
+    partition_owner: FxHashMap<Activation, Activation>,
     of_functions: FxHashMap<FnId, Vec<Capture>>,
     /// `function_captures`
     capturing: FxHashSet<FnId>,
@@ -177,6 +192,19 @@ struct FileCaptures {
     kept_expressions: FxHashMap<FnId, (Activation, u32)>,
     expressions_kept: FxHashMap<Activation, Vec<FnId>>,
     generators_called_through_closures: FxHashSet<ExprId>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+enum Retainer {
+    Node(Node),
+    Aggregate(ExprId),
+}
+
+struct CaptureGroup {
+    retainers: Vec<Retainer>,
+    variables: Vec<Sym>,
+    closures_kept_if_environment_exists: Vec<(Sym, FnId, ExprId)>,
+    is_in_coroutine: bool,
 }
 
 /// A reference to something that is not there once and for all.
@@ -249,17 +277,22 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let captures = self.captures_of_file(file);
-        let first = captures.environments.iter().filter(|(_, variables)| variables.len() > most).map(|(&activation, _)| activation).min()?;
+        let first = captures.environments.iter().filter(|(_, variables)| variables.len() > most).map(|(&activation, _)| captures.partition_owner.get(&activation).copied().unwrap_or(activation)).min()?;
         let hir = self.hir(file);
         Some(match first {
             Activation::Call(func) | Activation::Expression(func) => hir[func].start,
             Activation::Iteration(statement) | Activation::Block(statement) => hir[statement].start,
             Activation::Class(class) => hir[class].start,
+            Activation::Partition(_) => return None,
         })
     }
 
-    pub fn has_environment(&mut self, file: FileId, activation: Activation) -> bool {
-        self.captures_of_file(file).environments.contains_key(&activation)
+    pub fn environments_of_activation(&mut self, file: FileId, activation: Activation) -> Vec<Activation> {
+        self.captures_of_file(file).environments_by_activation.get(&activation).cloned().unwrap_or_default()
+    }
+
+    pub fn activation_of_environment(&mut self, file: FileId, environment: Activation) -> Activation {
+        self.captures_of_file(file).partition_owner.get(&environment).copied().unwrap_or(environment)
     }
 
     /// `None`: only the code that declares the variable refers to it, or there is one of it for as long as the program runs.
@@ -387,7 +420,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn scope_around(&self, file: FileId, scope: Activation) -> Option<Activation> {
         match scope {
             Activation::Block(stmt) => self.scope_at(file, self.bound(file).stmt_parent[stmt.idx()]),
-            Activation::Call(_) | Activation::Iteration(_) | Activation::Class(_) | Activation::Expression(_) => None,
+            Activation::Call(_) | Activation::Iteration(_) | Activation::Class(_) | Activation::Expression(_) | Activation::Partition(_) => None,
         }
     }
 
@@ -635,6 +668,7 @@ impl<'p, 's> Checker<'p, 's> {
         loop {
             let at = match self.site_of(file, parent) {
                 Some(at) if at == site => return pos >= end,
+                Some(Site::Parameter(p)) if site == Site::Body(bound.param_fn[p.idx()]) => return false,
                 Some(at) => at,
                 None => return false,
             };
@@ -704,10 +738,59 @@ impl<'p, 's> Checker<'p, 's> {
         outermost.is_some() && matches!(bound.fns[outermost.idx()].owner, FnOwner::Expr(made) if hir[made].pos >= hir[stmt].loc.end)
     }
 
+    fn last_store_end(&self, file: FileId, decl: Decl) -> Option<(Site, u32)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (site, bound_at) = match decl {
+            Decl::Param(pat) => match root_declaration(bound, pat) {
+                PatParent::Param(p) => (Site::Body(bound.param_fn[p.idx()]), 0),
+                _ => return None,
+            },
+            Decl::Var(pat) => match root_declaration(bound, pat) {
+                PatParent::Var(d) if hir[d].kind == VarKind::Let => (self.dead_zone_of(file, decl)?.0, hir[d].loc.end),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let mut end = 0;
+        for &(_, target) in bound.assignments_to(bound.symbol_of_declaration(decl)) {
+            if self.site_of(file, bound.expr_parent[target.idx()]) != Some(site) {
+                return None;
+            }
+            let (mut at, mut is_in_statement) = (bound.expr_parent[target.idx()], false);
+            loop {
+                at = match at {
+                    Parent::None | Parent::File | Parent::FnBody(_) => break,
+                    Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
+                    Parent::Stmt(s) if s.is_some() && hir[s].start < bound_at => break,
+                    Parent::Stmt(s) if s.is_some() => {
+                        if !is_in_statement || is_loop(&hir[s].kind) {
+                            end = end.max(hir[s].loc.end);
+                        }
+                        is_in_statement = true;
+                        bound.stmt_parent[s.idx()]
+                    }
+                    _ => self.parent_of_node(file, at),
+                };
+            }
+        }
+        Some((site, end))
+    }
+
     /// `references`: those to the variable from code other than the code that declares it.
-    fn why_not_copied(&mut self, file: FileId, sym: Sym, decl: Decl, references: &[ExprId]) -> Option<NotCopied> {
+    fn why_not_copied(
+        &mut self,
+        file: FileId,
+        sym: Sym,
+        decl: Decl,
+        references: &[ExprId],
+        mentions: &FxHashMap<FnId, Vec<ExprId>>,
+        closures: &FxHashMap<FnId, DeclaredClosure>,
+    ) -> Option<NotCopied> {
         if let Some(stored) = self.store_to(file, sym, decl) {
-            return Some(stored);
+            let is_captured_later = |(site, end)| references.iter().all(|&e| self.is_evaluated_once_bound(file, e, site, end, mentions, closures, &mut FxHashSet::default()));
+            if !matches!(stored, NotCopied::Stored(_)) || self.has_direct_eval(file) || !self.last_store_end(file, decl).is_some_and(is_captured_later) {
+                return Some(stored);
+            }
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         match decl {
@@ -740,6 +823,72 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => Some(NotCopied::Declaration),
         }
+    }
+
+    fn remove_non_escaping_closures(&mut self, file: FileId, retainers: &mut Vec<Node>, uses_as_value: &FxHashMap<FnId, Vec<(ExprId, Code, Code)>>, non_escaping: &mut FxHashMap<FnId, bool>) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let is_coroutine = |func: FnId| hir[func].flags.contains(Flags::ASYNC) || hir[func].flags.contains(Flags::GENERATOR);
+        retainers.retain(|&node| {
+            let Node::Code(Code::Function(func)) = node else { return true };
+            if let Some(&known) = non_escaping.get(&func) {
+                return !known;
+            }
+            let is_non_escaping = !is_coroutine(func)
+                && match bound.fns[func.idx()].owner {
+                    FnOwner::Expr(e) => self.use_of_value(file, e) & argument_use::ESCAPES == 0,
+                    FnOwner::Stmt(_) => {
+                        let name = bound.fn_symbol[func.idx()];
+                        name.is_some()
+                            && !bound.symbols[name.idx()].decls.iter().any(|decl| matches!(decl, Decl::Var(_) | Decl::Param(_)))
+                            && !bound.symbols[name.idx()].flags.contains(SymFlags::ASSIGNED)
+                            && bound.assignments_to(name).is_empty()
+                            && !self.is_stored_through_casts(file, name)
+                            && uses_as_value.get(&func).is_some_and(|uses| uses.iter().all(|used| self.use_of_value(file, used.0) & argument_use::ESCAPES == 0))
+                    }
+                    _ => false,
+                };
+            non_escaping.insert(func, is_non_escaping);
+            !is_non_escaping
+        });
+    }
+
+    fn aggregate_holding(&self, file: FileId, e: ExprId) -> Option<ExprId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (mut child, mut at, mut found) = (e, bound.expr_parent[e.idx()], None);
+        loop {
+            at = match at {
+                Parent::Prop(_) => self.parent_of_node(file, at),
+                Parent::Expr(parent) if parent.is_some() => {
+                    match hir[parent].kind {
+                        ExprKind::Call(call) | ExprKind::New(call) if hir[call].callee != child => return Some(parent),
+                        ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Jsx(_) => found = Some(parent),
+                        ExprKind::As { .. } | ExprKind::Satisfies { .. } | ExprKind::AsConst(_) | ExprKind::NonNull(_) | ExprKind::Spread(_) => {}
+                        _ => return found,
+                    }
+                    child = parent;
+                    bound.expr_parent[parent.idx()]
+                }
+                _ => return found,
+            };
+        }
+    }
+
+    fn retainer_of(&self, file: FileId, node: Node, uses_as_value: &FxHashMap<FnId, Vec<(ExprId, Code, Code)>>) -> Retainer {
+        let Node::Code(Code::Function(func)) = node else { return Retainer::Node(node) };
+        let aggregate = match self.bound(file).fns[func.idx()].owner {
+            FnOwner::Expr(e) => self.aggregate_holding(file, e),
+            FnOwner::Stmt(_) => match uses_as_value.get(&func).map(Vec::as_slice) {
+                Some([first, rest @ ..]) => self.aggregate_holding(file, first.0).filter(|&aggregate| rest.iter().all(|used| self.aggregate_holding(file, used.0) == Some(aggregate))),
+                _ => None,
+            },
+            _ => None,
+        };
+        aggregate.map_or(Retainer::Node(node), Retainer::Aggregate)
+    }
+
+    fn holds_no_cells(&mut self, sym: Sym) -> bool {
+        let ty = self.type_of_symbol(sym);
+        self.every_type(ty, |c, part| c.is_number_like(part) || c.is_boolean_like(part) || c.is_nullish(part))
     }
 
     // ───────────────────────────── the pass over a file ─────────────────────────────
@@ -827,13 +976,14 @@ impl<'p, 's> Checker<'p, 's> {
             .collect();
         // So may one whose `arguments` object shows it: `arguments.callee`.
         let mapped = self.mapped_arguments_of_file(file);
-        let mut showing_themselves: Vec<FnId> = mapped.functions.keys().copied().collect();
+        let mut showing_themselves: Vec<FnId> = mapped.functions.keys().chain(mapped.shown_on_demand.keys()).copied().collect();
         showing_themselves.sort_unstable();
         names_itself.extend(showing_themselves.iter().copied().filter(|func| matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_))));
         let mut captured: FxHashMap<Sym, (Decl, Vec<ExprId>)> = FxHashMap::default();
         let mut uses_as_value: FxHashMap<FnId, Vec<(ExprId, Code, Code)>> = FxHashMap::default();
         let mut symbol_of_function: FxHashMap<FnId, (Sym, Decl)> = FxHashMap::default();
         let mut mentions: FxHashMap<FnId, Vec<ExprId>> = FxHashMap::default();
+        let mut called_directly: FxHashSet<FnId> = FxHashSet::default();
         for reference in &references {
             let node = Node::Code(reference.code);
             // It lives in the `arguments` object of its function.
@@ -855,6 +1005,9 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(func) = declared_function(self, reference) {
                 edges.insert((node, Node::Code(self.code_of_fn(file, func))));
                 mentions.entry(func).or_default().push(reference.e);
+                if is_called_directly(reference.e) {
+                    called_directly.insert(func);
+                }
                 // The name of a function expression within it stands for the closure that the evaluation of the expression made.
                 if (!is_called_directly(reference.e) || returns_a_generator(func, reference.e)) && matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_) | FnOwner::Expr(_)) {
                     if is_callee(reference.e) && returns_a_generator(func, reference.e) {
@@ -875,6 +1028,7 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 if !returns_a_generator(func, reference.e) {
                     edges.insert((node, Node::Code(Code::Function(func))));
+                    called_directly.insert(func);
                     continue;
                 }
                 through_closures.insert(reference.e);
@@ -899,7 +1053,8 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(holder) = self.activation_binding(file, Decl::Fn(func)) else { continue };
             let holder = holder.map_or(Code::Module, |around| self.code_of_fn(file, around));
             let code = self.code_of_fn(file, func);
-            uses_as_value.entry(func).or_default().push((mapped.functions[&func], code, holder));
+            let shown_at = mapped.functions.get(&func).unwrap_or_else(|| &mapped.shown_on_demand[&func]);
+            uses_as_value.entry(func).or_default().push((*shown_at, code, holder));
             symbol_of_function.insert(func, (self.files.sym(file, name), Decl::Fn(func)));
             raw.entry(Node::Code(code)).or_default().insert(Need::Closure(func));
         }
@@ -973,6 +1128,9 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             edges.insert((Node::Code(self.code_at(file, parent)), Node::Code(Code::Function(func))));
+            if is_callee(e) {
+                called_directly.insert(func);
+            }
             if hir[func].kind == FnKind::Arrow {
                 found.receivers.insert(func, self.receiver_at(file, parent));
             }
@@ -1054,7 +1212,7 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 found.captured_before_iterations.insert(statement);
             }
-            if let Some(why) = self.why_not_copied(file, sym, *decl, inner) {
+            if let Some(why) = self.why_not_copied(file, sym, *decl, inner, &mentions, &found.declared_closures) {
                 found.not_copied.insert(sym, why);
             }
         }
@@ -1064,9 +1222,339 @@ impl<'p, 's> Checker<'p, 's> {
                 found.not_copied.insert(sym, NotCopied::KeepsClosure(inner));
             }
         }
-        // A scope that is held back by nothing else: whether what is seen early is seen by a function declaration that nothing mentions before
-        // the variable is bound.
-        for held in by_activation.values().filter(|held| held.len() <= MOST_COPIES) {
+        let member_of: FxHashMap<Code, ClassId> = (classes.iter())
+            .flat_map(|&class| {
+                let members = hir[class].members.iter().map(|member| hir[member].func).filter(|func| func.is_some()).map(|func| self.code_of_fn(file, func));
+                members.chain([Code::Constructor(class)]).map(move |code| (code, class)).collect::<Vec<_>>()
+            })
+            .collect();
+        let (mut predecessors, mut successors): (FxHashMap<Node, Vec<Node>>, FxHashMap<Node, Vec<Node>>) = Default::default();
+        for &(from, to) in edges.iter().filter(|edge| edge.0 != edge.1) {
+            predecessors.entry(to).or_default().push(from);
+            successors.entry(from).or_default().push(to);
+        }
+        let mut direct_users: FxHashMap<Sym, Vec<Node>> = FxHashMap::default();
+        for (&node, needed) in &raw {
+            for &need in needed {
+                match need {
+                    Need::Variable(sym) => direct_users.entry(sym).or_default().push(node),
+                    Need::Closure(func) => direct_users.entry(symbol_of_function[&func].0).or_default().push(node),
+                    _ => {}
+                }
+            }
+        }
+        let can_outlive_activation = |this: &Self, node: Node| match node {
+            Node::Class(_) => true,
+            Node::Code(Code::Function(func)) if member_of.contains_key(&Code::Function(func)) => false,
+            Node::Code(Code::Function(func)) => {
+                let name = bound.fn_symbol[func.idx()];
+                !matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_))
+                    || uses_as_value.contains_key(&func)
+                    || hir[func].flags.contains(Flags::ASYNC)
+                    || hir[func].flags.contains(Flags::GENERATOR)
+                    || name.is_none()
+                    || bound.symbols[name.idx()].decls.iter().any(|decl| matches!(decl, Decl::Var(_) | Decl::Param(_)))
+                    || bound.symbols[name.idx()].flags.contains(SymFlags::ASSIGNED)
+                    || !bound.assignments_to(name).is_empty()
+                    || this.is_stored_through_casts(file, name)
+            }
+            Node::Code(Code::Constructor(_) | Code::Module) => false,
+        };
+        let owner_of_declaration = |this: &Self, decl: Decl| Node::Code(this.activation_binding(file, decl).flatten().map_or(Code::Module, |func| this.code_of_fn(file, func)));
+        let mut variables_by_owner: FxHashMap<Node, Vec<(Activation, Sym, Option<(FnId, ExprId)>)>> = FxHashMap::default();
+        for (&scope, held) in &by_activation {
+            for &sym in held {
+                let decl = captured.get(&sym).map(|it| it.0).or_else(|| kept.get(&scope).and_then(|closures| closures.iter().find(|it| it.0 == sym)).map(|it| symbol_of_function[&it.1].1));
+                let owner = decl.map_or(Node::Code(Code::Module), |decl| owner_of_declaration(self, decl));
+                variables_by_owner.entry(owner).or_default().push((scope, sym, None));
+            }
+        }
+        for (activation, sym, func, inner) in kept_if_environment_exists {
+            variables_by_owner.entry(owner_of_declaration(self, symbol_of_function[&func].1)).or_default().push((activation, sym, Some((func, inner))));
+        }
+        let mut variables_by_owner: Vec<_> = variables_by_owner.into_iter().collect();
+        variables_by_owner.sort_unstable_by_key(|of_owner| of_owner.0);
+        for of_owner in &mut variables_by_owner {
+            of_owner.1.sort_unstable();
+        }
+        let function_kept_in: FxHashMap<Sym, FnId> = symbol_of_function.iter().map(|(&func, kept_in)| (kept_in.0, func)).collect();
+        let mut keeps_closure_without_captures: FxHashSet<Sym> = FxHashSet::default();
+        let mut non_escaping: FxHashMap<FnId, bool> = FxHashMap::default();
+        let mut groups_by_scope: FxHashMap<Activation, Vec<CaptureGroup>> = FxHashMap::default();
+        let mut has_too_many_captures: FxHashSet<Node> = FxHashSet::default();
+        loop {
+            groups_by_scope.clear();
+            let mut capture_counts: FxHashMap<Node, usize> = FxHashMap::default();
+            for (&node, needed) in &raw {
+                capture_counts.insert(node, needed.iter().filter(|need| !matches!(need, Need::Variable(_) | Need::Closure(_))).count());
+            }
+            for &(owner, ref variables) in &variables_by_owner {
+                let mut local_index: FxHashMap<Node, usize> = FxHashMap::default();
+                let mut nodes: Vec<Node> = Vec::new();
+                let mut any_needed: Vec<usize> = Vec::new();
+                let mut direct_needs: Vec<(usize, usize)> = Vec::new();
+                for (index, variable) in variables.iter().enumerate() {
+                    for &user in direct_users.get(&variable.1).into_iter().flatten().filter(|&&user| user != owner) {
+                        let node = *local_index.entry(user).or_insert_with(|| {
+                            nodes.push(user);
+                            any_needed.push(index);
+                            nodes.len() - 1
+                        });
+                        direct_needs.push((node, index));
+                    }
+                }
+                let mut callees: Vec<Vec<usize>> = Vec::new();
+                let mut cursor = 0;
+                while cursor < nodes.len() {
+                    let class = match nodes[cursor] {
+                        Node::Code(code) => member_of.get(&code).map(|&class| Node::Class(class)),
+                        Node::Class(_) => None,
+                    };
+                    let users = match &class {
+                        Some(class) => std::slice::from_ref(class),
+                        None => predecessors.get(&nodes[cursor]).map_or(&[][..], Vec::as_slice),
+                    };
+                    for &user in users.iter().filter(|&&user| user != owner) {
+                        let user = *local_index.entry(user).or_insert_with(|| {
+                            nodes.push(user);
+                            any_needed.push(any_needed[cursor]);
+                            nodes.len() - 1
+                        });
+                        callees.resize_with(callees.len().max(user + 1), Vec::new);
+                        callees[user].push(cursor);
+                    }
+                    cursor += 1;
+                }
+                callees.resize_with(nodes.len(), Vec::new);
+
+                let is_owner_coroutine = matches!(owner, Node::Code(Code::Function(func)) if hir[func].flags.contains(Flags::ASYNC) || hir[func].flags.contains(Flags::GENERATOR));
+                let mut is_visited = vec![false; nodes.len()];
+                let mut pending: Vec<usize> = (0..nodes.len()).filter(|&node| has_too_many_captures.contains(&nodes[node]) || !is_owner_coroutine && matches!(nodes[node], Node::Code(Code::Function(func)) if called_directly.contains(&func))).collect();
+                while let Some(node) = pending.pop() {
+                    if !std::mem::replace(&mut is_visited[node], true) {
+                        pending.extend(callees[node].iter().copied());
+                    }
+                }
+                let mut parents: Vec<usize> = (0..variables.len()).collect();
+                let mut unite = |first: usize, second: usize| {
+                    let (first, second) = (find_root(&mut parents, first), find_root(&mut parents, second));
+                    parents[first.max(second)] = first.min(second);
+                };
+                for &(node, index) in direct_needs.iter().filter(|need| is_visited[need.0]) {
+                    unite(index, any_needed[node]);
+                }
+                for node in (0..nodes.len()).filter(|&node| is_visited[node]) {
+                    for &callee in &callees[node] {
+                        unite(any_needed[callee], any_needed[node]);
+                    }
+                }
+                let mut united_count = 0;
+                let mut united_of_root: Vec<usize> = vec![usize::MAX; variables.len()];
+                let united_of: Vec<usize> = (0..variables.len())
+                    .map(|index| {
+                        let root = find_root(&mut parents, index);
+                        if united_of_root[root] == usize::MAX {
+                            united_of_root[root] = united_count;
+                            united_count += 1;
+                        }
+                        united_of_root[root]
+                    })
+                    .collect();
+
+                let mut callees_first: Vec<usize> = Vec::with_capacity(nodes.len());
+                let mut stack: Vec<(usize, usize)> = Vec::new();
+                is_visited.fill(false);
+                for start in 0..nodes.len() {
+                    if std::mem::replace(&mut is_visited[start], true) {
+                        continue;
+                    }
+                    stack.push((start, 0));
+                    while let Some(&(node, next)) = stack.last() {
+                        match callees[node].get(next) {
+                            Some(&callee) => {
+                                stack.last_mut().unwrap().1 += 1;
+                                if !std::mem::replace(&mut is_visited[callee], true) {
+                                    stack.push((callee, 0));
+                                }
+                            }
+                            None => {
+                                callees_first.push(node);
+                                stack.pop();
+                            }
+                        }
+                    }
+                }
+                let word_count = united_count.div_ceil(64);
+                let mut needed: Vec<u64> = vec![0; nodes.len() * word_count];
+                for &(node, index) in &direct_needs {
+                    needed[node * word_count + united_of[index] / 64] |= 1 << (united_of[index] % 64);
+                }
+                loop {
+                    let mut has_grown = false;
+                    for &node in &callees_first {
+                        for &callee in &callees[node] {
+                            for word in 0..word_count {
+                                let more = needed[callee * word_count + word] & !needed[node * word_count + word];
+                                needed[node * word_count + word] |= more;
+                                has_grown |= more != 0;
+                            }
+                        }
+                    }
+                    if !has_grown {
+                        break;
+                    }
+                }
+
+                let mut merged_into: Vec<usize> = (0..united_count).collect();
+                let mut united_sizes: Vec<usize> = vec![0; united_count];
+                for &united in &united_of {
+                    united_sizes[united] += 1;
+                }
+                let mut kept_closures: Vec<(usize, usize)> = Vec::new();
+                for (index, variable) in variables.iter().enumerate() {
+                    let Some(&func) = function_kept_in.get(&variable.1) else { continue };
+                    match local_index.get(&Node::Code(self.code_of_fn(file, func))) {
+                        Some(&node) if united_sizes[united_of[index]] == 1 => kept_closures.push((index, node)),
+                        Some(_) => {}
+                        None => {
+                            keeps_closure_without_captures.insert(variable.1);
+                        }
+                    }
+                }
+                loop {
+                    let before = kept_closures.len();
+                    kept_closures.retain(|&(index, node)| {
+                        let own = find_root(&mut merged_into, united_of[index]);
+                        let others: Vec<usize> = set_bits(&needed[node * word_count..(node + 1) * word_count]).into_iter().map(|united| find_root(&mut merged_into, united)).filter(|&united| united != own).collect();
+                        match others.first() {
+                            Some(&only) if others.iter().all(|&united| united == only) => {
+                                merged_into[own.max(only)] = own.min(only);
+                                false
+                            }
+                            _ => true,
+                        }
+                    });
+                    if kept_closures.len() == before {
+                        break;
+                    }
+                }
+
+                let mut retainers: Vec<Node> = nodes.iter().copied().filter(|&node| is_owner_coroutine || can_outlive_activation(self, node)).collect();
+                retainers.sort_unstable();
+                if !is_owner_coroutine && owner != Node::Code(Code::Module) {
+                    self.remove_non_escaping_closures(file, &mut retainers, &uses_as_value, &mut non_escaping);
+                }
+                let mut retainers_of: Vec<Vec<Retainer>> = vec![Vec::new(); united_count];
+                is_visited.fill(false);
+                pending.extend(successors.get(&owner).into_iter().flatten().filter_map(|next| local_index.get(next).copied()));
+                while let Some(node) = pending.pop() {
+                    if std::mem::replace(&mut is_visited[node], true) {
+                        continue;
+                    }
+                    if retainers.binary_search(&nodes[node]).is_err() {
+                        pending.extend(callees[node].iter().copied());
+                        continue;
+                    }
+                    let retainer = self.retainer_of(file, nodes[node], &uses_as_value);
+                    for united in set_bits(&needed[node * word_count..(node + 1) * word_count]) {
+                        retainers_of[find_root(&mut merged_into, united)].push(retainer);
+                    }
+                }
+                let mut component_of: FxHashMap<(usize, Activation), usize> = FxHashMap::default();
+                let mut components: Vec<(Activation, Vec<Retainer>, Vec<usize>)> = Vec::new();
+                for index in 0..variables.len() {
+                    let united = find_root(&mut merged_into, united_of[index]);
+                    let component = *component_of.entry((united, variables[index].0)).or_insert_with(|| {
+                        components.push((variables[index].0, retainers_of[united].clone(), Vec::new()));
+                        components.len() - 1
+                    });
+                    components[component].2.push(index);
+                }
+                for (scope, mut retainers, members) in components {
+                    retainers.sort_unstable();
+                    retainers.dedup();
+                    let groups = groups_by_scope.entry(scope).or_default();
+                    let group = match groups.iter().position(|group| group.retainers == retainers) {
+                        Some(position) => &mut groups[position],
+                        None => {
+                            groups.push(CaptureGroup { retainers, variables: Vec::new(), closures_kept_if_environment_exists: Vec::new(), is_in_coroutine: is_owner_coroutine });
+                            groups.last_mut().unwrap()
+                        }
+                    };
+                    for index in members {
+                        match variables[index].2 {
+                            None => group.variables.push(variables[index].1),
+                            Some((func, inner)) => group.closures_kept_if_environment_exists.push((variables[index].1, func, inner)),
+                        }
+                    }
+                }
+                let mut scopes_of_owner: Vec<Activation> = variables.iter().map(|variable| variable.0).collect();
+                scopes_of_owner.dedup();
+                for scope in &scopes_of_owner {
+                    let groups = groups_by_scope.get_mut(scope).unwrap();
+                    let mut index = 0;
+                    while index < groups.len() {
+                        let is_subset = |of: &CaptureGroup| groups[index].retainers.iter().all(|retainer| of.retainers.binary_search(retainer).is_ok());
+                        let target = (0..groups.len()).filter(|&other| other != index && is_subset(&groups[other])).min_by_key(|&other| groups[other].retainers.len());
+                        match target {
+                            Some(target) if groups[index].variables.clone().into_iter().all(|sym| keeps_closure_without_captures.contains(&sym) || captured.contains_key(&sym) && self.holds_no_cells(sym)) => {
+                                let merged = groups.remove(index);
+                                let target = &mut groups[target - usize::from(target > index)];
+                                target.variables.extend(merged.variables);
+                                target.closures_kept_if_environment_exists.extend(merged.closures_kept_if_environment_exists);
+                            }
+                            _ => index += 1,
+                        }
+                    }
+                    for group in groups.iter_mut() {
+                        group.variables.sort_unstable();
+                    }
+                }
+
+                let index_of: FxHashMap<Sym, usize> = variables.iter().enumerate().map(|(index, variable)| (variable.1, index)).collect();
+                let mut environments_of: Vec<Vec<usize>> = vec![Vec::new(); united_count];
+                let mut copies_of: Vec<usize> = vec![0; united_count];
+                for (environment, group) in scopes_of_owner.iter().flat_map(|scope| &groups_by_scope[scope]).enumerate() {
+                    let copyable = group.variables.iter().filter(|sym| !found.not_copied.contains_key(sym)).count();
+                    let has_environment = group.variables.len() > MOST_COPIES || copyable < group.variables.len();
+                    let copies_what_it_can = !has_environment || group.is_in_coroutine && copyable <= MOST_COPIES;
+                    for sym in &group.variables {
+                        let united = find_root(&mut merged_into, united_of[index_of[sym]]);
+                        if copies_what_it_can && !found.not_copied.contains_key(sym) {
+                            copies_of[united] += 1;
+                        } else if environments_of[united].last() != Some(&environment) {
+                            environments_of[united].push(environment);
+                        }
+                    }
+                    for kept in group.closures_kept_if_environment_exists.iter().filter(|_| has_environment) {
+                        let united = find_root(&mut merged_into, united_of[index_of[&kept.0]]);
+                        if environments_of[united].last() != Some(&environment) {
+                            environments_of[united].push(environment);
+                        }
+                    }
+                }
+                for (node, &code) in nodes.iter().enumerate() {
+                    if !matches!(code, Node::Code(function @ Code::Function(_)) if !member_of.contains_key(&function)) {
+                        continue;
+                    }
+                    let mut needed_sets: Vec<usize> = set_bits(&needed[node * word_count..(node + 1) * word_count]).into_iter().map(|united| find_root(&mut merged_into, united)).collect();
+                    needed_sets.sort_unstable();
+                    needed_sets.dedup();
+                    let mut environments: Vec<usize> = needed_sets.iter().flat_map(|&united| environments_of[united].iter().copied()).collect();
+                    environments.sort_unstable();
+                    environments.dedup();
+                    *capture_counts.entry(code).or_default() += environments.len() + needed_sets.iter().map(|&united| copies_of[united]).sum::<usize>();
+                }
+            }
+            let before = has_too_many_captures.len();
+            has_too_many_captures.extend(capture_counts.into_iter().filter(|count| count.1 > MOST_COPIES && matches!(count.0, Node::Code(Code::Function(_)))).map(|count| count.0));
+            if has_too_many_captures.len() == before {
+                break;
+            }
+        }
+        let mut scopes: Vec<Activation> = groups_by_scope.keys().copied().collect();
+        scopes.sort_unstable();
+        for held in groups_by_scope.values().flatten().map(|group| &group.variables).filter(|held| held.len() <= MOST_COPIES) {
             if !held.iter().all(|sym| matches!(found.not_copied.get(sym), None | Some(NotCopied::SeenEarly(_)))) {
                 continue;
             }
@@ -1080,15 +1568,21 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        for (activation, sym, func, inner) in kept_if_environment_exists {
-            if by_activation.get(&activation).is_some_and(|held| held.len() > MOST_COPIES || held.iter().any(|sym| found.not_copied.contains_key(sym))) {
-                found.declared_closures.remove(&func);
-                kept.entry(activation).or_default().push((sym, func, inner));
-                by_activation.entry(activation).or_default().push(sym);
-                found.not_copied.insert(sym, NotCopied::KeepsClosure(inner));
+        for scope in &scopes {
+            for group in groups_by_scope.get_mut(scope).unwrap() {
+                let closures = std::mem::take(&mut group.closures_kept_if_environment_exists);
+                if group.variables.len() <= MOST_COPIES && !group.variables.iter().any(|sym| found.not_copied.contains_key(sym)) {
+                    continue;
+                }
+                for (sym, func, inner) in closures {
+                    group.variables.push(sym);
+                    found.declared_closures.remove(&func);
+                    kept.entry(*scope).or_default().push((sym, func, inner));
+                    found.not_copied.insert(sym, NotCopied::KeepsClosure(inner));
+                }
             }
         }
-        let mut by_root: FxHashMap<Activation, Vec<Sym>> = FxHashMap::default();
+        let mut by_root: FxHashMap<(Activation, Vec<Retainer>), Vec<Sym>> = FxHashMap::default();
         let is_bound_to_literal = |sym: &Sym| {
             let Some((Decl::Var(pat), _)) = captured.get(sym) else { return false };
             let PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return false };
@@ -1100,36 +1594,47 @@ impl<'p, 's> Checker<'p, 's> {
             }
             init.is_some() && matches!(hir[init].kind, ExprKind::Object(_))
         };
-        let lives_in_environment = |held: &[Sym], sym: &Sym| {
-            (held.len() > MOST_COPIES || held.iter().any(|sym| found.not_copied.contains_key(sym))) && (found.not_copied.contains_key(sym) || !is_bound_to_literal(sym))
+        let lives_in_environment = |group: &CaptureGroup, sym: &Sym| {
+            let copyable = group.variables.iter().filter(|sym| !found.not_copied.contains_key(sym)).count();
+            (group.variables.len() > MOST_COPIES || copyable < group.variables.len())
+                && (found.not_copied.contains_key(sym) || !is_bound_to_literal(sym) && !(group.is_in_coroutine && copyable <= MOST_COPIES))
         };
-        let needs_environment = |held: &[Sym]| held.iter().any(|sym| lives_in_environment(held, sym));
-        for (&scope, held) in &by_activation {
-            if !needs_environment(held) {
-                continue;
-            }
-            // It shares the environment of the outermost scope around it that needs one and that it is entered at most once with.
-            let (mut root, mut around) = (scope, self.scope_around(file, scope));
-            while let Some(outer) = around {
-                if by_activation.get(&outer).is_some_and(|held| needs_environment(held)) {
-                    root = outer;
+        let needs_environment = |group: &CaptureGroup| group.variables.iter().any(|sym| lives_in_environment(group, sym));
+        for (&scope, groups) in &groups_by_scope {
+            for group in groups.iter().filter(|group| needs_environment(group)) {
+                let (mut root, mut around) = ((scope, &group.retainers), self.scope_around(file, scope));
+                while let Some(outer) = around {
+                    let has_same_retainers = |other: &&CaptureGroup| needs_environment(other) && other.retainers == group.retainers;
+                    if let Some(shared) = groups_by_scope.get(&outer).into_iter().flatten().find(has_same_retainers) {
+                        root = (outer, &shared.retainers);
+                    }
+                    around = self.scope_around(file, outer);
                 }
-                around = self.scope_around(file, outer);
+                by_root.entry((root.0, root.1.clone())).or_default().extend(group.variables.iter().filter(|sym| lives_in_environment(group, sym)));
             }
-            by_root.entry(root).or_default().extend(held.iter().filter(|sym| lives_in_environment(held, sym)));
         }
-        for held in by_activation.values() {
-            for &sym in held.iter().filter(|sym| !lives_in_environment(held, sym)) {
+        for group in groups_by_scope.values().flatten() {
+            for &sym in group.variables.iter().filter(|sym| !lives_in_environment(group, sym)) {
                 found.variables.insert(sym, CapturedVariable::Copied);
             }
         }
         let kept: Vec<(Sym, FnId)> = kept.into_values().flatten().map(|(sym, func, _)| (sym, func)).collect();
-        for (activation, mut held) in by_root {
+        let mut environments: Vec<(Activation, Vec<Sym>)> = by_root.into_iter().map(|((root, _), held)| (root, held)).collect();
+        for (_, held) in &mut environments {
             held.sort_unstable();
-            for (i, &sym) in held.iter().enumerate() {
-                found.variables.insert(sym, CapturedVariable::InEnvironment(activation, i as u32));
+        }
+        environments.sort_unstable();
+        for (root, held) in environments {
+            let environments_by_activation = found.environments_by_activation.entry(root).or_default();
+            let environment = if environments_by_activation.is_empty() { root } else { Activation::Partition(held[0]) };
+            environments_by_activation.push(environment);
+            if environment != root {
+                found.partition_owner.insert(environment, root);
             }
-            found.environments.insert(activation, held);
+            for (i, &sym) in held.iter().enumerate() {
+                found.variables.insert(sym, CapturedVariable::InEnvironment(environment, i as u32));
+            }
+            found.environments.insert(environment, held);
         }
         for (sym, func) in kept {
             if let Some(&CapturedVariable::InEnvironment(activation, index)) = found.variables.get(&sym) {
@@ -1153,6 +1658,7 @@ impl<'p, 's> Checker<'p, 's> {
             let activation = Activation::Expression(func);
             if !matches!(found.declared_closures.get(&func), Some(DeclaredClosure::KeptInEnvironment(..))) {
                 found.environments.insert(activation, Vec::new());
+                found.environments_by_activation.insert(activation, vec![activation]);
                 found.expressions_kept.insert(activation, vec![func]);
                 found.kept_expressions.insert(func, (activation, 0));
             }
@@ -1200,12 +1706,6 @@ impl<'p, 's> Checker<'p, 's> {
                 Need::This(Receiver::None) => Code::Module,
             }
         };
-        let member_of: FxHashMap<Code, ClassId> = (classes.iter())
-            .flat_map(|&class| {
-                let members = hir[class].members.iter().map(|member| hir[member].func).filter(|func| func.is_some()).map(|func| self.code_of_fn(file, func));
-                members.chain([Code::Constructor(class)]).map(move |code| (code, class)).collect::<Vec<_>>()
-            })
-            .collect();
 
         // The least sets such that each node needs what it refers to and what the nodes it makes or calls need, but for what it has itself.
         // All that gets out of a member of a class is a need for the class.
@@ -1300,7 +1800,8 @@ impl<'p, 's> Checker<'p, 's> {
         expressions.sort_unstable();
         for func in expressions {
             if let FnOwner::Expr(e) = bound.fns[func.idx()].owner
-                && let [Capture::Environment(activation @ Activation::Call(outermost))] = found.of_functions[&func][..]
+                && let [Capture::Environment(activation)] = found.of_functions[&func][..]
+                && let Activation::Call(outermost) = found.partition_owner.get(&activation).copied().unwrap_or(activation)
                 && bound.fns[outermost.idx()].enclosing.is_none()
                 && bound.fns[func.idx()].enclosing != outermost
                 && !self.hir(file)[func].flags.contains(Flags::GENERATOR)
@@ -1315,6 +1816,26 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     // ───────────────────────────── explanations ─────────────────────────────
+}
+
+fn set_bits(bits: &[u64]) -> Vec<usize> {
+    let mut indices = Vec::new();
+    for (word_index, &word) in bits.iter().enumerate() {
+        let mut rest = word;
+        while rest != 0 {
+            indices.push(word_index * 64 + rest.trailing_zeros() as usize);
+            rest &= rest - 1;
+        }
+    }
+    indices
+}
+
+fn find_root(parents: &mut [usize], mut index: usize) -> usize {
+    while parents[index] != index {
+        parents[index] = parents[parents[index]];
+        index = parents[index];
+    }
+    index
 }
 
 fn is_loop(kind: &StmtKind) -> bool {

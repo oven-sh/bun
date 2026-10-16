@@ -105,8 +105,11 @@ pub struct BundleV2<'a> {
     /// In-memory files that can be used as entrypoints or imported.
     /// This is a pointer to the FileMap in the completion config.
     pub file_map: Option<&'a FileMap>,
-    pub(crate) packages_met: std::collections::HashSet<Box<[u8]>>,
+    pub(crate) packages_met: bun_collections::HashMap<Box<[u8]>, ()>,
     pub(crate) laid: FileMap,
+    pub(crate) declaration_files: options::DeclarationFiles,
+    pub(crate) module_types: Option<Box<dyn core::any::Any + Send>>,
+    pub(crate) laid_as_typescript: bun_collections::HashMap<Box<[u8]>, ()>,
     pub(crate) source_code_length: usize,
 
     /// There is a race condition where an onResolve plugin may schedule a task
@@ -1585,6 +1588,16 @@ pub mod bv2_impl {
             ) -> u32;
             /// `WTF::StringImpl::hash()` of the string with these WTF-8 contents.
             safe fn __bun_jsc_wtf_string_hash(wtf8: &[u8]) -> u32;
+            safe fn __bun_jsc_check_syntax_of_module_text(
+                path: &[u8],
+                ascii_text: &[u8],
+                is_module: bool,
+            ) -> Option<(Vec<u8>, u32)>;
+        }
+
+        #[inline]
+        pub(crate) fn check_syntax_of_module_text(path: &[u8], ascii_text: &[u8], is_module: bool) -> Option<(Vec<u8>, u32)> {
+            __bun_jsc_check_syntax_of_module_text(path, ascii_text, is_module)
         }
 
         /// `WTF::StringImpl::hash()` of a WTF-8 string, as JSC hashes the atom it becomes at runtime.
@@ -2680,11 +2693,13 @@ pub mod bv2_impl {
         /// `BundleOptions::type_check`. Every file is parsed, so the pool is idle and the text of
         /// each file is in the graph.
         fn type_check(&mut self, early_analysis: Option<options::EarlyAnalysis>) -> Result<(), Error> {
+            let bundle: *mut Self = self;
             self.early_source_paths = None;
             // The analysis is for the compiler: without it the program would be left out of the bundle and nothing put in its place.
             let (type_check, analyze) =
                 (self.transpiler.options.type_check, self.transpiler.options.analyze.filter(|_| self.linker.options.aot));
-            if type_check.is_none() && analyze.is_none() {
+            let emit_declarations = self.transpiler.options.emit_declarations;
+            if type_check.is_none() && analyze.is_none() && emit_declarations.is_none() {
                 return Ok(());
             }
             let is_left_to_the_host: Vec<bool> =
@@ -2721,9 +2736,10 @@ pub mod bv2_impl {
             let mut react_compiler_candidates = if analyze.is_some() { self.react_compiler_candidates() } else { Vec::new() };
             let (printed_react_compiler_outputs, react_compiler_outputs) = std::sync::mpsc::channel();
             let keeps_function_texts = analyze.is_some() && self.transpiler.options.compile_function_source && !self.transpiler.options.preserve_source_paths;
-            let mut function_texts_to_print = keeps_function_texts.then(|| self.function_texts_to_print());
+            let mut function_texts_to_print = analyze.is_some().then(|| self.function_texts_to_print());
             let (printed_function_texts, function_texts) = std::sync::mpsc::channel::<options::FunctionTextsOfFiles>();
-            let function_texts = function_texts_to_print.as_ref().map(|(_, lists)| options::FunctionTextsLater { printed: function_texts, number_of_lists: lists.len() });
+            let function_texts = (function_texts_to_print.as_ref().filter(|_| keeps_function_texts))
+                .map(|(_, lists)| options::FunctionTextsLater { printed: function_texts, number_of_lists: lists.len() });
             let lowered_otherwise = if analyze.is_some() { self.other_tsconfigs()? } else { Vec::new() };
             let sources = self.graph.input_files.items_source();
             let loaders = self.graph.input_files.items_loader();
@@ -2914,17 +2930,25 @@ pub mod bv2_impl {
                     spec => spec,
                 })
             }
+            let mut required_otherwise: bun_collections::HashMap<(u32, u32), Box<[u8]>> = Default::default();
             if analyze.is_some() {
+                let is_required = |record: &bun_ast::ImportRecord| matches!(record.kind, ImportKind::Require | ImportKind::RequireResolve);
                 for ((source, records), loader) in all_sources.iter().zip(import_records).zip(loaders) {
                     if !loader.is_javascript_like() || records.as_slice().len() < 2 {
                         continue;
                     }
-                    let mut stands_for: std::collections::HashMap<&[u8], u32> = std::collections::HashMap::new();
+                    let mut stands_for: [bun_collections::HashMap<&[u8], u32>; 2] = Default::default();
                     for record in records.as_slice().iter().filter(|record| record.source_index.is_valid()) {
                         let Some(specifier) = specifier_of(source, record) else { continue };
                         let to = behind_redirects(record.source_index).get();
-                        if *stands_for.entry(specifier).or_insert(to) != to {
+                        if *stands_for[is_required(record) as usize].entry(specifier).or_insert_with(|| to) != to {
                             self.transpiler.log_mut().add_range_error_fmt(Some(source), record.range, format_args!("--aot does not support an import specifier that resolves to two different files within one module"));
+                        }
+                    }
+                    for (at, record) in records.as_slice().iter().enumerate().filter(|(_, record)| record.source_index.is_valid() && is_required(record)) {
+                        let Some(specifier) = specifier_of(source, record) else { continue };
+                        if stands_for[0].get(&specifier).is_some_and(|&imported| imported != behind_redirects(record.source_index).get()) {
+                            required_otherwise.insert((source.index.get(), at as u32), [b"\0require ".as_slice(), specifier].concat().into_boxed_slice());
                         }
                     }
                 }
@@ -2932,13 +2956,18 @@ pub mod bv2_impl {
                     return Err(crate::Error::BuildFailed);
                 }
             }
+            let required_otherwise = &required_otherwise;
             let mut imports = (all_sources.iter().zip(import_records)).flat_map(|(source, records)| {
-                records.as_slice().iter().filter_map(move |record| {
+                records.as_slice().iter().enumerate().filter_map(move |(at, record)| {
                     if !record.source_index.is_valid() {
                         return None;
                     }
                     let to = &all_sources[behind_redirects(record.source_index).get() as usize];
-                    Some((path_of(source)?, specifier_of(source, record)?, path_of(to)?))
+                    let specifier = match required_otherwise.get(&(source.index.get(), at as u32)) {
+                        Some(marked) => &**marked,
+                        None => specifier_of(source, record)?,
+                    };
+                    Some((path_of(source)?, specifier, path_of(to)?))
                 })
             });
             let side_effects = self.graph.input_files.items_side_effects();
@@ -3022,6 +3051,16 @@ pub mod bv2_impl {
                 }
             }
             let mut lifted_commonjs = (all_sources.iter().zip(&stays_lifted)).filter(|(_, stays)| **stays).filter_map(|(source, _)| path_of(source));
+            let runs_in_place = self.transpiler.options.preserve_source_paths;
+            let mut commonjs = (all_sources.iter().zip(loaders).zip(self.graph.ast.items_exports_kind()).zip(import_records))
+                .filter(|(((source, loader), kind), records)| {
+                    runs_in_place
+                        && source.path.is_file()
+                        && matches!(**loader, Loader::Js | Loader::Jsx)
+                        && matches!(**kind, bun_ast::ExportsKind::Cjs | bun_ast::ExportsKind::EsmWithDynamicFallbackFromCjs)
+                        && !records.as_slice().iter().any(|record| record.kind == ImportKind::Stmt && !record.flags.intersects(bun_ast::import_record::Flags::IS_INTERNAL | bun_ast::import_record::Flags::IS_UNUSED))
+                })
+                .filter_map(|(((source, _), _), _)| path_of(source));
             let mut statements = (all_sources.iter().zip(self.graph.ast.items_parts())).flat_map(|(source, parts)| {
                 let path = path_of(source);
                 parts.as_slice().iter().flat_map(move |part| {
@@ -3047,7 +3086,17 @@ pub mod bv2_impl {
             let has_late_strings = !manifests.is_empty() || unique_keys.iter().any(|key| !key.is_empty());
             let flags = self.transpiler.options.bundler_feature_flags.as_deref();
             let mut features = flags.into_iter().flat_map(|flags| flags.map.keys().iter().map(|flag| flag.as_ref()));
+            let is_all_code_compiled = (self.graph.entry_points.iter().map(|it| it.get() as usize))
+                .all(|index| !loaders[index].is_javascript_like() || (all_sources[index].path.is_file() && !is_left_to_the_host[index]));
+            let mut release_asts = move || {
+                if is_all_code_compiled {
+                    // SAFETY: the analysis calls it when it has exhausted the iterators below, which alone read the syntax trees. This
+                    // thread waits for the analysis, and the tasks that print beside it parse anew.
+                    unsafe { (*bundle).release_scan_arenas() };
+                }
+            };
             let checked = options::TypeChecked {
+                release_asts: &mut release_asts,
                 defines: &self.transpiler.options.define.user_inputs,
                 features: &mut features,
                 cwd: self.transpiler.fs().top_level_dir,
@@ -3061,6 +3110,7 @@ pub mod bv2_impl {
                 dropped_imports: &mut dropped_imports,
                 without_side_effects: &mut without_side_effects,
                 lifted_commonjs: &mut lifted_commonjs,
+                commonjs: &mut commonjs,
                 statements: &mut statements,
                 texts: &mut texts,
                 assets: &mut assets,
@@ -3091,7 +3141,10 @@ pub mod bv2_impl {
                     facts = match &mut function_texts_to_print {
                         Some((as_run, lists)) => {
                             let mut facts = None;
-                            self.print_function_texts_while(as_run.as_deref(), lists, printed_function_texts, || facts = analyze(checked, self.transpiler.log_mut()));
+                            let syntax_errors = self.print_function_texts_while(as_run.as_deref(), lists, keeps_function_texts.then_some(printed_function_texts), || {
+                                facts = analyze(checked, self.transpiler.log_mut())
+                            });
+                            self.add_syntax_errors(syntax_errors);
                             facts
                         }
                         None => analyze(checked, self.transpiler.log_mut()),
@@ -3115,6 +3168,11 @@ pub mod bv2_impl {
                     true => Err(crate::Error::BuildFailed),
                     false => Ok(()),
                 };
+            }
+            if let Some(emit_declarations) = emit_declarations {
+                let declarations = emit_declarations(checked, self.transpiler.log_mut()).ok_or(crate::Error::BuildFailed)?;
+                (self.declaration_files, self.module_types) = (declarations.files, declarations.module_types);
+                return Ok(());
             }
             if type_check.is_some_and(|type_check| type_check(checked, self.transpiler.log_mut())) {
                 return Ok(());
@@ -3291,90 +3349,203 @@ pub mod bv2_impl {
             &self,
             as_run: Option<&Transpiler<'a>>,
             lists: &mut [Vec<(usize, options::ModuleType)>],
-            printed: std::sync::mpsc::Sender<options::FunctionTextsOfFiles>,
+            printed: Option<std::sync::mpsc::Sender<options::FunctionTextsOfFiles>>,
             on_calling_thread: impl FnOnce(),
-        ) {
+        ) -> Vec<(usize, Vec<u8>, Option<(i32, i32)>)> {
             let Some(as_run) = as_run else {
-                return on_calling_thread();
+                on_calling_thread();
+                return Vec::new();
             };
             struct Shared<'f, 'a, 't> {
                 bundle: &'f BundleV2<'a>,
                 as_run: &'f Transpiler<'t>,
-                printed: std::sync::mpsc::Sender<options::FunctionTextsOfFiles>,
+                printed: Option<std::sync::mpsc::Sender<options::FunctionTextsOfFiles>>,
+                syntax_errors: &'f bun_threading::Guarded<Vec<(usize, Vec<u8>, Option<(i32, i32)>)>>,
             }
+            // SAFETY: the workers only read the bundle and `as_run`, and the `&self` of this
+            // function keeps both unchanged until `each_ptr_while` returns.
             unsafe impl Sync for Shared<'_, '_, '_> {}
+            struct ChunkCollector(Option<bun_sourcemap::Chunk>);
+            impl bun_js_printer::OnSourceMapChunk for ChunkCollector {
+                fn on_source_map_chunk(&mut self, chunk: bun_sourcemap::Chunk, _: &bun_ast::Source) -> bun_js_printer::Result<()> {
+                    self.0 = Some(chunk);
+                    Ok(())
+                }
+            }
+            let mut syntax_errors = bun_threading::Guarded::new(Vec::new());
             self.graph.pool().worker_pool().each_ptr_while(
-                Shared { bundle: self, as_run, printed },
+                Shared { bundle: self, as_run, printed, syntax_errors: &syntax_errors },
                 |shared: &Shared<'_, '_, '_>, list: *mut Vec<(usize, options::ModuleType)>, _: usize| {
+                    // SAFETY: `each_ptr_while` hands each element of `lists` to exactly one call.
                     let files = unsafe { &*list };
                     let mut printed: options::FunctionTextsOfFiles = Vec::new();
                     let this = shared.bundle;
                     let worker = crate::Worker::get(this);
                     {
                         let own_arena = ThreadLocalArena::new();
+                        // SAFETY: only `transpiler` holds it, and that is dropped ahead of the
+                        // arena at the end of this block.
                         let own_arena: &'static ThreadLocalArena = unsafe { bun_ptr::detach_lifetime_ref(&own_arena) };
                         let mut log = bun_ast::Log::init();
+                        // SAFETY: `as_run` is borrowed until `each_ptr_while` returns, and `log` is
+                        // dropped behind `transpiler`.
                         let mut transpiler = Box::new(unsafe { Transpiler::for_worker(shared.as_run, own_arena, &raw mut log) });
                         transpiler.wire_after_move();
+                        let shortens_names = transpiler.options.minify_identifiers;
                         for &(index, module_type) in files.iter() {
                             let arena = ThreadLocalArena::new();
                             let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
                             let _ast_scope = ast_memory_allocator.enter();
+                            // SAFETY: what is allocated in it is used in this iteration only, and
+                            // `set_arena(own_arena)` below takes it from the transpiler again.
                             let arena_ref: &'static ThreadLocalArena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
                             let mut source = this.graph.input_files.items_source()[index].clone();
                             source.index = bun_ast::Index(0);
                             transpiler.set_arena(arena_ref);
-                            let parsed = transpiler.parse(
-                                crate::transpiler::ParseOptions {
-                                    arena: arena_ref,
-                                    dirname_fd: bun_sys::Fd::INVALID,
-                                    file_descriptor: None,
-                                    file_fd_ptr: None,
-                                    path: source.path.clone(),
-                                    loader: this.graph.input_files.items_loader()[index],
-                                    jsx: transpiler.options.jsx.clone(),
-                                    macro_remappings: Default::default(),
-                                    macro_js_ctx: Default::default(),
-                                    virtual_source: Some(&source),
-                                    replace_exports: Default::default(),
-                                    inject_jest_globals: false,
-                                    set_breakpoint_on_first_line: false,
-                                    emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
-                                    experimental_decorators: transpiler.options.experimental_decorators,
-                                    use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
-                                    remove_cjs_module_wrapper: false,
-                                    dont_bundle_twice: true,
-                                    allow_commonjs: true,
-                                    module_type,
-                                    runtime_transpiler_cache: None,
-                                    keep_json_and_toml_as_one_statement: true,
-                                    allow_bytecode_cache: false,
-                                },
-                                None,
-                            );
-                            let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
-                            let mut ranges = Vec::new();
-                            let is_printed = parsed.is_some_and(|mut parsed| {
-                                let origin = bun_url::URL::default();
-                                transpiler.linker.link::<false, true>(&source.path, &mut parsed, &origin, options::ImportPathFormat::AbsolutePath).is_ok()
-                                    && transpiler.print_noting_function_texts(arena_ref, parsed, &mut printer, &mut ranges).is_ok()
-                            });
-                            transpiler.set_arena(own_arena);
-                            if is_printed && !log.has_errors() {
+                            let mut reported: Option<(Vec<u8>, u32)> = None;
+                            let mut is_checked = false;
+                            loop {
+                                transpiler.options.minify_identifiers = shortens_names && is_checked;
+                                let parsed = transpiler.parse(
+                                    crate::transpiler::ParseOptions {
+                                        arena: arena_ref,
+                                        dirname_fd: bun_sys::Fd::INVALID,
+                                        file_descriptor: None,
+                                        file_fd_ptr: None,
+                                        path: source.path.clone(),
+                                        loader: this.graph.input_files.items_loader()[index],
+                                        jsx: transpiler.options.jsx.clone(),
+                                        macro_remappings: Default::default(),
+                                        macro_js_ctx: Default::default(),
+                                        virtual_source: Some(&source),
+                                        replace_exports: Default::default(),
+                                        inject_jest_globals: false,
+                                        set_breakpoint_on_first_line: false,
+                                        emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
+                                        experimental_decorators: transpiler.options.experimental_decorators,
+                                        use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
+                                        remove_cjs_module_wrapper: false,
+                                        dont_bundle_twice: true,
+                                        allow_commonjs: true,
+                                        module_type,
+                                        runtime_transpiler_cache: None,
+                                        keep_json_and_toml_as_one_statement: true,
+                                        allow_bytecode_cache: false,
+                                    },
+                                    None,
+                                );
+                                let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
+                                let mut ranges = Vec::new();
+                                let mut source_map = ChunkCollector(None);
+                                let mut is_module = true;
+                                let is_printed = parsed.is_some_and(|mut parsed| {
+                                    is_module = !parsed.ast.has_commonjs_export_names && parsed.ast.exports_kind != bun_ast::ExportsKind::Cjs;
+                                    let origin = bun_url::URL::default();
+                                    transpiler.linker.link::<false, true>(&source.path, &mut parsed, &origin, options::ImportPathFormat::AbsolutePath).is_ok()
+                                        && match reported {
+                                            None => transpiler.print_noting_function_texts(arena_ref, parsed, &mut printer, &mut ranges).is_ok(),
+                                            Some(_) => {
+                                                let handler = bun_js_printer::SourceMapHandler::for_(&mut source_map);
+                                                transpiler.print_with_source_map(arena_ref, parsed, &mut printer, bun_js_printer::Format::EsmAscii, handler, None).is_ok()
+                                            }
+                                        }
+                                }) && !log.has_errors();
+                                log.msgs.clear();
+                                log.errors = 0;
                                 let text = printer.ctx.get_written();
-                                bun_js_printer::finish_function_texts(text, &mut ranges);
-                                printed.push((source.path.text.into(), text.into(), ranges));
+                                if let Some((message, offset)) = reported.take() {
+                                    let position = source_map.0.filter(|_| is_printed).and_then(|chunk| {
+                                        let before = text.get(..offset as usize)?;
+                                        let line = bun_core::strings::count_char(before, b'\n');
+                                        let column = before.len() - bun_core::strings::last_index_of_char(before, b'\n').map_or(0, |at| at + 1);
+                                        if chunk.buffer.list.is_empty() {
+                                            return None;
+                                        }
+                                        let mapping = bun_sourcemap::InternalSourceMap { data: chunk.buffer.list.as_ptr() }
+                                            .find(bun_sourcemap::Ordinal::from_zero_based(line as i32), bun_sourcemap::Ordinal::from_zero_based(column as i32))?;
+                                        Some((mapping.original.lines.one_based(), mapping.original.columns.one_based()))
+                                    });
+                                    shared.syntax_errors.lock().push((index, message, position));
+                                    break;
+                                }
+                                if !is_printed {
+                                    break;
+                                }
+                                if !is_checked {
+                                    reported = crate::bundle_v2::dispatch::check_syntax_of_module_text(source.path.text, text, is_module);
+                                    if reported.is_some() {
+                                        continue;
+                                    }
+                                    is_checked = true;
+                                    if shortens_names && shared.printed.is_some() {
+                                        continue;
+                                    }
+                                }
+                                if shared.printed.is_some() {
+                                    bun_js_printer::finish_function_texts(text, &mut ranges);
+                                    printed.push((source.path.text.into(), text.into(), ranges));
+                                }
+                                break;
                             }
-                            log.msgs.clear();
-                            log.errors = 0;
+                            transpiler.set_arena(own_arena);
                         }
                     }
                     worker.unget();
-                    let _ = shared.printed.send(printed);
+                    if let Some(sender) = &shared.printed {
+                        let _ = sender.send(printed);
+                    }
                 },
                 lists,
                 on_calling_thread,
             );
+            core::mem::take(syntax_errors.get_mut())
+        }
+
+        fn add_syntax_errors(&self, mut errors: Vec<(usize, Vec<u8>, Option<(i32, i32)>)>) {
+            if errors.is_empty() {
+                return;
+            }
+            let log = self.transpiler.log_mut();
+            log.msgs.retain(|msg| msg.kind != bun_ast::Kind::Err);
+            log.errors = 0;
+            errors.sort_by_key(|error| error.0);
+            for (index, message, position) in errors {
+                let (line, column) = position.unwrap_or((-1, -1));
+                log.errors += 1;
+                log.add_msg(bun_ast::Msg {
+                    kind: bun_ast::Kind::Err,
+                    data: bun_ast::Data {
+                        text: std::borrow::Cow::Owned([&b"SyntaxError: "[..], &message[..]].concat()),
+                        location: Some(bun_ast::Location {
+                            file: std::borrow::Cow::Owned(self.graph.input_files.items_source()[index].path.text.to_vec()),
+                            line,
+                            column,
+                            ..Default::default()
+                        }),
+                    },
+                    ..Default::default()
+                });
+            }
+        }
+
+        fn release_scan_arenas(&mut self) {
+            let heap = self.graph.heap;
+            let workers: Vec<*mut crate::Worker> = self.graph.pool().workers_assignments.lock().values().to_vec();
+            // SAFETY: the map holds live workers, and a `scan_heap` is made while files are parsed, which has ended.
+            let scan_heaps: Vec<*const ThreadLocalArena> =
+                workers.iter().filter_map(|&worker| unsafe { (*worker).scan_heap.as_ref() }.map(core::ptr::from_ref)).collect();
+            for index in 0..self.graph.ast.len() {
+                if scan_heaps.contains(&core::ptr::from_ref(*self.graph.ast.items_parts()[index].allocator())) {
+                    let mut empty = JSAst::empty_in(heap);
+                    empty.target = self.graph.ast.items_target()[index];
+                    self.graph.ast.set(index, empty);
+                }
+            }
+            for &worker in &workers {
+                // SAFETY: as above, and no entry of the graph points into a `scan_heap` any more.
+                unsafe { crate::Worker::release_scan_arena_soon(worker) };
+            }
+            self.graph.pool().wake_for_idle_events();
         }
 
         /// The compiled program is all that runs once one of its entry points is run, so those files become empty modules, and what
@@ -3507,7 +3678,7 @@ pub mod bv2_impl {
                 return;
             };
             let installed: &[u8] = if cfg!(windows) { b"\\node_modules\\" } else { b"/node_modules/" };
-            let Some(at) = path.windows(installed.len()).rposition(|window| window == installed) else {
+            let Some(at) = bun_core::strings::last_index_of(path, installed) else {
                 return;
             };
             let at = at + installed.len();
@@ -3520,14 +3691,17 @@ pub mod bv2_impl {
                 _ => first.len(),
             };
             let (directory, name) = (&path[..at + length], &path[at..at + length]);
-            if self.packages_met.contains(directory) {
+            if self.packages_met.contains_key(directory) {
                 return;
             }
-            self.packages_met.insert(directory.into());
+            self.packages_met.insert(directory.into(), ());
             let (files, said) = typed_package(self.transpiler.fs().top_level_dir, &self.transpiler.options.define.user_inputs, directory, name);
             let is_used = !files.is_empty();
-            for (path, text) in files {
+            for (path, text, is_typescript) in files {
                 self.laid.map.put(&path, text).expect("oom");
+                if is_typescript {
+                    self.laid_as_typescript.insert(path, ());
+                }
             }
             match said.filter(|_| !self.transpiler.options.preserve_source_paths) {
                 Some(said) if is_used => self.transpiler.log_mut().add_msg(bun_ast::Msg {
@@ -4175,6 +4349,9 @@ pub mod bv2_impl {
                 file_map: None,
                 packages_met: Default::default(),
                 laid: Default::default(),
+                declaration_files: Vec::new(),
+                module_types: None,
+                laid_as_typescript: Default::default(),
                 source_code_length: 0,
                 thread_lock: bun_core::ThreadLock::init_locked(),
                 resolve_tasks_waiting_for_import_source_index: ArrayHashMap::new(),
@@ -5034,6 +5211,8 @@ pub mod bv2_impl {
             task.io_task.node.next = core::ptr::null_mut();
             task.known_target = known_target;
             if let Some(contents) = self.laid.get(task.path.text) {
+                // SAFETY: `laid` keeps each text in a box of its own, puts a path once and removes
+                // none, so the bytes stay in place for the bundle pass.
                 task.contents_or_fd = parse_task::ContentsOrFd::Contents(unsafe { interned_slice(contents) });
             }
 
@@ -5273,25 +5452,48 @@ pub mod bv2_impl {
 
             let import_records = self.graph.ast.items_import_records();
 
+            // Check for either node or bun builtins
+            // We don't use the list from .bun because that includes third-party packages in some cases.
+            let is_builtin = |specifier: &[u8]| {
+                bun_resolve_builtins::HardcodedModule::Alias::has(
+                    specifier,
+                    Target::Node,
+                    Default::default(),
+                ) || specifier.starts_with(b"bun:")
+                    || specifier == b"bun"
+            };
+
+            let sources = self.graph.input_files.items_source();
+
             for source_index in reachable_files {
                 let records: &[ImportRecord] =
                     import_records[source_index.get() as usize].as_slice();
+                // A package may import itself by name, which is not a dependency to install. The
+                // resolver already read this directory while bundling, so this is a cache hit.
+                let own_name: &[u8] = self
+                    .transpiler
+                    .resolver
+                    .read_dir_info_ignore_error(
+                        sources[source_index.get() as usize].path.source_dir(),
+                    )
+                    .and_then(|dir| dir.enclosing_package_json)
+                    .map_or(&b""[..], |package_json| &*package_json.name);
                 for record in records {
                     if !record.source_index.is_valid()
                         && record.tag == bun_ast::ImportRecordTag::None
                     {
-                        let path = &record.path.text;
-                        // External dependency
-                        if !path.is_empty()
-                        // Check for either node or bun builtins
-                        // We don't use the list from .bun because that includes third-party packages in some cases.
-                        && !bun_resolve_builtins::HardcodedModule::Alias::has(path, Target::Node, Default::default())
-                        && !path.starts_with(b"bun:")
-                        && path != b"bun"
+                        let path: &[u8] = record.path.text;
+                        // Record the package name only: `lodash/debounce` is part of `lodash`.
+                        if let Some(name) = bun_resolver::package_json::Package::parse_name(path)
+                            && name != own_name
+                            && !is_builtin(path)
+                            && !is_builtin(name)
+                            // An npm scope is never empty, so `@/x` can only be a tsconfig `paths`
+                            // alias that matched nothing.
+                            && !name.starts_with(b"@/")
+                            && strings::is_npm_package_name_ignore_length(name)
                         {
-                            if strings::is_npm_package_name_ignore_length(path) {
-                                external_deps.insert(path)?;
-                            }
+                            external_deps.insert(name)?;
                         }
                     }
                 }
@@ -5401,11 +5603,13 @@ pub mod bv2_impl {
                     });
                 }
 
-                let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
+                let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
                     &mut this.linker,
                     &mut chunks,
                 )?;
                 this.dump_pool_stats("print");
+                this.add_sound_files(&mut output_files)?;
+                this.add_declaration_files(&mut output_files)?;
 
                 // Generate metafile if requested (the CLI build command writes the files)
                 let metafile: Option<Box<[u8]>> = if this.linker.options.metafile {
@@ -6615,6 +6819,8 @@ pub mod bv2_impl {
                 &mut self.linker,
                 &mut chunks,
             )?;
+            self.add_sound_files(&mut output_files)?;
+            self.add_declaration_files(&mut output_files)?;
 
             // Generate metafile if requested
             let metafile: Option<Box<[u8]>> = if self.linker.options.metafile {
@@ -6740,6 +6946,139 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        fn add_sound_files(&mut self, output_files: &mut Vec<options::OutputFile>) -> Result<(), Error> {
+            use bun_paths::resolve_path::{join_abs_string, platform::Auto};
+            if let Some(option) = self.transpiler.options.leaves_out_sound_files_for {
+                self.transpiler.log_mut().add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: it does not support {option} yet", options::SOUND_FILES_LEFT_OUT));
+            }
+            let Some(write_sound_files) = self.transpiler.options.write_sound_files else {
+                return Ok(());
+            };
+            let cwd = self.transpiler.fs().top_level_dir;
+            let relative_outdir: Box<[u8]> = self.linker.resolver().opts.output_dir.clone();
+            let outdir: Vec<u8> = join_abs_string::<Auto>(cwd, &[&relative_outdir]).to_vec();
+            if self.transpiler.options.drops_source_maps {
+                for file in output_files.iter_mut().filter(|file| file.source_map_index != u32::MAX) {
+                    let options::OutputFileValue::Buffer { bytes } = &mut file.value else { continue };
+                    const COMMENT: &[u8] = b"\n//# debugId=";
+                    let Some(at) = bun_core::strings::last_index_of(&bytes[..], COMMENT) else { continue };
+                    if bun_core::strings::count_char(&bytes[at + 1..], b'\n') == 1 && bytes.ends_with(b"\n") {
+                        *bytes = Box::from(&bytes[..at]);
+                        (file.size, file.size_without_sourcemap) = (at, at);
+                    }
+                }
+            }
+            let text_of = |file: &options::OutputFile| match &file.value {
+                options::OutputFileValue::Buffer { bytes } => Some(bytes.to_vec()),
+                options::OutputFileValue::Saved(_) => bun_sys::File::read_from(bun_core::Fd::cwd(), join_abs_string::<Auto>(&outdir, &[&file.dest_path])).ok(),
+                _ => None,
+            };
+            let mut texts: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, Option<&[u8]>)> = Vec::new();
+            for file in output_files.iter() {
+                if !matches!(file.output_kind, options::OutputKind::EntryPoint | options::OutputKind::Chunk) || !file.loader.is_javascript_like() {
+                    continue;
+                }
+                let source_map = output_files.get(file.source_map_index as usize).and_then(text_of);
+                let (Some(text), Some(source_map)) = (text_of(file), source_map) else {
+                    continue;
+                };
+                let entry_point = (file.output_kind == options::OutputKind::EntryPoint).then_some(file.src_path.text);
+                texts.push((join_abs_string::<Auto>(&outdir, &[&file.dest_path]).to_vec(), text, source_map, entry_point));
+            }
+            let written: Vec<options::WrittenJavaScript<'_>> =
+                texts.iter().map(|(path, text, source_map, entry_point)| options::WrittenJavaScript { path, text, source_map, entry_point: *entry_point }).collect();
+            let request = options::SoundFilesRequest {
+                cwd,
+                tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
+                conditions: &self.transpiler.options.custom_conditions,
+                loaders: &self.transpiler.options.loaders,
+                outdir: &outdir,
+                written: &written,
+                module_types: self.module_types.as_deref(),
+                rolls_up_declarations: self.transpiler.options.rolls_up_declarations,
+                keeps_modules_apart: false,
+            };
+            let typed = write_sound_files(request, self.transpiler.log_mut());
+            drop(written);
+            drop(texts);
+            if self.transpiler.options.drops_source_maps {
+                let mut kept = 0;
+                let moved: Vec<u32> = (output_files.iter())
+                    .map(|file| match file.output_kind {
+                        options::OutputKind::Sourcemap => u32::MAX,
+                        _ => {
+                            kept += 1;
+                            kept - 1
+                        }
+                    })
+                    .collect();
+                for file in output_files.iter_mut() {
+                    for index in [&mut file.source_map_index, &mut file.bytecode_index, &mut file.module_info_index] {
+                        *index = moved.get(*index as usize).copied().unwrap_or(u32::MAX);
+                    }
+                }
+                output_files.retain(|file| file.output_kind != options::OutputKind::Sourcemap);
+            }
+            if !typed.declaration_files.is_empty() {
+                self.declaration_files.clear();
+            }
+            let inside_the_outdir = |path: &[u8]| -> Box<[u8]> { path.strip_prefix(&outdir[..]).map_or(path, |inside| inside.strip_prefix(b"/").unwrap_or(inside)).into() };
+            for file in typed.sound_files {
+                let beside = inside_the_outdir(&file.declaration_file);
+                let root_dir = &self.transpiler.options.root_dir;
+                let declarations = self.declaration_files.iter_mut().find(|(source, _)| options::OutputFile::declaration_path(root_dir, source).is_some_and(|path| path == beside));
+                match declarations {
+                    Some((_, text)) => *text = [&file.mark[..], &text[..]].concat().into_boxed_slice(),
+                    None if file.mark.is_empty() => {}
+                    None => {
+                        self.transpiler.log_mut().add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: no declaration file is written as {}", options::SOUND_FILES_LEFT_OUT, bstr::BStr::new(&beside)));
+                        continue;
+                    }
+                }
+                output_files.push(options::OutputFile::sound(&file.path, inside_the_outdir(&file.path), file.text, false));
+            }
+            output_files.extend(typed.declaration_files.into_iter().map(|(path, text)| options::OutputFile::declaration(&path, inside_the_outdir(&path), text, false)));
+            if !relative_outdir.is_empty() {
+                let directory = bun_sys::Dir::cwd().make_open_path(&relative_outdir, Default::default())?;
+                for file in output_files.iter_mut().filter(|file| !matches!(file.value, options::OutputFileValue::Saved(_) | options::OutputFileValue::Noop)) {
+                    file.write_to_disk(directory.fd)?;
+                    file.value = options::OutputFileValue::Saved(Default::default());
+                }
+            }
+            match self.transpiler.log().has_errors() {
+                true => Err(crate::Error::BuildFailed),
+                false => Ok(()),
+            }
+        }
+
+        fn add_declaration_files(&mut self, output_files: &mut Vec<options::OutputFile>) -> Result<(), Error> {
+            let outdir: Box<[u8]> = self.linker.resolver().opts.output_dir.clone();
+            for (source, text) in std::mem::take(&mut self.declaration_files) {
+                let Some(path) = options::OutputFile::declaration_path(&self.transpiler.options.root_dir, &source) else {
+                    self.transpiler.log_mut().add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "cannot write a declaration file for {}: it is outside the root directory {} (pass --root)",
+                            bstr::BStr::new(&source),
+                            bstr::BStr::new(&self.transpiler.options.root_dir)
+                        ),
+                    );
+                    return Err(crate::Error::BuildFailed);
+                };
+                let file = options::OutputFile::declaration(&source, path, text, false);
+                if outdir.is_empty() {
+                    output_files.push(file);
+                    continue;
+                }
+                let directory = bun_sys::Dir::cwd().make_open_path(&outdir, Default::default())?;
+                file.write_to_disk(directory.fd)?;
+                let options::OutputFileValue::Buffer { bytes } = file.value else { unreachable!() };
+                output_files.push(options::OutputFile::declaration(&source, file.dest_path, bytes, true));
+            }
+            Ok(())
+        }
+
         fn should_add_watcher_plugin(&self, namespace: &[u8], path: &[u8]) -> bool {
             namespace == b"file" && bun_paths::is_absolute(path) && self.should_add_watcher(path)
         }
@@ -7713,12 +8052,25 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
+                let written_query: &'static [u8] = match strings::index_of_char(import_record.path.text, b'?') {
+                    Some(at)
+                        if self.transpiler.options.preserve_source_paths
+                            && self.transpiler.options.compiles_ahead_of_time()
+                            && matches!(import_record.kind, ImportKind::Stmt | ImportKind::Require | ImportKind::Dynamic)
+                            && !bun_core::strings::contains_char(&import_record.path.text[at as usize..], b'/') =>
+                    {
+                        &import_record.path.text[at as usize..]
+                    }
+                    _ => b"",
+                };
+
                 // Check the FileMap first for in-memory files
                 {
                     let in_memory = self
                         .file_map
                         .and_then(|file_map| file_map.resolve(self.arena(), source.path.text, import_record.path.text))
-                        .or_else(|| self.laid.resolve(self.arena(), source.path.text, import_record.path.text));
+                        .or_else(|| self.laid.resolve(self.arena(), source.path.text, import_record.path.text))
+                        .filter(|_| written_query.is_empty());
                     if let Some(_file_map_result) = in_memory {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
@@ -7727,6 +8079,7 @@ pub mod bv2_impl {
                                 .loader(&transpiler.options.loaders)
                                 .unwrap_or(Loader::File)
                         });
+                        let import_record_loader = if self.laid_as_typescript.contains_key(path_primary.text) { Loader::Ts } else { import_record_loader };
                         import_record.loader = Some(import_record_loader);
 
                         if let Some(id) =
@@ -7790,7 +8143,7 @@ pub mod bv2_impl {
                         } else {
                             source_dir
                         },
-                        import_record.path.text,
+                        &import_record.path.text[..import_record.path.text.len() - written_query.len()],
                         import_record.kind,
                     ) {
                         Ok(r) => break r,
@@ -8142,6 +8495,27 @@ pub mod bv2_impl {
                 };
                 import_record.loader = Some(import_record_loader);
 
+                if !written_query.is_empty() {
+                    let with_query = [path.text, written_query].concat();
+                    let text = match self.laid.contains(&with_query) {
+                        true => None,
+                        false => bun_sys::File::read_from(bun_core::Fd::cwd(), path.text).ok(),
+                    };
+                    if !import_record_loader.is_javascript_like() || (text.is_none() && !self.laid.contains(&with_query)) {
+                        import_record.loader = None;
+                        import_record.path.is_disabled = true;
+                        import_record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
+                        continue;
+                    }
+                    if let Some(text) = text {
+                        self.laid.map.put(&with_query, text.into_boxed_slice()).expect("oom");
+                    }
+                    // SAFETY: the arena outlives the bundle pass.
+                    path.text = unsafe { interned_slice(self.arena().alloc_slice_copy(&with_query)) };
+                }
+
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()
                     && self.dev_server.is_none();
@@ -8245,6 +8619,8 @@ pub mod bv2_impl {
                         .loader(&self.transpiler.options.loaders)
                         .unwrap_or(Loader::File)
                 });
+                let loader = if self.laid_as_typescript.contains_key(value.path.text) { Loader::Ts } else { loader };
+                value.loader = Some(loader);
                 let is_html_entrypoint =
                     loader == Loader::Html && target.is_server_side() && dev_server_is_none;
                 // Select map and perform get_or_put, capturing the slot as a raw ptr
@@ -8288,6 +8664,8 @@ pub mod bv2_impl {
                     new_task.source_index = bun_ast::Index(new_source_index);
                     new_task.ctx = self_ptr;
                     if let Some(contents) = self.laid.get(new_task.path.text) {
+                        // SAFETY: as where the entry points get their tasks: `laid` keeps the bytes
+                        // in place for the bundle pass.
                         new_task.contents_or_fd = parse_task::ContentsOrFd::Contents(unsafe { interned_slice(contents) });
                     }
                     // SAFETY: value_ptr points into PathToSourceIndexMap storage; no
@@ -8670,6 +9048,7 @@ pub mod bv2_impl {
                     if let Some(early_source_paths) = &this.early_source_paths
                         && result.loader.is_javascript_like()
                         && this.graph.input_files.items_source()[result_source_index].path.is_file()
+                        && !this.graph.input_files.items_flags()[result_source_index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                     {
                         let _ = early_source_paths.send(source_path_text.to_vec());
                     }

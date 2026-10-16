@@ -1,0 +1,18 @@
+{
+  "sound": 1,
+  "name": "react-dom",
+  "version": "19.3.1",
+  "when": {
+    "process.env.NODE_ENV": "production"
+  },
+  "basis": {
+    "cjs/react-dom-server-legacy.browser.production.js": "a470866a7a27a7f4fa69ef04e9bfdea0514fc9defdcc48bda43516b9ae2dfadd",
+    "cjs/react-dom-server.bun.production.js": "d1b54ce8599ab8b166d746ec2048fc9dc860afe5b559e7fc9aa08288fdb4b9ab"
+  },
+  "lay": {
+    "cjs/react-dom-server-legacy.browser.production.ts": "new",
+    "cjs/react-dom-server.bun.production.ts": "new",
+    "server.bun.js": "05b36175a0a2a46ffe70e9fda56a6481f10ffd42172ad2d795b82f6b0b167fbe"
+  },
+  "needs": []
+}

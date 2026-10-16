@@ -29,6 +29,8 @@ const missing: [entry: string, text: string, message: string][] = [
   ["renamed.mjs", `import { noSuchExport as local } from "node:path";\nconsole.log("ran", typeof local);\n`, "Export named 'noSuchExport' not found in module 'node:path'."],
   ["unused.mjs", `import { noSuchExport } from "node:os";\nconsole.log("ran");\n`, "Export named 'noSuchExport' not found in module 'node:os'."],
   ["typescript.ts", `// @ts-nocheck\nimport { noSuchExport } from "node:util";\nconsole.log("ran", typeof noSuchExport);\n`, "Export named 'noSuchExport' not found in module 'node:util'."],
+  ["export-from.mjs", `export { noSuchExport } from "node:fs";\nconsole.log("ran");\n`, "export 'noSuchExport' not found in '"],
+  ["imported-and-exported.mjs", `import { noSuchExport } from "node:fs";\nexport { noSuchExport };\nconsole.log("ran");\n`, "export 'noSuchExport' not found in '"],
   ["sqlite.mjs", `import { noSuchExport } from "bun:sqlite";\nconsole.log("ran", typeof noSuchExport);\n`, "Export named 'noSuchExport' not found in module 'bun:sqlite'."],
 ];
 
@@ -72,4 +74,7 @@ test("every name in src/aot/builtin-export-names.txt is exported", async () => {
   }
   expect(absent).toEqual([]);
   expect(lines.length).toBeGreaterThan(70);
+  // The compiler finds a module, and a name, by binary search.
+  expect(lines.map(line => line.split(" ")[0])).toEqual(lines.map(line => line.split(" ")[0]).sort());
+  for (const line of lines) expect(line.split(" ").slice(1)).toEqual(line.split(" ").slice(1).sort());
 });

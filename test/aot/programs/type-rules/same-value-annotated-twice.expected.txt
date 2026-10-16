@@ -20,7 +20,7 @@ two types, both 1n
 two types, only a point TypeError
 changed, not at all number number true
 changed, y is another number number number true
-changed, y is a string TypeError
+changed, y is a string string string true
 changed, y is deleted undefined undefined true
 changed, a property more number number true
 loop, all points 14

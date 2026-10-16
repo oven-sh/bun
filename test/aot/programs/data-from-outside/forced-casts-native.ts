@@ -1,7 +1,7 @@
 // A double cast of a built-in object (a Map) to an interface type.
 interface Closed { only: number; o: number[] }
 const map: Closed = new Map<string, number>([["only", 1]]) as unknown as Closed
-console.log("what is not laid out:", map.o, (map as unknown) instanceof Map, (map as unknown as Map<string, number>).get("only"))
+console.log("types without a layout:", map.o, (map as unknown) instanceof Map, (map as unknown as Map<string, number>).get("only"))
 interface Open { only?: number; o?: number[] }
 const open: Open = new Map<string, number>([["only", 1]]) as unknown as Open
 console.log("nothing is required:", open.o, open.only, (open as unknown) instanceof Map)

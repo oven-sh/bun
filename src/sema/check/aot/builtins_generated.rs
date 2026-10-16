@@ -4,7 +4,7 @@
 
 /// Every built-in the engine's table has an entry for, by holder, the names separated by one space. `""`: global functions, constructors and the intrinsics of the prelude. `@@name`: a well-known symbol.
 pub(super) const BUILTINS: &[(&str, &str)] = &[
-    ("", "$call $callNoInline $collectionTable $getContiguousIndex $getDoubleIndex $getIndex $growNewArray $hasContiguousIndex $hasIndex $isContiguousArray $isDoubleArray $isOriginalArray $isPlainArrayLike $mapKeyAt $mapNext $mapValueAt $newArrayWithCapacity $newArrayWithSpecies $newContiguousArray $newDoubleArray $putContiguousIndex $putDoubleIndex $setKeyAt $setNext $truncateNewArray $tryPutByValDirect $tryPutIndex AggregateError Array ArrayBuffer AsyncDisposableStack BigInt Boolean DataView Date DisposableStack Error EvalError FinalizationRegistry Function Map Number Object Promise RangeError ReferenceError RegExp Set SharedArrayBuffer String SuppressedError Symbol SyntaxError TypeError TypedArray URIError WeakMap WeakRef WeakSet decodeURI decodeURIComponent encodeURI encodeURIComponent escape eval isFinite isNaN parseFloat parseInt unescape"),
+    ("", "$appendJSON $call $callNoInline $collectionTable $getContiguousIndex $getDoubleIndex $getIndex $growNewArray $hasContiguousIndex $hasIndex $isContiguousArray $isDoubleArray $isOriginalArray $isPlainArrayLike $mapKeyAt $mapNext $mapValueAt $newArrayWithCapacity $newArrayWithSpecies $newContiguousArray $newDoubleArray $putContiguousIndex $putDoubleIndex $setKeyAt $setNext $truncateNewArray $tryPutByValDirect $tryPutIndex AggregateError Array ArrayBuffer AsyncDisposableStack BigInt Boolean DataView Date DisposableStack Error EvalError FinalizationRegistry Function Map Number Object Promise RangeError ReferenceError RegExp Set SharedArrayBuffer String SuppressedError Symbol SyntaxError TypeError TypedArray URIError WeakMap WeakRef WeakSet decodeURI decodeURIComponent encodeURI encodeURIComponent escape eval isFinite isNaN parseFloat parseInt unescape"),
     ("Array", "@@iterator at concat copyWithin entries every fill filter find findIndex findLast findLastIndex flat flatMap forEach from fromAsync includes indexOf isArray join keys lastIndexOf length map of pop push reduce reduceRight reverse shift slice some sort splice toLocaleString toReversed toSorted toSpliced toString unshift values with"),
     ("ArrayBuffer", "byteLength detached isView maxByteLength resizable resize slice transfer transferToFixedLength"),
     ("Atomics", "add and compareExchange exchange isLockFree load notify or pause store sub wait waitAsync xor"),
@@ -35,7 +35,7 @@ pub(super) const BUILTINS: &[(&str, &str)] = &[
     ("WeakSet", "add delete has"),
     ("console", "assert clear count countReset debug dir dirxml error group groupCollapsed groupEnd info log profile profileEnd table time timeEnd timeLog timeStamp trace warn"),
 ];
-pub(super) const REPLACEABLE_GLOBALS: &[&str] = &["Buffer", "console"];
+pub(super) const REPLACEABLE_GLOBALS: &[&str] = &["Buffer", "Response", "console"];
 
 /// What a built-in may do with an operand. The letters of the header of generate-aot-builtins.py, in their order.
 pub(super) mod uses {
@@ -410,6 +410,7 @@ pub(super) const BUILTIN_ENTRIES: &[BuiltinEntry] = &[
     BuiltinEntry { kind: BuiltinKind::Static, holder: "console", name: "timeLog", this: 0, parameters: &[(Pattern::ToString, Arity::Optional, 16), (Pattern::Any, Arity::Rest, 272)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Static, holder: "Buffer", name: "byteLength", this: 0, parameters: &[(Pattern::ToString, Arity::Required, 16), (Pattern::ToString, Arity::Optional, 16)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Static, holder: "Buffer", name: "byteLength", this: 0, parameters: &[(Pattern::Any, Arity::Required, 511), (Pattern::Any, Arity::Optional, 0), (Pattern::Any, Arity::Rest, 0)], fresh: Fresh::No },
+    BuiltinEntry { kind: BuiltinKind::Static, holder: "Response", name: "json", this: 0, parameters: &[(Pattern::Any, Arity::Required, 511), (Pattern::Any, Arity::Optional, 511), (Pattern::Any, Arity::Rest, 0)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Static, holder: "Iterator", name: "concat", this: 0, parameters: &[(Pattern::Any, Arity::Rest, 20)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Static, holder: "Iterator", name: "from", this: 0, parameters: &[(Pattern::Any, Arity::Optional, 52), (Pattern::Any, Arity::Rest, 0)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Static, holder: "Iterator", name: "zip", this: 0, parameters: &[(Pattern::Any, Arity::Rest, 511)], fresh: Fresh::No },
@@ -432,6 +433,7 @@ pub(super) const BUILTIN_ENTRIES: &[BuiltinEntry] = &[
     BuiltinEntry { kind: BuiltinKind::Method, holder: "Iterator", name: "windows", this: 20, parameters: &[(Pattern::Any, Arity::Optional, 16), (Pattern::Any, Arity::Optional, 16), (Pattern::Any, Arity::Rest, 0)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Method, holder: "Iterator", name: "@@dispose", this: 16, parameters: &[(Pattern::Any, Arity::Rest, 0)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Construct, holder: "", name: "DisposableStack", this: 0, parameters: &[], fresh: Fresh::No },
+    BuiltinEntry { kind: BuiltinKind::Intrinsic, holder: "", name: "$appendJSON", this: 0, parameters: &[(Pattern::Any, Arity::Required, 0), (Pattern::Any, Arity::Required, 0), (Pattern::Any, Arity::Required, 0)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Intrinsic, holder: "", name: "$hasIndex", this: 0, parameters: &[(Pattern::Any, Arity::Required, 16), (Pattern::Any, Arity::Required, 16)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Intrinsic, holder: "", name: "$getIndex", this: 0, parameters: &[(Pattern::Any, Arity::Required, 80), (Pattern::Any, Arity::Required, 16)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Intrinsic, holder: "", name: "$call", this: 0, parameters: &[(Pattern::Any, Arity::Required, 8), (Pattern::Any, Arity::Required, 128), (Pattern::Any, Arity::Rest, 128)], fresh: Fresh::No },

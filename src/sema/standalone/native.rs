@@ -885,7 +885,7 @@ unsafe extern "C" fn Bun__collateUTF8(
 ) -> i32 {
     // SAFETY: the caller passes two slices, as pointers and lengths.
     let (a, b) = unsafe { (bytes(a, a_len), bytes(b, b_len)) };
-    let (a, b) = (String::from_utf8_lossy(a), String::from_utf8_lossy(b));
+    let (a, b) = (bstr::BStr::new(a).to_string(), bstr::BStr::new(b).to_string());
     collate(is_numeric_and_base, a.chars().map(u32::from), b.chars().map(u32::from))
 }
 #[unsafe(no_mangle)]

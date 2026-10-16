@@ -23,6 +23,7 @@ mod libraries;
 pub mod locked_builtins;
 mod locked_builtins_generated;
 mod mapped_arguments;
+mod overrides;
 mod reported_by_lint;
 mod rows;
 mod sloppy;
@@ -51,7 +52,7 @@ use super::{Checker, Program};
 use super::relate::Relation;
 use crate::atom::{Atom, known};
 use crate::bind::Parent;
-use crate::hir::{ExprId, ExprsByKind, StmtId};
+use crate::hir::{ExprId, ExprKind, ExprTag, ExprsByKind, FileKind, StmtId};
 use crate::local::MaybeLocal;
 use crate::program::{FileId, Sym};
 use crate::types::{TypeData, TypeId};
@@ -385,6 +386,7 @@ impl Checker<'_, '_> {
 pub(super) struct Shared {
     /// `exprs_by_kind_of`
     exprs_by_kind: ByFile<ExprsByKind>,
+    names_written_in_code: std::sync::OnceLock<crate::util::FxHashSet<Atom>>,
     deepest_nests: ByFile<u32>,
     classes: classes::Shared,
     commonjs: commonjs::Shared,
@@ -393,6 +395,7 @@ pub(super) struct Shared {
     integers: integers::Shared,
     javascript: javascript::Shared,
     kinds: kinds::Shared,
+    overrides: overrides::Shared,
     storage: storage::Shared,
     undeclared_fields: undeclared_fields::Shared,
     is_given_up: std::sync::atomic::AtomicBool,
@@ -437,6 +440,37 @@ impl<'p, 's> Checker<'p, 's> {
     fn exprs_by_kind_of(&self, file: FileId) -> &'p ExprsByKind {
         let program = self.p;
         program.aot.exprs_by_kind.get_or_init(program.files.modules.len(), file, || ExprsByKind::outside(self.hir(file), program.files.module(file).cut))
+    }
+
+    pub fn is_written_in_code(&self, name: Atom) -> bool {
+        let program = self.p;
+        let written = program.aot.names_written_in_code.get_or_init(|| {
+            let mut names = crate::util::FxHashSet::default();
+            for file in (0..program.files.modules.len() as u32).map(FileId) {
+                let hir = self.hir(file);
+                if hir.kind == FileKind::Declaration {
+                    continue;
+                }
+                let cut = program.files.module(file).cut;
+                let is_cut = |pos: u32| {
+                    let after = cut.partition_point(|range| range.0 <= pos);
+                    after != 0 && pos < cut[after - 1].1
+                };
+                let by_kind = self.exprs_by_kind_of(file);
+                for &e in by_kind.of(ExprTag::Dot).iter().chain(by_kind.of(ExprTag::String)) {
+                    if let ExprKind::Dot { name, .. } | ExprKind::String(name) = hir[e].kind {
+                        names.insert(name);
+                    }
+                }
+                names.extend(hir.props.iter().filter(|prop| !is_cut(prop.pos)).filter_map(|prop| prop.key.name()));
+                names.extend(hir.pat_props.iter().filter(|prop| !is_cut(prop.pos)).filter_map(|prop| prop.key.name()));
+                for class in hir.classes.iter().filter(|class| !is_cut(class.start)) {
+                    names.extend(class.members.iter().filter_map(|member| hir[member].key.name()));
+                }
+            }
+            names
+        });
+        written.contains(&name)
     }
 
     pub fn in_slices<T: Sync, R: Send>(&mut self, items: &[T], size: usize, in_parallel: Option<InParallel<'_>>, work: &(dyn Fn(&mut Checker<'p, 's>, &[T]) -> R + Sync)) -> Vec<R> {

@@ -117,6 +117,8 @@ pub(crate) fn graph(
         pretty_errorln!("<r><red>error<r>: --aot-graph-fd is not a module graph");
         Global::exit(1);
     };
+    // SAFETY: `from_fd` just allocated the graph for the life of the process, and nobody else has
+    // the pointer.
     Ok(Some(unsafe { &mut *graph }))
 }
 
@@ -130,6 +132,7 @@ pub(crate) fn graph(
 pub(crate) fn as_dyn(
     graph: &bun_standalone_graph::Graph,
 ) -> &'static dyn bun_resolver::StandaloneModuleGraph {
+    // SAFETY: the one caller passes what `graph` above returns, which is never freed.
     unsafe {
         &*(std::ptr::from_ref::<bun_standalone_graph::Graph>(graph)
             as *const (dyn bun_resolver::StandaloneModuleGraph + 'static))
@@ -147,7 +150,7 @@ pub(crate) fn is_only_comments(mut text: &[u8]) -> bool {
             [] => return true,
             [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => rest,
             [b'/', b'/', rest @ ..] => &rest[end_of_line(rest)..],
-            [b'/', b'*', rest @ ..] => match rest.windows(2).position(|pair| pair == b"*/") {
+            [b'/', b'*', rest @ ..] => match bun_core::strings::index_of(rest, b"*/") {
                 Some(end) => &rest[end + 2..],
                 None => return false,
             },
@@ -156,8 +159,8 @@ pub(crate) fn is_only_comments(mut text: &[u8]) -> bool {
     }
 }
 
-const FLAGS_OF_BUILD: [&[u8]; 3] = [b"--aot", b"--aot-explain", b"--aot-type-errors"];
-const FLAGS_OF_RUN: [&[u8]; 3] = [b"--aot", b"--aot-audit", b"--aot-type-errors"];
+const FLAGS_OF_BUILD: [&[u8]; 4] = [b"--aot", b"--aot-explain", b"--aot-huge-heap", b"--aot-type-errors"];
+const FLAGS_OF_RUN: [&[u8]; 4] = [b"--aot", b"--aot-audit", b"--aot-huge-heap", b"--aot-type-errors"];
 const INTERNAL_FLAGS_OF_RUN: [&[u8]; 3] = [b"--aot-decode-crash-report", b"--aot-graph-fd", b"--aot-stamp"];
 const INTERNAL_FLAGS_OF_BOTH: [&[u8]; 1] = [b"--aot-crash-if-interpreter-is-used"];
 pub(crate) const OPTIONS_OF_COMPILE: [&[u8]; 3] = [b"aot", b"aotExplain", b"aotTypeErrors"];
@@ -285,6 +288,9 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     if ctx.runtime_options.aot_crash_if_interpreter_is_used {
         args.push(b"--aot-crash-if-interpreter-is-used".to_vec());
     }
+    if ctx.runtime_options.aot_huge_heap {
+        args.push(b"--aot-huge-heap".to_vec());
+    }
     if ctx.args.jsx.as_ref().is_some_and(|jsx| jsx.side_effects) {
         args.push(b"--jsx-side-effects".to_vec());
     }
@@ -379,31 +385,11 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     }
 
     args.extend(entry_points.iter().map(|path| path.to_vec()));
-    fn directory_of_tsconfig_around(path: &[u8]) -> &[u8] {
-        let mut directory = path;
-        while let Some(at) = bun_core::strings::last_index_of_char(directory, b'/') {
-            directory = &directory[..at];
-            if [&b"/tsconfig.json"[..], b"/jsconfig.json"].iter().any(|name| bun_sys::exists(&[directory, *name].concat())) {
-                return directory;
-            }
-        }
-        b""
-    }
-    let mut cwd_buf = bun_paths::path_buffer_pool::get();
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let cwd = bun_core::getcwd(&mut cwd_buf).map(|cwd| cwd.as_bytes().to_vec()).unwrap_or_default();
     for preload in &ctx.preloads {
         let path: &[u8] = preload.strip_prefix(b"file://".as_slice()).unwrap_or(&**preload);
-        if path.starts_with(b"node:") || path.starts_with(b"bun:") {
-            continue;
+        if !path.starts_with(b"node:") && !path.starts_with(b"bun:") {
+            args.push(path.to_vec());
         }
-        if (path.starts_with(b".") || path.starts_with(b"/")) && ctx.args.tsconfig_override.is_none() {
-            let absolute = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(&cwd, &mut path_buf[..], &[path]);
-            if entry_points.first().is_some_and(|first| directory_of_tsconfig_around(first) != directory_of_tsconfig_around(absolute)) {
-                continue;
-            }
-        }
-        args.push(path.to_vec());
     }
     let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
     let errno = bun_core::exec_self(&args, None);

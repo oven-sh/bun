@@ -1105,6 +1105,9 @@ impl<'p, 's> Checker<'p, 's> {
         types.into_iter().any(|ty| {
             let parts: Vec<TypeId> = self.parts(ty).to_vec();
             parts.into_iter().any(|part| {
+                if part.is_any() {
+                    return true;
+                }
                 let signatures: Vec<SigId> = self.signatures(part, false).iter().copied().collect();
                 signatures.into_iter().any(|signature| {
                     let parameters = self.sig_params(signature);

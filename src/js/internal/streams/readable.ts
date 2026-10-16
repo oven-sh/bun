@@ -1,3 +1,4 @@
+// @ts-check
 "use strict";
 
 const EE = require("node:events");
@@ -152,8 +153,8 @@ function push(stream, state: ReadableState, chunk, encoding): boolean {
     : readableAddChunkPushObjectMode(stream, state, chunk, encoding);
 }
 
-internals.push = push;
-internals.pushMethod = Readable.prototype.push;
+internals.pushToReadable = push;
+internals.methodThatPushes = Readable.prototype.push;
 
 // Unshift should *always* be something directly out of read().
 Readable.prototype.unshift = function (chunk, encoding) {
@@ -438,14 +439,14 @@ function read(stream, state: ReadableState, n: number) {
   // already have a bunch of data in the buffer, then just trigger
   // the 'readable' event and move on.
   const stateLength = state.length;
+  const flags = state.flags;
   if (
     n === 0 &&
-    (state.flags & kNeedReadable) !== 0 &&
-    ((state.highWaterMark !== 0 ? stateLength >= state.highWaterMark : stateLength > 0) ||
-      (state.flags & kEnded) !== 0)
+    (flags & kNeedReadable) !== 0 &&
+    ((state.highWaterMark !== 0 ? stateLength >= state.highWaterMark : stateLength > 0) || (flags & kEnded) !== 0)
   ) {
     $debug("read: emitReadable");
-    if (stateLength === 0 && (state.flags & kEnded) !== 0) endReadable(stream);
+    if (stateLength === 0 && (flags & kEnded) !== 0) endReadable(stream);
     else emitReadable(stream);
     return null;
   }
@@ -772,8 +773,8 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
     $debug("ondata");
     try {
       const ret =
-        destState !== undefined && dest.write === internals.writeMethod
-          ? internals.write!(dest, destState, chunk, undefined, undefined) === true
+        destState !== undefined && dest.write === internals.methodThatWrites
+          ? internals.writeToWritable!(dest, destState, chunk, undefined, undefined) === true
           : dest.write(chunk);
       $debug("dest.write", ret);
       if (ret === false) {

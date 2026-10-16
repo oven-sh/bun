@@ -10,7 +10,7 @@
 //!   cast may turn an object into a `b` where it is, and it admits what cannot become one: `Subtypes::verdict`.
 //! * TEST `a -> b`: every other `Coerce` operation, which only makes sure. `S(b)` takes those of `S(a)` that fit, and nothing else comes of it.
 //! * FIELDS: `L` in `S(V)` makes tests between the layouts of the type of `L.f` and those of `V.f`, where the two differ: a read through the
-//!   one finds what has been stored through the other, and is tested. Only what is not laid out goes over them: the type of a field is
+//!   one finds what has been stored through the other, and is tested. Only types without a layout goes over them: the type of a field is
 //!   vouched for (phase B), which brings every layout that fits. One general type of a field, `props: P`, would bring every layout of
 //!   the program to a test against every other type of that field.
 //!
@@ -81,7 +81,7 @@ pub(super) const IS_FLAT: u16 = 1 << 10;
 /// requiring nothing.
 const IS_TOLD_APART: u16 = 1 << 11;
 /// All its properties are primitives or functions (so whatever `IS_FLAT`): nothing has to be made of an object for it. It says one thing only: what is untyped and held to it is not copied into it. It
-/// is not taken for flat anywhere else: a type with methods has to be made, and what is not laid out does not pass a cast to it.
+/// is not taken for flat anywhere else: a type with methods has to be made, and types without a layout does not pass a cast to it.
 pub(super) const IS_FLAT_BUT_FOR_FUNCTIONS: u16 = 1 << 12;
 pub(super) const MAY_LACK_ROOM: u16 = 1 << 13;
 pub(super) const IS_PLAIN_DATA: u16 = 1 << 14;
@@ -120,6 +120,9 @@ pub(super) struct Facts {
     /// The names of the properties whose type may stand for a constant: `any`, `never`, a type parameter.
     pub open: Box<[u32]>,
     pub hidden: Box<[u32]>,
+    pub declared_as_bits: u64,
+    pub live_as_bits: u64,
+    pub required_as_bits: u64,
     /// What kind of type it is, in a word that says nothing of the program: for `Subtypes::report`.
     pub kind: &'static str,
 }
@@ -171,7 +174,7 @@ pub struct FieldTypes {
 /// Why a layout is a subtype of a supertype: the first reason that was come by. The order of the steps is fixed, so it is always the same.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Cause {
-    /// An allocation site, or a copy of plain data. For what is not laid out: it is let in here.
+    /// An allocation site, or a copy of plain data. For types without a layout: it is let in here.
     Birth,
     /// A shape transition from the layout makes it.
     Transition(u32),
@@ -292,7 +295,7 @@ impl Sizes {
 pub(super) struct Gathered {
     /// The views.
     pub types: Vec<TypeId>,
-    /// For each: what the relation is asked about where it is the supertype. See `Checker::type_coerced_to`.
+    /// For each: the pairs that the relation is queried for where it is the supertype. See `Checker::type_coerced_to`.
     pub asked_as: Vec<TypeId>,
     pub facts: Vec<Facts>,
     /// From a view to a supertype it declares.
@@ -351,7 +354,7 @@ pub struct Subtypes {
     completes_by_fit: bool,
     about_kinds: Vec<(Question, u32, WhyForeign)>,
     members_by_flow: Vec<Vec<u32>>,
-    /// The number of views. A number from here on stands for what is not laid out: this one for whatever stays where upcasts take it,
+    /// The number of views. A number from here on stands for types without a layout: this one for whatever stays where upcasts take it,
     /// the next ones for the types in `seen`, which also pass the casts that they fit.
     nodes: u32,
     seen: Vec<TypeId>,
@@ -421,6 +424,10 @@ pub struct Subtypes {
     over_budget: Option<&'static str>,
 }
 
+fn names_as_bits(names: &[u32]) -> u64 {
+    names.iter().fold(0, |bits, name| bits | 1 << (name.wrapping_mul(0x9E37_79B1) >> 26))
+}
+
 fn is_subset(of: &[u32], within: &[u32]) -> bool {
     of.len() <= within.len() && of.iter().all(|name| within.binary_search(name).is_ok())
 }
@@ -442,6 +449,9 @@ fn may_fit(made: &Facts, view: &Facts) -> bool {
     if view.flags & IS_MADE_BY_COERCION != 0 {
         return true;
     }
+    if view.required_as_bits & !made.declared_as_bits != 0 {
+        return false;
+    }
     if !is_subset(&view.required, &made.declared) || (view.flags & IS_WEAK != 0 && !view.declared.is_empty() && !made.declared.is_empty() && !shares_one(&view.declared, &made.declared)) {
         return false;
     }
@@ -456,6 +466,9 @@ fn may_fit(made: &Facts, view: &Facts) -> bool {
 }
 
 fn may_fit_by_value(made: &Facts, view: &Facts) -> bool {
+    if view.required_as_bits & !made.declared_as_bits != 0 {
+        return false;
+    }
     if !is_subset(&view.required, &made.declared) || (view.flags & IS_WEAK != 0 && !view.declared.is_empty() && !made.declared.is_empty() && !shares_one(&view.declared, &made.declared)) {
         return false;
     }
@@ -533,7 +546,10 @@ impl Subtypes {
         again
     }
 
-    fn new_run(gathered: Gathered, clock: Clock, completes_by_fit: bool, answered: FxHashMap<(bool, TypeId, TypeId), Answer>, answered_about_kinds: Option<Vec<Answer>>) -> Subtypes {
+    fn new_run(mut gathered: Gathered, clock: Clock, completes_by_fit: bool, answered: FxHashMap<(bool, TypeId, TypeId), Answer>, answered_about_kinds: Option<Vec<Answer>>) -> Subtypes {
+        for facts in gathered.facts.iter_mut() {
+            (facts.declared_as_bits, facts.live_as_bits, facts.required_as_bits) = (names_as_bits(&facts.declared), names_as_bits(&facts.live), names_as_bits(&facts.required));
+        }
         let nodes = gathered.types.len();
         let about_kinds = if completes_by_fit { Vec::new() } else { gathered.about_kinds.clone() };
         let mut seen: Vec<TypeId> = gathered.foreign.iter().filter_map(|let_in| let_in.1).collect();
@@ -1051,7 +1067,7 @@ impl Subtypes {
     }
 
     fn insert(&mut self, view: u32, member: u32, cause: Cause) -> bool {
-        if self.over_budget.is_some() {
+        if self.over_budget.is_some() || self.is_there_by_bits(view, member) == Some(true) {
             return false;
         }
         let Err(at) = self.sets[view as usize].binary_search(&member) else { return false };
@@ -1060,6 +1076,12 @@ impl Subtypes {
         self.note_in_bits(view, &[member]);
         self.follow(view, member);
         true
+    }
+
+    #[inline]
+    fn is_there_by_bits(&self, view: u32, member: u32) -> Option<bool> {
+        let bits = &self.bits[view as usize];
+        (member < self.nodes && !bits.is_empty()).then(|| bits[(member / 64) as usize] >> (member % 64) & 1 != 0)
     }
 
     fn note_in_bits(&mut self, view: u32, new: &[u32]) {
@@ -1560,7 +1582,7 @@ impl Subtypes {
         }
     }
 
-    /// `member` is a subtype of `view`: what is stored to a field through the one is read through the other.
+    /// `member` is a subtype of `view`: the value stored to a field through the one is read through the other.
     fn compare_fields(&mut self, member: u32, view: u32) {
         if self.over_budget.is_some() {
             return;
@@ -1585,7 +1607,7 @@ impl Subtypes {
 
     /// `member`, which is in places of the view `from`, gets to a cast to `to`, or to a mere test.
     fn meet(&mut self, member: u32, from: u32, to: u32, may_change: bool) {
-        let is_there = self.sets[to as usize].binary_search(&member).is_ok();
+        let is_there = self.is_there_by_bits(to, member).unwrap_or_else(|| self.sets[to as usize].binary_search(&member).is_ok());
         // Phase B asks about a supertype that is there, too: for what it brings.
         if self.over_budget.is_some() || (is_there && from != NONE && (!may_change || member >= self.nodes)) {
             return;
@@ -1633,7 +1655,7 @@ impl Subtypes {
         let (made, target) = (&self.gathered.facts[member as usize], &self.gathered.facts[to as usize]);
         // What is there without a verdict has come over an untested edge: it fits.
         let needs_fit_check = !is_there && may_fit(made, target);
-        let asks_the_converse = target.flags & IS_INSTANCE == 0 && is_subset(&made.live, &target.live) && may_fit(target, made);
+        let asks_the_converse = target.flags & IS_INSTANCE == 0 && made.live_as_bits & !target.live_as_bits == 0 && is_subset(&made.live, &target.live) && may_fit(target, made);
         if !needs_fit_check && !asks_the_converse {
             let verdict = self.verdict(member, to, is_there, false);
             self.settle_pair(member, to, verdict);

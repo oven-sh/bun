@@ -13,6 +13,7 @@ pub mod fragment;
 pub mod id;
 pub mod ir;
 pub mod link;
+mod operands;
 mod names;
 pub mod prelude;
 mod print;
@@ -26,7 +27,7 @@ use bun_sema::util::{InParallel, for_each_mut};
 use fragment::Fragments;
 pub use link::Explain;
 use link::{Elsewhere, Errors, Linked};
-use std::sync::{PoisonError, RwLock};
+use bun_threading::RwLock;
 
 pub struct Translated {
     pub program: ir::Program,
@@ -53,6 +54,76 @@ pub struct ForEngine {
     pub errors_that_stand: Vec<bool>,
     pub explained: Vec<String>,
     pub tokens: Option<Box<[u8]>>,
+}
+
+pub const REQUIRED_OTHERWISE: &[u8] = b"\0require ";
+
+pub const SECOND_FORM_SUFFIX: &[u8] = b"?required-again";
+pub const SPECIFIER_OF_SECOND_FORM: &[u8] = b"\0required again";
+
+pub fn written_path(path: &[u8]) -> &[u8] {
+    path.strip_suffix(SECOND_FORM_SUFFIX).unwrap_or(path)
+}
+
+pub fn mentions_the_cache_of_modules(text: &[u8]) -> bool {
+    let has = |needle: &[u8]| bun_core::strings::contains(text, needle);
+    let names_the_module_constructor = || has(b"\"module\"") || has(b"'module'") || has(b"node:module") || has(b".constructor");
+    has(b"delete") && (has(b"require.cache") || has(b"._cache") && names_the_module_constructor() || has(b"createRequire") && has(b".cache"))
+}
+
+fn names_the_word(text: &[u8], word: &[u8]) -> bool {
+    let is_part_of_a_name = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80;
+    let mut from = 0;
+    while let Some(found) = bun_core::strings::index_of(&text[from..], word) {
+        let at = from + found;
+        if !(at > 0 && (is_part_of_a_name(text[at - 1]) || text[at - 1] == b'.')) && !text.get(at + word.len()).is_some_and(|&c| is_part_of_a_name(c)) {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
+}
+
+fn names_eval(text: &[u8]) -> bool {
+    names_the_word(text, b"eval")
+}
+
+pub fn has_a_throw_at_the_top(text: &[u8], statements: &[(u32, bool)]) -> bool {
+    let is_part_of_a_name = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80;
+    let mut starts: Vec<usize> = statements.iter().map(|statement| statement.0 as usize).filter(|&start| start < text.len()).collect();
+    starts.sort_unstable();
+    starts.dedup();
+    starts.iter().enumerate().any(|(index, &start)| {
+        let statement = &text[start..starts.get(index + 1).copied().unwrap_or(text.len())];
+        let begins_with = |word: &[u8]| statement.starts_with(word) && !statement.get(word.len()).is_some_and(|&c| is_part_of_a_name(c));
+        let may_hold_one = statement.starts_with(b"{") || [&b"throw"[..], b"if", b"try", b"switch", b"for", b"while", b"do"].into_iter().any(begins_with);
+        may_hold_one && names_the_word(statement, b"throw")
+    })
+}
+
+const AHEAD_OF_SECOND_FORM: &[u8] = b"module.exports = function (exports, require, module, __filename, __dirname) {";
+const BEHIND_SECOND_FORM: &[u8] = b"\n}";
+pub const LENGTH_AHEAD_OF_SECOND_FORM: u32 = AHEAD_OF_SECOND_FORM.len() as u32;
+
+pub fn second_form_of_commonjs(text: &[u8]) -> Option<Vec<u8>> {
+    if names_eval(text) {
+        return None;
+    }
+    let mut wrapped = [AHEAD_OF_SECOND_FORM, text, BEHIND_SECOND_FORM].concat();
+    if text.starts_with(b"#!") {
+        wrapped[AHEAD_OF_SECOND_FORM.len()..AHEAD_OF_SECOND_FORM.len() + 2].copy_from_slice(b"//");
+    }
+    wrapped.extend_from_slice(format!("\n// 0+{} {}+{}", AHEAD_OF_SECOND_FORM.len(), text.len(), BEHIND_SECOND_FORM.len()).as_bytes());
+    wrapped.extend_from_slice(bun_sema::direct_eval::END_OF_INSERTIONS);
+    Some(wrapped)
+}
+
+pub fn written_text<'a>(path: &[u8], text: &'a [u8]) -> &'a [u8] {
+    if !path.ends_with(SECOND_FORM_SUFFIX) {
+        return text;
+    }
+    let wrapped = bun_sema::direct_eval::text_without_note_of_insertions(text);
+    wrapped.strip_prefix(AHEAD_OF_SECOND_FORM).and_then(|rest| rest.strip_suffix(BEHIND_SECOND_FORM)).unwrap_or(text)
 }
 
 /// What the bundler has decided: what it replaces by constants, and which code each import stands for.
@@ -173,13 +244,13 @@ impl<'a> Translation<'a> {
             program.give_up();
         }
         let translating = translating.filter(|_| refused_at.is_none());
-        *self.begun.write().unwrap_or_else(PoisonError::into_inner) = Some(Begun { without_whole_trees, translating, refused_at, is_evidence_dropped: Default::default() });
+        *self.begun.write() = Some(Begun { without_whole_trees, translating, refused_at, is_evidence_dropped: Default::default() });
     }
 
     /// `Request::before_visits`. What JavaScript is expected to do goes by how the whole program uses it. So the files that are
     /// visited are all looked at before the first of them is translated.
     pub fn note_file(&self, c: &mut Checker<'_, '_>, file: FileId) {
-        let begun = self.begun.read().unwrap_or_else(PoisonError::into_inner);
+        let begun = self.begun.read();
         let begun = begun.as_ref().expect(IS_BEGUN);
         if let Some((shared, fragments)) = &begun.translating
             && shared.is_compiled(file)
@@ -199,7 +270,7 @@ impl<'a> Translation<'a> {
     pub fn merge_notes(&self, program: &Checked<'_>) {
         let mut c = program.checker();
         c.merge_noted_uses_of_functions();
-        let begun = self.begun.read().unwrap_or_else(PoisonError::into_inner);
+        let begun = self.begun.read();
         if let Some((shared, _)) = &begun.as_ref().expect(IS_BEGUN).translating {
             c.merge_noted_evidence_of_foreign_objects(&|file| shared.is_compiled(file));
         }
@@ -209,7 +280,7 @@ impl<'a> Translation<'a> {
     /// the notes on all files are there: what is expected in it goes by the file itself. A file with errors is translated like any
     /// other, with `any` where the checker has no type: whether the errors matter is known in the end.
     pub fn translate_file(&self, c: &mut Checker<'_, '_>, file: FileId) {
-        let begun = self.begun.read().unwrap_or_else(PoisonError::into_inner);
+        let begun = self.begun.read();
         let Some((shared, fragments)) = &begun.as_ref().expect(IS_BEGUN).translating else { return };
         if !shared.is_compiled(file) {
             return;
@@ -228,7 +299,7 @@ impl<'a> Translation<'a> {
     }
 
     pub fn take_programs_of_fragments(&self, program: &Checked<'_>) -> Vec<ir::Program> {
-        let begun = self.begun.read().unwrap_or_else(PoisonError::into_inner);
+        let begun = self.begun.read();
         let fragments = begun.as_ref().expect(IS_BEGUN).translating.as_ref().map_or_else(Vec::new, |(_, fragments)| fragments.take());
         let line_table_of = |path: &[u8]| {
             let text = program.files.by_path.get(path).map_or(&[][..], |file| &program.files.hir(file).text[..]);
@@ -244,7 +315,13 @@ impl<'a> Translation<'a> {
     /// declaration file is no code at all, and says what the code is: an error there stands. So does one outside of functions in a
     /// file that is no module of the program and that a module of the program imports, be it through other such files.
     pub fn finish(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)]) -> Translated {
-        let begun = self.begun.read().unwrap_or_else(PoisonError::into_inner);
+        let (mut translated, said) = self.finish_ahead_of_the_tokens(program, in_parallel, errors);
+        translated.tokens = said.map(|said| names::as_json(&said).into_boxed_slice());
+        translated
+    }
+
+    fn finish_ahead_of_the_tokens(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)]) -> (Translated, Option<names::Said>) {
+        let begun = self.begun.read();
         let begun = begun.as_ref().expect(IS_BEGUN);
         let mut linked = match &begun.translating {
             Some((shared, fragments)) => {
@@ -272,7 +349,7 @@ impl<'a> Translation<'a> {
             }
         };
         linked.program.logs_type_errors = self.constants.logs_type_errors;
-        let tokens = self.constants.shortens_names.then(|| names::as_json(&names::shorten(&mut linked.program, in_parallel)).into_boxed_slice());
+        let said = self.constants.shortens_names.then(|| names::shorten(&mut linked.program, in_parallel));
         for (elsewhere, _) in linked.errors.iter_mut().zip(errors).filter(|(_, place)| program.files.hir(place.0).kind == FileKind::Declaration) {
             *elsewhere = None;
         }
@@ -308,20 +385,20 @@ impl<'a> Translation<'a> {
             .collect();
         let shown = |problem: &Problem| {
             let module = program.files.module(problem.file);
-            format!("{}:{}: --aot does not support {}", String::from_utf8_lossy(module.file_name()), line_of(problem.file, problem.pos), problem.what)
+            format!("{}:{}: --aot does not support {}", bstr::BStr::new(module.file_name()), line_of(problem.file, problem.pos), problem.what)
         };
         let problems = linked.problems.iter().map(shown).collect();
         let builtin_modules_left_out = linked.builtin_modules_left_out.iter().map(|(id, problem)| (*id, shown(problem))).collect();
         let builtin_functions_left_out = linked.builtin_functions_left_out.iter().map(|(id, problem)| (*id, shown(problem))).collect();
         let always_fails = linked.found.iter().any(|found| !matches!(found.code, 100019 | 100020));
         program.found_by_the_compiler.lock().extend(linked.found);
-        Translated { program: linked.program, problems, members: linked.members, explained: linked.explained, errors_that_stand: linked.errors.iter().map(Option::is_none).collect(), always_fails, why_errors_do_not_stand, builtin_modules_left_out, builtin_functions_left_out, times: linked.times, tokens }
+        (Translated { program: linked.program, problems, members: linked.members, explained: linked.explained, errors_that_stand: linked.errors.iter().map(Option::is_none).collect(), always_fails, why_errors_do_not_stand, builtin_modules_left_out, builtin_functions_left_out, times: linked.times, tokens: None }, said)
     }
 
     /// The same as what the engine reads, with `Translated::errors_that_stand`. `Err`: what could not be translated. Nothing, if an
     /// error stands.
     pub fn finish_for_engine(&self, program: &Checked<'_>, in_parallel: InParallel<'_>, errors: &[(FileId, u32)], on_written: &dyn Fn(&[u8])) -> ForEngine {
-        let Translated { program: mut linked, problems, errors_that_stand, always_fails, explained, tokens, .. } = self.finish(program, in_parallel, errors);
+        let (Translated { program: mut linked, problems, errors_that_stand, always_fails, explained, .. }, said) = self.finish_ahead_of_the_tokens(program, in_parallel, errors);
         let written = if errors_that_stand.contains(&true) || always_fails {
             Err(Vec::new())
         } else if !problems.is_empty() {
@@ -331,6 +408,7 @@ impl<'a> Translation<'a> {
             on_written(&written);
             Ok(written)
         };
+        let tokens = said.map(|said| names::as_json(&said).into_boxed_slice());
         release(linked, in_parallel);
         ForEngine { written, errors_that_stand, explained, tokens }
     }

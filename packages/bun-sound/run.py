@@ -27,7 +27,7 @@ def cut(tree, text):
     return text
 FACTS = {  # tree -> the package it judges and the pins (percent, percent, a ratio, the named records that may admit foreign objects); `by`: by the installed version where a tree serves several. Two points down, or a tenth more bytes, fails
     'client': dict(of='react-reconciler', receiver=61.4, read=44.3, bytes=0.725, strangers='AbortSignalLike AsyncDispatcher Dispatcher EffectInstance EventFunctionRef OffscreenProps'),
-    'server': dict(of='react-dom', strangers='ComponentIdentity Ping RefObject PostponedHoles', by={'19.3.': dict(receiver=61.1, read=49.5, bytes=1.012), '19.2.': dict(receiver=63.3, read=52.5, bytes=0.99), '19.1.': dict(receiver=60.6, read=49.4, bytes=0.965), '19.0.': dict(receiver=59.1, read=48.0, bytes=0.968)}),
+    'server': dict(of='react-dom', strangers='ComponentIdentity Ping RefObject PostponedHoles FormatContext ResumableState StylesheetResource ViewTransitionContext', by={'19.3.': dict(receiver=60.4, read=48.5, bytes=1.002), '19.2.': dict(receiver=63.3, read=52.5, bytes=0.99), '19.1.': dict(receiver=60.6, read=49.4, bytes=0.965), '19.0.': dict(receiver=59.1, read=48.0, bytes=0.968)}),
     'seroval.born': dict(of='seroval', receiver=46.5, read=41.6, bytes=0.976, strangers='Sequence Stream'), 'seroval.doors': dict(of='seroval', receiver=46.6, read=41.1, bytes=0.976, strangers='Sequence Stream'),
     'fuse.born': dict(of='fuse.js', receiver=42.6, read=34.5, bytes=1.064, strangers='FuseIndex FuseOptionKeyObject<Book> FuseOptionKeyObject<Row> FuseOptionKeyObject<string> FuseSearchOptions FuseSortFunctionArg FuseSortFunctionMatch FuseSortFunctionMatchList IndexOptions QueryNode'), 'fuse.doors': dict(of='fuse.js', receiver=42.5, read=34.2, bytes=1.068, strangers='FuseIndex FuseOptionKeyObject<Book> FuseOptionKeyObject<Row> FuseOptionKeyObject<string> FuseSearchOptions FuseSortFunctionArg FuseSortFunctionMatch FuseSortFunctionMatchList IndexOptions QueryNode'),
     'sdk': dict(of='@anthropic-ai/sdk', strangers='', by={'0.112.': dict(receiver=35.9, read=35.3, bytes=1.29), '0.128.': dict(receiver=35.8, read=35.3, bytes=1.015)}),
@@ -68,6 +68,7 @@ if STEP == 'build':
                     if gone: x = x.replace(m.group(0), 'import { %s } from "%s"; var %s;' % (', '.join(k for k in names if k not in gone), module, ', '.join('%s: typeof import("%s").%s' % (k, module, k) for k in gone))); lacks += gone
                 if lacks: open(R + '/wide.tsx', 'w').write(x); open(R + '/../lacks.txt', 'w').write(' '.join(lacks))
             os.symlink(modules, R + '/node_modules')
+            if modules != N and os.path.isdir(OUT + '/sound'): shutil.copytree(OUT + '/sound', R + '/.sound')  # what is typed where it lies
             counted = column == 'typed' and tree in FACTS
             listed = column == 'typed.audit' and tree in FACTS  # one --aot-explain a build: the audit's build, which is made anyway, carries the second
             b = subprocess.run([AOT, 'build', '--compile', '--aot'] + (['--aot-explain=given'] if counted else ['--aot-explain=foreign'] if listed else []) + ['--target=bun', '--define', 'process.env.NODE_ENV="production"', FILE(tree), '--outfile', R + '/wide'], cwd=R, env=dict(ENV, **options, BUN_AOT_TYPED_SNAPSHOT=R + '/snapshot', BUN_JSC_aotMapFilePath=R + '/map'), capture_output=True, text=True, stdin=subprocess.DEVNULL)
@@ -79,7 +80,7 @@ if STEP == 'build':
                 due = FACTS[tree]; pkg = due['of']; out = b.stdout + b.stderr
                 if 'by' in due: due = next((x for v, x in due['by'].items() if json.load(open(N + '/' + pkg + '/package.json'))['version'].startswith(v)), {})
                 size = lambda f: sum(int(c[3]) for c in (l.rstrip('\n').split('\t') for l in open(f, errors='replace') if l.startswith('F\t')) if len(c) > 10 and ('/' + pkg + '/') in c[10]) if os.path.exists(f) else 0  # an F line of the map: a body: its size in column 4, its file in column 11 (a linked node_modules shows its real path)
-                got = {k: float(m.group(1)) if m else None for k, m in (('receiver', re.search(r'reads of a property: the receiver: \d+ of \d+ \(([\d.]+)%\)', out)), ('read', re.search(r'reads of a property: what is read: \d+ of \d+ \(([\d.]+)%\)', out)))}
+                got = {k: float(m.group(1)) if m else None for k, m in (('receiver', re.search(r'reads of a property: the receiver: \d+ of \d+ \(([\d.]+)%\)', out)), ('read', re.search(r'reads of a property: (?:what is read|the value read): \d+ of \d+ \(([\d.]+)%\)', out)))}
                 u = size(OUT + '/rooms/' + tree + '/untyped/map'); got['bytes'] = round(size(R + '/map') / u, 3) if u else None
                 worse = [k for k in got if got[k] is None or k in due and (got[k] < due[k] - 2 if k != 'bytes' else got[k] > due[k] * 1.1)]
                 better = [k for k in got if got[k] is not None and k in due and (got[k] > due[k] + 2 if k != 'bytes' else got[k] < due[k] * 0.9)]
@@ -97,6 +98,7 @@ if STEP == 'build':
             R = '%s/rooms/entries/%s/%s' % (OUT, stem, column); os.makedirs(R)
             for f in os.listdir(H + '/trees/entries'): shutil.copy(H + '/trees/entries/' + f, R)
             os.symlink(modules, R + '/node_modules')
+            if modules != N and os.path.isdir(OUT + '/sound'): shutil.copytree(OUT + '/sound', R + '/.sound')
             b = subprocess.run([AOT, 'build', '--compile'] + flags2 + ['--target=bun', '--define', 'process.env.NODE_ENV="production"', stem + '.ts', '--outfile', R + '/entry'], cwd=R, env=ENV, capture_output=True, text=True, stdin=subprocess.DEVNULL); open(R + '/build.txt', 'w').write(b.stdout + b.stderr)
             if not os.access(R + '/entry', os.X_OK): fail('entries %s %s: NOT BUILT: %s' % (stem, column, ' '.join(re.findall(r'.*(?:error|not compiled).*', b.stdout + b.stderr)[:3])[:300]))
 elif STEP == 'answers':

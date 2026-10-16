@@ -1,0 +1,7 @@
+caught thrown at load, time 1
+caught a TypeError
+caught a TypeError
+symbols 1 false true 1
+keys on an object that outlives the evaluations 1 1
+the last is the one that is exported true undefined
+kept undefined readKept true

@@ -10,7 +10,33 @@ use memory::Newest;
 use std::alloc::{Allocator, Global};
 use std::hash::Hasher;
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+pub struct Barrier {
+    parties: u32,
+    arrived: AtomicU32,
+    generation: AtomicU32,
+}
+
+impl Barrier {
+    pub fn new(parties: usize) -> Barrier {
+        Barrier { parties: parties as u32, arrived: AtomicU32::new(0), generation: AtomicU32::new(0) }
+    }
+
+    pub fn wait(&self) -> bool {
+        let generation = self.generation.load(Ordering::Acquire);
+        if self.arrived.fetch_add(1, Ordering::AcqRel) + 1 == self.parties {
+            self.arrived.store(0, Ordering::Relaxed);
+            self.generation.store(generation.wrapping_add(1), Ordering::Release);
+            bun_threading::futex::wake(&self.generation, u32::MAX);
+            return true;
+        }
+        while self.generation.load(Ordering::Acquire) == generation {
+            bun_threading::futex::wait_forever(&self.generation, generation);
+        }
+        false
+    }
+}
 
 /// The hash rustc uses, as in `bun_collections::AutoContext`: keys here are small integers and short
 /// tuples of them. Nothing may depend on the order in which a map or a set iterates.

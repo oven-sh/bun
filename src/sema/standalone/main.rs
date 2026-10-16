@@ -1,7 +1,7 @@
 use bun_sema::atom::Interner;
 use bun_sema::messages::text;
 use bun_sema::resolve::Host;
-use bun_sema_baselines::{error_line, lines, output_line, read_file, write_file_to_look_at};
+use bun_sema_baselines::{error_line, lines, output_line, read_file, write_file, write_file_to_look_at};
 use bun_threading::Guarded;
 use std::io::Write;
 use std::sync::Arc;
@@ -189,7 +189,7 @@ fn run(args: &[String]) {
             let command_line = bun_sema_driver::parse_command_line(&arguments, cwd.as_bytes());
             // `--snapshot=<file>`: the files, the entry points and the resolutions of a bundle, as `bun build --compile --aot` wrote them.
             let mut snapshot = args.iter().find_map(|a| a.strip_prefix("--snapshot=")).map(|path| {
-                let bytes = std::fs::read(path).expect("the snapshot cannot be read");
+                let bytes = read_file(path).expect("the snapshot cannot be read");
                 bun_sema_driver::snapshot::Snapshot::from_bytes(&bytes).expect("not a snapshot")
             });
             let (cwd, paths, project) = match &snapshot {
@@ -432,9 +432,9 @@ fn run(args: &[String]) {
                 if audited_alone.is_some() {
                     let path = args.iter().find_map(|a| a.strip_prefix("--audit-sites-out=")).expect("--audit-only goes with --audit-sites-out");
                     let tables: Vec<String> = (translation.take_programs_of_fragments(program).iter())
-                        .map(|of_fragment| bun_aot::audit::to_json(&bun_aot::audit::table(of_fragment, false, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(String::from_utf8_lossy(path).as_ref()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..])), &[]))
+                        .map(|of_fragment| bun_aot::audit::to_json(&bun_aot::audit::table(of_fragment, false, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(bstr::BStr::new(path).to_string()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..])), &[]))
                         .collect();
-                    let is_written = std::fs::write(path, tables.join("\n")).is_ok();
+                    let is_written = write_file(path, tables.join("\n").as_bytes()).is_ok();
                     lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
                     error_line!("aot: sites of {} fragments written in {:.3} s", tables.len(), started.elapsed().as_secs_f64());
                     return vec![false; errors.len()];
@@ -475,16 +475,16 @@ fn run(args: &[String]) {
                 );
                 if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--audit-sites-out=")) {
                     let linked_in = started.elapsed().as_secs_f64();
-                    let is_written = std::fs::write(path, bun_aot::audit::to_json(&bun_aot::audit::table(&translated.program, true, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(String::from_utf8_lossy(path).as_ref()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..])), &bun_aot::audit::shapes(&translated.program))).is_ok();
+                    let is_written = write_file(path, bun_aot::audit::to_json(&bun_aot::audit::table(&translated.program, true, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(bstr::BStr::new(path).to_string()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..])), &bun_aot::audit::shapes(&translated.program)).as_bytes()).is_ok();
                     lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
                     error_line!("aot: linked in {:.3} s, sites written in {:.3} s", linked_in, started.elapsed().as_secs_f64() - linked_in);
                     return translated.errors_that_stand;
                 }
                 if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--aot-out=")) {
                     let linked_in = started.elapsed().as_secs_f64();
-                    let is_written = translated.problems.is_empty() && std::fs::write(path, bun_aot::format::write_releasing(&mut translated.program, in_parallel)).is_ok();
+                    let is_written = translated.problems.is_empty() && write_file(path, &bun_aot::format::write_releasing(&mut translated.program, in_parallel)).is_ok();
                     if let Some(tokens) = &translated.tokens {
-                        let _ = std::fs::write(format!("{path}.map"), [&b"{\n  \"version\": 3,\n  \"sources\": [],\n  \"mappings\": \"\",\n  \"names\": [],\n  \"x_bun_aot\": "[..], tokens, b"\n}\n"].concat());
+                        let _ = write_file(&format!("{path}.map"), &[&b"{\n  \"version\": 3,\n  \"sources\": [],\n  \"mappings\": \"\",\n  \"names\": [],\n  \"x_bun_aot\": "[..], tokens, b"\n}\n"].concat());
                     }
                     lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
                     error_line!("aot: linked in {:.1} s, written in {:.1} s", linked_in, started.elapsed().as_secs_f64() - linked_in);
@@ -579,6 +579,7 @@ fn run(args: &[String]) {
                 early_parse_only: defaults.early_parse_only,
                 early_scan_only: defaults.early_scan_only,
                 only_the_globals: defaults.only_the_globals,
+                writes_declaration_files: defaults.writes_declaration_files,
                 memory: defaults.memory,
             };
             let request = bun_sema_driver::Request {
@@ -673,7 +674,7 @@ fn run(args: &[String]) {
             if has("--aot") {
                 provided.build_constants = Some(constants.build_constants());
                 for &(name, text) in bun_aot::prelude::FILES {
-                    provided.already_read.insert(bun_sema_driver::host::from_native(&bun_aot::prelude::path_of(cwd.as_bytes(), name)), text.as_bytes().to_vec());
+                    provided.already_read.insert(bun_sema_driver::host::from_native(&bun_aot::prelude::path_of(cwd.as_bytes(), name)), text.as_bytes().into());
                 }
             }
             // `--no-builtin-modules`: for a program that is run where nothing runs the modules of the runtime, in the `jsc` shell.
@@ -684,8 +685,8 @@ fn run(args: &[String]) {
                 let manifest = bun_builtin_syntax::Archive::embedded().manifest();
                 let with_source = manifest.modules().iter().map(|module| &module.path).filter(|path| !path.is_empty());
                 for file in with_source.chain(manifest.function_files()) {
-                    if let Ok(source) = std::fs::read(std::path::Path::new(folder).join(text(file))) {
-                        provided.already_read.insert([bun_builtin_syntax::VIRTUAL_ROOT, file].concat(), source);
+                    if let Some(source) = read_file(&format!("{folder}/{}", text(file))) {
+                        provided.already_read.insert([bun_builtin_syntax::VIRTUAL_ROOT, file].concat(), source.into());
                     }
                 }
             }

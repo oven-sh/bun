@@ -1,3 +1,4 @@
+// @ts-check
 // a transform stream is a readable/writable stream where you do
 // something with the data.  Sometimes it's called a "filter",
 // but that's not a great name for it, since that implies a thing where
@@ -150,7 +151,7 @@ Transform.prototype._write = function (chunk, encoding, callback) {
     }
 
     if (val != null) {
-      if (this.push === internals.pushMethod) internals.push!(this, rState, val, undefined);
+      if (this.push === internals.methodThatPushes) internals.pushToReadable!(this, rState, val, undefined);
       else this.push(val);
     }
 

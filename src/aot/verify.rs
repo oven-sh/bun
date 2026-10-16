@@ -19,8 +19,8 @@ fn uses_in(program: &Program, func: &Func, block: usize, uses: &mut Vec<(V, TyId
     for &v in &func.blocks[block].ops {
         match func.op(v) {
             Some(&Op::Coerce { value, to, why: Why::Upcast }) => uses.push((value, to, "the operand of an upcast")),
-            Some(&Op::FieldSet { layout, field, value, .. }) => uses.push((value, program.layouts[layout.idx()].fields[field as usize].declared, "what is stored to a field")),
-            Some(&Op::GlobalSet(variable, value)) => uses.push((value, program.globals[variable.idx()].declared, "what is stored to a module variable")),
+            Some(&Op::FieldSet { layout, field, value, .. }) => uses.push((value, program.layouts[layout.idx()].fields[field as usize].declared, "the value stored to a field")),
+            Some(&Op::GlobalSet(variable, value)) => uses.push((value, program.globals[variable.idx()].declared, "the value stored to a module variable")),
             Some(Op::CallDirect { func: callee, args }) => {
                 let callee = &program.funcs[callee.idx()];
                 let receiver = callee.has(func_flags::HAS_THIS).then_some((callee.this_declared, "the receiver of a direct call"));
@@ -81,7 +81,7 @@ pub(crate) fn unsound_uses(program: &Program, most: usize, in_parallel: InParall
                     is_sound.insert((have, want), lost.is_none());
                     let Some((sub, lost)) = lost else { continue };
                     let supertypes: Vec<String> = layouts_in(program, want).map(|layout| name_of(program, layout)).collect();
-                    let function = String::from_utf8_lossy(if func.name.is_none() { b"" } else { program.strs.get(func.name) });
+                    let function = bstr::BStr::new(if func.name.is_none() { b"".as_slice() } else { program.strs.get(func.name) });
                     let what = format!(
                         "an upcast that the soundness closure was not told of: f{index} `{function}`: {argument} of type {} is {what} of type {}, of which {} is no subtype",
                         name_of(program, sub),
@@ -124,7 +124,7 @@ fn layouts_in(program: &Program, ty: TyId) -> impl Iterator<Item = LayoutId> + '
 
 fn name_of(program: &Program, layout: LayoutId) -> String {
     let name = program.layouts[layout.idx()].name;
-    format!("{}.{}", String::from_utf8_lossy(if name.is_none() { b"" } else { program.strs.get(name) }), layout.idx())
+    format!("{}.{}", bstr::BStr::new(if name.is_none() { b"".as_slice() } else { program.strs.get(name) }), layout.idx())
 }
 
 fn targets_of(term: Option<&Term>) -> SmallVec<[&Target; 2]> {

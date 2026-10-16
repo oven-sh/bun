@@ -1022,7 +1022,7 @@ export function Array$toSorted<T>(a: T[], f: unknown): T[] {
 export function Array$from<T, U>(items: unknown, f: unknown, thisArg: unknown): U[] {
     if (f !== undefined && !isCallable(f)) throw new TypeError("Array.from requires that the second argument, when provided, be a function");
     const isOriginal: boolean = $isOriginalArray(items);
-    const isLike: boolean = $isPlainArrayLike(items);
+    const isLike: boolean = isOriginal ? false : $isPlainArrayLike(items);
     if (f !== undefined && isLike) {
         const out: U[] = $newArrayWithSpecies<U>(toLength((items as any).length), undefined);
         const n = out.length;

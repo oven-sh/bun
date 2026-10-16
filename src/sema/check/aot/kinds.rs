@@ -353,7 +353,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let local = bound.expr_symbol[e.idx()].some()?;
         let symbol = &bound.symbols[local.idx()];
-        if symbol.flags.intersects(SymFlags::MERGED | SymFlags::ASSIGNED | SymFlags::ALIAS) || !bound.assignments_to(local).is_empty() || self.has_direct_eval(file) {
+        if symbol.flags.intersects(SymFlags::MERGED | SymFlags::ASSIGNED | SymFlags::ALIAS) || !bound.assignments_to(local).is_empty() || self.has_direct_eval(file) || self.may_be_overridden(Sym { file, id: local }) {
             return None;
         }
         if let [Decl::Var(pat)] = symbol.decls[..] {
@@ -951,7 +951,7 @@ impl<'p, 's> Checker<'p, 's> {
                     };
                 }
                 let flags = self.bound(file).symbols[local.idx()].flags;
-                if flags.intersects(SymFlags::ALIAS | SymFlags::MERGED) { kind::ANYTHING } else { self.kinds_read_by(file, e, local) }
+                if flags.intersects(SymFlags::ALIAS | SymFlags::MERGED) || self.may_be_overridden(Sym { file, id: local }) { kind::ANYTHING } else { self.kinds_read_by(file, e, local) }
             }
             ExprKind::Unary { op, operand } => match op {
                 UnOp::Not | UnOp::Delete => kind::BOOLEAN,
@@ -1010,6 +1010,8 @@ impl<'p, 's> Checker<'p, 's> {
                         None => kind::ANYTHING,
                     },
                     // A function may be added to `Math`. None of its own can be replaced.
+                    ExprKind::Dot { .. } if self.member_of_global_that_may_be_overridden(file, callee).is_some() => kind::ANYTHING,
+                    ExprKind::Dot { name, .. } if !self.holders_of_member_that_may_be_overridden(name).is_empty() => kind::ANYTHING,
                     ExprKind::Dot { obj, name, chain: Chain::No, .. } if FUNCTIONS_OF_MATH.contains(&self.atoms().bytes(name)) && self.names_global_object(file, obj, b"Math") => kind::NUMBER,
                     ExprKind::Dot { obj, name, chain: Chain::No, .. } => match self.kinds_yielded_by(file, obj) {
                         kind::NOTHING => kind::NOTHING,

@@ -38,7 +38,6 @@ const { resistStopPropagation } = require("internal/shared");
 const types = require("node:util/types");
 let inspect: ((value: unknown, opts?: object) => string) | undefined;
 
-const SymbolFor = Symbol.for;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const ReflectOwnKeys = Reflect.ownKeys;
 
@@ -47,13 +46,13 @@ const kCapture = Symbol("kCapture");
 // writes `undefined` instead of `delete`, keeping one shared JSC Structure
 // so the (StructureID, name)-keyed megamorphic cache stays hot.
 const kShapeMode = Symbol("shapeMode");
-const kErrorMonitor = SymbolFor("events.errorMonitor");
+const kErrorMonitor = Symbol.for("events.errorMonitor");
 const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
 const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned");
-const kWatermarkData = SymbolFor("nodejs.watermarkData");
-const kRejection = SymbolFor("nodejs.rejection");
-const kFirstEventParam = SymbolFor("nodejs.kFirstEventParam");
-const captureRejectionSymbol = SymbolFor("nodejs.rejection");
+const kWatermarkData = Symbol.for("nodejs.watermarkData");
+const kRejection = Symbol.for("nodejs.rejection");
+const kFirstEventParam = Symbol.for("nodejs.kFirstEventParam");
+const captureRejectionSymbol = Symbol.for("nodejs.rejection");
 
 let FixedQueue;
 const kEmptyObject = Object.freeze(Object.create(null));
@@ -844,7 +843,7 @@ function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
 }
 
 function checkListener(listener) {
-  validateFunction(listener, "listener");
+  if (typeof listener !== "function") validateFunction(listener, "listener");
 }
 
 function _getMaxListeners(emitter) {

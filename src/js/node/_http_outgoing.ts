@@ -5,7 +5,16 @@ const { Stream } = require("internal/stream");
 const { isUint8Array, validateString } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
-const { kOutHeaders, kNeedDrain, utcDate } = require("internal/http");
+const {
+  kOutHeaders,
+  kNeedDrain,
+  kErrored,
+  kHighWaterMark,
+  kSocket,
+  kRejectNonStandardBodyWrites,
+  kUniqueHeaders,
+  utcDate,
+} = require("internal/http");
 const {
   validateHeaderName,
   validateHeaderValue,
@@ -110,14 +119,9 @@ function validatedLowercaseHeaderName(name) {
 }
 
 const kCorked = Symbol("corked");
-const kSocket = Symbol("kSocket");
 const kChunkedBuffer = Symbol("kChunkedBuffer");
 const kChunkedLength = Symbol("kChunkedLength");
-const kUniqueHeaders = Symbol("kUniqueHeaders");
 const kBytesWritten = Symbol("kBytesWritten");
-const kErrored = Symbol("errored");
-const kHighWaterMark = Symbol("kHighWaterMark");
-const kRejectNonStandardBodyWrites = Symbol("kRejectNonStandardBodyWrites");
 const kLenientValidation = Symbol("kLenientValidation");
 
 const nop = () => {};

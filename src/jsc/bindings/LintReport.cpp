@@ -88,7 +88,7 @@ public:
     {
         if (text.is8Bit() && charactersAreAllASCII(text.span8())) [[likely]] {
             word(text.length());
-            bytes(text.span8());
+            bytes(byteCast<uint8_t>(text.span8()));
             return;
         }
         // No character takes more than three bytes for each UTF-16 code unit.

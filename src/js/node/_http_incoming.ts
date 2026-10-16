@@ -18,6 +18,7 @@ const {
   emitEOFIncomingMessage,
   onDataIncomingMessage,
   kAbortController,
+  kReqShouldKeepAlive,
 } = require("internal/http");
 
 const ObjectDefineProperty = Object.defineProperty;
@@ -26,10 +27,6 @@ const ObjectPrototypeLookupGetter: (this: unknown, name: PropertyKey) => Functio
 ).__lookupGetter__;
 
 const kHeaders = Symbol("kHeaders");
-// Cache slot for the server dispatcher's keep-alive decision (stamped once
-// per request in _http_server.ts); declared in the constructor so the stamp
-// never shape-transitions the request.
-const kReqShouldKeepAlive = Symbol("kReqShouldKeepAlive");
 const kHeadersDistinct = Symbol("kHeadersDistinct");
 const kHeadersCount = Symbol("kHeadersCount");
 // Lazy req.rawHeaders: cache slot + the native handle the bytes live on

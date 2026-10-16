@@ -247,6 +247,7 @@ console.log("seen", JSON.stringify(globalThis.__seen ?? null), JSON.stringify(gl
   },
   {
     name: "whole",
+    differs: "The namespace lists what the bundle lists, without `default`. The bundler moves `exports.name = function () {}` to a variable `$name`, which names the function. Under --aot its name stays empty, as in `bun run`.",
     files: {
       ...pkg("s_whole", {
         "index.js": `module.exports = require("./lib/main.js");

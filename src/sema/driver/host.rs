@@ -16,7 +16,7 @@ use bun_sema::atom::Interner;
 use bun_sema::hir::{self, FileKind};
 use bun_sema::json::Json;
 use bun_sema::portable::SharedFile;
-use bun_sema::program::{Builtin, Module};
+use bun_sema::program::{Builtin, LoadedBy, Module};
 use bun_sema::resolve::{
     Host, Kept, ModuleDetection, ParseOptions, Paths, Phase, ScriptKind, Spent, ancestors, inside,
     is_declaration_file_name, is_same_path, join, root_length, to_file_name_lower_case, to_path,
@@ -214,7 +214,7 @@ pub struct Disk {
     pub(crate) jsx_of_files: Vec<(Vec<u8>, JsxOfFile)>,
     pub(crate) constants_of_imports: FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>,
     pub(crate) build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
-    pub(crate) early_paths: Option<std::sync::Mutex<std::sync::mpsc::Receiver<Vec<u8>>>>,
+    pub(crate) early_paths: Option<bun_threading::Guarded<std::sync::mpsc::Receiver<Vec<u8>>>>,
     pub(crate) early_parse_cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// `Request::is_one_program`: what is compiled.
     pub(crate) compiled: Option<Compiled>,
@@ -254,8 +254,8 @@ struct Shared {
 
 /// The text of files that the caller of the check has read, by path in the checker's format, as UTF-8, without a byte order
 /// mark unless `Provided::keeps_byte_order_marks`. Such a file is not opened. Several programs may read it.
-/// `bun build --check` passes what the bundler has read.
-pub type AlreadyRead = FxHashMap<Vec<u8>, Vec<u8>>;
+/// `bun build --check` passes what the bundler has read. A text that is borrowed is read without a copy.
+pub type AlreadyRead = FxHashMap<Vec<u8>, Cow<'static, [u8]>>;
 
 /// Called with the path of a file, in the checker's format, right before the file is read, on the
 /// thread that reads it. A caller that starts to watch the file there sees every change to what is
@@ -863,11 +863,14 @@ fn list(path: &[u8]) -> Directory {
         };
         let is_dir = match entry.kind {
             EntryKind::Directory => true,
-            // A symlink has to be followed. It may be dangling.
-            EntryKind::SymLink | EntryKind::Unknown => match is_directory(directory.fd(), name) {
-                Some(is_dir) => is_dir,
-                None => continue,
-            },
+            // A symlink has to be followed, unless the listing says what it stands for. It may be dangling.
+            EntryKind::SymLink | EntryKind::Unknown => {
+                let known = entry.link_is_directory();
+                match known.or_else(|| is_directory(directory.fd(), name)) {
+                    Some(is_dir) => is_dir,
+                    None => continue,
+                }
+            }
             EntryKind::File => false,
             // A FIFO, socket or device.
             _ => continue,
@@ -1292,7 +1295,7 @@ impl Disk {
         if !self.already_read.is_empty()
             && let Some(text) = (self.already_read).get(&*to_path(path, self.case_sensitive))
         {
-            return Some(Cow::Owned(text.clone()));
+            return Some(text.clone());
         }
         let _reading = Spent::on(self, Phase::Read);
         if is_bundled(path) {
@@ -1534,7 +1537,7 @@ impl Host for Disk {
             return text;
         }
         if path.ends_with(b".json") {
-            return Cow::Owned(String::from_utf8_lossy(&text).into_owned().into_bytes());
+            return Cow::Owned(bstr::BStr::new(&text).to_string().into_bytes());
         }
         let mut text = as_the_runtime_reads(&text);
         text.extend_from_slice(b"\n// bun --aot: this file is not UTF-8: read as the runtime reads it");
@@ -1593,7 +1596,7 @@ impl Host for Disk {
         &self.script_kinds_by_extension
     }
     fn next_early_paths(&self) -> Option<Vec<Vec<u8>>> {
-        let receiver = self.early_paths.as_ref()?.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let receiver = self.early_paths.as_ref()?.lock();
         let first = loop {
             match receiver.recv_timeout(Duration::from_millis(20)) {
                 Ok(first) => break first,
@@ -1622,8 +1625,12 @@ impl Host for Disk {
         }
         let found = crate::builtins::find(loaded, atoms, &is_compiled, &|count, work| self.parallel(count, work));
         let archive = bun_builtin_syntax::Archive::embedded();
-        let is_root = |why: &crate::builtins::Why| !matches!(why, crate::builtins::Why::RequiredBy(_));
-        let modules = found.included.iter().map(|module| (archive.path(module.id).to_vec(), Builtin::Module(module.id, is_root(&module.why))));
+        let loaded_by = |why: &crate::builtins::Why| match why {
+            crate::builtins::Why::RequiredBy(_) => LoadedBy::RuntimeModulesOnly,
+            crate::builtins::Why::AnyName(_) => LoadedBy::ComputedName,
+            _ => LoadedBy::NativeCodeOrWrittenName,
+        };
+        let modules = found.included.iter().map(|module| (archive.path(module.id).to_vec(), Builtin::Module(module.id, loaded_by(&module.why))));
         let functions = archive.manifest().function_files().iter().map(|file| ([bun_builtin_syntax::VIRTUAL_ROOT, file].concat(), Builtin::Functions));
         let files = modules.chain(functions).collect();
         *compiled.builtin_modules.lock() = Some(found);

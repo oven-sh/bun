@@ -49,7 +49,7 @@ for d, ds, fs in sorted(os.walk(H)):
     if only and who not in only: continue
     stop = lambda why: sys.exit('publish.py: %s: %s' % (who, why)); flat = '@sound/' + name.lstrip('@').replace('/', '__')
     if os.path.relpath(d, H) != name + '/' + v: stop('it lies in %s' % os.path.relpath(d, H))
-    if S.get('sound') != 1 or set(S) != {'sound', 'name', 'version', 'when', 'basis', 'lay', 'needs'}: stop('sound.json has other members than the format\'s')
+    if S.get('sound') not in (1, 2) or set(S) != {'sound', 'name', 'version', 'when', 'basis', 'lay', 'needs'}: stop('sound.json has other members than the format\'s')
     if (P['name'], P['version'], P.get('peerDependencies')) != (flat, v, {name: v}): stop('package.json: name, version or the peer dependency are not the manifest\'s')
     if set(P) - {'name', 'version', 'description', 'license', 'peerDependencies', 'files'} or P['files'] != ['sound.json', 'lay', 'LICENSE', 'NOTICE']: stop('package.json holds more than a published package needs')
     sums = dict(reversed(l.split('  ', 1)) for l in read(d + '/lay.sums').decode().split('\n') if l)

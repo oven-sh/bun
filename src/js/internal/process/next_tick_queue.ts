@@ -177,7 +177,7 @@ function initializeNextTickQueue(process: typeof globalThis.process, nextTickQue
   }
 
   function nextTick(cb: unknown, ...args: unknown[]) {
-    validateFunction(cb, "callback");
+    if (typeof cb !== "function") validateFunction(cb, "callback");
     if (setup !== undefined) {
       setup();
       process = globalThis.process;

@@ -1,19 +1,19 @@
 start | dog>animal4,walk,DA4,4,true,true,legs+tricks | animal4,walk,A4,4,true,false,legs | dog>animal4,walk,DA4,4,true,true,legs+tricks | false false true
 an object, the prototype of another class: TypeError
 an object, the prototype of the class that is extended, by __proto__: TypeError
-an object, null: TypeError
-an object, a literal: TypeError
-an object, a proxy: TypeError
-by Reflect: false false
-the objects | dog>animal4,walk,DA4,4,true,true,legs+tricks | animal4,walk,A4,4,true,false,legs | dog>animal4,walk,DA4,4,true,true,legs+tricks | false false true
+an object, null: no error undefined
+an object, a literal: no error undefined
+an object, a proxy: no error undefined
+by Reflect: false true
+line 38: TypeError
 the prototype of a class, that of another class: TypeError
 the prototype of a class, null: TypeError
 the prototype of a class, a literal: TypeError
 line 42: TypeError
-the prototypes | dog>animal4,walk,DA4,4,true,true,legs+tricks | animal4,walk,A4,4,true,false,legs | dog>animal4,walk,DA4,4,true,true,legs+tricks | false false true
+line 43: TypeError
 the class, another class: TypeError
 by Reflect: false true
-the class | dog>animal4,walk,DA4,4,true,true,legs+tricks | animal4,walk,A4,4,true,false,legs | dog>animal4,walk,DA4,4,true,true,legs+tricks | false false true
+line 46: TypeError
 delete of a required field: no error true
 undefined  false
 a record, a literal: no error undefined

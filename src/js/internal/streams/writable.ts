@@ -1,3 +1,4 @@
+// @ts-check
 // A bit simpler than readable streams.
 // Implement an async ._write(chunk, encoding, cb), and it'll handle all
 // the drain event emission and buffering.
@@ -20,7 +21,6 @@ const {
   internals,
   nop,
 } = require("internal/streams/state") as typeof import("internal/streams/state").default;
-type ReadableState = import("internal/streams/state").ReadableState;
 type WritableState = import("internal/streams/state").WritableState;
 type WriteCallback = import("internal/streams/state").WriteCallback;
 type AfterWriteTickInfo = import("internal/streams/state").AfterWriteTickInfo;
@@ -234,8 +234,8 @@ Writable.prototype.write = function (chunk, encoding, cb) {
   return _write(this, this._writableState, chunk, encoding, cb) === true;
 };
 
-internals.write = _write;
-internals.writeMethod = Writable.prototype.write;
+internals.writeToWritable = _write;
+internals.methodThatWrites = Writable.prototype.write;
 
 Writable.prototype.cork = function () {
   const state: WritableState = this._writableState;
@@ -400,17 +400,20 @@ function onwrite(stream, state: WritableState, er): void {
             finishMaybe(stream, state, true);
           }
         }
-      } else if ((state.flags & kAfterWriteTickInfo) !== 0 && state.afterWriteTickInfoValue!.cb === cb) {
-        state.afterWriteTickInfoValue!.count++;
-      } else if (needTick) {
-        const info: AfterWriteTickInfo = { count: 1, cb, stream, state };
-        state.afterWriteTickInfoValue = info;
-        process.nextTick(afterWriteTick, info);
-        state.flags |= kAfterWritePending | kAfterWriteTickInfo;
       } else {
-        state.pendingcb!--;
-        if ((state.flags & kEnding) !== 0) {
-          finishMaybe(stream, state, true);
+        const tickInfo = (state.flags & kAfterWriteTickInfo) !== 0 ? state.afterWriteTickInfoValue : null;
+        if (tickInfo !== null && tickInfo.cb === cb) {
+          tickInfo.count++;
+        } else if (needTick) {
+          const info: AfterWriteTickInfo = { count: 1, cb, stream, state };
+          state.afterWriteTickInfoValue = info;
+          process.nextTick(afterWriteTick, info);
+          state.flags |= kAfterWritePending | kAfterWriteTickInfo;
+        } else {
+          state.pendingcb!--;
+          if ((state.flags & kEnding) !== 0) {
+            finishMaybe(stream, state, true);
+          }
         }
       }
     } else {
@@ -454,8 +457,8 @@ function errorBuffer(state: WritableState): void {
     return;
   }
 
-  if ((state.flags & kBuffered) !== 0) {
-    const buffered = state.bufferedValue!;
+  const buffered = (state.flags & kBuffered) !== 0 ? state.bufferedValue : null;
+  if (buffered !== null) {
     for (let n = state.bufferedIndex; n < buffered.length; ++n) {
       const { chunk, callback } = buffered[n]!;
       const len = (state.flags & kObjectMode) !== 0 ? 1 : (chunk.length as number);

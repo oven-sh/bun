@@ -131,12 +131,20 @@ struct Graph {
     modules: Vec<FileId>,
     /// By importing file and specifier: the file whose code runs.
     resolved: FxHashMap<(FileId, Atom), FileId>,
+    required_otherwise: FxHashMap<(FileId, Atom), FileId>,
+    evaluated_again: FxHashSet<FileId>,
     /// The `if` statements whose condition is a constant.
     folded: FxHashMap<(FileId, StmtId), bool>,
     /// Who imports what without saying so: the JSX runtime.
     implicit: Vec<(FileId, FileId)>,
     entry_points: Vec<FileId>,
     is_run_from_its_sources: bool,
+}
+
+impl Graph {
+    fn required(&self, file: FileId, specifier: Atom) -> Option<FileId> {
+        self.required_otherwise.get(&(file, specifier)).or_else(|| self.resolved.get(&(file, specifier))).copied()
+    }
 }
 
 /// What has been asked so far. It belongs to a checker.
@@ -172,7 +180,10 @@ struct Found {
     defining_aliases: FxHashSet<(FileId, ExprId)>,
     /// The calls of `__exportStar` that do.
     stars: FxHashSet<(FileId, ExprId)>,
+    making_values_alone: FxHashSet<FileId>,
+    keeping_values_alone_in_an_object: FxHashSet<FileId>,
     esbuild_exports: FxHashMap<FileId, ExprId>,
+    named_literals: FxHashMap<FileId, (ExprId, ExprId)>,
     /// By module that is in no cycle: where its prologue ends.
     prologues: FxHashMap<FileId, u32>,
     /// `module.exports`, in the modules where that is a variable.
@@ -183,6 +194,7 @@ struct Found {
     stored_once: FxHashSet<FileId>,
     /// The calls of `require` that find their module evaluated to the end.
     finding_evaluated: FxHashSet<(FileId, ExprId)>,
+    are_children_read: bool,
     /// Why a module keeps its object, and how many do for that.
     obstacles: Vec<(&'static str, u32)>,
     /// The same for the `module` object.
@@ -226,6 +238,7 @@ struct Module {
     getters: FxHashMap<Atom, (ExprId, ExprId)>,
     /// `module.exports = { .. }`: the literal.
     literal: ExprId,
+    name_of_literal: ExprId,
     /// The names that the module reads or calls through its own exports.
     reads: FxHashSet<Atom>,
     /// `__exportStar(.., exports)`: the calls, in their order.
@@ -312,6 +325,7 @@ struct Uses {
     starred: Vec<(FileId, ExprId, FileId)>,
     awaited: Vec<FileId>,
     is_cache_read: bool,
+    are_children_read: bool,
 }
 
 impl Uses {
@@ -326,6 +340,7 @@ impl Uses {
         self.starred.append(&mut more.starred);
         self.awaited.append(&mut more.awaited);
         self.is_cache_read |= more.is_cache_read;
+        self.are_children_read |= more.are_children_read;
     }
 }
 
@@ -333,8 +348,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// Once for the program, whichever checker is told, before anything is asked. `modules`: all that are compiled with the program.
     /// `resolved`: by file and specifier, the file whose code an `import`, an `import()` or a `require()` runs. `folded`: the `if` statements at the
     /// top level of CommonJS modules whose condition the build replaces by a constant. `implicit`: who imports which JSX runtime.
-    pub fn set_resolved_imports(&self, modules: &[FileId], resolved: Vec<((FileId, Atom), FileId)>, folded: Vec<((FileId, StmtId), bool)>, implicit: Vec<(FileId, FileId)>, entry_points: Vec<FileId>, is_run_from_its_sources: bool) {
-        self.p.aot.commonjs.graph.get_or_init(|| Graph { modules: modules.to_vec(), resolved: resolved.into_iter().collect(), folded: folded.into_iter().collect(), implicit, entry_points, is_run_from_its_sources });
+    pub fn set_resolved_imports(&self, modules: &[FileId], resolved: Vec<((FileId, Atom), FileId)>, required_otherwise: Vec<((FileId, Atom), FileId)>, evaluated_again: Vec<FileId>, folded: Vec<((FileId, StmtId), bool)>, implicit: Vec<(FileId, FileId)>, entry_points: Vec<FileId>, is_run_from_its_sources: bool) {
+        self.p.aot.commonjs.graph.get_or_init(|| Graph { modules: modules.to_vec(), resolved: resolved.into_iter().collect(), required_otherwise: required_otherwise.into_iter().collect(), evaluated_again: evaluated_again.into_iter().collect(), folded: folded.into_iter().collect(), implicit, entry_points, is_run_from_its_sources });
+    }
+
+    pub fn is_run_from_its_sources(&self) -> bool {
+        self.p.aot.commonjs.graph.get().is_some_and(|graph| graph.is_run_from_its_sources)
     }
 
     pub fn names_of_export_variables(&mut self, module: FileId) -> Vec<Atom> {
@@ -356,6 +375,12 @@ impl<'p, 's> Checker<'p, 's> {
         self.commonjs().aliases.get(&(module, name)).copied().unwrap_or((module, name))
     }
 
+    fn is_named_by_require_alone(&self, importer: FileId, specifier: Atom) -> bool {
+        let hir = self.hir(importer);
+        !hir.specifier_uses.iter().any(|used| used.spec == specifier)
+            && self.exprs_by_kind_of(importer).of(ExprTag::Call).iter().any(|&e| required_specifier(hir, e) == Some(specifier) || hir.specifiers_of_folded_require(e).contains(&specifier))
+    }
+
     pub(super) fn importers_that_see_other_declarations(&self) -> FxHashMap<FileId, Place> {
         let mut first_of: FxHashMap<FileId, Place> = FxHashMap::default();
         let Some(graph) = self.p.aot.commonjs.graph.get() else { return first_of };
@@ -363,8 +388,10 @@ impl<'p, 's> Checker<'p, 's> {
             if self.is_untyped_file(code) || self.is_untyped_file(importer) || matches!(self.hir(code).kind, FileKind::Declaration | FileKind::Json) {
                 continue;
             }
-            if self.files.module_of_specifier(importer, specifier).is_some_and(|seen| seen.file == code) {
-                continue;
+            match self.files.module_of_specifier(importer, specifier) {
+                Some(seen) if seen.file == code => continue,
+                None if self.is_named_by_require_alone(importer, specifier) => continue,
+                _ => {}
             }
             let pos = self.hir(importer).specifier_uses.iter().find(|used| used.spec == specifier).map_or(0, |used| used.pos);
             let (at, first) = (Place { file: importer, pos }, first_of.entry(code).or_insert(Place { file: importer, pos }));
@@ -407,6 +434,7 @@ impl<'p, 's> Checker<'p, 's> {
         directory.is_some() && self.files().package_jsons.get(self.atoms().bytes(directory)).and_then(|json| json.get(b"type")).and_then(|kind| kind.as_str()) == Some(&b"module"[..])
     }
 
+    #[allow(clippy::disallowed_methods, reason = "a package.json that no file of the program belongs to is not among those that were read")]
     pub fn is_in_package_without_side_effects(&self, file: FileId) -> bool {
         let module = self.files().module(file);
         if module.package_json_directory.is_none() {
@@ -436,7 +464,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if between.len() <= root.len() {
                         return between == root;
                     }
-                    if std::fs::metadata(String::from_utf8_lossy(&[between, b"/package.json"].concat()).as_ref()).is_ok() {
+                    if std::fs::metadata(bstr::BStr::new(&[between, b"/package.json"].concat()).to_string()).is_ok() {
                         return false;
                     }
                 }
@@ -542,7 +570,26 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `module.exports = { a, b: value }` in a module that keeps its exports in variables: the literal.
     pub fn is_literal_of_export_variables(&mut self, file: FileId, literal: ExprId) -> bool {
-        matches!(self.hir(file)[literal].kind, ExprKind::Object(_)) && self.commonjs_exports(file) == CommonJsExports::Variables
+        let is_name_of_literal = self.commonjs().named_literals.get(&file).is_some_and(|named| named.1 == literal);
+        (is_name_of_literal || matches!(self.hir(file)[literal].kind, ExprKind::Object(_))) && self.commonjs_exports(file) == CommonJsExports::Variables
+    }
+
+    pub fn is_named_literal_of_export_variables(&mut self, file: FileId, literal: ExprId) -> bool {
+        self.commonjs().named_literals.get(&file).is_some_and(|named| named.0 == literal)
+    }
+
+    pub fn is_module_that_only_makes_values(&mut self, module: FileId) -> bool {
+        self.commonjs().making_values_alone.contains(&module)
+    }
+
+    pub fn is_evaluated_again_after_a_failure(&mut self, module: FileId) -> bool {
+        let found = self.commonjs();
+        found.making_values_alone.contains(&module) || found.keeping_values_alone_in_an_object.contains(&module)
+    }
+
+    pub fn is_export_variable_stored_before_every_read(&mut self, module: FileId, name: Atom) -> bool {
+        let found = self.commonjs();
+        found.making_values_alone.contains(&module) && found.stores.get(&(module, name)).is_some_and(|stores| stores.len() == 1)
     }
 
     /// What the ES module `importer` gets for `import { name } from` the CommonJS module. `None`: there is no variable for it, the module has an
@@ -617,7 +664,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn function_required_by(&mut self, file: FileId, e: ExprId) -> Option<(FileId, FnId, bool)> {
         let hir = self.hir(file);
         let (specifier, ExprKind::Call(call)) = (required_specifier(hir, e)?, hir[e].kind) else { return None };
-        let &module = self.p.aot.commonjs.graph.get()?.resolved.get(&(file, specifier))?;
+        let module = self.p.aot.commonjs.graph.get()?.required(file, specifier)?;
         if self.commonjs_exports(module) != CommonJsExports::Value || !self.names_commonjs_variable(file, hir[call].callee, known::require) {
             return None;
         }
@@ -655,6 +702,10 @@ impl<'p, 's> Checker<'p, 's> {
         program.aot.commonjs.found.get_or_init(|| self.find_commonjs(None))
     }
 
+    pub fn are_children_of_modules_read(&mut self) -> bool {
+        self.commonjs().are_children_read
+    }
+
     pub fn settle_commonjs(&mut self, in_parallel: InParallel<'_>) {
         let program = self.p;
         program.aot.commonjs.found.get_or_init(|| self.find_commonjs(Some(in_parallel)));
@@ -670,7 +721,10 @@ impl<'p, 's> Checker<'p, 's> {
         let looked_into: Vec<FileId> = graph.modules.iter().copied().filter(is_looked_into).collect();
         let found = self.in_slices(&looked_into, FILES_OF_A_CHECKER, in_parallel, &|c, files| files.iter().map(|&file| c.find_commonjs_module(file, graph)).collect::<Vec<Module>>());
         let mut modules: FxHashMap<FileId, Module> = FxHashMap::default();
-        for (&file, found) in looked_into.iter().zip(found.into_iter().flatten()) {
+        for (&file, mut found) in looked_into.iter().zip(found.into_iter().flatten()) {
+            if self.module_may_be_overridden(file) {
+                found.obstacle = found.obstacle.or(Some("a test may override what it exports"));
+            }
             modules.insert(file, found);
         }
         for &file in &graph.modules {
@@ -678,7 +732,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && !modules.contains_key(&other)
                 && let Some(module) = modules.get_mut(&file)
             {
-                module.obstacle = module.obstacle.or(Some("it re-exports what is no CommonJS module"));
+                module.obstacle = module.obstacle.or(Some("it re-exports something that is not a CommonJS module"));
             }
         }
         // The module at the end of the re-exports. One that keeps its object for a reason of its own is an end.
@@ -737,7 +791,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut aliases: FxHashMap<(FileId, Atom), (FileId, Atom)> = FxHashMap::default();
         for &file in &graph.modules {
             let Some(module) = modules.get(&file) else { continue };
-            if module.literal.is_some() && got_at_early.contains(&file) {
+            if module.literal.is_some() && got_at_early.contains(&file) && !self.only_makes_values(file) {
                 with_object.entry(file).or_insert("module.exports = { .. }, and it may be got at while it is evaluated");
             }
             let hir = self.hir(file);
@@ -753,7 +807,7 @@ impl<'p, 's> Checker<'p, 's> {
                         aliases.insert((file, name), other);
                     }
                     None => {
-                        with_object.entry(file).or_insert("a getter that is no other name for an export");
+                        with_object.entry(file).or_insert("a getter that is not an alias of an export");
                     }
                 }
             }
@@ -782,7 +836,7 @@ impl<'p, 's> Checker<'p, 's> {
                 with_object.entry(file).or_insert("__exportStar of a module of its cycle");
             }
             if module.stars.len() != stars.get(&file).map_or(0, Vec::len) {
-                with_object.entry(file).or_insert("__exportStar of what is no CommonJS module of the program");
+                with_object.entry(file).or_insert("__exportStar of something that is not a CommonJS module of the program");
             }
         }
         // The names that a module is sure to have, and to show, once it has been evaluated. From the modules without stars on.
@@ -868,7 +922,7 @@ impl<'p, 's> Checker<'p, 's> {
                 with_object.entry(keeper_of(&modules, module)).or_insert(match value.some().map(|value| self.hir(keeper)[value].kind) {
                     Some(ExprKind::Fn(_)) => "a method call hands it to a function that mentions `this`",
                     Some(ExprKind::Ident(_)) => "a method call hands it to what a name holds, which may look at `this`",
-                    Some(ExprKind::Call(_) | ExprKind::New(_)) => "a method call hands it to what a call has yielded, which may look at `this`",
+                    Some(ExprKind::Call(_) | ExprKind::New(_)) => "a method call passes it to the result of a call, which may inspect `this`",
                     Some(ExprKind::Dot { .. } | ExprKind::Index { .. }) => "a method call hands it to a property of something, which may look at `this`",
                     _ => "a method call hands it to a value that may look at `this`",
                 });
@@ -922,6 +976,9 @@ impl<'p, 's> Checker<'p, 's> {
             let keeper = keeper_of(&modules, file);
             if let Some(why) = with_object.get(&file).or_else(|| with_object.get(&keeper)) {
                 *obstacles.entry(why).or_default() += 1;
+                if self.only_makes_values(file) {
+                    found.keeping_values_alone_in_an_object.insert(file);
+                }
                 if let Some(why) = module.needs_module {
                     found.exports.insert(file, CommonJsExports::Object);
                     *needing_module.entry(why).or_default() += 1;
@@ -946,8 +1003,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
             found.defining_aliases.extend(module.getters.values().map(|getter| (file, getter.0)));
             found.stars.extend(module.stars.iter().map(|&call| (file, call)));
+            if self.only_makes_values(file) && !uses.imported_by_es_modules.iter().any(|import| keeper_of(&modules, import.1) == file) {
+                found.making_values_alone.insert(file);
+            }
             if module.esbuild_export.is_some() {
                 found.esbuild_exports.insert(file, module.esbuild_export);
+            }
+            if module.name_of_literal.is_some() {
+                found.named_literals.insert(file, (module.literal, module.name_of_literal));
             }
         }
         for &(file, name) in &named {
@@ -958,6 +1021,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !uses.is_cache_read {
             found.finding_evaluated = std::mem::take(&mut uses.finding_evaluated);
         }
+        found.are_children_read = uses.is_cache_read || uses.are_children_read;
         for (file, e, mention) in uses.mentions {
             if !with_object.contains_key(&keeper_of(&modules, mention.module)) {
                 found.mentions.insert((file, e), mention);
@@ -976,30 +1040,39 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
-    fn is_node_module_specifier(&self, specifier: Atom) -> bool {
-        matches!(self.atoms().bytes(specifier), b"module" | b"node:module")
+    fn names_builtin_module(&self, specifier: Atom, module: &[u8]) -> bool {
+        if specifier.is_none() {
+            return false;
+        }
+        let text = self.atoms().bytes(specifier);
+        text.strip_prefix(b"node:").unwrap_or(text) == module
     }
 
-    fn is_node_module_object(&mut self, file: FileId, e: ExprId) -> bool {
+    fn is_builtin_module_object(&mut self, file: FileId, e: ExprId, module: &[u8]) -> bool {
         let hir = self.hir(file);
         if let Some(specifier) = required_specifier(hir, e) {
-            return self.is_node_module_specifier(specifier);
+            return self.names_builtin_module(specifier, module);
         }
         let ExprKind::Ident(name) = hir[e].kind else { return false };
         let Some(sym) = self.binding_of_identifier(file, e, name) else { return false };
         if let Some((of, init)) = self.initializer_of_const(sym) {
-            return required_specifier(self.hir(of), init).is_some_and(|specifier| self.is_node_module_specifier(specifier));
+            return required_specifier(self.hir(of), init).is_some_and(|specifier| self.names_builtin_module(specifier, module));
         }
         self.files().decls(sym).into_iter().any(|(of, decl)| match decl {
-            Decl::ImportNamespace(import) | Decl::ImportDefault(import) => self.is_node_module_specifier(self.hir(of)[import].spec),
+            Decl::ImportNamespace(import) | Decl::ImportDefault(import) => self.names_builtin_module(self.hir(of)[import].spec, module),
             _ => false,
         })
     }
 
-    fn is_create_require(&mut self, file: FileId, callee: ExprId, create_require: Atom) -> bool {
+    pub fn is_path_join_or_resolve(&mut self, file: FileId, callee: ExprId) -> bool {
+        let members: Vec<Atom> = [&b"join"[..], b"resolve"].into_iter().filter_map(|name| self.atoms().lookup(name)).collect();
+        members.into_iter().any(|member| self.is_member_of_builtin_module(file, callee, b"path", member))
+    }
+
+    fn is_member_of_builtin_module(&mut self, file: FileId, callee: ExprId, module: &[u8], member: Atom) -> bool {
         let hir = self.hir(file);
         let name = match hir[callee].kind {
-            ExprKind::Dot { obj, name, chain: Chain::No, .. } => return name == create_require && self.is_node_module_object(file, obj),
+            ExprKind::Dot { obj, name, chain: Chain::No, .. } => return name == member && self.is_builtin_module_object(file, obj, module),
             ExprKind::Ident(name) => name,
             _ => return false,
         };
@@ -1007,15 +1080,15 @@ impl<'p, 's> Checker<'p, 's> {
         self.files().decls(sym).into_iter().any(|(of, decl)| {
             let (hir, bound) = (self.hir(of), self.bound(of));
             match decl {
-                Decl::ImportSpec(spec) => hir[spec].imported == create_require && self.is_node_module_specifier(hir[hir[spec].import].spec),
+                Decl::ImportSpec(spec) => hir[spec].imported == member && self.names_builtin_module(hir[hir[spec].import].spec, module),
                 Decl::Var(pat) | Decl::Require(pat) => match bound.pat_parent[pat.idx()] {
                     PatParent::Prop(outer, prop) => {
                         let is_the_property = match (hir[prop].key, hir[pat].kind) {
-                            (PropKey::Name(key), _) | (PropKey::None, PatKind::Ident(key)) => key == create_require,
+                            (PropKey::Name(key), _) | (PropKey::None, PatKind::Ident(key)) => key == member,
                             _ => false,
                         };
                         let PatParent::Var(declaration) = bound.pat_parent[outer.idx()] else { return false };
-                        is_the_property && required_specifier(hir, hir[declaration].init).is_some_and(|specifier| self.is_node_module_specifier(specifier))
+                        is_the_property && required_specifier(hir, hir[declaration].init).is_some_and(|specifier| self.names_builtin_module(specifier, module))
                     }
                     _ => false,
                 },
@@ -1059,7 +1132,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
             let mut names = Vec::new();
             if self.atoms().lookup(b"createRequire").is_some() {
-                for declaration in hir.var_decls.iter().filter(|declaration| declaration.kind == VarKind::Const && declaration.init.is_some()) {
+                for declaration in hir.var_decls.iter().filter(|declaration| matches!(declaration.kind, VarKind::Const | VarKind::Let | VarKind::Var) && declaration.init.is_some()) {
                     if let (PatKind::Ident(name), ExprKind::Call(call)) = (hir[declaration.pat].kind, hir[declaration.init].kind)
                         && hir[call].args.len() == 1
                         && may_locate_its_own_file(hir.id_at(hir[call].args, 0))
@@ -1081,12 +1154,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let Some(create_require) = self.atoms().lookup(b"createRequire") else { return false };
         let Some(sym) = self.binding_of_identifier(file, e, name) else { return false };
-        let Some((of, init)) = self.initializer_of_const(sym) else { return false };
+        let Some((of, init)) = self.initializer_of_constant(sym) else { return false };
         if of != file {
             return false;
         }
         let ExprKind::Call(call) = hir[init].kind else { return false };
-        if hir[call].args.len() != 1 || !self.is_create_require(file, hir[call].callee, create_require) || !self.locates_its_own_file(file, hir.id_at(hir[call].args, 0)) {
+        if hir[call].args.len() != 1 || !self.is_member_of_builtin_module(file, hir[call].callee, b"module", create_require) || !self.locates_its_own_file(file, hir.id_at(hir[call].args, 0)) {
             return false;
         }
         if self.files().export_symbol_of_value_symbol_if_exported(sym) != sym || hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == name)) {
@@ -1102,7 +1175,7 @@ impl<'p, 's> Checker<'p, 's> {
             let is_called_or_read = match bound.expr_parent[mention.idx()] {
                 Parent::Expr(around) => match hir[around].kind {
                     ExprKind::Call(call) => hir[call].callee == mention,
-                    ExprKind::Dot { obj, .. } => obj == mention,
+                    ExprKind::Dot { obj, name, .. } => obj == mention && self.atoms().bytes(name) == b"resolve",
                     _ => false,
                 },
                 _ => false,
@@ -1573,7 +1646,7 @@ impl<'p, 's> Checker<'p, 's> {
         let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return false };
         let Some(init) = hir[declaration].init.some() else { return false };
         let (Some(specifier), ExprKind::Call(call)) = (required_specifier(hir, init), hir[init].kind) else { return false };
-        let Some(&tslib) = graph.resolved.get(&(file, specifier)) else { return false };
+        let Some(tslib) = graph.required(file, specifier) else { return false };
         let is_at_the_top = self.enclosing_fn_of_expr(file, init).is_none() && self.enclosing_fn_of_expr(file, callee).is_none();
         if !is_at_the_top
             || hir[init].end > hir[callee].pos
@@ -1717,7 +1790,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // The object is the module's own, which has no setters and is no proxy.
                     args.len() == 3 && (matches!(hir[args[0]].kind, ExprKind::Ident(known::exports)) || is_module_exports(hir, args[0])) && is_literal(args[1]) && self.is_inert_in_prologue(file, args[2], depth + 1)
                 } else {
-                    is_required && args.into_iter().all(is_literal)
+                    (is_required || self.makes_symbols(file, callee)) && args.into_iter().all(is_literal)
                 }
             }
             ExprKind::Dot { obj, chain: Chain::No, .. } if matches!(hir[obj].kind, ExprKind::Ident(name @ known::Object) if self.names_global(file, obj, name)) => true,
@@ -1726,6 +1799,49 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Object(props) => props.iter().all(|prop| matches!(hir[prop].kind, PropKind::Init | PropKind::Shorthand | PropKind::Method) && matches!(hir[prop].key, PropKey::Name(_)) && self.is_inert_in_prologue(file, hir[prop].value, depth + 1)),
             _ => false,
         }
+    }
+
+    fn makes_symbols(&mut self, file: FileId, callee: ExprId) -> bool {
+        let hir = self.hir(file);
+        match hir[callee].kind {
+            ExprKind::Ident(name @ known::Symbol) => self.names_global(file, callee, name),
+            ExprKind::Dot { obj, name, chain: Chain::No, .. } => self.atoms().bytes(name) == b"for" && matches!(hir[obj].kind, ExprKind::Ident(global @ known::Symbol) if self.names_global(file, obj, global)),
+            _ => false,
+        }
+    }
+
+    fn makes_values_alone(&mut self, file: FileId, e: ExprId, declared: &[crate::bind::SymbolId], depth: u32) -> bool {
+        let hir = self.hir(file);
+        if depth > 32 {
+            return false;
+        }
+        match hir[e].kind {
+            ExprKind::Fn(_) | ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_) => true,
+            ExprKind::Ident(_) => declared.contains(&self.bound(file).expr_symbol[e.idx()]),
+            ExprKind::Call(call) => hir[call].chain == Chain::No && hir.ids(hir[call].args).all(|argument: ExprId| matches!(hir[argument].kind, ExprKind::String(_))) && self.makes_symbols(file, hir[call].callee),
+            ExprKind::Object(props) => props.iter().all(|prop| matches!(hir[prop].kind, PropKind::Init | PropKind::Shorthand | PropKind::Method) && matches!(hir[prop].key, PropKey::Name(_)) && self.makes_values_alone(file, hir[prop].value, declared, depth + 1)),
+            _ => false,
+        }
+    }
+
+    fn only_makes_values(&mut self, file: FileId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut declared: Vec<crate::bind::SymbolId> = hir.ids(hir.body).filter_map(|stmt: StmtId| if let StmtKind::Fn(function) = hir[stmt].kind { Some(bound.fn_symbol[function.idx()]) } else { None }).filter(|symbol| symbol.is_some()).collect();
+        hir.ids(hir.body).all(|stmt: StmtId| match hir[stmt].kind {
+            StmtKind::Empty | StmtKind::Fn(_) => true,
+            StmtKind::Expr(e) => match hir[e].kind {
+                ExprKind::String(_) => true,
+                ExprKind::Assign { op: None, target, value } => is_module_exports(hir, target) && self.makes_values_alone(file, value, &declared, 0),
+                _ => false,
+            },
+            StmtKind::Var(declarations) => declarations.iter().all(|declaration| {
+                let is_plain = matches!(hir[declaration].kind, VarKind::Var | VarKind::Let | VarKind::Const) && matches!(hir[hir[declaration].pat].kind, PatKind::Ident(_));
+                let is_sound = is_plain && (hir[declaration].init.is_none() || self.makes_values_alone(file, hir[declaration].init, &declared, 0));
+                declared.push(bound.pat_symbol[hir[declaration].pat.idx()]);
+                is_sound
+            }),
+            _ => false,
+        })
     }
 
     /// `exports.name`, `module.exports.name`, `this.name` at the top level
@@ -1855,9 +1971,43 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    fn literal_named_only_by(&mut self, file: FileId, assignment: ExprId, name_of_literal: ExprId) -> Option<ExprId> {
+        let (hir, bound, by_kind) = (self.hir(file), self.bound(file), self.exprs_by_kind_of(file));
+        let ExprKind::Ident(name) = hir[name_of_literal].kind else { return None };
+        let local = bound.expr_symbol[name_of_literal.idx()];
+        let symbol = bound.symbols.get(local.idx()).filter(|symbol| !symbol.flags.contains(SymFlags::MERGED))?;
+        let &[Decl::Var(pat)] = &symbol.decls[..] else { return None };
+        let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return None };
+        let literal = hir[declaration].init;
+        let is_plain = matches!(hir[pat].kind, PatKind::Ident(_))
+            && literal.is_some()
+            && matches!(hir[literal].kind, ExprKind::Object(_))
+            && hir[declaration].ty.is_none()
+            && !hir[declaration].flags.intersects(Flags::EXPORT | Flags::AMBIENT)
+            && bound.assignments_to(local).is_empty()
+            && !self.is_stored_through_casts(file, local);
+        let Parent::Stmt(assigning) = bound.expr_parent[assignment.idx()] else { return None };
+        let declaring = bound.var_stmt[declaration.idx()];
+        if !is_plain || declaring.is_none() || !matches!(hir[declaring].kind, StmtKind::Var(declarations) if declarations.len() == 1) {
+            return None;
+        }
+        let statements: Vec<StmtId> = hir.ids(hir.body).collect();
+        if !statements.iter().zip(statements.iter().skip(1)).any(|(&first, &second)| first == declaring && second == assigning) {
+            return None;
+        }
+        let holder = self.files().sym(file, local);
+        let mut mentions = 0;
+        for &reference in by_kind.of(ExprTag::Ident) {
+            if matches!(hir[reference].kind, ExprKind::Ident(named) if named == name) && bound.expr_parent[reference.idx()] != Parent::None && self.binding_of_identifier(file, reference, name) == Some(holder) {
+                mentions += 1;
+            }
+        }
+        (mentions == 1).then_some(literal)
+    }
+
     fn find_commonjs_module(&mut self, file: FileId, graph: &Graph) -> Module {
         let (hir, bound, by_kind) = (self.hir(file), self.bound(file), self.exprs_by_kind_of(file));
-        let mut module = Module { obstacle: None, needs_module: None, values: Vec::new(), values_stored_always: 0, is_redirect: false, re_exports: None, mentions: Vec::new(), stores: FxHashMap::default(), methods: Vec::new(), marker: ExprId::NONE, getters: FxHashMap::default(), literal: ExprId::NONE, reads: FxHashSet::default(), stars: Vec::new(), esbuild_export: ExprId::NONE, is_exact_outside_cycles: false };
+        let mut module = Module { obstacle: None, needs_module: None, values: Vec::new(), values_stored_always: 0, is_redirect: false, re_exports: None, mentions: Vec::new(), stores: FxHashMap::default(), methods: Vec::new(), marker: ExprId::NONE, getters: FxHashMap::default(), literal: ExprId::NONE, name_of_literal: ExprId::NONE, reads: FxHashSet::default(), stars: Vec::new(), esbuild_export: ExprId::NONE, is_exact_outside_cycles: false };
         if self.has_direct_eval(file) {
             module.obstacle = Some("eval");
             module.needs_module = module.obstacle;
@@ -1895,7 +2045,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         for &e in by_kind.of(ExprTag::This) {
-            if self.this_container(file, e).is_none() && self.runs(file, graph, e) != Runs::Never {
+            if self.this_container(file, e).is_none() && self.runs(file, graph, e) != Runs::Never && !hir.names_import_meta() {
                 module.mentions.push(e);
             }
         }
@@ -1953,7 +2103,7 @@ impl<'p, 's> Checker<'p, 's> {
                 Use::Marked(_) => module.obstacle = Some("__esModule is defined late, or twice"),
                 Use::Assigned(assignment) => {
                     let ExprKind::Assign { value, .. } = hir[assignment].kind else { continue };
-                    let other = required_specifier(hir, value).and_then(|specifier| graph.resolved.get(&(file, specifier)).copied());
+                    let other = required_specifier(hir, value).and_then(|specifier| graph.required(file, specifier));
                     let is_statement = matches!(bound.expr_parent[assignment.idx()], Parent::Stmt(_));
                     let is_whole = is_statement && !matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::This) && self.runs(file, graph, assignment) == Runs::Always;
                     if is_whole
@@ -1972,12 +2122,14 @@ impl<'p, 's> Checker<'p, 's> {
                         module.is_exact_outside_cycles = true;
                         continue;
                     }
+                    let named_literal = if is_whole && other.is_none() && module.literal.is_none() { self.literal_named_only_by(file, assignment, value) } else { None };
                     match other {
                         Some(other) if is_whole => {
                             module.re_exports = Some(other);
                             module.is_redirect = hir.ids(hir.body).count() == 1;
                         }
                         None if is_whole && matches!(hir[value].kind, ExprKind::Object(_)) && module.literal.is_none() => module.literal = value,
+                        None if named_literal.is_some() => (module.literal, module.name_of_literal) = (named_literal.unwrap_or(ExprId::NONE), value),
                         _ if matches!(hir[e].kind, ExprKind::Ident(_)) => module.obstacle = Some("exports = .."),
                         _ if !is_whole => module.obstacle = Some("module.exports = .. in a function, a branch or an expression"),
                         _ => {
@@ -1992,7 +2144,7 @@ impl<'p, 's> Checker<'p, 's> {
                                             ExprKind::Object(_) => "module.exports = the name of a variable that holds { .. }",
                                             ExprKind::Fn(_) => "module.exports = the name of a variable that holds a function",
                                             ExprKind::Class(_) => "module.exports = the name of a variable that holds a class",
-                                            ExprKind::Call(_) | ExprKind::New(_) => "module.exports = the name of a variable that holds what a call yields",
+                                            ExprKind::Call(_) | ExprKind::New(_) => "module.exports = the name of a variable that holds the result of a call",
                                             _ => "module.exports = the name of a variable that holds something else",
                                         },
                                         _ => "module.exports = the name of a variable without an initializer, or of a pattern",
@@ -2000,8 +2152,8 @@ impl<'p, 's> Checker<'p, 's> {
                                     _ => "module.exports = another name",
                                 },
                                 ExprKind::Call(_) if other.is_some() => "module.exports = require(..), twice",
-                                ExprKind::Call(_) if required_specifier(hir, value).is_some() => "module.exports = require(..) of what is not compiled",
-                                ExprKind::Call(_) => "module.exports = what a call yields",
+                                ExprKind::Call(_) if required_specifier(hir, value).is_some() => "module.exports = require(..) of a module that is not compiled",
+                                ExprKind::Call(_) => "module.exports = the result of a call",
                                 ExprKind::New(_) => "module.exports = new ..",
                                 ExprKind::Object(_) => "module.exports = { .. }, twice",
                                 ExprKind::Assign { .. } => "module.exports = .. = ..",
@@ -2084,7 +2236,8 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(ExprKind::Object(props)) = module.literal.some().map(|literal| hir[literal].kind) {
             let end = hir[module.literal].end;
             let comes_first = module.mentions.iter().all(|&e| !matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::This) && (hir[e].end <= hir[module.literal].pos || hir[e].pos >= end || self.runs(file, graph, e) == Runs::Later));
-            let before = module.mentions.iter().filter(|&&e| hir[e].pos < hir[module.literal].pos && self.runs(file, graph, e) != Runs::Later).count();
+            let stored_at = hir[if module.name_of_literal.is_some() { module.name_of_literal } else { module.literal }].pos;
+            let before = module.mentions.iter().filter(|&&e| hir[e].pos < stored_at && self.runs(file, graph, e) != Runs::Later).count();
             if !comes_first || before != 1 || !module.getters.is_empty() || module.is_marked() && hir[module.marker].pos < end || module.stores.values().flatten().any(|store| store.runs == Runs::Later) {
                 module.obstacle = Some("module.exports = { .. } is not all that defines the exports");
             }
@@ -2111,7 +2264,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn required_by_folded_specifier(&self, file: FileId, graph: &Graph, e: ExprId) -> Vec<FileId> {
         let specifiers = self.hir(file).specifiers_of_folded_require(e);
-        specifiers.into_iter().filter_map(|specifier| graph.resolved.get(&(file, specifier)).copied()).collect()
+        specifiers.into_iter().filter_map(|specifier| graph.required(file, specifier)).collect()
     }
 
     /// The modules that a `require` in a function evaluates, and all that those evaluate. Their bodies may run while any other module is being evaluated.
@@ -2122,7 +2275,7 @@ impl<'p, 's> Checker<'p, 's> {
                 for &e in c.exprs_by_kind_of(file).of(ExprTag::Call) {
                     pending.extend(c.required_by_folded_specifier(file, graph, e));
                     let Some(specifier) = c.specifier_required_by(file, e) else { continue };
-                    if let Some(&module) = graph.resolved.get(&(file, specifier))
+                    if let Some(module) = graph.required(file, specifier)
                         && c.runs(file, graph, e) == Runs::Later
                     {
                         pending.push(module);
@@ -2145,20 +2298,83 @@ impl<'p, 's> Checker<'p, 's> {
         exposed
     }
 
+    pub fn names_the_cache_by_its_other_name(&self, file: FileId) -> bool {
+        let hir = self.hir(file);
+        self.takes_the_cache_out_of_the_module_constructor(file)
+            || self.exprs_by_kind_of(file).of(ExprTag::Dot).iter().any(|&e| matches!(hir[e].kind, ExprKind::Dot { obj, name, .. } if self.atoms().bytes(name) == b"_cache" && self.names_the_module_constructor(file, obj)))
+    }
+
+    fn takes_the_cache_out_of_the_module_constructor(&self, file: FileId) -> bool {
+        let hir = self.hir(file);
+        let is_cache = |name: Atom| self.atoms().bytes(name) == b"_cache";
+        let may_take_the_cache = |prop: &crate::hir::PatProp| {
+            prop.is_rest
+                || match prop.key {
+                    PropKey::Name(name) => is_cache(name),
+                    PropKey::None => matches!(hir[prop.value].kind, PatKind::Ident(name) if is_cache(name)),
+                    PropKey::Computed(_) => true,
+                    PropKey::Private(_) => false,
+                }
+        };
+        hir.imports.iter().any(|import| self.names_builtin_module(import.spec, b"module") && import.named.iter().any(|spec| is_cache(hir[spec].imported)))
+            || hir.var_decls.iter().any(|declaration| {
+                declaration.init.is_some() && matches!(hir[declaration.pat].kind, PatKind::Object(props) if props.iter().any(|prop| may_take_the_cache(&hir[prop]))) && self.names_the_module_constructor(file, declaration.init)
+            })
+    }
+
+    fn names_the_module_constructor(&self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let is_require_of_a_computed_name = |e: ExprId| matches!(hir[e].kind, ExprKind::Call(call) if hir[call].args.len() == 1 && matches!(hir[hir[call].callee].kind, ExprKind::Ident(of) if of == known::require)) && required_specifier(hir, e).is_none();
+        if let Some(specifier) = required_specifier(hir, e) {
+            return self.names_builtin_module(specifier, b"module");
+        }
+        if is_require_of_a_computed_name(e) {
+            return true;
+        }
+        if let ExprKind::Dot { obj, name, .. } = hir[e].kind {
+            return self.atoms().bytes(name) == b"constructor" && matches!(hir[obj].kind, ExprKind::Ident(of) if of == known::module);
+        }
+        let Some(symbol) = bound.symbols.get(bound.expr_symbol[e.idx()].idx()) else { return false };
+        symbol.decls.iter().any(|decl| match *decl {
+            Decl::Var(pat) | Decl::Require(pat) => {
+                matches!(bound.pat_parent[pat.idx()], PatParent::Var(declaration) if hir[declaration].init.is_some() && (is_require_of_a_computed_name(hir[declaration].init) || required_specifier(hir, hir[declaration].init).is_some_and(|specifier| self.names_builtin_module(specifier, b"module"))))
+            }
+            Decl::ImportNamespace(import) | Decl::ImportDefault(import) => self.names_builtin_module(hir[import].spec, b"module"),
+            _ => false,
+        })
+    }
+
     fn note_uses_of_commonjs_modules(&mut self, file: FileId, graph: &Graph, modules: &FxHashMap<FileId, Module>, keeper_of: &impl Fn(&FxHashMap<FileId, Module>, FileId) -> FileId, in_cycles: &FxHashMap<FileId, u32>, exposed: &FxHashSet<FileId>, uses: &mut Uses) {
         let (hir, bound, by_kind) = (self.hir(file), self.bound(file), self.exprs_by_kind_of(file));
         let commonjs = |specifier: Atom| graph.resolved.get(&(file, specifier)).copied().filter(|module| modules.contains_key(module));
         let mut pending: Vec<(ExprId, ExportsMention)> = Vec::new();
         let mut held: Vec<(Atom, Holder, ExportsMention)> = Vec::new();
+        if graph.evaluated_again.contains(&file) && modules.contains_key(&file) {
+            uses.looked_at.push((file, "it may be evaluated again"));
+        }
         let is_cache_of_require = |&e: &ExprId| match hir[e].kind {
-            ExprKind::Dot { obj, name, .. } => matches!(hir[obj].kind, ExprKind::Ident(of) if of == known::require) && self.atoms().bytes(name) == b"cache",
+            ExprKind::Dot { obj, name, .. } => match self.atoms().bytes(name) {
+                b"cache" | b"extensions" => matches!(hir[obj].kind, ExprKind::Ident(of) if of == known::require),
+                b"_cache" | b"_extensions" => self.names_the_module_constructor(file, obj),
+                b"_resolveFilename" => matches!(bound.expr_parent[e.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Assign { target, .. } if target == e)),
+                _ => false,
+            },
             _ => false,
         };
+        let is_children_of_a_module = |&e: &ExprId| match hir[e].kind {
+            ExprKind::Dot { obj, name, .. } if self.atoms().bytes(name) == b"children" => match hir[obj].kind {
+                ExprKind::Ident(of) => of == known::module,
+                ExprKind::Dot { name, .. } => self.atoms().bytes(name) == b"parent",
+                _ => false,
+            },
+            _ => false,
+        };
+        uses.are_children_read |= graph.is_run_from_its_sources && by_kind.of(ExprTag::Dot).iter().any(is_children_of_a_module);
         let is_require_of_a_prototype = |&e: &ExprId| match hir[e].kind {
             ExprKind::Dot { obj, name, .. } => self.atoms().bytes(name) == b"require" && matches!(hir[obj].kind, ExprKind::Dot { name, .. } if self.atoms().bytes(name) == b"prototype"),
             _ => false,
         };
-        if graph.is_run_from_its_sources && by_kind.of(ExprTag::Dot).iter().any(|e| is_cache_of_require(e) || is_require_of_a_prototype(e)) {
+        if graph.is_run_from_its_sources && (by_kind.of(ExprTag::Dot).iter().any(|e| is_cache_of_require(e) || is_require_of_a_prototype(e)) || self.takes_the_cache_out_of_the_module_constructor(file)) {
             let mut all: Vec<FileId> = modules.keys().copied().collect();
             all.sort_unstable();
             uses.looked_at.extend(all.into_iter().map(|module| (module, "require.cache is read")));
@@ -2172,12 +2388,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             let Some(specifier) = self.specifier_required_by(file, e) else { continue };
-            if let Some(module) = commonjs(specifier)
+            if let Some(module) = graph.required(file, specifier).filter(|module| modules.contains_key(module))
                 && self.runs(file, graph, e) != Runs::Never
             {
                 if self.runs(file, graph, e) == Runs::Later {
                     uses.required_by_functions.insert(module);
-                } else if !exposed.contains(&file) && in_cycles.get(&file).is_none_or(|cycle| in_cycles.get(&module) != Some(cycle)) {
+                } else if !exposed.contains(&file) && !graph.evaluated_again.contains(&module) && in_cycles.get(&file).is_none_or(|cycle| in_cycles.get(&module) != Some(cycle)) {
                     uses.finding_evaluated.insert((file, e));
                 }
                 pending.push((e, ExportsMention::of(module)));
@@ -2243,7 +2459,7 @@ impl<'p, 's> Checker<'p, 's> {
                 StmtKind::ExportStar { spec, type_only: false, .. } => uses.looked_at.extend(commonjs(spec).map(|module| (module, "export * from"))),
                 StmtKind::ImportEquals(import) => {
                     if let ImportEqualsTarget::Require(specifier) = hir[import].target {
-                        uses.looked_at.extend(commonjs(specifier).map(|module| (module, "import = require()")));
+                        uses.looked_at.extend(graph.required(file, specifier).filter(|module| modules.contains_key(module)).map(|module| (module, "import = require()")));
                     }
                 }
                 _ => {}
@@ -2333,7 +2549,7 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                     }
                     Use::Starred(call) if !mention.is_namespace && !mention.is_boxed && matches!(hir[e].kind, ExprKind::Call(_)) => uses.starred.push((file, call, module)),
-                    Use::Starred(_) | Use::StarredInto(_) => uses.looked_at.push((module, "it is passed to __exportStar, otherwise than as what `require` yields")),
+                    Use::Starred(_) | Use::StarredInto(_) => uses.looked_at.push((module, "it is passed to __exportStar, but not as the result of `require`")),
                     Use::Exported | Use::Assigned(_) | Use::Marked(_) | Use::Defined(..) => uses.looked_at.push((module, "it is used as a value")),
                     Use::Other(why) => uses.looked_at.push((module, why)),
                 }

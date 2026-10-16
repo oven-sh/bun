@@ -27,6 +27,7 @@
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
 #include "JavaScriptCore/Heap.h"
+#include "JavaScriptCore/MarkedBlockCage.h"
 #include "JavaScriptCore/DeferGCInlines.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/InitializeThreading.h"
@@ -68,7 +69,6 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
-#include "BunIDLConvert.h"
 #include "BunObject.h"
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
@@ -294,6 +294,7 @@ extern "C" bool Bun__hasStandaloneModuleGraph();
 
 extern "C" void Bun__installCompilers();
 extern "C" void Bun__AOT__setImageCodec();
+extern "C" [[noreturn]] void Bun__outOfMemory();
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool useAOT, bool crashIfInterpreterIsUsed)
 {
@@ -319,6 +320,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 #endif
         Bun__installCompilers();
         Bun__AOT__setImageCodec();
+        JSC::MarkedBlockCage::setExhaustionHandler(Bun__outOfMemory);
         JSC::initialize([&] {
 #if defined(BUN_DISABLE_WEBASSEMBLY)
             JSC::Options::useWasm() = false;
@@ -410,6 +412,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // that are not Bun's, where eval is on. After the loop: BUN_JSC_useDollarVM does not bring it back.
             if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
                 JSC::Options::useDollarVM() = false;
+            // The boundary of "=strict": see JSC::SourceProvenance.
+            if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
+                JSC::Options::disallowNonStaticCode() = true;
 #if defined(BUN_DISABLE_WEBASSEMBLY)
             // After the loop: BUN_JSC_useWasm=1 does not bring it back, and BUN_JSC_useWasm=0 stays a valid name.
             JSC::Options::useWasm() = false;
@@ -1576,7 +1581,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     RELEASE_AND_RETURN(
         throwScope,
         Bun__encoding__toString(
-            encodedString.span8().data(),
+            byteCast<uint8_t>(encodedString.span8().data()),
             length,
             globalObject,
             static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
@@ -2231,6 +2236,7 @@ void GlobalObject::finishCreation(VM& vm)
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage);
 
     m_bakeAdditions.initialize();
+    m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();
 
     static const LazyClassStructureInit lazyClassStructureInits[] = {
@@ -2997,7 +3003,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     JSObject* prototype = prototypeBase ? JSC::constructEmptyObject(globalObject, prototypeBase) : JSC::constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    prototype->structure()->setMayBePrototype(true);
+    prototype->didBecomePrototype(vm);
     prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
 
     target->setPrototypeDirect(vm, base);
@@ -3788,6 +3794,14 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         sourceOriginStringHolder = sourceURL.path().toString();
     }
 
+    if (!parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) {
+        JSC::JSObject* helpers = Bun::compiledRuntimeHelpers(globalObject, moduleName);
+        if (scope.exception()) [[unlikely]]
+            return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+        if (helpers)
+            RELEASE_AND_RETURN(scope, JSC::JSPromise::resolvedPromise(globalObject, helpers));
+    }
+
     if (Bun::hasFilesOfCompiledProgram(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         JSC::JSPromise* imported = Bun::importFileOfCompiledProgram(globalObject, loader, moduleName, sourceOriginStringHolder);
         if (scope.exception()) [[unlikely]]
@@ -3841,7 +3855,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
-    if (Bun::hasFilesOfCompiledProgram(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
+    if (Bun::hasFilesOfCompiledProgram(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader) && !Bun::isModuleMocked(static_cast<Zig::GlobalObject*>(globalObject), moduleKey)) [[unlikely]] {
         JSC::JSSourceCode* compiled = Bun::sourceOfFileOfCompiledProgram(static_cast<Zig::GlobalObject*>(globalObject), moduleKey);
         if (scope.exception()) [[unlikely]] {
             JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());

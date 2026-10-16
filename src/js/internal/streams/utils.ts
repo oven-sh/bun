@@ -1,24 +1,24 @@
+// @ts-check
 "use strict";
 
 const { isReadableState, isWritableState } =
   require("internal/streams/state") as typeof import("internal/streams/state").default;
 
-const SymbolFor = Symbol.for;
 const SymbolIterator = Symbol.iterator;
 const SymbolAsyncIterator = Symbol.asyncIterator;
 
-// We need to use SymbolFor to make these globally available
+// We need to use Symbol.for to make these globally available
 // for interoperability with readable-stream, i.e. readable-stream
 // and node core needs to be able to read/write private state
 // from each other for proper interoperability.
-const kIsDestroyed = SymbolFor("nodejs.stream.destroyed");
-const kIsErrored = SymbolFor("nodejs.stream.errored");
-const kIsReadable = SymbolFor("nodejs.stream.readable");
-const kIsWritable = SymbolFor("nodejs.stream.writable");
-const kIsDisturbed = SymbolFor("nodejs.stream.disturbed");
+const kIsDestroyed = Symbol.for("nodejs.stream.destroyed");
+const kIsErrored = Symbol.for("nodejs.stream.errored");
+const kIsReadable = Symbol.for("nodejs.stream.readable");
+const kIsWritable = Symbol.for("nodejs.stream.writable");
+const kIsDisturbed = Symbol.for("nodejs.stream.disturbed");
 
-const kIsClosedPromise = SymbolFor("nodejs.webstream.isClosedPromise");
-const kControllerErrorFunction = SymbolFor("nodejs.webstream.controllerErrorFunction");
+const kIsClosedPromise = Symbol.for("nodejs.webstream.isClosedPromise");
+const kControllerErrorFunction = Symbol.for("nodejs.webstream.controllerErrorFunction");
 
 const kObjectMode = 1 << 0;
 const kErrorEmitted = 1 << 1;

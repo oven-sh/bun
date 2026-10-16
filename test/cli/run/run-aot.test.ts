@@ -485,6 +485,48 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(actual.stdout).toBe("common.js module.ts common.js,module.ts\n");
   });
 
+  test.concurrent("every store by name to process.env goes through the conversion to a string", async () => {
+    using dir = tempDir("run-aot", {
+      "entry.ts": `
+        function store(env: any, value: any) { env.STORED_BY_NAME = value; }
+        function storeTyped(env: NodeJS.ProcessEnv, value: string) { env.STORED_BY_A_TYPED_SITE = value; }
+        const lines: string[] = [];
+        for (let i = 0; i < 6; i++) {
+          store(process.env, i);
+          lines.push(typeof process.env.STORED_BY_NAME + " " + process.env.STORED_BY_NAME + " " + Bun.env.STORED_BY_NAME);
+        }
+        for (const value of [undefined, null, true, 1.5, { toString() { return "object"; } }]) {
+          store(process.env, value);
+          lines.push(typeof process.env.STORED_BY_NAME + " " + process.env.STORED_BY_NAME);
+        }
+        for (let i = 0; i < 4; i++) {
+          storeTyped(process.env, "v" + i);
+          const child = Bun.spawnSync({ cmd: ["/bin/sh", "-c", "echo $STORED_BY_A_TYPED_SITE"], env: process.env as Record<string, string> });
+          lines.push(process.env.STORED_BY_A_TYPED_SITE + " " + child.stdout.toString().trim());
+        }
+        console.log(lines.join("\\n"));
+      `,
+    });
+    const { stdout } = await run(String(dir), true, "entry.ts", { env: { BUN_JSC_crashIfInterpreterIsUsed: "1" } });
+    expect(stdout.trim().split("\n")).toEqual([
+      "string 0 0",
+      "string 1 1",
+      "string 2 2",
+      "string 3 3",
+      "string 4 4",
+      "string 5 5",
+      "string undefined",
+      "string null",
+      "string true",
+      "string 1.5",
+      "string object",
+      "v0 v0",
+      "v1 v1",
+      "v2 v2",
+      "v3 v3",
+    ]);
+  });
+
   test.concurrent("require() and require.resolve() of a file with an unknown extension", async () => {
     const { stdout } = await expectSameAsBunRun(
       {

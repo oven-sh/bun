@@ -302,6 +302,10 @@ pub mod options {
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
         MetafileMarkdown,
+        #[strum(serialize = "declaration")]
+        Declaration,
+        #[strum(serialize = "sound")]
+        Sound,
     }
 
     impl OutputKind {
@@ -319,6 +323,8 @@ pub mod options {
                     | OutputKind::PrelinkedModuleGraph
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
+                    | OutputKind::Declaration
+                    | OutputKind::Sound
             )
         }
     }

@@ -100,5 +100,12 @@
   "built-in/path-of-untidy-paths": 100000,
   "built-in/path-of-16-bit-paths": 100000,
   "built-in/process-members": 1000000,
-  "built-in/process-argv": 1000000
+  "built-in/process-argv": 1000000,
+  "built-in/async-local-storage-get-store": 1000000,
+  "built-in/async-local-storage-of-records": 400000,
+  "built-in/stream-new-readable": 100000,
+  "built-in/events-once": 200000,
+  "built-in/process-next-tick": 400000,
+  "built-in/native-setter": 400000,
+  "built-in/regexp-exec-as-a-value": 400000
 }

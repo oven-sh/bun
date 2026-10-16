@@ -12,5 +12,8 @@
   },
   "side-effect.x.namespace.mjs": "compiled",
   "typescript.x.default.mjs": "compiled",
-  "typescript.x.dynamic-import.mjs": "compiled"
+  "typescript.x.dynamic-import.mjs": "compiled",
+  "whole.x.namespace.mjs": {
+    "output": "go,n\ngo fn:\nn 3\n"
+  }
 }

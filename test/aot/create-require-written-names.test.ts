@@ -12,6 +12,9 @@ const files = {
   "data.json": `{ "k": 1 }`,
   "node_modules/dep/package.json": `{ "name": "dep", "version": "1.0.0", "main": "index.js" }`,
   "node_modules/dep/index.js": `exports.dep = "dep";`,
+  "node_modules/dual/package.json": `{ "name": "dual", "version": "1.0.0", "exports": { ".": { "import": "./wrapper.mjs", "require": "./index.cjs" } } }`,
+  "node_modules/dual/index.cjs": `exports.state = { n: 0 }; exports.kind = "required";`,
+  "node_modules/dual/wrapper.mjs": `import both from "./index.cjs";\nexport const state = both.state;\nexport const kind = "imported";`,
 };
 
 const programs: Record<string, string> = {
@@ -53,7 +56,7 @@ console.log(lib.name, lib.twice(3));
 `,
   "with-resolve.mjs": `import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-console.log(require("./lib.cjs").name, typeof require.resolve, typeof require.cache);
+console.log(require("./lib.cjs").name, typeof require.resolve);
 `,
   "called-in-its-dead-zone.mjs": `import { createRequire } from "node:module";
 function early() { return require("./lib.cjs").name; }
@@ -64,6 +67,16 @@ console.log(early());
   "one-of-two-names.mjs": `import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 console.log(require(process.argv.length > 99 ? "./other.cjs" : "./lib.cjs").name);
+`,
+  "a-package-that-is-also-imported.mjs": `import { createRequire } from "node:module";
+import { state, kind } from "dual";
+const require = createRequire(import.meta.url);
+const required = require("dual");
+console.log(kind, required.kind, required.state === state);
+`,
+  "one-of-two-names-under-another-name.mjs": `import { createRequire } from "node:module";
+const load = createRequire(import.meta.url);
+console.log(load(process.argv.length > 99 ? "./other.cjs" : "./lib.cjs").name);
 `,
   "missing-in-a-try.mjs": `import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
@@ -81,7 +94,7 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
 const compiledOnly = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
 describe.concurrent.each(Object.keys(programs))("%s", entry => {
-  const tree = { ...files, [entry]: programs[entry], "tsconfig.json": `{ "compilerOptions": { "module": "preserve", "moduleResolution": "bundler", "types": [] } }` };
+  const tree = { ...files, [entry]: programs[entry], "tsconfig.json": `{ "compilerOptions": { "module": "preserve", "moduleResolution": "bundler" } }` };
 
   test("bun run --aot interprets nothing and prints what bun run prints", async () => {
     using dir = tempDir("create-require", tree);
@@ -92,7 +105,8 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });
 
-  test("bun build --compile --aot interprets nothing and prints what bun run prints, away from its sources", async () => {
+  // These two calls are left to the host's `require`, which looks on the disk.
+  test.skipIf(entry === "a-package-that-is-also-imported.mjs" || entry === "one-of-two-names-under-another-name.mjs")("bun build --compile --aot interprets nothing and prints what bun run prints, away from its sources", async () => {
     using dir = tempDir("create-require", tree);
     using elsewhere = tempDir("create-require-elsewhere", {});
     const plain = await spawned([bunExe(), "run", entry], String(dir));
@@ -103,6 +117,29 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
     expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });
+});
+
+test.each([
+  [
+    "deleted-from-its-cache.mjs",
+    `const before = load("./lib.cjs").name;
+const isDeleted = delete load.cache[load.resolve("./lib.cjs")];
+console.log(before, isDeleted, load("./lib.cjs").name, globalThis.evaluations);
+`,
+    "lib true lib 2\n",
+  ],
+  [
+    "called-through-call-and-bind.mjs",
+    `console.log(load("./lib.cjs").name, load.call(null, "./lib.cjs").name, load.bind(null)("./lib.cjs").name, globalThis.evaluations);
+`,
+    "lib lib lib 1\n",
+  ],
+])("a require off which more than resolve is read stays the host's: %s", async (entry, text, output) => {
+  using dir = tempDir("create-require", { ...files, [entry]: `import { createRequire } from "node:module";\nconst load = createRequire(import.meta.url);\n` + text });
+  const plain = await spawned([bunExe(), "run", entry], String(dir));
+  const aot = await spawned([bunExe(), "run", "--aot", entry], String(dir));
+  expect(plain.stdout).toBe(output);
+  expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
 });
 
 test("a require that is handed on stays the host's", async () => {

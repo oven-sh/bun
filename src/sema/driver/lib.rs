@@ -9,6 +9,7 @@ pub mod format;
 pub mod host;
 pub mod outline;
 pub mod snapshot;
+pub mod sound_files;
 pub mod typed_packages;
 
 pub use bun_sema::check::explain::MessageChain;
@@ -290,24 +291,38 @@ type ScannedFiles = Guarded<FxHashMap<Vec<u8>, ScannedFile>>;
 #[derive(Clone, Copy)]
 pub struct EarlyRun(*const core::ffi::c_void, *const ScannedFiles);
 
+// SAFETY: it is a `&Run` without its lifetimes, and `Run` is `Sync`: the threads of a request share
+// one.
 unsafe impl Send for EarlyRun {}
+// SAFETY: as above.
 unsafe impl Sync for EarlyRun {}
 
 impl EarlyRun {
     unsafe fn get<'a, 'u>(self) -> &'a Run<'u> {
+        // SAFETY: `with_early_run` made the pointer from a `Run`. The caller's contract: it is used
+        // only inside the closure passed to that function.
         unsafe { &*self.0.cast::<Run<'u>>() }
     }
 
     unsafe fn scanned_files<'a>(self) -> &'a ScannedFiles {
+        // SAFETY: `with_early_run` made the pointer from a local that lives as long as its `Run`. The
+        // caller's contract is that of `get`.
         unsafe { &*self.1 }
     }
 }
 
 pub fn with_early_run<R>(then: impl FnOnce(EarlyRun) -> R) -> R {
-    let session = Session::new();
-    let run = Run::early(&session);
-    let scanned_files = ScannedFiles::new(FxHashMap::default());
-    then(EarlyRun((&raw const run).cast(), &raw const scanned_files))
+    let result = {
+        let session = Session::new();
+        let run = Run::early(&session);
+        let scanned_files = ScannedFiles::new(FxHashMap::default());
+        then(EarlyRun((&raw const run).cast(), &raw const scanned_files))
+    };
+    THREADS_STILL_TO_RELEASE.fetch_add(1, Ordering::AcqRel);
+    release_free_pages_of(pool_of_regions());
+    let is_last = THREADS_STILL_TO_RELEASE.fetch_sub(1, Ordering::AcqRel) == 1;
+    bun_core::Global::mimalloc_cleanup(is_last);
+    result
 }
 
 /// The constants of a `Plan`. They are options while they are still being tuned: the standalone
@@ -380,8 +395,9 @@ pub struct PlanOptions {
     /// `GetCurrentDirectory` of a program is the directory of its configuration file, as that of a
     /// `ConfiguredProject` of tsserver is. Without one it is `Request::cwd`, as always otherwise.
     pub current_directory_is_of_the_project: bool,
-    /// Nobody reads what is reported about the files that are checked, so no `Diagnostic` is made of it: each has a copy
-    /// of the lines around it, which in a bundle on one line is a copy of the file.
+    /// Nobody reads what is reported about the files that are checked. So no `Diagnostic` is made of it: each has a copy
+    /// of the lines around it, which in a bundle on one line is a copy of the file. And the files are not checked:
+    /// `Request::after_file` asks for the types that it needs. See `Requested::Types`.
     pub reports_nothing_about_files: bool,
     /// A file of `Request::paths` is checked only in a project that includes it: that of the nearest configuration
     /// file or one that it references, or else the same for the configuration files further up
@@ -410,6 +426,7 @@ pub struct PlanOptions {
     /// it is in no program, and nothing is said about a program for which `Files::global_names` says nothing, or whose
     /// packages are not installed.
     pub only_the_globals: bool,
+    pub writes_declaration_files: bool,
     /// The memory of the machine, or of the container that the process is in: the programs of a request run at the same
     /// time as far as a quarter of it goes. 0: it is not known, and they run one after the other.
     pub memory: usize,
@@ -449,6 +466,7 @@ impl Default for PlanOptions {
             early_parse_only: false,
             early_scan_only: false,
             only_the_globals: false,
+            writes_declaration_files: false,
             memory: 0,
         }
     }
@@ -1283,6 +1301,7 @@ impl Report {
         self.refused.extend(other.refused);
         self.globals.extend(other.globals);
         self.listed_files.extend(other.listed_files);
+        self.declaration_files.extend(other.declaration_files);
         self.scripts_elsewhere.extend(other.scripts_elsewhere);
         self.resolution_trace.extend(other.resolution_trace);
         self.tasks.extend(other.tasks);
@@ -1341,7 +1360,7 @@ fn default_compiler_options() -> Json {
 
 fn package_holding(path: &[u8]) -> Option<(&[u8], &[u8])> {
     const INSTALLED: &[u8] = b"/node_modules/";
-    let at = path.windows(INSTALLED.len()).rposition(|window| window == INSTALLED)? + INSTALLED.len();
+    let at = strings::last_index_of(path, INSTALLED)? + INSTALLED.len();
     let mut parts = strings::split(&path[at..], b"/");
     let first = parts.next()?;
     let length = if first.starts_with(b"@") { first.len() + 1 + parts.next()?.len() } else { first.len() };
@@ -1355,6 +1374,23 @@ fn is_installed_declaration_file(path: &[u8]) -> bool {
 fn is_missing_runtime_type_library(reported: &Diagnostic) -> bool {
     const PREFIX: &[u8] = b"Cannot find type definition file for '";
     reported.code == 2688 && reported.text.strip_prefix(PREFIX).and_then(|rest| strings::split(rest, b"'").next()).is_some_and(|name| [&b"bun-types"[..], b"bun", b"node"].contains(&name))
+}
+
+fn directory_of_config_around<'p>(host: &dyn Host, file_name: &'p [u8], known: &mut FxHashMap<&'p [u8], &'p [u8]>) -> &'p [u8] {
+    let (mut directory, mut passed) = (file_name, Vec::new());
+    let found = loop {
+        let Some(at) = strings::last_index_of_char(directory, b'/') else { break &file_name[..0] };
+        directory = &directory[..at];
+        if let Some(&found) = known.get(directory) {
+            break found;
+        }
+        passed.push(directory);
+        if [&b"/tsconfig.json"[..], b"/jsconfig.json"].iter().any(|name| host.is_file(&[directory, *name].concat())) {
+            break directory;
+        }
+    };
+    known.extend(passed.into_iter().map(|directory| (directory, found)));
+    found
 }
 
 fn what_falls_with<'s>(module: &bun_sema::program::Module<'s>) -> (&'s [u8], &'s [u8]) {
@@ -1601,7 +1637,7 @@ pub fn check_provided_then<R>(
             if let std::collections::hash_map::Entry::Vacant(entry) = already_read.entry([bun_builtin_syntax::VIRTUAL_ROOT, file].concat())
                 && let Some(text) = bun_builtin_syntax::Archive::read(file)
             {
-                entry.insert(text);
+                entry.insert(text.into());
             }
         }
     }
@@ -1628,7 +1664,7 @@ pub fn check_provided_then<R>(
     disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
     disk.constants_of_imports = provided.constants_of_imports.into_iter().collect();
     disk.build_constants = provided.build_constants;
-    disk.early_paths = provided.early_paths.map(std::sync::Mutex::new);
+    disk.early_paths = provided.early_paths.map(bun_threading::Guarded::new);
     disk.early_parse_cancelled = provided.early_parse_cancelled;
     if let Libs::Bundled(libs) = request.libs {
         disk.bundled_libs = Some(libs);
@@ -2153,6 +2189,8 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             config: owner.as_deref(),
             named: Some((Extent::Project, paths.as_slice())),
             elsewhere: None,
+            // SAFETY: both places that put an `EarlyRun` into a request do so inside the closure of
+            // `with_early_run`, where the `Run` is alive.
             run: request.plan_options.early_run.map(|it| unsafe { it.get() }),
             place: None,
         };
@@ -2637,6 +2675,8 @@ fn check_project_of(
         let others: Vec<&Vec<u8>> = project.files.iter().filter(|file| names_its_files && !is_kept(file)).collect();
         let declares_globals: Vec<AtomicBool> = others.iter().map(|_| AtomicBool::new(false)).collect();
         let imported: Guarded<Vec<(Vec<u8>, usize)>> = Guarded::new(Vec::new());
+        // SAFETY: both places that put an `EarlyRun` into a request do so inside the closure of
+        // `with_early_run`, where the scanned files are alive.
         let scanned_early = request.plan_options.early_run.map(|it| unsafe { it.scanned_files() });
         if let (true, Some(scanned_early)) = (request.plan_options.early_scan_only, scanned_early) {
             disk.parallel(others.len(), &|at| {
@@ -2649,6 +2689,7 @@ fn check_project_of(
                 let imports = RefCell::new(Vec::new());
                 let may_declare_a_global = may_declare_a_global(disk, others[at], true, true, &|name| imports.borrow_mut().push(name.to_vec()));
                 scanned_early.lock().insert(others[at].clone(), ScannedFile { times, may_declare_a_global, imports: imports.into_inner() });
+                std::thread::yield_now();
             });
             return report;
         }
@@ -2671,9 +2712,12 @@ fn check_project_of(
         let mut places: Vec<(&[u8], &[u8])> = imported.iter().map(|(name, at)| (dirname::<Posix>(others[*at]), package_named_by(name))).collect();
         places.shared_sort_unstable();
         places.dedup();
-        let mut of_packages: Vec<Vec<u8>> = (places.into_iter())
-            .filter_map(|(directory, package)| global_declarations_of_package(disk, directory, package))
-            .collect();
+        let looked_into = Guarded::new(FxHashMap::default());
+        let mut asked: Vec<((&[u8], &[u8]), Option<Vec<u8>>)> = places.into_iter().map(|place| (place, None)).collect();
+        bun_sema::util::for_each_mut(&mut asked, &|count, work| disk.parallel(count, work), &|((directory, package), found)| {
+            *found = global_declarations_of_package(disk, directory, package, &looked_into);
+        });
+        let mut of_packages: Vec<Vec<u8>> = asked.into_iter().filter_map(|(_, found)| found).collect();
         of_packages.shared_sort_unstable();
         of_packages.dedup();
         let sources: FxHashSet<Vec<u8>> = (others.iter().zip(&declares_globals))
@@ -3891,27 +3935,37 @@ fn package_named_by(specifier: &[u8]) -> &[u8] {
     &specifier[..end]
 }
 
-fn global_declarations_of_package(host: &dyn Host, importing_directory: &[u8], package: &[u8]) -> Option<Vec<u8>> {
+type GlobalDeclarationsByRoot = Guarded<FxHashMap<Vec<u8>, Option<Option<Vec<u8>>>>>;
+
+fn global_declarations_of_package(host: &dyn Host, importing_directory: &[u8], package: &[u8], looked_into: &GlobalDeclarationsByRoot) -> Option<Vec<u8>> {
     let typed = [&b"@types/"[..], &package.strip_prefix(b"@").unwrap_or(package).replace(b"/", b"__")].concat();
     for directory in ancestors(importing_directory) {
         let packages = inside(directory, b"node_modules");
         for name in [package, &typed[..]] {
             let root = inside(&packages, name);
-            let Some(manifest) = host.read(&inside(&root, b"package.json")) else {
-                continue;
-            };
-            let fields = host.parse_package_json(Session::new().arena(), &manifest);
-            let written = fields.as_ref().and_then(|it| it.get(b"types").or_else(|| it.get(b"typings"))?.as_str());
-            let written = written.unwrap_or(b"index.d.ts");
-            let entry = inside(&root, written.strip_prefix(b"./").unwrap_or(written));
-            let Some(text) = host.read(&entry).filter(|_| is_declaration_file_name(&entry)) else {
-                continue;
-            };
-            let words = [&b"export as namespace"[..], b"declare global", b"<reference "];
-            return words.iter().any(|word| strings::contains(&text, word)).then(|| host.realpath(&entry));
+            let known = looked_into.lock().get(&root).cloned();
+            let found = known.unwrap_or_else(|| {
+                let found = global_declarations_of_package_at(host, &root);
+                looked_into.lock().insert(root, found.clone());
+                found
+            });
+            if let Some(declarations) = found {
+                return declarations;
+            }
         }
     }
     None
+}
+
+fn global_declarations_of_package_at(host: &dyn Host, root: &[u8]) -> Option<Option<Vec<u8>>> {
+    let manifest = host.read(&inside(root, b"package.json"))?;
+    let fields = host.parse_package_json(Session::new().arena(), &manifest);
+    let written = fields.as_ref().and_then(|it| it.get(b"types").or_else(|| it.get(b"typings"))?.as_str());
+    let written = written.unwrap_or(b"index.d.ts");
+    let entry = inside(root, written.strip_prefix(b"./").unwrap_or(written));
+    let text = host.read(&entry).filter(|_| is_declaration_file_name(&entry))?;
+    let words = [&b"export as namespace"[..], b"declare global", b"<reference "];
+    Some(words.iter().any(|word| strings::contains(&text, word)).then(|| host.realpath(&entry)))
 }
 
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they
@@ -3949,6 +4003,10 @@ fn check_named_files(
     };
     let conditions = request.conditions.iter().map(|it| it.to_vec());
     project.options.custom_conditions.extend(conditions);
+    if request.plan_options.writes_declaration_files {
+        project.options.emits_declarations = true;
+        project.options.writes_declaration_files = true;
+    }
     let config_path = project.config_path.clone();
     let last = RefCell::new(None);
     let of_configuration =
@@ -4208,6 +4266,19 @@ fn check_named_files(
             is_left_out[file.idx()] = true;
         }
         to_check.retain(|file| !(matches!(modules[file.idx()].hir.kind, FileKind::Ts | FileKind::Tsx) && package_holding(modules[file.idx()].path.text).is_some()));
+        let entry_points: Vec<Vec<u8>> = request.paths.iter().map(|path| host::from_argument(&host::from_native(request.cwd), path)).collect();
+        let mut known = FxHashMap::default();
+        let mut projects_of_entry_points = entry_points.iter().map(|path| directory_of_config_around(host, path, &mut known).to_vec());
+        let own_project = projects_of_entry_points.next().unwrap_or_default();
+        let other_projects: FxHashSet<Vec<u8>> = projects_of_entry_points.filter(|project| *project != own_project).collect();
+        if !other_projects.is_empty() && own_project == dirname::<Posix>(&config_path) {
+            let mut known = FxHashMap::default();
+            to_check.retain(|file| {
+                let module = &modules[file.idx()];
+                let is_code_of_the_program = matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx) && module.builtin.is_none() && !strings::contains(module.path.text, b"/.bun-aot-prelude/");
+                !(is_code_of_the_program && other_projects.contains(directory_of_config_around(host, module.file_name(), &mut known)))
+            });
+        }
         for file in &to_check {
             is_left_out[file.idx()] = false;
         }
@@ -4459,6 +4530,11 @@ fn check_named_files(
         }
         found.lock().extend(shown);
     };
+    // What `Request::after_file` is called after.
+    let wanted = match request.plan_options.reports_nothing_about_files {
+        true => Requested::Types,
+        false => Requested::All,
+    };
     let new_checker = |expected: Requested| {
         let mut checker = program.checker();
         checker.set_requested(expected);
@@ -4500,6 +4576,8 @@ fn check_named_files(
         }
     };
     let searches_in_the_plan = AtomicBool::new(false);
+    let is_checked_ahead = AtomicBool::new(false);
+    const MOST_SEARCHERS: usize = 8;
     let translate = |checker: &mut Checker<'_, '_>, file: FileId| {
         if let Some(after_file) = request.after_file {
             let more = more_stack_for(&[file]);
@@ -4510,11 +4588,16 @@ fn check_named_files(
             }
         }
     };
-    type Meets<'a> = &'a (dyn Fn(&mut Checker<'_, '_>, &[FileId]) + Sync);
+    #[derive(Copy, Clone, PartialEq)]
+    enum Work {
+        CheckAndTranslate,
+        Check,
+        Translate,
+    }
     // `task`: its step, its index in the step, `is_read_later`, and whether only its types and
     // declarations are. `None`: the files are checked outside the plan.
     let check_chunk =
-        |files: &[FileId], expected: Requested, task: Option<(usize, usize, bool, bool)>, meets: Option<Meets<'_>>| {
+        |files: &[FileId], expected: Requested, task: Option<(usize, usize, bool, bool)>, work: Work| {
             let translates_at_once = !searches_in_the_plan.load(Ordering::Relaxed) || program.is_what_is_given_found();
             let mut checker = new_checker(expected);
             if let Some((step, index, is_read_later, withholds_expressions)) = task {
@@ -4529,31 +4612,24 @@ fn check_named_files(
             }
             let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
             for &file in files {
-                checked.push((file, checker.check_file(file)));
-                if expected == Requested::All && (task.is_some() || !visits_in_tasks) {
+                match work {
+                    Work::Translate => checker.visit_file(file),
+                    Work::CheckAndTranslate | Work::Check => checked.push((file, checker.check_file(file))),
+                }
+                if expected == wanted && work != Work::Check && (task.is_some() || !visits_in_tasks) {
                     if translates_at_once {
                         translate(&mut checker, file);
-                    } else if meets.is_none() {
+                    } else {
                         checker.while_warming_up(|checker| translate(checker, file));
                     }
                 }
                 if checker.take_ran_out_of_stack() {
                     incomplete.push(file);
                 }
-                if let (Some(progress), Some(_)) = (request.progress, task) {
+                if let (Some(progress), Some(_)) = (request.progress.filter(|_| work != Work::Translate), task) {
                     progress.checked.fetch_add(1, Ordering::Relaxed);
                     let bytes = size(file) as usize;
                     progress.bytes_checked.fetch_add(bytes, Ordering::Relaxed);
-                }
-            }
-            if let Some(meets) = meets.filter(|_| !translates_at_once) {
-                meets(&mut checker, files);
-                for &file in files {
-                    checker.visit_file(file);
-                    translate(&mut checker, file);
-                    if checker.take_ran_out_of_stack() && !incomplete.contains(&file) {
-                        incomplete.push(file);
-                    }
                 }
             }
             deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
@@ -4572,7 +4648,7 @@ fn check_named_files(
             // bound to an earlier file of the task.
             // A freed HIR cannot be restored, and a file that is checked outside the plan is checked
             // again by its task.
-            if let Some(finished) = outcome.finished.as_ref().filter(|_| translates_at_once || meets.is_some()) {
+            if let Some(finished) = outcome.finished.as_ref().filter(|_| translates_at_once) {
                 let is_leaf = |file: &&FileId| program.files.modules[file.idx()].is_leaf;
                 outcome.trees_to_free = files.iter().filter(is_leaf).copied().collect();
                 if !finished.can_be_invalid() {
@@ -4600,6 +4676,7 @@ fn check_named_files(
     // `visited`: `after_file` or `before_visits`, for files that the task does not check. `place`: as above. `None`: the task is
     // outside the plan. `is_visited_again`: another step visits the files once more.
     type Visited<'a> = &'a (dyn Fn(&mut Checker<'_, '_>, FileId) + Sync);
+    let took_to_note: Vec<AtomicU64> = program.files.modules.iter().map(|_| AtomicU64::new(0)).collect();
     let visit_chunk = |files: &[FileId], place: Option<[usize; 2]>, visited: Visited<'_>, is_visited_again: bool| {
         let mut checker = new_checker(Requested::All);
         if let Some(place) = place {
@@ -4613,7 +4690,11 @@ fn check_named_files(
             checker.visit_file(file);
             let more = more_stack_for(&[file]);
             let budget = (more != 0).then(|| checker.begin_stack_budget_with(more));
+            let began = Instant::now();
             visited(&mut checker, file);
+            if is_visited_again {
+                took_to_note[file.idx()].store(began.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            }
             if let Some(budget) = budget {
                 checker.put_stack_budget_back(budget);
             }
@@ -4649,7 +4730,7 @@ fn check_named_files(
     }
     let check_on_this_stack = check_chunk;
     let check_chunk = |files: &[FileId], expected: Requested, task: Option<_>| {
-        on_a_stack_with(more_stack_for(files), || check_on_this_stack(files, expected, task, None))
+        on_a_stack_with(more_stack_for(files), || check_on_this_stack(files, expected, task, Work::CheckAndTranslate))
     };
     let visit_on_this_stack = visit_chunk;
     let visit_chunk = |files: &[FileId], place: Option<[usize; 2]>, visited: Visited<'_>, is_visited_again: bool| {
@@ -4709,7 +4790,18 @@ fn check_named_files(
             + type_nodes
             + request.plan_options.file_cost.max(1)
     };
-    let costs: Vec<usize> = to_check.iter().map(|&file| cost_of(file)).collect();
+    const FILES_OF_A_PIECE: usize = 256;
+    let costs: Vec<AtomicUsize> = to_check.iter().map(|_| AtomicUsize::new(0)).collect();
+    let count_piece = |piece: usize| {
+        for (cost, &file) in costs.iter().zip(&to_check).skip(piece * FILES_OF_A_PIECE).take(FILES_OF_A_PIECE) {
+            cost.store(cost_of(file), Ordering::Relaxed);
+        }
+    };
+    match to_check.len().div_ceil(FILES_OF_A_PIECE) {
+        pieces @ 0..=1 => (0..pieces).for_each(count_piece),
+        pieces => host.parallel(pieces, &count_piece),
+    }
+    let costs: Vec<usize> = costs.into_iter().map(AtomicUsize::into_inner).collect();
     let size_of = |index: usize| costs[index];
     // `PlanOptions::split_files`: the text of file `index` in at most `parts` ranges of about the same length, each from the start of
     // a statement to the start of another. Empty: the file is not split. In a declaration file nothing is inferred and no node is
@@ -4746,6 +4838,7 @@ fn check_named_files(
     let cost =
         costs.iter().sum::<usize>() + only_emitted.iter().map(|&it| cost_of(it)).sum::<usize>();
     let is_one_thread = threads == 1
+        && !visits_in_tasks
         && !request.plan_options.tasks_on_one_thread
         && cost <= request.plan_options.one_thread_max_cost;
     let all: Vec<usize> = (0..to_check.len()).collect();
@@ -4789,38 +4882,19 @@ fn check_named_files(
         visits_in_tasks && checker_count == 0 && is_any_type_checked && !plan.steps.is_empty() && plan.ahead.is_empty() && has_whole_trees,
         Ordering::Relaxed,
     );
-    struct Permits {
-        state: std::sync::Mutex<(usize, Vec<usize>)>,
-        has_changed: std::sync::Condvar,
-    }
-    impl Permits {
-        fn acquire(&self, rank: usize) {
-            let mut state = self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            state.1.push(rank);
-            while state.0 == 0 || state.1.iter().min() != Some(&rank) {
-                state = self.has_changed.wait(state).unwrap_or_else(std::sync::PoisonError::into_inner);
-            }
-            state.0 -= 1;
-            state.1.retain(|&waiting| waiting != rank);
-            self.has_changed.notify_all();
-        }
-        fn release(&self) {
-            self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).0 += 1;
-            self.has_changed.notify_all();
-        }
-    }
     let steps: Guarded<Vec<StepReport>> = Guarded::new(Vec::new());
     // For every task since the last barrier: wall time, the number of files, the index of the first file.
     let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
+    let took_to_check: Vec<AtomicU64> = to_check.iter().map(|_| AtomicU64::new(0)).collect();
     // Returns the invalid tasks.
     // `ahead`: by task. Empty: every task checks whole files.
     // `is_retry`: the valid tasks publish, so that the tasks retried after them find what they stored.
     let run_round =
-        |number: usize, step: &[Task], ahead: &[Ahead], expected: Requested, is_retry: bool| {
+        |number: usize, step: &[Task], ahead: &[Ahead], expected: Requested, is_retry: bool, work: Work| {
         // After the last step the published state is read by the loop over the files that are not
         // checked, which runs with `after_file`, and by a caller that goes on to query the program.
         // The tasks of split files read the ranges, and nothing else of the step before theirs.
-        let is_read_by_a_step = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len();
+        let is_read_by_a_step = work == Work::Check || number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len();
         let is_read_later = is_read_by_a_step
             || is_retry
             || request.retains_everything
@@ -4830,7 +4904,10 @@ fn check_named_files(
         let withholds_expressions =
             visits_in_tasks && !is_read_by_a_step && !request.retains_everything;
         let tasks = step.len();
-        let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
+        let weight_of = |i: usize| match work {
+            Work::Translate => step[i].iter().map(|&it| took_to_check[it].load(Ordering::Relaxed) as usize).sum::<usize>(),
+            Work::CheckAndTranslate | Work::Check => step[i].iter().map(|&it| size_of(it)).sum::<usize>(),
+        };
         // The largest first, so that no thread begins it when the others are nearly done.
         let mut start_order: Vec<usize> = (0..tasks).collect();
         match request.order {
@@ -4841,7 +4918,7 @@ fn check_named_files(
         let outcomes: Vec<Guarded<Option<Outcome>>> =
             (0..tasks).map(|_| Guarded::new(None)).collect();
         let (started, busy) = (Instant::now(), AtomicU64::new(0));
-        let run_task = |i: usize, meets: Option<Meets<'_>>| {
+        let run_task = |i: usize| {
             let (index, began) = (start_order[i], Instant::now());
             let cost_before = request.task_clock.map(|clock| clock());
             let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
@@ -4849,10 +4926,7 @@ fn check_named_files(
                 Some(range) => check_ahead(files[0], range, expected, [number, index]),
                 None => {
                     let task = (number, index, is_read_later, withholds_expressions);
-                    match meets {
-                        Some(_) => check_on_this_stack(&files, expected, Some(task), meets),
-                        None => check_chunk(&files, expected, Some(task)),
-                    }
+                    on_a_stack_with(more_stack_for(&files), || check_on_this_stack(&files, expected, Some(task), work))
                 }
             };
             *outcomes[index].lock() = Some(outcome);
@@ -4862,86 +4936,38 @@ fn check_named_files(
                 (Some(clock), Some(before)) => Duration::from_nanos(clock() - before),
                 _ => elapsed,
             };
+            if work == Work::Check {
+                let share = cost.as_nanos() as u64 / files.len() as u64;
+                for &file in &step[index] {
+                    took_to_check[file].fetch_add(share, Ordering::Relaxed);
+                }
+            }
             task_times.lock().push((cost, files.len(), step[index][0]));
         };
-        let meets_here = searches_in_the_plan.load(Ordering::Relaxed) && expected == Requested::All && number + 1 == plan.steps.len() && !program.is_what_is_given_found();
+        let meets_here = work == Work::Translate && number + 1 == plan.steps.len() && !program.is_what_is_given_found();
         let mut of_searchers: Vec<Outcome> = Vec::new();
+        let mut earlier: Vec<FileId> = Vec::new();
+        let searchers = threads.clamp(1, MOST_SEARCHERS);
         if meets_here {
-            let searchers = threads.max(1);
-            let meeting = program.meeting_of(tasks + searchers);
-            let permits = Permits { state: std::sync::Mutex::new((threads.max(1), Vec::new())), has_changed: std::sync::Condvar::new() };
-            let mut is_taken = vec![false; program.files.modules.len()];
-            for &file in step.iter().flatten() {
-                is_taken[to_check[file].idx()] = true;
-            }
-            let earlier: Vec<FileId> = plan.steps[..number].iter().flatten().flatten().map(|&file| to_check[file]).collect();
-            let have_arrived = (std::sync::Mutex::new(0usize), std::sync::Condvar::new());
-            let is_first_translated = (std::sync::Mutex::new(earlier.is_empty()), std::sync::Condvar::new());
+            let meeting = program.meeting_of(searchers);
+            earlier = plan.steps[..number].iter().flatten().flatten().map(|&file| to_check[file]).collect();
             let found: Vec<Guarded<Option<Outcome>>> = (0..searchers).map(|_| Guarded::new(None)).collect();
-            let (run_task, meeting, permits, is_taken, earlier, is_first_translated, have_arrived, found, start_order) = (&run_task, &meeting, &permits, &is_taken, &earlier, &is_first_translated, &have_arrived, &found, &start_order);
-            let (step_of_searchers, deepest_stack, translate, new_checker) = ((plan.steps.len() + 1) as u32, &deepest_stack, &translate, &new_checker);
+            let (meeting, found) = (&meeting, &found);
+            let (step_of_searchers, deepest_stack, new_checker) = ((plan.steps.len() + 1) as u32, &deepest_stack, &new_checker);
             std::thread::scope(|scope| {
-                for i in 0..tasks {
-                    let files: Vec<FileId> = step[start_order[i]].iter().map(|&file| to_check[file]).collect();
-                    std::thread::Builder::new()
-                        .stack_size(STACK_OF_A_WORKER as usize + more_stack_for(&files))
-                        .spawn_scoped(scope, move || {
-                            bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
-                            permits.acquire(i);
-                            run_task(i, Some(&|checker: &mut Checker<'_, '_>, files: &[FileId]| {
-                                permits.release();
-                                *have_arrived.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
-                                have_arrived.1.notify_all();
-                                checker.search_with_the_others(meeting, start_order[i], &Share::Of(files));
-                                let mut is_translated = is_first_translated.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                                while !*is_translated {
-                                    is_translated = is_first_translated.1.wait(is_translated).unwrap_or_else(std::sync::PoisonError::into_inner);
-                                }
-                                drop(is_translated);
-                                permits.acquire(i);
-                            }));
-                            permits.release();
-                        })
-                        .expect("a thread");
-                }
                 for index in 0..searchers {
                     std::thread::Builder::new()
                         .stack_size(STACK_OF_A_WORKER as usize)
                         .spawn_scoped(scope, move || {
                             bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
-                            let mut arrived = have_arrived.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                            while *arrived < tasks {
-                                arrived = have_arrived.1.wait(arrived).unwrap_or_else(std::sync::PoisonError::into_inner);
-                            }
-                            drop(arrived);
                             let mut searcher = new_checker(Requested::All);
                             searcher.begin_task(step_of_searchers, index as u32, true);
-                            searcher.search_with_the_others(meeting, tasks + index, &Share::Rest { index, of: searchers, is_taken });
-                            if index != 0 {
-                                let mut is_translated = is_first_translated.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                                while !*is_translated {
-                                    is_translated = is_first_translated.1.wait(is_translated).unwrap_or_else(std::sync::PoisonError::into_inner);
-                                }
-                            }
-                            permits.acquire(tasks + index);
-                            let mut incomplete = Vec::new();
-                            for &file in earlier.iter().skip(index).step_by(searchers) {
-                                searcher.visit_file(file);
-                                translate(&mut searcher, file);
-                                if searcher.take_ran_out_of_stack() {
-                                    incomplete.push(file);
-                                }
-                                if index == 0 {
-                                    *is_first_translated.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = true;
-                                    is_first_translated.1.notify_all();
-                                }
-                            }
-                            permits.release();
+                            searcher.search_with_the_others(meeting, index, &Share::Rest { index, of: searchers, is_taken: &[] });
                             deepest_stack.fetch_max(searcher.deepest_stack(), Ordering::Relaxed);
                             *found[index].lock() = Some(Outcome {
                                 finished: Some(searcher.end_task()),
                                 checked: Vec::new(),
-                                incomplete,
+                                incomplete: Vec::new(),
                                 generic_relation_entries_not_published: searcher.generic_relation_entries_not_published(),
                                 trees_to_free: Vec::new(),
                                 obstacles: 0,
@@ -4951,9 +4977,15 @@ fn check_named_files(
                 }
             });
             of_searchers = found.iter().map(|outcome| outcome.lock().take().unwrap()).collect();
-        } else {
-            host.parallel(tasks, &|i| run_task(i, None));
         }
+        let of_earlier: Vec<Guarded<Option<Outcome>>> = earlier.iter().map(|_| Guarded::new(None)).collect();
+        host.parallel(tasks + earlier.len(), &|i| match (i.checked_sub(tasks), request.after_file) {
+            (Some(at), Some(after_file)) => {
+                *of_earlier[at].lock() = Some(visit_chunk(&earlier[at..=at], Some([plan.steps.len(), searchers + at]), after_file, false));
+            }
+            _ => run_task(i),
+        });
+        of_searchers.extend(of_earlier.iter().map(|outcome| outcome.lock().take().unwrap()));
         let in_tasks = started.elapsed();
         // The barrier. Everything from here on is in task order.
         let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
@@ -4985,7 +5017,7 @@ fn check_named_files(
                 if is_invalid && ahead.get(index).is_some_and(Option::is_some) {
                     ranges_dropped += 1;
                 } else if is_invalid {
-                    if let Some(progress) = request.progress {
+                    if let Some(progress) = request.progress.filter(|_| work != Work::Translate) {
                         let bytes = task.iter().map(|&file| bytes_of(file)).sum();
                         progress.checked.fetch_sub(task.len(), Ordering::Relaxed);
                         progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
@@ -5059,9 +5091,9 @@ fn check_named_files(
     };
     // Retries the files of invalid tasks until every task is valid (`Program::validate`). They are partitioned again, because a few long
     // tasks would leave most threads idle. The first task of a round is always valid, so every round has fewer files.
-    let run_step = |number: usize, step: &[Task], expected: Requested| {
+    let run_step = |number: usize, step: &[Task], expected: Requested, work: Work| {
         program.compare_listings();
-        let mut invalid = run_round(number, step, plan.ahead_of(number), expected, false);
+        let mut invalid = run_round(number, step, plan.ahead_of(number), expected, false, work);
         let mut retried = 0;
         while !invalid.is_empty() {
             let mut files = invalid.concat();
@@ -5075,7 +5107,7 @@ fn check_named_files(
                 true => Plan::of_one_thread(files, &size_of, &request.plan_options),
                 false => Plan::cut(files, &size_of, &request.plan_options),
             };
-            invalid = run_round(number, &again, &[], expected, true);
+            invalid = run_round(number, &again, &[], expected, true, work);
         }
     };
     // `NewDiagnosticForNode` without a node: the range is empty, not undefined.
@@ -5097,7 +5129,15 @@ fn check_named_files(
     let check_files = |expected: Requested, type_checked: bool| {
         if type_checked == is_any_type_checked {
             for (number, step) in plan.steps.iter().enumerate() {
-                run_step(number, step, expected);
+                let meets = searches_in_the_plan.load(Ordering::Relaxed) && number + 1 == plan.steps.len() && !program.is_what_is_given_found();
+                let halves: &[Work] = match expected == Requested::All {
+                    true if is_checked_ahead.load(Ordering::Relaxed) => &[Work::Translate],
+                    true if meets => &[Work::Check, Work::Translate],
+                    _ => &[Work::CheckAndTranslate],
+                };
+                for &work in halves {
+                    run_step(number, step, expected, work);
+                }
             }
         }
         if !type_checked {
@@ -5219,8 +5259,33 @@ fn check_named_files(
                     }
                 });
             };
+            if searches_in_the_plan.load(Ordering::Relaxed) {
+                let (last, earlier) = plan.steps.split_last().expect("the plan has a step");
+                let (mut first, mut rest): (Vec<Task>, Vec<Task>) = (Vec::new(), Vec::new());
+                for task in last {
+                    let cost: usize = task.iter().map(|&file| size_of(file)).sum();
+                    let mut cost_before = 0;
+                    let is_early = |&&file: &&usize| {
+                        let is_early = cost_before * 8 < cost;
+                        cost_before += size_of(file);
+                        is_early
+                    };
+                    let (early, late) = task.split_at(task.iter().take_while(is_early).count());
+                    first.push(early.to_vec());
+                    rest.extend(Some(late.to_vec()).filter(|late| !late.is_empty()));
+                }
+                let cost_of_all = |tasks: &[Task]| tasks.iter().flatten().map(|&file| size_of(file)).sum::<usize>();
+                if cost_of_all(&first) < cost_of_all(&rest) {
+                    is_checked_ahead.store(true, Ordering::Relaxed);
+                    for (number, step) in earlier.iter().enumerate() {
+                        run_step(number, step, Requested::All, Work::Check);
+                    }
+                    run_step(earlier.len(), &first, Requested::All, Work::Check);
+                    run_step(earlier.len(), &rest, Requested::All, Work::Check);
+                }
+            }
             let mut finished = loop {
-                let gave_up = match program.find_what_is_given(threads, 0, searches_in_the_plan.load(Ordering::Relaxed), &at_once) {
+                let gave_up = match program.find_what_is_given(threads.min(MOST_SEARCHERS), 0, searches_in_the_plan.load(Ordering::Relaxed), &at_once) {
                     Ok(finished) => break finished,
                     Err(gave_up) => gave_up,
                 };
@@ -5244,7 +5309,7 @@ fn check_named_files(
             }
         }
         for type_checked in [!emits_first, emits_first] {
-            check_files(Requested::All, type_checked);
+            check_files(wanted, type_checked);
             report.diagnostics.append(&mut found.lock());
             // What a checker reports without a file after this is never asked for.
             if type_checked {
@@ -5301,12 +5366,15 @@ fn check_named_files(
                         false => 1,
                     };
                     let indices = (0..to_visit.len()).collect();
-                    let options = PlanOptions { min_tasks: 128, ..request.plan_options };
+                    let options = PlanOptions { min_tasks: if is_visited_again { 128 } else { 512 }, ..request.plan_options };
                     let tasks = Plan::cut(indices, &weight_of, &options);
                     let tasks: Vec<Vec<FileId>> = (tasks.iter())
                         .map(|task| task.iter().map(|&index| to_visit[index]).collect())
                         .collect();
-                    let weight_of = |i: usize| tasks[i].iter().map(|&it| size(it) as usize).sum::<usize>();
+                    let weight_of = |i: usize| {
+                        let took: u64 = tasks[i].iter().map(|&it| took_to_note[it.idx()].load(Ordering::Relaxed)).sum();
+                        (if is_visited_again { 0 } else { took }, tasks[i].iter().map(|&it| size(it) as usize).sum::<usize>())
+                    };
                     let mut start_order: Vec<usize> = (0..tasks.len()).collect();
                     match request.order {
                         1 => start_order.sort_by_key(|&i| Reverse(weight_of(i))),
@@ -5406,6 +5474,9 @@ fn check_named_files(
     report.declaration_files = std::mem::take(&mut *declaration_files.lock());
     if let Some(checked) = request.checked {
         checked(program);
+    }
+    if visits_in_tasks && !request.retains_everything {
+        program.release_tables_of_expressions();
     }
     let is_error = |d: &Diagnostic| d.category == Category::Error;
     let places: Vec<Option<(FileId, u32)>> = (report.diagnostics.iter())

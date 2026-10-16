@@ -19,7 +19,7 @@
 // With a second output file, also the archive `bun build --compile --aot` compiles the modules from: their sources as they
 // are written, the two declaration files, and the manifest. The format is described in src/builtin_syntax/lib.rs.
 //
-// Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>]
+// Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>] [--types-only=<schema>,..]
 import fs from "node:fs";
 import path from "node:path";
 import { constants, zstdCompressSync } from "node:zlib";
@@ -37,7 +37,10 @@ import { define, globalsToPrefix } from "./replacements";
 
 const debug = process.argv[2] === "--debug=ON";
 const output = process.argv[3];
-const archive = process.argv[4];
+const archive = process.argv[4]?.startsWith("--") ? undefined : process.argv[4];
+const typesOnlyFlag = process.argv.find(argument => argument.startsWith("--types-only="));
+const isTypesOnly = (schema: string) =>
+  typesOnlyFlag ? typesOnlyFlag.split("=")[1].split(",").includes(schema) : !debug && schema.endsWith("_test.bind.ts");
 if (!/^--debug=(OFF|ON)$/.test(process.argv[2] ?? "") || !output) {
   console.error("Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>]");
   process.exit(1);
@@ -154,7 +157,7 @@ for (let id = 0; id < moduleList.length; id++) {
 // An id is the position of the first call of a native function, over the modules in registry order and then the files
 // of builtin functions. The transpiler's output tells a call from the same text in a comment.
 const nativeCall =
-  /\$(cpp|rust|newCppFunction|newRustFunction|bindgenFn)\(\s*(["'])([^"'\n]+)\2\s*,\s*(["'])([^"'\n]+)\4\s*(?:,\s*(\d+)\s*)?,?\s*\)/g;
+  /\$(cpp|rust|newCppFunction|newRustFunction|bindgen)\(\s*(["'])([^"'\n]+)\2\s*,\s*(["'])([^"'\n]+)\4\s*(?:,\s*(\d+)\s*)?,?\s*\)/g;
 const transpiler = new Bun.Transpiler({ loader: "ts" });
 const keyOf = (match: RegExpMatchArray) => `${match[1]}\t${match[3]}\t${match[5]}`;
 const seen = new Set<string>();
@@ -166,10 +169,11 @@ for (const file of [...moduleList.slice(0, nativeStartIndex), ...functionFiles])
     const key = keyOf(match);
     if (!calls.has(key)) continue;
     const [, macro, , nativeFile, , symbol, length] = match;
+    if (macro === "bindgen" && isTypesOnly(nativeFile)) continue;
     if (macro.startsWith("new") !== (length !== undefined)) {
       throw new Error(`$${macro} takes ${macro.startsWith("new") ? "three" : "two"} arguments, but got '${match[0]}'`);
     }
-    const kind = macro === "bindgenFn" ? "bind" : macro.includes("ust") ? "rust" : "cpp";
+    const kind = macro === "bindgen" ? "bind" : macro.includes("ust") ? "rust" : "cpp";
     const id = registerNativeCall(kind, nativeFile, symbol, length === undefined ? null : Number(length));
     if (seen.has(key)) continue;
     seen.add(key);

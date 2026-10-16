@@ -14,10 +14,11 @@ pub mod prim {
     pub const STRING: u32 = 1 << 5;
     pub const SYMBOL: u32 = 1 << 6;
     pub const BIGINT: u32 = 1 << 7;
+    pub const LITERAL_STRING: u32 = 1 << 8;
     pub const BOOLEAN: u32 = FALSE | TRUE;
     pub const NULLISH: u32 = UNDEFINED | NULL;
     /// Kept as a reference, as objects and functions are.
-    pub const CELLS: u32 = STRING | SYMBOL | BIGINT;
+    pub const CELLS: u32 = STRING | SYMBOL | BIGINT | LITERAL_STRING;
     pub const ALL: u32 = (1 << 8) - 1;
 }
 
@@ -96,6 +97,15 @@ impl Declared {
         }
         self
     }
+    pub fn has_literal_string(&self) -> bool {
+        self.prims & prim::LITERAL_STRING != 0
+    }
+    pub fn with_literal_string_widened(mut self) -> Declared {
+        if self.has_literal_string() {
+            self.prims = self.prims & !prim::LITERAL_STRING | prim::STRING;
+        }
+        self
+    }
     /// The layout, if it is objects of one type of the program, or nil, and nothing else.
     pub fn only_layout(&self) -> Option<LayoutId> {
         match self.parts[..] {
@@ -140,19 +150,24 @@ impl Declared {
             parts.sort_unstable();
             parts.dedup();
         }
-        Declared { prims, ints, parts, any_object, any_function: self.any_function || other.any_function }
+        Declared { prims, ints, parts, any_object, any_function: self.any_function || other.any_function }.normalized()
+    }
+
+    pub fn normalized(self) -> Declared {
+        if self.prims & !(prim::LITERAL_STRING | prim::NULLISH) != 0 || self.ints.is_some() || self.has_objects() { self.with_literal_string_widened() } else { self }
     }
 }
 
 pub struct DeclaredTable {
     pub list: Vec<Declared>,
+    pub widened: Vec<Declared>,
     ids: FxHashMap<Declared, TyId>,
     pub anything: TyId,
 }
 
 impl Default for DeclaredTable {
     fn default() -> DeclaredTable {
-        let mut table = DeclaredTable { list: Vec::new(), ids: FxHashMap::default(), anything: TyId::NONE };
+        let mut table = DeclaredTable { list: Vec::new(), widened: Vec::new(), ids: FxHashMap::default(), anything: TyId::NONE };
         table.anything = table.intern(Declared::anything());
         table
     }
@@ -160,16 +175,21 @@ impl Default for DeclaredTable {
 
 impl DeclaredTable {
     pub fn intern(&mut self, declared: Declared) -> TyId {
+        let declared = declared.normalized();
         if let Some(&id) = self.ids.get(&declared) {
             return id;
         }
         let id = TyId::new(self.list.len());
         self.list.push(declared.clone());
+        self.widened.push(declared.clone().with_literal_string_widened());
         self.ids.insert(declared, id);
         id
     }
     pub fn get(&self, id: TyId) -> &Declared {
         &self.list[id.idx()]
+    }
+    pub fn get_widened(&self, id: TyId) -> &Declared {
+        &self.widened[id.idx()]
     }
     pub fn find(&self, declared: &Declared) -> Option<TyId> {
         self.ids.get(declared).copied()

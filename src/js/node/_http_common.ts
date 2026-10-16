@@ -2,6 +2,7 @@
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js
 const { checkIsHttpToken } = require("internal/validators");
 const FreeList = require("internal/freelist");
+const { kIncomingMessage, kSkipPendingData } = require("internal/http");
 interface HTTPParserError extends Error {
   bytesParsed: number;
   code: string;
@@ -123,8 +124,6 @@ const validateHeaderValue = (name, value) => {
 // CLI parsing, so reading it once here is equivalent.
 const insecureHTTPParser = $newRustFunction("node_http_binding.rs", "getInsecureHTTPParser", 0)();
 
-const kIncomingMessage = Symbol("IncomingMessage");
-const kSkipPendingData = Symbol("SkipPendingData");
 const kOnMessageBegin = HTTPParser.kOnMessageBegin | 0;
 const kOnHeaders = HTTPParser.kOnHeaders | 0;
 const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;

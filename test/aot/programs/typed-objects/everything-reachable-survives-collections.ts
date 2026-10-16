@@ -1,4 +1,6 @@
 // Every kind of reference the garbage collector follows keeps its target alive: fields of typed objects, elements and named properties of arrays, strings, maps and closures.
+const shell = globalThis as any;
+const collect: (full: boolean) => void = shell.Bun ? (full: boolean) => shell.Bun.gc(full) : (full: boolean) => (full ? shell.fullGC() : shell.edenGC());
 type Leaf = { id: number; label: string };
 type Pair = { left: Leaf | undefined; right: Leaf | null; anything: unknown; count: number };
 type Wide = {
@@ -134,11 +136,11 @@ for (let round = 0; round < 6; round++) {
     }
   }
   const dropped = garbage(4000);
-  if (round % 2) Bun.gc(true);
-  else Bun.gc(false);
+  if (round % 2) collect(true);
+  else collect(false);
   for (let i = 0; i < pairs.length; i += 3) pairs[i].left = leaf(i);
   for (let holder = chain, i = 0; holder && i < 400; holder = holder.next, i++) holder.list.owner = leaf(i);
-  Bun.gc(true);
+  collect(true);
 
   let sum = dropped;
   for (let holder = chain; holder; holder = holder.next) {

@@ -124,7 +124,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         filled = self.operation(fx, "CloneObjectWith", &operands);
                     }
                     fx.checked.insert(filled, copied);
-                    fx.b.func.values[filled.idx()].prediction = Prediction::Ty(self.ty_of(copied));
+                    fx.b.func.values[filled.idx()].set_prediction(Prediction::Ty(self.ty_of(copied)));
                 } else {
                     self.operation(fx, "CopyDataProperties", &[filled, source]);
                 }

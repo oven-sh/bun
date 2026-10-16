@@ -250,7 +250,7 @@ function createRenderState(
   importMap$given: FZ.ImportMap,
   onHeaders$given: FZ.OnHeaders | null | undefined,
   maxHeadersLength: FZ.PropValue
-): FZ.RenderState { var nonce, importMap, onHeaders; nonce = nonce$given; importMap = importMap$given; onHeaders = onHeaders$given; var idPrefix$asScript: FZ.PropValue; var idPrefix$asState: FZ.ResumableState; var idPrefix$asResource: FZ.Resource; var nonceStyle$asState: FZ.ResumableState; var nonceStyle$asResource: FZ.Resource; var inlineStyleWithNonce$asProps: FZ.PropsBag; var inlineStyleWithNonce$asSrc: FZ.PropValue; var inlineScriptWithNonce$asProps: FZ.PropsBag; var bootstrapScriptContent$asChunks: FZ.Chunk[];
+): FZ.RenderState { var nonce, importMap, onHeaders; nonce = nonce$given; importMap = importMap$given; onHeaders = onHeaders$given; var onHeaders$asState: FZ.RenderState; var idPrefix$asScript: FZ.PropValue; var idPrefix$asState: FZ.ResumableState; var idPrefix$asResource: FZ.Resource; var nonceStyle$asState: FZ.ResumableState; var nonceStyle$asResource: FZ.Resource; var inlineStyleWithNonce$asProps: FZ.PropsBag; var inlineStyleWithNonce$asSrc: FZ.PropValue; var inlineScriptWithNonce$asProps: FZ.PropsBag; var bootstrapScriptContent$asChunks: FZ.Chunk[];
   externalRuntimeConfig =
     "string" === typeof nonce ? nonce : nonce && nonce.script;
   var inlineScriptWithNonce: string | undefined =
@@ -297,7 +297,7 @@ function createRenderState(
           2 + ("number" === typeof maxHeadersLength ? maxHeadersLength : 2e3)
       } as FZ.PreloadHeaders
     : null;
-  onHeaders = {
+  onHeaders$asState = {
     placeholderPrefix: idPrefix + "P:",
     segmentPrefix: idPrefix + "S:",
     boundaryPrefix: idPrefix + "B:",
@@ -365,7 +365,7 @@ function createRenderState(
         (idPrefix$asState.moduleScriptResources[bootstrapScriptContent] = null),
         (idPrefix$asResource = []),
         pushLinkImpl(idPrefix$asResource, inlineStyleWithNonce$asProps),
-        onHeaders.bootstrapScripts.add(idPrefix$asResource),
+        onHeaders$asState.bootstrapScripts.add(idPrefix$asResource),
         bootstrapChunks.push(
           '<script src="',
           escapeTextForBrowser(maxHeadersLength),
@@ -419,7 +419,7 @@ function createRenderState(
         (nonceStyle$asState.moduleScriptResources[inlineStyleWithNonce$asSrc] = null),
         (nonceStyle$asResource = []),
         pushLinkImpl(nonceStyle$asResource, inlineScriptWithNonce$asProps),
-        onHeaders.bootstrapScripts.add(nonceStyle$asResource),
+        onHeaders$asState.bootstrapScripts.add(nonceStyle$asResource),
         bootstrapChunks.push(
           '<script type="module" src="',
           escapeTextForBrowser(bootstrapScripts),
@@ -445,7 +445,7 @@ function createRenderState(
           ),
         pushCompletedShellIdAttribute(bootstrapChunks, resumableState),
         bootstrapChunks.push(' async="">\x3c/script>');
-  return onHeaders;
+  return onHeaders$asState;
 }
 function createResumableState(
   identifierPrefix: FZ.PropValue,
@@ -3324,7 +3324,7 @@ function resetHooksState(): void {
 function basicStateReducer(state: FZ.HookState, action: FZ.HookState): FZ.HookState {
   return "function" === typeof action ? action(state) : action;
 }
-function useReducer(reducer$given: FZ.Reducer, initialArg$given: FZ.HookState, init$given?: (initialArg: FZ.HookState) => FZ.HookState): FZ.DispatchTuple { var reducer, initialArg, init; reducer = reducer$given; initialArg = initialArg$given; init = init$given;
+function useReducer(reducer$given: FZ.Reducer, initialArg$given: FZ.HookState, init$given?: (initialArg: FZ.HookState) => FZ.HookState): FZ.DispatchTuple { var reducer, initialArg, init; reducer = reducer$given; initialArg = initialArg$given; init = init$given; var init$asUpdate: FZ.Update | null | undefined;
   currentlyRenderingComponent = resolveCurrentlyRenderingComponent();
   workInProgressHook = createWorkInProgressHook();
   if (isReRender) {
@@ -3332,12 +3332,12 @@ function useReducer(reducer$given: FZ.Reducer, initialArg$given: FZ.HookState, i
     initialArg = queue.dispatch;
     if (
       null !== renderPhaseUpdates &&
-      ((init = renderPhaseUpdates.get(queue)), void 0 !== init)
+      ((init$asUpdate = renderPhaseUpdates.get(queue)), void 0 !== init$asUpdate)
     ) {
       renderPhaseUpdates.delete(queue);
       queue$asState = workInProgressHook.memoizedState;
-      do (queue$asState = reducer(queue$asState, init.action)), (init = init.next);
-      while (null !== init);
+      do (queue$asState = reducer(queue$asState, init$asUpdate.action)), (init$asUpdate = init$asUpdate.next);
+      while (null !== init$asUpdate);
       workInProgressHook.memoizedState = queue$asState;
       return [queue$asState, initialArg];
     }
@@ -3384,7 +3384,7 @@ function useMemo(nextCreate$given: () => FZ.MemoValue, deps: FZ.HookDeps): FZ.Me
   workInProgressHook.memoizedState = [nextCreate, deps];
   return nextCreate;
 }
-function dispatchAction(componentIdentity$given: FZ.ComponentIdentity, queue$given: FZ.UpdateQueue, action$given: FZ.HookState): void { var componentIdentity, queue, action; componentIdentity = componentIdentity$given; queue = queue$given; action = action$given;
+function dispatchAction(componentIdentity$given: FZ.ComponentIdentity, queue$given: FZ.UpdateQueue, action$given: FZ.HookState): void { var componentIdentity: FZ.ComponentIdentity, queue: FZ.UpdateQueue, action: FZ.HookState; componentIdentity = componentIdentity$given; queue = queue$given; action = action$given; var componentIdentity$asUpdate: FZ.Update; var action$asFirst: FZ.Update | undefined; var queue$asLast: FZ.Update;
   if (25 <= numberOfReRenders)
     throw Error(
       "Too many re-renders. React limits the number of renders to prevent an infinite loop."
@@ -3392,15 +3392,15 @@ function dispatchAction(componentIdentity$given: FZ.ComponentIdentity, queue$giv
   if (componentIdentity === currentlyRenderingComponent)
     if (
       ((didScheduleRenderPhaseUpdate = !0),
-      (componentIdentity = { action: action, next: null } as FZ.Update),
+      (componentIdentity$asUpdate = { action: action, next: null } as FZ.Update),
       null === renderPhaseUpdates && (renderPhaseUpdates = new Map()),
-      (action = renderPhaseUpdates.get(queue)),
-      void 0 === action)
+      (action$asFirst = renderPhaseUpdates.get(queue)),
+      void 0 === action$asFirst)
     )
-      renderPhaseUpdates.set(queue, componentIdentity);
+      renderPhaseUpdates.set(queue, componentIdentity$asUpdate);
     else {
-      for (queue = action; null !== queue.next; ) queue = queue.next;
-      queue.next = componentIdentity;
+      for (queue$asLast = action$asFirst; null !== queue$asLast.next; ) queue$asLast = queue$asLast.next;
+      queue$asLast.next = componentIdentity$asUpdate;
     }
 }
 function throwOnUseEffectEventCall() {
@@ -3928,8 +3928,8 @@ function createRequest(
   onShellError: ((error: FZ.Thrown) => void) | undefined,
   onFatalError: ((error: FZ.Thrown) => void) | undefined,
   formState: FZ.ReactFormState
-): FZ.Request { var children, resumableState, renderState; children = children$given; resumableState = resumableState$given; renderState = renderState$given;
-  resumableState = new (RequestInstance as unknown as FZ.RequestConstructor)(
+): FZ.Request { var children, resumableState, renderState; children = children$given; resumableState = resumableState$given; renderState = renderState$given; var children$asTask: FZ.Task;
+  resumableState = new (RequestInstance as FZ.RequestConstructor)(
     resumableState,
     renderState,
     rootFormatContext,
@@ -3951,7 +3951,7 @@ function createRequest(
     !1
   );
   renderState.parentFlushed = !0;
-  children = createRenderTask(
+  children$asTask = createRenderTask(
     resumableState,
     null,
     children,
@@ -3968,8 +3968,8 @@ function createRequest(
     null,
     null
   );
-  pushComponentStack(children);
-  resumableState.pingedTasks.push(children);
+  pushComponentStack(children$asTask);
+  resumableState.pingedTasks.push(children$asTask);
   return resumableState;
 }
 function createPrerenderRequest(
@@ -4017,7 +4017,7 @@ function resumeRequest(
   onShellError: ((error: FZ.Thrown) => void) | undefined,
   onFatalError: ((error: FZ.Thrown) => void) | undefined
 ): FZ.Request { var children, renderState, onError; children = children$given; renderState = renderState$given; onError = onError$given;
-  renderState = new (RequestInstance as unknown as FZ.RequestConstructor)(
+  renderState = new (RequestInstance as FZ.RequestConstructor)(
     postponedState.resumableState,
     renderState,
     postponedState.rootFormatContext,
@@ -5330,7 +5330,7 @@ function renderNodeDestructive(request: FZ.Request, task: FZ.Task, node$given: F
       retryNode(request, task),
       (task.componentStack = node));
 }
-function retryNode(request$given: FZ.Request, task: FZ.Task): void { var request; request = request$given; var node$asIndex: FZ.int32; var childIndex$asNodes: FZ.ReplayNode[]; var childIndex$asString: string; var childIndex$asSegment: FZ.Segment | null; var key$asKeyPath: FZ.KeyNode; var key$asInfo: FZ.ThrownInfo; var key$asDigest: FZ.ErrorDigest; var type$asNodes: FZ.ReplayNode[]; var props$asBoundary: FZ.SuspenseBoundary | null; var ref$asSlots: FZ.ResumeSlots; var name$asNodes: FZ.ReplayNode[]; var keyOrIndex$asKeyPath: FZ.KeyNode | null; var replay$asId: FZ.SegmentId; var node$jscomp$0$asSlots: FZ.ResumeSlots; var childNodes$asThrown: FZ.Thrown; var childNodes$asTask: FZ.Task; var childNodes$asInit: FZ.GivenFunction; var childNodes$asIterator: FZ.IteratorFn; var childSlots$asInfo: FZ.ThrownInfo; var childSlots$asChildren: FZ.ReactNode[]; var currentNode$asRequest: FZ.Request; var currentNode$asDigest: FZ.ErrorDigest;
+function retryNode(request$given: FZ.Request, task: FZ.Task): void { var request: FZ.Request; request = request$given; var request$asError: FZ.Thrown; var node$asIndex: FZ.int32; var childIndex$asNodes: FZ.ReplayNode[]; var childIndex$asString: string; var childIndex$asSegment: FZ.Segment | null; var key$asKeyPath: FZ.KeyNode; var key$asInfo: FZ.ThrownInfo; var key$asDigest: FZ.ErrorDigest; var type$asNodes: FZ.ReplayNode[]; var props$asBoundary: FZ.SuspenseBoundary | null; var ref$asSlots: FZ.ResumeSlots; var name$asNodes: FZ.ReplayNode[]; var keyOrIndex$asKeyPath: FZ.KeyNode | null; var replay$asId: FZ.SegmentId; var node$jscomp$0$asSlots: FZ.ResumeSlots; var childNodes$asThrown: FZ.Thrown; var childNodes$asTask: FZ.Task; var childNodes$asInit: FZ.GivenFunction; var childNodes$asIterator: FZ.IteratorFn; var childSlots$asInfo: FZ.ThrownInfo; var childSlots$asChildren: FZ.ReactNode[]; var currentNode$asRequest: FZ.Request; var currentNode$asDigest: FZ.ErrorDigest;
   var node = task.node,
     childIndex = task.childIndex;
   if (null !== node) {
@@ -5402,14 +5402,14 @@ function retryNode(request$given: FZ.Request, task: FZ.Task): void { var request
                       key$asInfo = getThrownInfo(task.componentStack);
                       currentNode$asRequest = request;
                       props$asBoundary = task.blockedBoundary;
-                      request = request.aborted ? request.fatalError : x;
-                      key$asDigest = logRecoverableError(currentNode$asRequest, request, key$asInfo);
+                      request$asError = request.aborted ? request.fatalError : x;
+                      key$asDigest = logRecoverableError(currentNode$asRequest, request$asError, key$asInfo);
                       abortRemainingReplayNodes(
                         currentNode$asRequest,
                         props$asBoundary,
                         childNodes,
                         childSlots,
-                        request,
+                        request$asError,
                         key$asDigest
                       );
                     }
@@ -5606,7 +5606,7 @@ function retryNode(request$given: FZ.Request, task: FZ.Task): void { var request
           ));
   }
 }
-function renderChildrenArray(request$given: FZ.Request, task: FZ.Task, children$given: FZ.ReactNode[], childIndex$given: FZ.ChildIndex): void { var request, children, childIndex; request = request$given; children = children$given; childIndex = childIndex$given; var replay$asTreeContext: FZ.TreeContext; var replayNodes$asLength: FZ.int32; var j$asSlots: FZ.ResumeSlots; var node$asSlots: FZ.ResumeSlots; var node$asChild: FZ.ReactNode; var thrownInfo$asDigest: FZ.ErrorDigest; var boundary$asId: FZ.SegmentId | undefined;
+function renderChildrenArray(request$given: FZ.Request, task: FZ.Task, children$given: FZ.ReactNode[], childIndex$given: FZ.ChildIndex): void { var request: FZ.Request, children: FZ.ReactNode[], childIndex; request = request$given; var request$asError: FZ.Thrown; var children$asRequest: FZ.Request; children = children$given; childIndex = childIndex$given; var replay$asTreeContext: FZ.TreeContext; var replayNodes$asLength: FZ.int32; var j$asSlots: FZ.ResumeSlots; var node$asSlots: FZ.ResumeSlots; var node$asChild: FZ.ReactNode; var thrownInfo$asDigest: FZ.ErrorDigest; var boundary$asId: FZ.SegmentId | undefined;
   var prevKeyPath = task.keyPath;
   if (
     -1 !== childIndex &&
@@ -5639,16 +5639,16 @@ function renderChildrenArray(request$given: FZ.Request, task: FZ.Task, children$
             throw x;
           task.replay.pendingTasks--;
           var thrownInfo = getThrownInfo(task.componentStack);
-          children = request;
+          children$asRequest = request;
           var boundary = task.blockedBoundary;
-          request = request.aborted ? request.fatalError : x;
-          thrownInfo$asDigest = logRecoverableError(children, request, thrownInfo);
+          request$asError = request.aborted ? request.fatalError : x;
+          thrownInfo$asDigest = logRecoverableError(children$asRequest, request$asError, thrownInfo);
           abortRemainingReplayNodes(
-            children,
+            children$asRequest,
             boundary,
             childIndex,
             node$asSlots,
-            request,
+            request$asError,
             thrownInfo$asDigest
           );
         }
@@ -6762,7 +6762,7 @@ function flushSegmentContainer(request: FZ.Request, destination: FZ.Destination,
   flushSegment(request, destination, segment, hoistableState);
   return writeEndSegment(destination, segment.parentFormatContext);
 }
-function flushCompletedBoundary(request$given: FZ.Request, destination: FZ.Destination, boundary$given: FZ.SuspenseBoundary): boolean { var request, boundary; request = request$given; boundary = boundary$given; var completedSegments$asRow: FZ.SuspenseListRow | null, completedSegments$asResumableState: FZ.ResumableState, completedSegments$asId: string;
+function flushCompletedBoundary(request$given: FZ.Request, destination: FZ.Destination, boundary$given: FZ.SuspenseBoundary): boolean { var request: FZ.Request, boundary: FZ.SuspenseBoundary; request = request$given; boundary = boundary$given; var request$asRenderState: FZ.RenderState; var boundary$asHoistables: FZ.HoistableState; var boundary$asWritten: boolean; var completedSegments$asRow: FZ.SuspenseListRow | null, completedSegments$asResumableState: FZ.ResumableState, completedSegments$asId: string;
   flushedByteSize = boundary.byteSize;
   for (
     var completedSegments = boundary.completedSegments, i: FZ.int32 = 0;
@@ -6787,13 +6787,13 @@ function flushCompletedBoundary(request$given: FZ.Request, destination: FZ.Desti
     request.renderState
   );
   completedSegments$asResumableState = request.resumableState;
-  request = request.renderState;
+  request$asRenderState = request.renderState;
   i = boundary.rootSegmentID;
-  boundary = boundary.contentState;
-  var requiresStyleInsertion = request.stylesToHoist,
+  boundary$asHoistables = boundary.contentState;
+  var requiresStyleInsertion = request$asRenderState.stylesToHoist,
     requiresViewTransitions = 0 !== (completedSegments$asResumableState.instructions & 128);
-  request.stylesToHoist = !1;
-  writeChunk(destination, request.startInlineScript);
+  request$asRenderState.stylesToHoist = !1;
+  writeChunk(destination, request$asRenderState.startInlineScript);
   writeChunk(destination, ">");
   requiresStyleInsertion
     ? (0 === (completedSegments$asResumableState.instructions & 4) &&
@@ -6837,17 +6837,17 @@ function flushCompletedBoundary(request$given: FZ.Request, destination: FZ.Desti
         )),
       writeChunk(destination, '$RC("'));
   completedSegments$asId = i.toString(16);
-  writeChunk(destination, request.boundaryPrefix);
+  writeChunk(destination, request$asRenderState.boundaryPrefix);
   writeChunk(destination, completedSegments$asId);
   writeChunk(destination, '","');
-  writeChunk(destination, request.segmentPrefix);
+  writeChunk(destination, request$asRenderState.segmentPrefix);
   writeChunk(destination, completedSegments$asId);
   requiresStyleInsertion
     ? (writeChunk(destination, '",'),
-      writeStyleResourceDependenciesInJS(destination, boundary))
+      writeStyleResourceDependenciesInJS(destination, boundary$asHoistables))
     : writeChunk(destination, '"');
-  boundary = !!destination.write(")\x3c/script>");
-  return writeBootstrap(destination, request) && boundary;
+  boundary$asWritten = !!destination.write(")\x3c/script>");
+  return writeBootstrap(destination, request$asRenderState) && boundary$asWritten;
 }
 function flushPartiallyCompletedSegment(
   request$given: FZ.Request,
@@ -7981,6 +7981,19 @@ namespace FZ {
       onFatalError: ((error: Thrown) => void) | undefined,
       formState: ReactFormState
     ): Request;
+    (this: Request,
+      resumableState: ResumableState,
+      renderState: RenderState,
+      rootFormatContext: FormatContext,
+      progressiveChunkSize: number | undefined,
+      onError: ErrorHandler | undefined,
+      onBrowserBailout: BailoutHandler | undefined,
+      onAllReady: (() => void) | undefined,
+      onShellReady: (() => void) | undefined,
+      onShellError: ((error: Thrown) => void) | undefined,
+      onFatalError: ((error: Thrown) => void) | undefined,
+      formState: ReactFormState
+    ): void;
   }
   export type ErrorHandler = (error: Thrown, errorInfo: ThrownInfo) => any;
   export type BailoutHandler = (error: Thrown, errorInfo: ThrownInfo) => void;

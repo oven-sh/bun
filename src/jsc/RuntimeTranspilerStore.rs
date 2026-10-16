@@ -549,6 +549,13 @@ impl TranspilerJob {
                 let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
                 debug_assert!(resolved_source.source_url.is_empty());
                 resolved_source.source_url = out.create_if_different(self.path.text);
+                // A job reads a file: `Bun__transpileFile` gives it no blob and no plugin's text.
+                // SAFETY: vm outlives the job, and this is its thread. One field: `self` is in `vm.transpiler_store`.
+                let in_standalone_executable = unsafe { (*vm).standalone_module_graph.is_some() };
+                resolved_source.is_static = VirtualMachine::is_file_on_disk_static(
+                    in_standalone_executable,
+                    self.path.text,
+                );
                 (out, Ok(resolved_source))
             }
         };
@@ -576,7 +583,9 @@ impl TranspilerJob {
                 );
             }
             match audited {
+                // SAFETY: the two lists are valid for the call, and C++ copies them.
                 Some(it) => unsafe { Bun__AOTAudit__setPendingSites(it.length_of_what_is_written, it.expressions.as_ptr(), it.expressions.len(), it.parameters.as_ptr(), it.parameters.len()) },
+                // SAFETY: C++ reads neither pointer when the counts are 0.
                 None => unsafe { Bun__AOTAudit__setPendingSites(0, core::ptr::null(), 0, core::ptr::null(), 0) },
             }
         }

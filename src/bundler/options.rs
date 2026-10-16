@@ -1241,6 +1241,7 @@ pub struct TypeChecked<'a, 'i> {
     pub dropped_imports: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
     pub without_side_effects: &'i mut dyn Iterator<Item = &'a [u8]>,
     pub lifted_commonjs: &'i mut dyn Iterator<Item = &'a [u8]>,
+    pub commonjs: &'i mut dyn Iterator<Item = &'a [u8]>,
     /// The statements at the top level of those files, as the parser has left them: the path of the file, where the statement starts in
     /// the text that the bundler has parsed (`stmt.loc.start`), which is the text in `sources`, and `Part::can_be_removed_if_unused` of its part.
     pub statements: &'i mut dyn Iterator<Item = (&'a [u8], u32, bool)>,
@@ -1272,6 +1273,7 @@ pub struct TypeChecked<'a, 'i> {
     pub explains_into_log: bool,
     pub logs_type_errors: bool,
     pub early_analysis: Option<EarlyAnalysis>,
+    pub release_asts: &'i mut dyn FnMut(),
 }
 
 pub type EarlyAnalysis = Box<dyn core::any::Any + Send>;
@@ -1321,8 +1323,53 @@ pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) ->
 pub type Analyze =
     fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> Option<bun_ast::type_tags::ProgramFacts>;
 
+pub type DeclarationFiles = Vec<(Box<[u8]>, Box<[u8]>)>;
+
+pub struct Declarations {
+    pub files: DeclarationFiles,
+    pub module_types: Option<Box<dyn core::any::Any + Send>>,
+}
+
+pub type EmitDeclarations = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> Option<Declarations>;
+
+pub struct WrittenJavaScript<'a> {
+    pub path: &'a [u8],
+    pub text: &'a [u8],
+    pub source_map: &'a [u8],
+    pub entry_point: Option<&'a [u8]>,
+}
+
+pub struct SoundFilesRequest<'a> {
+    pub cwd: &'a [u8],
+    pub tsconfig: Option<&'a [u8]>,
+    pub conditions: &'a [Box<[u8]>],
+    pub loaders: &'a LoaderHashTable,
+    pub outdir: &'a [u8],
+    pub written: &'a [WrittenJavaScript<'a>],
+    pub module_types: Option<&'a (dyn core::any::Any + Send)>,
+    pub rolls_up_declarations: bool,
+    pub keeps_modules_apart: bool,
+}
+
+pub struct SoundFile {
+    pub path: Box<[u8]>,
+    pub text: Box<[u8]>,
+    pub declaration_file: Box<[u8]>,
+    pub mark: Box<[u8]>,
+}
+
+#[derive(Default)]
+pub struct TypedOutputs {
+    pub sound_files: Vec<SoundFile>,
+    pub declaration_files: DeclarationFiles,
+}
+
+pub const SOUND_FILES_LEFT_OUT: &str = "--dts: the typed JavaScript that --aot compiles a package from is left out";
+
+pub type WriteSoundFiles = fn(request: SoundFilesRequest<'_>, log: &mut bun_ast::Log) -> TypedOutputs;
+
 pub type TypedPackage =
-    fn(root: &[u8], defines: &[(Box<[u8]>, Box<[u8]>)], directory: &[u8], name: &[u8]) -> (Vec<(Box<[u8]>, Box<[u8]>)>, Option<Box<str>>);
+    fn(root: &[u8], defines: &[(Box<[u8]>, Box<[u8]>)], directory: &[u8], name: &[u8]) -> (Vec<(Box<[u8]>, Box<[u8]>, bool)>, Option<Box<str>>);
 
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
@@ -1461,6 +1508,11 @@ pub struct BundleOptions<'a> {
     /// anything is linked. `bun_runtime` provides it: the bundler does not depend on the type
     /// checker.
     pub type_check: Option<TypeCheck>,
+    pub emit_declarations: Option<EmitDeclarations>,
+    pub write_sound_files: Option<WriteSoundFiles>,
+    pub leaves_out_sound_files_for: Option<&'static str>,
+    pub rolls_up_declarations: bool,
+    pub drops_source_maps: bool,
     pub analyze: Option<Analyze>,
     pub typed_package: Option<TypedPackage>,
     /// `--conditions`, `conditions`: those of `conditions` that are not there by default.
@@ -1707,6 +1759,11 @@ impl<'a> BundleOptions<'a> {
             fold_chunks: self.fold_chunks,
             module_preload: self.module_preload,
             type_check: self.type_check,
+            emit_declarations: self.emit_declarations,
+            write_sound_files: self.write_sound_files,
+            leaves_out_sound_files_for: self.leaves_out_sound_files_for,
+            rolls_up_declarations: self.rolls_up_declarations,
+            drops_source_maps: self.drops_source_maps,
             analyze: self.analyze,
             typed_package: self.typed_package,
             custom_conditions: self.custom_conditions.clone(),
@@ -1901,6 +1958,11 @@ impl<'a> BundleOptions<'a> {
             fold_chunks: true,
             module_preload: true,
             type_check: None,
+            emit_declarations: None,
+            write_sound_files: None,
+            leaves_out_sound_files_for: None,
+            rolls_up_declarations: false,
+            drops_source_maps: false,
             analyze: None,
             typed_package: None,
             custom_conditions: transform.conditions.clone(),

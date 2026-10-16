@@ -9,7 +9,7 @@ export const randomUUIDv5 = b.fn({
   // A namespace that is a string is a UUID or the name of one. One that is a buffer is its 16 bytes.
   args: { name: b.stringOrBuffer, namespace: b.stringOrBuffer.withValue, encoding: UUIDEncoding },
   returns: b.any,
-  capability: "js",
+  capability: "heap",
   throws: true,
   length: 3,
   rustPath: "crate::webcore::crypto::random_uuid_v5",

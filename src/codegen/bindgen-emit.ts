@@ -553,10 +553,7 @@ function cppCallBody(signature: Signature, symbol: string, leading: readonly str
     lines.push(`JSC::EnsureStillAliveScope argument${i} = callFrame->argument(${i});`);
     lines.push(`[[maybe_unused]] auto ctx${i} = Bun::Bindgen::LiteralConversionContext { ${asciiLiteral(name)} };`);
     readLast.push(
-      ...type.cppReadLast(`converted${i}`, `argument${i}.value()`, `ctx${i}`, name, {
-        isLast: i === signature.args.length - 1,
-        capability: signature.capability,
-      }),
+      ...type.cppReadLast(`converted${i}`, `argument${i}.value()`, `ctx${i}`, name, i === signature.args.length - 1),
     );
     lines.push(...cppDeclareConverted(type, `converted${i}`, `argument${i}.value()`, `ctx${i}`, name));
     if (type.conversionThrows) lines.push(`RETURN_IF_EXCEPTION(scope, {});`);

@@ -2,29 +2,18 @@ use bun_collections::HashMap;
 use bun_collections::smallvec::SmallVec;
 use bun_core::StackCheck;
 use bun_core::String as BunString;
-use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf,
-};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, WithValue};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf};
 use bun_parsers::toml::TOML;
 
-pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::create_host_function_object(
-        global,
-        &[
-            ("parse", __jsc_host_parse, 1),
-            ("stringify", __jsc_host_stringify, 3),
-        ],
-    )
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse<'a>(heap: &JsHeap<'a>, input: WithValue<'a, &'a [u8]>) -> JsResult<JSValue> {
+    // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are strings, and its properties are
+    // defined and not set.
+    let global = unsafe { heap.global() };
     super::with_text_format_source(
         global,
-        frame,
+        super::input_to_parse(global, input)?,
         b"input.toml",
-        super::BlobOrBufferInput::Bytes,
-        super::NullishInput::Throw,
         |arena, log, source| {
             let root = match TOML::parse(source, log, arena, false) {
                 Ok(v) => v,
@@ -54,13 +43,16 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     )
 }
 
-#[bun_jsc::host_fn]
-fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // `space` is accepted for signature parity with YAML/JSON5 but ignored:
-    // TOML output is line-oriented and has no nesting indentation.
-    let [value, replacer, _space] = frame.arguments_as_array::<3>();
-
-    value.ensure_still_alive();
+/// `space` is accepted for signature parity with YAML/JSON5 but ignored: TOML output is line-oriented and has no
+/// nesting indentation.
+pub(crate) fn stringify<'a>(
+    cx: &mut JsScope<'a>,
+    value: JsLocal<'a>,
+    replacer: JsLocal<'a>,
+    _: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    let (value, replacer) = (value.to_js(), replacer.to_js());
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(JSValue::UNDEFINED);

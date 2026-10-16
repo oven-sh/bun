@@ -202,13 +202,9 @@ export abstract class Type {
   get holdsJSValue(): boolean {
     return this.dependencies.some(type => type.holdsJSValue);
   }
-  /** Points into memory JavaScript can detach, resize or free, so it is read once everything is converted: only for an argument. */
+  /** Points into memory JavaScript can detach, resize or free: not for a function that can run it, and only for an argument, read once all are converted. */
   get borrowsHeap(): boolean {
     return this.dependencies.some(type => type.borrowsHeap);
-  }
-  /** What it borrows from the heap is a copy where the function can run JavaScript. Otherwise it is not for such a function. */
-  get copiesWhereJavaScriptRuns(): boolean {
-    return this.dependencies.some(type => type.copiesWhereJavaScriptRuns);
   }
   /** Points into the C++ host function's frame: only usable for the duration of a host call. */
   get borrowsFrame(): boolean {
@@ -245,15 +241,9 @@ export abstract class Type {
     return `Bun::convertIDL<${this.idlType}>(*globalObject, ${value}, ${ctx})`;
   }
   /** C++ lines that read into `target`, which was converted from `value`, what `borrowsHeap` is about, after every argument is converted. */
-  cppReadLast(
-    target: string,
-    value: string,
-    ctx: string,
-    name: string,
-    at: { isLast: boolean; capability: Capability },
-  ): string[] {
+  cppReadLast(target: string, value: string, ctx: string, name: string, isLast: boolean): string[] {
     // Nothing ran since it was converted.
-    if (!this.borrowsHeap || at.isLast) return [];
+    if (!this.borrowsHeap || isLast) return [];
     return [`${target} = ${this.cppConvert(value, ctx, name)};`, `scope.assertNoException();`];
   }
   /** Large, or holds something large: built where it ends up, not returned and moved there. */
@@ -732,7 +722,7 @@ export class PossiblySharedBytesType extends BytesType {
 
 /**
  * A string, as UTF-8, or the bytes of a typed array, `DataView`, `ArrayBuffer` or `SharedArrayBuffer`: `&[u8]` that nothing
- * changes during the call. What something could change is a copy: a shared buffer, and any buffer where JavaScript can run.
+ * changes during the call. The bytes of a shared buffer, which another thread could change, are a copy.
  */
 export class StringOrBufferType extends Type {
   readonly isLoose: boolean;
@@ -767,21 +757,14 @@ export class StringOrBufferType extends Type {
   get borrowsHeap(): boolean {
     return true;
   }
-  get copiesWhereJavaScriptRuns(): boolean {
-    return true;
-  }
   get convertsInPlace(): boolean {
     return true;
   }
   cppConvertInto(target: string, value: string, ctx: string): string {
     return `WebCore::Converter<${this.idlType}>::convertInto(*globalObject, ${value}, ${ctx}, ${target});`;
   }
-  cppReadLast(target: string, value: string, ctx: string, name: string, at: { capability: Capability }): string[] {
-    const copyBuffers = at.capability === "js" ? "Always" : "IfShared";
-    return [
-      `${target}.read<Bun::Bindgen::CopyBuffers::${copyBuffers}>(*globalObject, ${value});`,
-      `RETURN_IF_EXCEPTION(scope, {});`,
-    ];
+  cppReadLast(target: string, value: string): string[] {
+    return [`${target}.read(*globalObject, ${value});`, `RETURN_IF_EXCEPTION(scope, {});`];
   }
   layout(): Layout {
     return { size: 16, align: 8 };
@@ -1617,10 +1600,12 @@ export class Signature {
     for (const { name, type } of this.args) {
       assert(!(type instanceof BigIntResultType), `${name}: .asBigInt is a result; an argument is b.u64.allowBigInt`);
       assert(
-        !type.borrowsHeap || type.copiesWhereJavaScriptRuns || this.capability !== "js",
+        !type.borrowsHeap || this.capability !== "js",
         type instanceof PossiblySharedBytesType
           ? `${name}: JavaScript can detach a buffer; .allowShared is for a function that cannot run it`
-          : `${name}: JavaScript can detach a buffer; take b.bufferSource without .bytes and use with_bytes`,
+          : type.dependencies.concat(type).some(type => type instanceof StringOrBufferType)
+            ? `${name}: JavaScript can detach a buffer; b.stringOrBuffer is for a function that cannot run it`
+            : `${name}: JavaScript can detach a buffer; take b.bufferSource without .bytes and use with_bytes`,
       );
     }
     assert(!(this.returns instanceof DefaultType), "a result has no default");

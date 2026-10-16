@@ -113,6 +113,11 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     expect(() => b.stringOrBuffer[absent]).toThrow("b.stringOrBuffer is for an argument that is always there");
   }
   expect(() => b.stringOrBuffer.default("")).toThrow("cannot have a default");
+  for (const data of [b.stringOrBuffer, b.stringOrBuffer.orBlob.loose.withValue]) {
+    expect(() => b.fn({ args: { data }, capability: "js" })).toThrow(
+      "data: JavaScript can detach a buffer; b.stringOrBuffer is for a function that cannot run it",
+    );
+  }
   expect(b.stringOrBuffer.orBlob.loose.idlType).toBe(b.stringOrBuffer.loose.orBlob.idlType);
   expect(() => b.u32.asBigInt).toThrow(".asBigInt follows b.u64");
   expect(() => b.u64.allowBigInt.asBigInt).toThrow(".asBigInt follows b.u64");
@@ -1151,53 +1156,14 @@ describe("a string or a buffer, as bytes", () => {
     expect(log).toEqual(["data", "after"]);
   });
 
-  it("where JavaScript can run, what it does to a buffer does not show", () => {
-    for (const ArrayBufferClass of [ArrayBuffer, SharedArrayBuffer]) {
-      for (let i = 0; i < buffers(eight).length; i++) {
-        // Made anew each time: some of them show the same memory.
-        const buffer = buffers(eight, ArrayBufferClass)[i];
-        const bytes = ArrayBuffer.isView(buffer)
-          ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
-          : new Uint8Array(buffer);
-        expect(bindgen.bytesOfAfterCallback(buffer, () => bytes.fill(0))).toEqual(eight);
-        expect([...bytes]).toEqual(new Array(8).fill(0));
-      }
-    }
-    const detached = new Uint8Array(eight);
-    expect(
-      bindgen.bytesOfAfterCallback(detached, () => {
-        structuredClone(detached.buffer, { transfer: [detached.buffer] });
-        Bun.gc(true);
-      }),
-    ).toEqual(eight);
-    expect(detached.length).toBe(0);
-    const resizable = new ArrayBuffer(8, { maxByteLength: 16 });
-    new Uint8Array(resizable).set(eight);
-    expect(bindgen.bytesOfAfterCallback(resizable, () => resizable.resize(0))).toEqual(eight);
-    expect(bindgen.bytesOfAfterCallback("text", () => Bun.gc(true))).toEqual(utf8("text"));
-    expect(bindgen.bytesOfAfterCallback("\u65e5" + "x".repeat(300), () => Bun.gc(true))).toEqual(
-      utf8("\u65e5" + "x".repeat(300)),
-    );
-    expect(bindgen.bytesOfAfterCallback(new Blob([new Uint8Array(eight)]), () => Bun.gc(true))).toEqual(eight);
-  });
-
-  it("copies only what something could change", () => {
+  it("copies only what another thread could change", () => {
     const ownMemory = bindgen.bytesOfAreSameMemory;
-    const ownMemoryWhereJavaScriptRuns = bindgen.bytesOfAreSameMemoryWhereJavaScriptRuns;
-    for (const buffer of buffers(eight)) {
-      expect(ownMemory(buffer, buffer)).toBe(true);
-      expect(ownMemoryWhereJavaScriptRuns(buffer, buffer)).toBe(false);
-    }
-    for (const buffer of buffers(eight, SharedArrayBuffer)) {
-      expect(ownMemory(buffer, buffer)).toBe(false);
-      expect(ownMemoryWhereJavaScriptRuns(buffer, buffer)).toBe(false);
-    }
+    for (const buffer of buffers(eight)) expect(ownMemory(buffer, buffer)).toBe(true);
+    for (const buffer of buffers(eight, SharedArrayBuffer)) expect(ownMemory(buffer, buffer)).toBe(false);
     const blob = new Blob([new Uint8Array(eight)]);
     expect(ownMemory(blob, blob)).toBe(true);
-    expect(ownMemoryWhereJavaScriptRuns(blob, blob)).toBe(false);
-    // The characters of a string that is ASCII are its UTF-8, and nothing changes a string.
+    // The characters of a string that is ASCII are its UTF-8.
     expect(ownMemory("ascii", "ascii")).toBe(true);
-    expect(ownMemoryWhereJavaScriptRuns("ascii", "ascii")).toBe(true);
     expect(ownMemory("\xe9", "\xe9")).toBe(false);
   });
 });

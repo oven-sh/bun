@@ -80,7 +80,6 @@ use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
 
-use crate::api::{JSON5Object, TOMLObject, XMLObject, YAMLObject};
 use crate::crypto as Crypto;
 use crate::node;
 use crate::test_runner::jest::Jest;
@@ -292,12 +291,7 @@ pub(crate) mod bun_object {
         BunObject_lazyPropCb_SHA384 => Crypto::SHA384::getter,
         BunObject_lazyPropCb_SHA512 => Crypto::SHA512::getter,
         BunObject_lazyPropCb_SHA512_256 => Crypto::SHA512_256::getter,
-        BunObject_lazyPropCb_JSONC => super::get_jsonc_object,
         BunObject_lazyPropCb_markdown => super::get_markdown_object,
-        BunObject_lazyPropCb_TOML => super::get_toml_object,
-        BunObject_lazyPropCb_JSON5 => super::get_json5_object,
-        BunObject_lazyPropCb_XML => super::get_xml_object,
-        BunObject_lazyPropCb_YAML => super::get_yaml_object,
         BunObject_lazyPropCb_Transpiler => super::get_transpiler_constructor,
         BunObject_lazyPropCb_argv => super::get_argv,
         BunObject_lazyPropCb_cron => super::get_cron_object,
@@ -1545,26 +1539,8 @@ fn get_file_system_router(global_this: &JSGlobalObject, _: &JSObject) -> JSValue
     )
 }
 
-fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::api::jsonc_object::create(global_this)
-}
 fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     crate::api::markdown_object::create(global_this)
-}
-fn get_toml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    TOMLObject::create(global_this)
-}
-
-fn get_json5_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    JSON5Object::create(global_this)
-}
-
-fn get_xml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    XMLObject::create(global_this)
-}
-
-fn get_yaml_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    YAMLObject::create(global_this)
 }
 
 fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

@@ -1,21 +1,16 @@
 //! `Bun.JSONC` — `parse()` host function.
 
 use bun_js_parser_jsc::ExprJsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::bindgen::{JsScope, WithValue};
+use bun_jsc::{JSValue, JsError, JsResult};
 use bun_parsers::json;
 
-pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::create_host_function_object(global, &[("parse", __jsc_host_parse, 1)])
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: WithValue<'a, &'a [u8]>) -> JsResult<JSValue> {
+    let global = cx.global();
     super::with_text_format_source(
         global,
-        frame,
+        super::input_to_parse(global, input)?,
         b"input.jsonc",
-        super::BlobOrBufferInput::ToString,
-        super::NullishInput::Throw,
         |_arena, log, source| {
             // parse_jsonc maps empty input to {}; the public API rejects it like JSON.parse.
             if source.contents.is_empty() {

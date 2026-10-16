@@ -26,22 +26,22 @@ bool isInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
     return true;
 }
 
-void JSStringOrBufferView::readBuffer(JSGlobalObject& globalObject, JSValue argument, CopyBuffers copyBuffers)
+void JSStringOrBufferView::readBuffer(JSGlobalObject& globalObject, JSValue argument)
 {
-    bool copy = copyBuffers == CopyBuffers::Always;
+    bool isShared = false;
     if (auto* view = dynamicDowncast<JSArrayBufferView>(argument)) {
         m_buffer = view->span();
-        copy |= view->isShared();
+        isShared = view->isShared();
     } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(argument)) {
         m_buffer = buffer->impl()->span();
-        copy |= buffer->isShared();
+        isShared = buffer->isShared();
     } else {
         const uint8_t* data = nullptr;
         size_t length = 0;
         Blob__getInMemoryBytes(uncheckedDowncast<WebCore::JSBlob>(argument)->wrapped(), &data, &length);
         m_buffer = { data, length };
     }
-    if (copy) {
+    if (isShared) {
         if (!m_copy.tryAppend(m_buffer)) [[unlikely]] {
             auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
             throwOutOfMemoryError(&globalObject, scope);

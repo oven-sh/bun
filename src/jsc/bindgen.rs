@@ -38,21 +38,30 @@ pub struct JsScope<'a> {
 
 impl<'a> JsHeap<'a> {
     #[inline(always)]
-    fn global(&self) -> &JSGlobalObject {
+    fn global_object(&self) -> &JSGlobalObject {
         // SAFETY: a `JsHeap` only exists at the address of a live global (see `JsScope::with`).
         unsafe { JSGlobalObject::opaque_ref_nn(core::ptr::from_ref(self).cast()) }
+    }
+
+    /// For what takes the global object only to allocate or to throw.
+    ///
+    /// # Safety
+    /// Nothing it is passed to runs JavaScript.
+    #[inline(always)]
+    pub unsafe fn global(&self) -> &JSGlobalObject {
+        self.global_object()
     }
 
     #[doc(hidden)]
     #[inline(always)]
     pub fn global_ptr(&self) -> *mut JSGlobalObject {
-        self.global().as_mut_ptr()
+        self.global_object().as_mut_ptr()
     }
 
     #[inline]
     pub fn create_utf8_string(&self, utf8: &[u8]) -> Result<'a, JsLocal<'a, JSString>> {
         JsLocal::from_js_result(crate::bun_string_jsc::create_utf8_for_js(
-            self.global(),
+            self.global_object(),
             utf8,
         ))
     }
@@ -64,7 +73,7 @@ impl<'a> JsHeap<'a> {
         length: usize,
     ) -> Result<'a, JsLocal<'a, BufferSource>> {
         JsLocal::from_js_result(JSValue::create_uninitialized_uint8_array(
-            self.global(),
+            self.global_object(),
             length,
         ))
     }
@@ -81,7 +90,7 @@ impl<'a> JsHeap<'a> {
         // that never allocated has a dangling pointer, which nothing reads or frees.
         JsLocal::from_js_result(unsafe {
             ArrayBuffer::from_bytes(bytes, crate::JSType::Uint8Array).to_js_with_context(
-                self.global(),
+                self.global_object(),
                 if is_allocated {
                     allocation
                 } else {
@@ -98,31 +107,31 @@ impl<'a> JsHeap<'a> {
         &self,
         bytes: Box<[u8]>,
     ) -> Result<'a, JsLocal<'a, BufferSource>> {
-        JsLocal::from_js_result(JSValue::create_buffer_from_box(self.global(), bytes))
+        JsLocal::from_js_result(JSValue::create_buffer_from_box(self.global_object(), bytes))
     }
 
     /// An `Error` for the body to return. It is thrown after that.
     #[cold]
     pub fn error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
-        Error::unthrown(self.global().create_error_instance(args))
+        Error::unthrown(self.global_object().create_error_instance(args))
     }
 
     /// As [`error`](Self::error), a `TypeError`.
     #[cold]
     pub fn type_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
-        Error::unthrown(self.global().create_type_error_instance(args))
+        Error::unthrown(self.global_object().create_type_error_instance(args))
     }
 
     /// As [`error`](Self::error), a `RangeError`.
     #[cold]
     pub fn range_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
-        Error::unthrown(self.global().create_range_error_instance(args))
+        Error::unthrown(self.global_object().create_range_error_instance(args))
     }
 
     /// As [`error`](Self::error), with a `code`, which also picks the class.
     #[cold]
     pub fn error_with_code(&self, code: ErrorCode, args: core::fmt::Arguments<'_>) -> Error<'a> {
-        Error::unthrown(code.fmt(self.global(), args))
+        Error::unthrown(code.fmt(self.global_object(), args))
     }
 }
 
@@ -130,7 +139,7 @@ impl<'a> JsHeap<'a> {
     /// As [`error`](Self::error), with a `code` that is not one of [`ErrorCode`]'s. It is ASCII.
     #[cold]
     pub fn error_with_custom_code(&self, code: &[u8], args: core::fmt::Arguments<'_>) -> Error<'a> {
-        let global = self.global();
+        let global = self.global_object();
         let instance = global.create_error_instance(args);
         let code = crate::EncodedSliceJsc::to_js(&bun_core::EncodedSlice::latin1(code), global);
         instance.put(global, b"code", code);
@@ -154,13 +163,13 @@ impl<'a> JsScope<'a> {
     /// Anything can be done with a `&JSGlobalObject`, so it borrows the whole `JsScope`.
     #[inline(always)]
     pub fn global(&mut self) -> &JSGlobalObject {
-        self.heap.global()
+        self.heap.global_object()
     }
 
     /// For the APIs that take the tree's own proof of being on the JS thread.
     #[inline]
     pub fn js_thread(&mut self) -> JsThread<'_> {
-        self.heap.global().js_thread_of_caller_no_frame()
+        self.heap.global_object().js_thread_of_caller_no_frame()
     }
 }
 
@@ -252,13 +261,13 @@ impl<'a> IntoError<'a> for JsError {
 impl<'a> IntoError<'a> for bun_sys::Error {
     #[cold]
     fn into_error(self, heap: &JsHeap<'a>) -> Error<'a> {
-        Error::unthrown(crate::SysErrorJsc::to_js(&self, heap.global()))
+        Error::unthrown(crate::SysErrorJsc::to_js(&self, heap.global_object()))
     }
 }
 impl<'a> IntoError<'a> for crate::SystemError {
     #[cold]
     fn into_error(self, heap: &JsHeap<'a>) -> Error<'a> {
-        Error::unthrown(self.to_error_instance(heap.global()))
+        Error::unthrown(self.to_error_instance(heap.global_object()))
     }
 }
 impl<'a, E: IntoError<'a>> IntoError<'a> for Box<E> {
@@ -318,7 +327,7 @@ impl<'a, T> JsLocal<'a, T> {
     /// Keeps the value past the call.
     #[inline]
     pub fn to_strong(self, heap: &JsHeap<'a>) -> Strong {
-        Strong::create(self.0, heap.global())
+        Strong::create(self.0, heap.global_object())
     }
 }
 
@@ -357,7 +366,7 @@ impl<'a> JsLocal<'a, Callable> {
     ) -> Result<'a, JsLocal<'a>> {
         // SAFETY: `JsLocal` is `repr(transparent)` over `JSValue`.
         let args = unsafe { &*(core::ptr::from_ref(args) as *const [JSValue]) };
-        JsLocal::from_js_result(self.0.call(cx.heap.global(), this.0, args))
+        JsLocal::from_js_result(self.0.call(cx.heap.global_object(), this.0, args))
     }
 }
 
@@ -368,7 +377,7 @@ impl<'a> JsLocal<'a, BufferSource> {
     /// The bytes as they are now. A detached or out-of-bounds view is empty.
     #[inline]
     pub fn with_bytes<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&[u8]) -> R) -> R {
-        let array_buffer = self.0.as_array_buffer(heap.global());
+        let array_buffer = self.0.as_array_buffer(heap.global_object());
         let result = f(array_buffer.as_ref().map_or(&[], ArrayBuffer::byte_slice));
         self.0.ensure_still_alive();
         result
@@ -611,7 +620,10 @@ pub mod to_js {
 
     #[inline]
     pub fn u64_as_bigint<'a>(heap: &JsHeap<'a>, value: u64) -> Result<'a, JsLocal<'a>> {
-        JsLocal::from_js_result(JSValue::from_uint64_no_truncate(heap.global(), value))
+        JsLocal::from_js_result(JSValue::from_uint64_no_truncate(
+            heap.global_object(),
+            value,
+        ))
     }
 
     #[inline(always)]
@@ -665,7 +677,7 @@ pub mod to_js {
 
     #[inline]
     pub fn string<'a>(heap: &JsHeap<'a>, value: bun_core::String) -> Result<'a, JsLocal<'a>> {
-        JsLocal::from_js_result(crate::StringJsc::into_js(value, heap.global()))
+        JsLocal::from_js_result(crate::StringJsc::into_js(value, heap.global_object()))
     }
 
     #[inline]
@@ -681,7 +693,7 @@ pub mod to_js {
             let Some(item) = items.next() else {
                 // SAFETY: `count` initialized values.
                 return JsLocal::from_js_result(crate::call_zero_is_throw(
-                    heap.global(),
+                    heap.global_object(),
                     || unsafe {
                         extern_types::Bun__Bindgen__constructArrayFromValues(
                             heap.global_ptr(),
@@ -701,7 +713,7 @@ pub mod to_js {
                 values.append(convert(heap, item)?.0);
             }
             // SAFETY: `values` is live for the call.
-            JsLocal::from_js_result(crate::call_zero_is_throw(heap.global(), || unsafe {
+            JsLocal::from_js_result(crate::call_zero_is_throw(heap.global_object(), || unsafe {
                 extern_types::Bun__Bindgen__constructArray(heap.global_ptr(), values)
             }))
         })
@@ -760,7 +772,7 @@ pub fn host_fn_return<'a, T, E: IntoError<'a>>(
     };
     debug_assert_eq!(
         value.is_empty(),
-        cx.heap.global().has_exception(),
+        cx.heap.global_object().has_exception(),
         "a body fails exactly when an exception is pending",
     );
     value

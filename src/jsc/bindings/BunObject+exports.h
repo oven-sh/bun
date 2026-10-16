@@ -10,8 +10,6 @@
     macro(FileSystemRouter) \
     macro(Glob) \
     macro(Image) \
-    macro(JSON5) \
-    macro(JSONC) \
     macro(MD4) \
     macro(markdown) \
     macro(MD5) \
@@ -22,9 +20,6 @@
     macro(SHA384) \
     macro(SHA512) \
     macro(SHA512_256) \
-    macro(TOML) \
-    macro(XML) \
-    macro(YAML) \
     macro(Terminal) \
     macro(Transpiler) \
     macro(ValkeyClient) \

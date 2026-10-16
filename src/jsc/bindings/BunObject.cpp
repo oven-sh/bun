@@ -41,9 +41,14 @@
 #include "GeneratedCsrfJsc.h"
 #include "GeneratedDns.h"
 #include "GeneratedHashObject.h"
+#include "GeneratedJSON5Object.h"
+#include "GeneratedJSONCObject.h"
 #include "GeneratedPasswordObject.h"
 #include "GeneratedSemverObject.h"
+#include "GeneratedTOMLObject.h"
 #include "GeneratedUnsafeObject.h"
+#include "GeneratedXMLObject.h"
+#include "GeneratedYAMLObject.h"
 #include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
 #include "BunObjectModule.h"
 #include "_NativeModule.h"
@@ -932,13 +937,13 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     SHA384                                         BunObject_lazyPropCb_wrap_SHA384                                    DontDelete|PropertyCallback
     SHA512                                         BunObject_lazyPropCb_wrap_SHA512                                    DontDelete|PropertyCallback
     SHA512_256                                     BunObject_lazyPropCb_wrap_SHA512_256                                DontDelete|PropertyCallback
-    JSONC                                          BunObject_lazyPropCb_wrap_JSONC                                     DontDelete|PropertyCallback
-    JSON5                                          BunObject_lazyPropCb_wrap_JSON5                                     DontDelete|PropertyCallback
+    JSONC                                          Bun::Bindgen::Generated::JSONCObject::createJSONC                   DontDelete|PropertyCallback
+    JSON5                                          Bun::Bindgen::Generated::JSON5Object::createJSON5                   DontDelete|PropertyCallback
     JSONL                                          constructJSONLObject                                                ReadOnly|DontDelete|PropertyCallback
     markdown                                         BunObject_lazyPropCb_wrap_markdown                                  DontDelete|PropertyCallback
-    TOML                                           BunObject_lazyPropCb_wrap_TOML                                      DontDelete|PropertyCallback
-    XML                                            BunObject_lazyPropCb_wrap_XML                                       DontDelete|PropertyCallback
-    YAML                                           BunObject_lazyPropCb_wrap_YAML                                      DontDelete|PropertyCallback
+    TOML                                           Bun::Bindgen::Generated::TOMLObject::createTOML                     DontDelete|PropertyCallback
+    XML                                            Bun::Bindgen::Generated::XMLObject::createXML                       DontDelete|PropertyCallback
+    YAML                                           Bun::Bindgen::Generated::YAMLObject::createYAML                     DontDelete|PropertyCallback
     Transpiler                                     BunObject_lazyPropCb_wrap_Transpiler                                DontDelete|PropertyCallback
     embeddedFiles                                  BunObject_lazyPropCb_wrap_embeddedFiles                             DontDelete|PropertyCallback
     S3Client                                       BunObject_lazyPropCb_wrap_S3Client                                  DontDelete|PropertyCallback

@@ -95,22 +95,10 @@ export const bytesOfThen = b.fn({
   args: { data: b.stringOrBuffer.orBlob, after: b.f64.loose },
   returns: b.array(b.u8),
 });
-/** The bytes as they are once `callback` has run. */
-export const bytesOfAfterCallback = b.fn({
-  args: { data: b.stringOrBuffer.orBlob, callback: b.any },
-  returns: b.array(b.u8),
-  capability: "js",
-  throws: true,
-});
 /** Given one value twice: whether both are its own memory, and not a copy each. */
 export const bytesOfAreSameMemory = b.fn({
   args: { data: b.stringOrBuffer.orBlob, again: b.stringOrBuffer.orBlob },
   returns: b.bool,
-});
-export const bytesOfAreSameMemoryWhereJavaScriptRuns = b.fn({
-  args: { data: b.stringOrBuffer.orBlob, again: b.stringOrBuffer.orBlob },
-  returns: b.bool,
-  capability: "js",
 });
 export const asBigInt = b.fn({ args: { value: b.u64.allowBigInt }, returns: b.u64.asBigInt, capability: "heap" });
 

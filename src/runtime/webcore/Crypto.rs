@@ -1,5 +1,5 @@
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{self, JsScope, WithValue};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, WithValue};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsClass, JsResult, StringJsc};
 
@@ -227,14 +227,14 @@ fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 }
 
 pub(crate) fn random_uuid_v5<'a>(
-    cx: &mut JsScope<'a>,
+    heap: &JsHeap<'a>,
     name: &[u8],
     namespace: WithValue<'a, &'a [u8]>,
     encoding: UUIDEncoding<'a>,
-) -> bindgen::Result<'a, JSValue> {
+) -> bindgen::Result<'a, JsLocal<'a>> {
     let encoding = match encoding {
         UUIDEncoding::Label(label) => Encoding::from(label).ok_or_else(|| {
-            cx.heap.error_with_code(
+            heap.error_with_code(
                 bun_jsc::ErrorCode::UNKNOWN_ENCODING,
                 format_args!("Encoding must be one of base64, base64url, hex, or buffer"),
             )
@@ -242,7 +242,7 @@ pub(crate) fn random_uuid_v5<'a>(
         UUIDEncoding::Ignored(_) => Encoding::Hex,
     };
     let invalid_value = |message: &str| {
-        cx.heap.error_with_code(
+        heap.error_with_code(
             bun_jsc::ErrorCode::INVALID_ARG_VALUE,
             format_args!("{message}"),
         )
@@ -274,10 +274,15 @@ pub(crate) fn random_uuid_v5<'a>(
                 .try_into()
                 .expect("infallible: size matches"),
         );
-        return Ok(str.into_js(cx.global())?);
+        return bindgen::to_js::string(heap, str);
     }
 
-    Ok(encoding.encode_with_max_size(cx.global(), 32, &uuid.bytes)?)
+    // SAFETY: it makes a string or a `Buffer`.
+    let global = unsafe { heap.global() };
+    Ok(JsLocal::new(
+        heap,
+        encoding.encode_with_max_size(global, 32, &uuid.bytes)?,
+    ))
 }
 
 #[unsafe(no_mangle)]

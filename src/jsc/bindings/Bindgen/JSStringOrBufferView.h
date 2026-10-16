@@ -5,13 +5,8 @@
 
 namespace Bun::Bindgen {
 
-// A buffer that another thread can write is always copied. So is every buffer where the Rust body can run JavaScript, which can write, detach or resize one.
-enum class CopyBuffers : bool {
-    IfShared,
-    Always,
-};
-
-// The bytes of an argument of a host call that is a string, a BufferSource or a Blob. Nothing changes them during the call.
+// The bytes of an argument of a host call that is a string, a BufferSource or a Blob. Nothing changes them while no
+// JavaScript runs: those of a buffer that another thread can write are a copy.
 class JSStringOrBufferView {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(JSStringOrBufferView);
@@ -30,11 +25,10 @@ public:
     void initializeAsBuffer() { m_isBuffer = true; }
 
     // Converting a later argument can run JavaScript, so this comes after all of them. Copying can throw.
-    template<CopyBuffers copyBuffers>
     ALWAYS_INLINE void read(JSC::JSGlobalObject& globalObject, JSC::JSValue argument)
     {
         if (m_isBuffer)
-            readBuffer(globalObject, argument, copyBuffers);
+            readBuffer(globalObject, argument);
     }
 
     std::span<const uint8_t> bytes() const LIFETIME_BOUND
@@ -43,7 +37,7 @@ public:
     }
 
 private:
-    void readBuffer(JSC::JSGlobalObject&, JSC::JSValue, CopyBuffers);
+    void readBuffer(JSC::JSGlobalObject&, JSC::JSValue);
 
     JSStringUTF8View m_string;
     std::span<const uint8_t> m_buffer;

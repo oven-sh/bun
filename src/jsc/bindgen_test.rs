@@ -237,29 +237,7 @@ pub(crate) fn bytes_of_then(data: &[u8], _: f64) -> Vec<u8> {
     data.to_vec()
 }
 
-pub(crate) fn bytes_of_after_callback<'a>(
-    cx: &mut JsScope<'a>,
-    data: &'a [u8],
-    callback: JsLocal<'a>,
-) -> bindgen::Result<'a, Vec<u8>> {
-    let Some(callback) = callback.as_callable() else {
-        return Err(cx
-            .heap
-            .type_error(format_args!("callback must be a function")));
-    };
-    callback.call(cx, JsLocal::UNDEFINED, &[])?;
-    Ok(data.to_vec())
-}
-
 pub(crate) fn bytes_of_are_same_memory(data: &[u8], again: &[u8]) -> bool {
-    core::ptr::eq(data, again)
-}
-
-pub(crate) fn bytes_of_are_same_memory_where_java_script_runs(
-    _: &mut JsScope<'_>,
-    data: &[u8],
-    again: &[u8],
-) -> bool {
     core::ptr::eq(data, again)
 }
 

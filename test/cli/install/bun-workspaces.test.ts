@@ -507,6 +507,73 @@ test.concurrent("extglob and brace sequence workspace patterns", async () => {
   expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", ...good].sort());
 });
 
+test.concurrent("workspace patterns with a group that crosses a separator", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const good = ["apps/web", "packages/pkg1", "packages/pkg2", "tools/cli", "libs/a/core"];
+  // Installing any of these would fail.
+  const excluded = ["apps/other", "tools/internal", "libs/b/core"];
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["{apps/web,packages/*}", "@(tools/cli|libs/a/*)"],
+      }),
+    ),
+    ...good.map(dir =>
+      write(join(packageDir, dir, "package.json"), JSON.stringify({ name: dir.replaceAll("/", "-") })),
+    ),
+    ...excluded.map(dir =>
+      write(
+        join(packageDir, dir, "package.json"),
+        JSON.stringify({ name: dir.replaceAll("/", "-"), dependencies: { "doesnt-exist-oops": "1.2.3" } }),
+      ),
+    ),
+  ]);
+
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+
+  const lockfile = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as { workspaces: object };
+  expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", ...good].sort());
+});
+
+// symlinkSync to a directory needs Developer Mode or elevation on Windows.
+test.concurrent.skipIf(isWindows)("a group that crosses a separator takes a member that is a link", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const script = (name: string) => ({ name, version: "1.0.0", scripts: { present: `echo script-${name}` } });
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["{apps/web,packages/*}"] })),
+    write(join(packageDir, "apps", "web", "package.json"), JSON.stringify(script("web"))),
+    write(join(packageDir, "packages", "one", "package.json"), JSON.stringify(script("one"))),
+    write(join(packageDir, "real", "s", "package.json"), JSON.stringify(script("s"))),
+  ]);
+  symlinkSync(join("..", "real", "s"), join(packageDir, "packages", "s"));
+
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  const lockfile = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as { workspaces: object };
+  expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", "apps/web", "packages/one", "packages/s"]);
+
+  // `bun run --filter` reads the same patterns.
+  await using proc = spawn({
+    cmd: [bunExe(), "run", "--filter", "*", "present"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(["script-web", "script-one", "script-s"].filter(line => out.includes(line))).toEqual([
+    "script-web",
+    "script-one",
+    "script-s",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 test("dependency on same name as workspace and dist-tag", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

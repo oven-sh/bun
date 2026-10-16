@@ -277,6 +277,24 @@ describe("bun", () => {
       antipattern: /scriptc/,
     });
   });
+  test("members of a workspace pattern with a group that crosses a separator", () => {
+    const script = (name: string) => ({ name, scripts: { present: `echo script-${name}` } });
+    const cwd = tempDirWithFiles("filter-group-separator", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["{apps/web,packages/*}", "@(tools/cli|libs/a/*)"] }),
+      "apps/web/package.json": JSON.stringify(script("web")),
+      "apps/other/package.json": JSON.stringify(script("other")),
+      "packages/one/package.json": JSON.stringify(script("one")),
+      "tools/cli/package.json": JSON.stringify(script("cli")),
+      "tools/internal/package.json": JSON.stringify(script("internal")),
+      "libs/a/core/package.json": JSON.stringify(script("core")),
+    });
+    runInCwdSuccess({
+      cwd,
+      pattern: "*",
+      target_pattern: [/script-web/, /script-one/, /script-cli/, /script-core/],
+      antipattern: [/script-other/, /script-internal/],
+    });
+  });
   test("resolve package with missing name", () => {
     runInCwdSuccess({
       cwd: cwd_root,

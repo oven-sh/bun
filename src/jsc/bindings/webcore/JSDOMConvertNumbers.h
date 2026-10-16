@@ -38,95 +38,31 @@ namespace WebCore {
 // the value is outside the range of the destination integer type.
 
 template<typename T> T convertToInteger(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int8_t convertToInteger<int8_t>(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT uint8_t convertToInteger<uint8_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int16_t convertToInteger<int16_t>(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT uint16_t convertToInteger<uint16_t>(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT int32_t convertToInteger<int32_t>(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT uint32_t convertToInteger<uint32_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int64_t convertToInteger<int64_t>(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT uint64_t convertToInteger<uint64_t>(JSC::JSGlobalObject&, JSC::JSValue);
 
 // `x` truncated, or a TypeError if that is not in the range.
 double enforceRange(JSC::JSGlobalObject&, double x, double minimum, double maximum);
 
 template<typename T> T convertToIntegerEnforceRange(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int8_t convertToIntegerEnforceRange<int8_t>(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT uint8_t convertToIntegerEnforceRange<uint8_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int16_t convertToIntegerEnforceRange<int16_t>(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT uint16_t convertToIntegerEnforceRange<uint16_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int32_t convertToIntegerEnforceRange<int32_t>(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT uint32_t convertToIntegerEnforceRange<uint32_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int64_t convertToIntegerEnforceRange<int64_t>(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT uint64_t convertToIntegerEnforceRange<uint64_t>(JSC::JSGlobalObject&, JSC::JSValue);
 
 template<typename T> T convertToIntegerClamp(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int8_t convertToIntegerClamp<int8_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint8_t convertToIntegerClamp<uint8_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int16_t convertToIntegerClamp<int16_t>(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT uint16_t convertToIntegerClamp<uint16_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int32_t convertToIntegerClamp<int32_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint32_t convertToIntegerClamp<uint32_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT int64_t convertToIntegerClamp<int64_t>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> WEBCORE_EXPORT uint64_t convertToIntegerClamp<uint64_t>(JSC::JSGlobalObject&, JSC::JSValue);
 
 // MARK: -
 // MARK: Integer types
-
-template<> struct Converter<IDLByte> : DefaultConverter<IDLByte> {
-    static int8_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return convertToInteger<int8_t>(lexicalGlobalObject, value);
-    }
-};
-
-template<> struct JSConverter<IDLByte> {
-    using Type = typename IDLByte::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
 
 template<> struct Converter<IDLOctet> : DefaultConverter<IDLOctet> {
     static uint8_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
         return convertToInteger<uint8_t>(lexicalGlobalObject, value);
-    }
-};
-
-template<> struct JSConverter<IDLOctet> {
-    using Type = typename IDLOctet::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
-template<> struct Converter<IDLShort> : DefaultConverter<IDLShort> {
-    static int16_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return convertToInteger<int16_t>(lexicalGlobalObject, value);
-    }
-};
-
-template<> struct JSConverter<IDLShort> {
-    using Type = typename IDLShort::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
     }
 };
 
@@ -156,18 +92,6 @@ template<> struct Converter<IDLLong> : DefaultConverter<IDLLong> {
     }
 };
 
-template<> struct JSConverter<IDLLong> {
-    using Type = typename IDLLong::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
 template<> struct Converter<IDLUnsignedLong> : DefaultConverter<IDLUnsignedLong> {
     static uint32_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
@@ -177,25 +101,6 @@ template<> struct Converter<IDLUnsignedLong> : DefaultConverter<IDLUnsignedLong>
 
 template<> struct JSConverter<IDLUnsignedLong> {
     using Type = typename IDLUnsignedLong::ImplementationType;
-
-    static constexpr bool needsState = false;
-    static constexpr bool needsGlobalObject = false;
-
-    static JSC::JSValue convert(Type value)
-    {
-        return JSC::jsNumber(value);
-    }
-};
-
-template<> struct Converter<IDLLongLong> : DefaultConverter<IDLLongLong> {
-    static int64_t convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        return convertToInteger<int64_t>(lexicalGlobalObject, value);
-    }
-};
-
-template<> struct JSConverter<IDLLongLong> {
-    using Type = typename IDLLongLong::ImplementationType;
 
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;

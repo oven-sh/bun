@@ -99,19 +99,13 @@ template<typename NumericType> struct IDLNumber : IDLType<NumericType> {
 
 template<typename IntegerType> struct IDLInteger : IDLNumber<IntegerType> {
 };
-struct IDLByte : IDLInteger<int8_t> {
-};
 struct IDLOctet : IDLInteger<uint8_t> {
-};
-struct IDLShort : IDLInteger<int16_t> {
 };
 struct IDLUnsignedShort : IDLInteger<uint16_t> {
 };
 struct IDLLong : IDLInteger<int32_t> {
 };
 struct IDLUnsignedLong : IDLInteger<uint32_t> {
-};
-struct IDLLongLong : IDLInteger<int64_t> {
 };
 struct IDLUnsignedLongLong : IDLInteger<uint64_t> {
 };

@@ -97,38 +97,6 @@ struct SequenceTraits<
     }
 };
 
-template<typename IDLType, size_t arraySize>
-struct SequenceTraits<IDLType, std::array<typename IDLType::ImplementationType, arraySize>> {
-    using VectorType = std::array<typename IDLType::ImplementationType, arraySize>;
-
-    static void reserveExact(
-        JSC::JSGlobalObject& lexicalGlobalObject,
-        VectorType& sequence,
-        size_t size)
-    {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        if (size != arraySize) {
-            throwTypeError(&lexicalGlobalObject, scope);
-        }
-    }
-
-    template<typename T>
-    static void append(
-        JSC::JSGlobalObject& lexicalGlobalObject,
-        VectorType& sequence,
-        size_t index,
-        T&& element)
-    {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        if (index >= arraySize) {
-            throwTypeError(&lexicalGlobalObject, scope);
-        }
-        sequence[index] = std::forward<T>(element);
-    }
-};
-
 template<typename IDLType, typename VectorType = Vector<typename IDLType::SequenceStorageType>>
 struct GenericSequenceConverter {
     using Traits = SequenceTraits<IDLType, VectorType>;
@@ -138,12 +106,6 @@ struct GenericSequenceConverter {
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, Ctx& ctx)
     {
         return convert(lexicalGlobalObject, object, ReturnType(), ctx);
-    }
-
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object)
-    {
-        auto ctx = Bun::DefaultConversionContext {};
-        return convert(lexicalGlobalObject, object, ctx);
     }
 
     template<Bun::IDLConversionContext Ctx>
@@ -164,42 +126,6 @@ struct GenericSequenceConverter {
         });
 
         RETURN_IF_EXCEPTION(scope, {});
-        // This could be the case if `VectorType` is `std::array`.
-        if (index != result.size()) {
-            throwTypeError(&lexicalGlobalObject, scope);
-        }
-        return WTF::move(result);
-    }
-
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, ReturnType&& result)
-    {
-        auto ctx = Bun::DefaultConversionContext {};
-        return convert(lexicalGlobalObject, object, WTF::move(result), ctx);
-    }
-
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-        requires(!Bun::IDLConversionContext<std::decay_t<ExceptionThrower>>)
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, ExceptionThrower&& exceptionThrower = ExceptionThrower())
-    {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        ReturnType result;
-        size_t index = 0;
-        forEachInIterable(&lexicalGlobalObject, object, [&result, &index, &exceptionThrower](JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue nextValue) {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-
-            auto convertedValue = Converter<IDLType>::convert(*lexicalGlobalObject, nextValue, std::forward<ExceptionThrower>(exceptionThrower));
-            RETURN_IF_EXCEPTION(scope, );
-            Traits::append(*lexicalGlobalObject, result, index++, WTF::move(convertedValue));
-            RETURN_IF_EXCEPTION(scope, );
-        });
-
-        RETURN_IF_EXCEPTION(scope, {});
-        // This could be the case if `VectorType` is `std::array`.
-        if (index != result.size()) {
-            throwTypeError(&lexicalGlobalObject, scope);
-        }
         return WTF::move(result);
     }
 
@@ -224,10 +150,6 @@ struct GenericSequenceConverter {
         });
 
         RETURN_IF_EXCEPTION(scope, {});
-        // This could be the case if `VectorType` is `std::array`.
-        if (index != result.size()) {
-            throwTypeError(&lexicalGlobalObject, scope);
-        }
         return WTF::move(result);
     }
 };
@@ -285,49 +207,6 @@ struct SequenceConverter {
         return convertArray(lexicalGlobalObject, array, ctx);
     }
 
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-        requires(!Bun::IDLConversionContext<std::decay_t<ExceptionThrower>>)
-    static ReturnType convertArray(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSArray* array, ExceptionThrower&& exceptionThrower = ExceptionThrower())
-    {
-        auto& vm = lexicalGlobalObject.vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        unsigned length = array->length();
-
-        ReturnType result;
-        Traits::reserveExact(lexicalGlobalObject, result, length);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        JSC::IndexingType indexingType = array->indexingType() & JSC::IndexingShapeMask;
-
-        if (indexingType == JSC::ContiguousShape) {
-            for (unsigned i = 0; i < length; i++) {
-                auto indexValue = array->butterfly()->contiguous().at(array, i).get();
-                if (!indexValue)
-                    indexValue = JSC::jsUndefined();
-
-                auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue, std::forward<ExceptionThrower>(exceptionThrower));
-                RETURN_IF_EXCEPTION(scope, {});
-                Traits::append(lexicalGlobalObject, result, i, WTF::move(convertedValue));
-                RETURN_IF_EXCEPTION(scope, {});
-            }
-            return result;
-        }
-
-        for (unsigned i = 0; i < length; i++) {
-            auto indexValue = array->getDirectIndex(&lexicalGlobalObject, i);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (!indexValue)
-                indexValue = JSC::jsUndefined();
-
-            auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue, std::forward<ExceptionThrower>(exceptionThrower));
-            RETURN_IF_EXCEPTION(scope, {});
-            Traits::append(lexicalGlobalObject, result, i, WTF::move(convertedValue));
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        return result;
-    }
-
     template<Bun::IDLConversionContext Ctx>
     static ReturnType convertObject(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, Ctx& ctx)
     {
@@ -373,35 +252,6 @@ struct SequenceConverter {
         return {};
     }
 
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-        requires(!Bun::IDLConversionContext<std::decay_t<ExceptionThrower>>)
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject,
-        JSC::JSValue value,
-        ExceptionThrower&& exceptionThrower = ExceptionThrower(),
-        ASCIILiteral functionName = {}, ASCIILiteral argumentName = {})
-    {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        if (!value.isObject()) {
-            throwSequenceTypeError(lexicalGlobalObject, scope, functionName, argumentName);
-            return {};
-        }
-
-        JSC::JSObject* object = JSC::asObject(value);
-        if (Converter<IDLType>::conversionHasSideEffects)
-            RELEASE_AND_RETURN(scope, (GenericConverter::convert(lexicalGlobalObject, object, std::forward<ExceptionThrower>(exceptionThrower))));
-
-        if (!JSC::isJSArray(object))
-            RELEASE_AND_RETURN(scope, (GenericConverter::convert(lexicalGlobalObject, object, std::forward<ExceptionThrower>(exceptionThrower))));
-
-        JSC::JSArray* array = JSC::asArray(object);
-        if (!array->isIteratorProtocolFastAndNonObservable())
-            RELEASE_AND_RETURN(scope, (GenericConverter::convert(lexicalGlobalObject, object, std::forward<ExceptionThrower>(exceptionThrower))));
-
-        RELEASE_AND_RETURN(scope, (convertArray(lexicalGlobalObject, array, std::forward<ExceptionThrower>(exceptionThrower))));
-    }
-
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, JSC::JSValue method)
     {
         if (Converter<IDLType>::conversionHasSideEffects)
@@ -440,11 +290,6 @@ struct Converter<IDLSequence<T, VectorType>> : DefaultConverter<IDLSequence<T, V
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSObject* object, JSC::JSValue method)
     {
         return Detail::SequenceConverter<T, VectorType>::convert(lexicalGlobalObject, object, method);
-    }
-
-    template<typename ExceptionThrower> static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower, ASCIILiteral functionName = {}, ASCIILiteral argumentName = {})
-    {
-        return Detail::SequenceConverter<T, VectorType>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower), functionName, argumentName);
     }
 };
 

@@ -72,8 +72,7 @@ pub(crate) fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
         && (url.len() == registry.len() || url[registry.len()] == b'/')
 }
 
-/// Which npm tarball URLs the writer replaces with `""`: the parser rebuilds
-/// `""` against the reader's registry, so only a URL that rebuild reproduces.
+/// Decides when the writer replaces an npm tarball URL with `""`.
 struct NpmUrlWriter<'a> {
     options: &'a PackageManagerOptions,
     registry: Vec<u8>,

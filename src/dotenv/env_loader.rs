@@ -615,7 +615,7 @@ impl Loader {
             // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
             // for more details on how this edge case works.
             if !skip_default_env {
-                self.load_default_files(suffix, dir, &mut value_buffer)?;
+                self.load_default_files(suffix, bun_sys::Fd::cwd(), dir, &mut value_buffer)?;
             }
         }
 
@@ -623,6 +623,17 @@ impl Loader {
             self.print_loaded(start);
         }
         Ok(())
+    }
+
+    /// Loads the default `.env` files of the directory `dir_handle`, which `dir` lists. It is for
+    /// a directory that is not the working directory, and it prints nothing.
+    pub fn load_default_files_of<D: DirEntryProbe + ?Sized>(
+        &mut self,
+        dir_handle: bun_sys::Fd,
+        dir: &D,
+        suffix: DotEnvFileSuffix,
+    ) -> crate::Result<()> {
+        self.load_default_files(suffix, dir_handle, dir, &mut Vec::new())
     }
 
     fn loaded_count(&self) -> usize {
@@ -659,11 +670,10 @@ impl Loader {
     fn load_default_files<D: DirEntryProbe + ?Sized>(
         &mut self,
         suffix: DotEnvFileSuffix,
+        dir_handle: bun_sys::Fd,
         dir: &D,
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
-        let dir_handle = bun_sys::Fd::cwd();
-
         match suffix {
             DotEnvFileSuffix::Development => self.try_load_default(
                 dir,

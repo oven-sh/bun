@@ -674,6 +674,13 @@ fn build_package_json(
 // scanner-entry.d.ts is NOT included in the build (type definitions only)
 const SCANNER_ENTRY_SOURCE: &[u8] = include_bytes!("./scanner-entry.ts");
 
+/// Where the scanner runs, and where its module is looked up from: the project. For the install
+/// that `bunx` spawns, that is the project `bunx` runs in, not the directory of the tool.
+fn scanner_cwd() -> &'static [u8] {
+    crate::package_manager_real::run_tasks::bunx_project()
+        .unwrap_or_else(|| FileSystem::instance().top_level_dir())
+}
+
 fn replace_first(source: &[u8], placeholder: &[u8], with: &[u8]) -> Vec<u8> {
     let index = strings::index_of(source, placeholder).expect("placeholder in scanner-entry.ts");
     [&source[..index], with, &source[index + placeholder.len()..]].concat()
@@ -711,7 +718,11 @@ fn attempt_security_scan(
 
     // After a partial install, the package might exist but not be in the lockfile yet
     // In that case, we'll get null here but should still try to run the scanner
-    let security_scanner_pkg_id = finder.find_in_root_dependencies();
+    // `bunx <scanner>`: the scanner that checks the install is the project's, not the copy that is
+    // being installed.
+    let security_scanner_pkg_id = finder
+        .find_in_root_dependencies()
+        .filter(|_| crate::package_manager_real::run_tasks::bunx_project().is_none());
     // Suppress JavaScript error output unless in verbose mode
     let suppress_error_output =
         manager.options.log_level != crate::package_manager::Options::LogLevel::Verbose;
@@ -926,7 +937,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             stdout: Stdio::Inherit,
             stderr: Stdio::Inherit,
             stdin: Stdio::Inherit,
-            cwd: Box::from(FileSystem::instance().top_level_dir()),
+            cwd: Box::from(scanner_cwd()),
             extra_fds,
             ..Default::default()
         };
@@ -1027,7 +1038,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             stdout: Stdio::Inherit,
             stderr: Stdio::Inherit,
             stdin: Stdio::Inherit,
-            cwd: Box::from(FileSystem::instance().top_level_dir()),
+            cwd: Box::from(scanner_cwd()),
             extra_fds,
             windows: spawn::WindowsOptions {
                 loop_: EventLoopHandle::from_any(&mut self.manager.event_loop),

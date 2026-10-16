@@ -553,6 +553,22 @@ impl BunxCommand {
         Some([RealFS::platform_temp_dir(), prefix.as_bytes(), package_fmt].concat())
     }
 
+    /// Whether `dir` has a bunfig.toml or an .npmrc, by its listing. The resolver has the listing of
+    /// the working directory and of every directory above it, so this reads nothing for them.
+    fn has_install_config(transpiler: &mut Transpiler, dir: &[u8]) -> bool {
+        let Ok(Some(info)) = transpiler.resolver.read_dir_info(dir) else {
+            return true;
+        };
+        let _entries_lock = bun_resolver::fs::FileSystem::instance()
+            .fs
+            .entries_mutex
+            .lock_guard();
+        info.get_entries_ref_locked(transpiler.resolver.generation)
+            .is_none_or(|entries| {
+                entries.has_comptime_query(b"bunfig.toml") || entries.has_comptime_query(b".npmrc")
+            })
+    }
+
     fn prepend_to_path(
         env: &mut bun_dotenv::Loader,
         bunx_cache_dir: &[u8],
@@ -892,14 +908,16 @@ impl BunxCommand {
             }
         }
 
+        let project = bun_install::package_manager_real::project_directory(top_level_dir)
+            .unwrap_or(top_level_dir);
+
         // 2. The project's installed copy of the package. It is skipped when the user typed a
         // version, a tag, or a URL, because that says where the package must come from.
         if !is_versioned {
-            let project = bun_install::package_manager_real::project_directory(top_level_dir);
             let found = match Self::find_in_project(
                 this_transpiler,
                 top_level_dir,
-                project.unwrap_or(top_level_dir),
+                project,
                 result_package_name,
                 initial_bin_name,
                 opts.binary_name.is_some(),
@@ -918,6 +936,31 @@ impl BunxCommand {
                     passthrough,
                     None,
                 )?;
+            }
+        }
+
+        // The install takes the registries of the project's bunfig.toml and .npmrc. A package's own
+        // script in `node_modules`, or the node-gyp that `bun install` runs for one, is not a
+        // command of the project.
+        let project_of_install = (ignore_cwd.is_empty()
+            && !strings::contains(top_level_dir, bun_paths::NODE_MODULES_NEEDLE))
+        .then_some(project);
+        if let Some(project) = project_of_install
+            && Self::has_install_config(this_transpiler, project)
+        {
+            match bun_install::package_manager_real::bunx_project_key(env_loader, project) {
+                // What decides the content of a tree is part of its name.
+                Ok(Some(key)) => {
+                    package_fmt.extend_from_slice(format!("+project-{key:x}").as_bytes());
+                }
+                Ok(None) => {}
+                Err(path) => {
+                    Output::err_generic(
+                        "cannot read or parse {}, refusing to install packages",
+                        format_args!("{}", BStr::new(&path)),
+                    );
+                    Global::exit(1);
+                }
             }
         }
 
@@ -1085,6 +1128,10 @@ impl BunxCommand {
         if let Some(arg) = &minimum_release_age_arg {
             args.push(arg);
         }
+        if !ctx.args.env_files.is_empty() {
+            // As for `bun add --env-file`: the project's default `.env` files are not read.
+            args.push(b"--no-env-file");
+        }
 
         bun_output::scoped_log!(
             bunx,
@@ -1102,6 +1149,10 @@ impl BunxCommand {
         env_loader
             .map
             .put(b"BUN_INTERNAL_BUNX_HAS_COPY", has_copy)?;
+        match project_of_install {
+            Some(project) => env_loader.map.put(b"BUN_INTERNAL_BUNX_PROJECT", project)?,
+            None => env_loader.map.remove(b"BUN_INTERNAL_BUNX_PROJECT"),
+        }
 
         let envp = env_loader.map.create_null_delimited_env_map()?;
 
@@ -1142,6 +1193,7 @@ impl BunxCommand {
         // not inherit them.
         env_loader.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
         env_loader.map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
+        env_loader.map.remove(b"BUN_INTERNAL_BUNX_PROJECT");
 
         /// The raw byte: `signal_code()` would drop RT signals (>31).
         fn raise(signal: u8) -> ! {

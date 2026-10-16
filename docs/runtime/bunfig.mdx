@@ -824,6 +824,8 @@ The `[install]` section configures the behavior of `bun install`.
 # configuration here
 ```
 
+From the `[install]` section of a project, `bunx` and `bun create <npm template>` take only the registries and the settings that check packages. See [Registries](/pm/bunx#registries).
+
 A relative path in `cafile`, `cache`, `globalDir` or `globalBinDir` is relative to the file it is written in. A relative path in a flag (`--config`, `--cafile`, `--cache-dir`) is relative to the directory you run `bun` in. A relative `BUN_INSTALL_CACHE_DIR` is relative to the project's root. In all of these, a leading `~/` is your home directory.
 
 ### `install.optional`

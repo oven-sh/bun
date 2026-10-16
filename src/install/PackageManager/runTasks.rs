@@ -1954,6 +1954,12 @@ fn is_bunx_install() -> bool {
     is_bunx_tree(crate::bun_fs::FileSystem::instance().top_level_dir())
 }
 
+/// The project that `bunx` runs in, if this process is the `bun add` that `bunx` spawned for it.
+pub(crate) fn bunx_project() -> Option<&'static [u8]> {
+    let project = bun_core::env_var::BUN_INTERNAL_BUNX_PROJECT.get()?;
+    (bun_paths::is_absolute(project) && is_bunx_install()).then_some(project)
+}
+
 /// How a command ends whose request failed, before it linked or saved anything.
 pub(crate) fn failed_request_error() -> crate::Error {
     if REQUEST_GOT_NO_ANSWER.load(Ordering::Relaxed) && is_bunx_install() {

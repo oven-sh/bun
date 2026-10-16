@@ -1483,7 +1483,6 @@ describe("the FileSink class that a writer hands out by .constructor", () => {
         bunExe(),
         "-e",
         `
-const { S3Client } = require("bun");
 const outcome = fn => {
   try {
     return "returned " + fn();
@@ -1516,7 +1515,7 @@ const writer = file.writer();
 const FileSink = writer.constructor;
 const child = Bun.spawn({ cmd: [process.execPath, "--version"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
 await using server = Bun.serve({ port: 0, fetch: () => new Response() });
-const upload = new S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "c", endpoint: server.url.href })
+const upload = new Bun.S3Client({ accessKeyId: "a", secretAccessKey: "b", bucket: "c", endpoint: server.url.href })
   .file("key")
   .writer();
 

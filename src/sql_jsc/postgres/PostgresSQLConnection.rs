@@ -1769,13 +1769,23 @@ impl PostgresSQLConnection {
         self.pipelined_requests.get() > 0 || self.nonpipelinable_requests.get() > 0
     }
 
+    /// `None` too while the last request that is written waits for its turn to be stopped: with
+    /// another one behind it, `stop_cancelled_head` could not ask for that.
     fn first_unwritten(&self) -> Option<RefPtr<PostgresSQLQuery>> {
         let requests = self.requests.get();
         let written = requests
             .len()
             .checked_sub(self.pending_requests.get() as usize);
         debug_assert!(written.is_some(), "pending_requests exceeds the queue");
-        requests.get(written?).cloned()
+        let written = written?;
+        if written
+            .checked_sub(1)
+            .and_then(|last| requests.get(last))
+            .is_some_and(|last| last.flags.get().cancel == Cancel::Wanted)
+        {
+            return None;
+        }
+        requests.get(written).cloned()
     }
 
     /// `false`: it is not in the queue any more.

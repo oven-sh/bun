@@ -785,35 +785,43 @@ describe.concurrent("cancel()", () => {
     expect(await next).toEqual([{ v: "ok" }]);
   });
 
-  // A CancelRequest stops what the backend runs when it arrives. With both cancelled, nobody waits for that.
-  test("of two queries that are written asks for each when the backend runs it, on one connection at a time", async () => {
-    await using server = await cancelServer({ second: "stays open" });
-    await using sql = new SQL(server.url, { max: 1 });
-    server.auto = true;
-    await Promise.all([sql`select 'a'`, sql`select 'b'`]);
-    server.auto = false;
+  // A CancelRequest stops what the backend runs when it arrives. With both cancelled, nobody waits for that. What is
+  // handed over meanwhile is not written behind the second one, or nobody could ask for that one to be stopped.
+  test.each(["after", "before"])(
+    "of two queries that are written asks for each in its turn, the second connection closes %s the first is answered",
+    async order => {
+      await using server = await cancelServer({ second: "stays open" });
+      await using sql = new SQL(server.url, { max: 1 });
+      server.auto = true;
+      await Promise.all([sql`select 'a'`, sql`select 'b'`]);
+      server.auto = false;
 
-    const [first, second] = [sql`select 'a'`.execute(), sql`select 'b'`.execute()];
-    await server.batch(4);
-    first.cancel();
-    expect(await rejection(first)).toEqual(cancelledSent);
-    await server.fence();
-    expect(server.sockets).toHaveLength(2);
-    second.cancel();
-    expect(await rejection(second)).toEqual(cancelledSent);
-    await server.request(0);
-    stop(server);
-    await server.fence();
-    expect(server.sockets).toHaveLength(4);
+      const [first, second] = [sql`select 'a'`.execute(), sql`select 'b'`.execute()];
+      await server.batch(4);
+      first.cancel();
+      expect(await rejection(first)).toEqual(cancelledSent);
+      await server.fence();
+      expect(server.requested).toBe(0);
+      second.cancel();
+      expect(await rejection(second)).toEqual(cancelledSent);
+      await server.request(0);
+      const asked = server.sockets.at(-1)!;
+      const next = sql`select 'a'`.execute();
 
-    server.sockets[2].end();
-    expect(await server.request(1)).toEqual(pgCancelRequest(...cancelKey));
-    stop(server);
-    server.sockets[4].end();
-    server.auto = true;
-    expect(await sql`select 'c'`).toEqual([{ v: "ok" }]);
-    expect(server.sockets).toHaveLength(5);
-  });
+      const steps = [() => stop(server), () => asked.end()];
+      for (const step of order === "after" ? steps : steps.reverse()) {
+        step();
+        await server.fence();
+        expect(server.batches).toBe(4);
+      }
+      expect(await server.request(1)).toEqual(pgCancelRequest(...cancelKey));
+      stop(server);
+      server.auto = true;
+      server.sockets.at(-1)!.end();
+      expect(await next).toEqual([{ v: "ok" }]);
+      expect(server.requested).toBe(2);
+    },
+  );
 
   // The cancelled query can end by itself, and the signal would find the backend at work on the next one.
   test("of a query with another one written behind it asks for nothing, and that one runs once", async () => {

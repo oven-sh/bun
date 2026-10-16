@@ -280,16 +280,16 @@ test("indexOfLine searches a SharedArrayBuffer that another thread is writing", 
 
     let outOfRange = 0;
     const fromTheStart = new Set<number>();
-    // Until the writer has been seen to run. The loop never yields, so the test's own timeout cannot end it.
-    const deadline = Date.now() + 30_000;
-    for (let i = 0; i < 20_000 || (fromTheStart.size < 2 && Date.now() < deadline); i++) {
+    // Until the writer has been seen to run.
+    for (let i = 0; i < 20_000 || fromTheStart.size < 2; i++) {
       const offset = i % length;
       const index = indexOfLine(shared, offset);
       if (!(index === -1 || (Number.isInteger(index) && index >= offset && index < length))) outOfRange++;
       fromTheStart.add(indexOfLine(shared));
+      // The test's timeout can only end a loop that yields.
+      if (i % 1024 === 1023) await new Promise(setImmediate);
     }
     expect(outOfRange).toBe(0);
-    expect(fromTheStart.size).toBeGreaterThan(1);
 
     const stopped = message();
     Atomics.store(stop, 0, 1);

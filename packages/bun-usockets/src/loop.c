@@ -911,12 +911,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * here, so let the next poll re-report it together with READABLE and
                  * the read loop drain it, instead of closing over the unread tail. */
                 eof = 0;
-            } else if (eof_deferrable && s->flags.low_prio_state == 1 && !unsent_is_lost) {
+            } else if (eof_deferrable && s->flags.low_prio_state == 1 && (!hangup || (!read_fin && !unsent_is_lost))) {
                 /* Parked in the low-priority queue, where kqueue's sentinel knote still reports the
                  * peer's FIN and epoll still reports a hangup. What the peer sent ahead of it is
                  * unread: a TLS 1.3 client that ends right after its handshake has its Finished
                  * there, and an end here would fail the server's handshake and reset that client.
-                 * Leaving the queue re-arms the reads. */
+                 * Leaving the queue re-arms the reads. A hangup whose FIN this dispatch read has
+                 * nothing ahead of it. */
 #ifdef LIBUS_USE_EPOLL
                 /* As for a paused socket: leave epoll, or EPOLLHUP fires again on every poll. The queue
                  * registers the socket again (us_internal_handle_low_priority_sockets). */

@@ -170,6 +170,8 @@ describe("heapStats() mimalloc integration", () => {
         });
       }
 
+      // The next three tests change with oven-sh/WebKit#586, which lets JSC use a range that mimalloc refuses.
+
       // The default sizes. A reservation maps twice its size, so under 128 MB the 64 MB size never fits and the
       // 32 MB size does, and mimalloc takes no range that small.
       test.concurrent.skipIf(!isLinux)("under a ulimit -d that fits only the smallest size", async () => {
@@ -182,7 +184,6 @@ describe("heapStats() mimalloc integration", () => {
         });
       });
 
-      // These two stop to fail when JSC can run without mimalloc in that range (oven-sh/WebKit#586).
       test.concurrent("with a size that mimalloc refuses", async () => {
         expect(await run([bunExe(), "-e", "1"], { BUN_JSC_structureHeapSizeInKB: "32768" })).toEqual({
           stderr: tooSmall,

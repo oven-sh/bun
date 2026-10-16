@@ -159,6 +159,8 @@ impl Config {
         };
         let report = cx
             .report(place, PREFER_DESTRUCTURING)
+            .claims(declaration)
+            .unless_claimed(declaration)
             .called_with(declaration);
         let report = report
             .data("type", type_in_message(kind, cx))
@@ -249,6 +251,7 @@ impl Config {
             let arrays = std::iter::repeat_n(("Array", "array"), arrays);
             for (said, kind) in arrays.chain(std::iter::repeat_n(("Object", "object"), objects)) {
                 cx.report(e, PREFER_DESTRUCTURING)
+                    .unless_claimed(e)
                     .data("type", said)
                     .data("kind", kind);
             }
@@ -259,6 +262,8 @@ impl Config {
             && !utils::is_assignment_target(e)
         {
             cx.report(e, PREFER_DESTRUCTURING)
+                .claims(e)
+                .unless_claimed(e)
                 .data("type", type_in_message(kind, cx))
                 .data("kind", kind);
         }

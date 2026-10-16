@@ -107,13 +107,13 @@ impl Outline {
     /// another tag. `Flavor::Oxc` never asks.
     pub fn read(
         text: &[u8],
-        comments: &[(u32, u32)],
+        comments: &[crate::hir::Comment],
         flavor: Flavor,
         is_stack_low: &dyn Fn() -> bool,
     ) -> Outline {
         let mut outline = Outline::default();
         for &comment in comments {
-            outline.push(text, comment, flavor, is_stack_low);
+            outline.push(text, (comment.pos, comment.end), flavor, is_stack_low);
         }
         outline
     }

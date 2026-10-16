@@ -592,14 +592,18 @@ pub(super) fn comments<'a>(file: &'a File<'a>) -> Option<Vec<RawToken>> {
             });
         }
     }
-    comments.extend(listed.iter().map(|&(start, end)| RawToken {
-        start,
-        end,
-        kind: match text.get(start as usize + 1) {
-            Some(b'*') => TokenKind::Block,
-            _ => TokenKind::Line,
+    comments.extend(listed.iter().map(
+        |&hir::Comment {
+             pos: start, end, ..
+         }| RawToken {
+            start,
+            end,
+            kind: match text.get(start as usize + 1) {
+                Some(b'*') => TokenKind::Block,
+                _ => TokenKind::Line,
+            },
         },
-    }));
+    ));
     Some(comments)
 }
 

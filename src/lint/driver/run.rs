@@ -963,6 +963,8 @@ impl Run<'_> {
         if let Some(refusal) = loader.refused() {
             return self.refuse_flag(refusal);
         }
+        // Recorded as the loader's mistake, which is printed next.
+        let _ = of_cwd.as_ref().map(|it| loader.check_wildcards(it));
         if let Some(mistake) = loader.mistake() {
             self.out.stderr.extend_from_slice(mistake);
             self.out.exit_code = 2;
@@ -1023,6 +1025,7 @@ impl Run<'_> {
         let memory = bun_sema::session::Session::new();
         let (skipped_in_comments, out_of_stack) =
             (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
+        let without_include = Guarded::new(Vec::new());
         let broken_fixes = Guarded::new(Vec::new());
         let handed_back = Guarded::new(Vec::new());
         let unread = Guarded::new(Vec::new());
@@ -1041,6 +1044,7 @@ impl Run<'_> {
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
             out_of_stack: &out_of_stack,
+            without_include: &without_include,
             broken_fixes: &broken_fixes,
             handed_back: &handed_back,
             unread: &unread,
@@ -1187,6 +1191,63 @@ impl Run<'_> {
                     &shown.join(&b", "[..])[..],
                     more,
                     b"\n  Rules that need type information may have missed problems there. This is a bug in Bun.",
+                ]
+                .concat(),
+            );
+        }
+        // Who says which files to lint knows that they are few: `--staged`, `--changed`, standard input, or their names.
+        let named: Vec<Vec<u8>> = (options.patterns.iter())
+            .map(|it| paths::resolve(&environment.cwd, &paths::from_native(it)))
+            .collect();
+        let is_named = |path: &Vec<u8>| named.contains(&paths::from_native(path));
+        let mut without_include = std::mem::take(&mut *without_include.lock());
+        if options.only.is_some() || options.stdin || options.silent {
+            without_include.clear();
+        }
+        without_include.retain(|program| {
+            typed::is_out_of_proportion(program) && !program.files.iter().all(is_named)
+        });
+        for program in without_include {
+            let relative =
+                |path: &[u8]| paths::relative(&environment.cwd, &paths::from_native(path));
+            let shown: Vec<Vec<u8>> = program
+                .files
+                .iter()
+                .take(3)
+                .map(|it| relative(it))
+                .collect();
+            let more: &[u8] = if program.files.len() > 3 {
+                b", .."
+            } else {
+                b""
+            };
+            let plural = bun_sema_driver::format::plural;
+            let seconds = program.load_time.as_secs_f64();
+            let took = match seconds >= 1.0 {
+                true => format!("{seconds:.1}s"),
+                false => format!("{:.0}ms", seconds * 1e3),
+            };
+            let config = relative(&program.config_path);
+            let or_the_flag: &[u8] = match options.tsconfig {
+                Some(_) => b".",
+                None => b", or pass --tsconfig.",
+            };
+            self.warn(
+                &[
+                    b"Loaded ",
+                    &plural(program.included, b"file", b"files")[..],
+                    b" in ",
+                    took.as_bytes(),
+                    b" to lint ",
+                    &plural(program.files.len(), b"file", b"files")[..],
+                    b": ",
+                    &shown.join(&b", "[..])[..],
+                    more,
+                    b"\n  ",
+                    &config,
+                    b" has no \"include\", so every file below it is part of its project.",
+                    b"\n  To lint faster, add \"include\" to it",
+                    or_the_flag,
                 ]
                 .concat(),
             );
@@ -1363,6 +1424,11 @@ impl Run<'_> {
                 Err(Fatal(error)) => return self.fail(&error),
             },
         };
+        for result in &mut results {
+            if LintMessage::hide_claimed(&mut result.messages) {
+                result.counts = Counts::of(&result.messages);
+            }
+        }
         let has_unused = suppressed.has_unused && !options.pass_on_unpruned_suppressions;
         // oxlint reports it like problems, after those of all files.
         let about_suppressions = match is_oxlint {

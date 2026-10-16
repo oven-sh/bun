@@ -53,21 +53,6 @@ impl<'a> SourceText<'a> {
         self.text.get(position as usize).copied()
     }
 
-    pub(crate) fn next_non_whitespace_byte_is(self, position: u32, expected: u8) -> bool {
-        let mut rest = self.from(position).trim_ascii_start();
-        while rest.first().is_some_and(|b| !b.is_ascii()) {
-            match js_whitespace_len(rest) {
-                0 => break,
-                len => rest = rest[len..].trim_ascii_start(),
-            }
-        }
-        rest.first() == Some(&expected)
-    }
-
-    pub(crate) fn contains_byte(self, span: Span, byte: u8) -> bool {
-        bun_core::strings::contains_char(self.text_for(&span), byte)
-    }
-
     /// White space that is not ASCII counts as a space, and so does the vertical tab, which `u8::is_ascii_whitespace` does not
     /// know. U+2028 and U+2029 count as `\n`.
     pub(crate) fn all_bytes(self, span: Span, predicate: impl Fn(u8) -> bool) -> bool {

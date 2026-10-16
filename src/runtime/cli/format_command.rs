@@ -49,6 +49,32 @@ impl FormatCommand {
             }
             Global::exit(0);
         }
+        // `--debug-comments <directory> <file> ..`, for the tests: writes which node owns each comment of a file into
+        // `<directory>/<file>.txt`. `--debug-unprinted-comments`: the comments that no printer has printed. With `-oxfmt` at the
+        // end: in the flavor of oxfmt.
+        if HAS_TEST_RUNNER
+            && let [flag, directory, files @ ..] = args
+            && matches!(
+                flag.as_bytes(),
+                b"--debug-comments"
+                    | b"--debug-comments-oxfmt"
+                    | b"--debug-unprinted-comments"
+                    | b"--debug-unprinted-comments-oxfmt"
+            )
+        {
+            let only_unprinted = flag.as_bytes().starts_with(b"--debug-unprinted-comments");
+            let is_oxfmt = flag.as_bytes().ends_with(b"-oxfmt");
+            for file in files {
+                let path = file.as_bytes();
+                let listed = bun_format_conformance::read_file(path).and_then(|text| {
+                    bun_lint_driver::fmt::debug_comments(path, &text, only_unprinted, is_oxfmt)
+                });
+                let listed = listed.unwrap_or_else(|| b"REFUSED\n".to_vec());
+                let out = [directory.as_bytes(), b"/", path, b".txt"].concat();
+                bun_format_conformance::write_file(&out, &listed);
+            }
+            Global::exit(0);
+        }
         if HAS_TEST_RUNNER
             && let [first, rest @ ..] = args
             && let Some(run) = test_runner(first.as_bytes())

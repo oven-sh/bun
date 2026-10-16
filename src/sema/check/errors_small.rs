@@ -201,10 +201,19 @@ impl<'p> Checker<'p, '_> {
         if is_logical(location) {
             return self.check_known_truthy_types(file, location, whole, body);
         }
-        // Only a right operand is tested by its own type. Anything else uses the type of the whole
-        // condition.
-        let judged_by = if location == test { whole } else { location };
-        let ty = self.type_of_expr(file, judged_by);
+        // Only a right operand is tested by its own type: `c.checkExpression(location)`, in `CheckModeNormal` whatever the mode
+        // `test` is checked under, so a comparison in it is reported with the types that a loop has collected so far. Anything
+        // else uses the type of the whole condition.
+        let ty = if location == test {
+            self.type_of_expr(file, whole)
+        } else if self.is_rechecking() {
+            self.check_expression_ex(file, location, CheckMode::empty())
+        } else {
+            let outside = self.type_only_node.take();
+            let ty = self.type_of_expr(file, location);
+            self.type_only_node = outside;
+            ty
+        };
         let start = self.start_inside_parentheses(file, location);
         // An enum member has a constant value.
         if let (TypeData::EnumLit { value, .. }, ExprKind::Dot { obj, .. }) =

@@ -64,14 +64,14 @@ static std::optional<size_t> mlDsaPrivOnlyPkcs8Length(CryptoAlgorithmIdentifier 
 void CryptoAlgorithmMLDSA::generateKey(const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyOrKeyPairCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext&)
 {
     if (usages & ~(CryptoKeyUsageSign | CryptoKeyUsageVerify)) {
-        exceptionCallback(SyntaxError, makeString("Unsupported key usage for an "_s, mlDsaName(m_identifier), " key"_s));
+        exceptionCallback(JSSyntaxError, makeString("Unsupported key usage for an "_s, mlDsaName(m_identifier), " key"_s));
         return;
     }
 
     CryptoKeyUsageBitmap privateUsages = usages & CryptoKeyUsageSign;
     CryptoKeyUsageBitmap publicUsages = usages & CryptoKeyUsageVerify;
     if (!privateUsages) {
-        exceptionCallback(SyntaxError, "Usages cannot be empty when creating a key."_s);
+        exceptionCallback(JSSyntaxError, "Usages cannot be empty when creating a key."_s);
         return;
     }
 

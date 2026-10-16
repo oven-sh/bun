@@ -30,7 +30,9 @@
 #include "JSEvent.h"
 
 #include "JSDOMWrapperCache.h"
+#include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/SlotVisitorInlines.h>
 
 namespace WebCore {
 
@@ -38,5 +40,13 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 {
     return wrap(lexicalGlobalObject, globalObject, event);
 }
+
+template<typename Visitor>
+void JSEvent::visitAdditionalChildrenInGCThread(Visitor& visitor)
+{
+    wrapped().visitInGCThread(visitor);
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSEvent);
 
 } // namespace WebCore

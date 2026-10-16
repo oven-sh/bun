@@ -53,7 +53,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     // https://html.spec.whatwg.org/multipage/structured-data.html#dom-structuredclone
     // Convert the options dictionary (including its `transfer` sequence) per WebIDL
     // before serializing, so an invalid transfer list throws without detaching anything.
-    auto serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
+    StructuredSerializeOptions serializeOptions = convertDictionary<StructuredSerializeOptions>(*globalObject, options);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     Vector<RefPtr<MessagePort>> ports;

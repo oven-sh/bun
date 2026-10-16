@@ -25,16 +25,16 @@
 
 #pragma once
 
-#include "root.h"
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
 #include "EventTargetInterfaces.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/RefCounted.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-class EventTargetConcrete final : public RefCounted<EventTargetConcrete>, public EventTargetWithInlineData, private ContextDestructionObserver {
+class EventTargetConcrete final : public RefCounted<EventTargetConcrete>, public EventTarget, private ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(EventTargetConcrete);
 
 public:
@@ -43,13 +43,13 @@ public:
     // ContextDestructionObserver.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
-    USING_CAN_MAKE_WEAKPTR(EventTargetWithInlineData);
+    USING_CAN_MAKE_WEAKPTR(EventTarget);
 
 private:
     explicit EventTargetConcrete(ScriptExecutionContext&);
 
-    EventTargetInterface eventTargetInterface() const final { return EventTargetInterfaceType; }
-    ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
+    enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::EventTarget; }
+    ScriptExecutionContext* scriptExecutionContext() const final;
 
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }

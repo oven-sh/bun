@@ -77,11 +77,11 @@ void CryptoAlgorithmHKDF::importKey(CryptoKeyFormat format, KeyData&& data, cons
         return;
     }
     if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
-        exceptionCallback(SyntaxError, "Unsupported key usage for a HKDF key"_s);
+        exceptionCallback(JSSyntaxError, "Unsupported key usage for a HKDF key"_s);
         return;
     }
     if (extractable) {
-        exceptionCallback(SyntaxError, "HKDF keys are not extractable"_s);
+        exceptionCallback(JSSyntaxError, "HKDF keys are not extractable"_s);
         return;
     }
 

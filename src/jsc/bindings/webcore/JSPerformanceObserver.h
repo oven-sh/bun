@@ -90,6 +90,6 @@ template<> struct JSDOMWrapperConverterTraits<PerformanceObserver> {
     using WrapperClass = JSPerformanceObserver;
     using ToWrappedReturnType = PerformanceObserver*;
 };
-template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<PerformanceObserver::Init>> convertDictionary<PerformanceObserver::Init>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

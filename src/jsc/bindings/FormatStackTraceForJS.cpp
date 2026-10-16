@@ -833,6 +833,8 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
     return true;
 }
 
+bool isImportMetaEnvForTests(JSC::JSObject*);
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -840,7 +842,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
-    if (!objectArg.isObject()) {
+    // V8 rejects a Proxy too. JS would never see a `stack` written to the cell's own storage.
+    if (!objectArg.isObject() || asObject(objectArg)->type() == JSC::ProxyObjectType || isImportMetaEnvForTests(asObject(objectArg))) {
         return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
     }
 

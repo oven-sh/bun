@@ -44,6 +44,11 @@ private:
     void* m_pointer { nullptr };
 };
 
+class ScriptExecutionContext;
+
+// Zig::GlobalObject::visitChildren() adds its context as an opaque root.
+inline WebCoreOpaqueRoot root(ScriptExecutionContext* context) { return WebCoreOpaqueRoot { context }; }
+
 template<typename Visitor>
 inline void addWebCoreOpaqueRoot(Visitor&, WebCoreOpaqueRoot);
 

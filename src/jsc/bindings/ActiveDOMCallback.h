@@ -54,8 +54,8 @@ public:
 
     WEBCORE_EXPORT bool canInvokeCallback() const;
 
-    virtual void visitJSFunction(JSC::AbstractSlotVisitor&) {}
-    virtual void visitJSFunction(JSC::SlotVisitor&) {}
+    virtual void visitJSFunctionInGCThread(JSC::AbstractSlotVisitor&) {}
+    virtual void visitJSFunctionInGCThread(JSC::SlotVisitor&) {}
 };
 
 } // namespace WebCore

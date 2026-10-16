@@ -31,36 +31,33 @@
 
 namespace WebCore {
 
-template<typename T> struct Converter<IDLCallbackFunction<T>> : DefaultConverter<IDLCallbackFunction<T>> {
+template<typename ImplementationClass> struct JSDOMCallbackConverterTraits;
 
+// An example of an implementation of the traits.
+//
+// template<> struct JSDOMCallbackConverterTraits<JSNodeFilter> {
+//     using Base = NodeFilter;
+// };
+//
+// These will be produced by the code generator.
+
+template<typename T> struct Converter<IDLCallbackFunction<T>> : DefaultConverter<IDLCallbackFunction<T>> {
     static constexpr bool conversionHasSideEffects = false;
 
+    using Result = ConversionResult<IDLCallbackFunction<T>>;
+
     template<typename ExceptionThrower = DefaultExceptionThrower>
-    static RefPtr<T> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, NOESCAPE ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
+        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         if (!value.isCallable()) {
             exceptionThrower(lexicalGlobalObject, scope);
-            return nullptr;
+            return Result::exception();
         }
 
-        return T::create(JSC::asObject(value), &globalObject);
-    }
-
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-    static RefPtr<T> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
-    {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        if (!value.isCallable()) {
-            exceptionThrower(lexicalGlobalObject, scope);
-            return nullptr;
-        }
-
-        return T::create(vm, JSC::asObject(value));
+        return Result { T::create(JSC::asObject(value), &globalObject) };
     }
 };
 
@@ -68,32 +65,68 @@ template<typename T> struct JSConverter<IDLCallbackFunction<T>> {
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;
 
-    template<typename U>
-    static JSC::JSValue convert(const U& value)
+    using Base = typename JSDOMCallbackConverterTraits<T>::Base;
+
+    static JSC::JSValue convert(const Base& value)
     {
         return toJS(Detail::getPtrOrRef(value));
     }
 
-    template<typename U>
-    static JSC::JSValue convertNewlyCreated(U&& value)
+    static JSC::JSValue convert(const Ref<Base>& value)
     {
-        return toJSNewlyCreated(std::forward<U>(value));
+        return toJS(Detail::getPtrOrRef(value));
+    }
+
+    static JSC::JSValue convertNewlyCreated(Ref<Base>&& value)
+    {
+        return toJSNewlyCreated(std::forward<Base>(value));
+    }
+};
+
+// Specialization of nullable callback function to account for unconventional base type input.
+template<typename T> struct JSConverter<IDLNullable<IDLCallbackFunction<T>>> {
+    static constexpr bool needsState = false;
+    static constexpr bool needsGlobalObject = false;
+
+    using Base = typename JSDOMCallbackConverterTraits<T>::Base;
+
+    static JSC::JSValue convert(const Base* value)
+    {
+        if (!value)
+            return JSC::jsNull();
+        return toJS<IDLCallbackFunction<T>>(*value);
+    }
+
+    static JSC::JSValue convert(const RefPtr<Base>& value)
+    {
+        if (!value)
+            return JSC::jsNull();
+        return toJS<IDLCallbackFunction<T>>(*value);
+    }
+
+    static JSC::JSValue convertNewlyCreated(RefPtr<Base>&& value)
+    {
+        if (!value)
+            return JSC::jsNull();
+        return toJSNewlyCreated<IDLCallbackFunction<T>>(value.releaseNonNull());
     }
 };
 
 template<typename T> struct Converter<IDLCallbackInterface<T>> : DefaultConverter<IDLCallbackInterface<T>> {
+    using Result = ConversionResult<IDLCallbackInterface<T>>;
+
     template<typename ExceptionThrower = DefaultExceptionThrower>
-    static RefPtr<T> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject, NOESCAPE ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
+        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         if (!value.isObject()) {
             exceptionThrower(lexicalGlobalObject, scope);
-            return nullptr;
+            return Result::exception();
         }
 
-        return T::create(JSC::asObject(value), &globalObject);
+        return Result { T::create(JSC::asObject(value), &globalObject) };
     }
 };
 
@@ -101,16 +134,50 @@ template<typename T> struct JSConverter<IDLCallbackInterface<T>> {
     static constexpr bool needsState = false;
     static constexpr bool needsGlobalObject = false;
 
-    template<typename U>
-    static JSC::JSValue convert(const U& value)
+    using Base = typename JSDOMCallbackConverterTraits<T>::Base;
+
+    static JSC::JSValue convert(const Base& value)
     {
         return toJS(Detail::getPtrOrRef(value));
     }
 
-    template<typename U>
-    static JSC::JSValue convertNewlyCreated(U&& value)
+    static JSC::JSValue convert(const Ref<Base>& value)
     {
-        return toJSNewlyCreated(std::forward<U>(value));
+        return toJS(Detail::getPtrOrRef(value));
+    }
+
+    static JSC::JSValue convertNewlyCreated(Ref<Base>&& value)
+    {
+        return toJSNewlyCreated(std::forward<Base>(value));
+    }
+};
+
+// Specialization of nullable callback interface to account for unconventional base type input.
+template<typename T> struct JSConverter<IDLNullable<IDLCallbackInterface<T>>> {
+    static constexpr bool needsState = false;
+    static constexpr bool needsGlobalObject = false;
+
+    using Base = typename JSDOMCallbackConverterTraits<T>::Base;
+
+    static JSC::JSValue convert(const Base* value)
+    {
+        if (!value)
+            return JSC::jsNull();
+        return toJS<IDLCallbackInterface<T>>(*value);
+    }
+
+    static JSC::JSValue convert(const RefPtr<Base>& value)
+    {
+        if (!value)
+            return JSC::jsNull();
+        return toJS<IDLCallbackInterface<T>>(*value);
+    }
+
+    static JSC::JSValue convertNewlyCreated(RefPtr<Base>&& value)
+    {
+        if (!value)
+            return JSC::jsNull();
+        return toJSNewlyCreated<IDLCallbackInterface<T>>(value.releaseNonNull());
     }
 };
 

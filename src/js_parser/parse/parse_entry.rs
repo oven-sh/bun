@@ -13,6 +13,7 @@ use bun_ast::import_record::{Flags as ImportRecordFlags, ImportRecord};
 
 use crate::defines::Define;
 use crate::lexer as js_lexer;
+use crate::lower::hoist_test_mocks::MockHoistOrder;
 use crate::p::P;
 use crate::parser::{
     Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
@@ -139,6 +140,9 @@ pub struct Options<'a> {
 
     pub transform_only: bool,
 
+    /// `None` leaves `import.meta.glob()` calls untouched.
+    pub import_meta_glob: Option<crate::ImportMetaGlobHost>,
+
     /// Used for inlining the state of import.meta.main during visiting
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
@@ -189,6 +193,7 @@ impl<'a> Default for Options<'a> {
             jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
+            import_meta_glob: None,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             framework: None,
@@ -241,6 +246,8 @@ impl<'a> Options<'a> {
                 allow_runtime: f.allow_runtime,
                 inlining: f.inlining,
                 inject_jest_globals: f.inject_jest_globals,
+                vitest_globals: f.vitest_globals,
+                own_test_globals: f.own_test_globals,
                 no_macros: f.no_macros,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
@@ -261,6 +268,7 @@ impl<'a> Options<'a> {
                 remove_cjs_module_wrapper: f.remove_cjs_module_wrapper,
                 runtime_transpiler_cache: None,
                 lower_using: f.lower_using,
+                ascii_only: f.ascii_only,
                 bundler_feature_flags: None,
                 define_hash: f.define_hash,
                 repl_mode: f.repl_mode,
@@ -277,6 +285,7 @@ impl<'a> Options<'a> {
             jsc_builtin_syntax: self.jsc_builtin_syntax,
             output_format: self.output_format,
             transform_only: self.transform_only,
+            import_meta_glob: self.import_meta_glob,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
             framework: self.framework,
@@ -319,6 +328,11 @@ impl<'a> Options<'a> {
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
+    pub fn hash_test_features_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
+        self.features
+            .hash_test_features_for_runtime_transpiler(hasher);
+    }
+
     // Used to determine if `joinWithComma` should be called in `visitStmts`. We do this
     // to avoid changing line numbers too much to make source mapping more readable
     pub(crate) fn runtime_merge_adjacent_expression_statements(&self) -> bool {
@@ -352,6 +366,7 @@ impl<'a> Options<'a> {
             jsc_builtin_syntax: false,
             output_format: options::Format::Esm,
             transform_only: false,
+            import_meta_glob: None,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
             framework: None,
@@ -995,6 +1010,8 @@ impl<'a> Parser<'a> {
         let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut parts = BumpVec::<js_ast::Part>::with_capacity_in(stmts.len() + 2, p.arena);
         // (Element ownership is transferred into `parts` below via bitwise copy + set_len(0).)
+        let mut hoisted_mocks = BumpVec::<js_ast::Part>::new_in(p.arena);
+        let mut imports_after_hoisted_mocks = BumpVec::<js_ast::Part>::new_in(p.arena);
 
         if p.options.bundle {
             // The bundler requires a part for generated module wrappers. This
@@ -1060,10 +1077,21 @@ impl<'a> Parser<'a> {
         // because we only do tree-shaking on top-level statements and lowering
         // a top-level "using" declaration moves all top-level statements into a
         // nested scope.
+        let asks_uses_test_api = cfg!(debug_assertions)
+            || p.options
+                .features
+                .runtime_transpiler_cache_mut()
+                .is_some_and(|cache| cache.input_hash.is_some());
         if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
             // When tree shaking is disabled, everything comes in a single part
             p.append_part(&mut parts, stmts)?;
         } else {
+            let mock_hoist_order = if p.options.features.inject_jest_globals || asks_uses_test_api {
+                p.plan_mock_hoisting(stmts)
+            } else {
+                None
+            };
+
             // Preprocess TypeScript enums to improve code generation. Otherwise
             // uses of an enum before that enum has been declared won't be inlined:
             //
@@ -1107,7 +1135,19 @@ impl<'a> Parser<'a> {
             }
 
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
-            for stmt in stmts.iter() {
+            for (i, stmt) in stmts.iter().enumerate() {
+                let moved_parts = match mock_hoist_order.map(|order| order[i]) {
+                    Some(MockHoistOrder::BeforeHoisted) => Some(&mut before),
+                    Some(MockHoistOrder::Hoisted) => Some(&mut hoisted_mocks),
+                    Some(MockHoistOrder::LoweredImport) => Some(&mut imports_after_hoisted_mocks),
+                    Some(MockHoistOrder::InPlace) | None => None,
+                };
+                if let Some(moved_parts) = moved_parts {
+                    let sliced = arena.alloc_slice_copy(&[*stmt]);
+                    p.append_part(moved_parts, sliced)?;
+                    continue;
+                }
+
                 match &stmt.data {
                     js_ast::StmtData::SLocal(local) => {
                         if (local.decls.len_u32() as usize) > 1 {
@@ -1947,6 +1987,43 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if reject_import_statements {
+            p.reject_eager_import_meta_globs();
+        }
+        // Glob imports go before the file's own imports, whether or not they're lowered.
+        let mut lowered_glob_imports = BumpVec::<js_ast::Part>::new_in(p.arena);
+        for stmt in core::mem::replace(&mut p.import_meta_glob_imports, BumpVec::new_in(p.arena)) {
+            let is_lowered = !hoisted_mocks.is_empty()
+                && matches!(
+                    stmt.data,
+                    js_ast::StmtData::SImport(import)
+                        if matches!(
+                            p.plan_import(&import, &Default::default()),
+                            MockHoistOrder::LoweredImport
+                        )
+                );
+            let sliced = p.arena.alloc_slice_copy(&[stmt]);
+            p.append_part(
+                if is_lowered {
+                    &mut lowered_glob_imports
+                } else {
+                    &mut before
+                },
+                sliced,
+            )?;
+        }
+        lowered_glob_imports.append(&mut imports_after_hoisted_mocks);
+        let mut imports_after_hoisted_mocks = lowered_glob_imports;
+        if let Some(stmt) = p.import_meta_glob_definition() {
+            before.insert(
+                0,
+                js_ast::Part {
+                    stmts: p.arena.alloc_slice_copy(&[stmt]).into(),
+                    ..Default::default()
+                },
+            );
+        }
+
         // Handle dirname and filename at runtime.
         //
         // If we reach this point, it means:
@@ -2046,81 +2123,88 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
         }
 
+        // Must run before the globals' import record is added below, because only `bun test` adds it.
+        let uses_test_api = asks_uses_test_api && p.uses_test_api();
+        let imports_vitest = uses_test_api && p.imports_vitest();
+
         // Auto inject jest globals into the test file
         'outer: {
             if !p.options.features.inject_jest_globals {
                 break 'outer;
             }
 
-            for item in p.import_records.items() {
-                // skip if they did import it
-                if item.path.text == b"bun:test"
-                    || item.path.text == b"@jest/globals"
-                    || item.path.text == b"vitest"
-                {
-                    if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                        // If we rewrote import paths, we need to disable the runtime transpiler cache
-                        if item.path.text != b"bun:test" {
-                            cache.input_hash = None;
-                        }
-                    }
-
-                    break 'outer;
-                }
-            }
-
-            // if they didn't use any of the jest globals, don't inject it, I guess.
-            // Iterates the static `Jest::FIELDS`
-            // table (`&[(&'static str, fn(&Jest) -> Ref)]`); declaration order
-            // determines the emitted clause/property order.
-            let items_count: usize = {
-                let mut count: usize = 0;
-                for (_name, get_ref) in Jest::FIELDS {
-                    count += (p.symbols.as_slice()[get_ref(&p.jest).inner_index() as usize]
-                        .use_count_estimate
-                        > 0) as usize;
-                }
-                count
+            // A file that imports a test module keeps any global that a script put on `globalThis` itself.
+            let left_alone = if p
+                .import_records
+                .items()
+                .iter()
+                .any(|record| bun_ast::import_record::is_test_module(record.path.text))
+            {
+                p.options.features.own_test_globals
+            } else {
+                0
             };
-            if items_count == 0 {
+            let mut used = bun_alloc::vec_from_iter_in(
+                Jest::GLOBALS
+                    .iter()
+                    .copied()
+                    .zip(p.jest.refs)
+                    .enumerate()
+                    .filter(|(index, (_, global))| {
+                        left_alone & (1 << index) == 0
+                            && global.is_valid()
+                            && p.symbols.as_slice()[global.inner_index() as usize]
+                                .use_count_estimate
+                                > 0
+                    })
+                    .map(|(_, used)| used),
+                p.arena,
+            );
+
+            let import_path: &'static [u8] = if p.has_globals_of_vitest() {
+                used.retain(|(name, _)| !Jest::is_of_bun_only(name));
+                b"vitest"
+            } else {
+                used.retain(|(name, _)| !Jest::is_of_vitest_only(name));
+                b"bun:test"
+            };
+            if used.is_empty() {
                 break 'outer;
             }
+            p.did_apply_test_feature = true;
 
             let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-            declared_symbols.ensure_total_capacity(items_count)?;
+            declared_symbols.ensure_total_capacity(used.len())?;
 
             // For CommonJS modules, use require instead of import
             if exports_kind == js_ast::ExportsKind::Cjs {
                 let import_record_id = p.add_import_record(
                     bun_ast::ImportKind::Require,
                     bun_ast::Loc::EMPTY,
-                    b"bun:test",
+                    import_path,
                 );
 
                 // Create object binding pattern for destructuring
-                let mut properties = BumpVec::<B::Property>::with_capacity_in(items_count, p.arena);
-                for (symbol_name, get_ref) in Jest::FIELDS {
-                    let r = get_ref(&p.jest);
-                    if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
-                        let key = p.new_expr(
-                            E::String {
-                                data: symbol_name.as_bytes().into(),
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        );
-                        let value = p.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
-                        properties.push(B::Property {
-                            flags: bun_ast::flags::PROPERTY_NONE,
-                            key,
-                            value,
-                            default_value: None,
-                        });
-                        declared_symbols.append_assume_capacity(DeclaredSymbol {
-                            ref_: r,
-                            is_top_level: true,
-                        });
-                    }
+                let mut properties = BumpVec::<B::Property>::with_capacity_in(used.len(), p.arena);
+                for &(symbol_name, r) in used.iter() {
+                    let key = p.new_expr(
+                        E::String {
+                            data: symbol_name.as_bytes().into(),
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    );
+                    let value = p.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
+                    properties.push(B::Property {
+                        flags: bun_ast::flags::PROPERTY_NONE,
+                        key,
+                        value,
+                        default_value: None,
+                    });
+                    declared_symbols.append_assume_capacity(DeclaredSymbol {
+                        ref_: r,
+                        is_top_level: true,
+                    });
                 }
                 let properties = bun_ast::StoreSlice::from_bump(properties);
 
@@ -2168,29 +2252,26 @@ impl<'a> Parser<'a> {
                 let import_record_id = p.add_import_record(
                     bun_ast::ImportKind::Stmt,
                     bun_ast::Loc::EMPTY,
-                    b"bun:test",
+                    import_path,
                 );
 
                 // For ESM modules, use import statement
                 let mut clauses =
-                    BumpVec::<js_ast::ClauseItem>::with_capacity_in(items_count, p.arena);
-                for (symbol_name, get_ref) in Jest::FIELDS {
-                    let r = get_ref(&p.jest);
-                    if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
-                        clauses.push(js_ast::ClauseItem {
-                            name: js_ast::LocRef {
-                                ref_: r,
-                                loc: bun_ast::Loc::EMPTY,
-                            },
-                            alias: js_ast::StoreStr::new(symbol_name.as_bytes()),
-                            alias_loc: bun_ast::Loc::EMPTY,
-                            original_name: js_ast::StoreStr::new(b""),
-                        });
-                        declared_symbols.append_assume_capacity(DeclaredSymbol {
+                    BumpVec::<js_ast::ClauseItem>::with_capacity_in(used.len(), p.arena);
+                for &(symbol_name, r) in used.iter() {
+                    clauses.push(js_ast::ClauseItem {
+                        name: js_ast::LocRef {
                             ref_: r,
-                            is_top_level: true,
-                        });
-                    }
+                            loc: bun_ast::Loc::EMPTY,
+                        },
+                        alias: js_ast::StoreStr::new(symbol_name.as_bytes()),
+                        alias_loc: bun_ast::Loc::EMPTY,
+                        original_name: js_ast::StoreStr::new(b""),
+                    });
+                    declared_symbols.append_assume_capacity(DeclaredSymbol {
+                        ref_: r,
+                        is_top_level: true,
+                    });
                 }
                 let clauses = bun_ast::StoreSlice::from_bump(clauses);
 
@@ -2225,11 +2306,6 @@ impl<'a> Parser<'a> {
                     ..Default::default()
                 });
             }
-
-            // If we injected jest globals, we need to disable the runtime transpiler cache
-            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                cache.input_hash = None;
-            }
         }
 
         if p.has_called_runtime {
@@ -2250,7 +2326,79 @@ impl<'a> Parser<'a> {
                 },
             );
 
-            if i > 0 {
+            if i > 0 && wrap_mode == WrapMode::BunCommonjs {
+                // An import statement can't stand in the function that wraps a CommonJS module.
+                let import_record_id = p.add_import_record(
+                    bun_ast::ImportKind::Require,
+                    bun_ast::Loc::EMPTY,
+                    RuntimeImports::NAME,
+                );
+                {
+                    let record = &mut p.import_records.items_mut()[import_record_id as usize];
+                    record.path.namespace = b"runtime";
+                    record.flags.insert(ImportRecordFlags::IS_INTERNAL);
+                }
+                let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+                declared_symbols.ensure_total_capacity(i)?;
+                let mut properties = BumpVec::<B::Property>::with_capacity_in(i, p.arena);
+                for &import in &runtime_imports[0..i] {
+                    let r = p.runtime_imports.get(import as usize).expect("unreachable");
+                    let key = p.new_expr(
+                        E::String {
+                            data: RuntimeImports::ALL[import as usize].into(),
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    );
+                    let value = p.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
+                    properties.push(B::Property {
+                        flags: bun_ast::flags::PROPERTY_NONE,
+                        key,
+                        value,
+                        default_value: None,
+                    });
+                    declared_symbols.append_assume_capacity(DeclaredSymbol {
+                        ref_: r,
+                        is_top_level: true,
+                    });
+                }
+                let binding = p.b(
+                    B::Object {
+                        properties: bun_ast::StoreSlice::from_bump(properties),
+                        is_single_line: true,
+                    },
+                    bun_ast::Loc::EMPTY,
+                );
+                let value = p.new_expr(
+                    E::RequireString {
+                        import_record_index: import_record_id,
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                );
+                let mut decls = G::DeclList::init_capacity(1);
+                decls.append_assume_capacity(G::Decl {
+                    binding,
+                    value: Some(value),
+                });
+                let local_stmt = p.s(
+                    S::Local {
+                        kind: js_ast::LocalKind::KVar,
+                        decls,
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                );
+                before.push(js_ast::Part {
+                    stmts: p.arena.alloc_slice_fill_with(1, |_| local_stmt).into(),
+                    declared_symbols,
+                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
+                        import_record_id,
+                    ),
+                    tag: js_ast::PartTag::Runtime,
+                    ..Default::default()
+                });
+            } else if i > 0 {
                 // snapshot to break the `&mut self` ↔ `&self.runtime_imports`
                 // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
                 // never touches `self.runtime_imports`, so the clone is purely a
@@ -2318,6 +2466,22 @@ impl<'a> Parser<'a> {
             }
 
             p.jsx_imports = jsx_imports;
+        }
+
+        if !p.chai_imports.0.is_empty() {
+            let chai_imports = core::mem::take(&mut p.chai_imports);
+            let keys: Vec<usize> = (0..chai_imports.0.len()).collect();
+            p.generate_import_stmt(
+                b"chai",
+                keys,
+                &mut before,
+                &chai_imports,
+                None,
+                b"import_",
+                false,
+                js_ast::PartTag::None,
+            )
+            .expect("unreachable");
         }
 
         if p.server_components_wrap_ref.is_valid() {
@@ -2426,6 +2590,13 @@ impl<'a> Parser<'a> {
             )?;
         }
 
+        p.append_hoisted_mocks(
+            &mut before,
+            &mut hoisted_mocks,
+            &mut imports_after_hoisted_mocks,
+            exports_kind,
+        );
+
         if !before.is_empty() || !after.is_empty() {
             // Single up-front reserve; the inner
             // reserve() calls in prepend_from / append become no-ops.
@@ -2439,16 +2610,18 @@ impl<'a> Parser<'a> {
 
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
+            let depends_on_more_than_source = p.depends_on_more_than_source();
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                if p.macro_call_count != 0 {
-                    // disable this for:
-                    // - macros
+                if depends_on_more_than_source {
                     cache.input_hash = None;
                 } else {
                     cache.exports_kind = exports_kind;
+                    cache.uses_test_api = uses_test_api;
+                    cache.imports_vitest = imports_vitest;
                 }
             }
         }
+        debug_assert!(uses_test_api || !p.did_apply_test_feature);
 
         let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
 

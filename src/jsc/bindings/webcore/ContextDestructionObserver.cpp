@@ -26,14 +26,12 @@
 
 #include "config.h"
 #include "ContextDestructionObserver.h"
-#include <wtf/RefCountedAndCanMakeWeakPtr.h>
 
 #include "ScriptExecutionContext.h"
 
 namespace WebCore {
 
 ContextDestructionObserver::ContextDestructionObserver(ScriptExecutionContext* scriptExecutionContext)
-    : m_context(nullptr)
 {
     observeContext(scriptExecutionContext);
 }
@@ -45,22 +43,22 @@ ContextDestructionObserver::~ContextDestructionObserver()
 
 void ContextDestructionObserver::observeContext(ScriptExecutionContext* scriptExecutionContext)
 {
-    if (m_context) {
-        ASSERT(m_context->isContextThread());
-        m_context->willDestroyDestructionObserver(*this);
+    if (m_scriptExecutionContext) {
+        ASSERT(m_scriptExecutionContext->isContextThread());
+        m_scriptExecutionContext->willDestroyDestructionObserver(*this);
     }
 
-    m_context = WeakPtr { scriptExecutionContext, EnableWeakPtrThreadingAssertions::No };
+    m_scriptExecutionContext = WeakPtr { scriptExecutionContext, EnableWeakPtrThreadingAssertions::No };
 
-    if (m_context) {
-        ASSERT(m_context->isContextThread());
-        m_context->didCreateDestructionObserver(*this);
+    if (m_scriptExecutionContext) {
+        ASSERT(m_scriptExecutionContext->isContextThread());
+        m_scriptExecutionContext->didCreateDestructionObserver(*this);
     }
 }
 
 void ContextDestructionObserver::contextDestroyed()
 {
-    m_context = nullptr;
+    m_scriptExecutionContext = nullptr;
 }
 
 } // namespace WebCore

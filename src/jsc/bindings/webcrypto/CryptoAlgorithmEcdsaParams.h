@@ -37,7 +37,7 @@ namespace WebCore {
 class CryptoAlgorithmEcdsaParams final : public CryptoAlgorithmParameters {
 public:
     // FIXME: Consider merging hash and hashIdentifier.
-    std::variant<JSC::Strong<JSC::JSObject>, String> hash;
+    Variant<JSC::Strong<JSC::JSObject>, String> hash;
     CryptoAlgorithmIdentifier hashIdentifier;
 
     Class parametersClass() const final { return Class::EcdsaParams; }

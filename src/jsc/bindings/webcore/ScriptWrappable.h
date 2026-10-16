@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2013 Apple Inc. All rights reserved.
- * Copyright (c) 2010, Google Inc. All rights reserved.
+ * Copyright (c) 2010 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -31,9 +31,12 @@
 
 #pragma once
 
-#include "root.h"
+#include <JavaScriptCore/Weak.h>
+#include <wtf/TZoneMalloc.h>
 
-#include "JSDOMWrapper.h"
+namespace JSC {
+class JSObject;
+}
 
 namespace WebCore {
 
@@ -41,15 +44,18 @@ class ScriptWrappable {
     WTF_MAKE_TZONE_ALLOCATED(ScriptWrappable);
 
 public:
-    JSDOMObject* wrapper() const;
-    void setWrapper(JSDOMObject*, JSC::WeakHandleOwner*, void*);
-    void clearWrapper(JSDOMObject*);
+    inline JSC::JSObject* wrapper() const;
+    inline void setWrapper(JSC::JSObject*, JSC::WeakHandleOwner*, void*);
+    inline void clearWrapper(JSC::JSObject*);
+
+    template<typename Derived>
+    static constexpr ptrdiff_t offsetOfWrapper() { return CAST_OFFSET(Derived*, ScriptWrappable*) + OBJECT_OFFSETOF(ScriptWrappable, m_wrapper); }
 
 protected:
-    ~ScriptWrappable() = default;
+    WEBCORE_EXPORT ~ScriptWrappable();
 
 private:
-    JSC::Weak<JSDOMObject> m_wrapper;
+    JSC::Weak<JSC::JSObject> m_wrapper;
 };
 
 } // namespace WebCore

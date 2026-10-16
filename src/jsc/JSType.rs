@@ -543,13 +543,20 @@ impl JSType {
 
     pub const Event: JSType = JSType(0b11101111);
     pub const DOMWrapper: JSType = JSType(0b11101110);
+    /// A `NodeList` of bun:dom.
+    pub const EmbedderArrayLike: JSType = JSType(0b11101101);
 
     /// This means that we don't have bindings for the type yet, but it
     /// implements .toJSON()
-    pub(crate) const JSAsJSONType: JSType = JSType(0b11110000 | 1);
+    pub(crate) const JSAsJSONType: JSType = JSType(0b11101100);
 }
 
 impl JSType {
+    /// A node of bun:dom: `JSNodeType` in JSDOMWrapper.h, with the kind of node in the low four bits.
+    pub fn is_dom_node(self) -> bool {
+        self.0 >= 0b11110000
+    }
+
     pub const MIN_TYPED_ARRAY: JSType = JSType::Int8Array;
     pub const MAX_TYPED_ARRAY: JSType = JSType::DataView;
 

@@ -21,6 +21,7 @@
 #pragma once
 
 #include "AbortAlgorithm.h"
+#include "ContextDestructionObserverInlines.h"
 #include "IDLTypes.h"
 #include "JSCallbackData.h"
 #include <wtf/Forward.h>
@@ -39,13 +40,13 @@ public:
     ~JSAbortAlgorithm() final;
 
     // Functions
-    CallbackResult<typename IDLUndefined::ImplementationType> handleEvent(JSValue) override;
+    CallbackResult<typename IDLUndefined::CallbackReturnType> handleEvent(JSValue) override;
 
 private:
     JSAbortAlgorithm(JSC::VM&, JSC::JSObject* callback);
 
-    void visitJSFunction(JSC::AbstractSlotVisitor&) override;
-    void visitJSFunction(JSC::SlotVisitor&) override;
+    void visitJSFunctionInGCThread(JSC::AbstractSlotVisitor&) override;
+    void visitJSFunctionInGCThread(JSC::SlotVisitor&) override;
 
     JSCallbackData* m_data;
 };

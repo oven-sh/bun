@@ -18,6 +18,7 @@
 //! it via `bun_css::selector::impl_` / `super::impl_`.
 
 pub mod builder;
+pub(crate) mod dom;
 pub mod parser;
 #[path = "selector.rs"]
 pub mod selector;

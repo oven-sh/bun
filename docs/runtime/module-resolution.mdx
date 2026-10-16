@@ -361,6 +361,34 @@ Bun's bundler works differently: it wraps the CommonJS module in a `require_${mo
 
 ---
 
+## Import suffixes
+
+A query string at the end of an import path changes what the import gives you, like in [Vite](https://vite.dev/guide/assets#explicit-url-imports).
+
+| Suffix                     | Default export                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------- |
+| `?raw`                     | The file's text                                                                 |
+| `?url`                     | The file's absolute path                                                        |
+| `?worker`                  | A function that starts the file as a `Worker`                                   |
+| `?sharedworker`            | The same, but with `SharedWorker`, a global that Bun doesn't provide            |
+| `?worker&url`              | The file's absolute path                                                        |
+| `?inline` on a `.css` file | The file's text                                                                 |
+| `?inline` on an asset      | A `data:` URL of the file (images, fonts, audio, video, `.wasm`, `.txt`, ...)   |
+| `?init` on a `.wasm` file  | An async function that takes the imports and returns the `WebAssembly.Instance` |
+
+```ts
+import shader from "./shader.glsl?raw";
+import path from "./resize.ts?url";
+import logo from "./logo.png?inline"; // "data:image/png;base64,..."
+import ResizeWorker from "./resize.ts?worker";
+
+const worker = new ResizeWorker({ name: "resize" });
+```
+
+These work in `bun run` and `bun test`. `bun build` doesn't resolve import paths that have a query string.
+
+---
+
 ## `import.meta`
 
 The `import.meta` object exposes information about the current module. It's part of the JavaScript language, but its contents are not standardized: each "host" (browser or runtime) implements its own properties on the `import.meta` object.
@@ -377,16 +405,79 @@ import.meta.main; // `true` if this file is directly executed by `bun run`
 // `false` otherwise
 
 import.meta.resolve("zod"); // => "file:///path/to/project/node_modules/zod/index.js"
+
+import.meta.glob("./pages/*.tsx"); // => { "./pages/home.tsx": () => import("./pages/home.tsx"), ... }
 ```
 
 | Property               | Description                                                                                                                                                                                                                                                                                                                   |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `import.meta.dir`      | Absolute path to the directory containing the current file, e.g. `/path/to/project`. Equivalent to `__dirname` in CommonJS modules (and Node.js)                                                                                                                                                                              |
 | `import.meta.dirname`  | An alias to `import.meta.dir`, for Node.js compatibility                                                                                                                                                                                                                                                                      |
-| `import.meta.env`      | An alias to `process.env`.                                                                                                                                                                                                                                                                                                    |
+| `import.meta.env`      | An alias to `process.env`. In `bun test`, it also has [Vite's variables](/test/runtime-behavior#import-meta-env)                                                                                                                                                                                                              |
 | `import.meta.file`     | The name of the current file, e.g. `index.tsx`                                                                                                                                                                                                                                                                                |
 | `import.meta.path`     | Absolute path to the current file, e.g. `/path/to/project/index.ts`. Equivalent to `__filename` in CommonJS modules (and Node.js)                                                                                                                                                                                             |
 | `import.meta.filename` | An alias to `import.meta.path`, for Node.js compatibility                                                                                                                                                                                                                                                                     |
+| `import.meta.glob`     | Import every module that matches a glob pattern. See [`import.meta.glob`](#import-meta-glob)                                                                                                                                                                                                                                  |
 | `import.meta.main`     | Indicates whether the current file is the entrypoint to the current `bun` process: `true` if `bun run` executes it directly, `false` if it's imported                                                                                                                                                                         |
 | `import.meta.resolve`  | Resolve a module specifier (e.g. `"zod"` or `"./file.tsx"`) to a url. Equivalent to [`import.meta.resolve` in browsers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import.meta#resolve). Example: `import.meta.resolve("zod")` returns `"file:///path/to/project/node_modules/zod/index.js"` |
 | `import.meta.url`      | A `string` url to the current file, e.g. `file:///path/to/project/index.ts`. Equivalent to [`import.meta.url` in browsers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import.meta#url)                                                                                                       |
+
+### `import.meta.glob`
+
+`import.meta.glob()` imports every module that matches a glob pattern. It's compatible with [Vite's `import.meta.glob`](https://vite.dev/guide/features#glob-import) and works in `bun run`, `bun test` and `bun build`.
+
+```ts
+const pages = import.meta.glob("./pages/*.tsx");
+```
+
+Bun replaces the call when it transpiles the file, so the arguments must be literals. The call above becomes:
+
+```ts
+const pages = {
+  "./pages/about.tsx": () => import("./pages/about.tsx"),
+  "./pages/home.tsx": () => import("./pages/home.tsx"),
+};
+```
+
+Pass an array to use several patterns. A pattern that starts with `!` excludes the files it matches.
+
+```ts
+const modules = import.meta.glob(["./pages/**/*.tsx", "!**/*.test.tsx"]);
+```
+
+A pattern starts with one of these:
+
+- `./` or `../`, relative to the file
+- `/` or `**`, relative to the directory Bun runs in
+- An alias from `paths` in `tsconfig.json` or `imports` in `package.json`
+
+Dotfiles, `node_modules` and the file itself aren't matched. Parentheses are literal characters, so write alternatives as `{a,b}`, not `(a|b)` or `@(a|b)`.
+
+| Option       | Description                                                                                                                  |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `eager`      | `true` imports the modules with `import` statements, so the values are the modules instead of functions                      |
+| `import`     | The export to import instead of the whole module, e.g. `"default"`                                                           |
+| `query`      | A query string (or an object) to append to each import path. `"?raw"` imports the file as text and `"?url"` imports its path |
+| `base`       | The directory that relative patterns and the keys are relative to                                                            |
+| `exhaustive` | `true` also matches dotfiles and files in `node_modules`                                                                     |
+
+```ts
+const names = import.meta.glob("./plugins/*.ts", { eager: true, import: "name" });
+```
+
+This is equivalent to:
+
+```ts
+import { name as a } from "./plugins/a.ts";
+import { name as b } from "./plugins/b.ts";
+
+const names = {
+  "./plugins/a.ts": a,
+  "./plugins/b.ts": b,
+};
+```
+
+- If Bun can't replace a call, for example because the pattern is a variable, the call throws a `TypeError` when it runs.
+- `eager` needs `import` statements, so it throws in a CommonJS module.
+- If a file assigns its own function to `import.meta.glob`, Bun leaves that file's calls alone.
+- With `--watch`, `--hot` and the [dev server](/bundler/fullstack), a new matching file isn't picked up until the file that calls `import.meta.glob()` changes.

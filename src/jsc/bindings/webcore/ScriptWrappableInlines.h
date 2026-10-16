@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2013 Apple Inc. All rights reserved.
- * Copyright (c) 2010, Google Inc. All rights reserved.
+ * Copyright (c) 2010 Google Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -32,23 +32,22 @@
 #pragma once
 
 #include "JSDOMWrapper.h"
-#include <JavaScriptCore/Weak.h>
-#include <JavaScriptCore/WeakInlines.h>
+#include "ScriptWrappable.h"
 
 namespace WebCore {
 
-inline JSDOMObject* ScriptWrappable::wrapper() const
+inline JSC::JSObject* ScriptWrappable::wrapper() const
 {
     return m_wrapper.get();
 }
 
-inline void ScriptWrappable::setWrapper(JSDOMObject* wrapper, JSC::WeakHandleOwner* wrapperOwner, void* context)
+inline void ScriptWrappable::setWrapper(JSC::JSObject* wrapper, JSC::WeakHandleOwner* wrapperOwner, void* context)
 {
     ASSERT(!m_wrapper);
-    m_wrapper = JSC::Weak<JSDOMObject>(wrapper, wrapperOwner, context);
+    m_wrapper = JSC::Weak<JSC::JSObject>(wrapper, wrapperOwner, context);
 }
 
-inline void ScriptWrappable::clearWrapper(JSDOMObject* wrapper)
+inline void ScriptWrappable::clearWrapper(JSC::JSObject* wrapper)
 {
     weakClear(m_wrapper, wrapper);
 }

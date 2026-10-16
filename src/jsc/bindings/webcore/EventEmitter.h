@@ -4,7 +4,8 @@
 
 #include "IdentifierEventListenerMap.h"
 #include "ExceptionOr.h"
-#include "ContextDestructionObserver.h"
+#include "ContextDestructionObserverInlines.h"
+#include "JSDOMWrapper.h"
 #include "ScriptWrappable.h"
 #include <memory>
 #include <variant>

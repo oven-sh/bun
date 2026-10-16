@@ -1,0 +1,947 @@
+{
+  "AbortController": {
+    "static": "",
+    "prototype": "signal abort [Symbol.toStringTag]"
+  },
+  "AbortSignal": {
+    "extends": "EventTarget",
+    "static": "abort timeout any",
+    "prototype": "aborted reason onabort throwIfAborted [Symbol.toStringTag]"
+  },
+  "AbstractRange": {
+    "static": "",
+    "prototype": "startContainer startOffset endContainer endOffset collapsed [Symbol.toStringTag]"
+  },
+  "AnimationEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "animationName elapsedTime pseudoElement [Symbol.toStringTag]"
+  },
+  "Attr": {
+    "extends": "Node",
+    "static": "",
+    "prototype": "namespaceURI prefix localName name value ownerElement specified [Symbol.toStringTag]"
+  },
+  "BeforeUnloadEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "returnValue [Symbol.toStringTag]"
+  },
+  "Blob": {
+    "static": "",
+    "prototype": "arrayBuffer bytes delete exists formData image json lastModified name size slice stat stream text type unlink write writer [Symbol.toStringTag]"
+  },
+  "CDATASection": {
+    "extends": "Text",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "CSS": {
+    "static": "supports escape [Symbol.toStringTag]",
+    "prototype": ""
+  },
+  "CSSConditionRule": {
+    "extends": "CSSGroupingRule",
+    "static": "",
+    "prototype": "conditionText [Symbol.toStringTag]"
+  },
+  "CSSGroupingRule": {
+    "extends": "CSSRule",
+    "static": "",
+    "prototype": "cssRules insertRule deleteRule [Symbol.toStringTag]"
+  },
+  "CSSLayerBlockRule": {
+    "extends": "CSSGroupingRule",
+    "static": "",
+    "prototype": "name [Symbol.toStringTag]"
+  },
+  "CSSLayerStatementRule": {
+    "extends": "CSSRule",
+    "static": "",
+    "prototype": "nameList [Symbol.toStringTag]"
+  },
+  "CSSMediaRule": {
+    "extends": "CSSConditionRule",
+    "static": "",
+    "prototype": "media matches [Symbol.toStringTag]"
+  },
+  "CSSRule": {
+    "static": "STYLE_RULE CHARSET_RULE IMPORT_RULE MEDIA_RULE FONT_FACE_RULE PAGE_RULE KEYFRAMES_RULE KEYFRAME_RULE MARGIN_RULE NAMESPACE_RULE COUNTER_STYLE_RULE SUPPORTS_RULE FONT_FEATURE_VALUES_RULE",
+    "prototype": "cssText parentRule parentStyleSheet type STYLE_RULE CHARSET_RULE IMPORT_RULE MEDIA_RULE FONT_FACE_RULE PAGE_RULE KEYFRAMES_RULE KEYFRAME_RULE MARGIN_RULE NAMESPACE_RULE COUNTER_STYLE_RULE SUPPORTS_RULE FONT_FEATURE_VALUES_RULE [Symbol.toStringTag]"
+  },
+  "CSSRuleList": {
+    "static": "",
+    "prototype": "length item [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "CSSStyleDeclaration": {
+    "static": "",
+    "prototype": "cssText length parentRule item getPropertyValue getPropertyPriority setProperty removeProperty [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "CSSStyleProperties": {
+    "extends": "CSSStyleDeclaration",
+    "static": "",
+    "prototype": "cssFloat accentColor accent-color alignContent align-content alignItems align-items alignSelf align-self alignmentBaseline alignment-baseline anchorName anchor-name anchorScope anchor-scope animationComposition animation-composition animationDelay animation-delay animationDirection animation-direction animationDuration animation-duration animationFillMode animation-fill-mode animationIterationCount animation-iteration-count animationName animation-name animationPlayState animation-play-state animationRange animation-range animationRangeEnd animation-range-end animationRangeStart animation-range-start animationTimeline animation-timeline animationTimingFunction animation-timing-function appearance aspectRatio aspect-ratio backdropFilter backdrop-filter backfaceVisibility backface-visibility backgroundAttachment background-attachment backgroundBlendMode background-blend-mode backgroundClip background-clip backgroundColor background-color backgroundImage background-image backgroundOrigin background-origin backgroundPositionX background-position-x backgroundPositionY background-position-y backgroundRepeat background-repeat backgroundSize background-size baselineShift baseline-shift blockSize block-size borderBlockEndColor border-block-end-color borderBlockEndStyle border-block-end-style borderBlockEndWidth border-block-end-width borderBlockStartColor border-block-start-color borderBlockStartStyle border-block-start-style borderBlockStartWidth border-block-start-width borderBottomColor border-bottom-color borderBottomLeftRadius border-bottom-left-radius borderBottomRightRadius border-bottom-right-radius borderBottomStyle border-bottom-style borderBottomWidth border-bottom-width borderCollapse border-collapse borderEndEndRadius border-end-end-radius borderEndStartRadius border-end-start-radius borderImage border-image borderImageOutset border-image-outset borderImageRepeat border-image-repeat borderImageSlice border-image-slice borderImageSource border-image-source borderImageWidth border-image-width borderInlineEndColor border-inline-end-color borderInlineEndStyle border-inline-end-style borderInlineEndWidth border-inline-end-width borderInlineStartColor border-inline-start-color borderInlineStartStyle border-inline-start-style borderInlineStartWidth border-inline-start-width borderLeftColor border-left-color borderLeftStyle border-left-style borderLeftWidth border-left-width borderRightColor border-right-color borderRightStyle border-right-style borderRightWidth border-right-width borderSpacing border-spacing borderStartEndRadius border-start-end-radius borderStartStartRadius border-start-start-radius borderTopColor border-top-color borderTopLeftRadius border-top-left-radius borderTopRightRadius border-top-right-radius borderTopStyle border-top-style borderTopWidth border-top-width bottom boxShadow box-shadow boxSizing box-sizing breakAfter break-after breakBefore break-before breakInside break-inside bufferedRendering buffered-rendering captionSide caption-side caretColor caret-color clear clip clipPath clip-path clipRule clip-rule color colorInterpolation color-interpolation colorInterpolationFilters color-interpolation-filters colorScheme color-scheme columnCount column-count columnFill column-fill columnGap column-gap columnRule column-rule columnRuleColor column-rule-color columnRuleStyle column-rule-style columnRuleWidth column-rule-width columnSpan column-span columnWidth column-width columns contain containIntrinsicBlockSize contain-intrinsic-block-size containIntrinsicHeight contain-intrinsic-height containIntrinsicInlineSize contain-intrinsic-inline-size containIntrinsicSize contain-intrinsic-size containIntrinsicWidth contain-intrinsic-width container containerName container-name containerType container-type content contentVisibility content-visibility cornerBlockEndShape corner-block-end-shape cornerBlockStartShape corner-block-start-shape cornerBottomLeftShape corner-bottom-left-shape cornerBottomRightShape corner-bottom-right-shape cornerBottomShape corner-bottom-shape cornerEndEndShape corner-end-end-shape cornerEndStartShape corner-end-start-shape cornerInlineEndShape corner-inline-end-shape cornerInlineStartShape corner-inline-start-shape cornerLeftShape corner-left-shape cornerRightShape corner-right-shape cornerShape corner-shape cornerStartEndShape corner-start-end-shape cornerStartStartShape corner-start-start-shape cornerTopLeftShape corner-top-left-shape cornerTopRightShape corner-top-right-shape cornerTopShape corner-top-shape counterIncrement counter-increment counterReset counter-reset counterSet counter-set cursor cx cy d direction display dominantBaseline dominant-baseline emptyCells empty-cells fieldSizing field-sizing fill fillOpacity fill-opacity fillRule fill-rule filter fitTolerance fit-tolerance flexBasis flex-basis flexDirection flex-direction flexGrow flex-grow flexShrink flex-shrink flexWrap flex-wrap float floodColor flood-color floodOpacity flood-opacity fontFamily font-family fontFeatureSettings font-feature-settings fontKerning font-kerning fontOpticalSizing font-optical-sizing fontPalette font-palette fontSize font-size fontSizeAdjust font-size-adjust fontStretch font-stretch fontStyle font-style fontSynthesis font-synthesis fontSynthesisSmallCaps font-synthesis-small-caps fontSynthesisStyle font-synthesis-style fontSynthesisWeight font-synthesis-weight fontVariant font-variant fontVariantAlternates font-variant-alternates fontVariantCaps font-variant-caps fontVariantEastAsian font-variant-east-asian fontVariantEmoji font-variant-emoji fontVariantLigatures font-variant-ligatures fontVariantNumeric font-variant-numeric fontVariantPosition font-variant-position fontVariationSettings font-variation-settings fontWeight font-weight glyphOrientationVertical glyph-orientation-vertical grid gridAutoColumns grid-auto-columns gridAutoFlow grid-auto-flow gridAutoRows grid-auto-rows gridColumnEnd grid-column-end gridColumnStart grid-column-start gridRowEnd grid-row-end gridRowStart grid-row-start gridTemplate grid-template gridTemplateAreas grid-template-areas gridTemplateColumns grid-template-columns gridTemplateRows grid-template-rows hangingPunctuation hanging-punctuation height hyphenateCharacter hyphenate-character hyphenateLimitChars hyphenate-limit-chars hyphenateLimitLines hyphenate-limit-lines hyphens imageOrientation image-orientation imageRendering image-rendering inlineSize inline-size insetBlockEnd inset-block-end insetBlockStart inset-block-start insetInlineEnd inset-inline-end insetInlineStart inset-inline-start interpolateSize interpolate-size isolation justifyContent justify-content justifyItems justify-items justifySelf justify-self left letterSpacing letter-spacing lightingColor lighting-color lineBreak line-break lineHeight line-height linkParameters link-parameters listStyleImage list-style-image listStylePosition list-style-position listStyleType list-style-type marginBlockEnd margin-block-end marginBlockStart margin-block-start marginBottom margin-bottom marginInlineEnd margin-inline-end marginInlineStart margin-inline-start marginLeft margin-left marginRight margin-right marginTop margin-top marginTrim margin-trim marker markerEnd marker-end markerMid marker-mid markerStart marker-start mask maskBorder mask-border maskBorderOutset mask-border-outset maskBorderRepeat mask-border-repeat maskBorderSlice mask-border-slice maskBorderSource mask-border-source maskBorderWidth mask-border-width maskClip mask-clip maskComposite mask-composite maskImage mask-image maskMode mask-mode maskOrigin mask-origin maskPosition mask-position maskRepeat mask-repeat maskSize mask-size maskType mask-type mathDepth math-depth mathShift math-shift mathStyle math-style maxBlockSize max-block-size maxHeight max-height maxInlineSize max-inline-size maxSize max-size maxWidth max-width minBlockSize min-block-size minHeight min-height minInlineSize min-inline-size minSize min-size minWidth min-width mixBlendMode mix-blend-mode objectFit object-fit objectPosition object-position objectViewBox object-view-box offset offsetAnchor offset-anchor offsetDistance offset-distance offsetPath offset-path offsetPosition offset-position offsetRotate offset-rotate opacity order orphans outlineColor outline-color outlineOffset outline-offset outlineStyle outline-style outlineWidth outline-width overflowAnchor overflow-anchor overflowBlock overflow-block overflowClipMargin overflow-clip-margin overflowInline overflow-inline overflowWrap overflow-wrap overflowX overflow-x overflowY overflow-y overscrollBehavior overscroll-behavior overscrollBehaviorBlock overscroll-behavior-block overscrollBehaviorInline overscroll-behavior-inline overscrollBehaviorX overscroll-behavior-x overscrollBehaviorY overscroll-behavior-y paddingBlockEnd padding-block-end paddingBlockStart padding-block-start paddingBottom padding-bottom paddingInlineEnd padding-inline-end paddingInlineStart padding-inline-start paddingLeft padding-left paddingRight padding-right paddingTop padding-top page pageBreakAfter page-break-after pageBreakBefore page-break-before pageBreakInside page-break-inside paintOrder paint-order perspective perspectiveOrigin perspective-origin perspectiveOriginX perspective-origin-x perspectiveOriginY perspective-origin-y pointerEvents pointer-events position positionAnchor position-anchor positionArea position-area positionTry position-try positionTryFallbacks position-try-fallbacks positionTryOrder position-try-order positionVisibility position-visibility printColorAdjust print-color-adjust quotes r resize right rotate rowGap row-gap rubyAlign ruby-align rubyOverhang ruby-overhang rubyPosition ruby-position rx ry scale scrollBehavior scroll-behavior scrollMarginBlockEnd scroll-margin-block-end scrollMarginBlockStart scroll-margin-block-start scrollMarginBottom scroll-margin-bottom scrollMarginInlineEnd scroll-margin-inline-end scrollMarginInlineStart scroll-margin-inline-start scrollMarginLeft scroll-margin-left scrollMarginRight scroll-margin-right scrollMarginTop scroll-margin-top scrollPaddingBlockEnd scroll-padding-block-end scrollPaddingBlockStart scroll-padding-block-start scrollPaddingBottom scroll-padding-bottom scrollPaddingInlineEnd scroll-padding-inline-end scrollPaddingInlineStart scroll-padding-inline-start scrollPaddingLeft scroll-padding-left scrollPaddingRight scroll-padding-right scrollPaddingTop scroll-padding-top scrollSnapAlign scroll-snap-align scrollSnapStop scroll-snap-stop scrollSnapType scroll-snap-type scrollTimeline scroll-timeline scrollTimelineAxis scroll-timeline-axis scrollTimelineName scroll-timeline-name scrollbarColor scrollbar-color scrollbarGutter scrollbar-gutter scrollbarWidth scrollbar-width shapeImageThreshold shape-image-threshold shapeMargin shape-margin shapeOutside shape-outside shapeRendering shape-rendering size speakAs speak-as stopColor stop-color stopOpacity stop-opacity stroke strokeColor stroke-color strokeDasharray stroke-dasharray strokeDashoffset stroke-dashoffset strokeLinecap stroke-linecap strokeLinejoin stroke-linejoin strokeMiterlimit stroke-miterlimit strokeOpacity stroke-opacity strokeWidth stroke-width tabSize tab-size tableLayout table-layout textAlign text-align textAlignLast text-align-last textAnchor text-anchor textAutospace text-autospace textBox text-box textBoxEdge text-box-edge textBoxTrim text-box-trim textCombineUpright text-combine-upright textDecorationColor text-decoration-color textDecorationInset text-decoration-inset textDecorationLine text-decoration-line textDecorationSkip text-decoration-skip textDecorationSkipInk text-decoration-skip-ink textDecorationStyle text-decoration-style textDecorationThickness text-decoration-thickness textEmphasis text-emphasis textEmphasisColor text-emphasis-color textEmphasisPosition text-emphasis-position textEmphasisStyle text-emphasis-style textIndent text-indent textJustify text-justify textOrientation text-orientation textOverflow text-overflow textRendering text-rendering textShadow text-shadow textTransform text-transform textUnderlineOffset text-underline-offset textUnderlinePosition text-underline-position textWrap text-wrap textWrapMode text-wrap-mode textWrapStyle text-wrap-style timelineScope timeline-scope top touchAction touch-action transform transformBox transform-box transformOrigin transform-origin transformOriginX transform-origin-x transformOriginY transform-origin-y transformOriginZ transform-origin-z transformStyle transform-style transitionBehavior transition-behavior transitionDelay transition-delay transitionDuration transition-duration transitionProperty transition-property transitionTimingFunction transition-timing-function translate unicodeBidi unicode-bidi userSelect user-select vectorEffect vector-effect verticalAlign vertical-align viewTimeline view-timeline viewTimelineAxis view-timeline-axis viewTimelineInset view-timeline-inset viewTimelineName view-timeline-name viewTransitionClass view-transition-class viewTransitionName view-transition-name visibility whiteSpace white-space whiteSpaceCollapse white-space-collapse whiteSpaceTrim white-space-trim widows width willChange will-change wordBreak word-break wordSpacing word-spacing wrapInside wrap-inside writingMode writing-mode x y zIndex z-index zoom WebkitBackdropFilter webkitBackdropFilter -webkit-backdrop-filter WebkitBackgroundClip webkitBackgroundClip -webkit-background-clip WebkitBackgroundOrigin webkitBackgroundOrigin -webkit-background-origin WebkitBackgroundSize webkitBackgroundSize -webkit-background-size WebkitBorderHorizontalSpacing webkitBorderHorizontalSpacing -webkit-border-horizontal-spacing WebkitBorderImage webkitBorderImage -webkit-border-image WebkitBorderVerticalSpacing webkitBorderVerticalSpacing -webkit-border-vertical-spacing WebkitBoxAlign webkitBoxAlign -webkit-box-align WebkitBoxDecorationBreak webkitBoxDecorationBreak -webkit-box-decoration-break WebkitBoxDirection webkitBoxDirection -webkit-box-direction WebkitBoxFlex webkitBoxFlex -webkit-box-flex WebkitBoxFlexGroup webkitBoxFlexGroup -webkit-box-flex-group WebkitBoxLines webkitBoxLines -webkit-box-lines WebkitBoxOrdinalGroup webkitBoxOrdinalGroup -webkit-box-ordinal-group WebkitBoxOrient webkitBoxOrient -webkit-box-orient WebkitBoxPack webkitBoxPack -webkit-box-pack WebkitBoxReflect webkitBoxReflect -webkit-box-reflect WebkitBoxShadow webkitBoxShadow -webkit-box-shadow WebkitColumnAxis webkitColumnAxis -webkit-column-axis WebkitColumnBreakAfter webkitColumnBreakAfter -webkit-column-break-after WebkitColumnBreakBefore webkitColumnBreakBefore -webkit-column-break-before WebkitColumnBreakInside webkitColumnBreakInside -webkit-column-break-inside WebkitColumnProgression webkitColumnProgression -webkit-column-progression WebkitFontSmoothing webkitFontSmoothing -webkit-font-smoothing WebkitHyphenateLimitAfter webkitHyphenateLimitAfter -webkit-hyphenate-limit-after WebkitHyphenateLimitBefore webkitHyphenateLimitBefore -webkit-hyphenate-limit-before WebkitInitialLetter webkitInitialLetter -webkit-initial-letter WebkitLineAlign webkitLineAlign -webkit-line-align WebkitLineBoxContain webkitLineBoxContain -webkit-line-box-contain WebkitLineClamp webkitLineClamp -webkit-line-clamp WebkitLineGrid webkitLineGrid -webkit-line-grid WebkitLineSnap webkitLineSnap -webkit-line-snap WebkitLocale webkitLocale -webkit-locale WebkitMask webkitMask -webkit-mask WebkitMaskBoxImage webkitMaskBoxImage -webkit-mask-box-image WebkitMaskClip webkitMaskClip -webkit-mask-clip WebkitMaskComposite webkitMaskComposite -webkit-mask-composite WebkitMaskPosition webkitMaskPosition -webkit-mask-position WebkitMaskPositionX webkitMaskPositionX -webkit-mask-position-x WebkitMaskPositionY webkitMaskPositionY -webkit-mask-position-y WebkitMaskSourceType webkitMaskSourceType -webkit-mask-source-type WebkitNbspMode webkitNbspMode -webkit-nbsp-mode WebkitPerspective webkitPerspective -webkit-perspective WebkitRtlOrdering webkitRtlOrdering -webkit-rtl-ordering WebkitRubyPosition webkitRubyPosition -webkit-ruby-position WebkitTapHighlightColor webkitTapHighlightColor -webkit-tap-highlight-color WebkitTextCombine webkitTextCombine -webkit-text-combine WebkitTextDecorationsInEffect webkitTextDecorationsInEffect -webkit-text-decorations-in-effect WebkitTextFillColor webkitTextFillColor -webkit-text-fill-color WebkitTextOrientation webkitTextOrientation -webkit-text-orientation WebkitTextSecurity webkitTextSecurity -webkit-text-security WebkitTextStroke webkitTextStroke -webkit-text-stroke WebkitTextStrokeColor webkitTextStrokeColor -webkit-text-stroke-color WebkitTextStrokeWidth webkitTextStrokeWidth -webkit-text-stroke-width WebkitTextZoom webkitTextZoom -webkit-text-zoom WebkitUserDrag webkitUserDrag -webkit-user-drag WebkitUserModify webkitUserModify -webkit-user-modify WebkitUserSelect webkitUserSelect -webkit-user-select animation background backgroundPosition background-position border borderBlock border-block borderBlockColor border-block-color borderBlockEnd border-block-end borderBlockStart border-block-start borderBlockStyle border-block-style borderBlockWidth border-block-width borderBottom border-bottom borderColor border-color borderInline border-inline borderInlineColor border-inline-color borderInlineEnd border-inline-end borderInlineStart border-inline-start borderInlineStyle border-inline-style borderInlineWidth border-inline-width borderLeft border-left borderRadius border-radius borderRight border-right borderStyle border-style borderTop border-top borderWidth border-width flex flexFlow flex-flow font gap gridArea grid-area gridColumn grid-column gridRow grid-row inset insetBlock inset-block insetInline inset-inline listStyle list-style margin marginBlock margin-block marginInline margin-inline outline overflow padding paddingBlock padding-block paddingInline padding-inline placeContent place-content placeItems place-items placeSelf place-self scrollMargin scroll-margin scrollMarginBlock scroll-margin-block scrollMarginInline scroll-margin-inline scrollPadding scroll-padding scrollPaddingBlock scroll-padding-block scrollPaddingInline scroll-padding-inline textDecoration text-decoration transition all WebkitAlignContent webkitAlignContent -webkit-align-content WebkitAlignItems webkitAlignItems -webkit-align-items WebkitAlignSelf webkitAlignSelf -webkit-align-self WebkitAnimation webkitAnimation -webkit-animation WebkitAnimationDelay webkitAnimationDelay -webkit-animation-delay WebkitAnimationDirection webkitAnimationDirection -webkit-animation-direction WebkitAnimationDuration webkitAnimationDuration -webkit-animation-duration WebkitAnimationFillMode webkitAnimationFillMode -webkit-animation-fill-mode WebkitAnimationIterationCount webkitAnimationIterationCount -webkit-animation-iteration-count WebkitAnimationName webkitAnimationName -webkit-animation-name WebkitAnimationPlayState webkitAnimationPlayState -webkit-animation-play-state WebkitAnimationTimingFunction webkitAnimationTimingFunction -webkit-animation-timing-function WebkitAppearance webkitAppearance -webkit-appearance WebkitBackfaceVisibility webkitBackfaceVisibility -webkit-backface-visibility WebkitBorderAfter webkitBorderAfter -webkit-border-after WebkitBorderAfterColor webkitBorderAfterColor -webkit-border-after-color WebkitBorderAfterStyle webkitBorderAfterStyle -webkit-border-after-style WebkitBorderAfterWidth webkitBorderAfterWidth -webkit-border-after-width WebkitBorderBefore webkitBorderBefore -webkit-border-before WebkitBorderBeforeColor webkitBorderBeforeColor -webkit-border-before-color WebkitBorderBeforeStyle webkitBorderBeforeStyle -webkit-border-before-style WebkitBorderBeforeWidth webkitBorderBeforeWidth -webkit-border-before-width WebkitBorderBottomLeftRadius webkitBorderBottomLeftRadius -webkit-border-bottom-left-radius WebkitBorderBottomRightRadius webkitBorderBottomRightRadius -webkit-border-bottom-right-radius WebkitBorderEnd webkitBorderEnd -webkit-border-end WebkitBorderEndColor webkitBorderEndColor -webkit-border-end-color WebkitBorderEndStyle webkitBorderEndStyle -webkit-border-end-style WebkitBorderEndWidth webkitBorderEndWidth -webkit-border-end-width WebkitBorderRadius webkitBorderRadius -webkit-border-radius WebkitBorderStart webkitBorderStart -webkit-border-start WebkitBorderStartColor webkitBorderStartColor -webkit-border-start-color WebkitBorderStartStyle webkitBorderStartStyle -webkit-border-start-style WebkitBorderStartWidth webkitBorderStartWidth -webkit-border-start-width WebkitBorderTopLeftRadius webkitBorderTopLeftRadius -webkit-border-top-left-radius WebkitBorderTopRightRadius webkitBorderTopRightRadius -webkit-border-top-right-radius WebkitBoxSizing webkitBoxSizing -webkit-box-sizing WebkitClipPath webkitClipPath -webkit-clip-path WebkitColumnCount webkitColumnCount -webkit-column-count WebkitColumnFill webkitColumnFill -webkit-column-fill WebkitColumnGap webkitColumnGap -webkit-column-gap WebkitColumnRule webkitColumnRule -webkit-column-rule WebkitColumnRuleColor webkitColumnRuleColor -webkit-column-rule-color WebkitColumnRuleStyle webkitColumnRuleStyle -webkit-column-rule-style WebkitColumnRuleWidth webkitColumnRuleWidth -webkit-column-rule-width WebkitColumnSpan webkitColumnSpan -webkit-column-span WebkitColumnWidth webkitColumnWidth -webkit-column-width WebkitColumns webkitColumns -webkit-columns WebkitFilter webkitFilter -webkit-filter WebkitFlex webkitFlex -webkit-flex WebkitFlexBasis webkitFlexBasis -webkit-flex-basis WebkitFlexDirection webkitFlexDirection -webkit-flex-direction WebkitFlexFlow webkitFlexFlow -webkit-flex-flow WebkitFlexGrow webkitFlexGrow -webkit-flex-grow WebkitFlexShrink webkitFlexShrink -webkit-flex-shrink WebkitFlexWrap webkitFlexWrap -webkit-flex-wrap WebkitFontKerning webkitFontKerning -webkit-font-kerning WebkitHyphenateCharacter webkitHyphenateCharacter -webkit-hyphenate-character WebkitHyphenateLimitLines webkitHyphenateLimitLines -webkit-hyphenate-limit-lines WebkitHyphens webkitHyphens -webkit-hyphens WebkitJustifyContent webkitJustifyContent -webkit-justify-content WebkitJustifyItems webkitJustifyItems -webkit-justify-items WebkitLineBreak webkitLineBreak -webkit-line-break WebkitLogicalHeight webkitLogicalHeight -webkit-logical-height WebkitLogicalWidth webkitLogicalWidth -webkit-logical-width WebkitMarginAfter webkitMarginAfter -webkit-margin-after WebkitMarginBefore webkitMarginBefore -webkit-margin-before WebkitMarginEnd webkitMarginEnd -webkit-margin-end WebkitMarginStart webkitMarginStart -webkit-margin-start WebkitMaskBoxImageOutset webkitMaskBoxImageOutset -webkit-mask-box-image-outset WebkitMaskBoxImageRepeat webkitMaskBoxImageRepeat -webkit-mask-box-image-repeat WebkitMaskBoxImageSlice webkitMaskBoxImageSlice -webkit-mask-box-image-slice WebkitMaskBoxImageSource webkitMaskBoxImageSource -webkit-mask-box-image-source WebkitMaskBoxImageWidth webkitMaskBoxImageWidth -webkit-mask-box-image-width WebkitMaskImage webkitMaskImage -webkit-mask-image WebkitMaskOrigin webkitMaskOrigin -webkit-mask-origin WebkitMaskRepeat webkitMaskRepeat -webkit-mask-repeat WebkitMaskSize webkitMaskSize -webkit-mask-size WebkitMaxLogicalHeight webkitMaxLogicalHeight -webkit-max-logical-height WebkitMaxLogicalWidth webkitMaxLogicalWidth -webkit-max-logical-width WebkitMinLogicalHeight webkitMinLogicalHeight -webkit-min-logical-height WebkitMinLogicalWidth webkitMinLogicalWidth -webkit-min-logical-width WebkitOpacity webkitOpacity -webkit-opacity WebkitOrder webkitOrder -webkit-order WebkitPaddingAfter webkitPaddingAfter -webkit-padding-after WebkitPaddingBefore webkitPaddingBefore -webkit-padding-before WebkitPaddingEnd webkitPaddingEnd -webkit-padding-end WebkitPaddingStart webkitPaddingStart -webkit-padding-start WebkitPerspectiveOrigin webkitPerspectiveOrigin -webkit-perspective-origin WebkitPerspectiveOriginX webkitPerspectiveOriginX -webkit-perspective-origin-x WebkitPerspectiveOriginY webkitPerspectiveOriginY -webkit-perspective-origin-y WebkitPrintColorAdjust webkitPrintColorAdjust -webkit-print-color-adjust WebkitShapeImageThreshold webkitShapeImageThreshold -webkit-shape-image-threshold WebkitShapeMargin webkitShapeMargin -webkit-shape-margin WebkitShapeOutside webkitShapeOutside -webkit-shape-outside WebkitTextDecoration webkitTextDecoration -webkit-text-decoration WebkitTextDecorationColor webkitTextDecorationColor -webkit-text-decoration-color WebkitTextDecorationLine webkitTextDecorationLine -webkit-text-decoration-line WebkitTextDecorationSkip webkitTextDecorationSkip -webkit-text-decoration-skip WebkitTextDecorationStyle webkitTextDecorationStyle -webkit-text-decoration-style WebkitTextEmphasis webkitTextEmphasis -webkit-text-emphasis WebkitTextEmphasisColor webkitTextEmphasisColor -webkit-text-emphasis-color WebkitTextEmphasisPosition webkitTextEmphasisPosition -webkit-text-emphasis-position WebkitTextEmphasisStyle webkitTextEmphasisStyle -webkit-text-emphasis-style WebkitTextUnderlinePosition webkitTextUnderlinePosition -webkit-text-underline-position WebkitTransform webkitTransform -webkit-transform WebkitTransformOrigin webkitTransformOrigin -webkit-transform-origin WebkitTransformOriginX webkitTransformOriginX -webkit-transform-origin-x WebkitTransformOriginY webkitTransformOriginY -webkit-transform-origin-y WebkitTransformOriginZ webkitTransformOriginZ -webkit-transform-origin-z WebkitTransformStyle webkitTransformStyle -webkit-transform-style WebkitTransition webkitTransition -webkit-transition WebkitTransitionDelay webkitTransitionDelay -webkit-transition-delay WebkitTransitionDuration webkitTransitionDuration -webkit-transition-duration WebkitTransitionProperty webkitTransitionProperty -webkit-transition-property WebkitTransitionTimingFunction webkitTransitionTimingFunction -webkit-transition-timing-function WebkitWritingMode webkitWritingMode -webkit-writing-mode colorAdjust color-adjust flowTolerance flow-tolerance fontWidth font-width gridColumnGap grid-column-gap gridGap grid-gap gridRowGap grid-row-gap scrollSnapMargin scroll-snap-margin scrollSnapMarginBottom scroll-snap-margin-bottom scrollSnapMarginLeft scroll-snap-margin-left scrollSnapMarginRight scroll-snap-margin-right scrollSnapMarginTop scroll-snap-margin-top supportedColorSchemes supported-color-schemes wordWrap word-wrap [Symbol.toStringTag]"
+  },
+  "CSSStyleRule": {
+    "extends": "CSSRule",
+    "static": "",
+    "prototype": "selectorText style cssRules [Symbol.toStringTag]"
+  },
+  "CSSStyleSheet": {
+    "extends": "StyleSheet",
+    "static": "",
+    "prototype": "ownerRule cssRules rules insertRule deleteRule replaceSync addRule removeRule [Symbol.toStringTag]"
+  },
+  "CSSSupportsRule": {
+    "extends": "CSSConditionRule",
+    "static": "",
+    "prototype": "matches [Symbol.toStringTag]"
+  },
+  "CharacterData": {
+    "extends": "Node",
+    "static": "",
+    "prototype": "data length previousElementSibling nextElementSibling substringData appendData insertData deleteData replaceData before after replaceWith remove [Symbol.unscopables] [Symbol.toStringTag]"
+  },
+  "ClipboardEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "clipboardData [Symbol.toStringTag]"
+  },
+  "CloseEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "wasClean code reason [Symbol.toStringTag]"
+  },
+  "CommandEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "source command [Symbol.toStringTag]"
+  },
+  "Comment": {
+    "extends": "CharacterData",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "CompositionEvent": {
+    "extends": "UIEvent",
+    "static": "",
+    "prototype": "data initCompositionEvent [Symbol.toStringTag]"
+  },
+  "CustomElementRegistry": {
+    "static": "",
+    "prototype": "define get getName whenDefined upgrade initialize [Symbol.toStringTag]"
+  },
+  "CustomEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "detail initCustomEvent [Symbol.toStringTag]"
+  },
+  "CustomStateSet": {
+    "static": "",
+    "prototype": "size has entries keys values forEach add clear delete [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "DOMException": {
+    "static": "INDEX_SIZE_ERR DOMSTRING_SIZE_ERR HIERARCHY_REQUEST_ERR WRONG_DOCUMENT_ERR INVALID_CHARACTER_ERR NO_DATA_ALLOWED_ERR NO_MODIFICATION_ALLOWED_ERR NOT_FOUND_ERR NOT_SUPPORTED_ERR INUSE_ATTRIBUTE_ERR INVALID_STATE_ERR SYNTAX_ERR INVALID_MODIFICATION_ERR NAMESPACE_ERR INVALID_ACCESS_ERR VALIDATION_ERR TYPE_MISMATCH_ERR SECURITY_ERR NETWORK_ERR ABORT_ERR URL_MISMATCH_ERR QUOTA_EXCEEDED_ERR TIMEOUT_ERR INVALID_NODE_TYPE_ERR DATA_CLONE_ERR",
+    "prototype": "code name message INDEX_SIZE_ERR DOMSTRING_SIZE_ERR HIERARCHY_REQUEST_ERR WRONG_DOCUMENT_ERR INVALID_CHARACTER_ERR NO_DATA_ALLOWED_ERR NO_MODIFICATION_ALLOWED_ERR NOT_FOUND_ERR NOT_SUPPORTED_ERR INUSE_ATTRIBUTE_ERR INVALID_STATE_ERR SYNTAX_ERR INVALID_MODIFICATION_ERR NAMESPACE_ERR INVALID_ACCESS_ERR VALIDATION_ERR TYPE_MISMATCH_ERR SECURITY_ERR NETWORK_ERR ABORT_ERR URL_MISMATCH_ERR QUOTA_EXCEEDED_ERR TIMEOUT_ERR INVALID_NODE_TYPE_ERR DATA_CLONE_ERR [Symbol.toStringTag]"
+  },
+  "DOMImplementation": {
+    "static": "",
+    "prototype": "createDocumentType createDocument createHTMLDocument hasFeature [Symbol.toStringTag]"
+  },
+  "DOMParser": {
+    "static": "",
+    "prototype": "parseFromString [Symbol.toStringTag]"
+  },
+  "DOMRect": {
+    "extends": "DOMRectReadOnly",
+    "static": "fromRect",
+    "prototype": "x y width height [Symbol.toStringTag]"
+  },
+  "DOMRectList": {
+    "static": "",
+    "prototype": "length item [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "DOMRectReadOnly": {
+    "static": "fromRect",
+    "prototype": "x y width height top right bottom left toJSON [Symbol.toStringTag]"
+  },
+  "DOMStringMap": {
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "DOMTokenList": {
+    "static": "",
+    "prototype": "length value item contains add remove toggle replace supports toString entries forEach keys values [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "Document": {
+    "extends": "Node",
+    "static": "parseHTMLUnsafe",
+    "prototype": "implementation URL documentURI compatMode characterSet charset inputEncoding contentType doctype documentElement xmlEncoding xmlVersion xmlStandalone onabort onauxclick onbeforeinput onbeforematch onbeforetoggle onblur oncancel oncanplay oncanplaythrough onchange onclick onclose oncommand oncontentvisibilityautostatechange oncontextmenu oncopy oncuechange oncut ondblclick ondrag ondragend ondragenter ondragleave ondragover ondragstart ondrop ondurationchange onemptied onended onerror onfocus onformdata oninput oninvalid onkeydown onkeypress onkeyup onload onloadeddata onloadedmetadata onloadstart onmousedown onmouseenter onmouseleave onmousemove onmouseout onmouseover onmouseup onpaste onpause onplay onplaying onprogress onratechange onreset onresize onscroll onscrollend onsecuritypolicyviolation onseeked onseeking onselect onslotchange onstalled onsubmit onsuspend ontimeupdate ontoggle onvolumechange onwaiting onwebkitanimationend onwebkitanimationiteration onwebkitanimationstart onwebkittransitionend onwheel onmousewheel ontouchcancel ontouchend ontouchmove ontouchstart onwebkitmouseforcechanged onwebkitmouseforcedown onwebkitmouseforcewillbegin onwebkitmouseforceup onanimationstart onanimationiteration onanimationend onanimationcancel ontransitionrun ontransitionstart ontransitionend ontransitioncancel ongotpointercapture onlostpointercapture onpointerdown onpointermove onpointerup onpointercancel onpointerover onpointerout onpointerenter onpointerleave onselectstart onselectionchange scrollingElement domain referrer cookie lastModified readyState title dir body head images embeds plugins links forms scripts currentScript defaultView designMode onreadystatechange fgColor linkColor vlinkColor alinkColor bgColor anchors applets all hidden visibilityState onvisibilitychange onbeforecopy onbeforecut onbeforepaste activeElement styleSheets children firstElementChild lastElementChild childElementCount createElement createElementNS getElementsByTagName getElementsByTagNameNS getElementsByClassName createDocumentFragment createTextNode createCDATASection createComment createProcessingInstruction importNode adoptNode createAttribute createAttributeNS createEvent createRange createNodeIterator createTreeWalker getElementsByName open close write writeln hasFocus clear captureEvents releaseEvents getSelection getElementById prepend append replaceChildren querySelector querySelectorAll [Symbol.unscopables] [Symbol.toStringTag]",
+    "instance": "location"
+  },
+  "DocumentFragment": {
+    "extends": "Node",
+    "static": "",
+    "prototype": "children firstElementChild lastElementChild childElementCount getElementById prepend append replaceChildren querySelector querySelectorAll [Symbol.unscopables] [Symbol.toStringTag]"
+  },
+  "DocumentType": {
+    "extends": "Node",
+    "static": "",
+    "prototype": "name publicId systemId before after replaceWith remove [Symbol.unscopables] [Symbol.toStringTag]"
+  },
+  "DragEvent": {
+    "extends": "MouseEvent",
+    "static": "",
+    "prototype": "dataTransfer [Symbol.toStringTag]"
+  },
+  "Element": {
+    "extends": "Node",
+    "static": "",
+    "prototype": "namespaceURI prefix localName tagName id className classList slot part attributes shadowRoot onfocusin onfocusout onbeforeload role ariaActiveDescendantElement ariaAtomic ariaAutoComplete ariaBrailleLabel ariaBrailleRoleDescription ariaBusy ariaChecked ariaColCount ariaColIndex ariaColIndexText ariaColSpan ariaControlsElements ariaCurrent ariaDescribedByElements ariaDescription ariaDetailsElements ariaDisabled ariaErrorMessageElements ariaExpanded ariaFlowToElements ariaHasPopup ariaHidden ariaInvalid ariaKeyShortcuts ariaLabel ariaLabelledByElements ariaLevel ariaLive ariaModal ariaMultiLine ariaMultiSelectable ariaOrientation ariaOwnsElements ariaPlaceholder ariaPosInSet ariaPressed ariaReadOnly ariaRelevant ariaRequired ariaRoleDescription ariaRowCount ariaRowIndex ariaRowIndexText ariaRowSpan ariaSelected ariaSetSize ariaSort ariaValueMax ariaValueMin ariaValueNow ariaValueText scrollTop scrollLeft scrollWidth scrollHeight clientTop clientLeft clientWidth clientHeight outerHTML innerHTML previousElementSibling nextElementSibling children firstElementChild lastElementChild childElementCount assignedSlot hasAttributes getAttributeNames getAttribute getAttributeNS setAttribute setAttributeNS removeAttribute removeAttributeNS toggleAttribute hasAttribute hasAttributeNS getAttributeNode getAttributeNodeNS setAttributeNode setAttributeNodeNS removeAttributeNode attachShadow closest matches webkitMatchesSelector getElementsByTagName getElementsByTagNameNS getElementsByClassName insertAdjacentElement insertAdjacentText before after replaceWith remove getClientRects getBoundingClientRect scrollIntoView scroll scrollTo scrollBy scrollIntoViewIfNeeded insertAdjacentHTML setPointerCapture releasePointerCapture hasPointerCapture setHTMLUnsafe getHTML prepend append replaceChildren querySelector querySelectorAll [Symbol.unscopables] [Symbol.toStringTag]"
+  },
+  "ElementInternals": {
+    "static": "",
+    "prototype": "shadowRoot form willValidate validity validationMessage labels states role ariaActiveDescendantElement ariaAtomic ariaAutoComplete ariaBrailleLabel ariaBrailleRoleDescription ariaBusy ariaChecked ariaColCount ariaColIndex ariaColSpan ariaControlsElements ariaCurrent ariaDescribedByElements ariaDetailsElements ariaDisabled ariaErrorMessageElements ariaExpanded ariaFlowToElements ariaHasPopup ariaHidden ariaInvalid ariaKeyShortcuts ariaLabel ariaLabelledByElements ariaLevel ariaLive ariaModal ariaMultiLine ariaMultiSelectable ariaOrientation ariaOwnsElements ariaPlaceholder ariaPosInSet ariaPressed ariaReadOnly ariaRelevant ariaRequired ariaRoleDescription ariaRowCount ariaRowIndex ariaRowSpan ariaSelected ariaSetSize ariaSort ariaValueMax ariaValueMin ariaValueNow ariaValueText setFormValue setValidity checkValidity reportValidity [Symbol.toStringTag]"
+  },
+  "ErrorEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "message filename lineno colno error [Symbol.toStringTag]"
+  },
+  "Event": {
+    "static": "NONE CAPTURING_PHASE AT_TARGET BUBBLING_PHASE",
+    "prototype": "type target currentTarget eventPhase cancelBubble bubbles cancelable defaultPrevented composed timeStamp srcElement returnValue composedPath stopPropagation stopImmediatePropagation preventDefault initEvent NONE CAPTURING_PHASE AT_TARGET BUBBLING_PHASE [Symbol.toStringTag]"
+  },
+  "EventTarget": {
+    "static": "",
+    "prototype": "addEventListener removeEventListener dispatchEvent [Symbol.toStringTag]"
+  },
+  "File": {
+    "static": "",
+    "prototype": "arrayBuffer bytes delete exists formData image json lastModified name size slice stat stream text type unlink write writer [Symbol.toStringTag]"
+  },
+  "FileList": {
+    "static": "",
+    "prototype": "length item [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "FileReader": {
+    "extends": "EventTarget",
+    "static": "EMPTY LOADING DONE",
+    "prototype": "readyState result error onloadstart onprogress onload onabort onerror onloadend readAsArrayBuffer readAsBinaryString readAsText readAsDataURL abort EMPTY LOADING DONE [Symbol.toStringTag]"
+  },
+  "FocusEvent": {
+    "extends": "UIEvent",
+    "static": "",
+    "prototype": "relatedTarget [Symbol.toStringTag]"
+  },
+  "FormData": {
+    "static": "from",
+    "prototype": "append delete get getAll has set entries keys values forEach toJSON length [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "FormDataEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "formData [Symbol.toStringTag]"
+  },
+  "HTMLAllCollection": {
+    "static": "",
+    "prototype": "length namedItem item [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "HTMLAnchorElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "charset coords download hreflang name ping rel rev shape type text relList referrerPolicy href target origin protocol username password host hostname port pathname search hash toString [Symbol.toStringTag]"
+  },
+  "HTMLAreaElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "alt coords noHref ping rel shape download referrerPolicy relList href target origin protocol username password host hostname port pathname search hash toString [Symbol.toStringTag]"
+  },
+  "HTMLAudioElement": {
+    "extends": "HTMLMediaElement",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "HTMLBRElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "clear [Symbol.toStringTag]"
+  },
+  "HTMLBaseElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "href target [Symbol.toStringTag]"
+  },
+  "HTMLBodyElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "aLink background bgColor link text vLink onblur onerror onfocus onload onresize onscroll onfocusin onfocusout onwebkitmouseforcechanged onwebkitmouseforcedown onwebkitmouseforcewillbegin onwebkitmouseforceup onafterprint onbeforeprint onbeforeunload onhashchange onlanguagechange onmessage onmessageerror onoffline ononline onpagehide onpagereveal onpageshow onpageswap onpopstate onrejectionhandled onstorage onunhandledrejection onunload ongamepadconnected ongamepaddisconnected [Symbol.toStringTag]"
+  },
+  "HTMLButtonElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "disabled form formAction formEnctype formMethod type formNoValidate formTarget name value commandForElement command willValidate validity validationMessage labels popoverTargetElement popoverTargetAction checkValidity reportValidity setCustomValidity [Symbol.toStringTag]"
+  },
+  "HTMLCanvasElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "width height getContext toDataURL toBlob [Symbol.toStringTag]"
+  },
+  "HTMLCollection": {
+    "static": "",
+    "prototype": "length item namedItem [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "HTMLDListElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "compact [Symbol.toStringTag]"
+  },
+  "HTMLDataElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "value [Symbol.toStringTag]"
+  },
+  "HTMLDataListElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "options [Symbol.toStringTag]"
+  },
+  "HTMLDetailsElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "name open [Symbol.toStringTag]"
+  },
+  "HTMLDialogElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "open returnValue closedBy show showModal close requestClose [Symbol.toStringTag]"
+  },
+  "HTMLDirectoryElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "compact [Symbol.toStringTag]"
+  },
+  "HTMLDivElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "align [Symbol.toStringTag]"
+  },
+  "HTMLDocument": {
+    "extends": "Document",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "HTMLElement": {
+    "extends": "Element",
+    "static": "",
+    "prototype": "title lang translate dir cue cuebackground hidden accessKey accessKeyLabel draggable spellcheck innerText inert headingOffset headingReset popover outerText webkitdropzone onabort onauxclick onbeforeinput onbeforematch onbeforetoggle onblur oncancel oncanplay oncanplaythrough onchange onclick onclose oncommand oncontentvisibilityautostatechange oncontextmenu oncopy oncuechange oncut ondblclick ondrag ondragend ondragenter ondragleave ondragover ondragstart ondrop ondurationchange onemptied onended onerror onfocus onformdata oninput oninvalid onkeydown onkeypress onkeyup onload onloadeddata onloadedmetadata onloadstart onmousedown onmouseenter onmouseleave onmousemove onmouseout onmouseover onmouseup onpaste onpause onplay onplaying onprogress onratechange onreset onresize onscroll onscrollend onsecuritypolicyviolation onseeked onseeking onselect onslotchange onstalled onsubmit onsuspend ontimeupdate ontoggle onvolumechange onwaiting onwebkitanimationend onwebkitanimationiteration onwebkitanimationstart onwebkittransitionend onwheel onmousewheel ontouchcancel ontouchend ontouchmove ontouchstart onwebkitmouseforcechanged onwebkitmouseforcedown onwebkitmouseforcewillbegin onwebkitmouseforceup onanimationstart onanimationiteration onanimationend onanimationcancel ontransitionrun ontransitionstart ontransitionend ontransitioncancel ongotpointercapture onlostpointercapture onpointerdown onpointermove onpointerup onpointercancel onpointerover onpointerout onpointerenter onpointerleave onselectstart onselectionchange style onbeforecopy onbeforecut onbeforepaste contentEditable enterKeyHint isContentEditable inputMode offsetParent offsetTop offsetLeft offsetWidth offsetHeight dataset nonce autofocus tabIndex click attachInternals showPopover hidePopover togglePopover focus blur [Symbol.toStringTag]"
+  },
+  "HTMLEmbedElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "align height name src type width getSVGDocument [Symbol.toStringTag]"
+  },
+  "HTMLFieldSetElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "disabled form name type elements willValidate validity validationMessage checkValidity reportValidity setCustomValidity [Symbol.toStringTag]"
+  },
+  "HTMLFontElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "color face size [Symbol.toStringTag]"
+  },
+  "HTMLFormControlsCollection": {
+    "extends": "HTMLCollection",
+    "static": "",
+    "prototype": "namedItem [Symbol.toStringTag]"
+  },
+  "HTMLFormElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "acceptCharset action autocomplete enctype encoding method name noValidate target rel relList elements length submit requestSubmit reset checkValidity reportValidity [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "HTMLFrameElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "name scrolling src frameBorder longDesc noResize contentDocument contentWindow marginHeight marginWidth [Symbol.toStringTag]"
+  },
+  "HTMLFrameSetElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "cols rows onblur onerror onfocus onload onresize onscroll onfocusin onfocusout onafterprint onbeforeprint onbeforeunload onhashchange onlanguagechange onmessage onmessageerror onoffline ononline onpagehide onpagereveal onpageshow onpageswap onpopstate onrejectionhandled onstorage onunhandledrejection onunload ongamepadconnected ongamepaddisconnected [Symbol.toStringTag]"
+  },
+  "HTMLHRElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "align color noShade size width [Symbol.toStringTag]"
+  },
+  "HTMLHeadElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "HTMLHeadingElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "align [Symbol.toStringTag]"
+  },
+  "HTMLHtmlElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "version [Symbol.toStringTag]"
+  },
+  "HTMLIFrameElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "src srcdoc name sandbox allow allowFullscreen width height referrerPolicy loading contentDocument contentWindow align scrolling frameBorder longDesc marginHeight marginWidth getSVGDocument [Symbol.toStringTag]"
+  },
+  "HTMLImageElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "alt src srcset sizes crossOrigin useMap isMap width height naturalHeight naturalWidth complete currentSrc referrerPolicy decoding loading name lowsrc align hspace vspace longDesc border fetchPriority x y decode [Symbol.toStringTag]"
+  },
+  "HTMLInputElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "accept alpha alt autocomplete defaultChecked checked colorSpace dirName disabled form files formAction formEnctype formMethod formNoValidate formTarget height indeterminate list max minLength maxLength min multiple name pattern placeholder readOnly required size src step type defaultValue value valueAsDate valueAsNumber width willValidate validity validationMessage labels selectionStart selectionEnd selectionDirection align useMap popoverTargetElement popoverTargetAction stepUp stepDown checkValidity reportValidity setCustomValidity select setRangeText setSelectionRange showPicker [Symbol.toStringTag]"
+  },
+  "HTMLLIElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "type value [Symbol.toStringTag]"
+  },
+  "HTMLLabelElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "form htmlFor control [Symbol.toStringTag]"
+  },
+  "HTMLLegendElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "form align [Symbol.toStringTag]"
+  },
+  "HTMLLinkElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "href crossOrigin rel as relList media integrity hreflang type sizes imageSrcset imageSizes referrerPolicy blocking disabled fetchPriority charset rev target sheet [Symbol.toStringTag]"
+  },
+  "HTMLMapElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "areas name [Symbol.toStringTag]"
+  },
+  "HTMLMarqueeElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "behavior bgColor direction height hspace loop scrollAmount scrollDelay trueSpeed vspace width start stop [Symbol.toStringTag]"
+  },
+  "HTMLMediaElement": {
+    "extends": "HTMLElement",
+    "static": "NETWORK_EMPTY NETWORK_IDLE NETWORK_LOADING NETWORK_NO_SOURCE HAVE_NOTHING HAVE_METADATA HAVE_CURRENT_DATA HAVE_FUTURE_DATA HAVE_ENOUGH_DATA",
+    "prototype": "src currentSrc crossOrigin networkState preload buffered readyState seeking currentTime duration paused defaultPlaybackRate playbackRate played seekable ended autoplay loop controls volume muted defaultMuted load canPlayType play pause addTextTrack NETWORK_EMPTY NETWORK_IDLE NETWORK_LOADING NETWORK_NO_SOURCE HAVE_NOTHING HAVE_METADATA HAVE_CURRENT_DATA HAVE_FUTURE_DATA HAVE_ENOUGH_DATA [Symbol.toStringTag]"
+  },
+  "HTMLMenuElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "compact [Symbol.toStringTag]"
+  },
+  "HTMLMetaElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "content httpEquiv media name scheme [Symbol.toStringTag]"
+  },
+  "HTMLMeterElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "value min max low high optimum labels [Symbol.toStringTag]"
+  },
+  "HTMLModElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "cite dateTime [Symbol.toStringTag]"
+  },
+  "HTMLOListElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "compact start reversed type [Symbol.toStringTag]"
+  },
+  "HTMLObjectElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "data type name form width height contentDocument contentWindow willValidate validity validationMessage align archive code declare hspace standby vspace codeBase codeType useMap border getSVGDocument checkValidity reportValidity setCustomValidity [Symbol.toStringTag]"
+  },
+  "HTMLOptGroupElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "disabled label [Symbol.toStringTag]"
+  },
+  "HTMLOptionElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "disabled form label defaultSelected selected value text index [Symbol.toStringTag]"
+  },
+  "HTMLOptionsCollection": {
+    "extends": "HTMLCollection",
+    "static": "",
+    "prototype": "length selectedIndex add remove item namedItem [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "HTMLOutputElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "htmlFor form name type defaultValue value willValidate validity validationMessage labels checkValidity reportValidity setCustomValidity [Symbol.toStringTag]"
+  },
+  "HTMLParagraphElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "align [Symbol.toStringTag]"
+  },
+  "HTMLParamElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "name type value valueType [Symbol.toStringTag]"
+  },
+  "HTMLPictureElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "HTMLPreElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "width [Symbol.toStringTag]"
+  },
+  "HTMLProgressElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "value max position labels [Symbol.toStringTag]"
+  },
+  "HTMLQuoteElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "cite [Symbol.toStringTag]"
+  },
+  "HTMLScriptElement": {
+    "extends": "HTMLElement",
+    "static": "supports",
+    "prototype": "text innerText textContent htmlFor event charset async defer src type crossOrigin noModule integrity referrerPolicy fetchPriority blocking [Symbol.toStringTag]"
+  },
+  "HTMLSelectElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "autocomplete disabled form multiple name required size type options length selectedOptions selectedIndex value willValidate validity validationMessage labels item namedItem add remove checkValidity reportValidity setCustomValidity [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "HTMLSelectedContentElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "HTMLSlotElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "name assignedNodes assignedElements assign [Symbol.toStringTag]"
+  },
+  "HTMLSourceElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "src type srcset sizes media width height [Symbol.toStringTag]"
+  },
+  "HTMLSpanElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "HTMLStyleElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "disabled media type blocking sheet [Symbol.toStringTag]"
+  },
+  "HTMLTableCaptionElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "align [Symbol.toStringTag]"
+  },
+  "HTMLTableCellElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "cellIndex align axis bgColor ch chOff colSpan rowSpan headers height noWrap vAlign width abbr scope [Symbol.toStringTag]"
+  },
+  "HTMLTableColElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "align ch chOff span vAlign width [Symbol.toStringTag]"
+  },
+  "HTMLTableElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "caption tHead tFoot tBodies rows align border frame rules summary width bgColor cellPadding cellSpacing createCaption deleteCaption createTHead deleteTHead createTFoot deleteTFoot createTBody insertRow deleteRow [Symbol.toStringTag]"
+  },
+  "HTMLTableRowElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "rowIndex sectionRowIndex cells align bgColor ch chOff vAlign insertCell deleteCell [Symbol.toStringTag]"
+  },
+  "HTMLTableSectionElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "rows align ch chOff vAlign insertRow deleteRow [Symbol.toStringTag]"
+  },
+  "HTMLTemplateElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "content shadowRootMode shadowRootDelegatesFocus shadowRootSlotAssignment shadowRootClonable shadowRootSerializable [Symbol.toStringTag]"
+  },
+  "HTMLTextAreaElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "dirName disabled form minLength maxLength name placeholder readOnly required rows cols wrap type defaultValue value textLength willValidate validity validationMessage labels selectionStart selectionEnd selectionDirection autocomplete checkValidity reportValidity setCustomValidity select setRangeText setSelectionRange [Symbol.toStringTag]"
+  },
+  "HTMLTimeElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "dateTime [Symbol.toStringTag]"
+  },
+  "HTMLTitleElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "text [Symbol.toStringTag]"
+  },
+  "HTMLTrackElement": {
+    "extends": "HTMLElement",
+    "static": "NONE LOADING LOADED ERROR",
+    "prototype": "kind src srclang label default readyState NONE LOADING LOADED ERROR [Symbol.toStringTag]"
+  },
+  "HTMLUListElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "compact type [Symbol.toStringTag]"
+  },
+  "HTMLUnknownElement": {
+    "extends": "HTMLElement",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "HTMLVideoElement": {
+    "extends": "HTMLMediaElement",
+    "static": "",
+    "prototype": "width height videoWidth videoHeight poster playsInline [Symbol.toStringTag]"
+  },
+  "HashChangeEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "oldURL newURL [Symbol.toStringTag]"
+  },
+  "History": {
+    "static": "",
+    "prototype": "length state back forward go pushState replaceState [Symbol.toStringTag]"
+  },
+  "InputEvent": {
+    "extends": "UIEvent",
+    "static": "",
+    "prototype": "inputType data isComposing getTargetRanges [Symbol.toStringTag]"
+  },
+  "KeyboardEvent": {
+    "extends": "UIEvent",
+    "static": "DOM_KEY_LOCATION_STANDARD DOM_KEY_LOCATION_LEFT DOM_KEY_LOCATION_RIGHT DOM_KEY_LOCATION_NUMPAD",
+    "prototype": "key code location ctrlKey shiftKey altKey metaKey repeat isComposing keyIdentifier charCode keyCode getModifierState initKeyboardEvent DOM_KEY_LOCATION_STANDARD DOM_KEY_LOCATION_LEFT DOM_KEY_LOCATION_RIGHT DOM_KEY_LOCATION_NUMPAD [Symbol.toStringTag]"
+  },
+  "Location": {
+    "static": "",
+    "prototype": "[Symbol.toStringTag]",
+    "instance": "href protocol host hostname port pathname search hash origin assign replace reload toString valueOf [Symbol.toPrimitive]"
+  },
+  "MediaList": {
+    "static": "",
+    "prototype": "mediaText length item deleteMedium appendMedium toString [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "MediaQueryList": {
+    "extends": "EventTarget",
+    "static": "",
+    "prototype": "media matches onchange addListener removeListener [Symbol.toStringTag]"
+  },
+  "MessageEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "origin lastEventId source data ports initMessageEvent [Symbol.toStringTag]"
+  },
+  "MimeTypeArray": {
+    "static": "",
+    "prototype": "length item namedItem [Symbol.toStringTag]"
+  },
+  "MouseEvent": {
+    "extends": "UIEvent",
+    "static": "WEBKIT_FORCE_AT_MOUSE_DOWN WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN",
+    "prototype": "screenX screenY clientX clientY ctrlKey shiftKey altKey metaKey button buttons relatedTarget movementX movementY webkitForce offsetX offsetY x y fromElement toElement getModifierState initMouseEvent WEBKIT_FORCE_AT_MOUSE_DOWN WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN [Symbol.toStringTag]"
+  },
+  "MutationObserver": {
+    "static": "",
+    "prototype": "observe disconnect takeRecords [Symbol.toStringTag]"
+  },
+  "MutationRecord": {
+    "static": "",
+    "prototype": "type target addedNodes removedNodes previousSibling nextSibling attributeName attributeNamespace oldValue [Symbol.toStringTag]"
+  },
+  "NamedNodeMap": {
+    "static": "",
+    "prototype": "length item getNamedItem getNamedItemNS setNamedItem setNamedItemNS removeNamedItem removeNamedItemNS [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "Navigator": {
+    "static": "",
+    "prototype": "appCodeName appName appVersion platform product productSub userAgent vendor vendorSub language languages onLine cookieEnabled plugins mimeTypes hardwareConcurrency javaEnabled [Symbol.toStringTag]"
+  },
+  "Node": {
+    "extends": "EventTarget",
+    "static": "ELEMENT_NODE ATTRIBUTE_NODE TEXT_NODE CDATA_SECTION_NODE ENTITY_REFERENCE_NODE ENTITY_NODE PROCESSING_INSTRUCTION_NODE COMMENT_NODE DOCUMENT_NODE DOCUMENT_TYPE_NODE DOCUMENT_FRAGMENT_NODE NOTATION_NODE DOCUMENT_POSITION_DISCONNECTED DOCUMENT_POSITION_PRECEDING DOCUMENT_POSITION_FOLLOWING DOCUMENT_POSITION_CONTAINS DOCUMENT_POSITION_CONTAINED_BY DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC",
+    "prototype": "nodeType nodeName baseURI isConnected ownerDocument parentNode parentElement childNodes firstChild lastChild previousSibling nextSibling nodeValue textContent getRootNode hasChildNodes normalize cloneNode isEqualNode isSameNode compareDocumentPosition contains lookupPrefix lookupNamespaceURI isDefaultNamespace insertBefore appendChild replaceChild removeChild ELEMENT_NODE ATTRIBUTE_NODE TEXT_NODE CDATA_SECTION_NODE ENTITY_REFERENCE_NODE ENTITY_NODE PROCESSING_INSTRUCTION_NODE COMMENT_NODE DOCUMENT_NODE DOCUMENT_TYPE_NODE DOCUMENT_FRAGMENT_NODE NOTATION_NODE DOCUMENT_POSITION_DISCONNECTED DOCUMENT_POSITION_PRECEDING DOCUMENT_POSITION_FOLLOWING DOCUMENT_POSITION_CONTAINS DOCUMENT_POSITION_CONTAINED_BY DOCUMENT_POSITION_IMPLEMENTATION_SPECIFIC [Symbol.toStringTag]"
+  },
+  "NodeFilter": {
+    "static": "FILTER_ACCEPT FILTER_REJECT FILTER_SKIP SHOW_ALL SHOW_ELEMENT SHOW_ATTRIBUTE SHOW_TEXT SHOW_CDATA_SECTION SHOW_ENTITY_REFERENCE SHOW_ENTITY SHOW_PROCESSING_INSTRUCTION SHOW_COMMENT SHOW_DOCUMENT SHOW_DOCUMENT_TYPE SHOW_DOCUMENT_FRAGMENT SHOW_NOTATION",
+    "prototype": ""
+  },
+  "NodeIterator": {
+    "static": "",
+    "prototype": "root referenceNode pointerBeforeReferenceNode whatToShow filter nextNode previousNode detach [Symbol.toStringTag]"
+  },
+  "NodeList": {
+    "static": "",
+    "prototype": "length item entries forEach keys values [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "PageTransitionEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "persisted [Symbol.toStringTag]"
+  },
+  "PluginArray": {
+    "static": "",
+    "prototype": "length item namedItem refresh [Symbol.toStringTag]"
+  },
+  "PointerEvent": {
+    "extends": "MouseEvent",
+    "static": "",
+    "prototype": "pointerId width height pressure tangentialPressure tiltX tiltY twist altitudeAngle azimuthAngle pointerType isPrimary getCoalescedEvents getPredictedEvents [Symbol.toStringTag]"
+  },
+  "PopStateEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "state hasUAVisualTransition [Symbol.toStringTag]"
+  },
+  "ProcessingInstruction": {
+    "extends": "CharacterData",
+    "static": "",
+    "prototype": "target [Symbol.toStringTag]"
+  },
+  "ProgressEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "lengthComputable loaded total [Symbol.toStringTag]"
+  },
+  "PromiseRejectionEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "promise reason [Symbol.toStringTag]"
+  },
+  "RadioNodeList": {
+    "extends": "NodeList",
+    "static": "",
+    "prototype": "value [Symbol.toStringTag]"
+  },
+  "Range": {
+    "extends": "AbstractRange",
+    "static": "START_TO_START START_TO_END END_TO_END END_TO_START NODE_BEFORE NODE_AFTER NODE_BEFORE_AND_AFTER NODE_INSIDE",
+    "prototype": "commonAncestorContainer setStart setEnd setStartBefore setStartAfter setEndBefore setEndAfter collapse selectNode selectNodeContents compareBoundaryPoints deleteContents extractContents cloneContents insertNode surroundContents cloneRange detach isPointInRange comparePoint intersectsNode compareNode getClientRects getBoundingClientRect createContextualFragment toString START_TO_START START_TO_END END_TO_END END_TO_START NODE_BEFORE NODE_AFTER NODE_BEFORE_AND_AFTER NODE_INSIDE [Symbol.toStringTag]"
+  },
+  "ResizeObserver": {
+    "static": "",
+    "prototype": "observe unobserve disconnect [Symbol.toStringTag]"
+  },
+  "SVGAnimatedPreserveAspectRatio": {
+    "static": "",
+    "prototype": "baseVal animVal [Symbol.toStringTag]"
+  },
+  "SVGAnimatedRect": {
+    "static": "",
+    "prototype": "baseVal animVal [Symbol.toStringTag]"
+  },
+  "SVGAnimatedString": {
+    "static": "",
+    "prototype": "baseVal animVal [Symbol.toStringTag]"
+  },
+  "SVGDefsElement": {
+    "extends": "SVGGraphicsElement",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "SVGDescElement": {
+    "extends": "SVGElement",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "SVGElement": {
+    "extends": "Element",
+    "static": "",
+    "prototype": "className ownerSVGElement viewportElement onabort onauxclick onbeforeinput onbeforematch onbeforetoggle onblur oncancel oncanplay oncanplaythrough onchange onclick onclose oncommand oncontentvisibilityautostatechange oncontextmenu oncopy oncuechange oncut ondblclick ondrag ondragend ondragenter ondragleave ondragover ondragstart ondrop ondurationchange onemptied onended onerror onfocus onformdata oninput oninvalid onkeydown onkeypress onkeyup onload onloadeddata onloadedmetadata onloadstart onmousedown onmouseenter onmouseleave onmousemove onmouseout onmouseover onmouseup onpaste onpause onplay onplaying onprogress onratechange onreset onresize onscroll onscrollend onsecuritypolicyviolation onseeked onseeking onselect onslotchange onstalled onsubmit onsuspend ontimeupdate ontoggle onvolumechange onwaiting onwebkitanimationend onwebkitanimationiteration onwebkitanimationstart onwebkittransitionend onwheel onmousewheel ontouchcancel ontouchend ontouchmove ontouchstart onwebkitmouseforcechanged onwebkitmouseforcedown onwebkitmouseforcewillbegin onwebkitmouseforceup onanimationstart onanimationiteration onanimationend onanimationcancel ontransitionrun ontransitionstart ontransitionend ontransitioncancel ongotpointercapture onlostpointercapture onpointerdown onpointermove onpointerup onpointercancel onpointerover onpointerout onpointerenter onpointerleave onselectstart onselectionchange style onbeforecopy onbeforecut onbeforepaste dataset nonce autofocus tabIndex focus blur [Symbol.toStringTag]"
+  },
+  "SVGGElement": {
+    "extends": "SVGGraphicsElement",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "SVGGraphicsElement": {
+    "extends": "SVGElement",
+    "static": "",
+    "prototype": "requiredExtensions systemLanguage [Symbol.toStringTag]"
+  },
+  "SVGMetadataElement": {
+    "extends": "SVGElement",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "SVGNumber": {
+    "static": "",
+    "prototype": "value [Symbol.toStringTag]"
+  },
+  "SVGPreserveAspectRatio": {
+    "static": "SVG_PRESERVEASPECTRATIO_UNKNOWN SVG_PRESERVEASPECTRATIO_NONE SVG_PRESERVEASPECTRATIO_XMINYMIN SVG_PRESERVEASPECTRATIO_XMIDYMIN SVG_PRESERVEASPECTRATIO_XMAXYMIN SVG_PRESERVEASPECTRATIO_XMINYMID SVG_PRESERVEASPECTRATIO_XMIDYMID SVG_PRESERVEASPECTRATIO_XMAXYMID SVG_PRESERVEASPECTRATIO_XMINYMAX SVG_PRESERVEASPECTRATIO_XMIDYMAX SVG_PRESERVEASPECTRATIO_XMAXYMAX SVG_MEETORSLICE_UNKNOWN SVG_MEETORSLICE_MEET SVG_MEETORSLICE_SLICE",
+    "prototype": "align meetOrSlice SVG_PRESERVEASPECTRATIO_UNKNOWN SVG_PRESERVEASPECTRATIO_NONE SVG_PRESERVEASPECTRATIO_XMINYMIN SVG_PRESERVEASPECTRATIO_XMIDYMIN SVG_PRESERVEASPECTRATIO_XMAXYMIN SVG_PRESERVEASPECTRATIO_XMINYMID SVG_PRESERVEASPECTRATIO_XMIDYMID SVG_PRESERVEASPECTRATIO_XMAXYMID SVG_PRESERVEASPECTRATIO_XMINYMAX SVG_PRESERVEASPECTRATIO_XMIDYMAX SVG_PRESERVEASPECTRATIO_XMAXYMAX SVG_MEETORSLICE_UNKNOWN SVG_MEETORSLICE_MEET SVG_MEETORSLICE_SLICE [Symbol.toStringTag]"
+  },
+  "SVGRect": {
+    "static": "",
+    "prototype": "x y width height [Symbol.toStringTag]"
+  },
+  "SVGSVGElement": {
+    "extends": "SVGGraphicsElement",
+    "static": "",
+    "prototype": "viewBox preserveAspectRatio createSVGNumber createSVGRect getElementById suspendRedraw unsuspendRedraw unsuspendRedrawAll forceRedraw [Symbol.toStringTag]"
+  },
+  "SVGStringList": {
+    "static": "",
+    "prototype": "length numberOfItems clear initialize getItem insertItemBefore replaceItem removeItem appendItem [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "SVGSwitchElement": {
+    "extends": "SVGGraphicsElement",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "SVGSymbolElement": {
+    "extends": "SVGGraphicsElement",
+    "static": "",
+    "prototype": "viewBox preserveAspectRatio [Symbol.toStringTag]"
+  },
+  "SVGTitleElement": {
+    "extends": "SVGElement",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "Screen": {
+    "static": "",
+    "prototype": "availWidth availHeight width height colorDepth pixelDepth [Symbol.toStringTag]"
+  },
+  "Selection": {
+    "static": "",
+    "prototype": "anchorNode anchorOffset focusNode focusOffset isCollapsed rangeCount type direction getRangeAt addRange removeRange removeAllRanges empty collapse setPosition collapseToStart collapseToEnd extend setBaseAndExtent selectAllChildren deleteFromDocument containsNode toString [Symbol.toStringTag]"
+  },
+  "ShadowRoot": {
+    "extends": "DocumentFragment",
+    "static": "",
+    "prototype": "mode delegatesFocus slotAssignment clonable serializable host onslotchange activeElement styleSheets innerHTML setHTMLUnsafe getHTML [Symbol.toStringTag]"
+  },
+  "StaticRange": {
+    "extends": "AbstractRange",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "Storage": {
+    "static": "",
+    "prototype": "length key getItem setItem removeItem clear [Symbol.toStringTag]"
+  },
+  "StorageEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "key oldValue newValue url storageArea initStorageEvent [Symbol.toStringTag]"
+  },
+  "StyleSheet": {
+    "static": "",
+    "prototype": "type href ownerNode parentStyleSheet title media disabled [Symbol.toStringTag]"
+  },
+  "StyleSheetList": {
+    "static": "",
+    "prototype": "length item [Symbol.iterator] [Symbol.toStringTag]"
+  },
+  "SubmitEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "submitter [Symbol.toStringTag]"
+  },
+  "Text": {
+    "extends": "CharacterData",
+    "static": "",
+    "prototype": "wholeText assignedSlot splitText [Symbol.toStringTag]"
+  },
+  "TimeRanges": {
+    "static": "",
+    "prototype": "length start end [Symbol.toStringTag]"
+  },
+  "ToggleEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "oldState newState source [Symbol.toStringTag]"
+  },
+  "TouchEvent": {
+    "extends": "UIEvent",
+    "static": "",
+    "prototype": "touches targetTouches changedTouches ctrlKey shiftKey altKey metaKey [Symbol.toStringTag]"
+  },
+  "TransitionEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "propertyName elapsedTime pseudoElement [Symbol.toStringTag]"
+  },
+  "TreeWalker": {
+    "static": "",
+    "prototype": "root whatToShow filter currentNode parentNode firstChild lastChild previousSibling nextSibling previousNode nextNode [Symbol.toStringTag]"
+  },
+  "UIEvent": {
+    "extends": "Event",
+    "static": "",
+    "prototype": "view detail layerX layerY pageX pageY which initUIEvent [Symbol.toStringTag]"
+  },
+  "ValidityState": {
+    "static": "",
+    "prototype": "valueMissing typeMismatch patternMismatch tooShort tooLong rangeUnderflow rangeOverflow stepMismatch badInput customError valid [Symbol.toStringTag]"
+  },
+  "WheelEvent": {
+    "extends": "MouseEvent",
+    "static": "DOM_DELTA_PIXEL DOM_DELTA_LINE DOM_DELTA_PAGE",
+    "prototype": "deltaX deltaY deltaZ deltaMode wheelDeltaX wheelDeltaY wheelDelta DOM_DELTA_PIXEL DOM_DELTA_LINE DOM_DELTA_PAGE [Symbol.toStringTag]"
+  },
+  "Window": {
+    "extends": "EventTarget",
+    "static": "",
+    "prototype": "window self document name location history navigator customElements status closed frames length top opener parent frameElement event origin isSecureContext localStorage sessionStorage screen innerWidth innerHeight scrollX pageXOffset scrollY pageYOffset screenX screenLeft screenY screenTop outerWidth outerHeight devicePixelRatio onabort onauxclick onbeforeinput onbeforematch onbeforetoggle onblur oncancel oncanplay oncanplaythrough onchange onclick onclose oncommand oncontentvisibilityautostatechange oncontextmenu oncopy oncuechange oncut ondblclick ondrag ondragend ondragenter ondragleave ondragover ondragstart ondrop ondurationchange onemptied onended onerror onfocus onformdata oninput oninvalid onkeydown onkeypress onkeyup onload onloadeddata onloadedmetadata onloadstart onmousedown onmouseenter onmouseleave onmousemove onmouseout onmouseover onmouseup onpaste onpause onplay onplaying onprogress onratechange onreset onresize onscroll onscrollend onsecuritypolicyviolation onseeked onseeking onselect onslotchange onstalled onsubmit onsuspend ontimeupdate ontoggle ontouchcancel ontouchend ontouchmove ontouchstart onvolumechange onwaiting onwebkitanimationend onwebkitanimationiteration onwebkitanimationstart onwebkittransitionend onwheel ongotpointercapture onlostpointercapture onpointerdown onpointermove onpointerup onpointercancel onpointerover onpointerout onpointerenter onpointerleave onselectstart onselectionchange onanimationstart onanimationiteration onanimationend onanimationcancel ontransitionrun ontransitionstart ontransitionend ontransitioncancel onafterprint onbeforeprint onbeforeunload onhashchange onlanguagechange onmessage onmessageerror onoffline ononline onpagehide onpagereveal onpageshow onpageswap onpopstate onrejectionhandled onstorage onunhandledrejection onunload close stop focus blur open alert confirm prompt print postMessage requestAnimationFrame cancelAnimationFrame getSelection getComputedStyle matchMedia moveTo moveBy resizeTo resizeBy scroll scrollTo scrollBy [Symbol.toStringTag]",
+    "instance": "AbortController AbortSignal AbstractRange AnimationEvent Attr Audio BeforeUnloadEvent Blob CDATASection CSS CSSConditionRule CSSGroupingRule CSSLayerBlockRule CSSLayerStatementRule CSSMediaRule CSSRule CSSRuleList CSSStyleDeclaration CSSStyleProperties CSSStyleRule CSSStyleSheet CSSSupportsRule CharacterData ClipboardEvent CloseEvent CommandEvent Comment CompositionEvent CustomElementRegistry CustomEvent CustomStateSet DOMException DOMImplementation DOMParser DOMRect DOMRectList DOMRectReadOnly DOMStringMap DOMTokenList Document DocumentFragment DocumentType DragEvent Element ElementInternals ErrorEvent Event EventTarget File FileList FileReader FocusEvent FormData FormDataEvent HTMLAllCollection HTMLAnchorElement HTMLAreaElement HTMLAudioElement HTMLBRElement HTMLBaseElement HTMLBodyElement HTMLButtonElement HTMLCanvasElement HTMLCollection HTMLDListElement HTMLDataElement HTMLDataListElement HTMLDetailsElement HTMLDialogElement HTMLDirectoryElement HTMLDivElement HTMLDocument HTMLElement HTMLEmbedElement HTMLFieldSetElement HTMLFontElement HTMLFormControlsCollection HTMLFormElement HTMLFrameElement HTMLFrameSetElement HTMLHRElement HTMLHeadElement HTMLHeadingElement HTMLHtmlElement HTMLIFrameElement HTMLImageElement HTMLInputElement HTMLLIElement HTMLLabelElement HTMLLegendElement HTMLLinkElement HTMLMapElement HTMLMarqueeElement HTMLMediaElement HTMLMenuElement HTMLMetaElement HTMLMeterElement HTMLModElement HTMLOListElement HTMLObjectElement HTMLOptGroupElement HTMLOptionElement HTMLOptionsCollection HTMLOutputElement HTMLParagraphElement HTMLParamElement HTMLPictureElement HTMLPreElement HTMLProgressElement HTMLQuoteElement HTMLScriptElement HTMLSelectElement HTMLSelectedContentElement HTMLSlotElement HTMLSourceElement HTMLSpanElement HTMLStyleElement HTMLTableCaptionElement HTMLTableCellElement HTMLTableColElement HTMLTableElement HTMLTableRowElement HTMLTableSectionElement HTMLTemplateElement HTMLTextAreaElement HTMLTimeElement HTMLTitleElement HTMLTrackElement HTMLUListElement HTMLUnknownElement HTMLVideoElement HashChangeEvent History Image InputEvent KeyboardEvent Location MediaList MediaQueryList MessageEvent MimeTypeArray MouseEvent MutationObserver MutationRecord NamedNodeMap Navigator Node NodeFilter NodeIterator NodeList Option PageTransitionEvent PluginArray PointerEvent PopStateEvent ProcessingInstruction ProgressEvent PromiseRejectionEvent RadioNodeList Range ResizeObserver SVGAnimatedPreserveAspectRatio SVGAnimatedRect SVGAnimatedString SVGDefsElement SVGDescElement SVGElement SVGGElement SVGGraphicsElement SVGMetadataElement SVGNumber SVGPreserveAspectRatio SVGRect SVGSVGElement SVGStringList SVGSwitchElement SVGSymbolElement SVGTitleElement Screen Selection ShadowRoot StaticRange Storage StorageEvent StyleSheet StyleSheetList SubmitEvent Text TimeRanges ToggleEvent TouchEvent TransitionEvent TreeWalker UIEvent ValidityState WheelEvent Window XMLDocument XMLHttpRequest XMLHttpRequestEventTarget XMLHttpRequestUpload XMLSerializer addEventListener alert blur cancelAnimationFrame close confirm dispatchEvent focus getComputedStyle getSelection matchMedia moveBy moveTo open postMessage print prompt removeEventListener requestAnimationFrame resizeBy resizeTo scroll scrollBy scrollTo stop"
+  },
+  "XMLDocument": {
+    "extends": "Document",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "XMLHttpRequest": {
+    "extends": "XMLHttpRequestEventTarget",
+    "static": "UNSENT OPENED HEADERS_RECEIVED LOADING DONE",
+    "prototype": "onreadystatechange readyState timeout withCredentials upload responseURL status statusText responseType response responseText responseXML open setRequestHeader send abort getResponseHeader getAllResponseHeaders overrideMimeType UNSENT OPENED HEADERS_RECEIVED LOADING DONE [Symbol.toStringTag]"
+  },
+  "XMLHttpRequestEventTarget": {
+    "extends": "EventTarget",
+    "static": "",
+    "prototype": "onloadstart onprogress onabort onerror onload ontimeout onloadend [Symbol.toStringTag]"
+  },
+  "XMLHttpRequestUpload": {
+    "extends": "XMLHttpRequestEventTarget",
+    "static": "",
+    "prototype": "[Symbol.toStringTag]"
+  },
+  "XMLSerializer": {
+    "static": "",
+    "prototype": "serializeToString [Symbol.toStringTag]"
+  }
+}

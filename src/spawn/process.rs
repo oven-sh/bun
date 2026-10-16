@@ -1066,6 +1066,8 @@ pub mod waiter_thread_posix {
         // those producer borrows (forbidden aliased-&mut). With `&self` on
         // both sides the only interior mutation goes through this cell.
         pub(crate) active: core::cell::UnsafeCell<Vec<*mut T>>,
+        /// Entries in `queue` plus `active`. Decremented only after the entry's exit is posted.
+        pub(crate) watched: AtomicU32,
     }
 
     impl<T: 'static> NewQueue<T> {
@@ -1073,6 +1075,7 @@ pub mod waiter_thread_posix {
             Self {
                 queue: ConcurrentQueue::new(),
                 active: core::cell::UnsafeCell::new(Vec::new()),
+                watched: AtomicU32::new(0),
             }
         }
     }
@@ -1234,6 +1237,7 @@ pub mod waiter_thread_posix {
                 process,
                 next: bun_threading::Link::new(),
             }));
+            self.watched.fetch_add(1, Ordering::SeqCst);
             // SAFETY: `entry` was just `into_raw`'d from a live Box (non-null).
             self.queue
                 .push(unsafe { core::ptr::NonNull::new_unchecked(entry) });
@@ -1292,6 +1296,7 @@ pub mod waiter_thread_posix {
 
                 if remove {
                     let _ = active.remove(i);
+                    self.watched.fetch_sub(1, Ordering::SeqCst);
                 } else {
                     i += 1;
                 }
@@ -1444,6 +1449,11 @@ pub mod waiter_thread_posix {
         #[inline]
         pub(crate) fn should_use_waiter_thread() -> bool {
             bun_spawn_sys::waiter_thread_flag::get()
+        }
+
+        /// True while any thread's child has an exit still to post. After `false`, the caller must still check its task queue.
+        pub fn is_watching() -> bool {
+            instance_ref().js_process.watched.load(Ordering::SeqCst) > 0
         }
 
         pub(crate) fn append(process: *mut Process) {

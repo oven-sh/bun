@@ -33,6 +33,6 @@ enum class BadTransferElement : uint8_t { ThrowTypeError,
     ThrowDataCloneError };
 Vector<JSC::Strong<JSC::JSObject>> convertTransferList(JSC::JSGlobalObject&, JSC::JSValue, ASCIILiteral notIterableMessage, BadTransferElement);
 
-template<> StructuredSerializeOptions convertDictionary<StructuredSerializeOptions>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<StructuredSerializeOptions>> convertDictionary<StructuredSerializeOptions>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

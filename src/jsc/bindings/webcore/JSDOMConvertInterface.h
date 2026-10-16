@@ -25,11 +25,12 @@
 
 #pragma once
 
-#include "root.h"
-
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/GetVM.h>
+#include <JavaScriptCore/JSGlobalObject.h>
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
-#include <JavaScriptCore/Error.h>
+#include "JSDOMGlobalObject.h"
 
 namespace WebCore {
 
@@ -47,7 +48,8 @@ struct JSToWrappedOverloader {
 };
 
 template<typename T>
-struct JSToWrappedOverloader<T, typename std::enable_if<JSDOMWrapperConverterTraits<T>::needsState>::type> {
+    requires JSDOMWrapperConverterTraits<T>::needsState
+struct JSToWrappedOverloader<T> {
     using ReturnType = typename JSDOMWrapperConverterTraits<T>::ToWrappedReturnType;
     using WrapperType = typename JSDOMWrapperConverterTraits<T>::WrapperClass;
 
@@ -58,18 +60,21 @@ struct JSToWrappedOverloader<T, typename std::enable_if<JSDOMWrapperConverterTra
 };
 
 template<typename T> struct Converter<IDLInterface<T>> : DefaultConverter<IDLInterface<T>> {
-    using ReturnType = typename JSDOMWrapperConverterTraits<T>::ToWrappedReturnType;
-    using WrapperType = typename JSDOMWrapperConverterTraits<T>::WrapperClass;
+    using Result = ConversionResult<IDLInterface<T>>;
 
     template<typename ExceptionThrower = DefaultExceptionThrower>
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, NOESCAPE ExceptionThrower&& exceptionThrower = ExceptionThrower())
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        ReturnType object = JSToWrappedOverloader<T>::toWrapped(lexicalGlobalObject, value);
-        if (!object) [[unlikely]]
+
+        RefPtr object = JSToWrappedOverloader<T>::toWrapped(lexicalGlobalObject, value);
+        if (!object) [[unlikely]] {
             exceptionThrower(lexicalGlobalObject, scope);
-        return object;
+            return Result::exception();
+        }
+
+        return Result { object.releaseNonNull() };
     }
 };
 
@@ -77,16 +82,91 @@ template<typename T> struct JSConverter<IDLInterface<T>> {
     static constexpr bool needsState = true;
     static constexpr bool needsGlobalObject = true;
 
-    template<typename U>
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const U& value)
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, U& value)
     {
-        return toJS(&lexicalGlobalObject, &globalObject, Detail::getPtrOrRef(value));
+        return toJS(&lexicalGlobalObject, &globalObject, Ref<T>(value));
     }
 
-    template<typename U>
-    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, U&& value)
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const U& value)
     {
-        return toJSNewlyCreated(&lexicalGlobalObject, &globalObject, std::forward<U>(value));
+        return toJS(&lexicalGlobalObject, &globalObject, Ref<T>(const_cast<U&>(value)));
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, std::reference_wrapper<U> value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, Ref<T>(value.get()));
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, Ref<U>& value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, value);
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const Ref<U>& value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, const_cast<Ref<U>&>(value));
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, Ref<U>&& value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, WTF::move(value));
+    }
+
+    // Bun's older bindings pass pointers. Null becomes `null`.
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, U* value)
+    {
+        if (!value)
+            return JSC::jsNull();
+        return toJS(&lexicalGlobalObject, &globalObject, Ref<T>(*value));
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const RefPtr<U>& value)
+    {
+        return convert(lexicalGlobalObject, globalObject, value.get());
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, U& value)
+    {
+        return toJSNewlyCreated(&lexicalGlobalObject, &globalObject, Ref<T>(value));
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const U& value)
+    {
+        return toJSNewlyCreated(&lexicalGlobalObject, &globalObject, Ref<T>(const_cast<U&>(value)));
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, std::reference_wrapper<U> value)
+    {
+        return toJSNewlyCreated(&lexicalGlobalObject, &globalObject, Ref<T>(value.get()));
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, Ref<U>& value)
+    {
+        return toJSNewlyCreated(&lexicalGlobalObject, &globalObject, value);
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const Ref<U>& value)
+    {
+        return toJSNewlyCreated(&lexicalGlobalObject, &globalObject, const_cast<Ref<U>&>(value));
+    }
+
+    template<std::derived_from<T> U>
+    static JSC::JSValue convertNewlyCreated(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, Ref<U>&& value)
+    {
+        return toJSNewlyCreated(&lexicalGlobalObject, &globalObject, WTF::move(value));
     }
 };
 
@@ -95,10 +175,14 @@ template<typename T> struct VariadicConverter<IDLInterface<T>> {
 
     static std::optional<Item> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
-        auto* result = Converter<IDLInterface<T>>::convert(lexicalGlobalObject, value);
-        if (!result)
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto result = WebCore::convert<IDLInterface<T>>(lexicalGlobalObject, value);
+        if (result.hasException(scope)) [[unlikely]]
             return std::nullopt;
-        return std::optional<Item> { *result };
+
+        return Item { result.releaseReturnValue() };
     }
 };
 

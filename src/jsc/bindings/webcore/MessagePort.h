@@ -33,7 +33,9 @@
 #pragma once
 
 #include "ActiveDOMObject.h"
+#include "ContextDestructionObserverInlines.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
 #include "ExceptionOr.h"
 #include "MessagePortPipe.h"
 #include "MessageWithMessagePorts.h"
@@ -97,7 +99,7 @@ public:
     uint8_t side() const { return m_side; }
 
     // EventTarget.
-    EventTargetInterface eventTargetInterface() const final { return MessagePortEventTargetInterfaceType; }
+    enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::MessagePort; }
     ScriptExecutionContext* scriptExecutionContext() const final { return ActiveDOMObject::scriptExecutionContext(); }
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
@@ -105,10 +107,10 @@ public:
 
     // node:worker_threads receiveMessageOnPort — synchronous single pop.
     // The message may legitimately be `undefined`/falsy, so emptiness is reported through hadMessage.
-    JSValue tryTakeMessage(JSGlobalObject*, bool& hadMessage);
+    JSC::JSValue tryTakeMessage(JSC::JSGlobalObject*, bool& hadMessage);
 
-    void jsRef(JSGlobalObject*);
-    void jsUnref(JSGlobalObject*);
+    void jsRef(JSC::JSGlobalObject*);
+    void jsUnref(JSC::JSGlobalObject*);
     // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 
@@ -117,6 +119,7 @@ private:
 
     bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) final;
     bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) final;
+    void removeAllEventListeners() final;
 
     // ActiveDOMObject.
     void contextDestroyed() final;
@@ -163,7 +166,6 @@ private:
     bool m_listenerLoopRefActive { false };
 
     uint32_t m_messageEventCount { 0 };
-    static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
     // Reconciles the listener event-loop ref with (m_isRefd && m_messageEventCount > 0).
     void updateListenerEventLoopRef();
 };

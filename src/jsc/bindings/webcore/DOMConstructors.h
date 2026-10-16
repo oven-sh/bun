@@ -60,6 +60,9 @@ enum class DOMConstructorID : uint16_t {
     CookieMap,
     EventEmitter,
     URLPattern,
+    DOMCSSNamespace,
+
+#include "DOMBindingsConstructorIDs.h"
 
     // Keep last. Sizes ConstructorArray.
     Count,

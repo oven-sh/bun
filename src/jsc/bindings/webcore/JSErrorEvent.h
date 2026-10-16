@@ -81,6 +81,6 @@ template<> struct JSDOMWrapperConverterTraits<ErrorEvent> {
     using WrapperClass = JSErrorEvent;
     using ToWrappedReturnType = ErrorEvent*;
 };
-template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<ErrorEvent::Init>> convertDictionary<ErrorEvent::Init>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

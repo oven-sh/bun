@@ -36,12 +36,13 @@ const { isAbsolute: pathIsAbsolute } = require("node:path");
 // node's filename validation for non-eval workers: absolute or "./"/"../"-relative
 // paths and file: URL objects; bare specifiers and string URLs are rejected.
 function validateWorkerFilename(filename) {
-  if (filename instanceof URL) {
-    if (filename.protocol === "data:") return `${filename}`;
-    // throws ERR_INVALID_URL_SCHEME (TypeError) for non-file: URLs
-    return Bun.fileURLToPath(filename);
-  }
   if (typeof filename !== "string") {
+    const { isURL, toPathIfFileURL } = require("internal/url");
+    if (isURL(filename)) {
+      if (filename.protocol === "data:") return `${filename}`;
+      // throws ERR_INVALID_URL_SCHEME (TypeError) for non-file: URLs
+      return toPathIfFileURL(filename);
+    }
     // Not a string or URL: defer to the native Worker constructor, which
     // throws the canonical ERR_INVALID_ARG_TYPE with the exact node message.
     return filename;

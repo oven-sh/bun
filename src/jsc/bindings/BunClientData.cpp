@@ -31,6 +31,8 @@
 #include "NativePromiseContext.h"
 #include "ModuleGraph.h"
 #include "StrongRootBlock.h"
+#include "DOMClientData.h"
+#include "IsolatedModuleCache.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -99,6 +101,12 @@ void JSVMClientData::JSHeapDataDeleter::operator()(JSHeapData* heapData) const
         delete heapData;
 }
 
+WebCore::DOMClientData& JSVMClientData::createDOMClientData()
+{
+    m_domClientData = makeUnique<WebCore::DOMClientData>();
+    return *m_domClientData;
+}
+
 JSVMClientData::~JSVMClientData()
 {
     while (!m_clients.isEmpty()) {
@@ -106,6 +114,10 @@ JSVMClientData::~JSVMClientData()
         client->remove();
         client->willDestroyVM();
     }
+
+    // Destroying nodes and names looks the DOM's per-VM state up, so empty it while it can still be found.
+    if (m_domClientData)
+        m_domClientData->willDestroyVM();
 
     m_normalWorld = nullptr;
     if (vmHandle)

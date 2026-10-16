@@ -41,6 +41,7 @@ public:
     CallbackResult(ReturnType&&);
 
     CallbackResultType type() const;
+    const ReturnType& returnValue() const LIFETIME_BOUND;
     ReturnType&& releaseReturnValue();
 
 private:
@@ -71,6 +72,12 @@ template<typename ReturnType> inline CallbackResult<ReturnType>::CallbackResult(
 template<typename ReturnType> inline CallbackResultType CallbackResult<ReturnType>::type() const
 {
     return m_value.has_value() ? CallbackResultType::Success : m_value.error();
+}
+
+template<typename ReturnType> inline auto CallbackResult<ReturnType>::returnValue() const LIFETIME_BOUND -> const ReturnType&
+{
+    ASSERT(m_value.has_value());
+    return m_value.value();
 }
 
 template<typename ReturnType> inline auto CallbackResult<ReturnType>::releaseReturnValue() -> ReturnType&&

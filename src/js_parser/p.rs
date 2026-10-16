@@ -16,6 +16,7 @@ use bun_wyhash::Wyhash;
 
 use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
+use crate::lower::hoist_test_mocks::{MockApi, is_test_module};
 use crate::parse::parse_entry::Options as ParserOptions;
 use crate::renamer;
 use crate::{
@@ -477,6 +478,18 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) server_components_wrap_ref: Ref,
 
     pub(crate) jest: Jest,
+    pub(crate) imported_mock_apis: HashMap<Ref, MockApi>,
+    /// `assert` and `should` imported from "vitest", which re-exports them from chai. Bun imports them from the project's chai.
+    pub(crate) chai_imports: crate::parser::ChaiImports,
+    /// Only read by a debug assertion that `uses_test_api()` covers every test-only transform.
+    pub(crate) did_apply_test_feature: bool,
+    /// Also computed outside `bun test`, for `uses_test_api()`.
+    pub(crate) has_hoisted_mock_stmt: bool,
+
+    pub(crate) import_meta_glob_use: crate::lower::import_meta_glob::ImportMetaGlobUse,
+    pub(crate) import_meta_glob_imports: List<'a, Stmt>,
+    /// The `(() => ({ ... }))()` wrappers that `reject_eager_import_meta_globs` makes throw in a CommonJS module.
+    pub(crate) import_meta_glob_eager_calls: List<'a, Expr>,
 
     // Imports (both ES6 and CommonJS) are tracked at the top level
     pub(crate) import_records: ImportRecordList<'a>,
@@ -3356,34 +3369,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.filename_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__filename")?;
 
-        if self.options.features.inject_jest_globals {
-            self.jest.test =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"test")?;
-            self.jest.it = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"it")?;
-            self.jest.describe =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"describe")?;
-            self.jest.expect =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"expect")?;
-            self.jest.expect_type_of =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"expectTypeOf")?;
-            self.jest.before_all =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"beforeAll")?;
-            self.jest.before_each =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"beforeEach")?;
-            self.jest.after_each =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"afterEach")?;
-            self.jest.after_all =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"afterAll")?;
-            self.jest.jest =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"jest")?;
-            self.jest.vi = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"vi")?;
-            self.jest.xit = self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xit")?;
-            self.jest.xtest =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xtest")?;
-            self.jest.xdescribe =
-                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"xdescribe")?;
-        }
-
         if self.options.features.react_fast_refresh {
             self.react_refresh.create_signature_ref =
                 self.declare_generated_symbol(js_ast::symbol::Kind::Other, b"$RefreshSig$");
@@ -4387,6 +4372,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
 
+            if self.options.features.inject_jest_globals
+                && path.text == b"vitest"
+                && let Some(name) = crate::parser::ChaiImports::name(alias)
+            {
+                self.chai_imports.0.push((name, r#ref));
+                self.did_apply_test_feature = true;
+                continue;
+            }
+
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
                 let symbol = &mut self.symbols[r#ref.inner_index() as usize];
@@ -4479,6 +4473,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if path.import_tag != bun_ast::ImportRecordTag::None || path.loader.is_some() {
             self.validate_and_set_import_type(&path, &mut stmt)?;
+        }
+
+        if self.options.features.inject_jest_globals && is_test_module(path.text) {
+            for item in stmt.items.iter() {
+                if let Some(api) = MockApi::from_export_name(item.alias.slice()) {
+                    self.imported_mock_apis.insert(item.name.ref_, api);
+                }
+            }
         }
 
         // Track the items for this namespace
@@ -8325,16 +8327,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref
     }
 
-    /// A lowering's own `var`. `bun run` prints names as they are, so there it gets a per-file counter.
+    /// `bun run` doesn't rename symbols, so there a generated name gets a per-file counter.
+    pub(crate) fn temp_var_name(&mut self, name: &'a [u8]) -> &'a [u8] {
+        if self.will_use_renamer() {
+            return name;
+        }
+        self.temp_ref_count += 1;
+        bun_alloc::arena_format!(in self.arena, "{}${}", bstr::BStr::new(name), self.temp_ref_count)
+            .into_bump_str()
+            .as_bytes()
+    }
+
     pub(crate) fn generate_temp_var(&mut self, name: &'a [u8]) -> Ref {
-        let name: &'a [u8] = if self.will_use_renamer() {
-            name
-        } else {
-            self.temp_ref_count += 1;
-            bun_alloc::arena_format!(in self.arena, "{}${}", bstr::BStr::new(name), self.temp_ref_count)
-                .into_bump_str()
-                .as_bytes()
-        };
+        let name = self.temp_var_name(name);
         let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, name);
         self.declare_temp_var(ref_);
         ref_
@@ -9398,6 +9403,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // const_values: self.const_values,
             ts_enums,
             import_meta_ref: self.import_meta_ref,
+            depends_on_more_than_source: self.depends_on_more_than_source(),
 
             symbols,
             parts: parts_list,
@@ -9777,6 +9783,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_may_replace_body: false,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
+            imported_mock_apis: Default::default(),
+            chai_imports: Default::default(),
+            did_apply_test_feature: false,
+            has_hoisted_mock_stmt: false,
+            import_meta_glob_use: Default::default(),
+            import_meta_glob_imports: BumpVec::new_in(arena),
+            import_meta_glob_eager_calls: BumpVec::new_in(arena),
             import_records_for_current_part: BumpVec::new_in(arena),
             export_star_import_records: BumpVec::new_in(arena),
             import_symbol_property_uses: Default::default(),

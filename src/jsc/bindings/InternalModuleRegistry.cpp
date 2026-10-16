@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "InternalModuleRegistryConstants.h"
+#include "IsolatedModuleCache.h"
 #include "ModuleGraph.h"
 #include "ZigSourceProvider.h"
 #include "wtf/Forward.h"
@@ -52,11 +53,18 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 // which allows reloading code without recompiling bindings.
 
 static std::atomic<unsigned> s_internalModulesFromBytecode { 0 };
+static std::atomic<unsigned> s_internalModulesFromSource { 0 };
 
 // bun:internal-for-testing: how many internal modules this process created from embedded bytecode rather than source.
 JSC_DEFINE_HOST_FUNCTION(jsInternalModulesLoadedFromBytecode, (JSC::JSGlobalObject*, JSC::CallFrame*))
 {
     return JSValue::encode(jsNumber(s_internalModulesFromBytecode.load(std::memory_order_relaxed)));
+}
+
+// bun:internal-for-testing: how many times this process made an internal module's executable from its source.
+JSC_DEFINE_HOST_FUNCTION(jsInternalModulesCompiledFromSource, (JSC::JSGlobalObject*, JSC::CallFrame*))
+{
+    return JSValue::encode(jsNumber(s_internalModulesFromSource.load(std::memory_order_relaxed)));
 }
 
 static SourceCode makeInternalModuleSource(const String& text, const String& moduleName, const String& urlString)
@@ -109,20 +117,31 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     const auto& m = internalModuleRecord(id);
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
-    SourceCode source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
-    maybeAddCodeCoverage(vm, source);
-
+    SourceCode source;
     UnlinkedFunctionExecutable* executable = nullptr;
-    const uint8_t* cachedBytes = nullptr;
-    size_t cachedSize = 0;
-    uint32_t cachedEntryOffset = 0;
-    if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)) {
-        executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
-        if (executable)
-            s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
+    const bool outlivesGlobal = IsolatedModuleCache::canUse(vm, ::bunVM(globalObject));
+    if (auto* cached = outlivesGlobal ? IsolatedModuleCache::lookupInternalModule(vm, id) : nullptr) {
+        source = cached->source;
+        executable = cached->executable.get();
+    } else {
+        source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
+        maybeAddCodeCoverage(vm, source);
+
+        const uint8_t* cachedBytes = nullptr;
+        size_t cachedSize = 0;
+        uint32_t cachedEntryOffset = 0;
+        if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)) {
+            executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
+            if (executable)
+                s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!executable) {
+            executable = createInternalModuleExecutable(vm, source, moduleName);
+            s_internalModulesFromSource.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (outlivesGlobal)
+            IsolatedModuleCache::insertInternalModule(vm, id, source, executable);
     }
-    if (!executable)
-        executable = createInternalModuleExecutable(vm, source, moduleName);
 
     JSFunction* func = JSFunction::create(vm, globalObject, executable->link(vm, nullptr, source), static_cast<JSC::JSGlobalObject*>(globalObject));
 

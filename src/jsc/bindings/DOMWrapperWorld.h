@@ -29,6 +29,8 @@ namespace WebCore {
 
 DOMWrapperWorld& currentWorld(JSC::JSGlobalObject&);
 DOMWrapperWorld& worldForDOMObject(JSC::JSObject&);
+// Bun has one normal world per VM, so this is the current thread's.
+DOMWrapperWorld& mainThreadNormalWorldSingleton();
 
 // Helper function for code paths that must not share objects across isolated DOM worlds.
 bool isWorldCompatible(JSC::JSGlobalObject&, JSC::JSValue);

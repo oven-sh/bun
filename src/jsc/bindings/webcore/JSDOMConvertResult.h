@@ -26,17 +26,20 @@
 #pragma once
 
 #include <JavaScriptCore/ExceptionScope.h>
+#include <expected>
 #include <functional>
 #include <type_traits>
 #include <utility>
-#include <expected>
+#include <wtf/GetPtr.h>
 
 namespace WebCore {
 
 template<typename T> struct Converter;
 
+// Result a conversion from JSValue -> Implementation.
 template<typename IDL> class ConversionResult;
 
+// Token used to indicate that a conversion from JSValue -> Implementation has failed.
 struct ConversionResultException {};
 
 namespace Detail {
@@ -69,6 +72,7 @@ struct ConversionResultStorage {
     {
     }
 
+    // Special case conversion from T& to T*
     template<typename U>
         requires(std::is_pointer_v<Type> && std::is_lvalue_reference_v<U>)
     ConversionResultStorage(ConversionResultStorage<U>&& other)
@@ -172,6 +176,7 @@ public:
 
     static ConversionResult exception() { return ConversionResult(ConversionResultException()); }
 
+    // Token type for indicating an exception has been thrown.
     ConversionResult(ConversionResultException token)
         : m_storage { token }
     {
@@ -238,25 +243,44 @@ public:
         return m_storage.releaseReturnValue();
     }
 
-    // Transitional shim — lets existing call sites that do `auto x = convert<>(); RETURN_IF_EXCEPTION(scope, {}); use(WTF::move(x))`
-    // compile unchanged. The exception check via RETURN_IF_EXCEPTION inspects the scope directly, so by the
-    // time this fires the result is known-valid. Remove once call sites migrate to hasException()/releaseReturnValue().
+    // Bun's older bindings say `auto x = convert<IDL>(...); RETURN_IF_EXCEPTION(scope, { }); use(WTF::move(x));`.
+    // The members below keep them compiling. A failed conversion converts to a default value, which such a caller never reads,
+    // and `return { };` in an older convertDictionary() means "an exception was thrown".
+    ConversionResult()
+        : m_storage { ConversionResultException() }
+    {
+    }
+
     operator ReturnType() &&
         requires(!std::is_lvalue_reference_v<ReturnType>)
     {
+        if constexpr (std::is_default_constructible_v<ReturnType>) {
+            if (m_storage.hasException()) [[unlikely]]
+                return ReturnType {};
+        }
         return releaseReturnValue();
     }
 
     operator ReturnType() &
-        requires(!std::is_lvalue_reference_v<ReturnType>)
+        requires(!std::is_lvalue_reference_v<ReturnType> && std::is_copy_constructible_v<ReturnType>)
     {
-        return m_storage.returnValue();
+        if constexpr (std::is_default_constructible_v<ReturnType>) {
+            if (m_storage.hasException()) [[unlikely]]
+                return ReturnType {};
+        }
+        return returnValue();
     }
 
-    operator ReturnType()
-        requires std::is_lvalue_reference_v<ReturnType>
+    auto& operator*()
+        requires WTF::NonNullableSmartPtr<ReturnType>
     {
-        return m_storage.returnValue();
+        return returnValue().get();
+    }
+
+    auto* operator->()
+        requires WTF::NonNullableSmartPtr<ReturnType>
+    {
+        return returnValue().ptr();
     }
 
 private:

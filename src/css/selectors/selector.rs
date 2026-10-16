@@ -639,10 +639,19 @@ pub(crate) mod serialize {
             debug_assert!(!combinators_exhausted);
             let mut compound = compound_;
 
-            // Skip implicit :scope in relative selectors (e.g. :has(:scope > foo) -> :has(> foo))
-            if is_relative && compound.len() >= 1 && matches!(compound[0], Component::Scope) {
-                if let Some(combinator) = combinators.next() {
-                    serialize_combinator(combinator, dest)?;
+            // Skip the implicit :scope of a relative selector (`:has(> foo)` is stored as `:scope > foo`).
+            if is_relative
+                && selector.has_relative_anchor()
+                && compound.len() >= 1
+                && matches!(compound[0], Component::Scope)
+            {
+                // No space goes in front of the combinator that the selector starts with.
+                match combinators.next() {
+                    Some(parser::Combinator::Child) => dest.delim(b'>', false)?,
+                    Some(parser::Combinator::NextSibling) => dest.delim(b'+', false)?,
+                    Some(parser::Combinator::LaterSibling) => dest.delim(b'~', false)?,
+                    Some(combinator) => serialize_combinator(combinator, dest)?,
+                    None => {}
                 }
                 compound = &compound[1..];
                 is_relative = false;
@@ -671,6 +680,10 @@ pub(crate) mod serialize {
                 (true, first_index)
             } else {
                 match compound[0] {
+                    // `@namespace` has no effect in the DOM's sheets, so there is no default namespace and `*|e` is `e`.
+                    Component::ExplicitAnyNamespace if dest.cssom.is_some() => {
+                        (true, first_index + 1)
+                    }
                     Component::ExplicitAnyNamespace
                     | Component::ExplicitNoNamespace
                     | Component::Namespace { .. } => (false, first_index + 1),
@@ -862,7 +875,7 @@ pub(crate) mod serialize {
                     Component::Where(_) => dest.write_str(b":where(")?,
                     Component::Is(selectors) => {
                         // If there's only one simple selector, serialize it directly.
-                        if should_unwrap_is(selectors) {
+                        if should_unwrap_is(selectors) && dest.cssom.is_none() {
                             return serialize_selector(&selectors[0], dest, context, false);
                         }
 
@@ -987,6 +1000,16 @@ pub(crate) mod serialize {
             PseudoClass::Dir { direction } => {
                 dest.write_str(b":dir(")?;
                 direction.to_css(dest)?;
+                return dest.write_str(b")");
+            }
+            PseudoClass::UnknownDir { name } => {
+                dest.write_str(b":dir(")?;
+                dest.serialize_identifier(name)?;
+                return dest.write_str(b")");
+            }
+            PseudoClass::State { name } => {
+                dest.write_str(b":state(")?;
+                dest.serialize_identifier(name)?;
                 return dest.write_str(b")");
             }
             _ => {}
@@ -1134,6 +1157,8 @@ pub(crate) mod serialize {
 
             PseudoClass::Lang { .. } => unreachable!(),
             PseudoClass::Dir { .. } => unreachable!(),
+            PseudoClass::UnknownDir { .. } => unreachable!(),
+            PseudoClass::State { .. } => unreachable!(),
             PseudoClass::Custom { name } => {
                 dest.write_char(b':')?;
                 return dest.serialize_identifier(name);
@@ -1530,7 +1555,9 @@ pub(crate) mod tocss_servo {
                 dest.write_char(b'|')?;
             }
             Component::ExplicitAnyNamespace => {
-                dest.write_str(b"*|")?;
+                if dest.cssom.is_none() {
+                    dest.write_str(b"*|")?;
+                }
             }
             Component::Namespace { prefix, .. } => {
                 IdentFns::to_css(prefix, dest)?;
@@ -1582,8 +1609,11 @@ pub(crate) mod tocss_servo {
                 }
             }
             Component::Nth(nth_data) => {
-                nth_data.write_start(dest, nth_data.is_function_())?;
-                if nth_data.is_function_() {
+                // The CSSOM keeps `:nth-child(1)`.
+                let is_function =
+                    nth_data.is_function_() || (nth_data.is_function && dest.cssom.is_some());
+                nth_data.write_start(dest, is_function)?;
+                if is_function {
                     nth_data.write_affine(dest)?;
                     dest.write_char(b')')?;
                 }

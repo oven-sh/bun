@@ -79,7 +79,7 @@ void CryptoAlgorithmHMAC::generateKey(const CryptoAlgorithmParameters& parameter
     const auto& hmacParameters = downcast<CryptoAlgorithmHmacKeyParams>(parameters);
 
     if (usagesAreInvalidForCryptoAlgorithmHMAC(usages)) {
-        exceptionCallback(SyntaxError, "Unsupported key usage for an HMAC key"_s);
+        exceptionCallback(JSSyntaxError, "Unsupported key usage for an HMAC key"_s);
         return;
     }
 
@@ -105,7 +105,7 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
 
     if (usagesAreInvalidForCryptoAlgorithmHMAC(usages)) {
         // Node's import-path wording drops the article.
-        exceptionCallback(SyntaxError, "Unsupported key usage for HMAC key"_s);
+        exceptionCallback(JSSyntaxError, "Unsupported key usage for HMAC key"_s);
         return;
     }
 

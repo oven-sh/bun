@@ -60,7 +60,7 @@ CookieMap::CookieMap(Vector<KeyValuePair<String, String>>&& cookies)
 {
 }
 
-ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& variant, bool throwOnInvalidCookieString)
+ExceptionOr<Ref<CookieMap>> CookieMap::create(Variant<Vector<Vector<String>>, HashMap<String, String>, String>&& variant, bool throwOnInvalidCookieString)
 {
     auto visitor = WTF::makeVisitor(
         [&](const Vector<Vector<String>>& pairs) -> ExceptionOr<Ref<CookieMap>> {
@@ -125,7 +125,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
             return adoptRef(*new CookieMap(WTF::move(cookies)));
         });
 
-    return std::visit(visitor, variant);
+    return WTF::visit(visitor, variant);
 }
 
 std::optional<String> CookieMap::get(const String& name) const

@@ -56,11 +56,12 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(Performance);
 
 static constexpr Seconds timePrecision { 1_ms };
 
-Performance::Performance(ScriptExecutionContext* context, MonotonicTime timeOrigin)
+Performance::Performance(ScriptExecutionContext* context)
     : ContextDestructionObserver(context)
-    , m_timeOrigin(timeOrigin)
 {
-    ASSERT(m_timeOrigin);
+    auto before = MonotonicTime::now();
+    auto sinceOrigin = Seconds::fromNanoseconds(Bun__readOriginTimer(bunVM(context->vm())));
+    m_monotonicTimeOrigin = before + (MonotonicTime::now() - before) / 2 - sinceOrigin;
 }
 
 Performance::~Performance() = default;
@@ -89,9 +90,9 @@ Seconds Performance::reduceTimeResolution(Seconds seconds)
     return Seconds(reduced);
 }
 
-MonotonicTime Performance::monotonicTimeFromRelativeTime(DOMHighResTimeStamp relativeTime) const
+DOMHighResTimeStamp Performance::relativeTimeFromTimeOrigin(MonotonicTime timestamp) const
 {
-    return m_timeOrigin + Seconds::fromMilliseconds(relativeTime);
+    return (timestamp - m_monotonicTimeOrigin).milliseconds();
 }
 
 PerformanceTiming* Performance::timing()

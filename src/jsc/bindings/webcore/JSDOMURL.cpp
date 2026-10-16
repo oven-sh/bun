@@ -156,10 +156,10 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
+    String url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
+    String base = argument1.value().isUndefined() ? ConversionResult<IDLUSVString> { String() } : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     auto* structure = structureForNewTarget<DOMURL>(lexicalGlobalObject, callFrame);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -296,7 +296,7 @@ static inline bool setJSDOMURL_hrefSetter(JSGlobalObject& lexicalGlobalObject, J
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
+    String nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
         return impl.setHref(WTF::move(nativeValue));
@@ -341,7 +341,7 @@ static inline bool setJSDOMURL_protocolSetter(JSGlobalObject& lexicalGlobalObjec
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
+    String nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
         return impl.setProtocol(WTF::move(nativeValue));
@@ -373,7 +373,7 @@ static inline bool setJSDOMURL_usernameSetter(JSGlobalObject& lexicalGlobalObjec
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
+    String nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
         return impl.setUsername(WTF::move(nativeValue));
@@ -405,7 +405,7 @@ static inline bool setJSDOMURL_passwordSetter(JSGlobalObject& lexicalGlobalObjec
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
+    String nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
         return impl.setPassword(WTF::move(nativeValue));
@@ -437,7 +437,7 @@ static inline bool setJSDOMURL_hostSetter(JSGlobalObject& lexicalGlobalObject, J
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
+    String nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
         return impl.setHost(WTF::move(nativeValue));
@@ -469,7 +469,7 @@ static inline bool setJSDOMURL_hostnameSetter(JSGlobalObject& lexicalGlobalObjec
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
+    String nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
         return impl.setHostname(WTF::move(nativeValue));
@@ -501,7 +501,7 @@ static inline bool setJSDOMURL_portSetter(JSGlobalObject& lexicalGlobalObject, J
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
+    String nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
         return impl.setPort(WTF::move(nativeValue));
@@ -533,7 +533,7 @@ static inline bool setJSDOMURL_pathnameSetter(JSGlobalObject& lexicalGlobalObjec
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
+    String nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
         return impl.setPathname(WTF::move(nativeValue));
@@ -565,7 +565,7 @@ static inline bool setJSDOMURL_hashSetter(JSGlobalObject& lexicalGlobalObject, J
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
+    String nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
         return impl.setHash(WTF::move(nativeValue));
@@ -597,7 +597,7 @@ static inline bool setJSDOMURL_searchSetter(JSGlobalObject& lexicalGlobalObject,
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
+    String nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
         return impl.setSearch(WTF::move(nativeValue));
@@ -750,7 +750,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_inspectCustom, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     auto* thisObject = dynamicDowncast<JSDOMURL>(thisValue);
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
@@ -798,10 +798,10 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_parseBody(JSC::JSG
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
+    String url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
+    String base = argument1.value().isUndefined() ? ConversionResult<IDLUSVString> { String() } : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLInterface<DOMURL>>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, DOMURL::parse(WTF::move(url), WTF::move(base), &WebCore::clientData(vm)->urlBaseCache()))));
 }
@@ -820,10 +820,10 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_canParseBody(JSC::
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
+    String url = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
+    String base = argument1.value().isUndefined() ? ConversionResult<IDLUSVString> { String() } : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, DOMURL::canParse(WTF::move(url), WTF::move(base), &WebCore::clientData(vm)->urlBaseCache()))));
 }

@@ -4,6 +4,7 @@
 
 #include "EventNames.h"
 #include "EventTarget.h"
+#include "EventTargetInterfaces.h"
 #include "ContextDestructionObserver.h"
 #include "ExceptionOr.h"
 #include <wtf/URL.h>
@@ -17,14 +18,11 @@ class GlobalEventScope : public RefCounted<GlobalEventScope>, public EventTarget
 
     uint32_t m_messageEventCount { 0 };
 
-    static void onDidChangeListenerImpl(EventTarget&, const AtomString&, OnDidChangeListenerKind);
-
 public:
     GlobalEventScope(ScriptExecutionContext* context)
         : EventTargetWithInlineData()
         , m_context(context)
     {
-        this->onDidChangeListener = &onDidChangeListenerImpl;
     }
 
     using RefCounted::deref;
@@ -37,11 +35,15 @@ public:
 
     ~GlobalEventScope() = default;
 
-    EventTargetInterface eventTargetInterface() const final { return EventTargetInterface::DOMWindowEventTargetInterfaceType; }
+    enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::DOMWindow; }
     ScriptExecutionContext* scriptExecutionContext() const final { return m_context; }
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final {}
+
+    bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) final;
+    bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) final;
+    void removeAllEventListeners() final;
 
     ScriptExecutionContext* m_context;
 };

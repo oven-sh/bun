@@ -59,14 +59,14 @@ namespace WebCore {
 using namespace JSC;
 
 // Helper to convert from IDL's std::variant to WTF's Variant
-static URLPattern::URLPatternInput convertToWTFVariant(std::variant<String, URLPatternInit>&& input)
+static URLPattern::URLPatternInput convertToWTFVariant(Variant<String, URLPatternInit>&& input)
 {
     if (std::holds_alternative<String>(input))
         return URLPattern::URLPatternInput(std::get<String>(WTF::move(input)));
     return URLPattern::URLPatternInput(std::get<URLPatternInit>(WTF::move(input)));
 }
 
-static std::optional<URLPattern::URLPatternInput> convertToOptionalWTFVariant(std::optional<std::variant<String, URLPatternInit>>&& input)
+static std::optional<URLPattern::URLPatternInput> convertToOptionalWTFVariant(std::optional<Variant<String, URLPatternInit>>&& input)
 {
     if (!input)
         return std::nullopt;
@@ -138,10 +138,10 @@ static inline EncodedJSValue constructJSURLPattern1(JSGlobalObject* lexicalGloba
     auto input = convert<IDLUnion<IDLUSVString, IDLDictionary<URLPatternInit>>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto baseURL = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
+    String baseURL = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument2 = callFrame->argument(2);
-    auto options = convert<IDLDictionary<URLPatternOptions>>(*lexicalGlobalObject, argument2.value());
+    URLPatternOptions options = convert<IDLDictionary<URLPatternOptions>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto* structure = structureForNewTarget<URLPattern>(lexicalGlobalObject, callFrame);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -168,7 +168,7 @@ static inline EncodedJSValue constructJSURLPattern2(JSGlobalObject* lexicalGloba
     auto input = convert<IDLOptional<IDLUnion<IDLUSVString, IDLDictionary<URLPatternInit>>>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto options = convert<IDLDictionary<URLPatternOptions>>(*lexicalGlobalObject, argument1.value());
+    URLPatternOptions options = convert<IDLDictionary<URLPatternOptions>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto* structure = structureForNewTarget<URLPattern>(lexicalGlobalObject, callFrame);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -421,7 +421,7 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_testBody(JSC::JS
     auto input = convert<IDLOptional<IDLUnion<IDLUSVString, IDLDictionary<URLPatternInit>>>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto baseURL = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
+    String baseURL = argument1.value().isUndefined() ? ConversionResult<IDLUSVString> { String() } : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto result = impl.test(*context, convertToOptionalWTFVariant(WTF::move(input)), WTF::move(baseURL));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
@@ -447,7 +447,7 @@ static inline JSC::EncodedJSValue jsURLPatternPrototypeFunction_execBody(JSC::JS
     auto input = convert<IDLOptional<IDLUnion<IDLUSVString, IDLDictionary<URLPatternInit>>>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto baseURL = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
+    String baseURL = argument1.value().isUndefined() ? ConversionResult<IDLUSVString> { String() } : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto result = impl.exec(*context, convertToOptionalWTFVariant(WTF::move(input)), WTF::move(baseURL));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());

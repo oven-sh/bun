@@ -116,7 +116,10 @@ export default [
     },
   }),
   define({
-    name: "Comment",
+    // The DOM's wrapper is `JSComment`.
+    name: "HTMLRewriterComment",
+    jsName: "Comment",
+    rustPath: "crate::api::html_rewriter::Comment",
     // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
     sharedThis: true,
     construct: true,
@@ -202,7 +205,10 @@ export default [
     },
   }),
   define({
-    name: "Element",
+    // The DOM's wrapper is `JSElement`.
+    name: "HTMLRewriterElement",
+    jsName: "Element",
+    rustPath: "crate::api::html_rewriter::Element",
     // R-2 Phase 2: user impls take `&self`; emit `this: &T` shims.
     sharedThis: true,
     construct: true,

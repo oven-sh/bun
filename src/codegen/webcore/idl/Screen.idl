@@ -1,0 +1,13 @@
+// https://drafts.csswg.org/cssom-view/#the-screen-interface
+[
+    GenerateIsReachable=ImplDocument,
+    GenerateAddOpaqueRoot=document,
+    Exposed=Window
+] interface Screen {
+    [ImplementedAs=width] readonly attribute long availWidth;
+    [ImplementedAs=height] readonly attribute long availHeight;
+    readonly attribute long width;
+    readonly attribute long height;
+    readonly attribute unsigned long colorDepth;
+    [ImplementedAs=colorDepth] readonly attribute unsigned long pixelDepth;
+};

@@ -544,7 +544,8 @@ function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
     outputs: [out],
     rule: "esbuild",
     inputs: [src],
-    implicitInputs: [o.rootInstall],
+    // runtime.bun.js re-exports it.
+    implicitInputs: [resolve(cfg.cwd, "src", "runtime.js"), o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -833,6 +834,10 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // ($makeErrorWithCode(N, ...)); without this dep an ErrorCode.ts edit leaves
   // stale error numbers in the JS bundles while the C++ enum regenerates.
   const errorCodeInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.ts");
+  // internal-module-registry-scanner.ts reads the native module ids from this file.
+  const nativeModuleListInput = resolve(cfg.cwd, "src", "jsc", "modules", "NativeModuleList.h");
+  // replacements.ts reads the native globals' names from this file.
+  const globalObjectTableInput = resolve(cfg.cwd, "src", "jsc", "bindings", "ZigGlobalObject.lut.txt");
 
   const outputs = [
     resolve(cfg.codegenDir, "WebCoreJSBuiltins.cpp"),
@@ -863,7 +868,15 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   n.build({
     outputs: [...outputs, ...types],
     rule: "codegen_bun",
-    inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
+    inputs: [
+      script,
+      ...sources.js,
+      ...sources.jsCodegen,
+      extraInput,
+      errorCodeInput,
+      nativeModuleListInput,
+      globalObjectTableInput,
+    ],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -1056,6 +1069,10 @@ function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
   const pairs: [src: string, out: string][] = [
     [resolve(cfg.cwd, "src/jsc/bindings/BunObject.cpp"), resolve(cfg.codegenDir, "BunObject.lut.h")],
     [resolve(cfg.cwd, "src/jsc/bindings/ZigGlobalObject.lut.txt"), resolve(cfg.codegenDir, "ZigGlobalObject.lut.h")],
+    [
+      resolve(cfg.cwd, "src/jsc/bindings/webcore/generated/JSWindowInterfaces.lut.txt"),
+      resolve(cfg.codegenDir, "JSWindowInterfaces.lut.h"),
+    ],
     [resolve(cfg.cwd, "src/jsc/bindings/JSBuffer.cpp"), resolve(cfg.codegenDir, "JSBuffer.lut.h")],
     [resolve(cfg.cwd, "src/jsc/bindings/BunProcess.cpp"), resolve(cfg.codegenDir, "BunProcess.lut.h")],
     [

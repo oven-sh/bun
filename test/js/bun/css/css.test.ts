@@ -233,6 +233,12 @@ describe("css tests", () => {
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
+  describe("calc keeps a zero beside a percentage", () => {
+    // In a parent of height auto, a height with a percentage in it is auto and 0px is not.
+    minify_test(`a { height: calc(0% + 0px) }`, `a{height:calc(0% + 0px)}`);
+    minify_test(`a { height: calc(50% - 0px) }`, `a{height:calc(50% - 0px)}`);
+    minify_test(`a { height: calc(0% + 5px) }`, `a{height:calc(0% + 5px)}`);
+  });
   describe("border_spacing", () => {
     minify_test(
       `

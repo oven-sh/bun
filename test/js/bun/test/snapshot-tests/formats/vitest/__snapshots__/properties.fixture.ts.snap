@@ -1,0 +1,432 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`a Date among the properties 1`] = `
+{
+  "d": {},
+  "n": 1,
+}
+`;
+
+exports[`a Date that is received 1`] = `
+{
+  "a": Any<Number>,
+}
+`;
+
+exports[`a Map among the properties 1`] = `
+{
+  "d": {},
+}
+`;
+
+exports[`a Map that is received 1`] = `
+{
+  "a": Any<Number>,
+}
+`;
+
+exports[`a React element 1`] = `
+{
+  "el": <div
+    id={1}
+  />,
+}
+`;
+
+exports[`a RegExp among the properties 1`] = `
+{
+  "d": {},
+}
+`;
+
+exports[`a Set among the properties 1`] = `
+{
+  "d": {},
+}
+`;
+
+exports[`a class that says what it is 1`] = `
+{
+  "a": Any<Number>,
+}
+`;
+
+exports[`a part of the object as its own properties 1`] = `
+{
+  "n": 1,
+  "part": {
+    "a": 1,
+  },
+}
+`;
+
+exports[`a property that is not enumerable 1`] = `
+{
+  "a": Any<Number>,
+}
+`;
+
+exports[`a symbol as a key 1`] = `
+{
+  "a": Any<Number>,
+  Symbol(s): 2,
+}
+`;
+
+exports[`a symbol as a key of the properties 1`] = `
+{
+  "a": 1,
+  Symbol(s): 1,
+}
+`;
+
+exports[`a symbol as a key of the properties, inside 1`] = `
+{
+  "x": {
+    Symbol(s): Foo {
+      "a": 1,
+    },
+  },
+}
+`;
+
+exports[`a toJSON() that needs a private field 1`] = `
+{
+  "a": Any<Number>,
+}
+`;
+
+exports[`a toJSON() that needs a private field, inside 1`] = `
+{
+  "x": {
+    "a": Any<Number>,
+  },
+}
+`;
+
+exports[`a typed array among the properties 1`] = `
+{
+  "d": {
+    "0": 1,
+  },
+}
+`;
+
+exports[`an Error among the properties 1`] = `
+{
+  "d": {},
+}
+`;
+
+exports[`an Error that is received 1`] = `
+{
+  "code": Any<Number>,
+}
+`;
+
+exports[`an accessor 1`] = `
+{
+  "a": 1,
+  "b": Any<Number>,
+}
+`;
+
+exports[`an array among the properties 1`] = `
+{
+  "d": [
+    1,
+    2,
+    3,
+  ],
+  "n": 1,
+}
+`;
+
+exports[`an array of all sorts 1`] = `
+{
+  "d": [
+    1,
+    "a",
+    null,
+    undefined,
+    {
+      "a": Any<Number>,
+    },
+  ],
+}
+`;
+
+exports[`an array of objects among the properties 1`] = `
+{
+  "d": [
+    {
+      "a": 1,
+      "b": 2,
+    },
+  ],
+}
+`;
+
+exports[`an array with holes 1`] = `
+{
+  "d": [
+    1,
+    undefined,
+    3,
+  ],
+}
+`;
+
+exports[`an array, and properties that are no array 1`] = `
+[
+  1,
+  2,
+]
+`;
+
+exports[`an instance in one that they name 1`] = `
+{
+  "x": {
+    "a": Any<Number>,
+    "k": Foo {
+      "z": 1,
+    },
+  },
+}
+`;
+
+exports[`an instance in the array that is received 1`] = `
+[
+  {
+    "a": Any<Number>,
+  },
+]
+`;
+
+exports[`an instance inside 1`] = `
+{
+  "x": {
+    "a": Any<Number>,
+  },
+}
+`;
+
+exports[`an instance of a class 1`] = `
+{
+  "a": Any<Number>,
+  "b": 2,
+}
+`;
+
+exports[`an instance of a class of arrays 1`] = `
+{
+  "d": [
+    1,
+  ],
+}
+`;
+
+exports[`an instance that the properties do not name 1`] = `
+{
+  "x": {
+    "a": Any<Number>,
+  },
+  "y": Foo {
+    "b": 1,
+  },
+}
+`;
+
+exports[`an instance under a numeric key 1`] = `
+{
+  "1": {
+    "a": Any<Number>,
+  },
+}
+`;
+
+exports[`an object that holds itself 1`] = `
+{
+  "a": Any<Number>,
+  "self": {
+    "a": 1,
+    "self": [Circular],
+  },
+}
+`;
+
+exports[`an object without a prototype 1`] = `
+{
+  "a": Any<Number>,
+}
+`;
+
+exports[`any(Date), beside an Error 1`] = `
+{
+  "d": Any<Date>,
+  "e": [Error: x],
+}
+`;
+
+exports[`arrayContaining() 1`] = `
+{
+  "x": ArrayContaining [
+    1,
+  ],
+}
+`;
+
+exports[`arrays of arrays 1`] = `
+{
+  "d": [
+    [
+      1,
+      2,
+    ],
+    [
+      3,
+    ],
+  ],
+}
+`;
+
+exports[`closeTo() 1`] = `
+{
+  "d": NumberCloseTo 1 (2 digits),
+  "e": NumberCloseTo 0 (1 digit),
+}
+`;
+
+exports[`instances in an array 1`] = `
+{
+  "items": [
+    {
+      "a": Any<Number>,
+    },
+    {
+      "a": Any<Number>,
+    },
+  ],
+}
+`;
+
+exports[`instances in arrays in arrays 1`] = `
+{
+  "d": [
+    [
+      {
+        "a": Any<Number>,
+      },
+    ],
+  ],
+}
+`;
+
+exports[`instances three levels down 1`] = `
+{
+  "a": {
+    "b": {
+      "c": {
+        "d": Any<Number>,
+      },
+    },
+  },
+}
+`;
+
+exports[`its own toJSON() 1`] = `"json"`;
+
+exports[`matchers for what is no object in an array 1`] = `
+{
+  "d": [
+    Any<Number>,
+    StringMatching /b/,
+    StringContaining "b",
+    NumberCloseTo 1 (2 digits),
+    Anything,
+  ],
+}
+`;
+
+exports[`no properties 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`no properties, inside 1`] = `
+{
+  "x": {
+    "a": 1,
+  },
+}
+`;
+
+exports[`null 1`] = `
+{
+  "a": null,
+  "b": 1,
+}
+`;
+
+exports[`objectContaining() 1`] = `
+{
+  "x": ObjectContaining {
+    "a": 1,
+  },
+}
+`;
+
+exports[`one object twice 1`] = `
+{
+  "x": {
+    "a": Any<Number>,
+  },
+  "y": Foo {
+    "a": 1,
+  },
+}
+`;
+
+exports[`part of the objects of an array 1`] = `
+{
+  "d": [
+    {
+      "a": Any<Number>,
+      "b": 2,
+    },
+  ],
+}
+`;
+
+exports[`stringMatching() of a RegExp 1`] = `
+{
+  "s": StringMatching /B/i,
+}
+`;
+
+exports[`stringMatching() of a string 1`] = `
+{
+  "s": StringMatching /b/,
+}
+`;
+
+exports[`stringMatching() of a string that a RegExp has to escape 1`] = `
+{
+  "s": StringMatching /a\\.b\\\\//,
+}
+`;
+
+exports[`the toJSON() of its class 1`] = `
+{
+  "a": Any<Number>,
+}
+`;
+
+exports[`the toJSON() of its class, inside 1`] = `
+{
+  "x": {
+    "a": Any<Number>,
+  },
+}
+`;

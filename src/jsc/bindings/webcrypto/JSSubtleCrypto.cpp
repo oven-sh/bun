@@ -266,7 +266,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_encryptBody(JS
     auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "encrypt"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
+    auto data = convert<IDLBufferSource>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.encrypt(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), *key, WTF::move(data), WTF::move(promise)); })));
 }
@@ -292,7 +292,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_decryptBody(JS
     auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "decrypt"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
+    auto data = convert<IDLBufferSource>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.decrypt(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), *key, WTF::move(data), WTF::move(promise)); })));
 }
@@ -318,7 +318,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_signBody(JSC::
     auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "sign"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
+    auto data = convert<IDLBufferSource>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.sign(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), *key, WTF::move(data), WTF::move(promise)); })));
 }
@@ -344,10 +344,10 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_verifyBody(JSC
     auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "verify"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto signature = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
+    auto signature = convert<IDLBufferSource>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument3 = callFrame->uncheckedArgument(3);
-    auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument3.value());
+    auto data = convert<IDLBufferSource>(*lexicalGlobalObject, argument3.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.verify(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), *key, WTF::move(signature), WTF::move(data), WTF::move(promise)); })));
 }
@@ -370,7 +370,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_digestBody(JSC
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument1.value());
+    auto data = convert<IDLBufferSource>(*lexicalGlobalObject, argument1.value());
     if (throwScope.exception()) [[unlikely]] {
         (void)throwScope.tryClearException();
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "data"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, argument1.value());
@@ -491,8 +491,13 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_importKeyBody(
     if (format == SubtleCrypto::KeyFormat::Jwk) {
         // JWK conversion errors (e.g. a throwing member getter) propagate,
         // like node's.
-        keyData = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer, IDLDictionary<JsonWebKey>>>(*lexicalGlobalObject, argument1.value());
+        auto keyDataConversionResult = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer, IDLDictionary<JsonWebKey>>>(*lexicalGlobalObject, argument1.value());
         RETURN_IF_EXCEPTION(throwScope, {});
+        keyData = WTF::switchOn(
+            keyDataConversionResult.releaseReturnValue(),
+            [](Ref<JSC::ArrayBufferView>&& view) -> SubtleCrypto::KeyDataVariant { return RefPtr { WTF::move(view) }; },
+            [](Ref<JSC::ArrayBuffer>&& buffer) -> SubtleCrypto::KeyDataVariant { return RefPtr { WTF::move(buffer) }; },
+            [](JsonWebKey&& key) -> SubtleCrypto::KeyDataVariant { return WTF::move(key); });
     } else {
         // Node picks the converter by format: buffer formats never read the
         // JWK members, so a poisoned getter cannot fire and no exception is
@@ -500,9 +505,9 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_importKeyBody(
         JSC::JSValue keyDataValue = argument1.value();
         if (!dynamicDowncast<JSC::JSArrayBuffer>(keyDataValue) && !dynamicDowncast<JSC::JSArrayBufferView>(keyDataValue)) [[unlikely]]
             return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Failed to execute 'importKey' on 'SubtleCrypto': 2nd argument is not instance of ArrayBuffer, Buffer, TypedArray, or DataView."_s);
-        auto bufferData = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, keyDataValue);
+        BufferSource bufferData = convert<IDLBufferSource>(*lexicalGlobalObject, keyDataValue);
         RETURN_IF_EXCEPTION(throwScope, {});
-        std::visit([&](auto&& alternative) { keyData = WTF::move(alternative); }, WTF::move(bufferData));
+        WTF::visit([&](auto& alternative) { keyData = alternative; }, bufferData.variant());
     }
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument2.value());
@@ -609,7 +614,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_unwrapKeyBody(
     }
     auto format = *parsedFormat;
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto wrappedKey = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument1.value());
+    auto wrappedKey = convert<IDLBufferSource>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto unwrappingKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument2.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 2, "unwrappingKey"_s, "SubtleCrypto"_s, "unwrapKey"_s, "CryptoKey"_s); });
@@ -728,7 +733,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_decapsulateBit
     auto decapsulationKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "decapsulationKey"_s, "SubtleCrypto"_s, "decapsulateBits"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto ciphertext = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
+    auto ciphertext = convert<IDLBufferSource>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLArrayBuffer>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.decapsulateBits(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), *decapsulationKey, WTF::move(ciphertext), WTF::move(promise)); })));
 }
@@ -754,7 +759,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_decapsulateKey
     auto decapsulationKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "decapsulationKey"_s, "SubtleCrypto"_s, "decapsulateKey"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto ciphertext = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
+    auto ciphertext = convert<IDLBufferSource>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument3 = callFrame->uncheckedArgument(3);
     auto sharedKeyAlgorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument3.value());

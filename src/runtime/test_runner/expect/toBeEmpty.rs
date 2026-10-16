@@ -13,8 +13,6 @@ pub(crate) fn to_be_empty(
 ) -> JsResult<JSValue> {
     let (_this, value, not) = this.matcher_prelude(global, frame.this(), "toBeEmpty", "")?;
     let mut pass;
-    let mut formatter = super::make_formatter(global);
-    // `defer formatter.deinit()` — handled by Drop.
 
     let actual_length = value.get_length_if_property_exists_internal(global)?;
 
@@ -71,7 +69,7 @@ pub(crate) fn to_be_empty(
                 global,
                 signature,
                 "\n\nExpected value to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
-                value.to_fmt(&mut formatter)
+                value.to_fmt(&mut super::make_formatter(global))
             );
         }
     } else if actual_length.is_nan() {
@@ -90,7 +88,7 @@ pub(crate) fn to_be_empty(
             global,
             signature,
             "\n\nExpected value <b>not<r> to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
-            value.to_fmt(&mut formatter)
+            value.to_fmt(&mut super::make_formatter(global))
         );
     }
 
@@ -108,7 +106,7 @@ pub(crate) fn to_be_empty(
             global,
             signature,
             "\n\nExpected value <b>not<r> to be empty\n\nReceived: <red>{}<r>\n",
-            value.to_fmt(&mut formatter)
+            value.to_fmt(&mut super::make_formatter(global))
         );
     }
 
@@ -118,7 +116,7 @@ pub(crate) fn to_be_empty(
         global,
         signature,
         "\n\nExpected value to be empty\n\nReceived: <red>{}<r>\n",
-        value.to_fmt(&mut formatter)
+        value.to_fmt(&mut super::make_formatter(global))
     )
 }
 

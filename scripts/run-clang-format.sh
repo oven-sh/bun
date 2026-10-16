@@ -27,6 +27,11 @@ cd "$PROJECT_ROOT"
 # Array to hold all files to format
 declare -a FILES_TO_FORMAT
 
+# WebCore's directories hold upstream's text and what is generated from its IDL. streams/ is Bun's own.
+is_upstream_webcore() {
+    [[ "$1" =~ src/jsc/bindings/webcore/[^/]+/ && ! "$1" =~ src/jsc/bindings/webcore/streams/ ]]
+}
+
 # Find all header files in src/ and packages/, excluding third-party and generated code
 echo "Finding header files..."
 while IFS= read -r -d '' file; do
@@ -37,7 +42,8 @@ while IFS= read -r -d '' file; do
        [[ "$file" =~ src/jsc/bindings/sqlite/ ]] || \
        [[ "$file" =~ src/jsc/bindings/node/http/llhttp/ ]] || \
        [[ "$file" =~ packages/bun-usockets/.*libuv ]] || \
-       [[ "$file" =~ vendor/ ]]; then
+       [[ "$file" =~ vendor/ ]] || \
+       is_upstream_webcore "$file"; then
         continue
     fi
     FILES_TO_FORMAT+=("$file")
@@ -51,7 +57,7 @@ done < <(find src packages -type f \( -name "*.h" -o -name "*.hpp" \) \
 # Glob C++ source files — patterns are defined in scripts/build/sources.ts
 echo "Globbing C++ source files..."
 while IFS= read -r file; do
-    if [[ -n "$file" && -f "$file" ]]; then
+    if [[ -n "$file" && -f "$file" ]] && ! is_upstream_webcore "$file"; then
         FILES_TO_FORMAT+=("$file")
     fi
 done < <(bun scripts/glob-sources.ts cxx)

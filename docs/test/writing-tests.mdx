@@ -206,6 +206,8 @@ test.if(macOS)("runs on macOS", () => {
 });
 ```
 
+`test.runIf()` is an alias for `test.if()`, for Vitest compatibility.
+
 ### test.skipIf
 
 To instead skip a test based on some condition, use `test.skipIf()` or `describe.skipIf()`.
@@ -251,6 +253,21 @@ test.failing("fixed bug", () => {
 ```
 
 Use it to track known bugs you plan to fix later, or for test-driven development.
+
+`test.fails()` is Vitest's version. It passes if any part of the test fails: the callback, a `beforeEach` or `afterEach` hook, the timeout, or `expect.assertions()`. `test.failing()` only counts an error from the test callback.
+
+Neither one counts an uncaught exception or an unhandled rejection, because it may have come from an earlier test. Bun reports it as an unhandled error between tests.
+
+### Combining modifiers
+
+You can chain modifiers in any order. Repeating a modifier, as in `test.skip.skip`, has no effect. `skip` wins over `todo`, and `todo` wins over `failing`.
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test.skipIf(isWindows).skipIf(isCI)("skipped on Windows and in CI", () => {});
+test.skipIf(isWindows).failing("skipped on Windows, expected to fail elsewhere", () => {
+  expect(0.1 + 0.2).toBe(0.3);
+});
+```
 
 ## Conditional Tests for Describe Blocks
 
@@ -345,21 +362,51 @@ test.each([
 });
 ```
 
+You can also write the table as a tagged template. The first line names the columns, and each row is passed as an object:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test.each`
+  a    | b    | expected
+  ${1} | ${2} | ${3}
+  ${4} | ${5} | ${9}
+`("add($a, $b) = $expected", ({ a, b, expected }) => {
+  expect(a + b).toBe(expected);
+});
+```
+
+### `test.for` and `describe.for`
+
+`test.for` works like `test.each`, but it doesn't spread array rows. The row is always the first argument, and the second argument is the [test context](#test-context).
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test.for([
+  [1, 2, 3],
+  [4, 5, 9],
+])("add(%i, %i) = %i", ([a, b, expected], { expect }) => {
+  expect(a + b).toBe(expected);
+});
+```
+
 ### Format Specifiers
 
 Use these specifiers to format the test title:
 
-| Specifier | Description             |
-| --------- | ----------------------- |
-| `%p`      | pretty-format           |
-| `%s`      | String                  |
-| `%d`      | Number                  |
-| `%i`      | Integer                 |
-| `%f`      | Floating point          |
-| `%j`      | JSON                    |
-| `%o`      | Object                  |
-| `%#`      | Index of the test case  |
-| `%%`      | Single percent sign (%) |
+| Specifier  | Description                         |
+| ---------- | ----------------------------------- |
+| `%p`       | pretty-format                       |
+| `%s`       | String                              |
+| `%d`       | Number                              |
+| `%i`       | Integer (`parseInt`)                |
+| `%f`       | Floating point (`parseFloat`)       |
+| `%j`       | JSON                                |
+| `%o`, `%O` | Object                              |
+| `%#`       | Index of the test case              |
+| `%$`       | Number of the test case (index + 1) |
+| `%%`       | Single percent sign (%)             |
+
+Each specifier accepts any value and converts it the way `util.format` does. For example, `%s` prints `1` for `1` and `null` for `null`. Objects and arrays are printed on one line.
+
+When a row is an object, `$name` and `$user.name` print its properties, and `$#` prints the test case's index. If the row has no `name` property, `$name` is left as is.
 
 #### Examples
 
@@ -378,8 +425,8 @@ test.each([
   [{ name: "Alice" }, { a: 1, b: 2 }],
   [{ name: "Bob" }, { x: 5, y: 10 }],
 ])("user %p with data %p", (user, data) => {
-  // "user { name: 'Alice' } with data { a: 1, b: 2 }"
-  // "user { name: 'Bob' } with data { x: 5, y: 10 }"
+  // 'user { name: "Alice" } with data { a: 1, b: 2 }'
+  // 'user { name: "Bob" } with data { x: 5, y: 10 }'
 });
 
 // %# for index
@@ -388,6 +435,149 @@ test.each(["apple", "banana"])("fruit #%# is %s", fruit => {
   // "fruit #1 is banana"
 });
 ```
+
+## Fixtures
+
+`test.extend()` returns a new `test` function with fixtures. A fixture is a value that's set up before a test and torn down after it. Tests get fixtures by destructuring the callback's first parameter.
+
+```ts title="server.test.ts" icon="/icons/typescript.svg"
+import { test as base, expect } from "bun:test";
+
+const test = base.extend<{ server: Bun.Server<undefined>; url: string }>({
+  server: async ({}, use) => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response("ok") }); // setup
+    await use(server); // the test runs here
+    await server.stop(); // teardown
+  },
+  url: async ({ server }, use) => {
+    await use(server.url.href);
+  },
+});
+
+test("responds", async ({ url }) => {
+  expect(await (await fetch(url)).text()).toBe("ok");
+});
+```
+
+- By default, a fixture is only set up for tests that destructure it, so the first parameter must be an object destructuring pattern. A fixture declares the fixtures it depends on the same way.
+- `test.beforeEach()` and `test.afterEach()` on the extended `test` receive fixtures, like a test does. `beforeEach` and `afterEach` imported from `"bun:test"` don't. Their parameter is a `done` callback.
+- An [`aroundEach`](/test/lifecycle#wrapping-tests) hook receives fixtures in its second parameter: `aroundEach(async (runTest, { server }) => {})`.
+- Fixtures are torn down in reverse order, after the `afterEach` hooks. A fixture that an `aroundEach` hook destructures is torn down after the hook finishes.
+- A fixture that isn't a function is passed as is.
+- You can call `test.extend()` on an extended `test`. A fixture that replaces one with the same name can destructure the one it replaces.
+
+| Option                             | Description                                                                                              |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `[fixture, { auto: true }]`        | Sets up the fixture for every test, even tests that don't destructure it                                 |
+| `[fixture, { scope: "file" }]`     | Sets up the fixture once, for the first test that needs it, and tears it down after the file's last test |
+| `test.override({ name: fixture })` | Replaces fixtures in the `describe` block it's called in                                                 |
+| `test.beforeAll(({ name }) => {})` | `beforeAll`, `afterAll` and `aroundAll` hooks that receive the `scope: "file"` fixtures                  |
+
+### Test Context
+
+The test context is the object you destructure fixtures from. Each test has one, and its hooks receive the same object.
+
+| Property                                 | Description                                                                                                                       |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `task`                                   | The running test: `name`, `fullName`, `suite`, `file.filepath`, `meta`, `result.state`, `result.errors`, ...                      |
+| `expect`                                 | An `expect` whose assertion counts and snapshots belong to this test, even in [concurrent](/test#concurrent-test-execution) tests |
+| `skip(note?)`, `skip(condition, note?)`  | Stops the test and reports it as skipped                                                                                          |
+| `onTestFinished(fn)`, `onTestFailed(fn)` | Runs `fn` after the test's `afterEach` hooks and fixture teardown. `onTestFailed` only runs it if the test failed                 |
+| `signal`                                 | An `AbortSignal` that's aborted when the test times out                                                                           |
+| `annotate(message, type?, attachment?)`  | Adds an entry to `task.annotations`                                                                                               |
+
+As in Vitest, the context isn't a `done` callback. Calling it throws an error.
+
+## Importing from `vitest`
+
+In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/globals"`. Each module behaves like the runner it's named after, so a test file or helper module keeps the behavior it was written for:
+
+|                                                           | `"bun:test"`, `"@jest/globals"`      | `"vitest"`                                                           |
+| --------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
+| Test or hook callback's parameter                         | a `done` callback that Bun waits for | the [test context](#test-context)                                    |
+| `test.each` callback's extra parameter                    | a `done` callback                    | `undefined`                                                          |
+| Values in a `test.each` title                             | printed in full: `{ a: "x" }`        | printed as in Vitest: `{ a: 'x' }`, `[ 0, 1, …(118) ]`               |
+| `beforeAll` and `afterAll` callback parameters            | `(done)`                             | `({}, suite)`                                                        |
+| `afterEach` and `afterAll` hooks in the same scope        | run in registration order            | run in reverse registration order                                    |
+| Function returned by `beforeEach` or `beforeAll`          | ignored                              | runs after the matching `afterEach` / `afterAll` hooks               |
+| `test(name, { skip, only, todo, fails, concurrent }, fn)` | these options are ignored            | these options work like the modifiers                                |
+| `describe(name, options, fn)`                             | options are ignored                  | options are the defaults for the tests inside                        |
+| `test(name)` without a callback                           | an error                             | a todo test                                                          |
+| Mock functions before each test                           | left alone                           | cleared ([`clearMocks`](/test/configuration#test-execution))         |
+| Default hook timeout                                      | same as a test's                     | 10 seconds, or `--timeout` if it's longer                            |
+| `beforeAll` in a scope with only skipped tests            | runs                                 | doesn't run                                                          |
+| Hook registered while a test runs                         | an error, or runs after that test    | never runs                                                           |
+| `.not.toMatchObject()` with a value that isn't an object  | an error                             | passes                                                               |
+| `toHaveProperty("a.b")` on `{ "a.b": 1 }`                 | fails: `"a.b"` is always a path      | passes: an own key with that name comes before the path              |
+| `toHaveProperty()` on `undefined` or `null`               | fails, so it passes with `.not`      | throws a `TypeError`, with `.not` too                                |
+| `toContain()` on a string with a value that isn't one     | an error                             | converts the value to a string                                       |
+| `.resolves.toThrow()` on a promise resolved to an error   | passes                               | fails                                                                |
+| `.not.not`                                                | cancels out                          | still negates                                                        |
+| `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
+
+`"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context).
+
+`import { assert, should } from "vitest"` imports them from the `chai` package in your `node_modules`, which Vitest depends on. They aren't available through `import * as`, `import()` or a re-export of `"vitest"`.
+
+In a file that imports from `"vitest"`, the globals (`test`, `describe`, `beforeEach`, ...) come from `"vitest"` too. Set [`globals = "vitest"`](/test/configuration#globals) in `bunfig.toml` to do that for every file.
+
+## Promises
+
+`.resolves` and `.rejects` run the matcher on the value a promise resolves to or rejects with. They also accept a thenable or a function that returns a promise. The matcher returns a promise, so `await` it:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test("promises", async () => {
+  await expect(Promise.resolve(42)).resolves.toBe(42);
+  await expect(fetchUser("invalid-id")).rejects.toThrow("User not found");
+  await expect(() => fetchUser("invalid-id")).rejects.toThrow("User not found");
+});
+```
+
+If you don't `await` a matcher, the test still waits for it before ending, and a failure still fails that test. Outside a test, the file waits for the matcher, and a failure is reported as an error between tests. Code after the matcher doesn't wait for it, so `await` the matcher if that code closes something the promise needs.
+
+In a `"bun:test"` test, a promise that has already settled is checked right away, and a failed matcher throws instead of returning a rejected promise. In a `"vitest"` test, the matcher always returns a promise.
+
+These matchers also return a promise:
+
+- `toThrow()` on a function that returns a pending promise
+- A custom matcher that returns a promise
+- A matcher that compares a pending promise with `expect.resolvesTo` or `expect.rejectsTo`
+
+Don't change the values being compared while one of these matchers waits. If they change, the matcher fails.
+
+## Soft Assertions
+
+`expect.soft()` doesn't throw when a matcher fails. The test keeps running and is marked as failed at the end:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test("response", async () => {
+  const response = await fetch(url);
+  expect.soft(response.status).toBe(200);
+  expect.soft(response.headers.get("content-type")).toBe("text/html"); // checked even if the status is wrong
+});
+```
+
+`expect.soft()` works with `.not`, `.resolves`, `.rejects`, and custom matchers. Outside a test, or in a concurrent test after its first `await`, a failed matcher throws as usual.
+
+## Polling
+
+`expect.poll()` calls a function, awaits its result, and runs the matcher on it. It retries until the matcher passes. The matcher returns a promise:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+test("the queue drains", async () => {
+  await expect.poll(() => queue.length).toBe(0);
+  await expect.poll(() => fetchStatus(), { interval: 10, timeout: 500, message: "status" }).toBe("ready");
+});
+```
+
+| Option     | Default | Description                                                       |
+| ---------- | ------- | ----------------------------------------------------------------- |
+| `interval` | `50`    | Milliseconds between attempts                                     |
+| `timeout`  | `1000`  | Milliseconds before the promise rejects with the last failure     |
+| `message`  |         | Custom message shown if the matcher fails, as in `expect(x, msg)` |
+
+- `interval` and `timeout` are measured in real time, even with [fake timers](/test/dates-times). Each attempt also advances the fake clock by `interval`.
+- `expect.poll()` doesn't support `.resolves`, `.rejects`, `toThrow()`, or the snapshot matchers. Use `vi.waitFor()` for those.
 
 ## Assertion Counting
 
@@ -422,6 +612,50 @@ test("exactly two assertions", () => {
 ```
 
 `expect.assertions(count)` helps ensure all your assertions run, especially in complex async code with multiple code paths.
+
+## Custom Equality
+
+Use `expect.addEqualityTesters()` to teach `toEqual()`, `toStrictEqual()`, `toMatchObject()`, `toHaveBeenCalledWith()`, and the other deep-equality matchers how to compare your own types. A tester returns `true` or `false`, or `undefined` if it doesn't handle the two values.
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+function areVolumesEqual(a: unknown, b: unknown) {
+  if (a instanceof Volume && b instanceof Volume) return a.equals(b);
+  return undefined;
+}
+
+expect.addEqualityTesters([areVolumesEqual]);
+
+test("1 L is 1000 mL", () => {
+  expect({ size: new Volume(1, "L") }).toEqual({ size: new Volume(1000, "mL") });
+});
+```
+
+A tester registered in a test file applies until that file ends. A tester registered in a [preload script](/test/lifecycle#global-setup-and-teardown), or in a module that test files import, applies to every file after it.
+
+To compare nested values inside a tester, call `this.equals(a, b, customTesters)`. `customTesters` is the third argument the tester receives.
+
+## Test State
+
+`expect.getState()` returns information about the running test. Custom matchers can read the properties below from `this`.
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+describe("math", () => {
+  test("adds", () => {
+    const { currentTestName, testPath, assertionCalls } = expect.getState();
+    console.log(currentTestName); // "math adds"
+  });
+});
+```
+
+| Property                   | Description                                                                               |
+| -------------------------- | ----------------------------------------------------------------------------------------- |
+| `currentTestName`          | The `describe` names and the test name, joined by a space, or by `>` in a `"vitest"` test |
+| `testPath`                 | The test file's absolute path                                                             |
+| `assertionCalls`           | Number of assertions the test has made                                                    |
+| `expectedAssertionsNumber` | The count passed to `expect.assertions()`, or `null`                                      |
+| `isExpectingAssertions`    | `true` after `expect.hasAssertions()`, unless the test also calls `expect.assertions()`   |
+
+`expect.setState(state)` merges your own properties into the object `expect.getState()` returns. It can also set the three assertion properties above. Custom matchers don't get your own properties on `this`.
 
 ## Type Testing
 
@@ -499,6 +733,8 @@ Bun implements the following matchers. Full Jest compatibility is planned; see t
 | ✅     | `.stringMatching()`   |
 | ✅     | `.arrayContaining()`  |
 
+`expect.stringMatching()` takes a regular expression. A string is the source of one, as in `new RegExp(string)`. To look for a literal string, use `expect.stringContaining()`.
+
 ### Object Matchers
 
 | Status | Matcher                 |
@@ -539,18 +775,26 @@ Bun implements the following matchers. Full Jest compatibility is planned; see t
 
 ### Mock Function Matchers
 
-| Status | Matcher                       |
-| ------ | ----------------------------- |
-| ✅     | `.toHaveBeenCalled()`         |
-| ✅     | `.toHaveBeenCalledTimes()`    |
-| ✅     | `.toHaveBeenCalledWith()`     |
-| ✅     | `.toHaveBeenLastCalledWith()` |
-| ✅     | `.toHaveBeenNthCalledWith()`  |
-| ✅     | `.toHaveReturned()`           |
-| ✅     | `.toHaveReturnedTimes()`      |
-| ✅     | `.toHaveReturnedWith()`       |
-| ✅     | `.toHaveLastReturnedWith()`   |
-| ✅     | `.toHaveNthReturnedWith()`    |
+| Status | Matcher                              |
+| ------ | ------------------------------------ |
+| ✅     | `.toHaveBeenCalled()`                |
+| ✅     | `.toHaveBeenCalledTimes()`           |
+| ✅     | `.toHaveBeenCalledWith()`            |
+| ✅     | `.toHaveBeenLastCalledWith()`        |
+| ✅     | `.toHaveBeenNthCalledWith()`         |
+| ✅     | `.toHaveBeenCalledExactlyOnceWith()` |
+| ✅     | `.toHaveBeenCalledBefore()`          |
+| ✅     | `.toHaveBeenCalledAfter()`           |
+| ✅     | `.toHaveReturned()`                  |
+| ✅     | `.toHaveReturnedTimes()`             |
+| ✅     | `.toHaveReturnedWith()`              |
+| ✅     | `.toHaveLastReturnedWith()`          |
+| ✅     | `.toHaveNthReturnedWith()`           |
+| ✅     | `.toHaveResolved()`                  |
+| ✅     | `.toHaveResolvedTimes()`             |
+| ✅     | `.toHaveResolvedWith()`              |
+| ✅     | `.toHaveLastResolvedWith()`          |
+| ✅     | `.toHaveNthResolvedWith()`           |
 
 ### Snapshot Matchers
 
@@ -560,22 +804,33 @@ Bun implements the following matchers. Full Jest compatibility is planned; see t
 | ✅     | `.toMatchInlineSnapshot()`              |
 | ✅     | `.toThrowErrorMatchingSnapshot()`       |
 | ✅     | `.toThrowErrorMatchingInlineSnapshot()` |
+| ✅     | `.toMatchFileSnapshot()`                |
 
 ### Utility Matchers
 
-| Status | Matcher            |
-| ------ | ------------------ |
-| ✅     | `.extend`          |
-| ✅     | `.anything()`      |
-| ✅     | `.any()`           |
-| ✅     | `.assertions()`    |
-| ✅     | `.hasAssertions()` |
-
-### Not Yet Implemented
-
 | Status | Matcher                    |
 | ------ | -------------------------- |
-| ❌     | `.addSnapshotSerializer()` |
+| ✅     | `.extend`                  |
+| ✅     | `.anything()`              |
+| ✅     | `.any()`                   |
+| ✅     | `.toSatisfy()`             |
+| ✅     | `.assertions()`            |
+| ✅     | `.hasAssertions()`         |
+| ✅     | `.addEqualityTesters()`    |
+| ✅     | `.getState()`              |
+| ✅     | `.setState()`              |
+| ✅     | `.addSnapshotSerializer()` |
+
+`expect.toSatisfy(predicate)` stands in for a value, like `expect.any()`. It matches any value that `predicate` returns a truthy value for:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+const isOdd = (n: number) => n % 2 === 1;
+
+test("the count is odd", () => {
+  expect({ count: 3 }).toEqual({ count: expect.toSatisfy(isOdd) });
+  expect({ count: 2 }).toEqual({ count: expect.not.toSatisfy(isOdd) });
+});
+```
 
 ## Best Practices
 

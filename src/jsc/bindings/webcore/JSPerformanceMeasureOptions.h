@@ -25,6 +25,6 @@
 
 namespace WebCore {
 
-template<> PerformanceMeasureOptions convertDictionary<PerformanceMeasureOptions>(JSC::JSGlobalObject&, JSC::JSValue);
+template<> ConversionResult<IDLDictionary<PerformanceMeasureOptions>> convertDictionary<PerformanceMeasureOptions>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

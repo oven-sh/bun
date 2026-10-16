@@ -35,7 +35,7 @@ using namespace JSC;
 
 #if ENABLE(WEB_CRYPTO)
 
-template<> CryptoAlgorithmRsaOaepParams convertDictionary<CryptoAlgorithmRsaOaepParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> ConversionResult<IDLDictionary<CryptoAlgorithmRsaOaepParams>> convertDictionary<CryptoAlgorithmRsaOaepParams>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -68,7 +68,7 @@ template<> CryptoAlgorithmRsaOaepParams convertDictionary<CryptoAlgorithmRsaOaep
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!labelValue.isUndefined()) {
-        result.label = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(lexicalGlobalObject, labelValue);
+        result.label = BufferSource(convert<IDLBufferSource>(lexicalGlobalObject, labelValue)).variant();
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     return result;

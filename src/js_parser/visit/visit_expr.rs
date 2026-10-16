@@ -6,6 +6,8 @@ use bstr::BStr;
 use bun_core::strings;
 
 use crate::lexer as js_lexer;
+use crate::lower::hoist_test_mocks::drop_namespace_of_lowered_callee;
+use crate::lower::import_meta_glob::is_object_keys_call;
 use crate::p::P;
 use crate::parser::{
     ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
@@ -661,6 +663,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(tag) = e_.tag.as_mut() {
             p.template_tag = tag.data;
             p.visit_expr(tag);
+            if p.options.features.inject_jest_globals
+                && drop_namespace_of_lowered_callee(&p.symbols, tag)
+            {
+                p.did_apply_test_feature = true;
+            }
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -763,6 +770,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        if let Some(call) = p.call_tag_with_raw_strings(expr) {
+            *e = call;
+            return;
+        }
+
         // When mangling, inline string values into the template literal. Note that
         // it may no longer be a template literal after this point (it may turn into
         // a plain string literal instead).
@@ -770,6 +782,59 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             *e = e_.fold(p.arena, expr.loc);
             return;
         }
+    }
+
+    /// `` tag`é${x}` `` to `` tag(__rawTemplate(["é", ""])`\u00E9${0}`, x) ``. Escaped text would reach the tag in `strings.raw`.
+    fn call_tag_with_raw_strings(&mut self, expr: Expr) -> Option<Expr> {
+        if !self.options.features.ascii_only || !self.options.features.allow_runtime {
+            return None;
+        }
+        let mut template = expr.data.e_template()?;
+        let tag = template.tag?;
+        let E::TemplateContents::Raw(head) = &template.head else {
+            return None;
+        };
+        let head = *head;
+        let mut is_ascii = strings::is_all_ascii(head.slice());
+        for part in template.parts() {
+            let E::TemplateContents::Raw(tail) = &part.tail else {
+                return None;
+            };
+            is_ascii = is_ascii && strings::is_all_ascii(tail.slice());
+        }
+        if is_ascii {
+            return None;
+        }
+
+        let count = template.parts().len() + 1;
+        let mut raw = bun_alloc::ArenaVec::<Expr>::with_capacity_in(count, self.arena);
+        let mut args = bun_alloc::ArenaVec::<Expr>::with_capacity_in(count, self.arena);
+        raw.push(self.new_expr(E::String::init(head.slice()), expr.loc));
+        args.push(expr);
+        for part in template.parts_mut() {
+            if let E::TemplateContents::Raw(tail) = &part.tail {
+                raw.push(Expr::init(E::String::init(tail.slice()), part.tail_loc));
+            }
+            args.push(part.value);
+            part.value = Expr::init(E::Number::new(0.0), part.value.loc);
+        }
+        let raw = self.new_expr(
+            E::Array {
+                items: ExprNodeList::from_bump_vec(raw),
+                ..Default::default()
+            },
+            expr.loc,
+        );
+        template.tag =
+            Some(self.call_runtime(expr.loc, b"__rawTemplate", ExprNodeList::init_one(raw)));
+        Some(self.new_expr(
+            E::Call {
+                target: tag,
+                args: ExprNodeList::from_bump_vec(args),
+                ..Default::default()
+            },
+            expr.loc,
+        ))
     }
     fn e_binary(p: &mut Self, e: &mut Expr) {
         let expr = *e;
@@ -1872,6 +1937,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
+        let import_meta_glob = (p.has_import_meta && p.is_import_meta_glob_call(&e_))
+            .then(|| p.read_import_meta_glob_call(&e_, expr.loc));
         p.call_target = e_.target.data;
 
         p.then_catch_chain = ThenCatchChain {
@@ -1948,6 +2015,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             _ => {}
+        }
+
+        if p.options.features.inject_jest_globals
+            && drop_namespace_of_lowered_callee(&p.symbols, &mut e_.target)
+        {
+            p.did_apply_test_feature = true;
         }
 
         // `Promise.all([import("a"), …]).then(([{x}, ns]) => …)`
@@ -2131,8 +2204,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            for arg in e_.args.slice_mut() {
-                p.visit_expr(arg);
+            let visited_args = usize::from(
+                p.options.features.inject_jest_globals && p.visit_import_in_mock_path(&mut e_),
+            );
+            let mut arg_in = ExprIn {
+                is_object_keys_argument: p.has_import_meta && is_object_keys_call(&p.symbols, &e_),
+                ..Default::default()
+            };
+            for arg in &mut e_.args.slice_mut()[visited_args..] {
+                p.visit_expr_in_out(arg, arg_in);
+                arg_in = ExprIn::default();
             }
 
             // Restore saved state.
@@ -2148,6 +2229,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 return;
             }
+        }
+
+        if let Some(arguments) = import_meta_glob {
+            p.expand_import_meta_glob(e, arguments, in_.is_object_keys_argument);
+            return;
         }
 
         // Handle `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundle"`

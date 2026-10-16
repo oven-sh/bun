@@ -79,7 +79,7 @@ template<> struct JSDOMWrapperConverterTraits<CryptoKey> {
     using WrapperClass = JSCryptoKey;
     using ToWrappedReturnType = CryptoKey*;
 };
-template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, CryptoKey::Type);
+template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, CryptoKey::Type);
 
 } // namespace WebCore
 

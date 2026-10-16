@@ -889,7 +889,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ];
 
         for obj in objects_to_try {
-            if !obj.is_empty() {
+            // A Request's `keepalive` is the standard's flag, false unless asked for. It says nothing about the connection.
+            if !obj.is_empty() && obj.as_::<Request>().is_none() {
                 if let Some(keepalive_value) =
                     obj.get_common_string(global_this, jsc::CommonString::FetchOptionKeepalive)?
                 {

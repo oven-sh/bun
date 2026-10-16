@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "ContextDestructionObserverInlines.h"
 #include "IDLTypes.h"
 #include "JSCallbackData.h"
 #include "PerformanceObserverCallback.h"
@@ -39,14 +40,14 @@ public:
     ~JSPerformanceObserverCallback() final;
 
     // Functions
-    CallbackResult<typename IDLUndefined::ImplementationType> handleEvent(typename IDLInterface<PerformanceObserver>::ParameterType thisObject, typename IDLInterface<PerformanceObserverEntryList>::ParameterType entries, typename IDLInterface<PerformanceObserver>::ParameterType observer) override;
+    CallbackResult<typename IDLUndefined::CallbackReturnType> handleEvent(typename IDLInterface<PerformanceObserver>::ParameterType thisObject, typename IDLInterface<PerformanceObserverEntryList>::ParameterType entries, typename IDLInterface<PerformanceObserver>::ParameterType observer) override;
 
 private:
     JSPerformanceObserverCallback(JSC::JSObject*, JSDOMGlobalObject*);
 
-    void visitJSFunction(JSC::AbstractSlotVisitor&) override;
+    void visitJSFunctionInGCThread(JSC::AbstractSlotVisitor&) override;
 
-    void visitJSFunction(JSC::SlotVisitor&) override;
+    void visitJSFunctionInGCThread(JSC::SlotVisitor&) override;
 
     JSCallbackData* m_data;
 };

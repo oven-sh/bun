@@ -40,7 +40,6 @@ public:
     IsoSubspace* m_subspaceForImportMeta { nullptr };
     IsoSubspace* m_subspaceForBundlerPlugin { nullptr };
     IsoSubspace* m_subspaceForNodeVMGlobalObject { nullptr };
-    IsoSubspace* m_subspaceForNodeVMSpecialSandbox { nullptr };
     IsoSubspace* m_subspaceForNodeVMScript { nullptr };
     IsoSubspace* m_subspaceForNodeVMSourceTextModule { nullptr };
     IsoSubspace* m_subspaceForNodeVMSyntheticModule { nullptr };
@@ -77,6 +76,7 @@ public:
     IsoSubspace* m_subspaceForWasmStreamingCompiler { nullptr };
     IsoSubspace* m_subspaceForJSWebView { nullptr };
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
+#include "DOMBindingsIsoSubspaces.h"
     IsoSubspace* m_subspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /*-- BUN --*/
 

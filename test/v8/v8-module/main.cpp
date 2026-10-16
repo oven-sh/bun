@@ -1885,6 +1885,22 @@ void test_v8_exception(const FunctionCallbackInfo<Value> &info) {
   isolate->ThrowException(err);
 }
 
+// Returns [Error, TypeError] so the JS driver can inspect both.
+void test_v8_exception_empty_message(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<String> empty = String::NewFromUtf8(isolate, "").ToLocalChecked();
+
+  Local<Value> errors[] = {Exception::Error(empty),
+                           Exception::TypeError(empty)};
+  info.GetReturnValue().Set(Array::New(isolate, errors, 2));
+}
+
+void test_v8_throw_error_empty_message(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowError(String::NewFromUtf8(isolate, "").ToLocalChecked());
+}
+
 void test_v8_aligned_pointer_in_internal_field(
     const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
@@ -2226,6 +2242,10 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_getfunction_memoized);
   NODE_SET_METHOD(exports, "test_v8_map", test_v8_map);
   NODE_SET_METHOD(exports, "test_v8_exception", test_v8_exception);
+  NODE_SET_METHOD(exports, "test_v8_exception_empty_message",
+                  test_v8_exception_empty_message);
+  NODE_SET_METHOD(exports, "test_v8_throw_error_empty_message",
+                  test_v8_throw_error_empty_message);
   NODE_SET_METHOD(exports, "test_v8_aligned_pointer_in_internal_field",
                   test_v8_aligned_pointer_in_internal_field);
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler", test_v8_cpu_profiler);

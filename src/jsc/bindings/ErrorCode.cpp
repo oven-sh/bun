@@ -274,6 +274,11 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
     return createError(vm, globalObject, code, message);
 }
 
+JSC::ErrorInstance* createErrorAllowingEmptyMessage(JSC::JSGlobalObject* globalObject, JSC::ErrorType type, const WTF::String& message)
+{
+    return JSC::ErrorInstance::create(globalObject->vm(), globalObject->errorStructure(type), message, JSValue(), nullptr, JSC::RuntimeType::TypeNothing, type, true);
+}
+
 WTF::String MessageBuilder::finish(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
 {
     auto message = tryToString();

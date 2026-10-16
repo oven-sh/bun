@@ -1,4 +1,5 @@
 import { spawnSync } from "bun";
+import { Database } from "bun:sqlite";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
 import { appendFileSync, writeFileSync } from "node:fs";
@@ -128,6 +129,28 @@ describe.concurrent("bun test --changed", () => {
 
     const { stderr, exitCode } = await runTestChanged(String(dir));
     expect(ranFiles(stderr, names)).toEqual(["a.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun build` leaves this import external, which gives the graph no edge. The scan keeps the edge.
+  test("change to a database imported without the type attribute selects the importing test", async () => {
+    const database = (row: string) => {
+      const db = new Database(":memory:");
+      db.run("create table t (x text)");
+      db.run("insert into t values (?)", [row]);
+      return db.serialize();
+    };
+    using dir = tempDir("test-changed-sqlite", {
+      ...fixture,
+      "data.sqlite": database("before"),
+      "d.test.ts": `import { test, expect } from "bun:test";\nimport db from "./data.sqlite";\ntest("d", () => expect(db.query("select x from t").get().x).toBe("after"));\n`,
+    });
+    initRepo(String(dir));
+
+    writeFileSync(join(String(dir), "data.sqlite"), database("after"));
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, [...names, "d.test.ts"])).toEqual(["d.test.ts"]);
     expect(exitCode).toBe(0);
   });
 

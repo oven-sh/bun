@@ -1869,7 +1869,7 @@ impl ShellExecEnv {
     pub(crate) fn buffered_stdout(&mut self) -> *mut Vec<u8> {
         // Return the raw `*mut` directly — no `&mut Vec<u8>` is materialised,
         // so the `Bufio::Borrowed` aliasing concern (which forces
-        // [`buffered_stdout_mut`] to be `unsafe fn`) does not apply here. The
+        // [`buffered_stderr_mut`] to be `unsafe fn`) does not apply here. The
         // dereference obligation is on whoever later writes through it.
         match &mut self._buffered_stdout {
             Bufio::Owned(o) => std::ptr::from_mut(o),
@@ -1884,7 +1884,7 @@ impl ShellExecEnv {
         }
     }
 
-    /// Mutably borrow the captured-stdout buffer (owned, or the parent env's
+    /// Mutably borrow the captured-stderr buffer (owned, or the parent env's
     /// buffer for subshell/pipeline children — see `Bufio`).
     ///
     /// # Safety
@@ -1896,23 +1896,10 @@ impl ShellExecEnv {
     /// `unsafe fn`. The parent env strictly outlives this child (parents
     /// `deinit` after children), so the pointer is never dangling.
     #[inline]
-    pub(crate) unsafe fn buffered_stdout_mut(&mut self) -> &mut Vec<u8> {
-        match &mut self._buffered_stdout {
-            Bufio::Owned(o) => o,
-            // SAFETY: caller contract.
-            Bufio::Borrowed(b) => unsafe { &mut **b },
-        }
-    }
-
-    /// See [`buffered_stdout_mut`].
-    ///
-    /// # Safety
-    /// See [`buffered_stdout_mut`].
-    #[inline]
     pub(crate) unsafe fn buffered_stderr_mut(&mut self) -> &mut Vec<u8> {
         match &mut self._buffered_stderr {
             Bufio::Owned(o) => o,
-            // SAFETY: caller contract; see `buffered_stdout_mut`.
+            // SAFETY: caller contract.
             Bufio::Borrowed(b) => unsafe { &mut **b },
         }
     }

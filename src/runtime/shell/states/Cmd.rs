@@ -385,7 +385,7 @@ impl Cmd {
                     if out.bounds.is_empty() {
                         // An empty
                         // expansion that did *not* see a `""` literal pushes
-                        // no arg at all — `$unset` vanishes, only `""` yields
+                        // no arg at all — `$unset` vanishes, `""` (`has_quoted_empty`) yields
                         // an empty argv word.
                         if !out.buf.is_empty() || out.has_quoted_empty {
                             me.args.push(out.buf);

@@ -506,10 +506,10 @@ export const cases: Case[] = [
       },
       {
         ...common,
-        name: "what stands before 1,100 statements with a condition has its types, and the file a warning",
+        name: "what stands before 1,100 statements with a condition has its types, and no rule asks about the rest",
         text: () => head + three + conditions(1_100),
         reports: all,
-        matches: warning,
+        lacks: warning,
         exitCode: 1,
       },
       {

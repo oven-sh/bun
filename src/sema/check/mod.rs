@@ -1119,6 +1119,9 @@ struct QueryFrame {
 pub enum Requested {
     /// `GetSyntacticDiagnostics`: the diagnostics of the parser and the scanner.
     Syntactic,
+    /// The same, for a caller that then asks for the types it needs, as typescript-eslint and tsgolint do, and reads no
+    /// diagnostics.
+    Types,
     /// .. and `GetDeclarationDiagnostics`. The declaration transformer queries the checker only
     /// about what the file exports.
     Declaration,

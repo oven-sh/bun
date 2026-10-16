@@ -219,7 +219,7 @@ impl Checker<'_, '_> {
         if self.expected != Requested::All || is_json || !self.reports_semantic_errors(file) {
             let syntactic = std::mem::take(&mut self.reported);
             let mut declaration = Vec::new();
-            if self.expected != Requested::Syntactic {
+            if self.expected == Requested::Declaration {
                 self.emit_resolver_links = Default::default();
                 declaration = self.get_declaration_diagnostics(file);
             }

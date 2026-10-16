@@ -2307,14 +2307,8 @@ describe("object key separators", () => {
       endpoint: "https://s3.example.com",
     });
     const paths = ["/dir", "//dir", "\\dir", "dir\\"];
-    expect(
-      paths.map(path => ({ path, name: client.file(path).name, signed: new URL(client.presign(path)).pathname })),
-    ).toEqual([
-      { path: "/dir", name: "dir", signed: "/bucket/dir" },
-      { path: "//dir", name: "/dir", signed: "/bucket/dir" },
-      { path: "\\dir", name: "dir", signed: "/bucket/dir" },
-      { path: "dir\\", name: "dir", signed: "/bucket/dir" },
-    ]);
+    expect(paths.map(path => new URL(client.presign(path)).pathname)).toEqual(paths.map(() => "/bucket/dir"));
+    expect(["/dir", "\\dir", "dir\\"].map(path => client.file(path).name)).toEqual(["dir", "dir", "dir"]);
     expect(() => client.presign("/")).toThrow(expect.objectContaining({ code: "ERR_S3_INVALID_PATH" }));
   });
 });

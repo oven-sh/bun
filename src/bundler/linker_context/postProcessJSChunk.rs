@@ -99,6 +99,102 @@ fn module_preload_registration(
     Ok(code)
 }
 
+/// `0 && (module.exports = { a: null, ...require("ext") });` for a CommonJS
+/// entry point, empty when there is nothing to name. Node's ESM loader takes
+/// the named exports of a CommonJS file from a scan of its text
+/// (cjs-module-lexer, merve), and this statement, which never runs, is a shape
+/// the scan reads. It cannot name what an `export *` of a bundled CommonJS
+/// file adds at run time.
+///
+/// Every name gets a value and is quoted unless it is an ASCII identifier:
+/// merve 1.0 stops at a shorthand `get`, Bun's loader rejects a shorthand
+/// `await`, and cjs-module-lexer stops at an identifier newer than its Unicode
+/// tables.
+fn cjs_export_names_annotation(
+    c: &LinkerContext,
+    source_index: IndexInt,
+    ast: &crate::BundledAst,
+) -> Vec<u8> {
+    const COMMENT: &[u8] = b"// Annotate the CommonJS export names for ESM import in node:\n";
+    const SPREAD: &[u8] = b"...require(";
+    let minify = c.options.minify_whitespace;
+    let open: &[u8] = if minify {
+        b"0&&(module.exports={"
+    } else {
+        b"0 && (module.exports = { "
+    };
+    let value: &[u8] = if minify { b":null" } else { b": null" };
+    let separator: &[u8] = if minify { b"," } else { b", " };
+    let close: &[u8] = if minify { b"});" } else { b" });\n" };
+
+    // Node adds `default` and `module.exports` itself. Node 23.0 to 23.9 aborts
+    // when the scan gives it a second `module.exports`.
+    let names = || {
+        c.graph.meta.items_sorted_and_filtered_export_aliases()[source_index as usize]
+            .iter()
+            .map(|alias| &**alias)
+            .filter(|alias| *alias != b"default" && *alias != b"module.exports")
+    };
+    // `export * from "external"`. A bundled file has a source index.
+    let external_stars = || {
+        ast.export_star_import_records
+            .iter()
+            .map(|&index| &ast.import_records.as_slice()[index as usize])
+            .filter(|record| record.source_index.is_invalid())
+    };
+    let is_bare =
+        |name: &[u8]| strings::is_all_ascii(name) && js_ast::lexer_tables::is_identifier(name);
+
+    // The exact length when every name is bare and there is no `export *`, so
+    // that the usual entry point costs one allocation.
+    let mut len = 0;
+    for name in names() {
+        len += name.len() + value.len() + separator.len();
+    }
+    for record in external_stars() {
+        len += SPREAD.len() + record.path.text.len() + b"\"\")".len() + separator.len();
+    }
+    if len == 0 {
+        return Vec::new();
+    }
+    len += open.len() + close.len() - separator.len();
+    if !minify {
+        len += COMMENT.len();
+    }
+
+    let mut out = MutableString {
+        list: Vec::with_capacity(len),
+    };
+    if !minify {
+        out.list.extend_from_slice(COMMENT);
+    }
+    out.list.extend_from_slice(open);
+    let mut before: &[u8] = b"";
+    for name in names() {
+        out.list.extend_from_slice(before);
+        before = separator;
+        if is_bare(name) {
+            out.list.extend_from_slice(name);
+        } else {
+            bun_core::handle_oom(js_printer::quote_for_json(name, &mut out, false));
+        }
+        out.list.extend_from_slice(value);
+    }
+    for record in external_stars() {
+        out.list.extend_from_slice(before);
+        before = separator;
+        out.list.extend_from_slice(SPREAD);
+        bun_core::handle_oom(js_printer::quote_for_json(
+            record.path.text,
+            &mut out,
+            false,
+        ));
+        out.list.push(b')');
+    }
+    out.list.extend_from_slice(close);
+    out.list
+}
+
 /// This runs after we've already populated the compile results
 pub(crate) fn post_process_js_chunk(
     ctx: GenerateChunkCtx,
@@ -337,6 +433,10 @@ pub(crate) fn post_process_js_chunk(
         }
     }
 
+    // A chunk whose entry point targets Bun gets the `@bun` pragma and, for
+    // cjs, the `@bun-cjs` wrapper.
+    let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
+
     // Generate the exports for the entry point, if there are any.
     // This must happen before module_info serialization so the printer
     // can populate export entries in module_info.
@@ -356,6 +456,7 @@ pub(crate) fn post_process_js_chunk(
                 chunk.renamer.as_renamer(),
                 module_info.as_deref_mut(),
                 cross_chunk_exports,
+                is_bun,
             );
         }
 
@@ -440,7 +541,6 @@ pub(crate) fn post_process_js_chunk(
     }
 
     // Add @bun comments and CJS wrapper start for each chunk when targeting Bun.
-    let is_bun = c.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun();
     if is_bun {
         if c.options.generate_bytecode_cache && output_format == options::OutputFormat::Cjs {
             const INPUT: &[u8] =
@@ -830,9 +930,12 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     r: js_printer::renamer::Renamer<'a, 'a>,
     module_info: Option<&'a mut ModuleInfo>,
     cross_chunk_exports: &[bun_ast::ClauseItem],
+    is_bun: bool,
 ) -> CompileResult {
     let flags: crate::js_meta::Flags = c.graph.meta.items_flags()[source_index as usize];
     let mut stmts: Vec<Stmt> = Vec::new();
+    // Text that follows the printed statements.
+    let mut suffix: Vec<u8> = Vec::new();
     // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>`; the
     // storage retains ownership of every Drop field, so neither this
     // `BundledAst` nor the `ast_view: Ast` derived from it below may run Drop.
@@ -1248,12 +1351,16 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                 _ => {}
             }
 
-            // TODO:
             // If we are generating CommonJS for node, encode the known export names in
             // a form that node can understand them. This relies on the specific behavior
             // of this parser, which the node project uses to detect named exports in
             // CommonJS files: https://github.com/guybedford/cjs-module-lexer. Think of
             // this code as an annotation for that parser.
+            //
+            // Node cannot load a chunk that has the `@bun-cjs` wrapper.
+            if c.options.target.is_node() && !is_bun {
+                suffix = cjs_export_names_annotation(c, source_index, &ast);
+            }
         }
     }
 
@@ -1261,7 +1368,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
         return CompileResult::Javascript {
             source_index,
             result: PrintResult::Result(js_printer::PrintResultSuccess {
-                code: Box::default(),
+                code: suffix.into_boxed_slice(),
                 source_map: None,
             }),
             module_info: None,
@@ -1295,20 +1402,27 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
     let import_records: &'a [ImportRecord] =
         unsafe { bun_ptr::detach_lifetime(ast_view.import_records.as_slice()) };
 
+    let mut result = js_printer::print::<false>(
+        arena,
+        c.resolver().opts.target,
+        &ast_view,
+        c.get_source(source_index),
+        print_options,
+        import_records,
+        &[Part {
+            stmts: bun_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
+            ..Default::default()
+        }],
+        r,
+    );
+    if !suffix.is_empty()
+        && let PrintResult::Result(printed) = &mut result
+    {
+        printed.code = [&*printed.code, &*suffix].concat().into_boxed_slice();
+    }
+
     CompileResult::Javascript {
-        result: js_printer::print::<false>(
-            arena,
-            c.resolver().opts.target,
-            &ast_view,
-            c.get_source(source_index),
-            print_options,
-            import_records,
-            &[Part {
-                stmts: bun_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
-                ..Default::default()
-            }],
-            r,
-        ),
+        result,
         source_index,
         // The exports were recorded straight into the chunk's ModuleInfo above.
         module_info: None,

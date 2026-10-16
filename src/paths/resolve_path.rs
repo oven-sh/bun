@@ -1741,6 +1741,35 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     Some(&buf[..len])
 }
 
+/// Joins a directory from disk and `text` out of a file: as with `AutoLoose`, but a `\` in `dir` stays part of a name.
+pub fn join_abs_text_buf_checked<'a>(
+    dir: &'a [u8],
+    buf: &'a mut [u8],
+    text: &[u8],
+) -> Option<&'a [u8]> {
+    if cfg!(windows) {
+        return join_abs_string_buf_checked::<platform::Auto>(dir, buf, &[text]);
+    }
+    // Only a `/` in `text` itself makes it absolute or asks for a trailing `/`.
+    let relative: &[u8] = if text.first() == Some(&b'\\') {
+        b"."
+    } else {
+        b""
+    };
+    let slashes: Vec<u8> = relative
+        .iter()
+        .chain(text)
+        .map(|&c| if c == b'\\' { SEP_POSIX } else { c })
+        .collect();
+    let mut part = &slashes[..];
+    while let ([rest @ .., SEP_POSIX], Some(b'\\')) = (part, text.last())
+        && !rest.is_empty()
+    {
+        part = rest;
+    }
+    join_abs_string_buf_checked::<platform::Auto>(dir, buf, &[part])
+}
+
 /// [`join_abs_string_buf_checked`], NUL-terminated; the last byte of `buf` is reserved for the NUL.
 pub fn join_abs_string_buf_z_checked<'a, P: PlatformT>(
     cwd: &[u8],
@@ -2796,6 +2825,31 @@ mod tests {
             relative_platform::<platform::Posix, false>(b"/w/a\\b", b"/w/a\\c"),
             b"../a\\c"
         );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn join_abs_text_splits_the_text_at_a_backslash_and_not_the_directory() {
+        let (mut loose, mut text_only) = ([0u8; 64], [0u8; 64]);
+        for len in 0..=6u32 {
+            for n in 0..4usize.pow(len) {
+                let text: Vec<u8> = (0..len).map(|i| b"a./\\"[(n >> (2 * i)) & 3]).collect();
+                assert_eq!(
+                    join_abs_text_buf_checked(b"/w/d", &mut text_only, &text).unwrap(),
+                    join_abs_string_buf::<platform::PosixLoose>(b"/w/d", &mut loose, &[&text]),
+                    "{:?}",
+                    bstr::BStr::new(&text),
+                );
+            }
+        }
+        let mut join = |text: &[u8]| {
+            join_abs_text_buf_checked(b"/w\\d", &mut text_only, text)
+                .unwrap()
+                .to_vec()
+        };
+        assert_eq!(join(b"a\\b"), b"/w\\d/a/b");
+        assert_eq!(join(b"..\\x"), b"/x");
+        assert_eq!(join(b"\\etc"), b"/w\\d/etc");
     }
 
     #[test]

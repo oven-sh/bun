@@ -1426,6 +1426,24 @@ describe.concurrent("bun pm pkg", () => {
       expect((await readPkg(binDir)).name).toBe("bin-package");
     });
 
+    it.skipIf(isWindows)(
+      'a backslash separates in "bin" and is part of the name of the package\'s directory',
+      async () => {
+        using dir = tempDir("pm-pkg-bin-backslash", {
+          "w\\d/package.json": JSON.stringify({
+            name: "p",
+            version: "1.0.0",
+            bin: { slash: "bin/real.js", backslash: "bin\\real.js", missing: "bin\\missing.js" },
+          }),
+          "w\\d/bin/real.js": "",
+        });
+
+        const { error, code } = await runPmPkg(["fix"], join(dir, "w\\d"), false);
+        expect(error).toBe("warn: No bin file found at bin\\missing.js\n");
+        expect(code).toBe(0);
+      },
+    );
+
     it("should preserve all other package.json fields", async () => {
       using dir = makeFixDir();
       const { code } = await runPmPkg(["fix"], dir);

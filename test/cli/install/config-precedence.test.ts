@@ -1325,6 +1325,21 @@ describe.concurrent("directories named by config files", () => {
       });
     });
 
+    test.skipIf(isWindows)(
+      "a backslash separates in a config file and is part of the name of its directory",
+      async () => {
+        using dir = tempDir("config-directory-backslash", {
+          ...workspace,
+          [`${cwd}/co\\nf/x.toml`]: bunfig({ registry: unreachable, cafile: "ca\\x.pem" }),
+        });
+        const { stderr, exitCode } = await run(String(dir), ["add", "no-deps", "--config=co\\nf/x.toml"], noDirs, cwd);
+        expect(stderr).toContain(
+          `HTTPThread: could not find CA file: '${join(String(dir), cwd, "co\\nf", "ca", "x.pem")}'\n`,
+        );
+        expect(exitCode).toBe(1);
+      },
+    );
+
     test.skipIf(isWindows)("a backslash in --cafile is part of the file name", async () => {
       using dir = tempDir("config-typed-backslash-cafile", workspace);
       const args = ["add", "no-deps", `--registry=${unreachable}`, "--cafile=ca\\x.pem"];

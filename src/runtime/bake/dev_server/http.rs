@@ -150,7 +150,6 @@ pub(super) fn origin_forbidden(resp: AnyResponse) {
     clippy::undocumented_unsafe_blocks,
     reason = "the SAFETY note above the match covers the eight identical call-scoped reborrows"
 )]
-
 pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     res: *mut bun_uws_sys::uws_res,
     req: *mut bun_uws_sys::Request,

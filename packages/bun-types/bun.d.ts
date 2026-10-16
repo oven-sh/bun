@@ -4798,7 +4798,9 @@ declare module "bun" {
     /**
      * Optionally override the trusted CA certificates. Default is to trust
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
-     * replaced when CAs are explicitly specified using this option.
+     * replaced when CAs are explicitly specified using this option. An empty
+     * array replaces them too: no CA is trusted, and every peer certificate
+     * fails verification.
      *
      * On a server these verify client certificates, which it requests only
      * with `requestCert: true`.

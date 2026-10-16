@@ -824,39 +824,22 @@ end:
   return ret;
 }
 
-/* The context's own cert store for mutation: the process-shared root store and
- * the still-empty SSL_CTX_new() store are first replaced by a private full
- * default-root copy, and the context is marked so the per-socket attach keeps
- * it. https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1831 */
+/* The context's own cert store for mutation. A marked context keeps the store
+ * it has, also an empty one (`ca: []`). An unmarked one holds the shared
+ * default roots: a private full copy replaces them, and the context is marked.
+ * https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1831 */
 static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
-  X509_STORE *store = SSL_CTX_get_cert_store(ctx);
-  /* us_get_shared_default_ca_store() up-refs before returning, so release
-   * the reference taken just for this comparison. */
-  X509_STORE *shared = us_get_shared_default_ca_store();
-  int store_is_shared = store != NULL && store == shared;
-  X509_STORE_free(shared);
   us_ex_idx_ensure();
-  int store_is_empty = 0;
-  if (store != NULL && !store_is_shared) {
-    const STACK_OF(X509_OBJECT) *objs = X509_STORE_get0_objects(store);
-    store_is_empty = objs == NULL || sk_X509_OBJECT_num(objs) == 0;
+  if (SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx) != NULL) {
+    return SSL_CTX_get_cert_store(ctx);
   }
-  /* A user `ca` can legitimately add zero certificates (a key PEM is ignored,
-   * like Node), leaving an intentionally-empty pin set: only a context with
-   * no `ca` configured at all may be seeded with the default roots here. */
-  int user_ca = SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx) != NULL;
-  if (store == NULL || store_is_shared || (store_is_empty && !user_ca)) {
-    X509_STORE *own = us_get_default_ca_store();
-    if (own == NULL) {
-      return NULL;
-    }
-    SSL_CTX_set_cert_store(ctx, own);
-    store = own;
+  X509_STORE *own = us_get_default_ca_store();
+  if (own == NULL) {
+    return NULL;
   }
-  /* Without this marker us_internal_ssl_attach() would hand client sockets
-   * the shared default roots, discarding the store configured here. */
+  SSL_CTX_set_cert_store(ctx, own);
   SSL_CTX_set_ex_data(ctx, us_ctx_user_ca_ex_idx, (void *)1);
-  return store;
+  return own;
 }
 
 /* The `ca` option: every CERTIFICATE block of `content` as DER into `certs`. User-supplied certificates are validated
@@ -1361,7 +1344,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       ssl_ctx_build_fail(ssl_context);
       return NULL;
     }
-  } else if (options.ca && options.ca_count > 0) {
+  } else if (options.ca) {
     us_ex_idx_ensure();
     SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
     /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
@@ -1532,8 +1515,8 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   return ssl_context;
 }
 
-/* Whether the context's store was configured from user CAs (ca / addCACert / pfx extras) rather than being the
- * empty SSL_CTX_new() store or the shared default roots. */
+/* Whether the context's store is its own (a given `ca`, also an empty one, caFile, addCACert, pfx extras, crl)
+ * rather than the shared default roots. */
 int us_ssl_ctx_has_user_ca(SSL_CTX *ctx) {
   us_ex_idx_ensure();
   return ctx != NULL && SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx) != NULL;
@@ -1546,9 +1529,9 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   if (!ctx || !content) {
     return 0;
   }
-  /* addCACert must EXTEND the default trust set the way Node does: the
-   * own-store helper replaces a shared or still-empty store with a private
-   * full default-root copy before the user's CA is appended. */
+  /* For a context that was given no `ca`, addCACert must EXTEND the default
+   * trust set the way Node does: the own-store helper replaces the shared
+   * default roots with a private full copy before the user's CA is appended. */
   X509_STORE *store = us_ssl_ctx_get_own_cert_store(ctx);
   if (!store) {
     return 0;

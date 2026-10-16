@@ -513,6 +513,7 @@ struct us_bun_socket_context_options_t {
     unsigned int key_count;
     const char * const *cert;
     unsigned int cert_count;
+    /* Not NULL: the only trusted certificates, also when ca_count is 0. NULL: the default roots. */
     const char * const *ca;
     unsigned int ca_count;
     unsigned int secure_options;

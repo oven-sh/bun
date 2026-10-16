@@ -135,6 +135,39 @@ pub(crate) trait SSLConfigFromJs: Sized {
         generated: &jsc::generated::SSLConfig,
         is_server: bool,
     ) -> JsResult<Option<Self>>;
+
+    /// `from_js` for a socket that its tls object turns to TLS. A server gets [`LoneEmptyCa::NoTlsOption`].
+    fn from_js_for_socket(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        value: JSValue,
+        is_server: bool,
+    ) -> JsResult<Option<Self>>;
+
+    /// `from_generated` for a socket that its tls object turns to TLS. A server gets [`LoneEmptyCa::NoTlsOption`].
+    fn from_generated_for_socket(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        generated: &jsc::generated::SSLConfig,
+        is_server: bool,
+    ) -> JsResult<Option<Self>>;
+
+    fn from_generated_with(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        generated: &jsc::generated::SSLConfig,
+        is_server: bool,
+        lone_empty_ca: LoneEmptyCa,
+    ) -> JsResult<Option<Self>>;
+}
+
+/// What an empty `ca` means when it is the only option of a tls object.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoneEmptyCa {
+    /// A TLS option: a trust list with no entry.
+    TrustsNoCa,
+    /// No TLS option: a server stays plain text. With no certificate it cannot do TLS.
+    NoTlsOption,
 }
 
 impl SSLConfigFromJs for SSLConfig {
@@ -154,6 +187,40 @@ impl SSLConfigFromJs for SSLConfig {
         global: &JSGlobalObject,
         generated: &jsc::generated::SSLConfig,
         is_server: bool,
+    ) -> JsResult<Option<SSLConfig>> {
+        Self::from_generated_with(vm, global, generated, is_server, LoneEmptyCa::TrustsNoCa)
+    }
+
+    fn from_js_for_socket(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        value: JSValue,
+        is_server: bool,
+    ) -> JsResult<Option<SSLConfig>> {
+        let generated = jsc::generated::SSLConfig::from_js(global, value)?;
+        Self::from_generated_for_socket(vm, global, &generated, is_server)
+    }
+
+    fn from_generated_for_socket(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        generated: &jsc::generated::SSLConfig,
+        is_server: bool,
+    ) -> JsResult<Option<SSLConfig>> {
+        let lone_empty_ca = if is_server {
+            LoneEmptyCa::NoTlsOption
+        } else {
+            LoneEmptyCa::TrustsNoCa
+        };
+        Self::from_generated_with(vm, global, generated, is_server, lone_empty_ca)
+    }
+
+    fn from_generated_with(
+        vm: &VirtualMachine,
+        global: &JSGlobalObject,
+        generated: &jsc::generated::SSLConfig,
+        is_server: bool,
+        lone_empty_ca: LoneEmptyCa,
     ) -> JsResult<Option<SSLConfig>> {
         let mut result = SSLConfig::zero();
         // `result` cleanup handled by Drop on error-path `?`
@@ -214,12 +281,11 @@ impl SSLConfigFromJs for SSLConfig {
             || result.session_timeout != 0
             || result.allow_partial_trust_chain;
 
-        result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
-        result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
-        result.key = handle_file_for_field(global, "key", &generated.key)?;
-        result.crl = handle_file_for_field(global, "crl", &generated.crl)?;
+        result.ca = handle_file_for_field(global, "ca", &generated.ca, EmptyArray::EmptySet)?;
+        result.cert = handle_file_for_field(global, "cert", &generated.cert, EmptyArray::Absent)?;
+        result.key = handle_file_for_field(global, "key", &generated.key, EmptyArray::Absent)?;
+        result.crl = handle_file_for_field(global, "crl", &generated.crl, EmptyArray::Absent)?;
         result.requires_custom_request_ctx = result.requires_custom_request_ctx
-            || result.ca.is_some()
             || result.cert.is_some()
             || result.key.is_some()
             || result.crl.is_some()
@@ -273,6 +339,14 @@ impl SSLConfigFromJs for SSLConfig {
             || result.client_renegotiation_limit != 0
             || generated.client_renegotiation_window != 0;
 
+        // `ca` counts last, so that a lone empty list can be told from the other options.
+        if let Some(ca) = &result.ca {
+            if !any && ca.is_empty() && lone_empty_ca == LoneEmptyCa::NoTlsOption {
+                return Ok(None);
+            }
+            result.requires_custom_request_ctx = true;
+            any = true;
+        }
         if !any {
             return Ok(None);
         }
@@ -367,12 +441,22 @@ fn handle_path(
     Ok(dupe_z(path.slice()))
 }
 
+/// What an array with no element means for one TLS option.
+#[derive(Clone, Copy)]
+enum EmptyArray {
+    /// The same as an option that was not given.
+    Absent,
+    /// A given list with no entry: `ca: []` trusts no CA, as in Node's `configSecureContext`.
+    EmptySet,
+}
+
 fn handle_file_for_field(
     global: &JSGlobalObject,
     field: &'static str,
     file: &jsc::generated::SSLConfigFile,
+    empty_array: EmptyArray,
 ) -> JsResult<CStrSlice> {
-    match handle_file(global, file) {
+    match handle_file(global, file, empty_array) {
         Ok(v) => Ok(v),
         Err(ReadFromBlobError::Js(e)) => Err(e),
         Err(ReadFromBlobError::EmptyFile) => {
@@ -390,6 +474,7 @@ fn handle_file_for_field(
 fn handle_file(
     global: &JSGlobalObject,
     file: &jsc::generated::SSLConfigFile,
+    empty_array: EmptyArray,
 ) -> Result<CStrSlice, ReadFromBlobError> {
     let single = handle_single_file(
         global,
@@ -407,7 +492,7 @@ fn handle_file(
                 SingleFile::File(unsafe { &mut *val.get().cast::<crate::webcore::Blob>() })
             }
             jsc::generated::SSLConfigFile::Array(list) => {
-                return handle_file_array(global, list.items());
+                return handle_file_array(global, list.items(), empty_array);
             }
         },
     )?;
@@ -419,9 +504,13 @@ fn handle_file(
 fn handle_file_array(
     global: &JSGlobalObject,
     elements: &[jsc::generated::SSLConfigSingleFile],
+    empty_array: EmptyArray,
 ) -> Result<CStrSlice, ReadFromBlobError> {
     if elements.is_empty() {
-        return Ok(None);
+        return Ok(match empty_array {
+            EmptyArray::Absent => None,
+            EmptyArray::EmptySet => Some(Box::default()),
+        });
     }
     let mut result: Vec<*const c_char> = Vec::with_capacity(elements.len());
     // Error path: free_sensitive each, then drop result — need zeroing on error:

@@ -509,7 +509,7 @@ impl SocketConfig {
                     }
                 }
                 GeneratedTls::Object(ssl) => {
-                    SSLConfig::from_generated(vm, global, ssl, mode.is_server())?
+                    SSLConfig::from_generated_for_socket(vm, global, ssl, mode.is_server())?
                 }
             };
             break 'blk SocketConfig {

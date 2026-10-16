@@ -618,10 +618,14 @@ test.skipIf(isWindows)("a keyFile with a trailing slash is not the file without 
 });
 
 describe.concurrent("client certificate policy", () => {
-  async function run(NODE_TLS_REJECT_UNAUTHORIZED: string | undefined, policies: string[]) {
+  async function run(
+    NODE_TLS_REJECT_UNAUTHORIZED: string | undefined,
+    policies: string[],
+    NODE_EXTRA_CA_CERTS?: string,
+  ) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "tls-client-cert-policy-fixture.mjs"), ...policies],
-      env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED },
+      env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED, NODE_EXTRA_CA_CERTS },
       stdout: "pipe",
       stderr: "inherit",
     });
@@ -634,6 +638,10 @@ describe.concurrent("client certificate policy", () => {
     "caFile": ["anonymous", "anonymous", "anonymous"],
     "ca, requestCert": [null, null, "agent10.example.com"],
     "ca, requestCert, rejectUnauthorized: false": ["anonymous", "agent2", "agent10.example.com"],
+    // For these the issuer of the third client's certificate is a default root, and no `ca` names it.
+    "requestCert": [null, null, "agent10.example.com"],
+    "ca: []": ["anonymous", "anonymous", "anonymous"],
+    "ca: [], requestCert": [null, null, null],
   };
   function everyServer(policies: (keyof typeof rows)[]) {
     const table = (namesItsPeer: boolean) =>
@@ -678,6 +686,18 @@ describe.concurrent("client certificate policy", () => {
         },
         exitCode: 0,
       });
-    });
+    }, 30_000);
   });
+
+  // A `ca` that is given takes the place of the default roots, also when it lists no certificate: then the server
+  // trusts no client certificate. Serial: a sixth child at once is too much for a debug build.
+  test.serial(
+    "an empty ca trusts no client certificate",
+    async () => {
+      const policies = ["requestCert", "ca: []", "ca: [], requestCert"] as const;
+      const ca5 = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys", "ca5-cert.pem");
+      expect(await run(undefined, [...policies], ca5)).toEqual({ table: everyServer([...policies]), exitCode: 0 });
+    },
+    30_000,
+  );
 });

@@ -31,6 +31,7 @@ pub struct SSLConfig {
 
     pub key: CStrSlice,
     pub cert: CStrSlice,
+    /// `Some` replaces the default roots, also when the list is empty (`ca: []`).
     pub ca: CStrSlice,
     pub crl: CStrSlice,
 
@@ -351,9 +352,11 @@ impl SSLConfig {
             return cached;
         }
         let mut hasher = Wyhash::init(0);
+        // The 1 tells a given but empty option (`ca: []`) from an absent one: the pool compares this hash alone.
         macro_rules! hash_cstr {
             ($f:ident) => {
                 if !self.$f.is_null() {
+                    hasher.update(&[1]);
                     hasher.update(cstr_bytes(self.$f));
                 }
                 hasher.update(&[0]);
@@ -362,6 +365,7 @@ impl SSLConfig {
         macro_rules! hash_slice {
             ($f:ident) => {
                 if let Some(slice) = &self.$f {
+                    hasher.update(&[1]);
                     for s in slice.iter() {
                         hasher.update(cstr_bytes(*s));
                         hasher.update(&[0]);

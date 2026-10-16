@@ -3546,7 +3546,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // servername / ALPN still come from the surrounding tls config.
             if let Some(t) = opts.get_truthy(global, "tls")? {
                 if !t.is_boolean() {
-                    ssl_opts = SSLConfig::from_js(
+                    ssl_opts = SSLConfig::from_js_for_socket(
                         // SAFETY: per-thread VM singleton.
                         VirtualMachine::get().as_mut(),
                         global,
@@ -3557,7 +3557,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         } else if let Some(tls_js) = opts.get_truthy(global, "tls")? {
             if !tls_js.is_boolean() {
-                ssl_opts = SSLConfig::from_js(
+                ssl_opts = SSLConfig::from_js_for_socket(
                     // SAFETY: per-thread VM singleton.
                     VirtualMachine::get().as_mut(),
                     global,
@@ -4811,7 +4811,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     // Drop frees ssl_opts on error.
     if let Some(tls) = opts.get_truthy(global, "tls")? {
         if !tls.is_boolean() {
-            ssl_opts = SSLConfig::from_js(handlers.vm, global, tls, is_server)?;
+            ssl_opts = SSLConfig::from_js_for_socket(handlers.vm, global, tls, is_server)?;
         } else if tls.to_boolean() {
             ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm, is_server));
         }

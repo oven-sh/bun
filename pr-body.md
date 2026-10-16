@@ -1,22 +1,24 @@
+**On hold, do not merge.** Three open regressions (see Downsides). #45319 now fixes the reported order in the sink.
+
 ### Problem
-- `child.stdin.write(chunk, cb)` and `process.stdout.write(chunk, cb)` run callbacks out of write order: the repro in Notes prints `2,1,3`, Node `1,2,3`.
+- `child.stdin.write(chunk, cb)` and `process.stdout.write(chunk, cb)` run callbacks out of write order: the repro prints `2,1,3`, Node `1,2,3`.
 - Cause: `writeFast` calls `cb(null)` inside `write()` (`src/js/internal/fs/streams.ts:703`), ahead of writes the sink still holds.
 - It also cuts `write("", () => process.exit(0))` to 65536 of 1048576 bytes. A `write(x, next)` loop throws `RangeError: Maximum call stack size exceeded`.
 
 ### Fix
 - A write with a callback also sends a zero-length marker through `Writable`, which orders it with `end()`, `_final` and `destroy()`.
-- A chunk that `Writable` holds goes out first. A failed write destroys the stream even without `autoDestroy`, and `process.stdout` recovers as in Node.
-- Verified: `test/js/node/process/process-stdio-write-callback.test.ts` and two more. 64 of 114 tests fail on main.
-- Self-reviewed: 14 concerns raised, 14 addressed.
+- A chunk that `Writable` holds goes out first. A failed write destroys the stream, and `process.stdout` recovers as in Node.
+- Verified: `test/js/node/process/process-stdio-write-callback.test.ts` and two more. 64 of 114 fail on main.
+- Self-reviewed: the third round found the regressions under Downsides.
 
 ### Background
 - These streams are `fs.WriteStream`s whose own `write()` (`writeFast`) gives each chunk to a `FileSink`, which can hold it, and skips `Writable`.
-- Considered: a second queue in `writeFast` (cheaper, `end(chunk)` and `destroy()` bypass it), and no `writeFast` (#33508: 22 to 24% on every write).
+- Considered: a second queue in `writeFast` (`end(chunk)` and `destroy()` bypass it), and no `writeFast` (#33508: 22 to 24% slower).
 
 ### Downsides
-- Needs #42031 first. Main drops a tick queued in an `'unhandledRejection'` handler, so a handler that exits from a write callback exits 0.
-- `write(chunk, cb)` costs one `Writable` write more: 796 ns against 198 ns with a new closure per write (Node: 1497 ns). No callback: no change.
-- Callbacks run one tick later. `'drain'` fires once for writes held together.
+- Needs #42031 first: without it, an `'unhandledRejection'` handler that exits from a write callback exits 0.
+- Not fixed: `write(big); end()` into `| head -c 1` emits `'error'` twice. `process.exit()` after a `Writable.prototype.write()` loses output. A write after `end()` can drop the `end()` callback.
+- #45319 fixes the order on a full pipe in the sink. This PR conflicts with it in `streams.ts`.
 
 <details><summary>Notes</summary>
 
@@ -101,12 +103,19 @@ else {
 - The `process.stdout` and `process.stderr` rows use a FIFO and do not run on Windows. On Windows the sink of `process.stdout` writes synchronously, and one `uv_write` takes a whole chunk for `child.stdin`, so the tests that need a held write or a write that fails after it was accepted are skipped there. The `child.stdin` rows on a pipe that the child closed before the calls do not finish on Windows, and are skipped there too. `child_process.test.ts` already skips its test of that case on Windows.
 
 #### What changes for callers
+- A write callback runs one tick later than on main, never inside `write()`.
 
 - A callback of `write()` runs one tick after the call. A throw from it is an `uncaughtException` in every case.
 - `'drain'` fires once for all the writes that the sink held on one promise, on a tick. Main fires it once per held write.
 - After a failed write, `process.stdout` and `process.stderr` on a pipe are destroyed and reset, as in Node: `errored` is `null` again and `'close'` is emitted. On main the stream stays errored. A `tty.WriteStream` that user code made is destroyed by a failed write.
 - `cork()` now holds the callbacks until `uncork()`. The bytes still go out at once.
 - User code that replaces `_write` on one of these streams now gets a zero-length chunk for each `write()` that has a callback. On main it gets no call at all. On Node it gets every chunk.
+
+#### Open regressions (release build of this branch against main and Node v26.3.0)
+- `process.stdout.once("error", h); process.stdout.write(Buffer.alloc((1 << 20) + 1)); process.stdout.end()` piped into `head -c 1`: `h` runs once, then the process dies of an uncaught `EPIPE: broken pipe, write`. With `.on`, `h` runs twice. Main and Node: once. Two things report the one failure: the run of held writes, and the flush promise of `_final`. The stream is destroyed and reset between them, so the second report emits `'error'` again.
+- `Writable.prototype.write.call(process.stdout, "A"); process.stdout.write("B"); process.stdout.write("C\n"); process.exit(0)` prints `A`. Main and Node print `ABC`. While `Writable` holds a chunk, `write()` goes through `Writable`, and `process.exit()` drops what `Writable` holds.
+- Stdout is a file: `write("A", w0); Writable.prototype.write.call(out, "B", p1); write("C", w2); end(cb); write("E", w4)`. The `end()` callback never runs. On main and Node it gets `ERR_STREAM_DESTROYED`.
+- A replaced `process.stdout._write` sees a zero-length chunk for each write that has a callback. On main it sees nothing, on Node every chunk.
 
 #### Needs #42031 first
 
@@ -126,6 +135,7 @@ else {
 - `child.stdin` is constructed one tick after it is made. Until then its write callbacks wait, and a `destroy()` in that tick gives `ERR_STREAM_DESTROYED` to the callbacks of writes that the sink already took. #45195 makes the stream constructed from the start.
 
 #### Other open PRs
+- #45319 (an empty `write()` behind a full pipe returns the promise of the sink, one `'drain'` per promise): on a build of main with #45319, the repro above prints `1,2,3` and the exit idiom delivers all 1048576 bytes. What it leaves is the callback inside `write()` when the sink takes the chunk at once. Content conflict with this PR in `src/js/internal/fs/streams.ts`.
 
 - #37128 (console output goes behind what the stream has buffered) no longer touches `streams.ts` and keeps `writeFast`. No conflict with this branch.
 - #45002 (`child.stdin`'s `_final` ends the pipe) conflicts in two type lines of `streams.ts` and in `child-process-stdio.test.js`. Merged by hand, one of its tests changes: "end(cb) after a write() that failed calls back without autoDestroy" expects `write callback, error, end callback`. With this PR the order is Node's: `write callback, end callback, error`. The PR that merges second updates that line.

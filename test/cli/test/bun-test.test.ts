@@ -2099,6 +2099,42 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
+    test("a failed test with retries left is reported as failed, with no attempt that did not run", async () => {
+      const { stderr, exitCode } = await run(
+        {
+          "a.test.ts": `
+            import { test, expect, afterEach } from "bun:test";
+            afterEach(() => { process.exit(0); });
+            test("flaky", () => { expect(1).toBe(2); }, { retry: 2 });
+          `,
+        },
+        ["./a.test.ts"],
+      );
+      expect(stderr).toContain("(fail) flaky [");
+      expect(stderr).toContain(" 0 pass\n 1 fail");
+      expect(exitCode).toBe(1);
+    });
+
+    test("-t: tests that did not finish are not reported as a filter that matched no test", async () => {
+      const { stderr, exitCode } = await run(
+        {
+          "a.test.ts": `
+            import { test } from "bun:test";
+            test("alpha", () => {});
+            test("beta exits", () => { process.exit(0); });
+            test("delta", () => {});
+          `,
+        },
+        ["-t", "beta|delta", "./a.test.ts"],
+      );
+      expect(stderr).toContain(
+        `note: process.exit() was called by the test "beta exits" while a.test.ts was running (exit code 0)\n2 tests in this file did not finish\n`,
+      );
+      expect(stderr).toContain(" 0 pass\n 1 filtered out\n 0 fail");
+      expect(stderr).toContain("Ran 0 tests across 1 file.");
+      expect(exitCode).toBe(0);
+    });
+
     test("--parallel=1 runs the files in the main process, with the same result", async () => {
       const { stderr, exitCode } = await run({ "exits.test.ts": exitsInTest, "passes.test.ts": passes }, [
         "--parallel=1",

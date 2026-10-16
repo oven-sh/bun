@@ -1744,6 +1744,8 @@ struct ReportInputs<'a> {
     pass_with_no_tests_from_filter: bool,
     search_count: usize,
     ran_parallel: bool,
+    /// An exit ended the run with tests left. A `-t` filter that no finished test matched is not an error then.
+    cut_short: bool,
 }
 
 pub(crate) struct TestCommand;
@@ -2425,6 +2427,7 @@ impl TestCommand {
                 pass_with_no_tests_from_filter,
                 search_count,
                 ran_parallel,
+                cut_short: false,
             },
         )?;
         Self::exit_after_report(reporter, vm, failed)
@@ -2443,6 +2446,7 @@ impl TestCommand {
             pass_with_no_tests_from_filter,
             search_count,
             ran_parallel,
+            cut_short,
         } = inputs;
 
         let write_snapshots_success = jest::Jest::runner()
@@ -2575,7 +2579,8 @@ impl TestCommand {
             // `reporter.summary()` doesn't span the whole printing block and
             // conflict with the `reporter.jest.*` reads below.
             let summary: Summary = *reporter.summary();
-            let did_label_filter_out_all_tests = summary.did_label_filter_out_all_tests()
+            let did_label_filter_out_all_tests = !cut_short
+                && summary.did_label_filter_out_all_tests()
                 && reporter.jest.unhandled_errors_between_tests == 0;
 
             if !did_label_filter_out_all_tests {
@@ -2721,7 +2726,8 @@ impl TestCommand {
         let summary = reporter.summary();
 
         let should_fail_on_no_tests = !ctx.test_options.pass_with_no_tests
-            && (failed_to_find_any_tests || summary.did_label_filter_out_all_tests());
+            && (failed_to_find_any_tests
+                || (!cut_short && summary.did_label_filter_out_all_tests()));
         Ok(should_fail_on_no_tests
             || summary.fail > 0
             || (coverage_options.enabled
@@ -3335,6 +3341,7 @@ fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code:
         pass_with_no_tests_from_filter: false,
         search_count: 0,
         ran_parallel: false,
+        cut_short: collecting || unfinished.tests > 0 || !not_started.is_empty(),
     };
     let failed = TestCommand::report_run(reporter, vm, &mut coverage_options, inputs)
         .unwrap_or_else(|err| {

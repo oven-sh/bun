@@ -583,10 +583,10 @@ impl Execution {
         }
     }
 
-    /// Ends each failed sequence that still runs its hooks, so `advance_sequence` reports it before the process exits.
+    /// Reports each failed sequence that still runs its hooks. The process is about to exit, so the hooks never finish.
     #[cold]
     pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>) {
-        let (group, range) = {
+        let range = {
             // SAFETY: `buntest` is the live active file. This borrow of its `execution` ends with the block.
             let bun_test = unsafe { &mut *buntest.as_ptr() };
             if bun_test.phase != super::bun_test::Phase::Execution {
@@ -595,28 +595,17 @@ impl Execution {
             let Some(group) = bun_test.execution.active_group() else {
                 return;
             };
-            let range = group.sequence_start..group.sequence_end;
-            (NonNull::from(group), range)
+            group.sequence_start..group.sequence_end
         };
         for index in range {
-            // SAFETY: as in `advance_sequence`: one element of `buntest.execution.sequences`, disjoint from `groups`.
+            // SAFETY: as in `advance_sequence`: one element of `buntest.execution.sequences`.
             let sequence = unsafe { &mut (*buntest.as_ptr()).execution.sequences[index] };
-            let Some(mut last) = sequence.active_entry else {
-                continue;
-            };
-            if !sequence.result.is_fail() {
+            if sequence.active_entry.is_none() || !sequence.result.is_fail() {
                 continue;
             }
-            // SAFETY: arena-owned entries, alive for the lifetime of the `BunTest`.
-            while let Some(next) = nn(unsafe { last.as_ref() }.next) {
-                last = next;
-            }
-            // `advance_sequence` steps past the last entry and finds the sequence complete.
-            sequence.active_entry = Some(last);
-            sequence.maybe_skip = false;
-            sequence.executing = true;
-            sequence.remaining_retry_count = 0;
-            Execution::advance_sequence(buntest, NonNull::from(sequence), group);
+            sequence.active_entry = None;
+            sequence.executing = false;
+            Execution::on_sequence_completed(buntest, sequence);
         }
     }
 

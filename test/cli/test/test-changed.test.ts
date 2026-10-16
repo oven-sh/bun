@@ -393,6 +393,24 @@ describe.concurrent("bun test --changed", () => {
     expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "relative.test.ts"]);
     expect(exitCode).toBe(0);
   });
+
+  // `bun build` cannot read these options, so it leaves the call to the runtime and
+  // warns. The module graph scan still follows the call, and prints no warning.
+  test("import() with options in a variable is followed when computing the module graph", async () => {
+    using dir = tempDir("test-changed-import-options", {
+      "package.json": JSON.stringify({ name: "import-options", type: "module" }),
+      "src/lazy.ts": `export const lazy = () => 3;\n`,
+      "lazy.test.ts": `import { test, expect } from "bun:test";\nconst options = {};\ntest("lazy", async () => expect((await import("./src/lazy", options)).lazy()).toBe(3));\n`,
+      "unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "src", "lazy.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["lazy.test.ts", "unrelated.test.ts"])).toEqual(["lazy.test.ts"]);
+    expect(stderr).not.toContain("will not be bundled");
+    expect(exitCode).toBe(0);
+  });
 });
 
 // On Windows, `bun test --watch` runs as a parent watcher-manager that

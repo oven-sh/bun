@@ -3,7 +3,7 @@
 //! Lives in `bun_ast` so `Ast` (which holds `Vec<ImportRecord>`) is
 //! self-contained and `bun_js_printer` can drop its `bun_js_parser` dep.
 
-use crate::Range;
+use crate::{Loc, Range};
 use bun_paths::fs::Path;
 
 // Re-exported here (canonical at crate root) so callers that path through
@@ -31,7 +31,14 @@ pub struct ImportRecord {
     /// Pack all boolean flags into 4 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     pub flags: Flags,
+
+    /// The expression that hides the `with` attributes of `import(specifier, options)`.
+    /// Only meaningful with `Flags::UNREADABLE_ATTRIBUTES`.
+    pub unreadable_attributes_loc: Loc,
 }
+
+// `unreadable_attributes_loc` sits in what was tail padding.
+const _: () = assert!(core::mem::size_of::<ImportRecord>() == 96);
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
@@ -107,6 +114,66 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// `import(specifier, options)` in a bundle: only the runtime can read the
+        /// `with` attributes of `options`, so a loader picked at build time may not be
+        /// the one the runtime picks. `BundleV2` leaves the call as written and warns.
+        const UNREADABLE_ATTRIBUTES = 1 << 20;
+
+        /// Two bits: the `UnreadableAttributes` of an `UNREADABLE_ATTRIBUTES` record.
+        const UNREADABLE_ATTRIBUTES_REASON = 0b11 << 21;
+    }
+}
+
+/// Why a bundler cannot read the `with` attributes of `import(specifier, options)`.
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum UnreadableAttributes {
+    /// `import(x, options)`, `import(x, null)`
+    OptionsNotObjectLiteral = 0,
+    /// `import(x, { with: attributes })`
+    WithNotObjectLiteral = 1,
+    /// `import(x, { with: { type } })`, `import(x, { with: { type: 1 } })`
+    TypeNotStringLiteral = 2,
+    /// A getter, a setter, a spread, `__proto__` or a second definition decides `with` or `type`.
+    PropertyNotPlain = 3,
+}
+
+impl ImportRecord {
+    const UNREADABLE_ATTRIBUTES_REASON_SHIFT: u32 =
+        Flags::UNREADABLE_ATTRIBUTES_REASON.bits().trailing_zeros();
+
+    pub fn set_unreadable_attributes(&mut self, reason: UnreadableAttributes, loc: Loc) {
+        self.flags.remove(Flags::UNREADABLE_ATTRIBUTES_REASON);
+        self.flags.insert(
+            Flags::UNREADABLE_ATTRIBUTES
+                | Flags::from_bits_retain(
+                    (reason as u32) << Self::UNREADABLE_ATTRIBUTES_REASON_SHIFT,
+                ),
+        );
+        self.unreadable_attributes_loc = loc;
+    }
+
+    #[inline]
+    pub fn unreadable_attributes(&self) -> Option<(UnreadableAttributes, Loc)> {
+        if !self.flags.contains(Flags::UNREADABLE_ATTRIBUTES) {
+            return None;
+        }
+        let reason = match (self.flags & Flags::UNREADABLE_ATTRIBUTES_REASON).bits()
+            >> Self::UNREADABLE_ATTRIBUTES_REASON_SHIFT
+        {
+            0 => UnreadableAttributes::OptionsNotObjectLiteral,
+            1 => UnreadableAttributes::WithNotObjectLiteral,
+            2 => UnreadableAttributes::TypeNotStringLiteral,
+            _ => UnreadableAttributes::PropertyNotPlain,
+        };
+        Some((reason, self.unreadable_attributes_loc))
+    }
+
+    /// The record binds like one whose attributes the parser read.
+    pub fn clear_unreadable_attributes(&mut self) {
+        self.flags
+            .remove(Flags::UNREADABLE_ATTRIBUTES | Flags::UNREADABLE_ATTRIBUTES_REASON);
     }
 }
 

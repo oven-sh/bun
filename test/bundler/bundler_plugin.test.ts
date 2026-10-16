@@ -1893,4 +1893,224 @@ describe("bundler", () => {
       }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
     });
   }
+
+  // `import(specifier, options)` whose options the bundler cannot read stays a runtime
+  // import with a warning (see bundler_loader.test.ts). A target that an `onLoad` plugin
+  // loads stays in the bundle, whenever the plugin answers, and a plugin that declines
+  // does not bring back a loader picked from the file extension.
+  describe("plugin/import() options the bundler cannot read", () => {
+    const warning = "This import() expression will not be bundled because the second argument is not an object literal";
+    const onlyCall = {
+      "entry.js": `
+        const o = { with: { type: "text" } };
+        console.log((await import("./d.json", o)).default);
+      `,
+      "d.json": `{"from":"disk"}`,
+    };
+    // `entry.js` puts `d.json` in the graph before `second.js` is parsed.
+    const callAfterReadableImport = {
+      "entry.js": `
+        import { viaVariable } from "./second.js";
+        const inCall = await import("./d.json", { with: { type: "text" } });
+        console.log(inCall.default, (await viaVariable()).default);
+      `,
+      "second.js": `
+        const o = { with: { type: "text" } };
+        export const viaVariable = () => import("./d.json", o);
+      `,
+      "d.json": `{"from":"disk"}`,
+    };
+    const loaded = { contents: `export default "from plugin";`, loader: "js" } as const;
+    type Setup = (build: Bun.PluginBuilder, calls: string[], dir: string) => void;
+
+    const cases: {
+      name: string;
+      files?: Record<string, string>;
+      inMemory?: boolean;
+      setup: Setup;
+      expected: { logs: string[]; calls: string[]; call: string };
+    }[] = [
+      {
+        name: "onLoad loads the target",
+        setup(build, calls) {
+          build.onLoad({ filter: /d\.json$/ }, () => (calls.push("onLoad"), loaded));
+        },
+        expected: { logs: [], calls: ["onLoad"], call: "bundled" },
+      },
+      {
+        name: "onLoad declines the target",
+        setup(build, calls) {
+          build.onLoad({ filter: /d\.json$/ }, () => void calls.push("onLoad"));
+        },
+        expected: { logs: [warning], calls: ["onLoad"], call: `import("./d.json", o)` },
+      },
+      {
+        name: "onLoad loads the target after the call is resolved",
+        files: callAfterReadableImport,
+        setup(build, calls) {
+          build.onLoad({ filter: /d\.json$/ }, async ({ defer }) => {
+            await defer();
+            calls.push("onLoad");
+            return loaded;
+          });
+        },
+        expected: { logs: [], calls: ["onLoad"], call: "bundled" },
+      },
+      {
+        name: "onLoad declines the target after the call is resolved",
+        files: callAfterReadableImport,
+        setup(build, calls) {
+          build.onLoad({ filter: /d\.json$/ }, async ({ defer }) => {
+            await defer();
+            calls.push("onLoad");
+          });
+        },
+        expected: { logs: [warning], calls: ["onLoad"], call: `import("./d.json", o)` },
+      },
+      {
+        name: "onLoad has loaded the target before the call is resolved",
+        files: callAfterReadableImport,
+        setup(build, calls) {
+          build.onLoad({ filter: /d\.json$/ }, () => (calls.push("onLoad"), loaded));
+          // `second.js` is parsed last.
+          build.onLoad({ filter: /second\.js$/ }, async ({ defer }) => {
+            await defer();
+          });
+        },
+        expected: { logs: [], calls: ["onLoad"], call: "bundled" },
+      },
+      {
+        name: "onLoad has declined the target before the call is resolved",
+        files: callAfterReadableImport,
+        setup(build, calls) {
+          build.onLoad({ filter: /d\.json$/ }, () => void calls.push("onLoad"));
+          // `second.js` is parsed last.
+          build.onLoad({ filter: /second\.js$/ }, async ({ defer }) => {
+            await defer();
+          });
+        },
+        expected: { logs: [warning], calls: ["onLoad"], call: `import("./d.json", o)` },
+      },
+      // The page's script is bundled for the browser: there `d.json` is another module,
+      // and the plugin's answer for it does not decide the call in the server's bundle.
+      {
+        name: "onLoad loads the target in another graph only",
+        files: {
+          "entry.js": `
+            import page from "./page.html";
+            const o = { with: { type: "text" } };
+            console.log(page.index, (await import("./d.json", o)).default);
+          `,
+          "page.html": `<!doctype html><script type="module" src="./client.js"></script>`,
+          "client.js": `
+            import d from "./d.json";
+            console.log(d);
+          `,
+          "d.json": `{"from":"disk"}`,
+        },
+        setup(build, calls) {
+          build.onLoad({ filter: /d\.json$/ }, async ({ defer }) => {
+            // The first call is for the server's bundle. Its answer comes last.
+            if (calls.push("onLoad") === 1) return void (await defer());
+            return loaded;
+          });
+        },
+        expected: { logs: [warning], calls: ["onLoad", "onLoad"], call: `import("./d.json", o)` },
+      },
+      {
+        name: "onResolve declines",
+        setup(build, calls) {
+          build.onResolve({ filter: /d\.json$/ }, () => void calls.push("onResolve"));
+        },
+        expected: { logs: [warning], calls: ["onResolve"], call: `import("./d.json", o)` },
+      },
+      {
+        name: "onResolve declines and onLoad loads the target",
+        setup(build, calls) {
+          build.onResolve({ filter: /d\.json$/ }, () => void calls.push("onResolve"));
+          build.onLoad({ filter: /d\.json$/ }, () => (calls.push("onLoad"), loaded));
+        },
+        expected: { logs: [], calls: ["onResolve", "onLoad"], call: "bundled" },
+      },
+      {
+        name: "onResolve declines and onLoad declines the target",
+        setup(build, calls) {
+          build.onResolve({ filter: /d\.json$/ }, () => void calls.push("onResolve"));
+          build.onLoad({ filter: /d\.json$/ }, () => void calls.push("onLoad"));
+        },
+        expected: { logs: [warning], calls: ["onResolve", "onLoad"], call: `import("./d.json", o)` },
+      },
+      {
+        name: "onResolve declines an in-memory file",
+        inMemory: true,
+        setup(build, calls) {
+          build.onResolve({ filter: /d\.json$/ }, () => void calls.push("onResolve"));
+        },
+        expected: { logs: [warning], calls: ["onResolve"], call: `import("./d.json", o)` },
+      },
+      {
+        name: "onResolve declines an in-memory file and onLoad loads it",
+        inMemory: true,
+        setup(build, calls) {
+          build.onResolve({ filter: /d\.json$/ }, () => void calls.push("onResolve"));
+          build.onLoad({ filter: /d\.json$/ }, () => (calls.push("onLoad"), loaded));
+        },
+        expected: { logs: [], calls: ["onResolve", "onLoad"], call: "bundled" },
+      },
+      {
+        name: "onResolve declines an in-memory file and onLoad declines it",
+        inMemory: true,
+        setup(build, calls) {
+          build.onResolve({ filter: /d\.json$/ }, () => void calls.push("onResolve"));
+          build.onLoad({ filter: /d\.json$/ }, () => void calls.push("onLoad"));
+        },
+        expected: { logs: [warning], calls: ["onResolve", "onLoad"], call: `import("./d.json", o)` },
+      },
+      // A path that the plugin returns binds the record as it did before.
+      {
+        name: "onResolve returns the path",
+        setup(build, calls, dir) {
+          build.onResolve({ filter: /d\.json$/ }, () => (calls.push("onResolve"), { path: join(dir, "d.json") }));
+        },
+        expected: { logs: [], calls: ["onResolve"], call: "bundled" },
+      },
+      // A server-side import of an HTML file is a manifest module that the bundler
+      // makes, so no `onLoad` answer decides it.
+      {
+        name: "onLoad matches an HTML file imported by server-side code",
+        files: {
+          "entry.js": `
+            const o = {};
+            console.log(await import("./page.html", o));
+          `,
+          "page.html": `<!doctype html><title>page</title>`,
+        },
+        setup(build, calls) {
+          build.onLoad({ filter: /page\.html$/ }, () => void calls.push("onLoad"));
+        },
+        expected: { logs: [warning], calls: [], call: `import("./page.html", o)` },
+      },
+    ];
+
+    for (const { name, files = onlyCall, inMemory = false, setup, expected } of cases) {
+      test.concurrent(name, async () => {
+        using dir = tempDir("plugin-import-options", inMemory ? {} : files);
+        const calls: string[] = [];
+        const result = await Bun.build({
+          entrypoints: [inMemory ? "/entry.js" : join(String(dir), "entry.js")],
+          files: inMemory ? Object.fromEntries(Object.entries(files).map(([name, text]) => ["/" + name, text])) : {},
+          target: "bun",
+          throw: false,
+          plugins: [{ name: "plugin", setup: build => setup(build, calls, String(dir)) }],
+        });
+        const entry = await result.outputs.find(output => output.path.endsWith("entry.js"))!.text();
+        expect({
+          logs: result.logs.map(log => log.message),
+          calls,
+          // The call as the output has it, unless the import is a module of the bundle.
+          call: entry.match(/import\("[^"]+", o\)/)?.[0] ?? "bundled",
+        }).toEqual(expected);
+      });
+    }
+  });
 });

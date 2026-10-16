@@ -544,6 +544,315 @@ describe("bundler", async () => {
     }
   });
 
+  // The runtime reads the `with` attributes of `import(specifier, options)` when the
+  // call runs. A bundle that cannot read them at build time must not pick a loader
+  // from the file extension: it leaves the call as written and says so.
+  describe("import() options the bundler cannot read", () => {
+    const notBundled = (reason: string) => `This import() expression will not be bundled because ${reason}`;
+    const secondArgument = notBundled("the second argument is not an object literal");
+    const withValue = notBundled('the value of "with" is not an object literal');
+    const typeValue = notBundled('the value of "type" is not a string literal');
+    const property = notBundled('this property can change "with" or "type" when the call runs');
+    // `.dat` has no loader, so a loader picked from the extension is `file`.
+    const show = /* js */ `
+      function show({ status, value, reason }) {
+        if (status === "rejected") return reason.name;
+        if (typeof value.default !== "string") return "json " + JSON.stringify(value.default);
+        return value.default.endsWith(".dat") ? "file" : "text " + value.default;
+      }
+    `;
+
+    itBundled("bun/import-options-left-to-runtime", {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.js": /* js */ `
+          ${show}
+          const o = { with: { type: "text" } };
+          let l = { with: { type: "text" } };
+          const w = { type: "text" };
+          const t = "text";
+          const type = "text";
+          const load = options => import("./d.dat", options);
+          const results = await Promise.allSettled([
+            import("./d.dat", o),
+            import("./d.dat", l),
+            load({ with: { type: "text" } }),
+            load({ with: { type: "json" } }),
+            import(process.argv.length > 99 ? "./d.dat" : "./e.dat", o),
+            import("./d.dat", (0, { with: { type: "text" } })),
+            import("./d.dat", null),
+            import("./d.dat", { with: w }),
+            import("./d.dat", { with: { type: t } }),
+            import("./d.dat", { with: { type } }),
+            import("./d.dat", { with: { type: "te" + "xt" } }),
+            import("./d.dat", { with: { type: 1 } }),
+            import("./d.dat", { get with() { return { type: "text" }; } }),
+            import("./d.dat", { with: { get type() { return "text"; } } }),
+            import("./d.dat", { __proto__: { with: { type: "text" } } }),
+            import("./d.dat", { with: { type: "json" }, with: { type: "text" } }),
+            import("./d.dat", { with: { type: "json", type: "text" } }),
+          ]);
+          console.log(results.map(show).join("\\n"));
+        `,
+        "/d.dat": `{"a":1}`,
+        "/e.dat": `{"b":2}`,
+      },
+      // The ternary specifier is two import records and one call.
+      bundleWarnings: {
+        "/entry.js": [
+          ...Array(6).fill(secondArgument),
+          withValue,
+          ...Array(4).fill(typeValue),
+          ...Array(5).fill(property),
+        ],
+      },
+      // Neither file is copied as an asset: the test puts them next to the bundle.
+      runtimeFiles: {
+        "/out/d.dat": `{"a":1}`,
+        "/out/e.dat": `{"b":2}`,
+      },
+      onAfterBundle(api) {
+        expect(readdirSync(api.outdir).sort()).toEqual(["d.dat", "e.dat", "entry.js"]);
+      },
+      run: {
+        stdout: [
+          `text {"a":1}`,
+          `text {"a":1}`,
+          `text {"a":1}`,
+          `json {"a":1}`,
+          `text {"b":2}`,
+          `text {"a":1}`,
+          `TypeError`,
+          `text {"a":1}`,
+          `text {"a":1}`,
+          `text {"a":1}`,
+          `text {"a":1}`,
+          `TypeError`,
+          `text {"a":1}`,
+          `text {"a":1}`,
+          `text {"a":1}`,
+          `text {"a":1}`,
+          `text {"a":1}`,
+        ].join("\n"),
+      },
+    });
+
+    // Options that carry no attributes, and options written in the call, are read as before.
+    itBundled("bun/import-options-read-at-build-time", {
+      target: "bun",
+      outdir: "/out",
+      backend: "cli",
+      files: {
+        "/entry.js": /* js */ `
+          ${show}
+          const a = { type: "text" };
+          const results = await Promise.allSettled([
+            import("./d.dat"),
+            import("./d.dat", undefined),
+            import("./d.dat", void 0),
+            import("./d.dat", {}),
+            import("./d.dat", { with: {} }),
+            import("./d.dat", { with: undefined }),
+            import("./d.dat", { with: { __proto__: { type: "text" } } }),
+            import("./d.dat", { with: { type: "javascript" } }),
+            import("./d.dat", { assert: a }),
+            import("./e.dat", { with: { type: "text" } }),
+            import("./e.dat", { "with": { "type": "text" } }),
+            import("./e.dat", { ["with"]: { ["type"]: "text" } }),
+            import("./e.dat", { with: { type: \`text\` } }),
+            import("./e.dat", { with: { type: "text", other: "x" }, other: 1 }),
+            import("./e.dat", { assert: { type: "text" } }),
+          ]);
+          console.log(results.map(show).join("\\n"));
+        `,
+        "/d.dat": `{"a":1}`,
+        "/e.dat": `{"b":2}`,
+      },
+      run: {
+        stdout: [...Array(9).fill("file"), ...Array(6).fill(`text {"b":2}`)].join("\n"),
+      },
+    });
+
+    // Minification inlines a constant declared at the start of its scope and removes the
+    // comma operator before the options are read.
+    itBundled("bun/import-options-read-after-minify-syntax", {
+      target: "bun",
+      outdir: "/out",
+      backend: "cli",
+      minifySyntax: true,
+      files: {
+        "/entry.js": /* js */ `
+          const t = "text";
+          const type = "text";
+          ${show}
+          const results = await Promise.allSettled([
+            import("./d.dat", { with: { type: t } }),
+            import("./d.dat", { with: { type } }),
+            import("./d.dat", (0, { with: { type: "text" } })),
+          ]);
+          console.log(results.map(show).join("\\n"));
+        `,
+        "/d.dat": `{"a":1}`,
+      },
+      run: { stdout: Array(3).fill(`text {"a":1}`).join("\n") },
+    });
+
+    itBundled("bun/import-options-left-to-runtime-splitting", {
+      target: "bun",
+      outdir: "/out",
+      splitting: true,
+      files: {
+        "/entry.js": /* js */ `
+          const o = { with: { type: "text" } };
+          const { chunk } = await import("./chunk.js");
+          console.log(chunk, (await import("./d.dat", o)).default);
+        `,
+        "/chunk.js": `export const chunk = "chunk";`,
+        "/d.dat": "text",
+      },
+      bundleWarnings: { "/entry.js": [secondArgument] },
+      runtimeFiles: { "/out/d.dat": "text" },
+      onAfterBundle(api) {
+        expect(readdirSync(api.outdir).filter(file => file.endsWith(".dat"))).toEqual(["d.dat"]);
+        expect(api.readFile("/out/entry.js")).toContain(`import("./d.dat", o)`);
+      },
+      run: { file: "/out/entry.js", stdout: "chunk text" },
+    });
+
+    // A module that already is in the bundle does not bind the call either.
+    itBundled("bun/import-options-left-to-runtime-next-to-bundled-import", {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.js": /* js */ `
+          import staticText from "{{root}}/d.dat" with { type: "text" };
+          const o = { with: { type: "text" } };
+          const before = await import("./d.dat", { with: { type: "text" } });
+          const relative = await import("./d.dat", o);
+          const absolute = await import("{{root}}/d.dat", o);
+          const after = await import("./d.dat", { with: { type: "text" } });
+          console.log(staticText, before.default, relative.default, absolute.default, after.default);
+        `,
+        "/d.dat": "bundled",
+      },
+      bundleWarnings: { "/entry.js": [secondArgument, secondArgument] },
+      onAfterBundle(api) {
+        const output = api.readFile("/out/entry.js");
+        expect(output).toContain(`import("./d.dat", o)`);
+        expect(output).toMatch(/import\("[^"]+[\/\\]d\.dat", o\)/);
+      },
+      // The two calls that stay read the file at runtime.
+      runtimeFiles: { "/d.dat": "runtime", "/out/d.dat": "runtime" },
+      run: { stdout: "bundled bundled runtime runtime bundled" },
+    });
+
+    itBundled("bun/import-options-left-to-runtime-compile", {
+      target: "bun",
+      compile: true,
+      files: {
+        "/entry.js": /* js */ `
+          const o = { with: { type: "text" } };
+          console.log((await import("./d.dat", o)).default);
+        `,
+        "/d.dat": "not embedded",
+      },
+      bundleWarnings: { "/entry.js": [secondArgument] },
+      run: { stdout: "not embedded", setCwd: true },
+    });
+
+    // An external import already prints the call as written.
+    itBundled("bun/import-options-external", {
+      target: "bun",
+      backend: "cli",
+      external: ["ext"],
+      files: {
+        "/entry.js": /* js */ `
+          const o = { with: { type: "text" } };
+          export const imports = () => [import("ext", o), import("node:fs", o)];
+        `,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain(`import("ext", o)`);
+        expect(output).toContain(`import("fs", o)`);
+      },
+    });
+    itBundled("bun/import-options-packages-external", {
+      target: "bun",
+      backend: "cli",
+      packages: "external",
+      files: {
+        "/entry.js": /* js */ `
+          const o = { with: { type: "text" } };
+          export const imported = () => import("pkg", o);
+        `,
+      },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).toContain(`import("pkg", o)`);
+      },
+    });
+
+    // A browser build has no runtime module behind a node polyfill.
+    itBundled("browser/import-options-node-polyfill", {
+      target: "browser",
+      backend: "cli",
+      files: {
+        "/entry.js": /* js */ `
+          const o = {};
+          export const imported = () => import("path", o);
+        `,
+      },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).not.toContain(`import("path"`);
+      },
+    });
+
+    itBundled("bun/import-options-unresolved-specifier", {
+      target: "bun",
+      files: {
+        "/entry.js": /* js */ `
+          const o = { with: { type: "text" } };
+          import("./missing.dat", o);
+        `,
+      },
+      bundleErrors: { "/entry.js": [`Could not resolve: "./missing.dat"`] },
+    });
+
+    itBundled("bun/import-options-no-bundle", {
+      target: "bun",
+      backend: "cli",
+      bundling: false,
+      files: {
+        "/entry.js": /* js */ `
+          const o = { with: { type: "text" } };
+          import("./d.dat", o);
+        `,
+        "/d.dat": "text",
+      },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).toContain(`import("./d.dat", o)`);
+      },
+    });
+
+    // The dev server's runtime only loads modules that are in the bundle.
+    itBundled("bake-dev/import-options", {
+      format: "internal_bake_dev",
+      files: {
+        "/entry.js": /* js */ `
+          const o = { with: { type: "text" } };
+          import("./data.json", o).then(m => console.log(m.default));
+        `,
+        "/data.json": `{"value": 1}`,
+      },
+      onAfterBundle(api) {
+        const output = api.readFile("/out.js");
+        expect(output).toContain('"data.json"(hmr, module, exports) {');
+        expect(output).toContain('hmr.require("data.json")');
+      },
+    });
+  });
+
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the
   // printer when bundled with the dev server's module format.
   // https://github.com/oven-sh/bun/issues/31943

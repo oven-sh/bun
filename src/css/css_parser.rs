@@ -783,6 +783,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             source_index: Default::default(),
             original_path: b"",
             flags: Default::default(),
+            unreadable_attributes_loc: Default::default(),
         });
     }
 
@@ -3089,6 +3090,7 @@ impl<'a> Parser<'a> {
                 source_index: Default::default(),
                 original_path: b"",
                 flags: Default::default(),
+                unreadable_attributes_loc: Default::default(),
             });
             Ok(idx)
         } else {

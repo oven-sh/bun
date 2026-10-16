@@ -602,6 +602,63 @@ describe("bundler files option", () => {
     expect(output).toContain("injected by plugin");
   });
 
+  // See "import() options the bundler cannot read" in bundler_loader.test.ts.
+  describe("import() with options the bundler cannot read", () => {
+    const summary = async (result: Bun.BuildOutput) => ({
+      success: result.success,
+      logs: result.logs.map(log => ({
+        level: log.level,
+        message: log.message,
+        line: log.position?.line,
+        column: log.position?.column,
+        notes: log.notes.map(note => note.message),
+      })),
+      outputs: await Promise.all(result.outputs.map(output => output.text())),
+    });
+    const warning = (line: number, column: number) => ({
+      level: "warn",
+      message: "This import() expression will not be bundled because the second argument is not an object literal",
+      line,
+      column,
+      notes: [
+        'To bundle this import, write the attributes as an object literal in the call, such as import(path, { with: { type: "json" } }). As written, the call stays a runtime import: the file is not copied to the output directory or embedded by --compile. Mark the import as external to silence this warning.',
+      ],
+    });
+
+    test("an in-memory file stays a runtime import", async () => {
+      const result = await Bun.build({
+        entrypoints: ["/entry.js"],
+        target: "bun",
+        files: {
+          "/entry.js": `const o = { with: { type: "text" } };\nconsole.log((await import("./d.dat", o)).default);`,
+          "/d.dat": "in memory",
+        },
+      });
+      expect(await summary(result)).toEqual({
+        success: true,
+        logs: [warning(2, 38)],
+        outputs: [expect.stringContaining(`import("./d.dat", o)`)],
+      });
+    });
+
+    // The module that the static import puts in the bundle has the specifier as its key.
+    test("a files key equal to the specifier does not bundle the call", async () => {
+      const result = await Bun.build({
+        entrypoints: ["/entry.js"],
+        target: "bun",
+        files: {
+          "/entry.js": `import inCall from "/d.dat" with { type: "text" };\nconst o = { with: { type: "text" } };\nconsole.log(inCall, (await import("/d.dat", o)).default);`,
+          "/d.dat": "in memory",
+        },
+      });
+      expect(await summary(result)).toEqual({
+        success: true,
+        logs: [warning(3, 45)],
+        outputs: [expect.stringContaining(`import("/d.dat", o)`)],
+      });
+    });
+  });
+
   // Specifiers are joined onto the importer's directory to find a matching
   // in-memory file. A specifier longer than a path buffer (4096 bytes on
   // Linux, 1024 on macOS, 98302 on Windows) used to abort the process. These

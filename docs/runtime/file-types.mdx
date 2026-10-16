@@ -17,6 +17,8 @@ import my_toml from "./my_file" with { type: "toml" };
 const { default: my_toml } = await import("./my_file", { with: { type: "toml" } });
 ```
 
+To bundle a dynamic `import()` that has attributes, write the attributes as an object literal in the call. If the second argument is a variable, `bun build` prints a warning and leaves the call in the output as written. The runtime then loads the file, so the file is not part of the bundle.
+
 <Note>
   With TypeScript 7.1 or newer, `@types/bun` types these imports from the `type` attribute: a `type: "text"` import is a
   `string`, a `type: "sqlite"` import is a `Database`. Older TypeScript versions type the import from the file extension

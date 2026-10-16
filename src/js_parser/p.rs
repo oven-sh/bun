@@ -1466,8 +1466,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let import_record_index =
                 self.add_import_record(ImportKind::Dynamic, arg.loc, str_.slice(self.arena));
 
-            if let Some(loader) = state.import_loader {
-                self.import_records.items_mut()[import_record_index as usize].loader = Some(loader);
+            let is_linked_bundle = self.options.bundle
+                && self.options.output_format != options::Format::InternalBakeDev;
+
+            match state.import_loader {
+                E::ImportLoader::Attribute(loader) => {
+                    self.import_records.items_mut()[import_record_index as usize].loader =
+                        Some(loader);
+                }
+                // The dev server keeps the import in the bundle: `hmr.dynamicImport`
+                // only loads modules that are in it.
+                E::ImportLoader::Unreadable { reason, loc } if is_linked_bundle => {
+                    self.import_records.items_mut()[import_record_index as usize]
+                        .set_unreadable_attributes(reason, loc);
+                }
+                E::ImportLoader::None | E::ImportLoader::Unreadable { .. } => {}
             }
 
             self.import_records.items_mut()[import_record_index as usize]
@@ -1485,9 +1498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // and the importee's unobserved exports tree-shaken. It counts as
             // escaped unless exactly the consumer of this expression (`s_local`,
             // `maybe_rewrite_property_access`, `.then`, …) notes a tracked use.
-            let namespace_ref = if self.options.bundle
-                && self.options.output_format != options::Format::InternalBakeDev
-            {
+            let namespace_ref = if is_linked_bundle {
                 let path_name = fs::PathName::init(str_.slice(self.arena));
                 let name: &'a [u8] = bun_alloc::arena_format!(
                     in self.arena,
@@ -5288,6 +5299,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             source_index: bun_ast::Index::INVALID,
             original_path: b"",
             flags: bun_ast::ImportRecordFlags::empty(),
+            unreadable_attributes_loc: bun_ast::Loc::EMPTY,
         });
         u32::try_from(index).expect("int cast")
     }

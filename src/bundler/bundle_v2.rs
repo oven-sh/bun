@@ -6,7 +6,7 @@
 
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 use bun_core::ThreadLock;
 
 // `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
@@ -55,6 +55,16 @@ pub use api::JSBundler::FileMap;
 pub struct PendingImport {
     pub(crate) to_source_index: Index,
     pub(crate) import_record_index: u32,
+}
+
+/// An `import()` record with `ImportRecordFlags::UNREADABLE_ATTRIBUTES` whose target an
+/// `onLoad` plugin has been asked for: `BundleV2::on_load` binds the record when the
+/// plugin loads the target and leaves the call to the runtime when it declines.
+pub(crate) struct ImportAwaitingOnLoad {
+    pub(crate) importer: IndexInt,
+    pub(crate) import_record_index: u32,
+    /// The graph the record resolves in.
+    pub(crate) target: Target,
 }
 
 pub struct BundleV2<'a> {
@@ -111,6 +121,13 @@ pub struct BundleV2<'a> {
     /// on the bundle thread before its parsing task completes.
     pub(crate) resolve_tasks_waiting_for_import_source_index:
         ArrayHashMap<IndexInt, Vec<PendingImport>>,
+
+    /// Keyed by the path of the target. See `ImportAwaitingOnLoad`.
+    pub(crate) imports_awaiting_on_load: StringArrayHashMap<Vec<ImportAwaitingOnLoad>>,
+    /// Importer path and options location of every `import()` already reported as left
+    /// to the runtime: the two records of `import(a ? "x" : "y", options)`, or one file
+    /// parsed for two graphs, get one warning.
+    pub(crate) imports_left_to_runtime: StringArrayHashMap<()>,
 
     /// Allocations not tracked by a threadlocal heap.
     pub(crate) free_list: Vec<Box<[u8]>>,
@@ -2675,6 +2692,9 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
+                    if self.plugin_import_is_left_to_runtime(import_record, &path_primary, target) {
+                        return;
+                    }
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
                     // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
@@ -2726,7 +2746,13 @@ pub mod bv2_impl {
                                 [import_record.importer_source_index as usize]
                                 .as_mut_slice()
                                 [import_record.import_record_index as usize];
-                        record.source_index = Index::init(idx);
+                        // With the mark, `on_load` binds the record.
+                        if !record
+                            .flags
+                            .contains(bun_ast::ImportRecordFlags::UNREADABLE_ATTRIBUTES)
+                        {
+                            record.source_index = Index::init(idx);
+                        }
                     } else {
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()
@@ -2917,6 +2943,10 @@ pub mod bv2_impl {
                 return;
             }
 
+            if self.plugin_import_is_left_to_runtime(import_record, &path, target) {
+                return;
+            }
+
             if path.pretty.as_ptr() == path.text.as_ptr() {
                 // TODO: outbase
                 let rel = bun_paths::resolve_path::relative_platform::<
@@ -3025,7 +3055,13 @@ pub mod bv2_impl {
                 let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
                     [import_record.importer_source_index as usize]
                     .as_mut_slice()[import_record.import_record_index as usize];
-                record.source_index = source_index;
+                // With the mark, `on_load` binds the record.
+                if !record
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::UNREADABLE_ATTRIBUTES)
+                {
+                    record.source_index = source_index;
+                }
             }
         }
 
@@ -3281,6 +3317,8 @@ pub mod bv2_impl {
                 source_code_length: 0,
                 thread_lock: bun_core::ThreadLock::init_locked(),
                 resolve_tasks_waiting_for_import_source_index: ArrayHashMap::new(),
+                imports_awaiting_on_load: Default::default(),
+                imports_left_to_runtime: Default::default(),
                 free_list: Vec::new(),
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
@@ -4999,6 +5037,8 @@ pub mod bv2_impl {
             // arena/DevServer-owned log) so the `&mut this.graph.*` reborrows
             // below type-check without per-use-site `unsafe { &mut *log }`.
             let log = this.transpiler.log_mut();
+            this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
+                .remove(crate::Graph::InputFileFlags::IS_AWAITING_ON_LOAD);
 
             // TODO: watcher
 
@@ -5009,6 +5049,9 @@ pub mod bv2_impl {
                     // If it's a file namespace, we should run it through the parser like normal.
                     // The file could be on disk.
                     if source.path.is_file() {
+                        if !this.imports_awaiting_on_load.is_empty() {
+                            this.settle_imports_awaiting_on_load(load.source_index.get(), false);
+                        }
                         this.graph.pool().schedule(load.parse_task_mut());
                         return;
                     }
@@ -5048,6 +5091,9 @@ pub mod bv2_impl {
                         code.loader;
                     this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
                         .insert(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN);
+                    if !this.imports_awaiting_on_load.is_empty() {
+                        this.settle_imports_awaiting_on_load(load.source_index.get(), true);
+                    }
                     // For copied assets keep the bytes Owned in `source.contents`
                     // so `process_files_to_copy` can `mem::take` them zero-copy
                     // (it would otherwise clone the whole asset). For everything
@@ -6353,6 +6399,8 @@ pub mod bv2_impl {
                     );
                     // Arena-owned; the dispatch
                     // chain holds the raw `*mut Load` until the JS thread calls back.
+                    self.graph.input_files.items_flags_mut()[parse.source_index.get() as usize]
+                        .insert(crate::Graph::InputFileFlags::IS_AWAITING_ON_LOAD);
                     let load_val = jsc_api::JSBundler::Load::init(self, parse);
                     // SAFETY: arena outlives the bundle pass.
                     let load: &mut jsc_api::JSBundler::Load = self.arena_create(load_val);
@@ -6566,7 +6614,221 @@ pub mod bv2_impl {
         only_records.is_none_or(|only| only.binary_search(&(record_index as u32)).is_ok())
     }
 
+    /// What a binder does with an `import()` record that has
+    /// `ImportRecordFlags::UNREADABLE_ATTRIBUTES`.
+    enum UnreadableImport {
+        /// Clear the mark and bind the record like any other.
+        Bind,
+        /// Keep the mark and go on: the target is new and goes to an `onLoad` plugin,
+        /// whose answer `on_load` applies to the record.
+        Queue,
+        /// Keep the mark and stop: the call stays a runtime `import()`, or its target
+        /// already waits for an `onLoad` answer.
+        Skip,
+    }
+
     impl<'a> BundleV2<'a> {
+        /// Whether `import_record`, which resolves to `path`, is left as parsed.
+        ///
+        /// The parser marks an `import(specifier, options)` whose `with` attributes only
+        /// the runtime can read. A loader picked here from the file extension may not be
+        /// the one the runtime picks, so the call stays in the output as written.
+        ///
+        /// Every place that binds a record to a module asks this first, and none binds a
+        /// record that still carries the mark.
+        #[inline]
+        fn leaves_import_to_runtime(
+            &mut self,
+            importer: &bun_ast::Source,
+            import_record_index: u32,
+            import_record: &mut ImportRecord,
+            path: &Fs::Path,
+            target: options::Target,
+        ) -> bool {
+            let Some(unreadable) = import_record.unreadable_attributes() else {
+                return false;
+            };
+            match self.unreadable_import(importer, import_record_index, unreadable, path, target) {
+                UnreadableImport::Bind => {
+                    import_record.clear_unreadable_attributes();
+                    false
+                }
+                UnreadableImport::Queue => false,
+                UnreadableImport::Skip => true,
+            }
+        }
+
+        /// `leaves_import_to_runtime` for the importer's record behind a plugin `onResolve`.
+        fn plugin_import_is_left_to_runtime(
+            &mut self,
+            import_record: &jsc_api::JSBundler::MiniImportRecord,
+            path: &Fs::Path,
+            target: options::Target,
+        ) -> bool {
+            let importer = import_record.importer_source_index as usize;
+            let index = import_record.import_record_index as usize;
+            let Some(unreadable) = self.graph.ast.items_import_records()[importer].as_slice()
+                [index]
+                .unreadable_attributes()
+            else {
+                return false;
+            };
+            // Moved out so that the `&mut self` call does not alias a borrow into `graph`.
+            let source = core::mem::take(&mut self.graph.input_files.items_source_mut()[importer]);
+            let outcome = self.unreadable_import(&source, index as u32, unreadable, path, target);
+            self.graph.input_files.items_source_mut()[importer] = source;
+            match outcome {
+                UnreadableImport::Bind => {
+                    self.graph.ast.items_import_records_mut()[importer].as_mut_slice()[index]
+                        .clear_unreadable_attributes();
+                    false
+                }
+                UnreadableImport::Queue => false,
+                UnreadableImport::Skip => true,
+            }
+        }
+
+        #[cold]
+        fn unreadable_import(
+            &mut self,
+            importer: &bun_ast::Source,
+            import_record_index: u32,
+            unreadable: (bun_ast::import_record::UnreadableAttributes, bun_ast::Loc),
+            path: &Fs::Path,
+            target: options::Target,
+        ) -> UnreadableImport {
+            // A graph that is only scanned follows bound records, and a browser build has
+            // no runtime module behind a node polyfill.
+            if self.transpiler.options.ignore_module_resolution_errors || path.namespace == b"node"
+            {
+                return UnreadableImport::Bind;
+            }
+            let in_graph = self.path_to_source_index_map(target).get(path.text);
+            let awaits_on_load = match in_graph {
+                Some(source_index) => {
+                    let flags = self.graph.input_files.items_flags()[source_index as usize];
+                    // What the plugin returned is the module, whatever the attributes say.
+                    if flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN) {
+                        return UnreadableImport::Bind;
+                    }
+                    flags.contains(crate::Graph::InputFileFlags::IS_AWAITING_ON_LOAD)
+                }
+                // A server-side import of an HTML file binds to a manifest module made
+                // during resolution, not to the file a plugin answers for.
+                None => {
+                    let loaders = &self.transpiler_for_target(target).options.loaders;
+                    !(target.is_server_side() && path.loader(loaders) == Some(Loader::Html))
+                        && self
+                            .plugins_ref()
+                            .is_some_and(|plugins| plugins.has_any_matches(path, true))
+                }
+            };
+            if !awaits_on_load {
+                self.warn_import_left_to_runtime(importer, unreadable, target);
+                return UnreadableImport::Skip;
+            }
+            self.imports_awaiting_on_load
+                .get_or_put(path.text)
+                .expect("oom")
+                .value_ptr
+                .push(super::ImportAwaitingOnLoad {
+                    importer: importer.index.0,
+                    import_record_index,
+                    target,
+                });
+            if in_graph.is_some() {
+                UnreadableImport::Skip
+            } else {
+                UnreadableImport::Queue
+            }
+        }
+
+        /// An `onLoad` plugin answered for `source_index`. The `import()` records that
+        /// waited for the answer bind to the file when the plugin loaded it, and stay
+        /// runtime imports when it declined.
+        fn settle_imports_awaiting_on_load(
+            &mut self,
+            source_index: IndexInt,
+            is_loaded_by_plugin: bool,
+        ) {
+            let path_text = self.graph.input_files.items_source()[source_index as usize]
+                .path
+                .text;
+            let Some(awaiting) = self.imports_awaiting_on_load.fetch_swap_remove(path_text) else {
+                return;
+            };
+            for import in awaiting.value {
+                // In another graph the same path is another module.
+                if self.path_to_source_index_map(import.target).get(path_text) != Some(source_index)
+                {
+                    self.imports_awaiting_on_load
+                        .get_or_put(path_text)
+                        .expect("oom")
+                        .value_ptr
+                        .push(import);
+                    continue;
+                }
+                let importer = import.importer as usize;
+                let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                    [importer]
+                    .as_mut_slice()[import.import_record_index as usize];
+                if is_loaded_by_plugin {
+                    record.clear_unreadable_attributes();
+                    record.source_index = Index::init(source_index);
+                    self.schedule_barrel_imports_after_plugin_resolve(import.importer);
+                    continue;
+                }
+                let Some(unreadable) = record.unreadable_attributes() else {
+                    continue;
+                };
+                // `resolve_import_records` pointed a queued record at the target.
+                record.path = bun_paths::fs::Path::init(record.original_path);
+                let source =
+                    core::mem::take(&mut self.graph.input_files.items_source_mut()[importer]);
+                self.warn_import_left_to_runtime(&source, unreadable, import.target);
+                self.graph.input_files.items_source_mut()[importer] = source;
+            }
+        }
+
+        #[cold]
+        fn warn_import_left_to_runtime(
+            &mut self,
+            importer: &bun_ast::Source,
+            (reason, loc): (bun_ast::import_record::UnreadableAttributes, bun_ast::Loc),
+            target: options::Target,
+        ) {
+            let mut call_site = importer.path.text.to_vec();
+            call_site.extend_from_slice(&loc.start.to_ne_bytes());
+            if self
+                .imports_left_to_runtime
+                .get_or_put(&call_site)
+                .expect("oom")
+                .found_existing
+            {
+                return;
+            }
+            use bun_ast::import_record::UnreadableAttributes as Reason;
+            let reason = match reason {
+                Reason::OptionsNotObjectLiteral => "the second argument is not an object literal",
+                Reason::WithNotObjectLiteral => "the value of \"with\" is not an object literal",
+                Reason::TypeNotStringLiteral => "the value of \"type\" is not a string literal",
+                Reason::PropertyNotPlain => {
+                    "this property can change \"with\" or \"type\" when the call runs"
+                }
+            };
+            let range = bun_ast::Range { loc, len: 0 };
+            self.log_for_resolution_failures(importer.path.text, target.bake_graph())
+                .add_range_warning_fmt_with_note(
+                    Some(importer),
+                    range,
+                    format_args!("This import() expression will not be bundled because {reason}"),
+                    format_args!(
+                        "To bundle this import, write the attributes as an object literal in the call, such as import(path, {{ with: {{ type: \"json\" }} }}). As written, the call stays a runtime import: the file is not copied to the output directory or embedded by --compile. Mark the import as external to silence this warning."
+                    ),
+                    range,
+                );
+        }
+
         /// Resolve all unresolved import records for a module, or only `ctx.only_records`.
         /// Skips records that are already resolved (valid source_index), unused, or internal.
         /// Returns a resolve queue of new modules to schedule, plus any fatal error.
@@ -6802,6 +7064,15 @@ pub mod bv2_impl {
                     {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
+                        if self.leaves_import_to_runtime(
+                            source,
+                            i as u32,
+                            import_record,
+                            &path_primary,
+                            target,
+                        ) {
+                            continue;
+                        }
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
                             Fs::Path::init(path_primary.text)
                                 .loader(&transpiler.options.loaders)
@@ -7082,6 +7353,10 @@ pub mod bv2_impl {
                         resolve_result.primary_side_effects_data
                             != bun_ast::SideEffects::HasSideEffects,
                     );
+                    continue;
+                }
+
+                if self.leaves_import_to_runtime(source, i as u32, import_record, path, target) {
                     continue;
                 }
 
@@ -7466,6 +7741,14 @@ pub mod bv2_impl {
                     continue;
                 }
                 if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
+                    // `leaves_import_to_runtime` left the record as written, or `on_load`
+                    // decides: the text of its path is not a reason to bind it.
+                    if record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::UNREADABLE_ATTRIBUTES)
+                    {
+                        continue;
+                    }
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
                     {

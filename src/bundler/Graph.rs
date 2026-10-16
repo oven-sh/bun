@@ -152,6 +152,8 @@ bitflags::bitflags! {
         const IS_EXPORT_STAR_TARGET = 1 << 1;
         /// `source.contents` is what an `onLoad` plugin returned, not what is in the file.
         const IS_LOADED_BY_PLUGIN = 1 << 2;
+        /// An `onLoad` plugin has been asked for this file and has not answered.
+        const IS_AWAITING_ON_LOAD = 1 << 3;
     }
 }
 

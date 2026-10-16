@@ -70,6 +70,19 @@ fn is_npm_alias(version: &dependency::Version) -> bool {
     version.tag == VersionTag::Npm && version.npm().is_alias
 }
 
+/// The name that the rules for `dependency` are keyed by: the name it is declared under. Only an
+/// alias of a tag (`alias: npm:name@tag`) goes by the name of its package, as it always has.
+#[inline]
+fn rule_key(dependency: &Dependency, buf: &[u8]) -> PackageNameHash {
+    if dependency.version.tag == VersionTag::DistTag {
+        let name = dependency.version.dist_tag().name;
+        if !name.eql(dependency.name, buf, buf) {
+            return SemverBuilder::string_hash(name.slice(buf));
+        }
+    }
+    dependency.name_hash
+}
+
 /// How the range in a `name@<range>` key is compared with the range that a dependency declares.
 #[derive(Clone, Copy)]
 enum Selects {
@@ -212,70 +225,49 @@ struct ParseContext<'a, 'b> {
 }
 
 impl OverrideMap {
+    /// The rule for `dependency`, which is the dependency `dependency_id` as it is being resolved:
+    /// `enqueue_pinned` resolves another version than the one in the buffer. A rule goes by the name
+    /// that a dependency is declared under, not by the name that its package gives itself. A
+    /// workspaceOnly dependency has no rule.
+    ///
     /// Precedence: ranged parent > parent > none; within a tier a matching target range wins; ties go to the parent range text, then the target range text, that sorts first; then the flat map.
-    pub(crate) fn get(
+    #[inline]
+    pub(crate) fn rule_for(
         &self,
         lockfile: &Lockfile,
         dependency_id: DependencyID,
-        name_hash: PackageNameHash,
-    ) -> Option<dependency::Version> {
-        self.lookup(lockfile, dependency_id, name_hash)
-            .map(|rule| rule.version().clone())
-    }
-
-    pub(crate) fn lookup(
-        &self,
-        lockfile: &Lockfile,
-        dependency_id: DependencyID,
-        name_hash: PackageNameHash,
+        dependency: &Dependency,
     ) -> Option<OverrideRule<'_>> {
-        let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
-        self.lookup_declared(lockfile, dependency_id, name_hash, declared)
+        // Most projects have no rules: the resolver asks this for every dependency.
+        if self.is_empty() {
+            return None;
+        }
+        self.rule_selecting(lockfile, dependency_id, dependency, Selects::Overlapping)
     }
 
-    /// Like `lookup`, but a `name@<range>` key only matches a dependency that declares exactly that
-    /// range, as in yarn.
-    pub(crate) fn lookup_as_yarn(
+    /// Like `rule_for`, but a `name@<range>` key only matches a dependency that declares exactly
+    /// that range, as in yarn.
+    pub(crate) fn rule_for_as_yarn(
         &self,
         lockfile: &Lockfile,
         dependency_id: DependencyID,
-        name_hash: PackageNameHash,
+        dependency: &Dependency,
     ) -> Option<OverrideRule<'_>> {
-        let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
-        self.lookup_selecting(
-            lockfile,
-            dependency_id,
-            name_hash,
-            declared,
-            Selects::SameRange,
-        )
+        self.rule_selecting(lockfile, dependency_id, dependency, Selects::SameRange)
     }
 
-    /// `declared` is the version being resolved. `enqueue_pinned` resolves another one than the row's.
-    pub(crate) fn lookup_declared(
+    fn rule_selecting(
         &self,
         lockfile: &Lockfile,
         dependency_id: DependencyID,
-        name_hash: PackageNameHash,
-        declared: &dependency::Version,
-    ) -> Option<OverrideRule<'_>> {
-        self.lookup_selecting(
-            lockfile,
-            dependency_id,
-            name_hash,
-            declared,
-            Selects::Overlapping,
-        )
-    }
-
-    fn lookup_selecting(
-        &self,
-        lockfile: &Lockfile,
-        dependency_id: DependencyID,
-        name_hash: PackageNameHash,
-        declared: &dependency::Version,
+        dependency: &Dependency,
         selects: Selects,
     ) -> Option<OverrideRule<'_>> {
+        if dependency.behavior.is_workspace() {
+            return None;
+        }
+        let declared = &dependency.version;
+        let name_hash = rule_key(dependency, lockfile.buffers.string_bytes.as_slice());
         scoped_log!(OverrideMap, "looking up override for {:x}", name_hash);
         if !self.scoped.is_empty() && self.scoped_names.contains(&name_hash) {
             if let Some(rule) =

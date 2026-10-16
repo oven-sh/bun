@@ -2361,7 +2361,8 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
                 && !dependency.behavior.is_optional_peer()
                 && (package_id as usize) < resolutions.len()
                 && resolutions[package_id as usize].tag == ResolutionTag::Npm
-                && crate::dedupe::applied_override(lockfile, row as DependencyID, dependency)
+                && (lockfile.overrides)
+                    .rule_for(lockfile, row as DependencyID, dependency)
                     .is_some()
                 && crate::dedupe::effective_version(lockfile, row as DependencyID, dependency)
                     .is_some_and(|version| {

@@ -1,9 +1,10 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
-import { bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot } from "harness";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, githubTarball, nodeModulesPackages, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
+import { pathToFileURL } from "url";
 
 // Fixtures from ./registry/packages used below:
 //   no-deps        1.0.0, 1.0.1, 1.1.0 and 2.0.0 (latest), the package the overrides target
@@ -31,12 +32,12 @@ async function project(packageJson: Record<string, unknown>, files: Record<strin
 // Printed only by installs that had registry work to do; the bracketed task count is not what these tests check.
 const progressLine = /^Resolv(?:ing dependencies|ed, downloaded and extracted \[\d+\])\r?\n?/gm;
 
-async function bun(dir: string, ...args: string[]) {
+async function bunWith(env: Record<string, string>, dir: string, ...args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd: dir,
     // CI exports BUN_INSTALL_CACHE_DIR, which overrides the bunfig's per-test `cache`; concurrent tests sharing one cache race on Windows.
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"), ...env },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -48,6 +49,8 @@ async function bun(dir: string, ...args: string[]) {
     exitCode,
   };
 }
+
+const bun = (dir: string, ...args: string[]) => bunWith({}, dir, ...args);
 
 const lockfile = (dir: string) => file(join(dir, "bun.lock")).text();
 
@@ -877,4 +880,839 @@ describe("a bun.lock written by Bun 1.4", () => {
       await expectLockfileStable(dir, repaired);
     });
   });
+});
+
+// In most of these tests `b` is not a registry package. The project, or the tarball package `a`, declares it as a tarball
+// URL or as a git repository, and that specifier names `b@1.0.0`. A rule for `b` names a fork instead. Each fork is
+// 2.0.0: one keeps the name `b`, and one names itself `bee` in its own package.json.
+describe("a rule for a tarball or git dependency", () => {
+  const packages = {
+    original: { name: "b", version: "1.0.0" },
+    "fork-b": { name: "b", version: "2.0.0" },
+    "fork-bee": { name: "bee", version: "2.0.0" },
+    // A fork with a dependency of its own, for the rules that are nested under it.
+    "fork-bee-dep": { name: "bee", version: "2.0.0", dependencies: { "no-deps": "^1.0.0" } },
+    "fork-bee-script": { name: "bee", version: "2.0.0", scripts: { postinstall: "echo fork > ran.txt" } },
+    // What the specifier of `b` names when the package calls itself something else.
+    other: { name: "other", version: "1.0.0" },
+    // The `b` and the `a` of the registry that this server is for the tests that set `registry`.
+    "registry-b": { name: "b", version: "3.0.0", main: "package.json" },
+    "registry-a": { name: "a", version: "3.0.0", dependencies: { b: "^3.0.0" } },
+  };
+  type Id = keyof typeof packages;
+  const kinds = ["tarball", "git"] as const;
+  type Kind = (typeof kinds)[number];
+
+  const tarballs = new Map<string, Promise<Uint8Array>>();
+  const requests: string[] = [];
+  const gone = new Set<string>();
+  const failing = new Set<string>();
+  const commits = {} as Record<Id, string>;
+  let repos: ReturnType<typeof tempDir>;
+  let server: ReturnType<typeof Bun.serve>;
+  let tests = 0;
+
+  async function git(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: ["git", "-c", "commit.gpgsign=false", ...args],
+      cwd,
+      env: {
+        ...bunEnv,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_AUTHOR_NAME: "Test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "Test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${stderr}`);
+    return stdout.trim();
+  }
+
+  beforeAll(async () => {
+    repos = tempDir("override-git-", {});
+    await Promise.all(
+      (Object.keys(packages) as Id[]).map(async id => {
+        const repo = join(String(repos), id);
+        mkdirSync(repo);
+        writeFileSync(join(repo, "package.json"), JSON.stringify(packages[id]));
+        await git(repo, "init", "-q");
+        await git(repo, "add", "package.json");
+        await git(repo, "commit", "-q", "-m", id);
+        await git(repo, "tag", "v1");
+        commits[id] = await git(repo, "rev-parse", "HEAD");
+      }),
+    );
+    server = Bun.serve({
+      port: 0,
+      // `/<test>/<id>.tgz`, or `/repos/<test>/<id>/tarball/v1` for `github:<test>/<id>#v1`, or `/<test>/registry/<name>`
+      // for a manifest. `a-<kind>` is the package `a` that depends on the `b` of that test, and `a-peer-<kind>` has it
+      // as a peer.
+      async fetch(req) {
+        const { pathname, origin } = new URL(req.url);
+        const heal = /^\/(\w+)\/heal$/.exec(pathname);
+        if (heal) {
+          for (const path of failing) if (path.startsWith(`/${heal[1]}/`)) failing.delete(path);
+          return new Response("ok");
+        }
+        requests.push(pathname);
+        if (gone.has(pathname)) return new Response(null, { status: 404 });
+        if (failing.has(pathname)) return new Response("{}", { status: 500 });
+        const manifest = /^\/(\w+)\/registry\/(a|b)$/.exec(pathname);
+        if (manifest) {
+          const found = packages[`registry-${manifest[2] as "a" | "b"}`];
+          const dist = { tarball: `${origin}/${manifest[1]}/registry-${manifest[2]}.tgz` };
+          return Response.json({
+            name: found.name,
+            "dist-tags": { latest: found.version },
+            versions: { [found.version]: { ...found, dist } },
+          });
+        }
+        const github = /^\/repos\/(\w+)\/([\w-]+)\/tarball\/v1$/.exec(pathname);
+        const [, test, id] = github ?? /^\/(\w+)\/([\w-]+)\.tgz$/.exec(pathname) ?? ["", "", ""];
+        const dependent = /^a-(peer-)?(tarball|git)$/.exec(id);
+        const json =
+          id in packages
+            ? packages[id as Id]
+            : dependent && {
+                name: "a",
+                version: "1.0.0",
+                [dependent[1] ? "peerDependencies" : "dependencies"]: { b: at(test)[dependent[2] as Kind]("original") },
+              };
+        if (!json) return new Response(null, { status: 404 });
+        // One archive per URL: bun.lock pins its bytes.
+        if (!tarballs.has(pathname)) {
+          const root = github ? `${test}-${id}-v1` : "package";
+          tarballs.set(pathname, githubTarball(root, { "package.json": JSON.stringify(json) }));
+        }
+        return new Response(await tarballs.get(pathname));
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await server.stop(true);
+    repos[Symbol.dispose]();
+  });
+
+  /** The specifiers of the test `test`. Its URLs have a folder of their own, so `requested` counts its requests only. */
+  function at(test = `t${++tests}`) {
+    const origin = `http://localhost:${server.port}`;
+    const tarball = (id: string) => `${origin}/${test}/${id}.tgz`;
+    const paths = (id: string) => [`/${test}/${id}.tgz`, `/repos/${test}/${id}/tarball/v1`, `/${test}/registry/${id}`];
+    return {
+      tarball,
+      git: (id: string) => `git+${pathToFileURL(join(String(repos), id))}#v1`,
+      github: (id: string) => `github:${test}/${id}#v1`,
+      /** For `bunWith`: `a` and `b` are also registry packages, `registry-a` and `registry-b`. */
+      registry: { BUN_CONFIG_REGISTRY: `${origin}/${test}/registry/`, GITHUB_API_URL: origin },
+      requested: (id: string) => requests.filter(pathname => paths(id).includes(pathname)).length,
+      /** The server has `id` no more. */
+      remove: (id: string) => paths(id).forEach(path => gone.add(path)),
+      /** The server answers 500 for `id` until a request for `heal`. */
+      fail: (id: string) => paths(id).forEach(path => failing.add(path)),
+      heal: `${origin}/${test}/heal`,
+    };
+  }
+
+  /** `<name>@<version>` of the package in `folder`. */
+  function packageIn(folder: string) {
+    const path = join(folder, "package.json");
+    if (!existsSync(path)) return "nothing";
+    const { name, version } = JSON.parse(readFileSync(path, "utf8"));
+    return `${name}@${version}`;
+  }
+
+  /** `<name>@<version>` of the package in `node_modules/<key>`. */
+  const installed = (dir: string, key: string) => packageIn(join(dir, "node_modules", key));
+
+  /** `<name>@<version>` of the `b` that the package `a` loads, under either linker. */
+  function loadedByA(dir: string) {
+    const a = realpathSync(join(dir, "node_modules", "a"));
+    const nested = join(a, "node_modules", "b");
+    return packageIn(existsSync(nested) ? nested : join(a, "..", "b"));
+  }
+
+  /** What bun.lock has for `key`: `<name>@<resolution>`. */
+  async function locked(dir: string, key: string) {
+    const { packages } = Bun.JSONC.parse(await lockfile(dir)) as { packages: Record<string, [string]> };
+    return packages[key]?.[0];
+  }
+
+  /** The git repositories that the installs of `dir` cloned. */
+  const cloned = (dir: string) => {
+    const cache = join(dir, ".bun-cache");
+    return existsSync(cache) ? readdirSync(cache).filter(entry => entry.endsWith(".git")).length : 0;
+  };
+
+  /** How often the package that the rule replaces was fetched, and how many repositories were cloned. */
+  const fetched = (spec: ReturnType<typeof at>, dir: string) => ({
+    original: spec.requested("original"),
+    cloned: cloned(dir),
+  });
+
+  /** The next `bun install` resolves nothing and saves nothing. */
+  async function expectNextInstallChangesNothing(dir: string) {
+    const lock = await lockfile(dir);
+    const { stderr, exitCode } = await bun(dir, "install");
+    expect({ stderr, sameLock: (await lockfile(dir)) === lock, exitCode }).toEqual({
+      stderr: "",
+      sameLock: true,
+      exitCode: 0,
+    });
+  }
+
+  const forks = kinds.flatMap(to => (["b", "bee"] as const).map(named => ({ to, named })));
+  const cells = kinds.flatMap(from => forks.map(fork => ({ from, ...fork })));
+
+  describe.each(["the project", "the package a"])("%s declares b", declarer => {
+    test.concurrent.each(cells)(
+      "as a $from, and the rule names a $to that calls itself $named",
+      async ({ from, to, named }) => {
+        const spec = at();
+        const fork: Id = `fork-${named}`;
+        const dependencies =
+          declarer === "the project" ? { b: spec[from]("original") } : { a: spec.tarball(`a-${from}`) };
+        const dir = await project({ name: "foo", dependencies, overrides: { b: spec[to](fork) } });
+
+        const { stderr, exitCode } = await bun(dir, "install");
+
+        expect(stderr).toBe("Saved lockfile");
+        expect(installed(dir, "b")).toBe(`${named}@2.0.0`);
+        expect(await locked(dir, "b")).toBe(
+          `${named}@${to === "git" ? spec.git(fork).replace("#v1", `#${commits[fork]}`) : spec.tarball(fork)}`,
+        );
+        // The package that the rule replaces is not fetched.
+        expect(fetched(spec, dir)).toEqual({ original: 0, cloned: to === "git" ? 1 : 0 });
+        expect(exitCode).toBe(0);
+        if (declarer === "the project") await expectNextInstallChangesNothing(dir);
+      },
+    );
+  });
+
+  // `b` and `a` come from the registry here, as in most projects: `a@3.0.0` depends on `b@^3.0.0`.
+  describe.each(["the project", "the registry package a"])("%s declares b as a range", declarer => {
+    test.concurrent.each(["tarball", "git", "github"] as const)(
+      "and the rule names a %s that calls itself bee",
+      async to => {
+        const spec = at();
+        const dependencies = declarer === "the project" ? { b: "^3.0.0" } : { a: "3.0.0" };
+        const dir = await project({ name: "foo", dependencies, overrides: { b: spec[to]("fork-bee") } });
+
+        const { stderr, exitCode } = await bunWith(spec.registry, dir, "install");
+
+        expect(stderr).toBe("Saved lockfile");
+        expect(installed(dir, "b")).toBe("bee@2.0.0");
+        // Neither the manifest nor the tarball of the package that the rule replaces is asked for.
+        expect({ manifest: spec.requested("b"), tarball: spec.requested("registry-b") }).toEqual({
+          manifest: 0,
+          tarball: 0,
+        });
+        expect(exitCode).toBe(0);
+
+        // a machine that has bun.lock and nothing else
+        rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+        rmSync(join(dir, ".bun-cache"), { recursive: true, force: true });
+        const frozen = await bunWith(spec.registry, dir, "install", "--frozen-lockfile");
+        expect(frozen.stderr).toBe("");
+        expect(installed(dir, "b")).toBe("bee@2.0.0");
+        expect(frozen.exitCode).toBe(0);
+      },
+    );
+  });
+
+  describe.each(cells.filter(cell => cell.named === "bee"))(
+    "a $from dependency, and a rule that names a $to of another name",
+    ({ from, to }) => {
+      test.concurrent("the rule is added to the installed project", async () => {
+        const spec = at();
+        const dir = await project({ name: "foo", dependencies: { b: spec[from]("original") } });
+        expect((await bun(dir, "install")).stderr).toBe("Saved lockfile");
+        expect(installed(dir, "b")).toBe("b@1.0.0");
+
+        await editPackageJson(dir, pkg => (pkg.overrides = { b: spec[to]("fork-bee") }));
+        const { stderr, exitCode } = await bun(dir, "install");
+
+        expect(stderr).toBe("Saved lockfile");
+        expect(installed(dir, "b")).toBe("bee@2.0.0");
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("the rule is removed from the installed project", async () => {
+        const spec = at();
+        const dir = await project({
+          name: "foo",
+          dependencies: { b: spec[from]("original") },
+          overrides: { b: spec[to]("fork-bee") },
+        });
+        expect((await bun(dir, "install")).stderr).toBe("Saved lockfile");
+        expect(installed(dir, "b")).toBe("bee@2.0.0");
+
+        await editPackageJson(dir, pkg => delete pkg.overrides);
+        const { stderr, exitCode } = await bun(dir, "install");
+
+        expect(stderr).toBe("Saved lockfile");
+        expect(installed(dir, "b")).toBe("b@1.0.0");
+        expect(exitCode).toBe(0);
+      });
+    },
+  );
+
+  // #33192: the dependency and the rule name one tarball, and a registry package has a peer on the key.
+  test.concurrent("a tarball that calls itself other serves its key for the project and for a peer", async () => {
+    const spec = at();
+    const dir = await project({
+      name: "foo",
+      devDependencies: { "no-deps": spec.tarball("other"), "peer-deps-fixed": "1.0.0" },
+      overrides: { "no-deps": spec.tarball("other") },
+    });
+
+    const { stderr, exitCode } = await bun(dir, "install");
+
+    expect(stderr).toBe("Saved lockfile");
+    expect(nodeModulesPackages(dir)).toBe(
+      ["node_modules/no-deps/other@1.0.0", "node_modules/peer-deps-fixed/peer-deps-fixed@1.0.0"].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // `owner/repo#ref` is downloaded from `${GITHUB_API_URL}/repos/owner/repo/tarball/ref`.
+  test.concurrent("a github: dependency, and the rule names a github: repository that calls itself bee", async () => {
+    const spec = at();
+    const dir = await project({
+      name: "foo",
+      dependencies: { b: spec.github("original") },
+      overrides: { b: spec.github("fork-bee") },
+    });
+
+    const { stderr, exitCode } = await bunWith(spec.registry, dir, "install");
+
+    expect(stderr).toBe("Saved lockfile");
+    expect(installed(dir, "b")).toBe("bee@2.0.0");
+    expect({ original: spec.requested("original"), fork: spec.requested("fork-bee") }).toEqual({
+      original: 0,
+      fork: 1,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a version added as a rule for an installed tarball dependency replaces the tarball", async () => {
+    const tarball = `${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`;
+    const dir = await project({ name: "foo", dependencies: { "no-deps": tarball } });
+    expect((await bun(dir, "install")).stderr).toBe("Saved lockfile");
+    expect(installed(dir, "no-deps")).toBe("no-deps@1.0.0");
+
+    await editPackageJson(dir, pkg => (pkg.overrides = { "no-deps": "2.0.0" }));
+    const { stderr, exitCode } = await bun(dir, "install");
+
+    expect(stderr).toBe("Saved lockfile");
+    expect(installed(dir, "no-deps")).toBe("no-deps@2.0.0");
+    expect(await locked(dir, "no-deps")).toBe("no-deps@2.0.0");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each([
+    { spelling: "overrides { a: { b } }", rules: (fork: string) => ({ overrides: { a: { b: fork } } }) },
+    { spelling: 'overrides { "a>b" }', rules: (fork: string) => ({ overrides: { "a>b": fork } }) },
+    { spelling: "resolutions { b }", rules: (fork: string) => ({ resolutions: { b: fork } }) },
+    { spelling: 'resolutions { "a/b" }', rules: (fork: string) => ({ resolutions: { "a/b": fork } }) },
+  ])("$spelling reaches the tarball that the package a declares", async ({ rules }) => {
+    const spec = at();
+    const dir = await project({
+      name: "foo",
+      dependencies: { a: spec.tarball("a-tarball") },
+      ...rules(spec.tarball("fork-bee")),
+    });
+
+    const { stderr, exitCode } = await bun(dir, "install");
+
+    expect(stderr).toBe("Saved lockfile");
+    expect(installed(dir, "b")).toBe("bee@2.0.0");
+    expect(spec.requested("original")).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+
+  // The rule names the catalog, and the catalog names the fork.
+  describe.each([
+    { rule: "catalog:", catalogs: (fork: string) => ({ catalog: { b: fork } }) },
+    { rule: "catalog:forks", catalogs: (fork: string) => ({ catalogs: { forks: { b: fork } } }) },
+  ])("a rule that is $rule", ({ rule, catalogs }) => {
+    test.concurrent.each(kinds)("replaces a %s with the entry of the catalog", async kind => {
+      const spec = at();
+      const dir = await project({
+        name: "foo",
+        workspaces: { packages: [], ...catalogs(spec[kind]("fork-bee")) },
+        dependencies: { b: spec[kind]("original") },
+        overrides: { b: rule },
+      });
+
+      const { stderr, exitCode } = await bun(dir, "install");
+
+      expect(stderr).toBe("Saved lockfile");
+      expect(installed(dir, "b")).toBe("bee@2.0.0");
+      expect(fetched(spec, dir)).toEqual({ original: 0, cloned: kind === "git" ? 1 : 0 });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // `a` has `b` as a peer, and nothing else declares `b`.
+  test.concurrent.each(kinds)("a peer that is declared as a %s gets the fork", async kind => {
+    const spec = at();
+    const dir = await project({
+      name: "foo",
+      dependencies: { a: spec.tarball(`a-peer-${kind}`) },
+      overrides: { b: spec[kind]("fork-bee") },
+    });
+
+    const { stderr, exitCode } = await bun(dir, "install");
+
+    expect(stderr).toBe("Saved lockfile");
+    expect(loadedByA(dir)).toBe("bee@2.0.0");
+    expect(fetched(spec, dir)).toEqual({ original: 0, cloned: kind === "git" ? 1 : 0 });
+    expect(exitCode).toBe(0);
+
+    // from bun.lock alone
+    rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+    const again = await bun(dir, "install", "--frozen-lockfile");
+    expect(again.stderr).toBe("");
+    expect(loadedByA(dir)).toBe("bee@2.0.0");
+    expect(again.exitCode).toBe(0);
+  });
+
+  // The project has the `b` that the specifier names, and the rule is for the peer of `a` alone. The package that the
+  // rule names is the one that `a` loads, whether it keeps the name `b` or not.
+  describe.each(["hoisted", "isolated"])("with the %s linker, a rule for the peer of a", linker => {
+    test.concurrent.each(forks)("names a $to that calls itself $named", async ({ to, named }) => {
+      const spec = at();
+      const dir = await project({
+        name: "foo",
+        dependencies: { a: spec.tarball(`a-peer-${to}`), b: spec[to]("original") },
+        overrides: { a: { b: spec[to](`fork-${named}`) } },
+      });
+
+      const { stderr, exitCode } = await bun(dir, "install", `--linker=${linker}`);
+
+      expect(stderr).toBe("Saved lockfile");
+      expect({ project: installed(dir, "b"), a: loadedByA(dir) }).toEqual({
+        project: "b@1.0.0",
+        a: `${named}@2.0.0`,
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test.concurrent.each(kinds)("bun update and --force keep the fork of a %s, and read it again", async kind => {
+    const spec = at();
+    const dir = await project({
+      name: "foo",
+      dependencies: { b: spec[kind]("original") },
+      overrides: { b: spec[kind]("fork-bee") },
+    });
+    expect((await bun(dir, "install")).stderr).toBe("Saved lockfile");
+    const lock = await lockfile(dir);
+
+    for (const args of [["update"], ["install", "--force"]]) {
+      const { exitCode } = await bun(dir, ...args);
+      expect({ args, installed: installed(dir, "b"), lock: await lockfile(dir), exitCode }).toEqual({
+        args,
+        installed: "bee@2.0.0",
+        lock,
+        exitCode: 0,
+      });
+    }
+    expect(fetched(spec, dir)).toEqual({ original: 0, cloned: kind === "git" ? 1 : 0 });
+    // The install, the update and the forced install each asked for the tarball.
+    if (kind === "tarball") expect(spec.requested("fork-bee")).toBe(3);
+  });
+
+  // `bun update` reads what a rule names again, like what a dependency names. If that is gone, the update fails and
+  // changes nothing, or it leaves an optional dependency out.
+  test.concurrent.each([
+    { group: "dependencies", says: "error", installs: "bee@2.0.0", exits: 1 },
+    { group: "optionalDependencies", says: "warn", installs: "nothing", exits: 0 },
+  ])("bun update when the tarball that a rule for $group names is gone", async ({ group, says, installs, exits }) => {
+    const spec = at();
+    const dir = await project({
+      name: "foo",
+      [group]: { b: spec.tarball("original") },
+      overrides: { b: spec.tarball("fork-bee") },
+    });
+    expect((await bun(dir, "install")).stderr).toBe("Saved lockfile");
+    const lock = await lockfile(dir);
+    spec.remove("fork-bee");
+
+    const { stderr, exitCode } = await bun(dir, "update");
+
+    expect(stderr).toContain(`${says}: GET ${spec.tarball("fork-bee")} - 404`);
+    expect({ installed: installed(dir, "b"), sameLock: (await lockfile(dir)) === lock, exitCode }).toEqual({
+      installed: installs,
+      sameLock: exits === 1,
+      exitCode: exits,
+    });
+    expect(spec.requested("original")).toBe(0);
+  });
+
+  test.concurrent.each(kinds)("the isolated linker installs the fork of a %s from bun.lock alone", async kind => {
+    const spec = at();
+    const dir = await project({
+      name: "foo",
+      dependencies: { b: spec[kind]("original") },
+      overrides: { b: spec[kind]("fork-bee") },
+    });
+    expect((await bun(dir, "install", "--linker=isolated")).stderr).toBe("Saved lockfile");
+    expect(installed(dir, "b")).toBe("bee@2.0.0");
+    expect(fetched(spec, dir)).toEqual({ original: 0, cloned: kind === "git" ? 1 : 0 });
+
+    // a machine that has bun.lock and nothing else
+    rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+    rmSync(join(dir, ".bun-cache"), { recursive: true, force: true });
+    const { stderr, exitCode } = await bun(dir, "install", "--linker=isolated", "--frozen-lockfile");
+
+    expect(stderr).toBe("");
+    expect(installed(dir, "b")).toBe("bee@2.0.0");
+    expect(fetched(spec, dir)).toEqual({ original: 0, cloned: kind === "git" ? 1 : 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each(kinds)("a %s that cannot be fetched is not asked for", async kind => {
+    const spec = at();
+    const dir = await project({
+      name: "foo",
+      dependencies: { b: spec[kind]("gone") },
+      overrides: { b: spec[kind]("fork-bee") },
+    });
+
+    const { stderr, exitCode } = await bun(dir, "install");
+
+    expect(stderr).toBe("Saved lockfile");
+    expect(installed(dir, "b")).toBe("bee@2.0.0");
+    expect({ gone: spec.requested("gone"), cloned: cloned(dir) }).toEqual({ gone: 0, cloned: kind === "git" ? 1 : 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each(kinds)("the rule goes by the key of a %s, not by the name in its package.json", async kind => {
+    const spec = at();
+    const dir = await project({
+      name: "foo",
+      dependencies: { b: spec[kind]("other") },
+      overrides: { b: spec[kind]("fork-b") },
+    });
+
+    const { stderr, exitCode } = await bun(dir, "install");
+
+    expect(stderr).toBe("Saved lockfile");
+    expect(installed(dir, "b")).toBe("b@2.0.0");
+    expect(exitCode).toBe(0);
+  });
+
+  describe("a rule for the name that a package gives itself", () => {
+    const warning =
+      'warn: override for "b" does not replace "alias": an override replaces a dependency by the name it is declared under, not by the name in its package.json';
+
+    // `alias` is the key, and only the package.json of the package says `b`.
+    test.concurrent.each(kinds)("does not replace a %s that is declared under another key", async kind => {
+      const spec = at();
+      const dir = await project({
+        name: "foo",
+        dependencies: { alias: spec[kind]("original") },
+        overrides: { b: spec[kind]("fork-b") },
+      });
+
+      const { stderr, exitCode } = await bun(dir, "install");
+
+      expect(stderr.split("\n")).toEqual([warning, "Saved lockfile"]);
+      expect(installed(dir, "alias")).toBe("b@1.0.0");
+      expect(exitCode).toBe(0);
+      await expectNextInstallChangesNothing(dir);
+    });
+
+    // The warning is for a rule that would have replaced the dependency. These rules would not have.
+    test.concurrent.each(kinds)("says nothing about a %s that the rule is not for", async kind => {
+      const spec = at();
+      const fork = spec[kind]("fork-bee");
+      const silent = [
+        // `b` has its own rule, and the package that the rule names calls itself `bee`.
+        { dependencies: { b: spec[kind]("original") }, overrides: { b: fork, bee: "1.0.0" } },
+        // The rule for `b` is for the dependency of `a` alone.
+        {
+          dependencies: { alias: spec[kind]("original"), a: spec.tarball(`a-${kind}`) },
+          overrides: { a: { b: fork } },
+        },
+        // The rule names what `alias` declares.
+        { dependencies: { alias: spec[kind]("fork-b") }, overrides: { b: spec[kind]("fork-b") } },
+        { dependencies: { alias: spec[kind]("fork-b") }, overrides: { b: "$alias" } },
+      ];
+      const results = await Promise.all(
+        silent.map(async rules => {
+          const { stderr, exitCode } = await bun(await project({ name: "foo", ...rules }), "install");
+          return { rules, stderr, exitCode };
+        }),
+      );
+      expect(results).toEqual(silent.map(rules => ({ rules, stderr: "Saved lockfile", exitCode: 0 })));
+    });
+  });
+
+  // The parent of a nested rule is the package that is installed: it goes by the name in its own package.json.
+  test.concurrent.each(kinds)(
+    "a rule nested under a %s fork goes by the name that the fork gives itself",
+    async kind => {
+      const spec = at();
+      const fork = spec[kind]("fork-bee-dep");
+      const dependencies = { b: spec[kind]("original") };
+
+      const byKey = await project({ name: "foo", dependencies, overrides: { b: { ".": fork, "no-deps": "1.0.0" } } });
+      const byName = await project({ name: "foo", dependencies, overrides: { b: fork, bee: { "no-deps": "1.0.0" } } });
+      const results = [];
+      for (const dir of [byKey, byName]) {
+        const { stderr, exitCode } = await bun(dir, "install");
+        results.push({ stderr, exitCode, b: installed(dir, "b"), "no-deps": installed(dir, "no-deps") });
+      }
+
+      expect(results).toEqual([
+        { stderr: "Saved lockfile", exitCode: 0, b: "bee@2.0.0", "no-deps": "no-deps@1.1.0" },
+        { stderr: "Saved lockfile", exitCode: 0, b: "bee@2.0.0", "no-deps": "no-deps@1.0.0" },
+      ]);
+    },
+  );
+
+  // `bun add <specifier>` learns the key from the package that the specifier names. The rule for that key then applies,
+  // as it does when `bun install` reads the package.json that this command writes.
+  describe("bun add of a specifier without a name", () => {
+    test.concurrent.each(forks)(
+      "a $to, and the rule names a $to that calls itself $named",
+      async ({ to: kind, named }) => {
+        const spec = at();
+        const dir = await project({ name: "foo", overrides: { b: spec[kind](`fork-${named}`) } });
+
+        const { stderr, exitCode } = await bun(dir, "add", spec[kind]("original"));
+
+        expect(stderr).toBe("Saved lockfile");
+        expect((await file(join(dir, "package.json")).json()).dependencies).toEqual({ b: spec[kind]("original") });
+        expect(installed(dir, "b")).toBe(`${named}@2.0.0`);
+        expect(exitCode).toBe(0);
+        await expectNextInstallChangesNothing(dir);
+      },
+    );
+
+    test.concurrent.each([
+      { flag: "--dev", group: "devDependencies" },
+      { flag: "--optional", group: "optionalDependencies" },
+      { flag: "--peer", group: "peerDependencies" },
+    ])("$flag writes the key to $group", async ({ flag, group }) => {
+      const spec = at();
+      const dir = await project({ name: "foo", overrides: { b: spec.tarball("fork-bee") } });
+
+      const { stderr, exitCode } = await bun(dir, "add", flag, spec.tarball("original"));
+
+      expect(stderr).toBe("Saved lockfile");
+      expect((await file(join(dir, "package.json")).json())[group]).toEqual({ b: spec.tarball("original") });
+      expect(installed(dir, "b")).toBe("bee@2.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    // The folder and the file are the `b` that the specifier names.
+    test.concurrent.each([
+      { what: "a folder", specifier: "./b-folder" },
+      { what: "a tarball in the project", specifier: "./b.tgz" },
+    ])("$what", async ({ specifier }) => {
+      const spec = at();
+      const dir = await project(
+        { name: "foo", overrides: { b: spec.tarball("fork-bee") } },
+        { "b-folder/package.json": JSON.stringify(packages.original) },
+      );
+      await write(
+        join(dir, "b.tgz"),
+        await githubTarball("package", { "package.json": JSON.stringify(packages.original) }),
+      );
+
+      const { stderr, exitCode } = await bun(dir, "add", specifier);
+
+      expect(stderr).toBe("Saved lockfile");
+      expect((await file(join(dir, "package.json")).json()).dependencies).toEqual({ b: specifier });
+      expect(installed(dir, "b")).toBe("bee@2.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("two specifiers, and a rule for one of them", async () => {
+      const spec = at();
+      const dir = await project({ name: "foo", overrides: { b: spec.tarball("fork-bee") } });
+
+      const { stderr, exitCode } = await bun(dir, "add", spec.tarball("original"), spec.tarball("other"));
+
+      expect(stderr).toBe("Saved lockfile");
+      expect((await file(join(dir, "package.json")).json()).dependencies).toEqual({
+        b: spec.tarball("original"),
+        other: spec.tarball("other"),
+      });
+      expect({ b: installed(dir, "b"), other: installed(dir, "other") }).toEqual({
+        b: "bee@2.0.0",
+        other: "other@1.0.0",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a rule that names a version of the registry", async () => {
+      const spec = at();
+      const dir = await project({ name: "foo", overrides: { b: "3.0.0" } });
+
+      const { stderr, exitCode } = await bunWith(spec.registry, dir, "add", spec.tarball("original"));
+
+      expect(stderr).toBe("Saved lockfile");
+      expect((await file(join(dir, "package.json")).json()).dependencies).toEqual({ b: spec.tarball("original") });
+      expect(installed(dir, "b")).toBe("b@3.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    // `trustedDependencies` goes by the key too, as it does when `bun install` reads the package.json.
+    test.concurrent.each([
+      { trusted: "b", runs: true },
+      { trusted: "bee", runs: false },
+    ])(
+      "with $trusted trusted, the postinstall of a fork that calls itself bee runs: $runs",
+      async ({ trusted, runs }) => {
+        const spec = at();
+        const dir = await project({
+          name: "foo",
+          overrides: { b: spec.tarball("fork-bee-script") },
+          trustedDependencies: [trusted],
+        });
+
+        const { stderr, exitCode } = await bun(dir, "add", spec.tarball("original"));
+
+        expect(stderr).toBe("Saved lockfile");
+        expect({ b: installed(dir, "b"), ran: existsSync(join(dir, "node_modules", "b", "ran.txt")) }).toEqual({
+          b: "bee@2.0.0",
+          ran: runs,
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent("a rule that names a folder that is not there", async () => {
+      const spec = at();
+      const dir = await project({ name: "foo", overrides: { b: "file:./not-there" } });
+
+      const { stderr, exitCode } = await bun(dir, "add", spec.tarball("original"));
+
+      expect(stderr).toContain('error: package.json not found for "file:./not-there" dependency "b"');
+      expect(installed(dir, "b")).toBe("nothing");
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  describe("an import that installs its package", () => {
+    /** Runs `script` in a project without node_modules. `attempt(name)` is the version that `require(name)` finds. */
+    async function autoInstall(spec: ReturnType<typeof at>, packageJson: object, script: string) {
+      using dir = tempDir("override-autoinstall", {
+        "package.json": JSON.stringify(packageJson),
+        "index.js": `
+          const attempt = name => {
+            try { return require(name).version; } catch (e) { return e.code; }
+          };
+          // a failed lookup stands until the event loop has gone around
+          const turn = () => fetch(${JSON.stringify(spec.heal)});
+          ${script}`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+          // A 500 is tried again once: one lookup is then two requests.
+          BUN_CONFIG_HTTP_RETRY_COUNT: "1",
+          ...spec.registry,
+        },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { stdout: stdout.trim(), exitCode };
+    }
+    const declared = ["tarball", "git", "github"] as const;
+
+    // The rule sends `b` to the registry, so the lookup that fails is the manifest of `b`.
+    test.concurrent.each(declared)("asks again for the manifest that a rule for a %s needs", async kind => {
+      const spec = at();
+      spec.fail("b");
+
+      const { stdout, exitCode } = await autoInstall(
+        spec,
+        { name: "foo", dependencies: { b: spec[kind]("original") }, overrides: { b: "3.0.0" } },
+        `const results = [attempt("b")];
+         await turn(); // the registry answers from here on
+         results.push(attempt("b"));
+         console.log(JSON.stringify(results));`,
+      );
+
+      expect(stdout).toBe(JSON.stringify(["MODULE_NOT_FOUND", "3.0.0"]));
+      expect({ manifest: spec.requested("b"), original: spec.requested("original") }).toEqual({
+        manifest: 3,
+        original: 0,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // The `b` of the project is not the `b` of the registry: that it cannot be fetched says nothing about the manifest.
+    test.concurrent.each(declared)("a %s that cannot be fetched leaves the manifest of its name alone", async kind => {
+      const spec = at();
+
+      const { stdout, exitCode } = await autoInstall(
+        spec,
+        { name: "foo", dependencies: { b: spec[kind]("gone") } },
+        `const results = [attempt("b@3.0.0")];
+         await turn();
+         results.push(attempt("b"));
+         await turn();
+         results.push(attempt("b@9.9.9"));
+         console.log(JSON.stringify(results));`,
+      );
+
+      expect(stdout).toBe(JSON.stringify(["3.0.0", "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]));
+      expect(spec.requested("b")).toBe(1);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test.concurrent("a github: dependency that cannot be fetched is named by its key", async () => {
+    const dir = await project({ name: "foo", dependencies: { b: "github:o/r" } });
+
+    const { stderr, exitCode } = await bunWith({ GITHUB_API_URL: "ftp://127.0.0.1:1" }, dir, "install");
+
+    expect(stderr).toContain("note: error occurred while resolving b\n");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// `my-alias` asks for the package `no-deps`. A rule is for the name that a dependency is declared under, so the rule
+// for `no-deps` is not for an alias of a range of it. Only an alias of a tag goes by the name of its package.
+test.concurrent.each([
+  { alias: "npm:no-deps@^2.0.0", rule: { "no-deps": "1.0.0" }, installs: "no-deps@2.0.0" },
+  { alias: "npm:no-deps@latest", rule: { "no-deps": "1.0.0" }, installs: "no-deps@1.0.0" },
+  { alias: "npm:no-deps@latest", rule: { "my-alias": "npm:no-deps@1.0.0" }, installs: "no-deps@2.0.0" },
+])("with the rule $rule, the alias $alias installs $installs", async ({ alias, rule, installs }) => {
+  const dir = await project({ name: "foo", dependencies: { "my-alias": alias }, overrides: rule });
+
+  const { stderr, exitCode } = await bun(dir, "install");
+
+  expect(stderr).toBe("Saved lockfile");
+  expect(nodeModulesPackages(dir)).toBe(`node_modules/my-alias/${installs}`);
+  expect(exitCode).toBe(0);
+  await expectLockfileStable(dir, await lockfile(dir));
+});
+
+// The name that `bun add npm:<name>@<tag>` asks the registry for is the key of its rule before the dependency has one.
+test.concurrent("bun add npm:no-deps@latest gets the version that the rule for no-deps names", async () => {
+  const dir = await project({ name: "foo", overrides: { "no-deps": "1.0.0" } });
+
+  const { stderr, exitCode } = await bun(dir, "add", "npm:no-deps@latest");
+
+  expect(stderr).toBe("Saved lockfile");
+  expect(nodeModulesPackages(dir)).toBe("node_modules/no-deps/no-deps@1.0.0");
+  expect(exitCode).toBe(0);
 });

@@ -5,7 +5,7 @@ use bun_core::strings;
 use bun_semver as semver;
 
 use crate::dependency;
-use crate::lockfile::{DependencyIDSlice, DependencySlice};
+use crate::lockfile::{DependencyIDSlice, DependencySlice, QueuedRows};
 use crate::npm;
 use crate::resolution::Tag as ResolutionTag;
 use crate::{
@@ -71,22 +71,31 @@ impl PackageManager {
         self.options.scope_for_package_name(name)
     }
 
-    pub(crate) fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
-        // reshaped for borrowck — capture lengths before mutable borrows.
+    /// Binds the dependency to the package. A dependency that `bun add <specifier>` left without a
+    /// name takes the name of the package. Returns whether that gave it another name.
+    fn bind(&mut self, dependency_id: DependencyID, package_id: PackageID) -> bool {
         debug_assert!(
             (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
         );
         debug_assert!((package_id as usize) < self.lockfile.packages.len());
-        // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
         let buffers = &mut self.lockfile.buffers;
         buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
         let string_buf = buffers.string_bytes.as_slice();
         let dep = &mut buffers.dependencies.as_mut_slice()[dependency_id as usize];
-        if dep.name.is_empty()
-            || dep.name.slice(string_buf) == dep.version.literal.slice(string_buf)
+        if !dep.name.is_empty()
+            && dep.name.slice(string_buf) != dep.version.literal.slice(string_buf)
         {
-            dep.name = self.lockfile.packages.items_name()[package_id as usize];
-            dep.name_hash = self.lockfile.packages.items_name_hash()[package_id as usize];
+            return false;
+        }
+        let declared_as = dep.name_hash;
+        dep.name = self.lockfile.packages.items_name()[package_id as usize];
+        dep.name_hash = self.lockfile.packages.items_name_hash()[package_id as usize];
+        dep.name_hash != declared_as
+    }
+
+    pub(crate) fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
+        if self.bind(dependency_id, package_id) {
+            self.resolve_again_as_named(dependency_id);
         }
     }
 
@@ -95,25 +104,32 @@ impl PackageManager {
         dependency_id: DependencyID,
         package_id: PackageID,
     ) {
-        // reshaped for borrowck — capture lengths before mutable borrows.
-        debug_assert!(
-            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-        );
-        debug_assert!((package_id as usize) < self.lockfile.packages.len());
         debug_assert!(
             self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
                 == invalid_package_id
         );
-        let buffers = &mut self.lockfile.buffers;
-        buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
-        let string_buf = buffers.string_bytes.as_slice();
-        let dep = &mut buffers.dependencies.as_mut_slice()[dependency_id as usize];
-        if dep.name.is_empty()
-            || dep.name.slice(string_buf) == dep.version.literal.slice(string_buf)
+        self.bind(dependency_id, package_id);
+    }
+
+    /// `bun add <specifier>` has just named the dependency after the package that the specifier
+    /// points at. A rule for that name could not apply while the dependency had no name, so the
+    /// dependency is resolved once more.
+    #[cold]
+    fn resolve_again_as_named(&mut self, dependency_id: DependencyID) {
+        let lockfile = &mut *self.lockfile;
+        let row = &lockfile.buffers.dependencies[dependency_id as usize];
+        if (lockfile.overrides)
+            .rule_for(lockfile, dependency_id, row)
+            .is_none()
         {
-            dep.name = self.lockfile.packages.items_name()[package_id as usize];
-            dep.name_hash = self.lockfile.packages.items_name_hash()[package_id as usize];
+            return;
         }
+        lockfile.buffers.resolutions[dependency_id as usize] = invalid_package_id;
+        bun_core::handle_oom(lockfile.scratch.dependency_list_queue.push(QueuedRows {
+            rows: DependencySlice::new(dependency_id, 1),
+            install_peer: false,
+            from_command: true,
+        }));
     }
 
     pub(crate) fn verify_resolutions(&mut self, log_level: LogLevel) {

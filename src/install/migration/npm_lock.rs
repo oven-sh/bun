@@ -723,7 +723,6 @@ impl<'a> Migrator<'a> {
             }
         }
         repo.resolved = repo.committish;
-        repo.package_name = name_string;
 
         Ok(Resolution::init(if is_github {
             ResTagged::Github(repo)

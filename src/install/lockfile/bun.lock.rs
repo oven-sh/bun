@@ -3086,7 +3086,7 @@ fn version_based_peer_range<'a>(
         return None;
     }
     let range = catalogs.resolve_range(string_buf, dep);
-    let name_hash = peer_candidate_name_hash(dep, range, string_buf);
+    let name_hash = peer_candidate_name_hash(dep, range, string_buf)?;
 
     // The fresh resolver rewrites the name and range through
     // `lockfile.overrides` (and any catalog entry an override points at)
@@ -3110,21 +3110,22 @@ fn version_based_peer_range<'a>(
     Some((range, name_hash))
 }
 
-/// `package_index` is keyed by real package names; for an alias, `range` carries it.
+/// `package_index` is keyed by real package names; for an alias, `range` carries it. A git, GitHub
+/// or tarball range carries no name, so the scan has no candidates for it.
 pub(crate) fn peer_candidate_name_hash(
     dep: &Dependency,
     range: &DependencyVersion,
     string_buf: &[u8],
-) -> PackageNameHash {
+) -> Option<PackageNameHash> {
     let name = match range.tag {
         DependencyVersionTag::Npm => range.npm().name,
         DependencyVersionTag::DistTag => range.dist_tag().name,
-        DependencyVersionTag::Git => range.git().package_name,
-        DependencyVersionTag::Github => range.github().package_name,
-        DependencyVersionTag::Tarball => range.tarball().package_name,
-        _ => return dep.name_hash,
+        DependencyVersionTag::Git
+        | DependencyVersionTag::Github
+        | DependencyVersionTag::Tarball => return None,
+        _ => return Some(dep.name_hash),
     };
-    StringBuilder::string_hash(name.slice(string_buf))
+    Some(StringBuilder::string_hash(name.slice(string_buf)))
 }
 
 /// The scan itself; the yarn.lock migration also binds `*` and overridden peers with it.

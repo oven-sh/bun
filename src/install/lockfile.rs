@@ -1038,7 +1038,8 @@ impl Lockfile {
         (self.buffers.resolutions.iter().enumerate()).any(|(row, &target)| {
             let dependency = &self.buffers.dependencies[row];
             target == id
-                && crate::dedupe::applied_override(self, row as DependencyID, dependency)
+                && (self.overrides)
+                    .rule_for(self, row as DependencyID, dependency)
                     .map(|rule| rule.version())
                     .filter(|version| version.tag == dependency::version::Tag::Folder)
                     .and_then(|version| join_top_level_dir(&[version.folder().slice(buf)]))
@@ -1144,7 +1145,22 @@ impl Lockfile {
 
     pub(crate) fn is_overridden_dependency(&self, id: DependencyID) -> bool {
         let dependency = &self.buffers.dependencies[id as usize];
-        self.overrides.get(self, id, dependency.name_hash).is_some()
+        self.overrides.rule_for(self, id, dependency).is_some()
+    }
+
+    /// Whether the package `other` serves a peer for which a rule chose the package `chosen`.
+    /// A registry package or a workspace goes by its name: a package of that name serves the
+    /// peer, as for a peer without a rule. A git, GitHub, tarball or folder package is the one
+    /// that its specifier points at, whatever name it gives itself: no other package serves it.
+    pub(crate) fn serves_overridden_peer(&self, chosen: PackageID, other: PackageID) -> bool {
+        if chosen == other {
+            return true;
+        }
+        let name_hashes = self.packages.items_name_hash();
+        matches!(
+            self.packages.items_resolution()[chosen as usize].tag,
+            ResolutionTag::Npm | ResolutionTag::Workspace
+        ) && name_hashes[chosen as usize] == name_hashes[other as usize]
     }
 
     /// Returns the package id of the workspace the install is taking place in.
@@ -1217,6 +1233,7 @@ impl Lockfile {
                         update.version_buf = string_buf_ptr;
                         update.version = dep.version.clone();
                         update.package_id = package_id;
+                        update.name_in_lockfile = dep.name;
 
                         continue 'request_updated;
                     }

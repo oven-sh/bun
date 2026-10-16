@@ -1881,8 +1881,7 @@ impl Tree {
 
             if dependency.behavior.is_peer() {
                 // A rule chose this peer's package: an alias of another package does not serve it.
-                let pkg_name_hashes = builder.lockfile().packages.items_name_hash();
-                if pkg_name_hashes[res_id as usize] != pkg_name_hashes[package_id as usize]
+                if !(builder.lockfile()).serves_overridden_peer(package_id, res_id)
                     && builder.lockfile().is_overridden_dependency(input_dep_id)
                 {
                     return HoistDependencyResult::DependencyLoop; // 3

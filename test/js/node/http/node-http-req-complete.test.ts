@@ -631,11 +631,18 @@ describe("an Upgrade request with a body", { skip: Number(process.versions.node.
   // and 'upgrade'. A request that already flows ends behind the listener.
   const ticksFirst = ["shouldUpgradeCallback", "tick of shouldUpgradeCallback"];
   const listenerFirst = ["shouldUpgradeCallback", "upgrade, complete: false", "tick of shouldUpgradeCallback"];
-  for (const [name, request, expected] of [
+  for (const [name, request, expected, readInData] of [
     [
       "a body with the head",
       fixedLength.head + fixedLength.body,
       [...ticksFirst, "data hello", "upgrade, complete: true", "end", "tick of upgrade"],
+    ],
+    // The read() finds the body complete. The request still ends behind the listener.
+    [
+      "a body with the head and a read() inside its 'data'",
+      fixedLength.head + fixedLength.body,
+      [...ticksFirst, "data hello", "upgrade, complete: true", "end", "tick of upgrade"],
+      true,
     ],
     ["a Content-Length head alone", fixedLength.head, [...listenerFirst, "tick of upgrade"]],
     ["a chunked head alone", requests.chunked.head, [...listenerFirst, "tick of upgrade"]],
@@ -655,7 +662,10 @@ describe("an Upgrade request with a body", { skip: Number(process.versions.node.
           shouldUpgradeCallback(req: http.IncomingMessage) {
             order.push("shouldUpgradeCallback");
             process.nextTick(() => order.push("tick of shouldUpgradeCallback"));
-            req.on("data", chunk => order.push(`data ${chunk}`));
+            req.on("data", chunk => {
+              order.push(`data ${chunk}`);
+              if (readInData) req.read();
+            });
             req.on("end", () => order.push("end"));
             return true;
           },

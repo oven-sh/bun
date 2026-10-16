@@ -1506,10 +1506,10 @@ function parkUpgrade(server, socket, socketHandle, req, handle) {
   return promise;
 }
 
-// No EOF tick for the last chunk (it would end a flowing request before the listener): handOffParkedUpgrade() completes the request.
+// No EOF tick for the last chunk, or for a read() inside its 'data' (it would end a flowing request before the listener): handOffParkedUpgrade() completes the request.
 function onDataParkedUpgrade(this: import("node:http").IncomingMessage, chunk, isLast, aborted) {
-  onDataIncomingMessage.$call(this, chunk, false, aborted);
   if (isLast && aborted === NodeHTTPResponseAbortEvent.none) this[eofInProgress] = true;
+  onDataIncomingMessage.$call(this, chunk, false, aborted);
 }
 
 // head: what follows the body in the read. complete: the body ended in it.

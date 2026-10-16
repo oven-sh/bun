@@ -1563,6 +1563,38 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       wss.close();
     });
 
+    // uWS parses no more of the read once the socket is a WebSocket. The 'upgrade' event does not wait for it.
+    it(`emits 'upgrade' at once when a 'data' listener of the request upgrades first, ${framing} body`, async () => {
+      const events: string[] = [];
+      const upgraded = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      const wss = new WebSocketServer({ noServer: true });
+      const server = createServer({
+        shouldUpgradeCallback(req) {
+          req.once("data", () => {
+            wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => {
+              events.push("open");
+              ws.on("close", () => {
+                events.push("close");
+                closed.resolve();
+              });
+              upgraded.promise.then(() => ws.close());
+            });
+          });
+          return true;
+        },
+      });
+      server.on("upgrade", () => {
+        events.push("upgrade");
+        upgraded.resolve();
+      });
+      const head = upgradeRequest().replace("\r\n\r\n", `\r\n${header}\r\n\r\n`);
+      await using upgrade = await receiveUpgrade(head + body, server);
+      await closed.promise;
+      expect(events).toEqual(["open", "upgrade", "close"]);
+      wss.close();
+    });
+
     it(`close() in the 'upgrade' event of a request with a ${framing} body ends the connection`, async () => {
       const server = createServer();
       const wss = new WebSocketServer({ noServer: true });

@@ -782,6 +782,12 @@ void JSNodeHTTPServerSocket::onUpgraded(us_socket_t* adopted)
     socket = adopted;
     upgraded = true;
     releaseTunnelReadsForUpgrade();
+    // uWS parses no more of the read for a WebSocket: the callback of notifyWhenReadParsed() runs behind this call.
+    if (functionToCallOnReadParsed) {
+        if (auto* context = static_cast<Zig::GlobalObject*>(globalObject())->scriptExecutionContext()) {
+            context->postTask([self = this](ScriptExecutionContext&) { self->onReadParsed({}, false); });
+        }
+    }
 
     // The HTTP connection is gone for the responses that did not upgrade it. They stay queued: the close still tells them.
     if (auto* res = currentResponse(); res != nullptr && res->m_ctx != nullptr) {

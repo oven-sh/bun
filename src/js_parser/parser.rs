@@ -1073,8 +1073,18 @@ pub(crate) enum CalleeChain {
     None,
     /// The callee itself, or reached from it through `.` only: `a.b` in `a.b.c()`.
     Dots,
-    /// Reached through a `[]`: `a.b` in `a.b[c]()`. `--drop` does not follow it.
-    Index,
+    /// Reached through a `[]`, or the operand that a folded `?:`, `||`, `&&`, `??` or `,` leaves as the callee. `--drop` does not follow it.
+    Indirect,
+}
+
+impl CalleeChain {
+    #[inline]
+    pub(crate) const fn indirect(self) -> Self {
+        match self {
+            Self::None => Self::None,
+            Self::Dots | Self::Indirect => Self::Indirect,
+        }
+    }
 }
 
 /// A node in a call's callee asks that call to become `undefined`. Outside a callee nothing owns the request, so the next unrelated call would take it.

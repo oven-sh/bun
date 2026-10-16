@@ -1084,6 +1084,8 @@ describe("bundler", () => {
           table[import.meta.hot.accept]();
           const fallback = () => console.log("called fallback");
           (import.meta.hot ? import.meta.hot.accept : fallback)();
+          (true ? fallback : import.meta.hot.accept)();
+          (fallback || import.meta.hot.accept).call(null);
           new Date(import.meta.hot.accept);
           console.log("after new");
           import.meta.hot.accept(() => {
@@ -1108,6 +1110,8 @@ describe("bundler", () => {
           "after function",
           "after dead branch",
           "called table[undefined]",
+          "called fallback",
+          "called fallback",
           "called fallback",
           "after new",
           "after callback that reads a method",
@@ -1135,6 +1139,12 @@ describe("bundler", () => {
           import.meta.hot.accept?.(fail);
           import.meta.hot.on[fail()]();
           console.log(import.meta.hot.accept.bind(null), import.meta.hot.on.toString());
+          // A conditional or logical expression that folds to the method is the method.
+          (true ? import.meta.hot.accept : fail)(fail);
+          (false ? fail : import.meta.hot.accept).call(null, fail);
+          (null ?? import.meta.hot.dispose)(fail);
+          (false || import.meta.hot.on)(fail);
+          (1 && import.meta.hot.off)(fail);
           console.log("after calls");
         `,
       },
@@ -1148,6 +1158,25 @@ describe("bundler", () => {
       },
     });
   }
+  // `(0, f)(x)` folds to `f(x)` only with minify.syntax. Without it the call on `(0, undefined)` stays, as before.
+  itBundled("minify/ImportMetaHotCommaCalleeMinifySyntax", {
+    files: {
+      "/entry.ts": `
+        const fail = () => console.log("FAIL");
+        (0, import.meta.hot.accept)(fail);
+        (0, import.meta.hot.dispose).call(null, fail);
+        console.log("after calls");
+      `,
+    },
+    minifySyntax: true,
+    outfile: "/out.js",
+    run: {
+      stdout: "after calls",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("import.meta.hot");
+    },
+  });
   itBundled("minify/ProductionMode", {
     files: {
       "/entry.jsx": `

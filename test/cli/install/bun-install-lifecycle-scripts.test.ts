@@ -3755,6 +3755,32 @@ describe.concurrent("a dependency that Bun names after its own package gets no t
     }
   });
 
+  test("bun add --filter <member> --trust <tarball URL> runs the scripts", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      workspace(packageDir, "a"),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          trustedDependencies: ["electron"],
+        }),
+      ),
+    ]);
+
+    const { err, exitCode } = await run(ctx, ["add", "--filter", "a", "--trust", electronUrl()]);
+
+    expect(err).not.toContain("error:");
+    expect(await Promise.all([ranPreinstall(packageDir), ranPreinstall(member(packageDir, "a"))])).toContain(true);
+    expect((await file(join(member(packageDir, "a"), "package.json")).json()).dependencies).toEqual({
+      electron: electronUrl(),
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("a name that is not in trustedDependencies is added with its scripts blocked, until a person lists it", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson } = ctx;

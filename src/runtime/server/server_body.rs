@@ -1535,10 +1535,6 @@ where
 
         let seconds = arguments[1];
 
-        if self.config.address.is_unix() {
-            return Ok(JSValue::NULL);
-        }
-
         if !seconds.is_number() {
             return Err(self
                 .global()

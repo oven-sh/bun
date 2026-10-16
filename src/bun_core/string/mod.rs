@@ -2347,10 +2347,6 @@ impl<'a> PrefixedPath<'a> {
         self.prefix.len() + self.separator.len() + self.path.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     pub fn to_boxed(&self) -> Box<[u8]> {
         strings::concat(&self.parts())
     }

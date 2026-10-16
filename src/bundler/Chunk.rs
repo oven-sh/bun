@@ -27,7 +27,8 @@ use crate::LinkerContext;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
-    AdditionalFile, CompileResult, LinkerGraph, PartRange, PathTemplate, cheap_prefix_normalizer,
+    AdditionalFile, CompileResult, LinkerGraph, PartRange, PathTemplate, PrefixedPath,
+    cheap_prefix_normalizer,
 };
 
 use crate::IndexInt;
@@ -508,6 +509,34 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
             unreachable!("asset additional_files entry must be .output_file")
         }
     }
+}
+
+/// Where a chunk's linked source map is: under the public path, or beside the chunk by its file name.
+pub(crate) fn linked_source_map_url<'a>(
+    public_path: &'a [u8],
+    map_rel_path: &'a [u8],
+) -> PrefixedPath<'a> {
+    if public_path.is_empty() {
+        PrefixedPath {
+            prefix: b"",
+            separator: b"",
+            path: bun_paths::basename(map_rel_path),
+        }
+    } else {
+        cheap_prefix_normalizer(public_path, map_rel_path)
+    }
+}
+
+/// Ends `code` with the `//# sourceMappingURL=` line for `url`.
+pub(crate) fn append_source_mapping_url(code: &mut Box<[u8]>, url: PrefixedPath<'_>) {
+    *code = strings::concat(&[
+        &**code,
+        b"//# sourceMappingURL=",
+        url.prefix,
+        url.separator,
+        url.path,
+        b"\n",
+    ]);
 }
 
 impl IntermediateOutput {

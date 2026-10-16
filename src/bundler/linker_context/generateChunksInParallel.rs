@@ -14,10 +14,10 @@ use crate::BundleV2;
 use crate::Chunk;
 use crate::Index;
 use crate::analyze_transpiled_module;
+use crate::cheap_prefix_normalizer;
 use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
 use crate::options;
 use crate::options::Loader;
-use crate::{PrefixedPath, cheap_prefix_normalizer};
 
 use crate::LinkerContext;
 use crate::linker_context::generate_compile_result_for_css_chunk::generate_compile_result_for_css_chunk;
@@ -810,14 +810,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             )
                         };
 
-                        buffer = strings::concat(&[
-                            &buffer,
-                            b"//# sourceMappingURL=",
-                            url.prefix,
-                            url.separator,
-                            url.path,
-                            b"\n",
-                        ]);
+                        crate::chunk::append_source_mapping_url(&mut buffer, url);
                     }
 
                     standalone_sourcemaps[ci] = Some(output_source_map);
@@ -1020,24 +1013,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     source_map_final_rel_path.extend_from_slice(b".map");
 
                     if tag == SourceMapOption::Linked {
-                        let url = if public_path.len() > 0 {
-                            cheap_prefix_normalizer(public_path, &source_map_final_rel_path)
-                        } else {
-                            PrefixedPath {
-                                prefix: b"",
-                                separator: b"",
-                                path: path::basename(&source_map_final_rel_path),
-                            }
-                        };
-
-                        code_result.buffer = strings::concat(&[
-                            &code_result.buffer,
-                            b"//# sourceMappingURL=",
-                            url.prefix,
-                            url.separator,
-                            url.path,
-                            b"\n",
-                        ]);
+                        crate::chunk::append_source_mapping_url(
+                            &mut code_result.buffer,
+                            crate::chunk::linked_source_map_url(
+                                public_path,
+                                &source_map_final_rel_path,
+                            ),
+                        );
                     }
 
                     sourcemap_output_file =

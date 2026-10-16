@@ -6771,7 +6771,10 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    WTF::String source = WTF::String::fromUTF8(std::span { sourcePtr, sourceLen });
+    // WTF::String::fromUTF8 returns a null string for ill-formed UTF-8, and a null source evaluates to nothing.
+    WTF::String source = sourceLen > 0
+        ? Zig::convertUTF8ToString(std::span { sourcePtr, sourceLen })
+        : WTF::emptyString();
     WTF::String filename = filenameLen > 0
         ? WTF::String::fromUTF8(std::span { filenamePtr, filenameLen })
         : "[repl]"_s;

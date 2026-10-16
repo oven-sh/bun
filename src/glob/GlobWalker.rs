@@ -2339,9 +2339,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             width = u32::from(strings::wtf8_byte_sequence_length(c));
 
             let is_separator = bun_core::path_sep::is_sep_native(c);
-            // A separator or a `**` inside a group or a class ends no component: the tokens of the matcher say where the segments are.
+            // A separator or a `**` inside a group, in a class or after a `\` ends no component: the tokens of the matcher say where the segments are.
             if (is_separator || (c == b'*' && pattern.get(i as usize + 1) == Some(&b'*')))
-                && brackets.may_be_open()
+                && brackets.may_be_open(i)
             {
                 let (tail, rewritten) = Self::build_components_from_tokens(
                     pattern_components,
@@ -2478,7 +2478,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     }
 }
 
-/// What `{`, `(` and `[` have opened before a byte of a pattern, as far as one look at each byte tells. It can say open when nothing is, and never the reverse.
+/// What `{`, `(`, `[` and `\` have opened before a byte of a pattern, as far as one look at each byte tells. It can say open when nothing is, and never the reverse.
 #[derive(Default)]
 struct Brackets {
     /// One bit for each open group, the innermost lowest: 1 for `(`.
@@ -2495,9 +2495,10 @@ struct Brackets {
 }
 
 impl Brackets {
+    /// Returns true if the byte at `at` may be in a group or in a class, or is escaped.
     #[inline(always)]
-    fn may_be_open(&self) -> bool {
-        self.depth != 0 || self.class_from != 0 || self.is_unsure
+    fn may_be_open(&self, at: u32) -> bool {
+        self.depth != 0 || self.class_from != 0 || self.is_unsure || at < self.escaped_until
     }
 
     /// `c`, the byte at `at`, is one of `\`, `[`, `]`, `{`, `}`, `(`, `)`.

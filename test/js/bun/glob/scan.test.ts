@@ -1444,6 +1444,15 @@ describe("a group that crosses a path separator", () => {
     expect(scan("{a\\/b,c}/d", String(dir))).toEqual(["c/d"]);
   });
 
+  test.skipIf(isWindows)("a class or an escape with a separator is one name", () => {
+    // These are the paths that a cut at each `/` of the patterns names. match() accepts neither.
+    using dir = tree("glob-scan-group-class", ["a[/]b/d", "a\\/b/d"]);
+    expect(scan("a[/]b/d", String(dir))).toEqual([]);
+    expect(scan("a\\/b/d", String(dir))).toEqual([]);
+    expect(new Glob("a[/]b/d").match("a[/]b/d")).toBe(false);
+    expect(new Glob("a\\/b/d").match("a\\/b/d")).toBe(false);
+  });
+
   test("two alternatives that are the same give each path once", () => {
     using dir = tree("glob-scan-group-separator", files);
     expect([...new Glob("{src/a,src/a}/index.ts").scanSync({ cwd: String(dir) })]).toHaveLength(1);

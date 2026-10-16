@@ -272,4 +272,33 @@ describe("http3 response header field validation", () => {
     expect(delivered?.headers.get("te") ?? null).toBeNull();
     expect(failure).toBeInstanceOf(Error);
   });
+
+  // MAX_RESPONSE_HEADERS in src/http/lib.rs is the field-count limit of every protocol.
+  test("accepts 1000 response header fields and rejects 1001 with ResponseHeadersTooLarge", async () => {
+    const makeCookies = (count: number) => Array.from({ length: count }, (_, i) => `c${i}=v${i}`);
+    using upstream = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch(req) {
+        const count = Number(new URL(req.url).searchParams.get("cookies"));
+        return new Response("ok", { headers: makeCookies(count).map(cookie => ["set-cookie", cookie]) });
+      },
+    });
+    const outcomeOf = (cookieCount: number) =>
+      fetch(`https://127.0.0.1:${upstream.port}/?cookies=${cookieCount}`, h3).then(
+        r => ({ status: r.status, fields: [...r.headers].length, cookies: r.headers.getSetCookie() }),
+        e => e.code,
+      );
+
+    // The server adds fields of its own (content-length, content-type, date).
+    const own = await outcomeOf(0);
+    expect(own).toEqual({ status: 200, fields: expect.any(Number), cookies: [] });
+    const ownFields = (own as { fields: number }).fields;
+
+    const cookies = makeCookies(1000 - ownFields);
+    expect(await outcomeOf(cookies.length)).toEqual({ status: 200, fields: 1000, cookies });
+    expect(await outcomeOf(cookies.length + 1)).toBe("ResponseHeadersTooLarge");
+  });
 });

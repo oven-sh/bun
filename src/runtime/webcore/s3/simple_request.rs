@@ -658,6 +658,7 @@ impl Drop for S3HttpSimpleTask {
 }
 
 /// A request that failed and waits to be sent again. Only a request that waits allocates one.
+/// Nothing of it is on another thread, so it holds no ticket: its context stops it.
 pub(crate) struct Wait {
     pub(crate) timer: EventLoopTimer,
     /// The context of the request ends the wait when it stops.

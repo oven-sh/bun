@@ -79,9 +79,7 @@ pub trait Accessor {
     /// symlinked directory is reported as `Directory`, never `SymLink`), so the
     /// Directory descent arm must run the followed-link ancestor check itself.
     const ENTRY_KIND_FOLLOWS_SYMLINKS: bool = true;
-    /// Continue the walk without a directory or a symlink that a listing reported and that
-    /// is gone when the walk opens it. For `SyscallAccessor`, where another process can
-    /// remove an entry in between.
+    /// Continue the walk without a listed directory or symlink that is gone when the walk opens it.
     const SKIP_GONE_ENTRIES: bool = false;
     type Handle: AccessorHandle;
     type DirIter: AccessorDirIter<Handle = Self::Handle>;
@@ -996,9 +994,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 }
                 IterState::Directory(dir) => {
                     let entry = match dir.iter.next() {
-                        // A listing reported this directory, and it was removed after the
-                        // walk opened it: Linux fails the read with ENOENT. libc's readdir
-                        // reports the end of the directory for it.
+                        // Removed after its open. libc's readdir also takes this ENOENT as the end.
                         Err(err)
                             if A::SKIP_GONE_ENTRIES
                                 && !dir.is_root
@@ -1521,8 +1517,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         }
     }
 
-    /// The directory a walk starts in: `cwd`, or the leading plain names of an absolute
-    /// pattern.
+    /// The directory a walk starts in: `cwd`, or the leading plain names of an absolute pattern.
     fn start_path(&self) -> &[u8] {
         if !self.is_pattern_absolute() {
             return &self.cwd;
@@ -1537,9 +1532,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         }
     }
 
-    /// The kernel resolves a `..` through a symlink, and the walker joins it as text. So
-    /// with one in the pattern, or in the `cwd` of an `absolute` walk, a path that the
-    /// walk queued can be wrong.
+    /// With a `..`, a queued path can be wrong: the kernel resolves it through a symlink, the walker as text.
     fn has_dot_dot(&self) -> bool {
         self.pattern_components
             .iter()
@@ -1547,10 +1540,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             || (self.absolute && strings::split_any(&self.cwd, b"/\\").any(|name| name == b".."))
     }
 
-    /// The open of `dir_path`, which a listing reported as a directory, failed with `err`.
-    /// With ENOENT or ENOTDIR, a stat through `cwd_fd` says what is there now. `None` when
-    /// it is no directory: another process removed it, or replaced it with a file. When a
-    /// directory is there, the same open runs once more. If that fails too, the error stays.
+    /// `None` when a stat through `cwd_fd` finds no directory at the listed `dir_path`. One that is there is opened once more.
     #[cold]
     #[inline(never)]
     fn open_listed_again(
@@ -1577,13 +1567,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Ok(Err(self.handle_sys_err_with_path(err, dir_path)))
     }
 
-    /// Whether `path`, which a listing reported as a symlink, is gone: its open failed with
-    /// `err`, and an lstat through `cwd_fd` finds nothing there. Such a link is not a broken
-    /// link. Not on Windows, where the accessor's `lstatat` follows the link and so fails
-    /// for a broken link too.
+    /// Whether an lstat through `cwd_fd` finds nothing at `path`, a listed symlink whose open failed with `err`.
     #[cold]
     #[inline(never)]
     fn listed_link_is_gone(&self, cwd_fd: A::Handle, err: &SysError, path: &[u8]) -> bool {
+        // On Windows the accessor's `lstatat` follows the link, so it fails for a broken link too.
         if !A::SKIP_GONE_ENTRIES || cfg!(windows) || err.get_errno() != E::ENOENT {
             return false;
         }
@@ -1592,8 +1580,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             .is_some_and(|path| A::lstatat(cwd_fd, path).is_err_and(|now| is_gone(&now)))
     }
 
-    /// `path`, which this walk queued, as a path that the kernel resolves through the
-    /// directory the walk started in. `None` when the walk has no such path for it.
+    /// `path`, which this walk queued, as a path below the directory the walk started in.
     fn through_start<'b>(&self, path: &[u8], buf: &'b mut PathBuffer) -> Option<&'b ZStr> {
         if self.has_dot_dot() {
             return None;
@@ -1608,8 +1595,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Some(ZStr::from_buf(&buf[..], below.len()))
     }
 
-    /// `path`, an absolute path that this walk queued, as a path below the directory the
-    /// walk started in. `None` when `path` is not the path of that directory plus names.
+    /// The part of the absolute `path` that is below the directory the walk started in.
     fn below_start<'p>(&self, path: &'p [u8]) -> Option<&'p [u8]> {
         let start = self.start_path();
         // `join` normalizes every path of an `absolute` walk.

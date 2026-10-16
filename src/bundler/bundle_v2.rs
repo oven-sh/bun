@@ -756,6 +756,7 @@ pub mod bv2_impl {
                     importer: &mut BunString,
                     context: *mut core::ffi::c_void,
                     kind: u8,
+                    is_dev_server: bool,
                 );
                 #[link_name = "JSBundlerPlugin__drainDeferred"]
                 safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin, rejected: bool);
@@ -869,6 +870,7 @@ pub mod bv2_impl {
                     importer: &[u8],
                     context: *mut core::ffi::c_void,
                     import_record_kind: ImportKind,
+                    is_dev_server: bool,
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnResolve");
                     let mut namespace_string = if namespace.is_empty() || namespace == b"file" {
@@ -885,6 +887,7 @@ pub mod bv2_impl {
                         &mut importer_string,
                         context,
                         import_record_kind as u8,
+                        is_dev_server,
                     );
                 }
             }
@@ -1213,16 +1216,16 @@ pub mod bv2_impl {
                     // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
                     // returned by `plugins_mut()` does not alias the
                     // `&self.import_record.*` borrows below.
-                    unsafe { &mut *self.bv2 }
-                        .plugins_mut()
-                        .expect("plugins")
-                        .match_on_resolve(
-                            &self.import_record.specifier,
-                            &self.import_record.namespace,
-                            &self.import_record.source_file,
-                            self_ptr,
-                            kind,
-                        );
+                    let bv2 = unsafe { &mut *self.bv2 };
+                    let is_dev_server = bv2.dev_server.is_some();
+                    bv2.plugins_mut().expect("plugins").match_on_resolve(
+                        &self.import_record.specifier,
+                        &self.import_record.namespace,
+                        &self.import_record.source_file,
+                        self_ptr,
+                        kind,
+                        is_dev_server,
+                    );
                 }
             }
 
@@ -6820,8 +6823,9 @@ pub mod bv2_impl {
                             resolve_queue.get_or_put(path_primary.text).expect("oom");
                         if resolve_entry.found_existing {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                            import_record.path =
-                                path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
+                            import_record.set_module_path(path_as_static(
+                                &unsafe { &**resolve_entry.value_ptr }.path,
+                            ));
                             continue;
                         }
 
@@ -6835,7 +6839,7 @@ pub mod bv2_impl {
                                 self.arena().alloc_slice_copy(path_primary.text),
                             )
                         };
-                        import_record.path = path_as_static(&path_primary);
+                        import_record.set_module_path(path_as_static(&path_primary));
                         let _ = path_primary.text; // key already interned by get_or_put
                         bun_core::scoped_log!(
                             Bundle,
@@ -7126,11 +7130,9 @@ pub mod bv2_impl {
                                 let hash = dev_server
                                     .asset_hash(path.text)
                                     .expect("cached asset not found");
-                                import_record.path.text = path.text;
-                                import_record.path.namespace = b"file";
                                 // SAFETY: `alloc_str` returns into the bundler arena which
                                 // outlives this `ImportRecord`. See `interned_slice` contract.
-                                import_record.path.pretty = unsafe {
+                                let pretty = unsafe {
                                     interned_slice(
                                         self.arena()
                                             .alloc_str(&format!(
@@ -7144,15 +7146,21 @@ pub mod bv2_impl {
                                             .as_bytes(),
                                     )
                                 };
-                                import_record.path.is_disabled = false;
+                                import_record.set_module_path(Fs::Path {
+                                    text: path.text,
+                                    namespace: b"file",
+                                    pretty,
+                                    is_disabled: false,
+                                    ..import_record.path
+                                });
                             } else {
                                 import_record.path.text = path.text;
                                 import_record.path.pretty = rel;
-                                import_record.path = path_as_static(
+                                import_record.set_module_path(path_as_static(
                                     &self
                                         .path_with_pretty_initialized(path, target)
                                         .expect("oom"),
-                                );
+                                ));
                                 if loader == Loader::Html
                                     || entry.kind == bake_types::CacheKind::Css
                                 {
@@ -7193,8 +7201,9 @@ pub mod bv2_impl {
 
                 if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
                     if self.dev_server.is_some() && loader != Loader::Html {
-                        import_record.path =
-                            self.graph.input_files.items_source()[id as usize].path;
+                        import_record.set_module_path(
+                            self.graph.input_files.items_source()[id as usize].path,
+                        );
                     } else {
                         import_record.source_index = Index::init(id);
                     }
@@ -7208,8 +7217,9 @@ pub mod bv2_impl {
                 let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                    import_record.path =
-                        path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
+                    import_record.set_module_path(path_as_static(
+                        &unsafe { &**resolve_entry.value_ptr }.path,
+                    ));
                     continue;
                 }
 
@@ -7217,7 +7227,7 @@ pub mod bv2_impl {
                     .path_with_pretty_initialized(path, target)
                     .expect("oom");
 
-                import_record.path = path_as_static(path);
+                import_record.set_module_path(path_as_static(path));
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
                 bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
                 // Arena-owned.
@@ -7465,7 +7475,7 @@ pub mod bv2_impl {
                 if !only_selected_record(ctx.only_records, i) {
                     continue;
                 }
-                if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
+                if let Some(source_index) = path_to_source_index_map.get_record(record) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
                     {
@@ -7804,7 +7814,7 @@ pub mod bv2_impl {
                             let resolved_index = if star_ir.source_index.is_valid() {
                                 star_ir.source_index.get()
                             } else if let Some(idx) =
-                                this.graph.build_graphs[result_ast_target].get_path(&star_ir.path)
+                                this.graph.build_graphs[result_ast_target].get_record(star_ir)
                             {
                                 idx
                             } else {

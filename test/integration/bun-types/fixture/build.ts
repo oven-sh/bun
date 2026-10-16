@@ -36,6 +36,26 @@ Bun.build({
           return { path: args.path };
         });
 
+        build.onResolve({ filter: /^react$/ }, args => {
+          return { path: "https://esm.sh/" + args.path, external: true };
+        });
+
+        build.onResolve({ filter: /^react-dom$/ }, () => {
+          return { external: true };
+        });
+
+        build.onResolve({ filter: /^lodash$/ }, async args => {
+          if (args.kind === "entry-point-build") return;
+          return { external: true };
+        });
+
+        build.onResolve({ filter: /^declined$/ }, () => {
+          return { path: undefined };
+        });
+
+        expectType<Bun.OnResolveResult["path"]>().is<string | undefined>();
+        expectType<Bun.OnResolveResult["external"]>().is<boolean | undefined>();
+
         build.onLoad({ filter: /^hey$/ }, args => {
           expectType(args).is<Bun.OnLoadArgs>();
 

@@ -410,11 +410,19 @@ export function runSetupFunction(
   return processSetupResult();
 }
 
-export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespace, importer, internalID, kindId) {
+export function runOnResolvePlugins(
+  this: BundlerPlugin,
+  specifier,
+  inputNamespace,
+  importer,
+  internalID,
+  kindId,
+  isDevServer,
+) {
   // Must be kept in sync with ImportRecord.label
   const kind = $ImportKindIdToLabel[kindId];
 
-  var promiseResult: any = (async (inputPath, inputNamespace, importer, kind) => {
+  var promiseResult: any = (async (inputPath: string, inputNamespace, importer, kind) => {
     var { onResolve, onLoad } = this;
     var results = onResolve.$get(inputNamespace);
     if (!results) {
@@ -455,7 +463,9 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
         }
 
         if (!path) {
-          continue;
+          // An entry point cannot be external. The dev server cannot load an external import.
+          if (external !== true || kind === "entry-point-build" || isDevServer) continue;
+          path = inputPath;
         }
 
         if (!userNamespace) {

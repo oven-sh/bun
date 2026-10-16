@@ -107,6 +107,18 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// Scan phase: `path` is the resolved module's path, not a specifier. See `set_module_path`.
+        const PATH_IS_MODULE = 1 << 19;
+    }
+}
+
+impl ImportRecord {
+    /// Store the resolved module's path. The bundler's path map pass links only such records.
+    #[inline]
+    pub fn set_module_path(&mut self, path: Path<'static>) {
+        self.path = path;
+        self.flags.insert(Flags::PATH_IS_MODULE);
     }
 }
 

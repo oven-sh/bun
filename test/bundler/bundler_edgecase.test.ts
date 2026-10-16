@@ -1823,6 +1823,45 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("h(");
     },
   });
+  // b.js imports a.js by its absolute path, and the `external` option names that path. a.js is also
+  // an entry point, so the bundle has a module with the same path text. The import stays external.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`edgecase/ExternalFileIsAlsoAnEntryPoint_${backend}`, ({ root }) => ({
+      files: {
+        "/a.js": `export const A = "A_BODY";`,
+        "/b.js": `import { A } from ${JSON.stringify(join(root, "a.js"))}; console.log(A);`,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      external: [join(root, "a.js")],
+      outdir: "/out",
+      backend,
+      onAfterBundle(api) {
+        const b = api.readFile("/out/b.js");
+        expect(b).toMatch(/import \{ A \} from "[^"]*a\.js";/);
+        expect(b).not.toContain("A_BODY");
+      },
+    }));
+  }
+  // tsconfig "paths" maps the specifier in late.js, the absolute path of a.js, to b.js. entry.js
+  // imports a.js too, so that specifier text is also the path of a module in the bundle. The
+  // import in late.js is b.js all the same.
+  itBundled("edgecase/TsconfigPathsTargetIsNotReplacedByTheModuleAtTheSpecifierPath", ({ root }) => ({
+    files: {
+      "/entry.js": /* js */ `
+        import { who as b } from "./b.js";
+        import { who as a } from "./a.js";
+        import "./late.js";
+        console.log("entry", a, b);
+      `,
+      "/a.js": `export const who = "A";`,
+      "/b.js": `export const who = "B";`,
+      "/late.js": `import { who } from ${JSON.stringify(join(root, "a.js"))}; console.log("late", who);`,
+      "/tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { [join(root, "a.js")]: ["./b.js"] } },
+      }),
+    },
+    run: { stdout: "late B\nentry A B" },
+  }));
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
       "/entry.js": `

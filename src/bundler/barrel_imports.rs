@@ -323,7 +323,22 @@ fn record_target(
     if rec.source_index.is_valid() {
         return Some(rec.source_index.get());
     }
-    map?.get_path(&rec.path)
+    map?.get_record(rec)
+}
+
+/// The surviving record of an HMR duplicate import (`dedup_fallback`), else `ir` itself.
+#[inline]
+fn surviving_record<'a>(
+    records: &'a [bun_ast::ImportRecord],
+    dedup_fallback: &StringArrayHashMap<u32>,
+    ir: &'a bun_ast::ImportRecord,
+) -> &'a bun_ast::ImportRecord {
+    if ir.flags.contains(import_record::Flags::IS_UNUSED) {
+        if let Some(&survivor) = dedup_fallback.get(ir.path.text) {
+            return &records[survivor as usize];
+        }
+    }
+    ir
 }
 
 /// The export names the result of `import()` / `require()` record `idx` can
@@ -486,11 +501,10 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // surviving record's path.text becomes the resolved absolute path.
     // named_imports entries created for the dedup'd record still point at
     // its index, so the direct path lookup below fails for those entries.
-    // Build a fallback: raw specifier → surviving record's resolved path
-    // text, using non-unused records in this file. See #28886.
-    let mut dedup_fallback: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::default();
+    // Build a fallback: raw specifier → index of the surviving record. See #28886.
+    let mut dedup_fallback: StringArrayHashMap<u32> = StringArrayHashMap::default();
     if dev_handle.is_some() {
-        for ir_probe in file_import_records.as_slice() {
+        for (idx, ir_probe) in file_import_records.as_slice().iter().enumerate() {
             if ir_probe.flags.contains(import_record::Flags::IS_UNUSED)
                 || ir_probe.flags.contains(import_record::Flags::IS_INTERNAL)
             {
@@ -499,10 +513,14 @@ pub(crate) fn schedule_barrel_deferred_imports(
             if ir_probe.original_path.is_empty() {
                 continue;
             }
-            if ir_probe.original_path == ir_probe.path.text {
+            if !ir_probe.source_index.is_valid()
+                && !ir_probe
+                    .flags
+                    .contains(import_record::Flags::PATH_IS_MODULE)
+            {
                 continue;
             }
-            dedup_fallback.put(ir_probe.original_path, ir_probe.path.text)?;
+            dedup_fallback.put(ir_probe.original_path, idx as u32)?;
         }
     }
 
@@ -522,25 +540,8 @@ pub(crate) fn schedule_barrel_deferred_imports(
         // path map as a read-only fallback. Do NOT write back to the import
         // record — the dev server intentionally leaves source_indices unset
         // and other code (IncrementalGraph, printer) depends on that.
-        // For dedup'd HMR records (is_unused), fall back to a sibling's
-        // resolved path text since the record itself still has the raw
-        // specifier in path.text.
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or(ir.path.text)
-        } else {
-            ir.path.text
-        };
-        let target = if ir.source_index.is_valid() {
-            ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
-                Some(t) => t,
-                None => continue,
-            }
-        } else {
+        let ir = surviving_record(file_import_records.as_slice(), &dedup_fallback, ir);
+        let Some(target) = record_target(ir, path_to_source_index_map) else {
             continue;
         };
 
@@ -558,7 +559,7 @@ pub(crate) fn schedule_barrel_deferred_imports(
             }
             // Persist the export request on DevServer so it survives across builds.
             if let Some(dev) = dev_handle {
-                persist_barrel_export(&dev, resolved_path_text, alias);
+                persist_barrel_export(&dev, ir.path.text, alias);
             }
         }
     }
@@ -618,22 +619,8 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if matches!(ir.kind, ImportKind::Require | ImportKind::Dynamic) {
             continue;
         }
-        let resolved_path_text = if ir.flags.contains(import_record::Flags::IS_UNUSED) {
-            dedup_fallback
-                .get(ir.path.text)
-                .copied()
-                .unwrap_or(ir.path.text)
-        } else {
-            ir.path.text
-        };
-        let ir_target = if ir.source_index.is_valid() {
-            ir.source_index.get()
-        } else if let Some(map) = path_to_source_index_map {
-            match map.get().get(resolved_path_text) {
-                Some(t) => t,
-                None => continue,
-            }
-        } else {
+        let ir = surviving_record(file_import_records.as_slice(), &dedup_fallback, ir);
+        let Some(ir_target) = record_target(ir, path_to_source_index_map) else {
             continue;
         };
 

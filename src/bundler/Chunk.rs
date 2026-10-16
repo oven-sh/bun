@@ -511,6 +511,16 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
     }
 }
 
+/// An output path as the value of a double-quoted `src`/`href`: its URL path, with `&` as a character reference.
+fn html_attribute_url(path: &[u8]) -> Cow<'_, [u8]> {
+    let url_path = strings::percent_encode_url_path(path);
+    if strings::contains_char(&url_path, b'&') {
+        Cow::Owned(strings::replace_owned(&url_path, b"&", b"&amp;"))
+    } else {
+        url_path
+    }
+}
+
 impl IntermediateOutput {
     pub(crate) fn allocator_for_size(_size: usize) -> &'static DynAlloc {
         // mimalloc serves large allocations via mmap already, so the global
@@ -724,7 +734,7 @@ impl IntermediateOutput {
                 // HTML `src`/`href` values are URLs; JS and CSS strings stay raw.
                 let url_path: fn(&[u8]) -> Cow<'_, [u8]> = if matches!(chunk.content, Content::Html)
                 {
-                    strings::percent_encode_url_path
+                    html_attribute_url
                 } else {
                     |path| Cow::Borrowed(path)
                 };

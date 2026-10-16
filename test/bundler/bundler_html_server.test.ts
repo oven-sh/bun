@@ -122,9 +122,9 @@ describe.concurrent("bundler", () => {
       },
     });
 
-    // The embedded page references each asset by its percent-encoded name and
-    // the compiled server registers the file under that name, so the request a
-    // browser makes for each `<img src>` is a 200.
+    // The embedded page references each asset by its URL path (percent-encoded,
+    // with `&` as `&amp;`) and the compiled server registers the file under that
+    // path, so the request a browser makes for each `<img src>` is a 200.
     itBundled(`compile/${backend}/HTMLServerPercentEncodedAssets`, {
       compile: true,
       backend: backend,
@@ -140,10 +140,11 @@ describe.concurrent("bundler", () => {
         });
 
         const html = await (await fetch(server.url)).text();
-        for (const [, src] of html.matchAll(/<img src="([^"]+)"/g)) {
+        for (const [, attribute] of html.matchAll(/<img src="([^"]+)"/g)) {
+          const src = attribute.replaceAll("&amp;", "&");
           const url = new URL(src, server.url);
           const res = await fetch(url);
-          console.log(src.replace(/-[a-z0-9]+\\.png$/, ".png"), url.pathname === src, res.status, await res.text());
+          console.log(attribute.replace(/-[a-z0-9]+\\.png$/, ".png"), url.pathname === src, res.status, await res.text());
         }
       `,
         "/index.html": /* html */ `
@@ -154,6 +155,7 @@ describe.concurrent("bundler", () => {
             <img src="./shot #1.png">
             <img src="./100%.png">
             <img src="./ünï.png">
+            <img src="./cut&copy.png">
           </body>
         </html>
       `,
@@ -161,6 +163,7 @@ describe.concurrent("bundler", () => {
         "/shot #1.png": "shot",
         "/100%.png": "percent",
         "/ünï.png": "unicode",
+        "/cut&copy.png": "ampersand",
       },
       run: {
         stdout: [
@@ -168,6 +171,7 @@ describe.concurrent("bundler", () => {
           "/shot%20%231.png true 200 shot",
           "/100%25.png true 200 percent",
           "/%C3%BCn%C3%AF.png true 200 unicode",
+          "/cut&amp;copy.png true 200 ampersand",
         ].join("\n"),
       },
     });

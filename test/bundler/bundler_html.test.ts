@@ -1079,9 +1079,10 @@ body {
     },
   });
 
-  // A rewritten `src`/`href` is a URL, so an output file name with a space,
-  // `#`, `%` or a non-ASCII byte in it is percent-encoded. A browser then
-  // requests the file that exists instead of cutting the name at `#`.
+  // A rewritten `src`/`href` is a URL in an HTML attribute, so an output file
+  // name with a space, `#`, `%` or a non-ASCII byte in it is percent-encoded,
+  // and `&` is written as `&amp;`. A browser then requests the file that exists
+  // instead of cutting the name at `#` or reading `&copy` as a character.
   itBundled("html/percent-encodes-rewritten-urls", {
     outdir: "out/",
     files: {
@@ -1098,6 +1099,7 @@ body {
     <img src="./shot #1.png">
     <img src="./100%.png">
     <img src="./ünï (1)+@2x.png">
+    <img src="./cut&copy.png">
   </body>
 </html>`,
       "/styles.css": "body { color: red }",
@@ -1106,12 +1108,13 @@ body {
       "/shot #1.png": "shot",
       "/100%.png": "percent",
       "/ünï (1)+@2x.png": "unicode",
+      "/cut&copy.png": "ampersand",
     },
     entryPoints: ["/my page.html"],
     onAfterBundle(api) {
       const html = api.readFile("out/my page.html");
-      const urls = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map(m => m[1]);
-      expect(urls).toEqual([
+      const attributes = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map(m => m[1]);
+      expect(attributes).toEqual([
         "https://cdn.example.com/lib%20v1.js?a=b#c",
         expect.stringMatching(/^\.\/my%20page-[a-z0-9]+\.css$/),
         expect.stringMatching(/^\.\/my%20page-[a-z0-9]+\.js$/),
@@ -1119,9 +1122,11 @@ body {
         expect.stringMatching(/^\.\/shot%20%231-[a-z0-9]+\.png$/),
         expect.stringMatching(/^\.\/100%25-[a-z0-9]+\.png$/),
         expect.stringMatching(/^\.\/%C3%BCn%C3%AF%20\(1\)\+@2x-[a-z0-9]+\.png$/),
+        expect.stringMatching(/^\.\/cut&amp;copy-[a-z0-9]+\.png$/),
       ]);
-      // Each encoded URL decodes to a file that the build wrote.
-      for (const url of urls.slice(1)) {
+      // The URL each attribute holds is its own parsed form, and names a file that the build wrote.
+      for (const attribute of attributes.slice(1)) {
+        const url = attribute.replaceAll("&amp;", "&");
         expect(new URL(url, "http://example.test/").pathname).toBe(url.slice(1));
         api.assertFileExists("out/" + decodeURIComponent(url.slice(2)));
       }

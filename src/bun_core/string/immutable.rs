@@ -2254,10 +2254,7 @@ pub fn percent_encode_uri_component(input: &[u8], writer: &mut Vec<u8>) {
     });
 }
 
-/// Percent-encodes a file path for use as a URL path (an HTML `src`/`href`):
-/// the WHATWG path percent-encode set (C0, space, `"#<>?^`{}`, DEL,
-/// non-ASCII) plus `%` and `\`, which are literal in a file name. `/` and
-/// everything a browser sends unchanged are kept. Borrows when nothing changes.
+/// A file path as a URL path: escapes what a browser would (the WHATWG path percent-encode set), and `%` and `\`, which a file name means literally.
 pub fn percent_encode_url_path(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     fn keep(byte: u8) -> bool {
         byte.is_ascii_graphic()

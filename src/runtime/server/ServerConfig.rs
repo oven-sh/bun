@@ -220,9 +220,7 @@ impl StaticRouteEntry {
         self.path.len() + self.route.memory_cost()
     }
 
-    /// Adds the route of a file the bundler wrote: under the percent-encoded
-    /// name that the bundled HTML references, and under the raw name that a JS
-    /// `file` loader string carries.
+    /// Adds the route of a file the bundler wrote under its URL path, and under its raw name for a client that sends that as is.
     pub(crate) fn push_bundled_file(
         routes: &mut Vec<StaticRouteEntry>,
         path: &[u8],

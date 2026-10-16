@@ -1359,8 +1359,9 @@ describe("package-lock.json migration fixes", () => {
     return JSON.stringify(lock.packages[""]);
   }
 
+  /** With --verbose, which also reports what bun resolves by itself. */
   async function migrate(dir: string) {
-    const result = await run(dir, "pm", "migrate");
+    const result = await run(dir, "pm", "migrate", "--verbose");
     if (result.exitCode !== 0) {
       throw new Error(`bun pm migrate exited with ${result.exitCode}\n${result.stderr}`);
     }
@@ -1965,7 +1966,7 @@ describe("package-lock.json migration fixes", () => {
 
     const { stderr, exitCode, lock } = await migrate(dir);
     expect(stderr).toContain('skipping "y@catalog:"');
-    expect(stderr).toContain('skipped "z@ftp://example.invalid/z.tgz"');
+    expect(stderr).toContain('skipping "z@ftp://example.invalid/z.tgz"');
     expect(lock.packages.x[2]).toStrictEqual({});
     expect(exitCode).toBe(0);
     await frozen(dir);
@@ -2249,6 +2250,7 @@ describe("package-lock.json migration fixes", () => {
     });
     fs.rmSync(join(String(dir), "b"), { recursive: true });
 
+    expect((await run(dir, "install", "--lockfile-only", "--dry-run")).stderr).not.toContain("warn:");
     const { stderr, exitCode, lock } = await migrate(dir);
     expect(stderr).toContain('skipping 1 unused package-lock.json entry: "b"');
     expect(exitCode).toBe(0);
@@ -2844,7 +2846,7 @@ describe("package-lock.json migration fixes", () => {
       const dir = join(String(copy), "root");
       writeExtra(dir, {});
 
-      const install = await run(dir, "install");
+      const install = await run(dir, "install", "--verbose");
       expect(install.stderr).toContain("migrated lockfile from package-lock.json");
       expect(install.stderr).toContain(skipped("d"));
       expect(install.stderr).toContain(skipped("v"));

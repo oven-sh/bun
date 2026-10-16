@@ -390,7 +390,7 @@ describe("yarn berry migration", () => {
       const dir = await fixture("patch");
       const before = await Bun.file(join(dir, "package.json")).text();
 
-      const { stdout, stderr, exitCode } = await run(dir, ...args);
+      const { stdout, stderr, exitCode } = await run(dir, ...args, "--verbose");
 
       expect(stderr).not.toContain("error:");
       expect(stderr).toContain("migrated lockfile from yarn.lock");
@@ -469,7 +469,7 @@ describe("yarn berry migration", () => {
         },
       });
 
-      const frozen = await run(dir, "install", "--frozen-lockfile");
+      const frozen = await run(dir, "install", "--frozen-lockfile", "--verbose");
       expect(frozen.stderr).toContain(frozenNote);
       expect(await Bun.file(join(dir, "packages", "pkg-a", "package.json")).json()).toEqual(member);
 

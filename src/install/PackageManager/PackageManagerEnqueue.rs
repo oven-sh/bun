@@ -2571,9 +2571,6 @@ fn warn_unmet_peer_dependency(
     version: &dependency::Version,
     err: crate::Error,
 ) {
-    if !this.options.log_level.is_verbose() {
-        return;
-    }
     let literal = bstr::BStr::new(this.lockfile.str(&version.literal));
     let name = bstr::BStr::new(this.lockfile.str(&name));
     if err == crate::Error::TooRecentVersion {

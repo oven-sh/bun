@@ -1038,7 +1038,9 @@ describe.concurrent("backoff", () => {
       expect(err).not.toContain("error:");
       expect(out).toContain("9 packages installed");
       expect(exitCode).toBe(0);
-      return lines.filter(line => line.includes("downloading package manifest") || line.includes("at a time"));
+      return lines.filter(
+        line => line.includes("downloading package manifest") || line.includes("concurrent requests"),
+      );
     }
 
     // A lower limit leaves the held manifests waiting for one that is never sent, until the server drops them.

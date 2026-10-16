@@ -455,7 +455,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     }
 
     let silent = manager.options.log_level.is_silent();
-    let verbose = manager.options.log_level.is_verbose();
 
     if lockfile_version_num >= 10.0 && !silent {
         bun_core::warn!(
@@ -974,7 +973,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         && !silent
                     {
                         match url {
-                            Some(_) if !verbose => {}
                             Some(url) => bun_core::warn!(
                                 "fetching pnpm registry \"{}\" packages from {}; add it to bunfig.toml or .npmrc if it needs authentication",
                                 escape_control_chars(registry_name),
@@ -1757,7 +1755,7 @@ fn update_package_json_after_migration(
     patches: &FoundPatches,
 ) -> Result<(), AllocError> {
     let bump = bun_alloc::Arena::new();
-    let verbose = manager.options.log_level.is_verbose();
+    let silent = manager.options.log_level.is_silent();
 
     let Some(root_pkg_json) = root_package_json(manager, log) else {
         return Ok(());
@@ -1851,7 +1849,7 @@ fn update_package_json_after_migration(
                 let map = ws_root.get_object(field.as_bytes())?;
                 let mut skipped = 0;
                 let strings = string_entries(contents, &map, field == "catalogs", &mut skipped);
-                if skipped > 0 && verbose {
+                if skipped > 0 && !silent {
                     bun_core::warn!(
                         "skipping non-string entries of \"{}\" in pnpm-workspace.yaml ({})",
                         field,

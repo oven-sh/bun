@@ -4015,7 +4015,7 @@ test.concurrent("hoisted: a nested copy of a link: dependency is removed when th
 // So a project with such a link is not pruned at all. The hoisted linker installs through the link, and that is all.
 const REFUSED = (...folders: string[]) =>
   [
-    ...folders.map(folder => `error: ${folder} is a symlink, nothing pruned`),
+    ...folders.map(folder => `error: cannot prune symlink ${folder}`),
     "note: to prune this project, remove the link and run 'bun install'",
   ].join("\n");
 
@@ -4177,7 +4177,7 @@ test.concurrent("hoisted: bun update removes no copy while a workspace node_modu
 
   const { stderr, exitCode } = await update(dir);
   expect(stderr).toContain(
-    "warn: packages/a/node_modules is a symlink, stale copies in node_modules not removed\n" +
+    "warn: cannot prune symlink packages/a/node_modules\n" +
       "note: remove the link and run 'bun install', then 'bun prune'",
   );
   expect(await versions()).toEqual({ "no-deps": "2.0.0", "what-bin": "1.5.0" });
@@ -4223,7 +4223,7 @@ test.concurrent("hoisted: bun install says so when a copy left a workspace node_
 
   const { stderr, exitCode } = await bun(dir, "install", "--linker", "hoisted");
   expect(out(stderr)).toContain(
-    "warn: packages/a/node_modules is a symlink, stale copies in node_modules not removed\n" +
+    "warn: cannot prune symlink packages/a/node_modules\n" +
       "note: remove the link and run 'bun install', then 'bun prune'",
   );
   expect(await file(join(storage, "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });

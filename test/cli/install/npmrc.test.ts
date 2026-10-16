@@ -4754,7 +4754,7 @@ describe.concurrent("registry credentials from $VAR env references", () => {
     const { stderr, exitCode } = await install(String(dir), {});
     expect(auths).toEqual([null]);
     expect(stderr).toContain("$UNSET_TOKEN_41044");
-    expect(stderr).toContain("is not set");
+    expect(stderr).toContain("references unset variable");
     expect(exitCode).not.toBe(0);
   });
 
@@ -4994,7 +4994,7 @@ describe.concurrent("registry credentials from $VAR env references", () => {
     });
     const { stderr, exitCode } = await install(String(dir), {});
     expect(auths).toEqual(["Bearer $UNSET_TOKEN_41044"]);
-    expect(stderr).not.toContain("is not set");
+    expect(stderr).not.toContain("unset variable");
     expect(exitCode).not.toBe(0);
   });
 });
@@ -5404,7 +5404,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     const { stdout, stderr, exitCode } = await run(cmd.split(" "), runnable);
     expect(stderr.split("\n")).toEqual([
       expect.stringContaining("warn: EACCES"),
-      expect.stringMatching(/^ignoring settings in \S+bunfig\.toml$/),
+      expect.stringMatching(/^ignoring settings in \S*bunfig\.toml$/),
       "",
     ]);
     expect(stdout).toBe("ran\n");

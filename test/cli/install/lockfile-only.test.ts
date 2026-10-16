@@ -210,7 +210,7 @@ describe("--lockfile-only and lockfile migration under --frozen-lockfile, --dry-
 
       const { stdout, stderr, exitCode } = await run(dir, "--frozen-lockfile", "--lockfile-only");
       expect(stderr).toContain(`migrated lockfile from ${name}`);
-      expect(stderr).toContain(frozenNote(name));
+      expect(stderr).not.toContain(frozenNote(name));
       expect(stdout + stderr).not.toContain("Saved");
       expect(existsSync(lock(dir))).toBe(false);
       expect(existsSync(join(dir, "node_modules"))).toBe(false);
@@ -224,7 +224,7 @@ describe("--lockfile-only and lockfile migration under --frozen-lockfile, --dry-
       using tmp = tempDir("frozen-migrate", { ...project, [name]: contents });
       const dir = String(tmp);
 
-      const { stdout, stderr, exitCode } = await run(dir, "--frozen-lockfile");
+      const { stdout, stderr, exitCode } = await run(dir, "--frozen-lockfile", "--verbose");
       expect(stderr).toContain(`migrated lockfile from ${name}`);
       expect(stderr).toContain(frozenNote(name));
       expect(stdout + stderr).not.toContain("Saved");

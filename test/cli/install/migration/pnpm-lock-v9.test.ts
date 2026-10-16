@@ -42,8 +42,8 @@ async function runWithEnv(cwd: string, env: Record<string, string>, ...args: str
   return { stdout, stderr, exitCode };
 }
 
-function migrate(cwd: string) {
-  return run(cwd, "pm", "migrate");
+function migrate(cwd: string, ...flags: string[]) {
+  return run(cwd, "pm", "migrate", ...flags);
 }
 
 function fixture(name: string) {
@@ -2609,10 +2609,10 @@ snapshots:
           a: existsSync(join(dir, "apps/a/node_modules")) ? readdirSync(join(dir, "apps/a/node_modules")).sort() : [],
         });
 
-        const install = await run(packageDir, "install");
+        const install = await run(packageDir, "install", "--verbose");
 
-        expect(install.stderr).toContain('skipped peer "no-deps" of the root package');
-        expect(install.stderr).toContain('skipped peer "no-deps" of workspace "apps/a"');
+        expect(install.stderr).toContain('skipping peer "no-deps" of the root package');
+        expect(install.stderr).toContain('skipping peer "no-deps" of workspace "apps/a"');
         expect(install.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
         expect(install.exitCode).toBe(0);
         const migrated = await bunLockOf(packageDir);
@@ -2742,7 +2742,7 @@ ${snapshots}`;
         files: join(import.meta.dir, "pnpm/v9-importer-peers"),
       });
 
-      const { stderr, exitCode } = await migrate(packageDir);
+      const { stderr, exitCode } = await migrate(packageDir, "--verbose");
 
       expect(stderr).not.toContain("skipping peer");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
@@ -2947,7 +2947,7 @@ snapshots:
         },
       });
 
-      const { stderr, exitCode } = await migrate(packageDir);
+      const { stderr, exitCode } = await migrate(packageDir, "--verbose");
 
       expect(stderr).toContain(
         'warn: skipping peer "no-deps" of workspace "packages/project-1": not in pnpm-lock.yaml, resolving it',
@@ -3022,7 +3022,7 @@ snapshots:
         },
       });
 
-      const { stderr, exitCode } = await migrate(packageDir);
+      const { stderr, exitCode } = await migrate(packageDir, "--verbose");
 
       expect(stderr).toContain(
         'warn: skipping peer "has-peer" of the root package: not in pnpm-lock.yaml, resolving it',
@@ -3112,10 +3112,10 @@ snapshots:
       expect(frozenMigration.exitCode).toBe(0);
       expect(existsSync(join(packageDir, "bun.lock"))).toBe(false);
 
-      const install = await run(packageDir, "install");
+      const install = await run(packageDir, "install", "--verbose");
 
-      expect(install.stderr).toContain('skipped peer "a-dep" of the root package');
-      expect(install.stderr).toContain('skipped peer "what-bin" of workspace "packages/ui"');
+      expect(install.stderr).toContain('skipping peer "a-dep" of the root package');
+      expect(install.stderr).toContain('skipping peer "what-bin" of workspace "packages/ui"');
       expect(install.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(install.exitCode).toBe(0);
       const migrated = await bunLockOf(packageDir);
@@ -3289,7 +3289,7 @@ snapshots:
       },
     });
 
-    const { stderr, exitCode } = await migrate(packageDir);
+    const { stderr, exitCode } = await migrate(packageDir, "--verbose");
 
     expect(stderr).toContain(
       'warn: skipping "linked" from the root package: excluded from pnpm-lock.yaml by excludeLinksFromLockfile',
@@ -3321,7 +3321,7 @@ importers:
 `,
       });
 
-      const { stderr, exitCode } = await migrate(String(dir));
+      const { stderr, exitCode } = await migrate(String(dir), "--verbose");
 
       expect(stderr).toContain(
         'warn: skipping "x" from workspace "packages/a": excluded from pnpm-lock.yaml by excludeLinksFromLockfile',
@@ -4276,7 +4276,7 @@ snapshots:
     ])("bun %s installs the migrated lockfile without writing package.json or bun.lock", async (_, args) => {
       using dir = tempDir("pnpm-v9-package-json-frozen", files);
 
-      const { stdout, stderr, exitCode } = await run(String(dir), ...args);
+      const { stdout, stderr, exitCode } = await run(String(dir), ...args, "--verbose");
 
       expect(stderr).not.toContain("error:");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");

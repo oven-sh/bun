@@ -1178,12 +1178,10 @@ impl BunxCommand {
                         // Rewriting package.json marks the tree as fresh. Otherwise every run
                         // without a network connection would first wait for another failed attempt.
                         write_package_json(package_json);
-                        if opts.verbose_install {
-                            bun_core::warn!(
-                                "registry unreachable, using cached <b>{}<r>",
-                                BStr::new(&update_request.name),
-                            );
-                        }
+                        bun_core::warn!(
+                            "registry unreachable, using cached <b>{}<r>",
+                            BStr::new(&update_request.name),
+                        );
                     }
                     (BUNX_REGISTRY_UNREACHABLE, _) => Global::exit(1),
                     (code, _) => Global::exit(code),

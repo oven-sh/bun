@@ -1812,7 +1812,7 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
 fn remove_planned(mut plan: Plan, layout: Layout, manager: &PackageManager) {
     if !plan.linked_folders.is_empty() {
         if (!plan.removals.is_empty() || plan.left_linked_folder)
-            && manager.options.log_level.is_verbose()
+            && manager.options.log_level != LogLevel::Silent
         {
             for folder in plan.sorted_linked_folders() {
                 bun_core::warn!("cannot prune symlink {}", native_path(folder));
@@ -2114,7 +2114,7 @@ impl LinkedNodeModules {
     /// `folders` are the symlinked `node_modules` folders, relative to the project root, that a
     /// switch to the other linker would have cleared if they were real directories.
     pub(crate) fn warn_not_cleared(log_level: LogLevel, folders: &[Box<[u8]>]) {
-        if !log_level.is_verbose() || folders.is_empty() {
+        if log_level == LogLevel::Silent || folders.is_empty() {
             return;
         }
         for folder in folders {

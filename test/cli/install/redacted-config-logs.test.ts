@@ -1062,7 +1062,7 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
       "package.json": packageJson(spec(nowhere)),
       "yarn.lock": `# yarn lockfile v1\n\n\n"direct@${spec(nowhere)}":\n  version "1.0.0"\n`,
     });
-    const fromYarn = await run(String(yarn), nowhere, ["pm", "migrate"]);
+    const fromYarn = await run(String(yarn), nowhere, ["pm", "migrate", "--verbose"]);
     expect(fromYarn.err).toContain(
       `warn: skipping "direct@${masked(nowhere)}" from yarn.lock: missing "resolved" field\n`,
     );
@@ -1100,7 +1100,7 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
         packages: { "": { name: "app", dependencies: { direct: spec(nowhere) } } },
       }),
     });
-    const fromNpm = await run(String(npm), nowhere, ["pm", "migrate"]);
+    const fromNpm = await run(String(npm), nowhere, ["pm", "migrate", "--verbose"]);
     expect(fromNpm.err).toContain(
       `warn: skipping "direct@${masked(nowhere)}" from package-lock.json: no entry for this dependency of "."\n`,
     );

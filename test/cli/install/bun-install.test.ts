@@ -670,8 +670,8 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  // The same in somebody else's manifest is not this project's error: the edge is left out, with one
-  // warning that names the package, and the registry is not asked for `/` or `/@1.0.0`.
+  // The same in somebody else's manifest is not this project's error: the edge is left out, --verbose
+  // names the package, and the registry is not asked for `/` or `/@1.0.0`.
   describe.each(["hoisted", "isolated"])("a dependency of a package that names no package, %s linker", linker => {
     async function install(ctx: TestContext, ...args: string[]) {
       await using proc = spawn({
@@ -697,7 +697,7 @@ describe.concurrent("bun-install", () => {
           setContextHandler(ctx, heldRegistry(ctx, urls, { holder: { "1.0.0": { [group]: declared } } }));
           await writeProject(ctx, { "package.json": { name: "foo", dependencies: { holder: "1.0.0" } } }, { linker });
 
-          const fresh = await install(ctx);
+          const fresh = await install(ctx, "--verbose");
           expect(fresh.err).not.toContain("error:");
           expect(fresh.warnings).toEqual([
             `warn: skipping unnamed dependency of holder@1.0.0 ("${Object.values(declared)[0]}" in "${group}")`,
@@ -17197,12 +17197,10 @@ describe.concurrent("deprecated versions", () => {
     expect(await resolve(String(dir), registry)).toEqual([]);
   });
 
-  it("the dependencies of dependencies get one line in total", async () => {
+  it("the dependencies of dependencies are only reported with --verbose", async () => {
     using registry = serveManifests(packages);
     using dir = project({ dependencies: { parent: "1.0.0" } });
-    expect(await resolve(String(dir), registry)).toEqual([
-      "warn: 2 deprecated transitive dependencies (--verbose to list)",
-    ]);
+    expect(await resolve(String(dir), registry)).toEqual([]);
 
     await rm(join(String(dir), "bun.lock"));
     expect((await resolve(String(dir), registry, "install", "--verbose")).sort()).toEqual([
@@ -17220,10 +17218,7 @@ describe.concurrent("deprecated versions", () => {
         "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { old: "1.1.0" } }),
       },
     );
-    expect((await resolve(String(dir), registry)).sort()).toEqual([
-      "warn: 1 deprecated transitive dependency (--verbose to list)",
-      "warn: deprecated old@1.1.0: use new",
-    ]);
+    expect(await resolve(String(dir), registry)).toEqual(["warn: deprecated old@1.1.0: use new"]);
   });
 
   it("bun add and bun update report what they resolve", async () => {

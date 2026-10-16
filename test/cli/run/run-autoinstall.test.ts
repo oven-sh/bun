@@ -1285,7 +1285,7 @@ describe.concurrent("auto-install throws what it cannot do instead of ending the
           try {
             require("no-deps");
           } catch (e) {
-            console.log(Bun.inspect(e).split("\\n").filter(line => line.startsWith("note: bun")).length);
+            console.log(Bun.inspect(e).split("\\n").filter(line => line.startsWith("note: cannot ")).length);
           }
           await new Promise(resolve => setTimeout(resolve, 1));
         }

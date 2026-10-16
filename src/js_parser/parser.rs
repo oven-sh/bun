@@ -626,6 +626,21 @@ impl crate::p::GenerateImportSymbols for RuntimeImports {
     }
 }
 
+impl crate::p::GenerateImportSymbols for Jest {
+    /// Index into [`Jest::FIELDS`].
+    type Key = u8;
+
+    #[inline]
+    fn get(&self, key: &u8) -> Option<Ref> {
+        Some((Jest::FIELDS[*key as usize].1)(self))
+    }
+
+    #[inline]
+    fn alias_name(&self, key: &u8) -> &'static [u8] {
+        Jest::FIELDS[*key as usize].0.as_bytes()
+    }
+}
+
 impl crate::p::GenerateImportSymbols for JSXImportSymbols {
     type Key = &'static [u8];
 
@@ -1593,6 +1608,7 @@ impl<'a> MacroState<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Jest {
     pub(crate) test: Ref,
     pub(crate) it: Ref,

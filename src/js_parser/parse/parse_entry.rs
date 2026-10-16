@@ -2091,6 +2091,9 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
         }
 
+        // An `import` inside the CommonJS function wrapper is a syntax error.
+        let wrap_in_commonjs = wrap_mode == WrapMode::BunCommonjs;
+
         // Auto inject jest globals into the test file
         'outer: {
             if !p.options.features.inject_jest_globals {
@@ -2115,102 +2118,33 @@ impl<'a> Parser<'a> {
             }
 
             // if they didn't use any of the jest globals, don't inject it, I guess.
-            // Iterates the static `Jest::FIELDS`
-            // table (`&[(&'static str, fn(&Jest) -> Ref)]`); declaration order
-            // determines the emitted clause/property order.
-            let items_count: usize = {
-                let mut count: usize = 0;
-                for (_name, get_ref) in Jest::FIELDS {
-                    count += (p.symbols.as_slice()[get_ref(&p.jest).inner_index() as usize]
-                        .use_count_estimate
-                        > 0) as usize;
+            // `Jest::FIELDS` order is the emitted clause/property order.
+            let mut used = [0u8; Jest::FIELDS.len()];
+            let mut items_count: usize = 0;
+            for (i, (_name, get_ref)) in Jest::FIELDS.iter().enumerate() {
+                if p.symbols.as_slice()[get_ref(&p.jest).inner_index() as usize].use_count_estimate
+                    > 0
+                {
+                    used[items_count] = i as u8;
+                    items_count += 1;
                 }
-                count
-            };
+            }
             if items_count == 0 {
                 break 'outer;
             }
 
-            let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-            declared_symbols.ensure_total_capacity(items_count)?;
-
-            // For CommonJS modules, use require instead of import
-            if exports_kind == js_ast::ExportsKind::Cjs {
-                let import_record_id = p.add_import_record(
-                    bun_ast::ImportKind::Require,
-                    bun_ast::Loc::EMPTY,
+            if wrap_in_commonjs {
+                let jest = p.jest;
+                p.generate_require_stmt(
                     b"bun:test",
-                );
-
-                // Create object binding pattern for destructuring
-                let mut properties = BumpVec::<B::Property>::with_capacity_in(items_count, p.arena);
-                for (symbol_name, get_ref) in Jest::FIELDS {
-                    let r = get_ref(&p.jest);
-                    if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
-                        let key = p.new_expr(
-                            E::String {
-                                data: symbol_name.as_bytes().into(),
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        );
-                        let value = p.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
-                        properties.push(B::Property {
-                            flags: bun_ast::flags::PROPERTY_NONE,
-                            key,
-                            value,
-                            default_value: None,
-                        });
-                        declared_symbols.append_assume_capacity(DeclaredSymbol {
-                            ref_: r,
-                            is_top_level: true,
-                        });
-                    }
-                }
-                let properties = bun_ast::StoreSlice::from_bump(properties);
-
-                // Create: const { test, expect, ... } = require("bun:test")
-                let binding = p.b(
-                    B::Object {
-                        properties,
-                        is_single_line: false,
-                        close_brace_loc: bun_ast::Loc::EMPTY,
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let value = p.new_expr(
-                    E::RequireString {
-                        import_record_index: import_record_id,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let mut decls = G::DeclList::init_capacity(1);
-                decls.append_assume_capacity(G::Decl {
-                    binding,
-                    value: Some(value),
-                });
-
-                let local_stmt = p.s(
-                    S::Local {
-                        kind: js_ast::LocalKind::KConst,
-                        decls,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                let part_stmts = p.arena.alloc_slice_fill_with(1, |_| local_stmt);
-
-                before.push(js_ast::Part {
-                    stmts: part_stmts.into(),
-                    declared_symbols,
-                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
-                        import_record_id,
-                    ),
-                    tag: bun_ast::PartTag::BunTest,
-                    ..Default::default()
-                });
+                    &used[..items_count],
+                    &mut before,
+                    &jest,
+                    bun_ast::PartTag::BunTest,
+                )?;
             } else {
+                let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+                declared_symbols.ensure_total_capacity(items_count)?;
                 let import_record_id = p.add_import_record(
                     bun_ast::ImportKind::Stmt,
                     bun_ast::Loc::EMPTY,
@@ -2277,9 +2211,6 @@ impl<'a> Parser<'a> {
                 cache.input_hash = None;
             }
         }
-
-        // An `import` inside the CommonJS function wrapper is a syntax error.
-        let wrap_in_commonjs = wrap_mode == WrapMode::BunCommonjs;
 
         if p.has_called_runtime {
             let mut runtime_imports: [u8; RuntimeImports::ALL.len()] =

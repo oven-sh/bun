@@ -408,9 +408,9 @@ fn source_from_js(
     if let Some(blob) = value.as_class_ref::<Blob>() {
         // In-memory blob: dupe its bytes (the store may be sliced/replaced
         // independently).
-        let view = blob.shared_view();
-        if !view.is_empty() {
-            return Ok(Source::Owned(view.to_vec()));
+        match blob.in_memory_view() {
+            Ok(view) if !view.is_empty() => return Ok(Source::Owned(view.to_vec())),
+            _ => {}
         }
         // Anything with a backing store but no in-memory view yet
         // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it

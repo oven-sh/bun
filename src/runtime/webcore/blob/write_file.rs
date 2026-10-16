@@ -94,6 +94,14 @@ impl WriteFile {
     }
 }
 
+/// The bytes a write sends. `Bun.write` makes a `WriteFile` only for a source
+/// in memory (a file or S3 source takes its own copy path), and the write
+/// runs off the JS thread, so there is neither a refusal to report nor a way
+/// to report one.
+fn source_bytes(bytes_blob: &Blob) -> &[u8] {
+    bytes_blob.in_memory_view_or_empty()
+}
+
 pub(crate) struct WriteFile {
     pub(crate) file_blob: Blob,
     #[cfg(not(windows))]
@@ -326,7 +334,7 @@ impl WriteFile {
         // On macOS, it is an error to use pwrite() on a
         // non-seekable file.
         loop {
-            match sys::write(fd, &self.bytes_blob.shared_view()[off..off + len]) {
+            match sys::write(fd, &source_bytes(&self.bytes_blob)[off..off + len]) {
                 Ok(wrote) => {
                     self.total_written += wrote;
                     return WriteStep::Wrote(wrote);
@@ -457,11 +465,11 @@ impl WriteFile {
             // We only do this on Linux because the equivalent on macOS
             // seemed to have zero performance impact in
             // microbenchmarks.
-            if !self.could_block && self.bytes_blob.shared_view().len() > 1024 {
+            if !self.could_block && source_bytes(&self.bytes_blob).len() > 1024 {
                 let _ = sys::preallocate_file(
                     fd.native(),
                     0,
-                    i64::try_from(self.bytes_blob.shared_view().len()).expect("int cast"),
+                    i64::try_from(source_bytes(&self.bytes_blob).len()).expect("int cast"),
                 ); // we don't care if it fails.
             }
         }
@@ -498,7 +506,7 @@ impl WriteFile {
     #[cfg(not(windows))]
     fn do_write_loop_posix(&mut self) {
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-            let remain_full = self.bytes_blob.shared_view();
+            let remain_full = source_bytes(&self.bytes_blob);
             // reshaped for borrowck — capture len/offset before mut borrow
             let off = self.total_written.min(remain_full.len());
             let remain_len = remain_full.len() - off;
@@ -1095,7 +1103,7 @@ mod windows_impl {
             uv_loop: *mut uv::Loop,
         ) -> Result<(), WriteFileWindowsError> {
             // SAFETY: caller contract — `this` is live.
-            let remain_full = unsafe { (*this).bytes_blob.shared_view() };
+            let remain_full = unsafe { super::source_bytes(&(*this).bytes_blob) };
             // SAFETY: caller contract — `this` is live.
             let off = unsafe { (*this).total_written }.min(remain_full.len());
             let remain = &remain_full[off..];

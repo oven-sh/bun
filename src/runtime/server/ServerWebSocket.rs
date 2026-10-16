@@ -208,12 +208,8 @@ pub(super) fn blob_payload<'a>(
     let Some(blob) = value.as_class_ref::<Blob>() else {
         return Ok(None);
     };
-    if blob.needs_to_read_file() || blob.is_s3() {
-        return Err(global_this.throw(format_args!(
-            "{fn_name} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"
-        )));
-    }
-    Ok(Some(blob.shared_view()))
+    blob.in_memory_view_or_throw(global_this, format_args!("{fn_name} cannot send"))
+        .map(Some)
 }
 
 /// Handler state a `publish*` method reads once up front (`publish_ctx`).

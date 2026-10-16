@@ -245,10 +245,6 @@ pub struct SqlRuntimeHooks {
     pub ssl_config_server_name: unsafe fn(*const c_void) -> *const c_char,
     /// `SSLConfig.reject_unauthorized`.
     pub ssl_config_reject_unauthorized: unsafe fn(*const c_void) -> i32,
-    /// `Blob::needsToReadFile`.
-    pub blob_needs_to_read_file: unsafe fn(*const c_void) -> bool,
-    /// `Blob::sharedView` — returns `(ptr, len)` borrowing the immutable store.
-    pub blob_shared_view: unsafe fn(*const c_void, out_len: *mut usize) -> *const u8,
 }
 
 unsafe extern "Rust" {
@@ -570,30 +566,21 @@ pub mod api {
 pub mod webcore {
     pub use super::AutoFlusher;
     use super::*;
+    use bun_jsc::webcore_types::NotInMemory;
 
     // Opaque view of `bun_runtime::webcore::Blob`. Never constructed by value
     // on this side — SQL only ever holds `*mut Blob` recovered from a JS
-    // wrapper's `m_ctx` via `value.as_::<Blob>()`. Field accessors route
-    // through [`SqlRuntimeHooks`]; the `from_js`/`from_js_direct` codegen
-    // externs are real C++ symbols (generate-classes.ts), not Rust shims.
+    // wrapper's `m_ctx` via `value.as_::<Blob>()`. The `from_js`/
+    // `from_js_direct` codegen externs are real C++ symbols
+    // (generate-classes.ts), not Rust shims.
     bun_opaque::opaque_ffi! { pub struct Blob; }
     impl Blob {
-        pub(crate) fn needs_to_read_file(&self) -> bool {
-            // SAFETY: `self` is a live `*const bun_runtime::webcore::Blob`
-            // (codegen m_ctx payload).
-            unsafe { (hooks().blob_needs_to_read_file)(self._p.get() as *const c_void) }
-        }
-        pub(crate) fn shared_view(&self) -> &[u8] {
-            let mut len: usize = 0;
-            // SAFETY: `self` is a live `*const Blob`; the returned ptr/len
-            // borrow the Blob's store, which is immutable for its lifetime.
-            let ptr =
-                unsafe { (hooks().blob_shared_view)(self._p.get() as *const c_void, &raw mut len) };
-            if ptr.is_null() || len == 0 {
-                return &[];
-            }
-            // SAFETY: hook guarantees `ptr[..len]` valid while the Blob lives.
-            unsafe { core::slice::from_raw_parts(ptr, len) }
+        /// The bytes the blob holds in memory, or why it holds none.
+        pub(crate) fn in_memory_view(&self) -> Result<&[u8], NotInMemory> {
+            // SAFETY: `self` is the codegen `m_ctx` payload of a `JSBlob`, a
+            // live `bun_jsc::webcore_types::Blob`. The bytes borrow its store,
+            // which is immutable for the blob's lifetime.
+            unsafe { &*self._p.get().cast::<bun_jsc::webcore_types::Blob>() }.in_memory_view()
         }
     }
     impl super::JsClass for Blob {

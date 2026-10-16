@@ -4,7 +4,7 @@ use std::ffi::CString;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::Store;
+use crate::webcore::blob::{NotInMemory, Store};
 use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::{
@@ -391,10 +391,17 @@ fn get_entry_data<'a>(
     value: JSValue,
     array_buffer: &'a mut Option<bun_jsc::ArrayBuffer>,
 ) -> JsResult<Utf8Bytes<'a>> {
-    // For Blob, use sharedView (no copy needed). The backing store outlives
+    // For a Blob, borrow its bytes (no copy needed). The backing store outlives
     // the returned slice for the duration of the caller's tarball build.
     if let Some(blob) = blob_from_js(value) {
-        return Ok(Utf8Bytes::Borrowed(blob.shared_view()));
+        return match blob.in_memory_view() {
+            Ok(bytes) => Ok(Utf8Bytes::Borrowed(bytes)),
+            // A file-backed blob still adds an empty entry.
+            Err(NotInMemory::File) => Ok(Utf8Bytes::Borrowed(b"")),
+            Err(not_in_memory @ NotInMemory::S3) => {
+                Err(not_in_memory.throw(global, format_args!("Bun.Archive cannot read")))
+            }
+        };
     }
 
     // For ArrayBuffer/TypedArray, use view (no copy needed)

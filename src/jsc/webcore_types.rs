@@ -24,7 +24,7 @@ use bun_ptr::RefPtr;
 
 use crate::JsCell;
 use crate::node_path::{PathLike, PathOrFileDescriptor};
-use crate::{JSGlobalObject, JSValue, JsClass};
+use crate::{JSGlobalObject, JSValue, JsClass, JsError, JsResult};
 
 /// Blob size type. Values are masked to 52 bits at the boundary.
 pub type SizeType = u64;
@@ -105,6 +105,26 @@ impl From<MimeType> for BlobContentType {
 // Blob
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Why [`Blob::in_memory_view`] has no bytes: the store is a file or an S3
+/// object, not bytes in memory.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum NotInMemory {
+    File,
+    S3,
+}
+
+impl NotInMemory {
+    /// Throws the one `TypeError` a synchronous reader of blob bytes gives a
+    /// file- or S3-backed blob. `action` starts the message with the API and
+    /// what it cannot do, e.g. `format_args!("Bun.hash() cannot read")`.
+    #[cold]
+    pub fn throw(self, global: &JSGlobalObject, action: core::fmt::Arguments<'_>) -> JsError {
+        global.throw_type_error(format_args!(
+            "{action} a file- or S3-backed Blob synchronously; await blob.bytes() first"
+        ))
+    }
+}
+
 /// The `m_ctx` payload of
 /// the codegen'd `JSBlob` wrapper.
 ///
@@ -121,7 +141,7 @@ pub struct Blob {
     pub store: JsCell<Option<RefPtr<Store>>>,
     pub content_type: JsCell<BlobContentType>,
     pub content_type_was_set: Cell<bool>,
-    /// Cached encoding probe of `shared_view()`.
+    /// Cached encoding probe of the bytes in memory.
     pub charset: Cell<AsciiStatus>,
     /// Was it created via the `File` constructor?
     pub is_jsdom_file: Cell<bool>,
@@ -308,25 +328,61 @@ impl Blob {
         blob
     }
 
-    /// Borrowed view of the in-memory
-    /// bytes (`offset..offset+size` of the backing store). Empty for
-    /// file-/S3-backed or zero-length blobs.
-    pub fn shared_view(&self) -> &[u8] {
-        let Some(store) = self.store() else {
-            return b"";
-        };
-        if self.size.get() == 0 {
-            return b"";
-        }
-        let mut slice = store.shared_view();
-        if slice.is_empty() {
-            return b"";
-        }
+    /// This blob's window (`offset..offset + size`) of `bytes`, the contents
+    /// of its `Bytes` store.
+    #[inline]
+    pub fn window_of<'a>(&self, bytes: &'a [u8]) -> &'a [u8] {
         // Defensive: `offset`/`size` may originate from untrusted
         // structured-clone data; never index past the store's length.
-        let off = (self.offset.get() as usize).min(slice.len());
-        slice = &slice[off..];
-        &slice[..slice.len().min(self.size.get() as usize)]
+        let off = (self.offset.get() as usize).min(bytes.len());
+        let bytes = &bytes[off..];
+        &bytes[..bytes.len().min(self.size.get() as usize)]
+    }
+
+    /// The bytes this blob holds in memory: its window of a `Bytes` store, or
+    /// nothing when it has no store. A file- or S3-backed blob holds none, and
+    /// only an asynchronous read produces them, so a synchronous reader
+    /// refuses it ([`Self::in_memory_view_or_throw`]).
+    #[inline]
+    pub fn in_memory_view(&self) -> Result<&[u8], NotInMemory> {
+        let Some(store) = self.store() else {
+            return Ok(b"");
+        };
+        match &store.data {
+            store::Data::Bytes(bytes) => Ok(self.window_of(bytes.slice())),
+            store::Data::File(_) => Err(NotInMemory::File),
+            store::Data::S3(_) => Err(NotInMemory::S3),
+        }
+    }
+
+    /// The store-kind test of [`Self::in_memory_view`] on its own, for a
+    /// caller that refuses a blob before it reads it.
+    #[inline]
+    pub fn not_in_memory(&self) -> Option<NotInMemory> {
+        match &self.store()?.data {
+            store::Data::Bytes(_) => None,
+            store::Data::File(_) => Some(NotInMemory::File),
+            store::Data::S3(_) => Some(NotInMemory::S3),
+        }
+    }
+
+    /// [`Self::in_memory_view`], or a thrown `TypeError` for a file- or
+    /// S3-backed blob. `action` starts the message: see [`NotInMemory::throw`].
+    #[inline]
+    pub fn in_memory_view_or_throw(
+        &self,
+        global: &JSGlobalObject,
+        action: core::fmt::Arguments<'_>,
+    ) -> JsResult<&[u8]> {
+        self.in_memory_view()
+            .map_err(|not_in_memory| not_in_memory.throw(global, action))
+    }
+
+    /// [`Self::in_memory_view`] with a file- or S3-backed blob read as empty.
+    /// Only for a caller that has no way to refuse one: each call says why.
+    #[inline]
+    pub fn in_memory_view_or_empty(&self) -> &[u8] {
+        self.in_memory_view().unwrap_or_default()
     }
 
     /// Release the store ref without

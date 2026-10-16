@@ -30,6 +30,7 @@ use bun_jsc::{
     self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
     JsError, ModuleLoader, WebCore,
 };
+use bun_jsc::webcore_types::NotInMemory;
 use bun_jsc::{BuildMessage, ResolveMessage};
 
 const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
@@ -685,9 +686,20 @@ impl<'a> Run<'a> {
 
                 if let Some(blob) = blob_ {
                     // SAFETY: `blob` (a JS cell) is pinned for the call; the
-                    // shared-view/content-type slices borrow its store.
-                    let (bytes, ct) =
-                        unsafe { ((*blob).shared_view(), (*blob).content_type_slice()) };
+                    // bytes and the content type borrow its store.
+                    let blob = unsafe { &*blob };
+                    let bytes = match blob.in_memory_view() {
+                        Ok(bytes) => bytes,
+                        // A file-backed blob still inlines as empty.
+                        Err(NotInMemory::File) => b"",
+                        Err(not_in_memory @ NotInMemory::S3) => {
+                            return Err(MacroError::Js(not_in_memory.throw(
+                                self.global,
+                                format_args!("A macro cannot return"),
+                            )));
+                        }
+                    };
+                    let ct = blob.content_type_slice();
                     return expr_from_blob(bytes, self.bump, ct, self.log, self.caller.loc)
                         .map_err(|_| MacroError::MacroFailed);
                 }

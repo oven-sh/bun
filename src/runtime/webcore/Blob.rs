@@ -74,6 +74,18 @@ pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
+/// The bytes a Blob part adds to `new Blob([...])` / `new File([...])`. An
+/// S3-backed part throws. A file-backed part still adds no bytes.
+fn blob_part_bytes<'a>(blob: &'a Blob, global: &JSGlobalObject) -> JsResult<&'a [u8]> {
+    match blob.in_memory_view() {
+        Ok(bytes) => Ok(bytes),
+        Err(NotInMemory::File) => Ok(b""),
+        Err(not_in_memory @ NotInMemory::S3) => {
+            Err(not_in_memory.throw(global, format_args!("new Blob() cannot read")))
+        }
+    }
+}
+
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
 pub(crate) enum ReadBytesResult {
     /// global-allocator-owned by the callback.
@@ -104,7 +116,9 @@ pub(crate) trait ReadBytesHandler {
 // This crate layers behaviour via the `BlobExt` extension trait below.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX_SIZE, SizeType};
+pub(crate) use bun_jsc::webcore_types::{
+    Blob, BlobContentType, ClosingState, MAX_SIZE, NotInMemory, SizeType,
+};
 
 /// 1: Initial
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
@@ -368,28 +382,6 @@ pub(crate) trait BlobExt {
     fn is_all_ascii(&self) -> Option<bool>;
 }
 
-/// C-ABI trampoline for `Blob::shared_view` so C++ (`ZigGeneratedClasses`)
-/// can read blob bytes.
-///
-/// # Safety
-/// `this` must be a live `*const Blob` (the codegen `m_ctx` payload obtained
-/// via `Blob__fromJS`), valid for shared read for the duration of the call.
-/// `len` must be a writable `usize` out-param (caller stack slot). Kept as a
-/// raw-pointer ABI (not `&Blob`/`&mut usize`) because the sole Rust caller is
-/// the type-erased `SqlRuntimeHooks` vtable in `hw_exports.rs`, which forwards
-/// `*const c_void` without materialising a reference.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__Blob__sharedView(
-    this: *const Blob,
-    len: *mut usize,
-) -> *const u8 {
-    // SAFETY: preconditions documented on the fn item above.
-    let view = unsafe { (*this).shared_view() };
-    // SAFETY: `len` is a valid writable out-param per the fn safety contract.
-    unsafe { *len = view.len() };
-    view.as_ptr()
-}
-
 impl BlobExt for Blob {
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>> {
         let content_type_slice = self.get_content_type()?;
@@ -487,7 +479,7 @@ impl BlobExt for Blob {
     ///
     /// In-memory stores are duped before the callback so the ownership contract is
     /// uniform (and so the source Blob can outlive or be re-sliced independently);
-    /// callers that already special-case `shared_view()` can keep doing that and
+    /// callers that already special-case `in_memory_view()` can keep doing that and
     /// only call this when it's empty.
     ///
     /// Every store kind hands `ctx` to exactly one `H::on_read_bytes` call:
@@ -646,9 +638,8 @@ impl BlobExt for Blob {
             }
             return Ok(());
         }
-        // In-memory or detached.
-        let view = self.shared_view();
-        let owned = view.to_vec();
+        // In-memory or detached: the file and S3 stores returned above.
+        let owned = self.in_memory_view().unwrap_or_default().to_vec();
         // SAFETY: `ctx` is this call's handler (fn contract) and this is its
         // only delivery.
         unsafe { H::on_read_bytes(ctx, ReadBytesResult::Ok(owned)) }
@@ -737,7 +728,7 @@ impl BlobExt for Blob {
 
         if let Some(store) = self.store.get() {
             if let store::Data::Bytes(bytes) = &store.data {
-                let view = self.shared_view();
+                let view = self.window_of(bytes.slice());
                 writer.write_int_le::<u32>(view.len() as u32)?;
                 writer.write_all(view)?;
 
@@ -3242,16 +3233,15 @@ impl BlobExt for Blob {
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
                                         // A later part may run user JS that drops the
                                         // last ref to this Blob's Store before `done()`.
+                                        let bytes = blob_part_bytes(blob, global)?;
                                         if parts_can_run_js {
-                                            joiner.push_cloned(blob.shared_view());
+                                            joiner.push_cloned(bytes);
                                         } else {
                                             // SAFETY: the prescan above proved no
                                             // remaining part can run user JS, so this
                                             // Blob (rooted via `_keep`/`arg`) keeps its
                                             // Store alive until `joiner.done()` below.
-                                            joiner.push(unsafe {
-                                                bun_ptr::detach_lifetime(blob.shared_view())
-                                            });
+                                            joiner.push(unsafe { bun_ptr::detach_lifetime(bytes) });
                                         }
                                         continue;
                                     } else {
@@ -3279,7 +3269,7 @@ impl BlobExt for Blob {
                         // This arm only handles entries deferred onto the walk
                         // stack; other pending entries may still run user JS and
                         // free this Blob's Store before `done()`, so always copy.
-                        joiner.push_cloned(blob.shared_view());
+                        joiner.push_cloned(blob_part_bytes(blob, global)?);
                     } else {
                         let utf8 = current.to_utf8(global)?;
                         could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
@@ -3694,7 +3684,7 @@ impl FormDataContext<'_> {
                             self.failed = true;
                             let entry_name = name.to_utf8();
                             let _ = global_this.throw_type_error(format_args!(
-                                "FormData entry {} is an S3 file, which cannot be read while serializing the body. Read it first: formData.append(name, new Blob([await s3file.bytes()]), filename)",
+                                "FormData entry {} is an S3 file, which cannot be read while serializing the body. Read it first: formData.append(name, new Blob([await s3file.bytes()], {{ type: s3file.type }}), s3file.name)",
                                 bun_core::fmt::quote(entry_name.slice()),
                             ));
                         }
@@ -3729,11 +3719,13 @@ impl FormDataContext<'_> {
                                 }
                             }
                         }
-                        store::Data::Bytes(_) => {
+                        store::Data::Bytes(bytes) => {
                             // SAFETY: borrowed from the blob's store, which the
                             // `DOMFormData` entry keeps alive until after
                             // `joiner.done()`.
-                            joiner.push(unsafe { bun_ptr::detach_lifetime(blob.shared_view()) });
+                            joiner.push(unsafe {
+                                bun_ptr::detach_lifetime(blob.window_of(bytes.slice()))
+                            });
                         }
                     }
                 }
@@ -3946,7 +3938,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     );
 
     // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
-    // make shared_view() slice past the end of the backing store (OOB heap read).
+    // make the blob's window start past the end of the backing store.
     blob.offset.set(offset as SizeType); // intentional truncate
     if let Some(size) = file_size {
         // resolve_size() clamps this to the actual file size on first use.
@@ -5672,8 +5664,10 @@ pub(crate) extern "C" fn Blob__getDataPtr(value: JSValue) -> *mut c_void {
     let Some(blob) = Blob::from_js(value) else {
         return core::ptr::null_mut();
     };
+    // The WebSocket client in C++ reads this pointer and `Blob__getSize` with
+    // no way to report a refusal, so a file- or S3-backed blob stays empty.
     // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
-    let data = unsafe { (*blob).shared_view() };
+    let data = unsafe { (*blob).in_memory_view_or_empty() };
     if data.is_empty() {
         return core::ptr::null_mut();
     }
@@ -5685,8 +5679,9 @@ pub(crate) extern "C" fn Blob__getSize(value: JSValue) -> usize {
     let Some(blob) = Blob::from_js(value) else {
         return 0;
     };
+    // See `Blob__getDataPtr` for the file- or S3-backed blob.
     // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
-    unsafe { (*blob).shared_view().len() }
+    unsafe { (*blob).in_memory_view_or_empty().len() }
 }
 
 /// # Safety
@@ -6359,10 +6354,13 @@ impl Any {
         }
     }
 
+    /// The bytes in memory. A file- or S3-backed `Blob` reads as empty: the
+    /// callers take a bare slice, so each one has to check the store kind
+    /// (`needs_to_read_file()`, `is_s3()`) before it trusts an empty result.
     #[inline]
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
-            Any::Blob(b) => b.shared_view(),
+            Any::Blob(b) => b.in_memory_view_or_empty(),
             Any::WTFStringImpl(s) => s.utf8_slice(),
             Any::InternalBlob(ib) => ib.slice_const(),
         }

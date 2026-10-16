@@ -8,6 +8,7 @@ use core::ffi::c_void;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
+use crate::webcore::blob::NotInMemory;
 
 declare_scope!(FormData, visible);
 
@@ -135,7 +136,14 @@ pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) ->
         input_slice = input_value.to_utf8(global)?;
         input = input_slice.slice();
     } else if let Some(blob) = input_value.as_class_ref::<Blob>() {
-        input = blob.shared_view();
+        input = match blob.in_memory_view() {
+            Ok(bytes) => bytes,
+            // A file-backed blob still parses as an empty body.
+            Err(NotInMemory::File) => b"",
+            Err(not_in_memory @ NotInMemory::S3) => {
+                return Err(not_in_memory.throw(global, format_args!("FormData.from() cannot read")));
+            }
+        };
     } else {
         return Err(global
             .throw_invalid_arguments(format_args!("input must be a string or ArrayBufferView")));

@@ -14,6 +14,7 @@ use bun_sql::mysql::protocol::prepared_statement::ExecuteParam;
 use bun_sql::shared::Data;
 
 use crate::jsc::webcore::Blob;
+use bun_jsc::webcore_types::NotInMemory;
 
 pub(crate) fn field_type_from_js(
     global_object: &JSGlobalObject,
@@ -368,18 +369,27 @@ impl Value {
                 }
 
                 if let Some(blob) = value.as_class_ref::<Blob>() {
-                    if blob.needs_to_read_file() {
-                        return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
-                            format_args!("File blobs are not supported"),
-                        )));
-                    }
+                    let bytes = match blob.in_memory_view() {
+                        Ok(bytes) => bytes,
+                        Err(NotInMemory::File) => {
+                            return Err(js_error_to_mysql(global_object.throw_invalid_arguments(
+                                format_args!("File blobs are not supported"),
+                            )));
+                        }
+                        Err(not_in_memory @ NotInMemory::S3) => {
+                            return Err(js_error_to_mysql(not_in_memory.throw(
+                                global_object,
+                                format_args!("A MySQL parameter cannot read"),
+                            )));
+                        }
+                    };
                     // Blob byte stores are immutable from JS (no detach),
                     // but user JS running for a later parameter could drop
                     // the last reference and force GC. Root the wrapper so
                     // the store survives until execute.write() has read it.
                     roots.append(value);
                     return Ok(Value::Bytes(Bytes {
-                        slice: Utf8Bytes::Borrowed(blob.shared_view()),
+                        slice: Utf8Bytes::Borrowed(bytes),
                         pinned: JSValue::ZERO,
                     }));
                 }

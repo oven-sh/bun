@@ -231,7 +231,7 @@ describe("multipart serialization of S3-backed entries", () => {
   function messageFor(quotedName: string): string {
     return (
       `FormData entry ${quotedName} is an S3 file, which cannot be read while serializing the body. ` +
-      "Read it first: formData.append(name, new Blob([await s3file.bytes()]), filename)"
+      "Read it first: formData.append(name, new Blob([await s3file.bytes()], { type: s3file.type }), s3file.name)"
     );
   }
   const expectedMessage = messageFor('"report"');

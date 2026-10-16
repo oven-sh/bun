@@ -1,4 +1,5 @@
 use crate::webcore::Blob;
+use crate::webcore::blob::NotInMemory;
 use bun_core::Utf8Bytes;
 use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
@@ -256,7 +257,13 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
     if let Some(arg) = args.next_eat() {
         if let Some(blob) = arg.as_class_ref::<Blob>() {
             // TODO: files
-            input = blob.shared_view();
+            input = match blob.in_memory_view() {
+                Ok(bytes) => bytes,
+                Err(NotInMemory::File) => b"",
+                Err(not_in_memory @ NotInMemory::S3) => {
+                    return Err(not_in_memory.throw(global, format_args!("Bun.hash() cannot read")));
+                }
+            };
         } else {
             match arg.js_type_loose() {
                 jsc::JSType::ArrayBuffer

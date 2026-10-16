@@ -16,6 +16,7 @@ use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::states::cmd::{Cmd, CmdState};
 use crate::shell::yield_::Yield;
+use crate::webcore::blob::NotInMemory;
 
 pub(crate) struct Builtin {
     pub(crate) kind: Kind,
@@ -735,6 +736,14 @@ impl Builtin {
                         ));
                         return Some(Yield::Failed(cmd));
                     }
+                    if redirect.stdin()
+                        && let crate::webcore::body::Value::Blob(b) = &*body
+                        && let Some(not_in_memory @ NotInMemory::S3) = b.not_in_memory()
+                    {
+                        let _ = not_in_memory
+                            .throw(global, format_args!("A shell builtin cannot read"));
+                        return Some(Yield::Failed(cmd));
+                    }
                     let original_blob = body.use_();
                     if !redirect.stdin() && !redirect.stdout() && !redirect.stderr() {
                         drop(original_blob);
@@ -759,6 +768,13 @@ impl Builtin {
                         let _ = global.throw(format_args!(
                             "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
                         ));
+                        return Some(Yield::Failed(cmd));
+                    }
+                    if redirect.stdin()
+                        && let Some(not_in_memory @ NotInMemory::S3) = blob_ref.not_in_memory()
+                    {
+                        let _ = not_in_memory
+                            .throw(global, format_args!("A shell builtin cannot read"));
                         return Some(Yield::Failed(cmd));
                     }
                     let theblob = Arc::new(BuiltinBlob {
@@ -874,7 +890,9 @@ impl Builtin {
     pub(crate) fn read_stdin_no_io<'a>(interp: &'a Interpreter, cmd: NodeId) -> &'a [u8] {
         match &Self::of(interp, cmd).stdin {
             BuiltinInput::ArrayBuf { buf, .. } => buf.slice(),
-            BuiltinInput::Blob(b) => b.blob.shared_view(),
+            // `init_redirections` refuses an S3-backed blob. A file-backed one
+            // still reads as empty.
+            BuiltinInput::Blob(b) => b.blob.in_memory_view_or_empty(),
             BuiltinInput::Fd(_) | BuiltinInput::Ignore => b"",
         }
     }

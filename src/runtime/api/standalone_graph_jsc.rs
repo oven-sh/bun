@@ -25,8 +25,8 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
         // the (otherwise UB) free of a static slice is unreachable.
         let contents = file.utf8_contents();
         // SAFETY: `contents` is `'static` and never freed (see above);
-        // the const-cast is sound because Blob consumers only read via
-        // `shared_view()`.
+        // the const-cast is sound because Blob consumers only read the
+        // store's bytes.
         let mut bytes = unsafe {
             Bytes::from_raw_parts(
                 contents.as_ptr().cast_mut(),

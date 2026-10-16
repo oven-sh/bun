@@ -13,6 +13,7 @@ use crate::crypto::evp::{AlgorithmExt as _, EVP};
 use crate::crypto::{HMAC, create_crypto_error, evp};
 use crate::generated_classes::PropertyName;
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
+use crate::webcore::blob::NotInMemory;
 use bun_sha_hmac::sha as hashers;
 
 // sha3/blake2 algorithms with no BoringSSL streaming context:
@@ -40,13 +41,23 @@ fn boring_engine(global: &JSGlobalObject) -> *mut boring_ssl::ENGINE {
         .cast::<boring_ssl::ENGINE>()
 }
 
-/// The synchronous hashers only accept in-memory input, not a `Bun.file()`.
+/// The bytes to hash. The hashers are synchronous, so a `Blob` whose store is
+/// a file or an S3 object throws.
 #[inline]
-fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
-    match input {
-        BlobOrStringOrBuffer::Blob(b) => b.needs_to_read_file(),
-        _ => false,
-    }
+fn in_memory_bytes<'a>(
+    global: &JSGlobalObject,
+    input: &'a BlobOrStringOrBuffer,
+) -> JsResult<&'a [u8]> {
+    input
+        .in_memory_slice()
+        .map_err(|not_in_memory| match not_in_memory {
+            NotInMemory::File => global.throw(format_args!(
+                "Bun.file() is not supported here yet (it needs an async version)"
+            )),
+            NotInMemory::S3 => {
+                not_in_memory.throw(global, format_args!("Bun.CryptoHasher cannot read"))
+            }
+        })
 }
 
 /// `union(enum)` → Rust enum with payload variants.
@@ -353,13 +364,9 @@ impl CryptoHasher {
         let mut output_digest_buf: Digest = [0u8; EVP_MAX_MD_SIZE_USIZE];
         // `defer input.deinit()` — handled by Drop on `input`.
 
-        if is_bun_file_blob(input) {
-            return Err(global.throw(format_args!(
-                "Bun.file() is not supported here yet (it needs an async version)"
-            )));
-        }
+        let bytes = in_memory_bytes(global, input)?;
 
-        let Some(len) = evp.hash(boring_engine(global), input.slice(), &mut output_digest_buf)
+        let Some(len) = evp.hash(boring_engine(global), bytes, &mut output_digest_buf)
         else {
             let err = boring_ssl::ERR_get_error();
             let instance = create_crypto_error(global, err);
@@ -383,11 +390,7 @@ impl CryptoHasher {
         let mut output_digest_slice: &mut [u8] = &mut output_digest_buf;
         // `defer input.deinit()` — handled by Drop on `input`.
 
-        if is_bun_file_blob(input) {
-            return Err(global.throw(format_args!(
-                "Bun.file() is not supported here yet (it needs an async version)"
-            )));
-        }
+        let bytes = in_memory_bytes(global, input)?;
 
         if let Some(output_buf) = &output {
             let size = evp.size() as usize;
@@ -405,7 +408,7 @@ impl CryptoHasher {
             output_digest_slice = unsafe { core::slice::from_raw_parts_mut(output_buf.ptr, size) };
         }
 
-        let Some(len) = evp.hash(boring_engine(global), input.slice(), output_digest_slice) else {
+        let Some(len) = evp.hash(boring_engine(global), bytes, output_digest_slice) else {
             let err = boring_ssl::ERR_get_error();
             let instance = create_crypto_error(global, err);
             boring_ssl::ERR_clear_error();
@@ -599,15 +602,11 @@ impl CryptoHasher {
             );
         };
         // `defer buffer.deinit()` — handled by Drop.
-        if is_bun_file_blob(&buffer) {
-            return Err(global.throw(format_args!(
-                "Bun.file() is not supported here yet (it needs an async version)"
-            )));
-        }
+        let bytes = in_memory_bytes(global, &buffer)?;
 
         match this {
             CryptoHasher::Evp(inner) => {
-                inner.with_mut(|e| e.update(buffer.slice()));
+                inner.with_mut(|e| e.update(bytes));
                 let err = boring_ssl::ERR_get_error();
                 if err != 0 {
                     let instance = create_crypto_error(global, err);
@@ -622,7 +621,7 @@ impl CryptoHasher {
                 if inner.get().is_none() {
                     return Err(Self::throw_hmac_consumed(global));
                 }
-                inner.with_mut(|opt| opt.as_mut().unwrap().update(buffer.slice()));
+                inner.with_mut(|opt| opt.as_mut().unwrap().update(bytes));
                 let err = boring_ssl::ERR_get_error();
                 if err != 0 {
                     let instance = create_crypto_error(global, err);
@@ -631,7 +630,7 @@ impl CryptoHasher {
                 }
             }
             CryptoHasher::Zig(inner) => {
-                inner.with_mut(|z| z.update(buffer.slice()));
+                inner.with_mut(|z| z.update(bytes));
                 return Ok(this_value);
             }
         }
@@ -937,14 +936,10 @@ impl CryptoHasherZig {
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(input) {
-            return Err(global.throw(format_args!(
-                "Bun.file() is not supported here yet (it needs an async version)"
-            )));
-        }
+        let bytes = in_memory_bytes(global, input)?;
 
         let mut h = A::init();
-        h.update(input.slice());
+        h.update(bytes);
 
         // Const-generic array length from trait assoc const requires
         // `feature(generic_const_exprs)` — use a stack buffer of EVP_MAX_MD_SIZE
@@ -963,11 +958,7 @@ impl CryptoHasherZig {
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(input) {
-            return Err(global.throw(format_args!(
-                "Bun.file() is not supported here yet (it needs an async version)"
-            )));
-        }
+        let bytes = in_memory_bytes(global, input)?;
 
         let mut h = A::init();
         let digest_length_comptime = A::DIGEST_LENGTH as usize;
@@ -981,7 +972,7 @@ impl CryptoHasherZig {
             }
         }
 
-        h.update(input.slice());
+        h.update(bytes);
 
         if let Some(output_buf) = output {
             // SAFETY: length checked above; `output_buf.ptr` is the JSC-owned
@@ -1272,15 +1263,11 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: H::Digest = H::new_digest();
 
-        if is_bun_file_blob(input) {
-            return Err(global.throw(format_args!(
-                "Bun.file() is not supported here yet (it needs an async version)"
-            )));
-        }
+        let bytes = in_memory_bytes(global, input)?;
 
         // SAFETY: `boring_engine` returns the VM-owned engine (live for the
         // process) or null.
-        unsafe { H::hash(input.slice(), &mut output_digest_buf, boring_engine(global)) };
+        unsafe { H::hash(bytes, &mut output_digest_buf, boring_engine(global)) };
 
         encoding.encode_with_max_size(global, EVP_MAX_MD_SIZE_USIZE, output_digest_buf.as_ref())
     }
@@ -1327,11 +1314,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     ) -> JsResult<JSValue> {
         // `defer input.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(input) {
-            return Err(global.throw(format_args!(
-                "Bun.file() is not supported here yet (it needs an async version)"
-            )));
-        }
+        in_memory_bytes(global, input)?;
 
         if let Some(string_or_buffer) = output {
             if let StringOrBuffer::Buffer(buffer) = &string_or_buffer {
@@ -1387,11 +1370,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         };
         // `defer buffer.deinit()` — handled by Drop.
 
-        if is_bun_file_blob(&buffer) {
-            return Err(global.throw(format_args!(
-                "Bun.file() is not supported here yet (it needs an async version)"
-            )));
-        }
+        let bytes = in_memory_bytes(global, &buffer)?;
         if this.digested.get() {
             return Err(global
                 .err(
@@ -1403,7 +1382,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                 )
                 .throw());
         }
-        this.hashing.with_mut(|h| h.update(buffer.slice()));
+        this.hashing.with_mut(|h| h.update(bytes));
         Ok(this_value)
     }
 

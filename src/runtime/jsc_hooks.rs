@@ -1479,7 +1479,9 @@ mod vm_loader_ctx {
                 .map(|s| core::slice::from_raw_parts(s.as_ptr(), s.len())),
             blob_needs_read_file(b) => blob(b).needs_to_read_file(),
             blob_shared_view(b) => {
-                let v = blob(b).shared_view();
+                // The bundler takes a bare slice for a `blob:` URL, so an
+                // S3-backed blob still bundles as an empty source.
+                let v = blob(b).in_memory_view_or_empty();
                 core::slice::from_raw_parts(v.as_ptr(), v.len())
             },
             blob_deinit(b) => {
@@ -3986,7 +3988,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
                 }
 
                 if !blob.needs_to_read_file() {
-                    // SAFETY: same lifetime erasure as above — `shared_view()`
+                    // An S3-backed blob still loads as an empty module here.
+                    // SAFETY: same lifetime erasure as above — the view
                     // borrows the blob's backing store (held in the caller's
                     // `blob_to_deinit` slot for the synchronous transpile).
                     // `bun_ast::Source` stores `&'static [u8]` (see
@@ -3994,7 +3997,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                     // `'static`; sound because the blob outlives the
                     // synchronous `transpile_source_code_inner` call.
                     let (contents, path_text): (&'static [u8], &'static [u8]) = unsafe {
-                        let v = blob.shared_view();
+                        let v = blob.in_memory_view_or_empty();
                         (
                             core::slice::from_raw_parts(v.as_ptr(), v.len()),
                             core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()),

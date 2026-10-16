@@ -14,6 +14,7 @@ use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
+use crate::webcore::blob::NotInMemory;
 use crate::webcore::{Blob, Request, Response};
 
 pub(crate) use jsc::MarkedArrayBuffer as Buffer;
@@ -85,14 +86,16 @@ pub(crate) enum StringObjects {
     Reject,
 }
 
-/// What [`BlobOrStringOrBuffer`] parsing does with a file-backed `Blob`
-/// (`Bun.file(..)`). Nothing here reads the file: an allowed one is returned
-/// as [`BlobOrStringOrBuffer::Blob`] like an in-memory blob, and its `slice()`
+/// What [`BlobOrStringOrBuffer`] parsing does with a `Blob` that holds no
+/// bytes in memory: a file-backed one (`Bun.file(..)`) or an S3-backed one.
+/// Nothing here reads it: an allowed one is returned as
+/// [`BlobOrStringOrBuffer::Blob`] like an in-memory blob, and its `slice()`
 /// is empty.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum FileBlobs {
     Allow,
-    /// Throws "File blob cannot be used here".
+    /// Throws "File blob cannot be used here" for a file, and the
+    /// [`NotInMemory`] refusal for an S3 object.
     Reject,
 }
 
@@ -117,10 +120,21 @@ impl Drop for BlobOrStringOrBuffer {
 }
 
 impl BlobOrStringOrBuffer {
+    /// The bytes in memory. A file- or S3-backed `Blob` reads as empty: the
+    /// callers take a bare slice, so the parse refuses such a blob first
+    /// ([`FileBlobs::Reject`]) or the caller uses [`Self::in_memory_slice`].
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
-            Self::Blob(blob) => blob.shared_view(),
+            Self::Blob(blob) => blob.in_memory_view_or_empty(),
             Self::StringOrBuffer(str) => str.slice(),
+        }
+    }
+
+    /// The bytes, or why a `Blob` holds none in memory.
+    pub(crate) fn in_memory_slice(&self) -> Result<&[u8], NotInMemory> {
+        match self {
+            Self::Blob(blob) => blob.in_memory_view(),
+            Self::StringOrBuffer(str) => Ok(str.slice()),
         }
     }
 
@@ -140,10 +154,17 @@ impl BlobOrStringOrBuffer {
         let Some(blob) = value.as_class_ref::<Blob>() else {
             return Ok(None);
         };
-        if file_blobs == FileBlobs::Reject && blob.needs_to_read_file() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("File blob cannot be used here"))
-            );
+        if file_blobs == FileBlobs::Reject {
+            match blob.not_in_memory() {
+                None => {}
+                Some(NotInMemory::File) => {
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("File blob cannot be used here")));
+                }
+                Some(not_in_memory @ NotInMemory::S3) => {
+                    return Err(not_in_memory.throw(global, format_args!("This function cannot read")));
+                }
+            }
         }
         Ok(Some(Self::Blob(Box::new(blob.dupe()))))
     }

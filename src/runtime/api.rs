@@ -140,7 +140,6 @@ pub(crate) use crate::api::bun::h2_frame_parser::H2FrameParser;
 pub(crate) use crate::api::bun::ssl_context_cache as SSLContextCache;
 pub(crate) use crate::api::filesystem_router::FileSystemRouter;
 pub(crate) use crate::api::filesystem_router::MatchedRoute;
-pub(crate) use crate::api::hash_object as HashObject;
 pub(crate) use crate::api::js_bundler::BuildArtifact;
 pub(crate) use crate::api::js_bundler::JSBundler;
 pub(crate) use crate::api::json5_object as JSON5Object;

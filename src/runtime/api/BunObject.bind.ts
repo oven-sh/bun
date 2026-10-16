@@ -27,6 +27,39 @@ export const braces = b.fn({
   throws: true,
 });
 
+/** `windowBits` is converted and not used. */
+export const ZlibCompressionOptions = b.dictionary(
+  {
+    windowBits: b.f64.loose.allowBigInt.optional,
+    library: b.string.utf8.nullable,
+    level: b.f64.loose.allowBigInt.optional,
+  },
+  { allowArray: true },
+);
+
+/** `memLevel` and `strategy` are converted and not used. */
+export const ZlibDecompressionOptions = b.dictionary(
+  {
+    windowBits: b.f64.loose.allowBigInt.optional,
+    level: b.f64.loose.allowBigInt.optional,
+    memLevel: b.f64.loose.allowBigInt.optional,
+    strategy: b.f64.loose.allowBigInt.optional,
+    library: b.string.utf8.nullable,
+  },
+  { allowArray: true },
+);
+
+const zlib = (rustName: string, options: typeof ZlibCompressionOptions | typeof ZlibDecompressionOptions) =>
+  b.fn({
+    args: { data: b.stringOrBuffer, options: options.default({}) },
+    returns: b.bufferSource,
+    capability: "heap",
+    throws: true,
+    rustPath: `crate::api::bun_object::JSZlib::${rustName}`,
+  });
+
+export const deflateSync = zlib("deflate_sync", ZlibCompressionOptions);
+
 export const gc = b.fn({
   args: {
     force: b.bool.loose.default(false),
@@ -36,6 +69,9 @@ export const gc = b.fn({
   rustPath: "crate::api::bun_object::gc_from_js",
 });
 
+export const gunzipSync = zlib("gunzip_sync", ZlibDecompressionOptions);
+export const gzipSync = zlib("gzip_sync", ZlibCompressionOptions);
+
 export const indexOfLine = b.fn({
   args: {
     buffer: b.bufferSource.bytes.allowShared,
@@ -43,6 +79,8 @@ export const indexOfLine = b.fn({
   },
   returns: b.f64,
 });
+
+export const inflateSync = zlib("inflate_sync", ZlibDecompressionOptions);
 
 export const MMapOptions = b.dictionary(
   {
@@ -115,4 +153,22 @@ export const which = b.fn({
   returns: b.string.utf8.nullable,
   capability: "heap",
   throws: true,
+});
+
+export const ZstdCompressionOptions = b.dictionary({ level: b.f64.loose.allowBigInt.optional }, { allowArray: true });
+
+export const zstdCompressSync = b.fn({
+  args: { data: b.stringOrBuffer, options: ZstdCompressionOptions.default({}) },
+  returns: b.bufferSource,
+  capability: "heap",
+  throws: true,
+  rustPath: "crate::api::bun_object::JSZstd::compress_sync",
+});
+
+export const zstdDecompressSync = b.fn({
+  args: { data: b.stringOrBuffer },
+  returns: b.bufferSource,
+  capability: "heap",
+  throws: true,
+  rustPath: "crate::api::bun_object::JSZstd::decompress_sync",
 });

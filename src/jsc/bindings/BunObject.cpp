@@ -37,8 +37,11 @@
 #include "BunObject+exports.h"
 #include "ErrorCode.h"
 #include "GeneratedBunObject.h"
+#include "GeneratedCrypto.h"
 #include "GeneratedCsrfJsc.h"
 #include "GeneratedDns.h"
+#include "GeneratedHashObject.h"
+#include "GeneratedPasswordObject.h"
 #include "GeneratedSemverObject.h"
 #include "GeneratedUnsafeObject.h"
 #include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
@@ -75,7 +78,6 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNS__lookupService);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv7);
-BUN_DECLARE_HOST_FUNCTION(Bun__randomUUIDv5);
 
 #include "sliceAnsi.h"
 #include "escapeHTML.h"
@@ -330,13 +332,6 @@ static JSValue constructBunSQLObject(VM& vm, JSObject* bunObject)
     RETURN_IF_EXCEPTION(scope, {});
     auto clientData = WebCore::clientData(vm);
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
-}
-
-extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
-
-static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
-{
-    return JSValue::decode(JSPasswordObject__create(bunObject->globalObject()));
 }
 
 JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
@@ -959,7 +954,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     color                                          BunObject_callback_color                                            DontDelete|Function 2
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
-    deflateSync                                    BunObject_callback_deflateSync                                      DontDelete|Function 1
+    deflateSync                                    Bun::Bindgen::Generated::BunObject::jsDeflateSync                   DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_lazyPropCb_wrap_enableANSIColors                          DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
@@ -969,11 +964,11 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
     gc                                             Bun::Bindgen::Generated::BunObject::jsGc                            DontDelete|Function 1
     generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 2
-    gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
-    gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
-    hash                                           BunObject_lazyPropCb_wrap_hash                                      DontDelete|PropertyCallback
+    gunzipSync                                     Bun::Bindgen::Generated::BunObject::jsGunzipSync                    DontDelete|Function 1
+    gzipSync                                       Bun::Bindgen::Generated::BunObject::jsGzipSync                      DontDelete|Function 1
+    hash                                           Bun::Bindgen::Generated::HashObject::createHash                     DontDelete|PropertyCallback
     indexOfLine                                    Bun::Bindgen::Generated::BunObject::jsIndexOfLine                   DontDelete|Function 1
-    inflateSync                                    BunObject_callback_inflateSync                                      DontDelete|Function 1
+    inflateSync                                    Bun::Bindgen::Generated::BunObject::jsInflateSync                   DontDelete|Function 1
     inspect                                        BunObject_lazyPropCb_wrap_inspect                                   DontDelete|PropertyCallback
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     isStandaloneExecutable                         BunObject_lazyPropCb_wrap_isStandaloneExecutable                    ReadOnly|DontDelete|PropertyCallback
@@ -986,12 +981,12 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     openInEditor                                   Bun::Bindgen::Generated::BunObject::jsOpenInEditor                  DontDelete|Function 1
     origin                                         BunObject_lazyPropCb_wrap_origin                                    DontEnum|ReadOnly|DontDelete|PropertyCallback
     version_with_sha                               constructBunVersionWithSha                                          DontEnum|ReadOnly|DontDelete|PropertyCallback
-    password                                       constructPasswordObject                                             DontDelete|PropertyCallback
+    password                                       Bun::Bindgen::Generated::PasswordObject::createPassword             DontDelete|PropertyCallback
     pathToFileURL                                  functionPathToFileURL                                               DontDelete|Function 1
     peek                                           constructBunPeekObject                                              DontDelete|PropertyCallback
     plugin                                         constructPluginObject                                               ReadOnly|DontDelete|PropertyCallback
     randomUUIDv7                                   Bun__randomUUIDv7                                                   DontDelete|Function 2
-    randomUUIDv5                                   Bun__randomUUIDv5                                                   DontDelete|Function 3
+    randomUUIDv5                                   Bun::Bindgen::Generated::Crypto::jsRandomUUIDv5                     DontDelete|Function 3
     readableStreamToArray                          WebCore::jsFunctionReadableStreamToArray           DontDelete|Function 1
     readableStreamToArrayBuffer                    WebCore::jsFunctionReadableStreamToArrayBuffer     DontDelete|Function 1
     readableStreamToBytes                          WebCore::jsFunctionReadableStreamToBytes           DontDelete|Function 1
@@ -1030,8 +1025,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     redis                                          BunObject_lazyPropCb_wrap_valkey                                    DontDelete|PropertyCallback
     secrets                                        constructSecretsObject                                              DontDelete|PropertyCallback
     write                                          BunObject_callback_write                                            DontDelete|Function 1
-    zstdCompressSync                               BunObject_callback_zstdCompressSync                                DontDelete|Function 1
-    zstdDecompressSync                             BunObject_callback_zstdDecompressSync                              DontDelete|Function 1
+    zstdCompressSync                               Bun::Bindgen::Generated::BunObject::jsZstdCompressSync             DontDelete|Function 1
+    zstdDecompressSync                             Bun::Bindgen::Generated::BunObject::jsZstdDecompressSync           DontDelete|Function 1
     zstdCompress                                 BunObject_callback_zstdCompress                                    DontDelete|Function 1
     zstdDecompress                                 BunObject_callback_zstdDecompress                                    DontDelete|Function 1
 @end

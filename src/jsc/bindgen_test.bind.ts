@@ -121,7 +121,16 @@ export const withValueEcho = b.fn({
   capability: "heap",
 });
 
-export const TestFailure = b.enumeration(["type", "range", "plain", "syscall", "value"]);
+export const TestFailure = b.enumeration([
+  "type",
+  "range",
+  "plain",
+  "code",
+  "customCode",
+  "syscall",
+  "outOfMemory",
+  "value",
+]);
 export const fail = b.fn({ args: { how: TestFailure, value: b.any }, capability: "heap", throws: true });
 
 export const TestCounter = b.class({

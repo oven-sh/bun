@@ -33,7 +33,6 @@
     macro(cwd) \
     macro(embeddedFiles) \
     macro(enableANSIColors) \
-    macro(hash) \
     macro(inspect) \
     macro(isStandaloneExecutable) \
     macro(origin) \
@@ -47,11 +46,7 @@
     macro(connect) \
     macro(createParsedShellScript) \
     macro(createShellInterpreter) \
-    macro(deflateSync) \
     macro(file) \
-    macro(gunzipSync) \
-    macro(gzipSync) \
-    macro(inflateSync) \
     macro(jest) \
     macro(listen) \
     macro(registerMacro) \
@@ -63,8 +58,6 @@
     macro(spawnSync) \
     macro(udpSocket) \
     macro(write) \
-    macro(zstdCompressSync) \
-    macro(zstdDecompressSync) \
     macro(zstdCompress) \
     macro(zstdDecompress) \
 

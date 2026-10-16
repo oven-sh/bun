@@ -581,14 +581,14 @@ describe("sync compression argument handling", () => {
     expect(zstdDecompressSync(compressed).byteLength).toBe(0);
   });
 
-  it("zstdCompressSync evaluates the options object before validating the input", () => {
+  it("zstdCompressSync refuses an input that is not bytes before it evaluates the options object", () => {
     expect(() =>
       zstdCompressSync(42 as any, {
         get level(): never {
           throw new Error("level option was read");
         },
       }),
-    ).toThrow("level option was read");
+    ).toThrow("data must be a string, ArrayBuffer or ArrayBufferView");
   });
 
   it("gzipSync evaluates the options object before capturing the input", () => {
@@ -613,24 +613,24 @@ describe("sync compression argument handling", () => {
     expect(inflateSync(compressed).byteLength).toBe(0);
   });
 
-  it("gunzipSync evaluates the options object before validating the input", () => {
+  it("gunzipSync refuses an input that is not bytes before it evaluates the options object", () => {
     expect(() =>
       gunzipSync(42 as any, {
         get windowBits(): never {
           throw new Error("windowBits option was read");
         },
       }),
-    ).toThrow("windowBits option was read");
+    ).toThrow("data must be a string, ArrayBuffer or ArrayBufferView");
   });
 
-  it("inflateSync evaluates the options object before validating the input", () => {
+  it("inflateSync refuses an input that is not bytes before it evaluates the options object", () => {
     expect(() =>
       inflateSync(42 as any, {
         get windowBits(): never {
           throw new Error("windowBits option was read");
         },
       }),
-    ).toThrow("windowBits option was read");
+    ).toThrow("data must be a string, ArrayBuffer or ArrayBufferView");
   });
 
   // An empty result must not register a GC-time deallocator: the backing Vec is

@@ -80,7 +80,7 @@ use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
 
-use crate::api::{HashObject, JSON5Object, TOMLObject, XMLObject, YAMLObject};
+use crate::api::{JSON5Object, TOMLObject, XMLObject, YAMLObject};
 use crate::crypto as Crypto;
 use crate::node;
 use crate::test_runner::jest::Jest;
@@ -91,7 +91,8 @@ use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 
 use crate::generated_bindgen::bun_object::{
-    BracesOptions, EditorOptions, MMapOptions, WhichOptions,
+    BracesOptions, EditorOptions, MMapOptions, WhichOptions, ZlibCompressionOptions,
+    ZlibDecompressionOptions, ZstdCompressionOptions,
 };
 use crate::generated_bindgen::glob::GlobClass as _;
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PossiblySharedBytes};
@@ -250,11 +251,7 @@ pub(crate) mod bun_object {
         BunObject_callback_build => super::static_adapters::js_bundler_build,
         BunObject_callback_color => bun_css_jsc::js_function_color,
         BunObject_callback_connect => super::static_adapters::listener_connect,
-        BunObject_callback_deflateSync => JSZlib::deflate_sync,
         BunObject_callback_file => crate::webcore::blob::construct_bun_file,
-        BunObject_callback_gunzipSync => JSZlib::gunzip_sync,
-        BunObject_callback_gzipSync => JSZlib::gzip_sync,
-        BunObject_callback_inflateSync => JSZlib::inflate_sync,
         BunObject_callback_jest => Jest::call,
         BunObject_callback_listen => super::static_adapters::listener_listen,
         BunObject_callback_registerMacro => super::register_macro,
@@ -266,8 +263,6 @@ pub(crate) mod bun_object {
         BunObject_callback_spawnSync => super::static_adapters::subprocess_spawn_sync,
         BunObject_callback_udpSocket => super::static_adapters::udp_socket,
         BunObject_callback_write => crate::webcore::blob::write_file,
-        BunObject_callback_zstdCompressSync => JSZstd::compress_sync,
-        BunObject_callback_zstdDecompressSync => JSZstd::decompress_sync,
         BunObject_callback_zstdCompress => JSZstd::compress,
         BunObject_callback_zstdDecompress => JSZstd::decompress,
     }
@@ -310,7 +305,6 @@ pub(crate) mod bun_object {
         BunObject_lazyPropCb_embeddedFiles => super::get_embedded_files,
         BunObject_lazyPropCb_enableANSIColors => super::enable_ansi_colors,
         BunObject_lazyPropCb_isStandaloneExecutable => super::get_is_standalone_executable,
-        BunObject_lazyPropCb_hash => super::get_hash_object,
         BunObject_lazyPropCb_inspect => super::get_inspect,
         BunObject_lazyPropCb_origin => super::get_origin,
         BunObject_lazyPropCb_S3Client => super::get_s3_client_constructor,
@@ -1551,10 +1545,6 @@ fn get_file_system_router(global_this: &JSGlobalObject, _: &JSObject) -> JSValue
     )
 }
 
-fn get_hash_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    HashObject::create(global_this)
-}
-
 fn get_jsonc_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     crate::api::jsonc_object::create(global_this)
 }
@@ -1877,13 +1867,8 @@ extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
 }
 
 /// Shared argument prefix for `Bun.{gzip,gunzip,deflate,inflate}Sync` and
-/// `Bun.zstd{Compress,Decompress}{,Sync}`: returns `(arguments[0] ?? undefined,
-/// arguments[1] if object)`. Throws if `arguments[1]` is present but neither an
-/// object nor `undefined`.
-///
-/// Kept separate from [`parse_compress_buffer_and_options`] so async callers
-/// (e.g. `JSZstd::get_options_async`) can read `options` *before* pinning and
-/// rooting the buffer, preserving error precedence.
+/// `Bun.zstd{Compress,Decompress}`: returns `(arguments[0] ?? undefined, arguments[1] if object)`. Throws if
+/// `arguments[1]` is present but neither an object nor `undefined`.
 #[inline]
 pub(crate) fn parse_compress_args(
     global: &JSGlobalObject,
@@ -1907,36 +1892,16 @@ pub(crate) fn parse_compress_args(
     Ok((buffer_value, options_val))
 }
 
-/// Sync `StringOrBuffer` coercion of the buffer argument. Callers that read
-/// option properties (which can run arbitrary JS) must do so *before* calling
-/// this, so nothing runs between the coercion and the use of the slice.
-#[inline]
-pub(crate) fn coerce_compress_buffer(
-    global: &JSGlobalObject,
-    buffer_value: JSValue,
-) -> JsResult<node::StringOrBuffer<'static>> {
-    if let Some(buffer) = node::StringOrBuffer::from_js(global, buffer_value)? {
-        return Ok(buffer);
-    }
-    Err(global.throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
-}
-
-/// [`parse_compress_args`] + [`coerce_compress_buffer`], for callers that read
-/// no further option properties.
-#[inline]
-pub(crate) fn parse_compress_buffer_and_options(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<(node::StringOrBuffer<'static>, Option<JSValue>)> {
-    let (buffer_value, options_val) = parse_compress_args(global, callframe)?;
-    Ok((coerce_compress_buffer(global, buffer_value)?, options_val))
+fn invalid_arguments<'a>(heap: &JsHeap<'a>, args: core::fmt::Arguments<'_>) -> bindgen::Error<'a> {
+    heap.error_with_code(jsc::ErrorCode::INVALID_ARG_TYPE, args)
 }
 
 #[allow(non_snake_case)]
 pub(crate) mod JSZlib {
     use super::*;
-    use bun_jsc::ComptimeStringMapExt as _;
     use bun_libdeflate_sys::libdeflate as bun_libdeflate;
+
+    type Bytes<'a> = bindgen::Result<'a, JsLocal<'a, BufferSource>>;
 
     /// Local shim: libdeflate's `Status` has no `Into<&str>` upstream.
     #[inline]
@@ -1949,155 +1914,88 @@ pub(crate) mod JSZlib {
         }
     }
 
-    // NOTE: a full `[0..capacity)` window
-    // was previously shimmed here as `&mut [u8]`, but materializing `&mut [u8]`
-    // over uninitialized bytes is UB regardless of later `set_len`.
-    // Callers now use `Vec::spare_capacity_mut()` (-> `&mut [MaybeUninit<u8>]`)
-    // with `compress_into` / `decompress_into`, which is the sound equivalent.
-
-    // NOTE: no `reader_deallocator` / `compressor_deallocator` exports are
-    // needed to free a heap-allocated reader/compressor from the ArrayBuffer
-    // finalizer. The reader stays on-stack
-    // borrowing a local `Vec<u8>`, then leaks only the Vec's allocation into
-    // the ArrayBuffer — so both zlib paths converge on `global_deallocator`
-    // and the per-type callbacks are gone. (`no_mangle` dropped: 0 C++ refs.)
-    use bun_alloc::c_thunks::mi_free_ctx as global_deallocator;
-
-    #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
-    #[strum(serialize_all = "lowercase")]
-    pub(crate) enum Library {
+    #[derive(Copy, Clone, PartialEq, Eq)]
+    enum Library {
         Zlib,
         Libdeflate,
     }
 
-    // bun.ComptimeEnumMap(Library)
-    bun_core::comptime_string_map! {
-        pub(crate) static LIBRARY_MAP: Library = {
-            b"zlib" => Library::Zlib,
-            b"libdeflate" => Library::Libdeflate,
-        };
-    }
-
-    /// Move `list`'s allocation into a `Uint8Array` backing store without
-    /// copying. After `shrink_to_fit`, an empty `Vec` owns no allocation (its
-    /// pointer is dangling), so no deallocator is registered for it.
-    fn leak_list_into_uint8array(
-        global_this: &JSGlobalObject,
-        mut list: Vec<u8>,
-    ) -> JsResult<JSValue> {
-        list.shrink_to_fit();
-        let is_empty = list.is_empty();
-        let leaked: &'static mut [u8] = list.leak();
-        let ptr = leaked.as_mut_ptr();
-        let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-        // SAFETY: non-empty: `ptr` is the just-leaked `Vec` allocation, freed
-        // exactly once at GC by `global_deallocator` (`mi_free_ctx`) via the ctx
-        // pointer. Empty: no callback, and the dangling `ptr` is never read.
-        unsafe {
-            array_buffer.to_js_with_context(
-                global_this,
-                if is_empty {
-                    core::ptr::null_mut()
-                } else {
-                    ptr.cast::<c_void>()
-                },
-                if is_empty {
-                    None
-                } else {
-                    Some(global_deallocator)
-                },
-            )
+    impl Library {
+        fn from_option<'a>(heap: &JsHeap<'a>, name: Option<&[u8]>) -> bindgen::Result<'a, Self> {
+            match name {
+                None | Some(b"" | b"zlib") => Ok(Library::Zlib),
+                Some(b"libdeflate") => Ok(Library::Libdeflate),
+                Some(_) => Err(invalid_arguments(
+                    heap,
+                    format_args!("Expected library to be one of 'zlib' or 'libdeflate'"),
+                )),
+            }
         }
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn gzip_sync(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
-        gzip_or_deflate_sync(global_this, buffer_value, options_val, true)
+    fn init_error<'a>(heap: &JsHeap<'a>, err: zlib::ZlibError) -> bindgen::Error<'a> {
+        match err {
+            zlib::ZlibError::OutOfMemory => bun_alloc::AllocError.into(),
+            zlib::ZlibError::InvalidArgument => {
+                heap.error(format_args!("Zlib error: Invalid argument"))
+            }
+            err => heap.error(format_args!("{} Zlib error", <&'static str>::from(err))),
+        }
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn inflate_sync(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
-        gunzip_or_inflate_sync(global_this, buffer_value, options_val, false)
+    fn read_error<'a>(
+        heap: &JsHeap<'a>,
+        err: zlib::ZlibError,
+        message: Option<&[u8]>,
+    ) -> bindgen::Error<'a> {
+        if err == zlib::ZlibError::OutOfMemory {
+            return bun_alloc::AllocError.into();
+        }
+        let message = message.unwrap_or(b"Zlib returned an error");
+        heap.error(format_args!("{}", bstr::BStr::new(message)))
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn deflate_sync(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
-        gzip_or_deflate_sync(global_this, buffer_value, options_val, false)
+    pub(crate) fn gzip_sync<'a>(
+        heap: &JsHeap<'a>,
+        data: &[u8],
+        options: ZlibCompressionOptions<'a>,
+    ) -> Bytes<'a> {
+        gzip_or_deflate_sync(heap, data, options, true)
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn gunzip_sync(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
-        gunzip_or_inflate_sync(global_this, buffer_value, options_val, true)
+    #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
+    pub(crate) fn inflate_sync<'a>(
+        heap: &JsHeap<'a>,
+        data: &[u8],
+        options: ZlibDecompressionOptions<'a>,
+    ) -> Bytes<'a> {
+        gunzip_or_inflate_sync(heap, data, &options, false)
     }
 
-    fn gunzip_or_inflate_sync(
-        global_this: &JSGlobalObject,
-        buffer_value: JSValue,
-        options_val_: Option<JSValue>,
+    pub(crate) fn deflate_sync<'a>(
+        heap: &JsHeap<'a>,
+        data: &[u8],
+        options: ZlibCompressionOptions<'a>,
+    ) -> Bytes<'a> {
+        gzip_or_deflate_sync(heap, data, options, false)
+    }
+
+    #[allow(clippy::large_types_passed_by_value)] // the generated thunk hands over the struct it made
+    pub(crate) fn gunzip_sync<'a>(
+        heap: &JsHeap<'a>,
+        data: &[u8],
+        options: ZlibDecompressionOptions<'a>,
+    ) -> Bytes<'a> {
+        gunzip_or_inflate_sync(heap, data, &options, true)
+    }
+
+    fn gunzip_or_inflate_sync<'a>(
+        heap: &JsHeap<'a>,
+        compressed: &[u8],
+        options: &ZlibDecompressionOptions<'a>,
         is_gzip: bool,
-    ) -> JsResult<JSValue> {
-        let mut opts = zlib::Options {
-            gzip: is_gzip,
-            window_bits: if is_gzip { 31 } else { -15 },
-            ..Default::default()
-        };
-
-        let mut library = Library::Zlib;
-        if let Some(options_val) = options_val_ {
-            if let Some(window) = options_val.get(global_this, "windowBits")? {
-                opts.window_bits = window.coerce::<i32>(global_this)?;
-                library = Library::Zlib;
-            }
-
-            if let Some(level) = options_val.get(global_this, "level")? {
-                opts.level = level.coerce::<i32>(global_this)?;
-            }
-
-            if let Some(mem_level) = options_val.get(global_this, "memLevel")? {
-                opts.mem_level = mem_level.coerce::<i32>(global_this)?;
-                library = Library::Zlib;
-            }
-
-            if let Some(strategy) = options_val.get(global_this, "strategy")? {
-                opts.strategy = strategy.coerce::<i32>(global_this)?;
-                library = Library::Zlib;
-            }
-
-            if let Some(library_value) = options_val.get_truthy(global_this, "library")? {
-                if !library_value.is_string() {
-                    return Err(global_this
-                        .throw_invalid_arguments(format_args!("Expected library to be a string")));
-                }
-
-                library = match LIBRARY_MAP.from_js(global_this, library_value)? {
-                    Some(v) => v,
-                    None => {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected library to be one of 'zlib' or 'libdeflate'",
-                        )));
-                    }
-                };
-            }
-        }
-
-        let buffer = coerce_compress_buffer(global_this, buffer_value)?;
-        let compressed = buffer.slice();
+    ) -> Bytes<'a> {
+        let library = Library::from_option(heap, options.library)?;
 
         let mut list: Vec<u8> = Vec::new();
         let mut reserved = false;
@@ -2122,54 +2020,35 @@ pub(crate) mod JSZlib {
             } else {
                 32
             })
-            .map_err(|_| global_this.throw_out_of_memory())?;
+            .map_err(|_| bun_alloc::AllocError)?;
         }
 
         match library {
             Library::Zlib => {
-                let mut reader = match zlib::ZlibReaderArrayList::init_with_options(
+                let defaults = zlib::Options::default();
+                let mut reader = zlib::ZlibReaderArrayList::init_with_options(
                     compressed,
                     &mut list,
                     zlib::Options {
-                        window_bits: opts.window_bits,
-                        level: opts.level,
-                        ..Default::default()
+                        window_bits: options
+                            .window_bits
+                            .map_or(if is_gzip { 31 } else { -15 }, |bits| bits as i32),
+                        level: options.level.map_or(defaults.level, |level| level as i32),
+                        ..defaults
                     },
-                ) {
-                    Ok(r) => r,
-                    Err(err) => {
-                        // `list` is still mutably borrowed by the match
-                        // scrutinee's temporary; it drops on `return` anyway.
-                        if err == zlib::ZlibError::InvalidArgument {
-                            return Err(
-                                global_this.throw(format_args!("Zlib error: Invalid argument"))
-                            );
-                        }
-                        return Err(global_this.throw_error(crate::Error::from(err), "Zlib error"));
-                    }
-                };
+                )
+                .map_err(|err| init_error(heap, err))?;
 
-                match reader.read_all(true) {
-                    Ok(()) => {}
-                    Err(zlib::ZlibError::OutOfMemory) => {
-                        return Err(global_this.throw_out_of_memory());
-                    }
-                    Err(_) => {
-                        let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                        return Err(global_this.throw(format_args!("{}", bstr::BStr::new(msg))));
-                    }
+                if let Err(err) = reader.read_all(true) {
+                    return Err(read_error(heap, err, reader.error_message()));
                 }
-                // NOTE: the reader *borrows* `list_ptr`,
-                // so drop the reader to release the borrow, then leak the owned
-                // `list` directly into the ArrayBuffer (freed by
-                // `global_deallocator`).
                 drop(reader);
-                leak_list_into_uint8array(global_this, list)
+                list.shrink_to_fit();
+                heap.create_uint8_array_from_vec(list)
             }
             Library::Libdeflate => {
                 let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
-                    drop(list);
-                    return Err(global_this.throw_out_of_memory());
+                    return Err(bun_alloc::AllocError.into());
                 };
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
@@ -2179,145 +2058,74 @@ pub(crate) mod JSZlib {
                 let max_output = ArrayBuffer::MAX_SIZE as usize;
                 let result = decompressor
                     .decompress_to_vec_grow(compressed, &mut list, encoding, max_output)
-                    .map_err(|_| global_this.throw_out_of_memory())?;
+                    .map_err(|_| bun_alloc::AllocError)?;
                 match result.status {
                     bun_libdeflate::Status::Success if list.len() <= max_output => {}
                     bun_libdeflate::Status::Success | bun_libdeflate::Status::InsufficientSpace => {
-                        drop(list);
-                        return Err(global_this
-                            .err(
-                                jsc::ErrCode::BUFFER_TOO_LARGE,
-                                format_args!(
-                                    "Cannot create a Buffer larger than {max_output} bytes",
-                                ),
-                            )
-                            .throw());
+                        return Err(heap.error_with_code(
+                            jsc::ErrorCode::BUFFER_TOO_LARGE,
+                            format_args!("Cannot create a Buffer larger than {max_output} bytes"),
+                        ));
                     }
                     _ => {
-                        drop(list);
-                        return Err(global_this.throw(format_args!(
+                        return Err(heap.error(format_args!(
                             "libdeflate returned an error: {}",
                             libdeflate_status_str(result.status),
                         )));
                     }
                 }
-
-                // Ownership of the allocation transfers to JSC; freed via
-                // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
-                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
-                // GC via the ctx pointer (the data pointer itself).
-                unsafe {
-                    array_buffer.to_js_with_context(
-                        global_this,
-                        ptr.cast::<c_void>(),
-                        Some(global_deallocator),
-                    )
-                }
+                heap.create_uint8_array_from_vec(list)
             }
         }
     }
 
-    fn gzip_or_deflate_sync(
-        global_this: &JSGlobalObject,
-        buffer_value: JSValue,
-        options_val_: Option<JSValue>,
+    fn gzip_or_deflate_sync<'a>(
+        heap: &JsHeap<'a>,
+        data: &[u8],
+        options: ZlibCompressionOptions<'a>,
         is_gzip: bool,
-    ) -> JsResult<JSValue> {
-        let mut level: Option<i32> = None;
-        let mut library = Library::Zlib;
-        let mut window_bits: i32 = 0;
+    ) -> Bytes<'a> {
+        let level = options.level.map_or(6, |level| level as i32);
 
-        if let Some(options_val) = options_val_ {
-            if let Some(window) = options_val.get(global_this, "windowBits")? {
-                window_bits = window.coerce::<i32>(global_this)?;
-                library = Library::Zlib;
-            }
-
-            if let Some(library_value) = options_val.get_truthy(global_this, "library")? {
-                if !library_value.is_string() {
-                    return Err(global_this
-                        .throw_invalid_arguments(format_args!("Expected library to be a string")));
-                }
-
-                library = match LIBRARY_MAP.from_js(global_this, library_value)? {
-                    Some(v) => v,
-                    None => {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected library to be one of 'zlib' or 'libdeflate'",
-                        )));
-                    }
-                };
-            }
-
-            if let Some(level_value) = options_val.get(global_this, "level")? {
-                level = Some(level_value.coerce::<i32>(global_this)?);
-            }
-        }
-
-        let buffer = coerce_compress_buffer(global_this, buffer_value)?;
-        let compressed = buffer.slice();
-        let _ = window_bits; // unused
-
-        match library {
+        match Library::from_option(heap, options.library)? {
             Library::Zlib => {
                 // `init` reserves `deflateBound` of the input.
                 let mut list: Vec<u8> = Vec::new();
 
-                let mut reader = match zlib::ZlibCompressorArrayList::init(
-                    compressed,
+                let mut reader = zlib::ZlibCompressorArrayList::init(
+                    data,
                     &mut list,
                     zlib::Options {
                         window_bits: 15,
                         gzip: is_gzip,
-                        level: level.unwrap_or(6),
+                        level,
                         ..Default::default()
                     },
-                ) {
-                    Ok(r) => r,
-                    Err(err) => {
-                        // `list` is still mutably borrowed by the match
-                        // scrutinee's temporary; it drops on `return` anyway.
-                        if err == zlib::ZlibError::InvalidArgument {
-                            return Err(
-                                global_this.throw(format_args!("Zlib error: Invalid argument"))
-                            );
-                        }
-                        return Err(global_this.throw_error(crate::Error::from(err), "Zlib error"));
-                    }
-                };
+                )
+                .map_err(|err| init_error(heap, err))?;
 
-                match reader.read_all() {
-                    Ok(()) => {}
-                    Err(zlib::ZlibError::OutOfMemory) => {
-                        return Err(global_this.throw_out_of_memory());
-                    }
-                    Err(_) => {
-                        let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                        return Err(global_this.throw(format_args!("{}", bstr::BStr::new(msg))));
-                    }
+                if let Err(err) = reader.read_all() {
+                    return Err(read_error(heap, err, reader.error_message()));
                 }
-                // NOTE: see gunzip path — reader borrows `list`, so drop
-                // it before leaking `list` into the ArrayBuffer.
                 drop(reader);
-                leak_list_into_uint8array(global_this, list)
+                list.shrink_to_fit();
+                heap.create_uint8_array_from_vec(list)
             }
             Library::Libdeflate => {
-                let level = level.unwrap_or(6);
                 if !(bun_libdeflate::MIN_COMPRESSION_LEVEL..=bun_libdeflate::MAX_COMPRESSION_LEVEL)
                     .contains(&level)
                 {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "Compression level must be between {} and {} for libdeflate",
-                        bun_libdeflate::MIN_COMPRESSION_LEVEL,
-                        bun_libdeflate::MAX_COMPRESSION_LEVEL,
-                    )));
+                    return Err(invalid_arguments(
+                        heap,
+                        format_args!(
+                            "Compression level must be between {} and {} for libdeflate",
+                            bun_libdeflate::MIN_COMPRESSION_LEVEL,
+                            bun_libdeflate::MAX_COMPRESSION_LEVEL,
+                        ),
+                    ));
                 }
                 let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level) else {
-                    return Err(global_this.throw_out_of_memory());
+                    return Err(bun_alloc::AllocError.into());
                 };
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
@@ -2327,31 +2135,15 @@ pub(crate) mod JSZlib {
 
                 let mut list: Vec<u8> = Vec::new();
                 let result = compressor
-                    .compress_to_vec(compressed, &mut list, encoding)
-                    .map_err(|_| global_this.throw_out_of_memory())?;
+                    .compress_to_vec(data, &mut list, encoding)
+                    .map_err(|_| bun_alloc::AllocError)?;
                 if result.status != bun_libdeflate::Status::Success {
-                    drop(list);
-                    return Err(global_this.throw(format_args!(
+                    return Err(heap.error(format_args!(
                         "libdeflate error: {}",
                         libdeflate_status_str(result.status),
                     )));
                 }
-
-                // Ownership of the allocation transfers to JSC; freed via
-                // `global_deallocator` once the ArrayBuffer is finalized.
-                let leaked: &'static mut [u8] = list.leak();
-                let ptr = leaked.as_mut_ptr();
-                let array_buffer = ArrayBuffer::from_bytes(leaked, jsc::JSType::Uint8Array);
-                // SAFETY: `ptr` is the just-leaked `Vec` allocation, live until
-                // `global_deallocator` (`mi_free_ctx`) frees it exactly once at
-                // GC via the ctx pointer (the data pointer itself).
-                unsafe {
-                    array_buffer.to_js_with_context(
-                        global_this,
-                        ptr.cast::<c_void>(),
-                        Some(global_deallocator),
-                    )
-                }
+                heap.create_uint8_array_from_vec(list)
             }
         }
     }
@@ -2360,23 +2152,31 @@ pub(crate) mod JSZlib {
 #[allow(non_snake_case)]
 pub(crate) mod JSZstd {
     use super::*;
+    use bun_jsc::bindgen::IntoError as _;
+
+    const DEFAULT_LEVEL: i32 = 3;
+    const LEVEL_OUT_OF_RANGE: &str = "Compression level must be between 1 and 22";
+
+    fn is_level(value: i32) -> bool {
+        (1..=22).contains(&value)
+    }
 
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
         if let Some(option_obj) = options_val {
             if let Some(level_val) = option_obj.get(global_this, "level")? {
                 let value = level_val.coerce::<i32>(global_this)?;
 
-                if value < 1 || value > 22 {
-                    return Err(global_this.throw_invalid_arguments(format_args!(
-                        "Compression level must be between 1 and 22",
-                    )));
+                if !is_level(value) {
+                    return Err(
+                        global_this.throw_invalid_arguments(format_args!("{LEVEL_OUT_OF_RANGE}"))
+                    );
                 }
 
                 return Ok(value);
             }
         }
 
-        Ok(3)
+        Ok(DEFAULT_LEVEL)
     }
 
     #[inline]
@@ -2410,14 +2210,23 @@ pub(crate) mod JSZstd {
         Decompression(bun_zstd::ZstdError),
     }
 
-    impl Failure {
-        fn throw(self, global_this: &JSGlobalObject) -> jsc::JsError {
+    impl<'a> bindgen::IntoError<'a> for Failure {
+        fn into_error(self, heap: &JsHeap<'a>) -> bindgen::Error<'a> {
             match self {
-                Failure::OutOfMemory => global_this.throw_out_of_memory(),
-                failure => global_this.throw_value(failure.to_js(global_this)),
+                Failure::OutOfMemory => bun_alloc::AllocError.into(),
+                Failure::Compression(message) => heap.error_with_code(
+                    jsc::ErrorCode::ZSTD,
+                    format_args!("{}", bstr::BStr::new(message)),
+                ),
+                Failure::Decompression(err) => heap.error_with_code(
+                    jsc::ErrorCode::ZSTD,
+                    format_args!("Decompression failed: {}", err),
+                ),
             }
         }
+    }
 
+    impl Failure {
         fn to_js(self, global_this: &JSGlobalObject) -> JSValue {
             match self {
                 Failure::OutOfMemory => global_this.create_out_of_memory_error(),
@@ -2475,34 +2284,28 @@ pub(crate) mod JSZstd {
             .map_err(Failure::from)
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn compress_sync(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
-
-        let level = get_level(global_this, options_val)?;
-
-        let buffer = coerce_compress_buffer(global_this, buffer_value)?;
-
-        let output =
-            compress_to_box(buffer.slice(), level).map_err(|failure| failure.throw(global_this))?;
-
-        JSValue::create_buffer_from_box(global_this, output)
+    pub(crate) fn compress_sync<'a>(
+        heap: &JsHeap<'a>,
+        data: &[u8],
+        options: ZstdCompressionOptions,
+    ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
+        let level = options.level.map_or(DEFAULT_LEVEL, |level| level as i32);
+        if !is_level(level) {
+            return Err(invalid_arguments(
+                heap,
+                format_args!("{LEVEL_OUT_OF_RANGE}"),
+            ));
+        }
+        let output = compress_to_box(data, level).map_err(|failure| failure.into_error(heap))?;
+        heap.create_buffer_from_box(output)
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn decompress_sync(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let (buffer, _) = parse_compress_buffer_and_options(global_this, callframe)?;
-
-        let output =
-            decompress_to_box(buffer.slice()).map_err(|failure| failure.throw(global_this))?;
-
-        JSValue::create_buffer_from_box(global_this, output)
+    pub(crate) fn decompress_sync<'a>(
+        heap: &JsHeap<'a>,
+        data: &[u8],
+    ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
+        let output = decompress_to_box(data).map_err(|failure| failure.into_error(heap))?;
+        heap.create_buffer_from_box(output)
     }
 
     // --- Async versions ---
@@ -2597,8 +2400,7 @@ pub(crate) mod JSZstd {
 }
 
 // NOTE: symbols are linked via the `#[unsafe(no_mangle)]` exports above.
-// Referenced: Crypto::JSPasswordObject::JSPasswordObject__create,
-// bun_jsc::btjs::dump_btjs_trace.
+// Referenced: bun_jsc::btjs::dump_btjs_trace.
 
 // LazyProperty initializers for stdin/stderr/stdout
 //

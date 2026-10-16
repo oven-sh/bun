@@ -69,6 +69,38 @@ impl<'a> JsHeap<'a> {
         ))
     }
 
+    /// A `Uint8Array` that takes over the allocation of `bytes`.
+    pub fn create_uint8_array_from_vec(
+        &self,
+        bytes: Vec<u8>,
+    ) -> Result<'a, JsLocal<'a, BufferSource>> {
+        let is_allocated = bytes.capacity() != 0;
+        let bytes: &'static mut [u8] = bytes.leak();
+        let allocation = bytes.as_mut_ptr().cast::<c_void>();
+        // SAFETY: the allocation was just leaked, and `mi_free_ctx` frees it once, when the array is collected. A `Vec`
+        // that never allocated has a dangling pointer, which nothing reads or frees.
+        JsLocal::from_js_result(unsafe {
+            ArrayBuffer::from_bytes(bytes, crate::JSType::Uint8Array).to_js_with_context(
+                self.global(),
+                if is_allocated {
+                    allocation
+                } else {
+                    core::ptr::null_mut()
+                },
+                is_allocated.then_some(bun_alloc::c_thunks::mi_free_ctx),
+            )
+        })
+    }
+
+    /// A `Buffer` that takes over the allocation of `bytes`.
+    #[inline]
+    pub fn create_buffer_from_box(
+        &self,
+        bytes: Box<[u8]>,
+    ) -> Result<'a, JsLocal<'a, BufferSource>> {
+        JsLocal::from_js_result(JSValue::create_buffer_from_box(self.global(), bytes))
+    }
+
     /// An `Error` for the body to return. It is thrown after that.
     #[cold]
     pub fn error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
@@ -91,6 +123,18 @@ impl<'a> JsHeap<'a> {
     #[cold]
     pub fn error_with_code(&self, code: ErrorCode, args: core::fmt::Arguments<'_>) -> Error<'a> {
         Error::unthrown(code.fmt(self.global(), args))
+    }
+}
+
+impl<'a> JsHeap<'a> {
+    /// As [`error`](Self::error), with a `code` that is not one of [`ErrorCode`]'s. It is ASCII.
+    #[cold]
+    pub fn error_with_custom_code(&self, code: &[u8], args: core::fmt::Arguments<'_>) -> Error<'a> {
+        let global = self.global();
+        let instance = global.create_error_instance(args);
+        let code = crate::EncodedSliceJsc::to_js(&bun_core::EncodedSlice::latin1(code), global);
+        instance.put(global, b"code", code);
+        Error::unthrown(instance)
     }
 }
 

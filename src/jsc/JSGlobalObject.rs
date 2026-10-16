@@ -146,7 +146,7 @@ impl JSGlobalObject {
     #[cold]
     #[inline(never)]
     pub fn throw_out_of_memory_value(&self) -> JSValue {
-        JSGlobalObject__throwOutOfMemoryError(self);
+        let _ = self.throw_out_of_memory();
         JSValue::ZERO
     }
 

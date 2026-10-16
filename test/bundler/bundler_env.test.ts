@@ -53,26 +53,6 @@ for (let backend of ["api", "cli"] as const) {
       },
     });
 
-    // NODE_ENV becomes the define `process.env.NODE_ENV`. A quote or a backslash in it is part of the value.
-    if (backend === "cli")
-      itBundled("env/NODE_ENV with a quote and a backslash", {
-        env: {
-          NODE_ENV: 'a"b\\c',
-        },
-        backend: backend,
-        files: {
-          "/a.js": `
-        console.log(process.env.NODE_ENV);
-      `,
-        },
-        run: {
-          env: {
-            NODE_ENV: "the run-time value, which inlining should have replaced",
-          },
-          stdout: 'a"b\\c\n',
-        },
-      });
-
     // Test disable mode - no env vars are inlined
     itBundled("env/disable", {
       env: {

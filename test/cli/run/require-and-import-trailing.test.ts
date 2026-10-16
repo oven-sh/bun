@@ -19,7 +19,7 @@ async function rejectionOf(promise: Promise<unknown>) {
 }
 
 // The comma after the root object is content after the document, like a second
-// object. The file does not parse, as in node, npm, esbuild and tsc.
+// object. The file does not parse, as with JSON.parse, npm, esbuild and tsc.
 test("require() with trailing slash", () => {
   using requireDir = tempDir("require-trailing", {
     "package.json": `

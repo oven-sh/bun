@@ -332,7 +332,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             let q = self.pos_at(j);
             let b = self.contents[q];
             let run = self.run(j);
-            if (b >= 0x80 || b == 0x0B || b == 0x0C) && Self::rest_is_ws_cold(run) {
+            if (b >= 0x80 || b == 0x0B || b == 0x0C) && self.rest_is_ws_cold(run) {
                 if strings::contains_any(&self.contents[q..hi], b"\n\r") {
                     return true;
                 }
@@ -352,7 +352,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
             let run = self.run(self.cursor);
             let b = run[0];
-            if (b >= 0x80 || b == 0x0B || b == 0x0C) && Self::rest_is_ws_cold(run) {
+            if (b >= 0x80 || b == 0x0B || b == 0x0C) && self.rest_is_ws_cold(run) {
                 self.cursor += 1;
                 continue;
             }
@@ -588,12 +588,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     #[inline]
     fn run_rest_is_ws(&mut self, cursor: usize, n: usize) -> bool {
         let run = self.run(cursor);
-        run.len() == n || Self::rest_is_ws_cold(&run[n..])
+        run.len() == n || self.rest_is_ws_cold(&run[n..])
     }
 
-    /// True when `rest` holds only whitespace and complete comments.
     #[cold]
-    pub(crate) fn rest_is_ws_cold(rest: &[u8]) -> bool {
+    fn rest_is_ws_cold(&self, rest: &[u8]) -> bool {
         if rest
             .iter()
             .all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
@@ -906,7 +905,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
 
         let (value, used) = self.parse_number_text(full_run, start)?;
-        if !Self::rest_is_ws_cold(&full_run[used..]) {
+        if !self.rest_is_ws_cold(&full_run[used..]) {
             return Err(self.number_trailing_junk(start + used));
         }
         self.cursor += 1;
@@ -934,7 +933,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.token_start = q;
         let run = &contents[q..self.pos_at(self.cursor + 1)];
         let (value, used) = self.parse_number_text(run, q)?;
-        if !Self::rest_is_ws_cold(&run[used..]) {
+        if !self.rest_is_ws_cold(&run[used..]) {
             return Err(self.number_trailing_junk(q + used));
         }
         self.cursor += 1;
@@ -1200,22 +1199,22 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let loc_tail = usize2loc(pos);
         self.token_start = pos;
         match tail[0] {
-            b't' if tail.starts_with(b"true") && Self::rest_is_ws_cold(&tail[4..]) => {
+            b't' if tail.starts_with(b"true") && self.rest_is_ws_cold(&tail[4..]) => {
                 self.cursor += 1;
                 Ok(Expr::init(E::Boolean { value: true }, loc_tail))
             }
-            b'f' if tail.starts_with(b"false") && Self::rest_is_ws_cold(&tail[5..]) => {
+            b'f' if tail.starts_with(b"false") && self.rest_is_ws_cold(&tail[5..]) => {
                 self.cursor += 1;
                 Ok(Expr::init(E::Boolean { value: false }, loc_tail))
             }
-            b'n' if tail.starts_with(b"null") && Self::rest_is_ws_cold(&tail[4..]) => {
+            b'n' if tail.starts_with(b"null") && self.rest_is_ws_cold(&tail[4..]) => {
                 self.cursor += 1;
                 Ok(Expr::init(E::Null {}, loc_tail))
             }
             b'-' => self.parse_negative_number_at(pos, loc_tail),
             b'0'..=b'9' | b'.' => {
                 let (value, used) = self.parse_number_text(tail, pos)?;
-                if !Self::rest_is_ws_cold(&tail[used..]) {
+                if !self.rest_is_ws_cold(&tail[used..]) {
                     return Err(self.number_trailing_junk(pos + used));
                 }
                 self.cursor += 1;
@@ -1263,7 +1262,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             i += 1;
         }
         let text = &run[..i];
-        if !Self::rest_is_ws_cold(&run[i..]) {
+        if !self.rest_is_ws_cold(&run[i..]) {
             let pos = start + i;
             return Err(self.junk_byte_error(self.cursor, pos, self.contents[pos]));
         }

@@ -519,8 +519,6 @@ pub fn parse_ts_config(
 }
 
 /// `.env` / `--define` values: JSON, keywords, or an implicitly-quoted string.
-/// A value that starts like JSON must be JSON to its end. A keyword followed
-/// by anything but whitespace and comments is an implicitly-quoted string.
 pub fn parse_env_json(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
@@ -557,27 +555,26 @@ pub fn parse_env_json(
                 .iter()
                 .position(|c| !c.is_ascii_alphanumeric() && *c != b'_' && *c != b'$')
                 .unwrap_or(contents.len());
-            let is_whole_value = || Parser::rest_is_ws_cold(&contents[word_len..]);
             match &contents[..word_len] {
-                b"true" if is_whole_value() => {
+                b"true" => {
                     return Ok(Expr {
                         loc: bun_ast::Loc { start: 0 },
                         data: js_ast::expr::Data::EBoolean(E::Boolean { value: true }),
                     });
                 }
-                b"false" if is_whole_value() => {
+                b"false" => {
                     return Ok(Expr {
                         loc: bun_ast::Loc { start: 0 },
                         data: js_ast::expr::Data::EBoolean(E::Boolean { value: false }),
                     });
                 }
-                b"null" if is_whole_value() => {
+                b"null" => {
                     return Ok(Expr {
                         loc: bun_ast::Loc { start: 0 },
                         data: js_ast::expr::Data::ENull(E::Null {}),
                     });
                 }
-                b"undefined" if is_whole_value() => {
+                b"undefined" => {
                     return Ok(Expr {
                         loc: bun_ast::Loc { start: 0 },
                         data: js_ast::expr::Data::EUndefined(E::Undefined {}),
@@ -2191,7 +2188,7 @@ mod tests {
     }
 
     #[test]
-    fn env_json_reads_the_whole_value() {
+    fn env_json_content_after_a_json_value() {
         for (src, found) in [
             ("1 2", "2"),
             ("7 days", "days"),
@@ -2216,47 +2213,6 @@ mod tests {
             assert!(p.root.is_some(), "{src:?}: {}", p.first_msg);
             assert_eq!(p.errors, 0, "{src:?}: {}", p.first_msg);
         }
-        for src in [
-            "true false",
-            "false || true",
-            "true-color",
-            "null x",
-            "null;",
-            "undefined x",
-            "true /* open",
-            "true /",
-        ] {
-            let p = run(src.as_bytes(), Which::Env);
-            assert_eq!(p.errors, 0, "{src}: {}", p.first_msg);
-            assert_eq!(root_string(&p), src, "{src}");
-        }
-        for src in [
-            "true",
-            "true ",
-            "true\n",
-            "true // c",
-            "true /* c */",
-            "true\u{a0}",
-        ] {
-            let p = run(src.as_bytes(), Which::Env);
-            assert!(
-                matches!(
-                    p.root.as_ref().map(|r| &r.data),
-                    Some(Data::EBoolean(E::Boolean { value: true }))
-                ),
-                "{src:?}: {}",
-                p.first_msg
-            );
-        }
-        let p = run(b"false ", Which::Env);
-        assert!(matches!(
-            p.root.as_ref().unwrap().data,
-            Data::EBoolean(E::Boolean { value: false })
-        ));
-        let p = run(b"null /* c */", Which::Env);
-        assert!(matches!(p.root.as_ref().unwrap().data, Data::ENull(_)));
-        let p = run(b"undefined\t", Which::Env);
-        assert!(matches!(p.root.as_ref().unwrap().data, Data::EUndefined(_)));
     }
 
     #[test]

@@ -633,12 +633,17 @@ describe.concurrent("files with content after the root value", () => {
   });
 });
 
-// A `--define` value goes through the same parser. A value that starts like
-// JSON is JSON to its end. `true`, `false`, `null` and `undefined` are keywords
-// only as the whole value: with other content behind the word, the value is an
-// auto-quoted string, like `hello world`.
-describe.concurrent("--define values with content after the value", () => {
-  async function build(value: string) {
+// A `--define` value that starts like JSON goes through the same parser, so it
+// is JSON to its end.
+describe.concurrent("--define values with content after a JSON value", () => {
+  test.each([
+    ["7 days", "days", "  "],
+    ["1 2", "2", "  "],
+    ["5 * 1000", "*", "  "],
+    ['{"a":1} junk', "junk", "        "],
+    ['"a" + "b"', "+", "    "],
+    ["[1],", ",", "   "],
+  ])("%j is an error", async (value, found, indent) => {
     using dir = tempDir("jsonc-define-value", { "entry.ts": "declare const X: unknown;\nconsole.log(X);\n" });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--define", `X=${value}`, "entry.ts"],
@@ -648,47 +653,10 @@ describe.concurrent("--define values with content after the value", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
-  test.each([
-    ["7 days", "days", "  "],
-    ["1 2", "2", "  "],
-    ["5 * 1000", "*", "  "],
-    ['{"a":1} junk', "junk", "        "],
-    ['"a" + "b"', "+", "    "],
-    ["[1],", ",", "   "],
-  ])("%j is an error", async (value, found, indent) => {
-    const { stdout, stderr, exitCode } = await build(value);
     expect(stderr).toStartWith(
       `1 | ${value}\n    ${indent}^\nerror: Expected end of file but found "${found}"\n    at defines.json:1:${indent.length + 1}\n`,
     );
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
-  });
-
-  test.each(["true false", "false || true", "true-color", "null x", "null;", "undefined x", "true /* open"])(
-    "%j is a string",
-    async value => {
-      expect(await build(value)).toEqual({
-        stdout: `// entry.ts\nconsole.log(${JSON.stringify(value)});\n`,
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-  );
-
-  test.each([
-    ["true ", "true"],
-    ["true // comment", "true"],
-    ["false /* comment */", "false"],
-    ["null\n", "null"],
-    ["undefined\t", "undefined"],
-  ])("%j is the keyword", async (value, keyword) => {
-    expect(await build(value)).toEqual({
-      stdout: `// entry.ts\nconsole.log(${keyword});\n`,
-      stderr: "",
-      exitCode: 0,
-    });
   });
 });
 

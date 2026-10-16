@@ -3,7 +3,8 @@
 // teardown: what already started finishes, and the afterAll hooks of every scope that was
 // entered still run.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe.concurrent("the report in the issue", () => {
@@ -530,4 +531,162 @@ test("async preload hooks finish when a test file fails to load", async () => {
   expect(stderr).toContain("a throws while it loads");
   expect(stderr).toContain("c throws while it loads");
   expect(exitCode).toBe(1);
+});
+
+// --bail only stops the run. What a run does at its end still happens.
+describe.concurrent("a bailed run ends like any other run", () => {
+  const files = {
+    "math.ts": `
+      export const add = (a: number, b: number) => a + b;
+    `,
+    "a.test.ts": `
+      import { expect, test } from "bun:test";
+      import { add } from "./math";
+      test("snapshot", () => expect({ sum: add(1, 2) }).toMatchSnapshot());
+      test("fail", () => expect(add(1, 2)).toBe(4));
+      test("next", () => {});
+    `,
+  };
+
+  async function run(args: string[], read: string[] = [], env: Record<string, string> = {}) {
+    using dir = tempDir("bun-test-bail-end", { ...files, "not-a-directory": "" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args, "./a.test.ts"],
+      // CI=false: a new snapshot is only written outside CI.
+      env: { ...bunEnv, CI: "false", ...env },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const text = async (name: string) => {
+      const file = Bun.file(join(String(dir), name));
+      return (await file.exists()) ? await file.text() : "";
+    };
+    return {
+      stderr,
+      exitCode,
+      signalCode: proc.signalCode,
+      files: Object.fromEntries(await Promise.all(read.map(async name => [name, await text(name)]))),
+    };
+  }
+
+  test("it prints the summary of the tests that ran", async () => {
+    const { stderr, exitCode } = await run(["--bail"]);
+    const end = stderr.slice(stderr.indexOf("Bailed out")).replace(/\[[\d.]+m?s\]/, "[time]");
+    expect(end.split("\n")).toEqual([
+      "Bailed out after 1 failure",
+      "",
+      " 1 pass",
+      " 1 fail",
+      "snapshots: +1 added",
+      " 2 expect() calls",
+      "Ran 2 tests across 1 file. [time]",
+      "",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("it writes the snapshot file", async () => {
+    const snapshot = "__snapshots__/a.test.ts.snap";
+    const { files, exitCode } = await run(["--bail"], [snapshot]);
+    expect(files[snapshot]).toContain('exports[`snapshot 1`] = `\n{\n  "sum": 3,\n}\n`;');
+    expect(exitCode).toBe(1);
+  });
+
+  test("it writes the coverage report", async () => {
+    const { stderr, files, exitCode } = await run(
+      ["--bail", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov"],
+      ["coverage/lcov.info"],
+    );
+    expect(stderr).toContain("% Funcs");
+    expect(files["coverage/lcov.info"]).toContain("SF:math.ts");
+    expect(exitCode).toBe(1);
+  });
+
+  // The coverage report comes before the summary and the JUnit file, so it must not end the run.
+  test.each([[[]], [["--bail"]]])(
+    "a coverage file that cannot be written does not drop the JUnit file: %j",
+    async args => {
+      const { stderr, files, exitCode } = await run(
+        [
+          ...args,
+          "--coverage",
+          "--coverage-reporter=lcov",
+          "--coverage-dir=./not-a-directory/coverage",
+          "--reporter=junit",
+          "--reporter-outfile=junit.xml",
+        ],
+        ["junit.xml"],
+      );
+      expect(stderr).toContain("Failed to write lcov.info");
+      expect(stderr).toContain(" 1 fail");
+      expect(files["junit.xml"]).toContain('<testcase name="fail"');
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  // The exit goes through the VM teardown that the sanitizer lane checks (scripts/runner.node.ts
+  // sets this environment). Without it, LeakSanitizer aborts the process with 134.
+  test.skipIf(!isASAN)("it exits 1 cleanly under LeakSanitizer", async () => {
+    const { stderr, exitCode, signalCode } = await run(["--bail"], [], {
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1",
+      LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${join(import.meta.dir, "../../leaksan.supp")}`,
+    });
+    expect(stderr).toContain("Bailed out after 1 failure");
+    expect(stderr).not.toContain("LeakSanitizer");
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
+  // On Windows, `bun test --watch` runs as a parent watcher-manager that respawns a child process
+  // on change (rather than exec()-in-place), which makes the stderr-stream sync points racy there.
+  test.skipIf(isWindows)("--watch keeps watching", async () => {
+    using dir = tempDir("bun-test-bail-watch", {
+      "a.test.ts": `
+        import { expect, test } from "bun:test";
+        test("first", () => expect(1).toBe(2));
+        test("second", () => {});
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--watch", "--no-clear-screen", "--bail", "./a.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    async function waitFor(needle: string, from = 0): Promise<void> {
+      while (!buf.slice(from).includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`stream closed before seeing ${JSON.stringify(needle)}\n${buf}`);
+        buf += decoder.decode(value, { stream: true });
+      }
+    }
+
+    // Sync on the end-of-run summary so the watcher is seeded before the file changes.
+    await waitFor("Bailed out after 1 failure");
+    await waitFor("Ran 1 test across 1 file");
+
+    const before = buf.length;
+    writeFileSync(
+      join(String(dir), "a.test.ts"),
+      `
+        import { expect, test } from "bun:test";
+        test("first", () => expect(1).toBe(1));
+        test("second", () => {});
+      `,
+    );
+    await waitFor("Ran 2 tests across 1 file", before);
+    expect(buf.slice(before)).toContain(" 2 pass");
+    expect(buf.slice(before)).not.toContain("Bailed out");
+
+    proc.kill();
+    reader.releaseLock();
+  });
 });

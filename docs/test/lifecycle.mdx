@@ -134,6 +134,8 @@ Then use `--preload` to run the setup script before any test files.
 bun test --preload ./setup.ts
 ```
 
+The `afterAll` hook runs after the last test file. It also runs when [`--bail`](/test/index#bail-out-with---bail) stops the run early.
+
 To avoid typing `--preload` every time you run tests, add it to your `bunfig.toml`:
 
 ```toml title="bunfig.toml" icon="settings"

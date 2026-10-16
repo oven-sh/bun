@@ -284,6 +284,8 @@ bun test --bail
 bun test --bail=10
 ```
 
+After the last of these failures, no other test or test file starts. Teardown still runs: a test that is already running finishes, and the `afterAll` hooks of each `describe` block, test file and [preload script](/test/lifecycle#global-setup-and-teardown) that already started still run. The run then ends as usual, with the summary and the reports, and exits with code `1`.
+
 ## Watch mode
 
 Like `bun run`, `bun test` accepts the `--watch` flag to watch for changes and re-run tests.

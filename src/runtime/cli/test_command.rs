@@ -1419,15 +1419,6 @@ impl CommandLineReporter {
         reached_bail
     }
 
-    /// The end of a run that `--bail` stopped: the summary line and the report files.
-    pub(crate) fn report_bailed_run(&mut self) {
-        self.print_summary();
-        pretty_error!("\n");
-        Output::flush();
-        self.write_junit_report_if_needed();
-        self.write_timings_if_needed();
-    }
-
     /// `process.exit()` from a hook or a test that still runs after `--bail` stopped the run.
     /// The exit skips the end of `exec`, so a run that has failed reports here and exits 1.
     pub(crate) fn on_process_exit(vm: &mut VirtualMachine) {
@@ -1451,7 +1442,12 @@ impl CommandLineReporter {
         };
         // SAFETY: `BunTest.reporter` points at the `CommandLineReporter` that `exec` owns for
         // the whole run; single-threaded, and this exit never returns to a frame that borrows it.
-        unsafe { &mut *reporter.as_ptr() }.report_bailed_run();
+        let reporter = unsafe { &mut *reporter.as_ptr() };
+        reporter.print_summary();
+        pretty_error!("\n");
+        Output::flush();
+        reporter.write_junit_report_if_needed();
+        reporter.write_timings_if_needed();
     }
 
     pub(crate) fn print_summary(&mut self) {
@@ -1470,7 +1466,7 @@ impl CommandLineReporter {
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
     }
 
-    /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
+    /// Like the JUnit report, written at the end of the run and before an exit that skips it, so measured durations aren't lost.
     pub(crate) fn write_timings_if_needed(&mut self) {
         if self.jest.test_options.update_timings
             && self.worker_ipc_file_idx.is_none()
@@ -1482,7 +1478,7 @@ impl CommandLineReporter {
 
     /// Writes the JUnit reporter output file if a JUnit reporter is active and
     /// an outfile path was configured. This must be called before any early exit
-    /// (e.g. bail) so that the report is not lost.
+    /// (`on_process_exit`) so that the report is not lost.
     pub(crate) fn write_junit_report_if_needed(&mut self) {
         if let Some(junit) = self.reporters.junit.as_mut() {
             if let Some(outfile) = self.jest.test_options.reporter_outfile.as_deref() {
@@ -1527,24 +1523,27 @@ impl CommandLineReporter {
         }
     }
 
+    /// Returns false when `lcov.info` could not be written. The caller fails the run, after the
+    /// summary and the report files that come after the coverage report.
     pub(crate) fn generate_code_coverage(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
-    ) {
+    ) -> bool {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
         if ByteRangeMapping::map().is_none_or(|m| {
             // SAFETY: see `for_each_coverage_report`.
             unsafe { m.as_ref() }.is_empty()
         }) {
-            return;
+            return true;
         }
         let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
         Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
         if let Err(err) = print_coverage_reports(opts, &reports) {
             Output::err(err, "Failed to write lcov.info", ());
-            Global::exit(1);
+            return false;
         }
+        true
     }
 }
 
@@ -2407,25 +2406,6 @@ impl TestCommand {
             }
         }
 
-        if !ran_parallel && reporter.jest.bail_reached() {
-            reporter.report_bailed_run();
-            vm.exit_handler.exit_code = 1;
-            vm.is_shutting_down = true;
-            // Release the `bun:test` GC roots, then clear `RUNNER` so finalizers
-            // can't observe a partially-torn-down `TestRunner`.
-            reporter.jest.bun_test_root.deinit_for_exit();
-            // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
-            // no concurrent reader exists on this shutdown path.
-            unsafe {
-                jest::Jest::RUNNER.write(None);
-            }
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only and `global_exit()`
-            // diverges, so the closure is the sole mutator.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
-        }
-
         // With --changed, only a subset of test files (possibly none) runs,
         // so the module loader won't naturally add every source file to the
         // watcher. Seed it from the module graph so editing any local source
@@ -2502,6 +2482,7 @@ impl TestCommand {
         Output::flush();
 
         let mut failed_to_find_any_tests = false;
+        let mut wrote_coverage = true;
 
         if test_files.is_empty() && !pass_with_no_tests_from_filter {
             failed_to_find_any_tests = true;
@@ -2576,7 +2557,7 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                reporter.generate_code_coverage(vm, &mut coverage_options);
+                wrote_coverage = reporter.generate_code_coverage(vm, &mut coverage_options);
             }
 
             // `Summary` is `Copy`; take a value snapshot so the `&mut` from
@@ -2743,6 +2724,7 @@ impl TestCommand {
                 && coverage_options.fractions.failing
                 && coverage_options.fail_on_low_coverage)
             || !write_snapshots_success
+            || !wrote_coverage
             || reporter.jest.unhandled_errors_between_tests > 0
         {
             vm.exit_handler.exit_code = 1;

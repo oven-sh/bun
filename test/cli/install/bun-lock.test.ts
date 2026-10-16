@@ -4037,6 +4037,7 @@ describe("loading bun.lock binds the edges of a package printed at several paths
 // on, or for the parent's tarball. Every order has to write the same
 // bun.lock. `z`, the package the rows disagree on, has 1.0.0, 1.0.5, 1.1.0 and 2.0.0.
 type OrderedManifests = Record<string, Record<string, Record<string, Record<string, string> | string[]>>>;
+// `manifest` is the name of a package, or the file name of a tarball such as "a-1.0.0.tgz".
 type Hold = { manifest: string; until: string };
 type OrderedShape = {
   shape: string;
@@ -4065,13 +4066,13 @@ async function registryWithHolds(manifests: OrderedManifests) {
     async fetch(request) {
       const { origin, pathname } = new URL(request.url);
       gates.get(pathname)?.resolve();
-      const tarball = tarballs.get(pathname);
-      if (tarball) return new Response(tarball);
       const name = pathname.slice(1);
-      const entry = manifests[name];
-      if (!entry) return new Response("not found", { status: 404 });
       const until = heldUntil.get(name);
       if (until) await gates.get(until)!.promise;
+      const tarball = tarballs.get(pathname);
+      if (tarball) return new Response(tarball);
+      const entry = manifests[name];
+      if (!entry) return new Response("not found", { status: 404 });
       const versions: Record<string, unknown> = {};
       for (const [version, extra] of Object.entries(entry)) {
         versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
@@ -4554,6 +4555,77 @@ it("an install that adds packages to a bun.lock writes the same bun.lock whichev
     expect({ order, lock }).toEqual({ order, lock: expected });
   }
   expect(instancesOf(expected!, "z")).toEqual({ "z": "z@1.0.0", "c/z": "z@1.1.0" });
+});
+
+// What a tarball dependency depends on is only known once it is downloaded, and how long that takes
+// must not decide which versions its dependencies share with the rest of the tree. p's peer keeps
+// z@2.0.0 in the tree once something has picked it, so the collapse cannot even the orders out.
+const pinAndPeer = { dependencies: { p: "1.0.0", z: "1.0.0" } };
+const peerOnZ2 = { "1.0.0": { peerDependencies: { z: "^2.0.0" } } };
+
+function dependenciesOnTarballs(server: Bun.Server, names: string[]) {
+  return Object.fromEntries(names.map(name => [name, `${server.url.origin}/${name}-1.0.0.tgz`]));
+}
+
+it.each<Omit<OrderedShape, "files"> & { tarballs: string[]; dependencies: Record<string, string> }>([
+  {
+    shape: "the tarball a -> z@* next to b -> z@1.0.0",
+    manifests: { a: { "1.0.0": { dependencies: { z: "*" } } }, b: { "1.0.0": pinAndPeer }, p: peerOnZ2, z: zVersions },
+    tarballs: ["a"],
+    dependencies: { b: "1.0.0" },
+    orders: {
+      // While b's manifest is held, only a's package.json leads to z.
+      "a's tarball first": [{ manifest: "b", until: "/z" }],
+      "a's tarball last": [{ manifest: "a-1.0.0.tgz", until: "/z-1.0.0.tgz" }],
+    },
+    z: { "z": "z@1.0.0" },
+  },
+  {
+    shape: "the tarball a -> z@* next to the tarball c -> z@1.0.0",
+    manifests: { a: { "1.0.0": { dependencies: { z: "*" } } }, c: { "1.0.0": pinAndPeer }, p: peerOnZ2, z: zVersions },
+    tarballs: ["a", "c"],
+    dependencies: {},
+    orders: {
+      "a's tarball first": [{ manifest: "c-1.0.0.tgz", until: "/z" }],
+      // Only c's package.json leads to p.
+      "c's tarball first": [{ manifest: "a-1.0.0.tgz", until: "/p" }],
+    },
+    z: { "z": "z@2.0.0", "c/z": "z@1.0.0" },
+  },
+])(
+  "a fresh install writes the same bun.lock whichever tarball dependency arrives last: $shape",
+  async ({ manifests, tarballs, dependencies, orders, z }) => {
+    const ordered = await registryWithHolds(manifests);
+    using server = ordered.server;
+    const files = {
+      "package.json": { name: "foo", dependencies: { ...dependenciesOnTarballs(server, tarballs), ...dependencies } },
+    };
+    let expected: string | undefined;
+    for (const [order, holds] of Object.entries(orders)) {
+      ordered.hold(holds);
+      const lock = await freshInstallLock(server, files);
+      expected ??= lock;
+      expect({ order, lock }).toEqual({ order, lock: expected });
+    }
+    expect(instancesOf(expected!, "z")).toEqual(z);
+  },
+);
+
+it("a tarball dependency is installed when the one before it cannot be downloaded", async () => {
+  const ordered = await registryWithHolds({ c: { "1.0.0": { dependencies: { z: "~1.0.0" } } }, z: zVersions });
+  using server = ordered.server;
+  // c is downloaded, and read, while the answer for `a` is still out. Only c's package.json leads to z.
+  ordered.hold([{ manifest: "a-1.0.0.tgz", until: "/z" }]);
+  const lock = await freshInstallLock(server, {
+    "package.json": {
+      name: "foo",
+      dependencies: dependenciesOnTarballs(server, ["c"]),
+      optionalDependencies: dependenciesOnTarballs(server, ["a"]),
+    },
+  });
+  expect(instancesOf(lock, "a")).toEqual({});
+  expect(instancesOf(lock, "c")).toEqual({ "c": `c@${server.url.origin}/c-1.0.0.tgz` });
+  expect(instancesOf(lock, "z")).toEqual({ "z": "z@1.0.5" });
 });
 
 it("a peer no version in the tree satisfies stays on the one it was bound to", async () => {

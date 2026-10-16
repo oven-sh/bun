@@ -1377,7 +1377,7 @@ fn run_tasks_erased(
                     } else {
                         unreachable!("unexpected context type");
                     }
-                } else if manager.defers_remote_package(resolution) {
+                } else if manager.defers_remote_package(task.id, resolution) {
                     manager.keep_arrived_package(task.id, resolution, task.data_extract());
                     name_progress(manager, alias, EXTRACT);
                     continue;
@@ -1672,7 +1672,7 @@ fn run_tasks_erased(
                     } else {
                         unreachable!("unexpected context type");
                     }
-                } else if manager.defers_remote_package(resolution) {
+                } else if manager.defers_remote_package(task.id, resolution) {
                     manager.keep_arrived_package(task.id, resolution, task.data_git_checkout());
                 } else if let Some(pkg) = manager.process_extracted_tarball_package(
                     &mut package_id,

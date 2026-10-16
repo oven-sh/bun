@@ -8,7 +8,7 @@ use bun_semver::{ExternalString, String as SemverString};
 use crate::bun_json::Expr;
 use crate::dependency::{TagExt as _, VersionTag};
 use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext};
-use crate::lockfile_real::{DependencySlice, PackageIDSlice, QueuedRows, StringBuilder};
+use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{ArrivedPackage, PackageManager, RemoteTurn, enqueue, run_tasks};
 use crate::package_manager_task as Task;
@@ -18,6 +18,35 @@ use crate::{
     Dependency, DependencyID, ExtractData, ExtractDataJson, Features, INVALID_PACKAGE_ID,
     PackageID, Resolution, TaskCallbackContext, dependency,
 };
+
+/// What a package.json depends on, parsed into a lockfile of its own. `LookAhead` reads it to
+/// request manifests for a package before the package is resolved.
+#[derive(Default)]
+pub(crate) struct ListedDependencies {
+    pub(crate) lockfile: Lockfile,
+    pub(crate) package: Package,
+}
+
+/// Parses a package.json for `ListedDependencies`, where the package's resolution does not matter.
+pub(crate) struct OnlyDependencies;
+
+impl ResolverContext for OnlyDependencies {
+    fn is_void(&self) -> bool {
+        true
+    }
+
+    fn check_bundled_dependencies(&self) -> bool {
+        true
+    }
+
+    fn resolve(
+        &mut self,
+        _builder: &mut StringBuilder<'_>,
+        _json: &Expr,
+    ) -> Result<ResolutionType<u64>, crate::Error> {
+        Ok(ResolutionType::default())
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 // GitResolver
@@ -446,9 +475,9 @@ impl PackageManager {
         }
     }
 
-    /// Whether a downloaded package with this resolution waits for its turn, see `RemotePackages`.
+    /// Whether the package that `task_id` has downloaded waits for its turn, see `RemotePackages`.
     /// The runtime's auto-install writes no lockfile, and an import waits for its package alone.
-    pub(crate) fn defers_remote_package(&self, resolution: &Resolution) -> bool {
+    pub(crate) fn defers_remote_package(&self, task_id: Task::Id, resolution: &Resolution) -> bool {
         !self.options.runtime_auto_install
             && matches!(
                 resolution.tag,
@@ -457,6 +486,10 @@ impl PackageManager {
                     | ResolutionTag::LocalTarball
                     | ResolutionTag::RemoteTarball
             )
+            // `bun pm fetch` downloads what bun.lock has, and no dependency is resolved by that.
+            && self.task_queue.get(&task_id).is_some_and(|waiting| {
+                (waiting.iter()).any(|waiter| matches!(waiter, TaskCallbackContext::Dependency(_)))
+            })
     }
 
     /// Keeps a downloaded package until `append_next_remote_package` adds it to the lockfile.
@@ -468,8 +501,22 @@ impl PackageManager {
         resolution: &Resolution,
         data: &ExtractData,
     ) {
-        let rows = self.rows_of_arrived_package(resolution, data);
-        enqueue::look_ahead_from_rows(self, &rows);
+        if let Some(json) = &data.json {
+            let source = bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
+            let mut listed = ListedDependencies::default();
+            // What is wrong with the package.json is reported when the package is added.
+            let parsed = listed.package.parse(
+                &mut listed.lockfile,
+                self,
+                &mut bun_ast::Log::init(),
+                &source,
+                &mut OnlyDependencies,
+                Features::NPM,
+            );
+            if parsed.is_ok() {
+                enqueue::look_ahead_from(self, &listed);
+            }
+        }
         let data = ExtractData {
             url: data.url.clone(),
             resolved: data.resolved.clone(),
@@ -484,49 +531,6 @@ impl PackageManager {
             data,
         };
         let _ = self.remote_packages.arrived.insert(task_id, arrived);
-    }
-
-    /// The dependencies in the package.json of a downloaded package. Their rows are taken out of
-    /// the lockfile again, so that the ids of later rows do not depend on when the package arrived.
-    fn rows_of_arrived_package(
-        &mut self,
-        resolution: &Resolution,
-        data: &ExtractData,
-    ) -> Vec<Dependency> {
-        let Some(json) = &data.json else {
-            return Vec::new();
-        };
-        let source = bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
-        let log_mark = self.log_mut().msgs.len();
-        let start = self.lockfile.buffers.dependencies.len();
-        let parsed = match resolution.tag {
-            ResolutionTag::Git | ResolutionTag::Github => {
-                let fallback_name: Vec<u8> = resolution
-                    .repository()
-                    .fallback_package_name(self.lockfile.buffers.string_bytes.as_slice())
-                    .to_vec();
-                let repo = self.lockfile.str(&resolution.repository().repo);
-                let mut resolver = GitResolver {
-                    resolved: &data.resolved,
-                    resolution,
-                    fallback_name: &fallback_name,
-                    locked_repo: locked_scp_like(repo),
-                };
-                self.parse_extracted(&mut Package::default(), &source, &mut resolver)
-            }
-            _ => {
-                let mut resolver = TarballResolver {
-                    url: &data.url,
-                    resolution,
-                };
-                self.parse_extracted(&mut Package::default(), &source, &mut resolver)
-            }
-        };
-        self.lockfile.buffers.resolutions.truncate(start);
-        let rows = self.lockfile.buffers.dependencies.split_off(start);
-        // The package.json is parsed again when the package is added, and reported then.
-        drop(self.take_log_since(log_mark));
-        if parsed.is_ok() { rows } else { Vec::new() }
     }
 
     /// For each task that fetches a git, GitHub or tarball package: the lowest dependency that

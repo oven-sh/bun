@@ -26,6 +26,7 @@ use crate::package_manager_real::directories::{
     try_get_cache_directory, try_get_temporary_directory, try_global_link_dir,
 };
 use crate::package_manager_real::options::{Do, OfflineMode};
+use crate::package_manager_real::process_dependency_list::ListedDependencies;
 use crate::package_manager_real::{
     self, HeldAbout, PackageManager, RemoteTurn, SuccessFn, TaskCallbackList, Wanted,
     get_cache_directory, get_temporary_directory, run_tasks,
@@ -73,7 +74,14 @@ fn task_callback_list(this: &mut PackageManager, task_id: Task::Id) -> &mut Task
 
 /// Makes a git, GitHub or tarball dependency wait for the task that fetches its package.
 fn wait_for_remote_task(this: &mut PackageManager, task_id: Task::Id, waiter: TaskCallbackContext) {
-    task_callback_list(this, task_id).push(waiter);
+    use TaskCallbackContext::Dependency as Row;
+    let waiting = task_callback_list(this, task_id);
+    // `request_remote_package_ahead` may have put the dependency on the list before its turn.
+    let is_waiting = (waiting.iter())
+        .any(|other| matches!((other, &waiter), (Row(other), Row(id)) if other == id));
+    if !is_waiting {
+        waiting.push(waiter);
+    }
     if !this.remote_packages.tasks.contains(&task_id) {
         this.remote_packages.tasks.push(task_id);
     }
@@ -1142,7 +1150,7 @@ fn request_ahead(this: &mut PackageManager) {
     }
 }
 
-/// Looks ahead from the row `id` of `item`, unless it can be resolved without a manifest.
+/// Requests what the row `id` of `item` will need when its turn comes, and looks ahead from it.
 fn request_row_ahead(this: &mut PackageManager, id: DependencyID, item: Lockfile::QueuedRows) {
     let row = queued_row(this, id, item);
     // Most names come up many times, and one request serves all of them.
@@ -1158,18 +1166,27 @@ fn request_row_ahead(this: &mut PackageManager, id: DependencyID, item: Lockfile
     let Ok(asked) = asked_version(this, id, &dependency, false, &mut replacement) else {
         return;
     };
-    if !asked.version.tag.is_npm()
-        // `Wanted` keeps the text of a range, and a range that a command made up has none. A tag
-        // without text is what `bun add <name>` and `"name": ""` ask for, and it means `latest`.
-        || (asked.version.tag == dependency::version::Tag::Npm
-            && asked.version.literal.is_empty())
-        || unsafe_name(&this.lockfile, &dependency, &asked).is_some()
-    {
+    if unsafe_name(&this.lockfile, &dependency, &asked).is_some() {
         return;
     }
     // The rows of a package that the peer pass added are queued like any other package's. Its
     // peers are in the next batch, and all they wait for is their turn.
     let install_peer = item.install_peer || this.look_ahead.in_peer_pass;
+    match asked.version.tag {
+        // `Wanted` keeps the text of a range, and a range that a command made up has none. A tag
+        // without text is what `bun add <name>` and `"name": ""` ask for, and it means `latest`.
+        dependency::version::Tag::Npm if asked.version.literal.is_empty() => return,
+        dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {}
+        dependency::version::Tag::Git
+        | dependency::version::Tag::Github
+        | dependency::version::Tag::Tarball => {
+            return request_remote_package_ahead(this, id, item, &dependency, asked, install_peer);
+        }
+        dependency::version::Tag::Folder | dependency::version::Tag::Workspace => {
+            return look_ahead_from_project_folder(this, id, asked);
+        }
+        _ => return,
+    }
     let latest_for_target = picks_latest_tag(
         this,
         &dependency,
@@ -1203,6 +1220,71 @@ fn request_row_ahead(this: &mut PackageManager, id: DependencyID, item: Lockfile
         install_peer,
     );
     look_ahead(this, wanted);
+}
+
+/// Starts the download of a git, GitHub or tarball dependency before its turn. The package waits
+/// for its own turn once it is downloaded (`RemotePackages`), so nothing is resolved by this.
+fn request_remote_package_ahead(
+    this: &mut PackageManager,
+    id: DependencyID,
+    item: Lockfile::QueuedRows,
+    dependency: &Dependency,
+    asked: Asked<'_>,
+    install_peer: bool,
+) {
+    let resolution = this.lockfile.buffers.resolutions[id as usize];
+    let is_local_tarball = asked.version.tag == dependency::version::Tag::Tarball
+        && matches!(
+            asked.version.tarball().uri,
+            dependency::tarball::Uri::Local(_)
+        );
+    if resolution != invalid_package_id
+        || this.options.runtime_auto_install
+        // A deferred peer asks for nothing: the tree may provide it.
+        || (dependency.behavior.is_peer() && !install_peer)
+        // Whether another package may name a tarball in the project is decided, and reported, once.
+        || (is_local_tarball && !this.lockfile.is_dependency_of_local_package(id))
+    {
+        return;
+    }
+    let started = bind_row_without_manifest(
+        this,
+        id,
+        dependency,
+        resolution,
+        install_peer,
+        PackageManager::assign_resolution,
+        false,
+        asked,
+    );
+    // The task is on record now, so the dependency does not run into the same error at its turn.
+    if let Err(err) = started
+        && item.from_command
+    {
+        add_dependency_error(this, dependency, err);
+    }
+}
+
+/// Looks ahead from what a `file:` or `workspace:` folder of the project depends on. Resolving the
+/// folder needs no download, but it has to wait for its turn like any other dependency.
+fn look_ahead_from_project_folder(this: &mut PackageManager, id: DependencyID, asked: Asked<'_>) {
+    // What the `file:` folder of another package depends on is not resolved.
+    if !this.lockfile.is_workspace_dependency(id) {
+        return;
+    }
+    let path = match asked.version.tag {
+        dependency::version::Tag::Workspace => (this.lockfile.workspace_paths)
+            .get(&asked.name_hash)
+            .copied()
+            .unwrap_or_else(|| *asked.version.workspace()),
+        _ => *asked.version.folder(),
+    };
+    let path = this.lockfile.str_detached(&path);
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let abs = project_path(path, &mut buf[..]);
+    if let Some(listed) = FolderResolution::listed_dependencies(asked.version.tag, abs, this) {
+        look_ahead_from(this, &listed);
+    }
 }
 
 impl Wanted {
@@ -1408,13 +1490,13 @@ impl Follow<'_> {
     }
 }
 
-/// Looks ahead from the dependencies of a git, GitHub or tarball package that waits for its turn.
-/// The strings of `rows` are in the lockfile's buffer.
+/// Looks ahead from what a package that waits for its turn depends on.
 #[cold]
-pub(crate) fn look_ahead_from_rows(this: &mut PackageManager, rows: &[Dependency]) {
+pub(crate) fn look_ahead_from(this: &mut PackageManager, listed: &ListedDependencies) {
     let follows_peers = this.look_ahead.in_peer_pass;
     let lockfile = &*this.lockfile;
-    let buf = lockfile.buffers.string_bytes.as_slice();
+    let buf = listed.lockfile.buffers.string_bytes.as_slice();
+    let rows = (listed.package.dependencies).get(listed.lockfile.buffers.dependencies.as_slice());
     let mut follow = Follow {
         lockfile,
         known_npm_aliases: &this.known_npm_aliases,
@@ -3666,16 +3748,20 @@ fn resolve_project_folder(
     // `get_or_put` copies the path into the lockfile string buffer before any other mutation.
     let path = this.lockfile.str_detached(&path);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let abs = if bun_paths::is_absolute(path) {
-        path
-    } else {
-        Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-            FileSystem::instance().top_level_dir(),
-            &mut buf,
-            &[path],
-        )
-    };
+    let abs = project_path(path, &mut buf[..]);
     FolderResolution::get_or_put(GlobalOrRelative::Relative(version.tag), version, abs, this)
+}
+
+/// `path` as an absolute path. A relative one is relative to the project.
+fn project_path<'a>(path: &'a [u8], buf: &'a mut [u8]) -> &'a [u8] {
+    if bun_paths::is_absolute(path) {
+        return path;
+    }
+    Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+        FileSystem::instance().top_level_dir(),
+        buf,
+        &[path],
+    )
 }
 
 /// `bun update <name>`: the row names a requested package, as declared or through `npm:`.

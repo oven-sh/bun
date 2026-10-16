@@ -121,6 +121,9 @@ public:
     bool m_finalChunkArmed : 1 { false };
     // A whole-body consumer (.text() etc.): an async pull() resolving without close()/end() closes.
     bool m_closeOnPullSettled : 1 { false };
+    // Array sink of a Response / Request blob() or formData() (BlobChunkPolicy::BytesOrString):
+    // write() takes a string, an ArrayBuffer or an ArrayBufferView, and throws for any other value.
+    bool m_arraySinkTakesBytesOrString : 1 { false };
     // ArrayBuffer sink: the bytes write() accepted since it armed m_pendingWrite (saturating).
     uint32_t m_pendingWriteLength { 0 };
     // ArrayBuffer sink: m_buffer's capacity as last reported to the heap (reportExtraMemoryAllocated);

@@ -799,7 +799,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_blob, (JSGlobalObject
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
-    RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToBlob(lexicalGlobalObject, stream)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToBlob(lexicalGlobalObject, stream, BlobChunkPolicy::BlobParts)));
 }
 
 // Bun private-name accessor ($bunNativePtr).

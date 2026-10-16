@@ -209,6 +209,12 @@ enum class DirectSinkKind : uint8_t {
     Array, // chunks pushed into a JSArray
 };
 
+// What a blob() / formData() consumer takes as a chunk.
+enum class BlobChunkPolicy : uint8_t {
+    BlobParts, // `new Blob(chunks)`: a Blob is copied, any other value is converted to a string
+    BytesOrString, // a Response / Request body: any chunk that is not a string, ArrayBuffer or ArrayBufferView is a TypeError
+};
+
 // Body.textStream() streaming UTF-8 decode state: the partial trailing sequence carried
 // across chunk boundaries plus the once-per-stream BOM decision. Held-back bytes are
 // always [lead(>=0xC0), cont*(0x80..0xBF)], never zero, so pendingLen is the index of

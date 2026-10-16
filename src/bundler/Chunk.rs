@@ -721,8 +721,13 @@ impl IntermediateOutput {
                     || reference_path_style == ReferencePathStyle::OutdirRelative
                     || !import_prefix.is_empty();
 
-                // HTML `src`/`href` values are URLs, JS and CSS strings stay raw.
-                let percent_encode_paths = matches!(chunk.content, Content::Html);
+                // HTML `src`/`href` values are URLs; JS and CSS strings stay raw.
+                let url_path: fn(&[u8]) -> Cow<'_, [u8]> = if matches!(chunk.content, Content::Html)
+                {
+                    strings::percent_encode_url_path
+                } else {
+                    |path| Cow::Borrowed(path)
+                };
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
@@ -806,14 +811,11 @@ impl IntermediateOutput {
                                 QueryKind::None | QueryKind::ChunkId => unreachable!(),
                             };
 
-                            // Normalized as in the write pass so both measure the same bytes.
-                            let file_path: &[u8] = {
-                                let n = file_path.len();
-                                let dst = &mut file_path_buf[..n];
-                                dst.copy_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
-                                dst
-                            };
+                            // The write pass normalizes separators; measure the same bytes.
+                            let file_path = bun_paths::resolve_path::platform_to_posix_buf(
+                                file_path,
+                                &mut file_path_buf[..],
+                            );
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {
@@ -827,11 +829,7 @@ impl IntermediateOutput {
                                     )
                                 },
                             );
-                            let path_part = if percent_encode_paths {
-                                strings::percent_encode_url_path(cheap_normalizer[1])
-                            } else {
-                                Cow::Borrowed(cheap_normalizer[1])
-                            };
+                            let path_part = url_path(cheap_normalizer[1]);
                             count += cheap_normalizer[0].len() + path_part.len();
                         }
                         QueryKind::None => {}
@@ -1030,11 +1028,7 @@ impl IntermediateOutput {
                                     )
                                 },
                             );
-                            let path_part = if percent_encode_paths {
-                                strings::percent_encode_url_path(cheap_normalizer[1])
-                            } else {
-                                Cow::Borrowed(cheap_normalizer[1])
-                            };
+                            let path_part = url_path(cheap_normalizer[1]);
 
                             if !cheap_normalizer[0].is_empty() {
                                 remain[..cheap_normalizer[0].len()]

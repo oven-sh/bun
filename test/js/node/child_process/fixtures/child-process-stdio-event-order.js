@@ -7,6 +7,7 @@
 //   first-read    the bytes and the EOF are both in the pipe before the parent reads for the first time
 //   waiting-read  the parent's read already waits when the child writes
 //   two-chunks    the second chunk and the EOF are in the pipe while the 'data' listener of the first chunk runs
+//   held-open     the child exits at once, and a grandchild holds the pipe: it writes when the parent has seen 'exit'
 // consumer:
 //   data          a 'data' listener
 //   readable      a 'readable' listener that calls read()
@@ -14,8 +15,11 @@
 //   throw         a 'data' listener that throws
 //   destroy-callback-throws  a 'data' listener that calls destroy() with a callback that throws
 //   read-on-exit  no listener, and a read() call when the child exits
+//   for-await     a `for await` loop, and after it a 'close' listener and `await once(child, "close")`
+//   await-end     a 'data' listener and `await once(stream, "end")`, and after it the same two
 // "both" reads stdout and stderr, and prints only their 'data' events.
 const { spawn } = require("node:child_process");
+const { once } = require("node:events");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -39,7 +43,7 @@ function blockUntilExists(file) {
 
 // The child closes the fd itself, so the EOF is in the pipe before `written` exists. (On Windows
 // closeSync() of fd 1 or 2 does nothing, and the EOF follows when the child exits.)
-const childSource = `
+const writerSource = `
   const fs = require("node:fs");
   const sleeper = new Int32Array(new SharedArrayBuffer(4));
   const dir = ${JSON.stringify(dir)};
@@ -52,6 +56,11 @@ const childSource = `
   for (const fd of fds) fs.closeSync(fd);
   fs.writeFileSync(${JSON.stringify(written)}, "");
 `;
+// held-open: the writer is a grandchild that inherits the pipe, and the child exits without a wait for it.
+const childSource =
+  mode === "held-open"
+    ? `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(writerSource)}], { stdio: "inherit" }).unref();`
+    : writerSource;
 
 const stdio = ["ignore", "ignore", "ignore"];
 for (const fd of fds) stdio[fd] = "pipe";
@@ -69,6 +78,7 @@ async function queueTickAndJobs(label) {
   events.push(`job3(${label})`);
 }
 
+const awaitsEnd = consumer === "for-await" || consumer === "await-end";
 for (const fd of fds) {
   const stream = child.stdio[fd];
   if (consumer === "data") {
@@ -116,16 +126,39 @@ for (const fd of fds) {
       queueTickAndJobs(chunk);
       throw new Error("the listener threw");
     });
+  } else if (awaitsEnd) {
+    // Node emits 'close' from the close callback of the handle, after the promise jobs that 'end' started.
+    (async () => {
+      if (consumer === "for-await") {
+        for await (const chunk of stream) events.push(`data(${chunk})`);
+      } else {
+        stream.on("data", chunk => events.push(`data(${chunk})`));
+        await once(stream, "end");
+      }
+      events.push("consumed");
+      stream.on("close", hadError => events.push(`late-close(${hadError})`));
+      await once(child, "close");
+      events.push("child-close-settled");
+    })();
   } else {
     // Node has read the pipe from the start, so the bytes are in the stream's buffer by now.
     child.on("exit", () => events.push(`read(${stream.read()})`));
   }
   if (which === "both") continue;
-  stream.on("end", () => {
-    events.push("end");
-    queueTickAndJobs("end");
+  // Not for a consumer that awaits: how many promise jobs an await takes is not what the line is about.
+  if (!awaitsEnd) {
+    stream.on("end", () => {
+      events.push("end");
+      queueTickAndJobs("end");
+    });
+  }
+  stream.on("close", hadError => events.push(`close(${hadError})`));
+}
+if (mode === "held-open") {
+  child.on("exit", () => {
+    events.push("exit");
+    fs.writeFileSync(go, "");
   });
-  stream.on("close", () => events.push("close"));
 }
 child.on("close", () => {
   // A job that runs after 'close' still gets into the line.

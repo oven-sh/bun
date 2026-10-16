@@ -228,20 +228,25 @@ describe.skipIf(!isPosix)("stdio handed to the child", () => {
 describe.concurrent("child.stdout and child.stderr event order", () => {
   const fixture = import.meta.dir + "/fixtures/child-process-stdio-event-order.js";
   const chain = label => `tick(${label}) job(${label}) job2(${label}) job3(${label})`;
-  const end = `end ${chain("end")} close`;
+  const end = `end ${chain("end")} close(false)`;
+  // The consumer awaits the end of the stream. Then it listens for 'close' and awaits the child's 'close': both still come.
+  const awaited = "data(AAAABB) consumed close(false) late-close(false) child-close-settled";
   const expected = {
     data: `data(AAAABB) ${chain("AAAABB")} ${end}`,
     readable: `read(AAAABB) read(null) ${chain("AAAABB")} read(null) ${end}`,
     // The listener destroys the stream from a promise job: no 'end' follows, and the rest of that job comes before 'close'.
-    destroy: "data(AAAABB) destroy job(destroy) tick(destroy) job2(destroy) job3(destroy) close",
+    destroy: "data(AAAABB) destroy job(destroy) tick(destroy) job2(destroy) job3(destroy) close(false)",
     // destroy() swallows the throw of its callback, and 'close' still comes.
-    "destroy-callback-throws": "data(AAAABB) destroy-callback close",
+    "destroy-callback-throws": "data(AAAABB) destroy-callback close(false)",
     // The throw is an uncaught exception, and the stream reads on.
     throw: `data(AAAABB) uncaughtException(uncaughtException) ${chain("AAAABB")} ${end}`,
     // Nobody listens: a read() call gets the bytes at once.
     "read-on-exit": `read(AAAABB) ${end}`,
     both: `data(OUT) ${chain("OUT")} data(ERR) ${chain("ERR")}`,
     "two-chunks": `data(AAAA) ${chain("AAAA")} data(BBBB) ${chain("BBBB")} ${end}`,
+    "for-await": awaited,
+    "await-end": awaited,
+    "held-open": `exit ${awaited}`,
   };
 
   it.each([
@@ -249,6 +254,8 @@ describe.concurrent("child.stdout and child.stderr event order", () => {
     ["stdout", "first-read", "data"],
     ["stdout", "first-read", "readable"],
     ["stdout", "first-read", "destroy"],
+    ["stdout", "first-read", "for-await"],
+    ["stdout", "first-read", "await-end"],
     ["stderr", "first-read", "data"],
     ["both", "first-read", "data"],
     // waiting-read: the parent's read already waits when the child writes.
@@ -262,11 +269,15 @@ describe.concurrent("child.stdout and child.stderr event order", () => {
     // Not on Windows. There Node runs the promise jobs of a listener that threw after 'end', when
     // the EOF is already in the pipe. And Bun reads a pipe asynchronously there, so a read() call
     // in 'exit' finds no bytes yet.
+    // held-open: a grandchild holds the pipe until the parent has seen the child's 'exit', so the 'close'
+    // of the pipe is also the 'close' of the child. On Windows the exit of the child ends the grandchild.
     ...(isWindows
       ? []
       : [
           ["stdout", "first-read", "throw"],
           ["stdout", "first-read", "read-on-exit"],
+          ["stdout", "held-open", "for-await"],
+          ["stdout", "held-open", "await-end"],
         ]),
   ])("%s, %s, %s", async (which, mode, consumer) => {
     using dir = tempDir("child-stdio-event-order", {});
@@ -278,7 +289,7 @@ describe.concurrent("child.stdout and child.stderr event order", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: expected[which === "both" ? which : mode === "two-chunks" ? mode : consumer],
+      stdout: expected[which === "both" ? which : mode === "two-chunks" || mode === "held-open" ? mode : consumer],
       stderr: "",
       exitCode: 0,
     });

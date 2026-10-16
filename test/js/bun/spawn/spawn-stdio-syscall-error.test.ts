@@ -303,8 +303,8 @@ const events = [];
 const child = spawn("sh", ["-c", 'printf AAAABB; : > "$SPAWN_FAULT_MARKER"; exec sleep 60'], { stdio: ["ignore", "pipe", "ignore"] });
 child.stdout.on("data", chunk => events.push("stdout.data:" + chunk));
 child.stdout.on("error", e => events.push("stdout.error:" + e.code));
-child.stdout.on("close", () => {
-  events.push("stdout.close");
+child.stdout.on("close", hadError => {
+  events.push("stdout.close(" + hadError + ")");
   child.kill();
 });
 child.on("close", () => {
@@ -547,7 +547,7 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
         SPAWN_FAULT_MARKER: join(String(dir), "first-read-written"),
       }),
     ).toEqual({
-      parsed: { events: ["stdout.data:AAAABB", "stdout.error:EIO", "stdout.close", "close"] },
+      parsed: { events: ["stdout.data:AAAABB", "stdout.error:EIO", "stdout.close(true)", "close"] },
       stderr: "",
       exitCode: 0,
     });

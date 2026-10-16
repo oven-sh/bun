@@ -381,7 +381,7 @@ function destroy(this: NativeReadable, error: any, cb: (error?: any) => void) {
   }
   if (this[kReadEvents] !== undefined) {
     // As net.Socket: 'close' comes from the handle's close callback. It is queued before cb(), which can throw.
-    runAfterTickDrain(emitClose, this);
+    runAfterTickDrain(error ? emitCloseAfterError : emitClose, this);
     if (cb) cb(error);
     return;
   }
@@ -392,8 +392,13 @@ function destroy(this: NativeReadable, error: any, cb: (error?: any) => void) {
   }
 }
 
+// The argument is net.Socket's `hadError`: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L358
 function emitClose(stream: NativeReadable) {
-  stream.emit("close");
+  stream.emit("close", false);
+}
+
+function emitCloseAfterError(stream: NativeReadable) {
+  stream.emit("close", true);
 }
 
 // `_read()` of a "webstream" source pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async sources do not.

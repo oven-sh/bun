@@ -422,8 +422,7 @@ impl S3Credentials {
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
 
-        // Written once, into the allocation the result returns. The canonical request reads the
-        // path, and for a presigned URL the query, back from it.
+        // The URL is written once. The canonical request reads its path and presigned query back.
         let path_capacity = extra_path.len()
             + "/".len()
             + if self.virtual_hosted_style {
@@ -480,11 +479,7 @@ impl S3Credentials {
         encode_uri_component_into::<false>(path, &mut url.0);
         let path_end = url.0.len();
 
-        // The parameters are in alphabetical order, which is the order of the canonical
-        // request: Content-MD5, X-Amz-Acl, X-Amz-Algorithm, X-Amz-Credential, X-Amz-Date,
-        // X-Amz-Expires, X-Amz-Security-Token, X-Amz-Signature, X-Amz-SignedHeaders,
-        // response-content-disposition, response-content-type, x-amz-request-payer,
-        // x-amz-storage-class.
+        // The canonical request needs the query parameters in the order of their bytes.
         let presigned_query = if sign_query {
             url.0.push(b'?');
             let start = url.0.len();
@@ -573,8 +568,7 @@ impl S3Credentials {
                     break 'brk_sign cached;
                 }
                 // not cached yet lets generate a new one
-                // `BStr` writes at most three bytes for one, so this Vec never grows and
-                // no copy of the secret is freed with its bytes still in it.
+                // `BStr` writes at most three bytes for one, so no growth frees a copy of the secret.
                 let mut aws4_key = Zeroing(Vec::with_capacity(
                     "AWS4".len() + self.secret_access_key.len() * 3,
                 ));
@@ -657,9 +651,7 @@ impl S3Credentials {
             }
             let sha_digest = canonical.finish();
 
-            // The string to sign is the scope of the signature, then the digest of the
-            // canonical request in hex: 124 bytes and the region. It fits the block for every
-            // region that a service has. A longer one goes to the heap.
+            // The string to sign is 124 bytes and the region. Above 132 bytes of region it is on the heap.
             macro_rules! scope {
                 () => {
                     format_args!(
@@ -1120,8 +1112,7 @@ pub fn guess_region(endpoint: &[u8]) -> &[u8] {
 // URI encoding helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The bytes that go into a URI component as one byte: the RFC 3986 unreserved
-/// characters and, in the second table, the two path separators.
+/// The bytes that a URI component keeps: RFC 3986 unreserved, and in the second table `/` and `\`.
 static KEPT: [[bool; 256]; 2] = [kept_bytes(false), kept_bytes(true)];
 
 const fn kept_bytes(keep_slash: bool) -> [bool; 256] {
@@ -1135,8 +1126,7 @@ const fn kept_bytes(keep_slash: bool) -> [bool; 256] {
     table
 }
 
-/// Appends `input` to `out` percent-encoded, in uppercase hex. Without
-/// `ENCODE_SLASH`, `/` is kept and `\` becomes `/`.
+/// Appends `input` percent-encoded. Without `ENCODE_SLASH`, `/` stays and `\` becomes `/`.
 pub fn encode_uri_component_into<const ENCODE_SLASH: bool>(input: &[u8], out: &mut Vec<u8>) {
     let kept = &KEPT[usize::from(!ENCODE_SLASH)];
     let mut run_start = 0;
@@ -1369,8 +1359,7 @@ impl CanonicalRequest {
 
 const HASH_BLOCK_LEN: usize = 256;
 
-/// The canonical request is only hashed, so it goes to SHA-256 in pieces and no buffer has
-/// to hold all of it. `block` collects the small pieces.
+/// Sends the canonical request to SHA-256 in pieces. `block` collects the small ones.
 struct HashWriter<'a> {
     hash: bun_sha_hmac::sha::hashers::SHA256,
     block: &'a mut [u8; HASH_BLOCK_LEN],

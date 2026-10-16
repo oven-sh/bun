@@ -38,7 +38,9 @@ pub(crate) mod wire;
 
 pub use engine::{Demand, Engine, HEAVY, Serve, Vm, Work};
 pub use eslint::{Configuration, ForEslint, Linted, Refusal, Text};
-pub use host::{Failure, Host, Loading, ParseAgain, Ran, Report, Suggested, ThrownAt};
+pub use host::{
+    Failure, Host, Loading, ParseAgain, Ran, Report, Suggested, ThrownAt, WithoutTypes,
+};
 pub use prettier::Unformatted;
 pub use processor::{Block, Processor, Route, read_messages, write_messages};
 pub(crate) use rules::has_what_json_lacks;

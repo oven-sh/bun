@@ -12,6 +12,7 @@ use super::processor::{FindRule, read_messages};
 use super::wire::{self, result};
 use crate::linter::{LintMessage, write_json};
 use crate::options::Json;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// What the program is called with, after those of `processor.rs`.
@@ -38,6 +39,8 @@ pub struct Configuration {
     id: u32,
     /// `{ object, parser, plugins }`, as `builtConfiguration` in `worker/eslint.js` reads it. `null`: see [`Configuration::whole`].
     json: Box<[u8]>,
+    /// Why no realm can set it up, once one has tried. It would fail the same way every time.
+    refusal: OnceLock<Refusal>,
 }
 
 impl Configuration {
@@ -47,6 +50,7 @@ impl Configuration {
         Configuration {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
             json: json.into(),
+            refusal: OnceLock::new(),
         }
     }
 
@@ -90,7 +94,7 @@ pub struct Linted {
 }
 
 /// Why ESLint's `Linter` says nothing.
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Refusal {
     /// The project has no `eslint`.
     NotInstalled,
@@ -157,6 +161,9 @@ impl Host<'_> {
         file: Text,
         find_rule: &FindRule,
     ) -> Result<Linted, Refusal> {
+        if let Some(refusal) = configuration.refusal.get() {
+            return Err(refusal.clone());
+        }
         let mut only = Vec::new();
         if let Some(ids) = file.only {
             let ids = ids.iter().map(|it| Json::String(it.to_vec()));
@@ -182,6 +189,9 @@ impl Host<'_> {
         match file.only {
             Some(_) => self.engine.with_first_vm(&mut lint)?,
             None => self.engine.with_vm(file.text.len(), &mut lint)?,
+        }
+        if let Err(refusal @ (Refusal::NotInstalled | Refusal::NotConfigured(_))) = &returned {
+            let _ = configuration.refusal.set(refusal.clone());
         }
         let Some(parts) = crate::json::parse(&returned?).and_then(Json::into_array) else {
             return Err(OUT_OF_STEP.to_vec().into());

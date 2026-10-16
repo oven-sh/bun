@@ -60,6 +60,15 @@ pub struct Ran {
     pub asked_for_types: Vec<u32>,
 }
 
+/// Rules that asked for types where the config has them, and got none.
+#[derive(Clone, Debug)]
+pub struct WithoutTypes {
+    pub why: Refusal,
+    /// Where the config file is. Each config file looks for its own `eslint`.
+    pub directory: Box<[u8]>,
+    pub rules: Vec<Arc<Rule>>,
+}
+
 /// Why there are no reports for a file.
 #[derive(Clone, Debug)]
 pub struct Failure {
@@ -146,7 +155,7 @@ struct State {
     /// [`Host::rules_that_asked_for_types`]
     asked_for_types: Vec<Arc<Rule>>,
     /// [`Host::rules_without_types`]
-    without_types: Option<(Refusal, Vec<Arc<Rule>>)>,
+    without_types: Vec<WithoutTypes>,
 }
 
 /// What `getParserServices` of `@typescript-eslint/utils` throws starts so, in all its versions.
@@ -160,8 +169,8 @@ pub struct Host<'e> {
     measures: bool,
     /// Whether a rule [has asked for types](Host::has_asked_for_types).
     has_been_asked_for_types: AtomicBool,
-    /// Not [`Host::can_give_types`].
-    lacks_types: AtomicBool,
+    /// [`Host::can_give_types`]
+    gives_types: bool,
     state: Guarded<State>,
 }
 
@@ -233,7 +242,7 @@ impl<'e> Host<'e> {
             cwd: cwd.to_vec(),
             measures: false,
             has_been_asked_for_types: AtomicBool::new(false),
-            lacks_types: AtomicBool::new(false),
+            gives_types: true,
             state: Guarded::new(State::default()),
         }
     }
@@ -243,10 +252,10 @@ impl<'e> Host<'e> {
         Host { measures, ..self }
     }
 
-    /// The same host, which [gives types](Host::can_give_types) only if `gives`.
-    pub fn giving_types(self, gives: bool) -> Host<'e> {
+    /// The same host, which [gives types](Host::can_give_types) only if `gives_types`.
+    pub fn giving_types(self, gives_types: bool) -> Host<'e> {
         Host {
-            lacks_types: AtomicBool::new(!gives),
+            gives_types,
             ..self
         }
     }
@@ -378,10 +387,9 @@ impl<'e> Host<'e> {
         rules
     }
 
-    /// Whether a rule that asks for types gets them, where the config has them. False once ESLint's own `Linter`
-    /// [couldn't be used](Host::cannot_give_types).
+    /// Whether a rule that asks for types gets them, where the config has them. False with `--no-type-aware`.
     pub fn can_give_types(&self) -> bool {
-        !self.lacks_types.load(Ordering::Relaxed)
+        self.gives_types
     }
 
     /// ESLint's own `Linter` ran `rules`, which asked for types.
@@ -389,19 +397,38 @@ impl<'e> Host<'e> {
         add_rules(&mut self.state.lock().loading.given_types, rules);
     }
 
-    /// `rules` asked for types, but because of `why` there are none for the rest of the run.
-    pub fn cannot_give_types<'r>(&self, why: Refusal, rules: impl Iterator<Item = &'r Arc<Rule>>) {
-        self.lacks_types.store(true, Ordering::Relaxed);
-        let mut state = self.state.lock();
-        let without_types = state.without_types.get_or_insert((why, Vec::new()));
-        add_rules(&mut without_types.1, rules);
+    /// `rules` asked for types in a file whose config file is in `directory`, and because of `why` they got none.
+    pub fn cannot_give_types<'r>(
+        &self,
+        why: Refusal,
+        directory: &[u8],
+        rules: impl Iterator<Item = &'r Arc<Rule>>,
+    ) {
+        let all = &mut self.state.lock().without_types;
+        let known = (all.iter()).position(|it| it.why == why && *it.directory == *directory);
+        let at = known.unwrap_or_else(|| {
+            all.push(WithoutTypes {
+                why,
+                directory: directory.into(),
+                rules: Vec::new(),
+            });
+            all.len() - 1
+        });
+        if let Some(it) = all.get_mut(at) {
+            add_rules(&mut it.rules, rules);
+        }
     }
 
-    /// Why there are [no types](Host::can_give_types), and the rules that asked for them, sorted by name.
-    pub fn rules_without_types(&self) -> Option<(Refusal, Vec<Arc<Rule>>)> {
-        let (why, mut rules) = self.state.lock().without_types.clone()?;
-        crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
-        Some((why, rules))
+    /// The rules that asked for types and got none, in an order that doesn't depend on which file was linted first.
+    pub fn rules_without_types(&self) -> Vec<WithoutTypes> {
+        let mut all = self.state.lock().without_types.clone();
+        crate::utils::sort::sort_by(&mut all, |a, b| {
+            (&a.directory, &a.why).cmp(&(&b.directory, &b.why))
+        });
+        for it in &mut all {
+            crate::utils::sort::sort_by(&mut it.rules, |a, b| a.id.cmp(&b.id));
+        }
+        all
     }
 
     /// The plugins that are known, each with where it is: `[directory, specifier, alias]` of [`Host::load`], or

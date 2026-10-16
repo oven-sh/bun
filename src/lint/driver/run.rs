@@ -1154,19 +1154,28 @@ impl Run<'_> {
                 },
             ]);
         }
-        if let Some((why, rules)) = js_plugins.rules_without_types() {
-            let ids: Vec<&[u8]> = rules.iter().map(|it| &it.id[..]).collect();
-            let (why, message): (&[u8], _) = match &why {
-                Refusal::NotInstalled => (b"is not installed\n  Run bun add -d eslint", &[][..]),
+        for it in js_plugins.rules_without_types() {
+            let ids: Vec<&[u8]> = it.rules.iter().map(|it| &it.id[..]).collect();
+            let directory = paths::relative(&environment.cwd, &it.directory);
+            let within: &[u8] = if directory.is_empty() { b"" } else { b" in " };
+            let (why, then, message): (&[u8], &[u8], _) = match &it.why {
+                Refusal::NotInstalled => (
+                    b": eslint is not installed",
+                    b"\n  Run bun add -d eslint",
+                    &[][..],
+                ),
                 Refusal::NotConfigured(message) | Refusal::Thrown(message) => {
-                    (b"could not be set up: ", &message[..])
+                    (b": could not set up eslint", b": ", &message[..])
                 }
             };
             self.warn(
                 &[
+                    b"no type information for ",
                     &ids.join(&b", "[..])[..],
-                    b" ran without type information because eslint ",
                     why,
+                    within,
+                    &directory[..],
+                    then,
                     message,
                 ]
                 .concat(),
@@ -1233,8 +1242,9 @@ impl Run<'_> {
                 true => format!("{seconds:.1}s"),
                 false => format!("{:.0}ms", seconds * 1e3),
             };
-            let config = paths::relative(&environment.cwd, &program.config_path);
-            let example = paths::relative(&environment.cwd, &program.example);
+            let relative =
+                |path: &[u8]| paths::relative(&environment.cwd, &paths::from_native(path));
+            let (config, example) = (relative(&program.config_path), relative(&program.example));
             let linted = match program.asked_for {
                 1 => example,
                 many => [

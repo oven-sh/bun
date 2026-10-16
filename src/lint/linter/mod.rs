@@ -724,15 +724,15 @@ impl<S: RuleSet> Linter<S> {
             (options.js_plugins, &config.js_settings, options.again)
             && !running_js.is_empty()
         {
+            let can_have_types = config.js_rules_have_types && host.can_give_types();
             // What a rule that does not run would have reported cannot be told.
             running_js.retain(|it| {
-                let has_asked = host.has_asked_for_types(&it.configured.rule);
+                let has_asked = !can_have_types && host.has_asked_for_types(&it.configured.rule);
                 if has_asked {
                     rules_to_ignore.push(RuleId::Js(Arc::clone(&it.configured.rule)));
                 }
                 !has_asked
             });
-            let mut can_have_types = config.js_rules_have_types && host.can_give_types();
             let mut has_types = can_have_types;
             // The rules that asked for types.
             let mut typed: Vec<RunningJs> = Vec::new();
@@ -765,7 +765,7 @@ impl<S: RuleSet> Linter<S> {
                     }
                     Err(failure) => {
                         let asks = |it: &RunningJs| match can_have_types {
-                            // Only this file has no types.
+                            // It still runs wherever it gets types.
                             true => js_plugin::Host::is_about_types(&failure.message),
                             false => host.asks_for_types(&it.configured.rule, &failure.message),
                         };
@@ -822,8 +822,8 @@ impl<S: RuleSet> Linter<S> {
                     }
                     // Run them again without types.
                     Err(why) => {
-                        host.cannot_give_types(why, rules);
-                        (can_have_types, has_types) = (false, false);
+                        host.cannot_give_types(why, &config.base_path, rules);
+                        has_types = false;
                         running_js = std::mem::take(&mut typed);
                     }
                 }

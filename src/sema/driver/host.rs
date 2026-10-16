@@ -154,7 +154,12 @@ impl Entries {
         entries.shared_sort_unstable_by(|a, b| {
             (name(a).cmp(name(b))).then(a.is_directory.cmp(&b.is_directory))
         });
-        entries.dedup_by(|a, b| name(a) == name(b) && a.is_directory == b.is_directory);
+        // What is only in memory can have the name of a link on the disk.
+        entries.dedup_by(|dropped, kept| {
+            let is_same = name(dropped) == name(kept) && dropped.is_directory == kept.is_directory;
+            kept.is_link |= is_same && dropped.is_link;
+            is_same
+        });
         Listing {
             is_ascii: names.is_ascii(),
             names: names.into_boxed_slice(),

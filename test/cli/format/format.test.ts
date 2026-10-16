@@ -1359,10 +1359,11 @@ describe.concurrent("bun fmt", () => {
     });
 
     test("function types in each other take time in proportion to their number", async () => {
-      const nested = `type F = ${"(a: A) => ".repeat(isDebug || isASAN ? 1_000 : 4_000)}${flat};\n`;
+      const times = (text: string, count: number) => Buffer.alloc(text.length * Math.floor(count), text).toString();
+      const nested = `type F = ${times("(a: A) => ", isDebug || isASAN ? 1_000 : 4_000)}${flat};\n`;
       const ordinary = "type F = (a: A) => B;\n";
       const run = (text: string) => format({ "a.ts": text }, ["--check"]);
-      const [odd, plain] = [await run(nested), await run(ordinary.repeat(nested.length / ordinary.length))];
+      const [odd, plain] = [await run(nested), await run(times(ordinary, nested.length / ordinary.length))];
       expect(slowdown(odd, plain)).toBeLessThan(8);
     });
   });

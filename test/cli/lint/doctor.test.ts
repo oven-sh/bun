@@ -372,11 +372,17 @@ Still needed:   eslint (some files go to it)
         "src/c.js": "",
         "d.ts": "",
       };
-      const [text, json, off] = await Promise.all([
+      const eslint = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0" }) };
+      const [text, missing, json, off] = await Promise.all([
+        doctor({ ...files, ...eslint }),
         doctor(files),
         doctor(files, ["-f", "json"]),
         doctor(files, ["--no-type-aware"]),
       ]);
+      const count = "2 of them go to your installed ESLint if a JavaScript rule asks for types: 2 *.ts\n";
+      expect(missing.stdout).toBe(
+        text.stdout.replace(count, `${count}        Install eslint, or those rules get no types\n`),
+      );
       expect(text.stdout).toBe(`Using eslint.config.js (ESLint flat config)
 
     5 files to lint

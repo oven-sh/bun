@@ -1598,6 +1598,7 @@ impl Config {
         // espree ignores these options.
         if is_flat && config.language.wants_types && config.language.parser != Parser::Espree {
             config.js_rules_have_types = true;
+            config.base_path = self.base_path[..].into();
             config.eslint.clone_from(&self.eslint);
         }
         // For a file that Bun lints itself, ESLint's own `Linter` only ever runs rules of JavaScript plugins.

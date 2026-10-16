@@ -354,6 +354,7 @@ pub(crate) fn lint(
     let (mut by_eslint, mut not_linted) = (Kinds::default(), Kinds::default());
     // Files whose JavaScript rules can ask for types. Only a real run shows whether one does.
     let mut for_types = Kinds::default();
+    let mut lacks_eslint_for_types = false;
     let mut all_loaded: Vec<&Arc<Loaded>> = vec![&own];
     let mut seen = FxHashSet::default();
     // Some files are skipped only because the `eslint` package isn't installed.
@@ -380,6 +381,7 @@ pub(crate) fn lint(
                     && js_rules.any(|it| it.severity != Severity::Off)
                 {
                     for_types.add(&target.path);
+                    lacks_eslint_for_types |= config.eslint.is_none();
                 }
                 if seen.insert(Arc::as_ptr(config)) {
                     if let Some(error) = &config.error {
@@ -578,6 +580,13 @@ pub(crate) fn lint(
             for_types.shown()
         );
         write_count(&mut out, colors, for_types.count(), &what);
+        if lacks_eslint_for_types {
+            pretty!(
+                &mut out,
+                colors,
+                "        <d>Install eslint, or those rules get no types<r>\n"
+            );
+        }
     }
     if not_linted.count() > 0 {
         let what = noun(not_linted.count(), "file", "files");

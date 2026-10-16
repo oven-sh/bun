@@ -305,6 +305,8 @@ pub struct ResolvedConfig {
     pub js_rules_have_types: bool,
     /// What to tell that `Linter`, if the package is installed. Only set with `js_rules_have_types`.
     pub eslint: Option<Arc<js_plugin::ForEslint>>,
+    /// Where the config file is. Only set with `js_rules_have_types`.
+    pub base_path: Box<[u8]>,
     /// The configuration is invalid, and ESLint would refuse to run: its message.
     pub error: Option<Vec<u8>>,
 }

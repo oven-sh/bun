@@ -1419,17 +1419,16 @@ describe.concurrent("bun lint: JavaScript rules that ask for types", () => {
         "b.ts": "let typed;\n",
       };
       const result = await lint({ ...withoutEslint, ...files }, ["-f", "json", "a.ts", "b.ts"]);
-      // The file that is linted first has them in a different order.
-      expect(summary(result.raw).split("\n").sort()).toEqual([
-        "a.ts: 1:1 own/catches catches nothing",
-        "a.ts: 1:1 own/checks checks nothing",
-        "a.ts: 1:1 own/plain plain",
-        "b.ts: 1:1 own/catches catches nothing",
-        "b.ts: 1:1 own/checks checks nothing",
-        "b.ts: 1:1 own/plain plain",
-      ]);
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "a.ts: 1:1 own/plain plain
+        a.ts: 1:1 own/checks checks nothing
+        a.ts: 1:1 own/catches catches nothing
+        b.ts: 1:1 own/plain plain
+        b.ts: 1:1 own/checks checks nothing
+        b.ts: 1:1 own/catches catches nothing"
+      `);
       expect(result.stderr).toStartWith(
-        "warn: own/catches, own/checks ran without type information because eslint is not installed\n  Run bun add -d eslint\nLinted",
+        "warn: no type information for own/catches, own/checks: eslint is not installed\n  Run bun add -d eslint\nLinted",
       );
       expect(result.exitCode).toBe(1);
       // eslint is installed, but something it needs isn't.
@@ -1441,10 +1440,46 @@ describe.concurrent("bun lint: JavaScript rules that ask for types", () => {
         },
         ["-f", "json", "a.ts", "b.ts"],
       );
-      expect(summary(broken.raw).split("\n").sort()).toEqual(summary(result.raw).split("\n").sort());
+      expect(summary(broken.raw)).toBe(summary(result.raw));
       expect(broken.stderr).toStartWith(
-        "warn: own/catches, own/checks ran without type information because eslint could not be set up: Cannot find module 'typescript'\nLinted",
+        "warn: no type information for own/catches, own/checks: could not set up eslint: Cannot find module 'typescript'\nLinted",
       );
+    },
+    timeout,
+  );
+
+  // Every config file looks for its own eslint. The largest file is linted first.
+  test.each(["a", "b", "c"].flatMap(largest => ["1", "8"].map(threads => [largest, threads])))(
+    "a package that can't use eslint doesn't take the types from another package: %s.ts first, %s threads",
+    async (largest, threads) => {
+      const { "plugin.mjs": plugin, ...packages } = withTypes;
+      const files: Record<string, string> = { "plugin.mjs": plugin };
+      for (const name of ["a", "b", "c"]) {
+        for (const [path, text] of Object.entries(packages)) files[`packages/${name}/${path}`] = text;
+        files[`packages/${name}/eslint.config.mjs`] = typedConfig(["checks", "strict", "plain"]).replace(
+          "./plugin.mjs",
+          "../../plugin.mjs",
+        );
+        files[`packages/${name}/${name}.ts`] = "let typed;\n" + Buffer.alloc(name === largest ? 2000 : 0, "//\n");
+      }
+      delete files["packages/b/node_modules/eslint/package.json"];
+      delete files["packages/b/node_modules/eslint/index.js"];
+      files["packages/c/node_modules/eslint/index.js"] = `throw new Error("Cannot find module 'typescript'");`;
+      const result = await lint(files, ["-f", "json", "--threads", threads, "packages"]);
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "a.ts: 1:1 own/plain plain
+        a.ts: 1:1 own/checks checks number (eslint)
+        a.ts: 1:1 own/strict strict number (eslint)
+        b.ts: 1:1 own/plain plain
+        b.ts: 1:1 own/checks checks nothing
+        c.ts: 1:1 own/plain plain
+        c.ts: 1:1 own/checks checks nothing"
+      `);
+      expect(result.stderr).toStartWith(
+        "warn: no type information for own/checks, own/strict: eslint is not installed in packages/b\n  Run bun add -d eslint\n" +
+          "warn: no type information for own/checks, own/strict: could not set up eslint in packages/c: Cannot find module 'typescript'\nLinted",
+      );
+      expect(result.exitCode).toBe(1);
     },
     timeout,
   );

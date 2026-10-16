@@ -502,17 +502,19 @@ fn check_and_lint_in(
     if is_first_pass {
         let mut noted = context.without_include.lock();
         for program in without_include {
+            let config_path = to_native(&program.config_path).to_vec();
             // Each kind of configuration loads it for its own files.
-            match (noted.iter_mut()).find(|it| it.config_path == program.config_path) {
+            match noted.iter_mut().find(|it| it.config_path == config_path) {
                 Some(known) => {
                     known.asked_for += program.asked_for;
                     known.load_time += program.load_time;
                 }
-                // As it is spelled by who named it.
                 None => noted.push(WithoutInclude {
+                    config_path,
+                    // As it is spelled by who named it.
                     example: match by_path.get(&program.example, is_case_sensitive) {
-                        Some(at) => from_native(files[indices[at]].path),
-                        None => program.example,
+                        Some(at) => files[indices[at]].path.to_vec(),
+                        None => to_native(&program.example).to_vec(),
                     },
                     ..program
                 }),

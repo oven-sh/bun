@@ -1020,6 +1020,30 @@ describe.each(implementations)("ws client opening handshake ($name)", ({ ws: imp
     });
   });
 
+  describe("interim responses before the 101", () => {
+    const CONTINUE = "HTTP/1.1 100 Continue\r\n\r\n";
+    // The built-in's limit for a response head: --max-http-header-size (16 KB by default) plus 1 KB.
+    const fitting = Math.floor((16384 + 1024) / CONTINUE.length);
+    const respond = (count: number) => (conn: RawSocket) =>
+      Buffer.alloc(count * CONTINUE.length, CONTINUE) + response101(conn);
+
+    test.each([1, fitting])("skips %i", async count => {
+      await using client = await connectClient(implementation, {}, { respond: respond(count) });
+      await client.opened;
+      expect(client.events).toEqual(openEvents);
+    });
+
+    // npm ws skips any number of them. An endless stream of them would block the native client's thread.
+    test.skipIf(!builtin)("fails once they exceed the size limit of a response head", async () => {
+      await using client = await connectClient(implementation, {}, { respond: respond(fitting + 1) });
+      await Promise.race([client.opened, client.closed]);
+      expect(client.events).toEqual([
+        `error Error "WebSocket connection to 'ws://127.0.0.1:PORT/' failed: Response headers too large" rs=2`,
+        abnormalClose,
+      ]);
+    });
+  });
+
   describe("frames in the same packet as the 101", () => {
     test("are delivered after 'open'", async () => {
       await using client = await openClient(

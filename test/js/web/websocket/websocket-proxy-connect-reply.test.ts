@@ -69,6 +69,11 @@ async function startFixedReplyProxy(reply: string, firstRead = reply.length) {
   };
 }
 
+// Interim responses count toward the response header size limit of 16 KB + 1 KB.
+const CONTINUE = "HTTP/1.1 100 Continue\r\n\r\n";
+const fitting = Math.floor((16384 + 1024) / CONTINUE.length);
+const interim = (count: number) => Buffer.alloc(count * CONTINUE.length, CONTINUE).toString();
+
 describe("CONNECT reply", () => {
   describe.each([
     ["200", "HTTP/1.1 200 Connection established\r\n\r\n", "connected"],
@@ -105,6 +110,16 @@ describe("CONNECT reply", () => {
       "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 503 Busy\r\n\r\n",
       "Proxy connection failed: 503 Busy",
     ],
+    [
+      "interim responses just under the size limit, then 200",
+      interim(fitting) + "HTTP/1.1 200 OK\r\n\r\n",
+      "connected",
+    ],
+    [
+      "interim responses over the size limit, then 200",
+      interim(fitting + 1) + "HTTP/1.1 200 OK\r\n\r\n",
+      "Response headers too large",
+    ],
     ["non-HTTP reply", "SSH-2.0-OpenSSH_9.6\r\n", "Invalid response"],
   ])("%s", (_, reply, outcome) => {
     test.each([
@@ -133,6 +148,20 @@ describe("CONNECT reply", () => {
     using proxy = await startFixedReplyProxy(reply, firstRead);
     expect(await greetingOrFailure(new WebSocket(echoUrl, { proxy: proxy.url }))).toBe("Response headers too large");
   });
+
+  test.each(["ws", "wss"])(
+    "interim responses before it don't count toward the limit of the %s: target's response",
+    async protocol => {
+      await using server = await createPeer({
+        secure: protocol === "wss",
+        respond: connection => interim(fitting) + response101(connection),
+        afterUpgrade: encodeFrame(OP.text, "connected"),
+      });
+      using proxy = await startFixedReplyProxy(interim(fitting) + "HTTP/1.1 200 OK\r\n\r\n");
+      const ws = new WebSocket(server.url, { proxy: proxy.url, tls: { ca: tlsCerts.cert } });
+      expect(await greetingOrFailure(ws)).toBe("connected");
+    },
+  );
 });
 
 describe("101 response received through a TLS tunnel", () => {
@@ -153,6 +182,8 @@ describe("101 response received through a TLS tunnel", () => {
       [],
       "connected",
     ],
+    ["interim responses just under the size limit before the 101", interim(fitting), [], "connected"],
+    ["interim responses over the size limit before the 101", interim(fitting + 1), [], "Response headers too large"],
     [
       "headers over the size limit",
       "",

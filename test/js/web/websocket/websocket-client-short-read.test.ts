@@ -49,6 +49,14 @@ async function writeSplit(connection: RawSocket, bytes: string, firstRead = byte
   write(connection, bytes.slice(firstRead));
 }
 
+/** Sends `bytes` so the client gets them in reads of at most `size` bytes. */
+async function writeInChunks(connection: RawSocket, bytes: string, size: number) {
+  for (let offset = 0; offset < bytes.length; offset += size) {
+    if (offset) await clientHasRead(connection);
+    write(connection, bytes.slice(offset, offset + size));
+  }
+}
+
 /** Records every `handshake` event, the native event behind the ws package's 'upgrade' and 'unexpected-response'. */
 function recordHandshakes(ws: NativeWebSocket) {
   const seen: { statusCode: number; rawHeaders: string[] }[] = [];
@@ -167,12 +175,12 @@ describe("WebSocket", () => {
   });
 });
 
-describe("response header size limit", () => {
-  // --max-http-header-size (16 KB by default) counts header names, values and the status text, like Node.
-  // The client limits the raw bytes of the response head instead, with 1 KB extra for delimiters.
-  const MAX_HEAD = 16384 + 1024;
-  const TOO_LARGE = "Response headers too large";
+// --max-http-header-size (16 KB by default) counts header names, values and the status text, like Node.
+// The client limits the raw bytes of the response head instead, with 1 KB extra for delimiters.
+const MAX_HEAD = 16384 + 1024;
+const TOO_LARGE = "Response headers too large";
 
+describe("response header size limit", () => {
   function paddedHead(connection: RawSocket, size: number): string {
     const padding = size - response101(connection, ["X-Pad: "]).length;
     return response101(connection, ["X-Pad: " + Buffer.alloc(padding, "a").toString()]);
@@ -318,6 +326,27 @@ describe("interim responses", () => {
       expect({ message: await firstMessage(ws), statusCodes: seen.map(({ statusCode }) => statusCode) }).toEqual({
         message: "hi",
         statusCodes: [101],
+      });
+    });
+  });
+
+  // Otherwise a server could keep the client parsing them forever.
+  describe("count toward the response header size limit", () => {
+    const fitting = Math.floor(MAX_HEAD / CONTINUE.length);
+
+    describe.each([
+      [fitting, "open"],
+      [fitting + 1, TOO_LARGE],
+    ])("%i times 100 Continue, then a 101: %s", (count, outcome) => {
+      test.each([
+        ["in one read", Infinity],
+        ["in reads of 2000 bytes", 2000],
+      ])("%s", async (_, size) => {
+        await using server = await listen(connection => {
+          const interim = Buffer.alloc(count * CONTINUE.length, CONTINUE).toString();
+          return writeInChunks(connection, interim + response101(connection), size);
+        });
+        expect(await openOrFailure(new NativeWebSocket(server.url))).toBe(outcome);
       });
     });
   });

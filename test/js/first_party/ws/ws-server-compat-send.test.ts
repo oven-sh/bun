@@ -9,6 +9,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { WebSocket as Socket } from "ws";
 import {
+  closePayload,
   createInflater,
   createServer,
   detached,
@@ -680,6 +681,27 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         expect(events).toEqual(["close 1006 Buffer() rs=3"]);
       },
     );
+
+    test("callbacks succeed when the peer's Close frame arrives before it has read the messages", async () => {
+      await using server = await openServer(implementation);
+      const { ws, client, events } = server;
+      const recorder = createRecorder();
+      client.socket.pause();
+      // More than the kernel will buffer, so this write can't complete yet.
+      ws.send(Buffer.alloc(12 * MiB), recorder.callback("large"));
+      ws.send("x", recorder.callback("small"));
+      expect(ws.bufferedAmount).toBeGreaterThan(0);
+      ws.on("close", recorder.callback("close"));
+
+      // The server parses both frames in one read, and the client can't read before this thread's next event loop turn.
+      client.write(Buffer.concat([client.frame(OP.text, "turn"), client.frame(OP.close, closePayload(1000))]));
+      await nextEvent(ws, "message");
+      client.socket.resume();
+      expect(await client.remainingFrames()).toEqual([`binary ${12 * MiB} bytes`, 'text "x"', "close 1000"]);
+      await server.closed;
+      expect(recorder.lines).toEqual(["large null", "small null", "close 1000 Buffer()"]);
+      expect(events).toEqual(['message Buffer("turn") text rs=1', "close 1000 Buffer() rs=3"]);
+    });
 
     // With npm ws on Bun, the node:http socket skips 'close' after terminate() and swallows the exception on a reset.
     test.concurrent.skipIf(!builtin).each([

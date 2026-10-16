@@ -18,7 +18,7 @@ import {
   startRecordingProxy,
   startRenegotiatingWssServer,
 } from "./proxy-test-utils";
-import { createPeer, RawSocket, response101 } from "./raw-peer";
+import { createPeer, OP, RawSocket, response101 } from "./raw-peer";
 function test(
   label: string,
   fn: (ws: WebSocket, done: (err?: unknown) => void) => void,
@@ -487,6 +487,59 @@ describe.concurrent("WebSocket closing handshake", () => {
     expect(await events).toEqual([{ code: 1005, reason: "", wasClean: true }]);
     expect(tryPause(ws)).toEqual(notPausable);
     expect(ws.resume()).toBe(false);
+  });
+});
+
+describe.concurrent("WebSocket frames received while their event has no listener", () => {
+  /** Returns `listen(type, then)`, which adds a listener that pushes `<type> <data>` to `received` and calls `then`. */
+  const recordInto =
+    (received: string[], ws: WebSocket) =>
+    (type: "message" | "ping" | "pong", then = () => {}) =>
+      ws.addEventListener(type, ({ data }: MessageEvent) => {
+        received.push(`${type} ${data}`);
+        then();
+      });
+
+  // Few programs listen for these, and a peer that floods them would otherwise grow the task queue without limit.
+  it.each(["ping", "pong"] as const)("drops a %s", async type => {
+    await using server = await createPeer();
+    const ws = new WebSocket(server.url);
+    try {
+      const received: string[] = [];
+      const listen = recordInto(received, ws);
+      const messages = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+      let count = 0;
+      listen("message", () => {
+        if (count === 0) listen(type);
+        messages[count++].resolve();
+      });
+      const peer = await server.connection();
+      peer.write(Buffer.concat([peer.frame(OP[type], "before"), peer.frame(OP.text, "first")]));
+      await messages[0].promise;
+      // A queued event would be dispatched before these arrive.
+      peer.write(Buffer.concat([peer.frame(OP[type], "after"), peer.frame(OP.text, "last")]));
+      await messages[1].promise;
+      expect(received).toEqual(["message first", `${type} after`, "message last"]);
+    } finally {
+      ws.terminate();
+    }
+  });
+
+  it.each(["text", "binary"] as const)("queues a %s message for a listener attached in the same tick", async type => {
+    await using server = await createPeer();
+    const ws = new WebSocket(server.url);
+    try {
+      const received: string[] = [];
+      const listen = recordInto(received, ws);
+      const { promise: delivered, resolve } = Promise.withResolvers<void>();
+      listen("pong", () => listen("message", resolve));
+      const peer = await server.connection();
+      peer.write(Buffer.concat([peer.frame(OP[type], "before"), peer.frame(OP.pong, "now")]));
+      await delivered;
+      expect(received).toEqual(["pong now", "message before"]);
+    } finally {
+      ws.terminate();
+    }
   });
 });
 

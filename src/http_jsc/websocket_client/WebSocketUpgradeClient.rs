@@ -850,9 +850,9 @@ where
 
     /// Appends `data` to `body`. Once `body` starts with a complete response head, calls `on_head`
     /// with the parsed response and the bytes after it. Skips interim 1xx responses, and fails the
-    /// connection if the head is malformed or too large. Interim responses count toward that size,
-    /// or a server could keep the client parsing them forever. The result depends only on the
-    /// bytes received so far, not on how they were split across reads.
+    /// connection if the head is malformed or too large. All interim responses together may be as
+    /// large as one head, or a server could keep the client parsing them forever. The result
+    /// depends only on the bytes received so far, not on how they were split across reads.
     ///
     /// `on_head` gets a copy and the head stays in `body`: a `handshake` listener can spin the event
     /// loop, and the next read then appends after it.

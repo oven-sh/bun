@@ -11,7 +11,7 @@ import path from "node:path";
 import type { ConnectionOptions } from "node:tls";
 import WebSocket from "ws";
 import { connectRequest, startEchoServer, startRecordingProxy } from "../../web/websocket/proxy-test-utils";
-import { createPeer, runScript, scriptTimeout } from "./ws-raw-peer";
+import { closedPort, createPeer, nextEvent, runScript, scriptTimeout } from "./ws-raw-peer";
 
 // Use dynamic require to avoid linter removing the import
 const { HttpsProxyAgent } = require("https-proxy-agent") as {
@@ -450,6 +450,18 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
     gc();
   });
 
+  test("`proxy.tls: true` verifies the proxy with the defaults instead of `tls`", async () => {
+    using recorded = await startRecordingProxy({ tls: true });
+    const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+      proxy: { url: `https://127.0.0.1:${recorded.port}`, tls: true },
+      tls: { rejectUnauthorized: false },
+    } as ClientOptions);
+    expect({ events: await wsFailingSession(ws), requests: recorded.requests }).toEqual({
+      events: failed({ error: expect.any(String), code: "DEPTH_ZERO_SELF_SIGNED_CERT" }),
+      requests: [],
+    });
+  });
+
   test("`proxy.tls` accepts `pfx` and `passphrase`, like `tls`", async () => {
     const read = (name: string) => readFileSync(path.join(import.meta.dirname, "../../node/test/fixtures/keys", name));
     using recorded = await startRecordingProxy({
@@ -604,6 +616,69 @@ describe("ws package with HttpsProxyAgent", () => {
     });
     gc();
   });
+});
+
+// The proxy is the only host the client looks up and connects to. Expected values are from Node v26.3.0 with ws 8.18.3
+// and https-proxy-agent 7.0.6.
+describe("'error' when the proxy can't be reached", () => {
+  // getaddrinfo rejects DNS labels longer than 63 bytes without sending a query.
+  const unresolvable = (name: string) => `${Buffer.alloc(64, "a")}.${name}.invalid`;
+  const details = ({ message, code, syscall, address, port, hostname }: any): object =>
+    ({ message, code, syscall, address, port, hostname }); // prettier-ignore
+  const refused = (port: number) => ({
+    message: `connect ECONNREFUSED 127.0.0.1:${port}`,
+    code: "ECONNREFUSED",
+    syscall: "connect",
+    address: "127.0.0.1",
+    port,
+  });
+
+  async function connectError(url: string, options: ClientOptions) {
+    return details((await nextEvent(new WebSocket(url, options), "error"))[0]);
+  }
+
+  describe.each<[how: string, options: (proxy: string) => ClientOptions]>([
+    ["an HttpsProxyAgent", proxy => ({ agent: new HttpsProxyAgent(proxy) })],
+    ["the `proxy` option as a string", proxy => ({ proxy })],
+    ["the `proxy` option as an object", proxy => ({ proxy: { url: proxy } })],
+  ])("with %s", (_, options) => {
+    test.each([
+      { proxy: "http", target: "ws" },
+      { proxy: "https", target: "wss" },
+    ])("names an $proxy: proxy that refuses the connection", async ({ proxy, target }) => {
+      const port = await closedPort();
+      expect(
+        await connectError(`${target}://${unresolvable("target")}:7777`, options(`${proxy}://127.0.0.1:${port}`)),
+      ).toEqual(refused(port));
+    });
+
+    test("names a proxy whose hostname doesn't resolve", async () => {
+      const hostname = unresolvable("proxy");
+      expect(await connectError(`ws://${unresolvable("target")}:7777`, options(`http://${hostname}:9`))).toEqual({
+        message: `getaddrinfo ENOTFOUND ${hostname}`,
+        code: "ENOTFOUND",
+        syscall: "getaddrinfo",
+        hostname,
+      });
+    });
+  });
+
+  test.concurrent(
+    "names the target when NO_PROXY bypasses the proxy",
+    async () => {
+      const port = await closedPort();
+      const { lines, exitCode } = await runClientScript(
+        `
+        const ws = new WebSocket(process.env.TARGET, { proxy: process.env.PROXY });
+        ws.on("error", error => console.log(JSON.stringify((${details})(error))));
+      `,
+        { NO_PROXY: "127.0.0.1", TARGET: `ws://127.0.0.1:${port}`, PROXY: `http://${unresolvable("proxy")}:9` },
+      );
+      expect(lines.map(line => JSON.parse(line))).toEqual([refused(port)]);
+      expect(exitCode).toBe(0);
+    },
+    scriptTimeout,
+  );
 });
 
 // npm ws passes its TLS options to the agent, which uses them for the target. The agent uses its own options to connect

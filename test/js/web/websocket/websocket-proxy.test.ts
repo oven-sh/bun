@@ -978,7 +978,7 @@ describe("`proxy.tls`", () => {
     { proxy: "https", target: "ws" },
     { proxy: "https", target: "wss" },
   ] as const)("$proxy: proxy, $target: target", ({ proxy, target }) => {
-    type Row = [options: string, proxyTls: Bun.TLSOptions | undefined, tls: Bun.TLSOptions, trusted: string[]];
+    type Row = [options: string, proxyTls: unknown, tls: Bun.TLSOptions, trusted: string[]];
 
     test.each<Row>([
       ["proxy.tls: {}", {}, {}, []],
@@ -990,12 +990,17 @@ describe("`proxy.tls`", () => {
       ["no proxy.tls, tls.rejectUnauthorized: false", undefined, off, ["proxy", "target"]],
       ["no proxy.tls, tls.ca for both", undefined, { ca: [proxyCa, targetCa] }, ["proxy", "target"]],
       ["no proxy.tls, tls.ca for the proxy", undefined, { ca: proxyCa }, ["proxy"]],
+      // `true` means TLS with the defaults, as in Bun.connect(). A falsy value means "not set".
+      ["proxy.tls: true, tls.rejectUnauthorized: false", true, off, ["target"]],
+      ...[false, null, 0, ""].map(
+        (value): Row => [`proxy.tls: ${JSON.stringify(value)}, tls.rejectUnauthorized: false`, value, off, ["proxy", "target"]], // prettier-ignore
+      ),
     ])("%s", async (_, proxyTls, tlsOptions, trusted) => {
       using recorded = await startRecordingProxy({ tls: proxy === "https" });
       const port = target === "wss" ? secureTarget.port! : wsPort;
       const url = `${target}://127.0.0.1:${port}`;
       const ws = new WebSocket(url, {
-        proxy: { url: `${proxy}://127.0.0.1:${recorded.port}`, tls: proxyTls },
+        proxy: { url: `${proxy}://127.0.0.1:${recorded.port}`, tls: proxyTls as Bun.TLSOptions },
         tls: tlsOptions,
       });
       // A rejected proxy never gets the CONNECT request.
@@ -1007,6 +1012,13 @@ describe("`proxy.tls`", () => {
             : { events: echoed("hello"), requests: [connectRequest(port)] },
       );
     });
+  });
+
+  test.each([1, "x"])("proxy.tls: %j throws", value => {
+    const proxy = { url: "https://127.0.0.1:1", tls: value as unknown as Bun.TLSOptions };
+    expect(() => new WebSocket("ws://127.0.0.1:1", { proxy })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: expect.stringContaining("proxy.tls") }),
+    );
   });
 
   test("each client certificate is only sent to the peer it was configured for", async () => {

@@ -18,11 +18,6 @@
 /* This Server Name Indication hostname tree is written in C++ but could be ported to C.
  * Overall it looks like crap, but has no memory allocations in fast path and is O(log n). */
 
-#ifndef SNI_TREE_H
-#define SNI_TREE_H
-
-#ifndef LIBUS_NO_SSL
-
 #include "libusockets.h"
 #include <map>
 #include <memory>
@@ -167,7 +162,3 @@ extern "C" {
     }
 
 }
-
-#endif
-
-#endif

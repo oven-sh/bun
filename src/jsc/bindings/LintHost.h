@@ -75,6 +75,8 @@ public:
     bool isOxlint() const { return m_flags & 16; }
     // See `shortens_nodes` in src/lint/js_plugin/ast.rs.
     bool shortensNodes() const { return m_flags & 256; }
+    // The config asks for types, and a rule that asks for them can get them.
+    bool hasTypes() const { return m_flags & 512; }
 
     // The index where each line starts. The first is 0.
     const WTF::Vector<uint32_t>& lineStarts()

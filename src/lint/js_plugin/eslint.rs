@@ -1,5 +1,6 @@
 //! ESLint's own `Linter`, for files whose tree is not ours: those for which an `eslint.config.js` has a `language` other than
-//! JavaScript, or a parser that is not known here. See `worker/eslint.js`.
+//! JavaScript, or a parser that is not known here. It also runs the rules that ask for types, because only typescript-eslint's
+//! parser has them. See `worker/eslint.js`.
 //!
 //! The `Linter` is that of the `eslint` which the project has installed. It is given a configuration that is made of what is
 //! configured for the file ([`Configuration`]), and of the objects which that names, each from the module that exports it. The
@@ -16,7 +17,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 /// What the program is called with, after those of `processor.rs`.
 mod call {
     /// `flags`, the id of the [`Configuration`](super::Configuration), the length of the path, the length of what it starts with
-    /// that is the path of the file on disk, the path, the text.
+    /// that is the path of the file on disk, the length of [`Text::only`](super::Text::only) as JSON, the path, that JSON, the text.
     pub(super) const LINT: u32 = 20;
     /// JSON: `[id, run, configuration]`.
     pub(super) const CONFIGURE: u32 = 21;
@@ -55,6 +56,15 @@ impl Configuration {
     }
 }
 
+/// What ESLint's own `Linter` is told that is the same for all files of a configuration file.
+#[derive(Debug)]
+pub struct ForEslint {
+    /// JSON: see [`Host::lint_with_eslint`].
+    pub run: Vec<u8>,
+    /// For a file whose configuration has what JSON cannot say.
+    pub whole: Configuration,
+}
+
 /// Text to lint.
 #[derive(Copy, Clone)]
 pub struct Text<'t> {
@@ -65,6 +75,9 @@ pub struct Text<'t> {
     pub text: &'t [u8],
     /// ESLint's `disableFixes`.
     pub without_fixes: bool,
+    /// Run only the rules with these ids, which asked for types. The result then has only their messages and parse errors. The
+    /// first realm does all of this work, so a run loads TypeScript's program once.
+    pub only: Option<&'t [&'t [u8]]>,
 }
 
 /// What ESLint's `Linter` says about a text.
@@ -81,6 +94,8 @@ pub struct Linted {
 pub enum Refusal {
     /// The project has no `eslint`.
     NotInstalled,
+    /// Setting up the configuration threw this, for example because a package is missing.
+    NotConfigured(Vec<u8>),
     /// What was thrown.
     Thrown(Vec<u8>),
 }
@@ -125,7 +140,7 @@ impl Host<'_> {
             match configured.split_first() {
                 Some((&result::DONE, _)) => {}
                 Some((&NOT_INSTALLED, _)) => return Err(Refusal::NotInstalled),
-                Some((&result::FAILED, why)) => return Err(why.to_vec().into()),
+                Some((&result::FAILED, why)) => return Err(Refusal::NotConfigured(why.to_vec())),
                 _ => break,
             }
         }
@@ -142,7 +157,12 @@ impl Host<'_> {
         file: Text,
         find_rule: &FindRule,
     ) -> Result<Linted, Refusal> {
-        let mut message = Vec::with_capacity(16 + file.path.len() + file.text.len());
+        let mut only = Vec::new();
+        if let Some(ids) = file.only {
+            let ids = ids.iter().map(|it| Json::String(it.to_vec()));
+            write_json(&mut only, &Json::Array(ids.collect()));
+        }
+        let mut message = Vec::with_capacity(20 + file.path.len() + only.len() + file.text.len());
         wire::words(
             &mut message,
             &[
@@ -150,15 +170,19 @@ impl Host<'_> {
                 configuration.id,
                 file.path.len() as u32,
                 file.physical_path_len as u32,
+                only.len() as u32,
             ],
         );
         message.extend_from_slice(file.path);
+        message.extend_from_slice(&only);
         message.extend_from_slice(file.text);
-        self.count_one_for_eslint();
+        self.count_one_for_eslint(file.only.is_some());
         let mut returned = Err(OUT_OF_STEP.to_vec().into());
-        self.engine.with_vm(file.text.len(), &mut |vm| {
-            returned = self.lint_in(vm, &message, configuration, run)
-        })?;
+        let mut lint = |vm: &mut dyn Vm| returned = self.lint_in(vm, &message, configuration, run);
+        match file.only {
+            Some(_) => self.engine.with_first_vm(&mut lint)?,
+            None => self.engine.with_vm(file.text.len(), &mut lint)?,
+        }
         let Some(parts) = crate::json::parse(&returned?).and_then(Json::into_array) else {
             return Err(OUT_OF_STEP.to_vec().into());
         };

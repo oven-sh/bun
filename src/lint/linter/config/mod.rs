@@ -74,7 +74,7 @@ use super::resolved::{
 use super::schema;
 use crate::context::Severity;
 use crate::js_plugin;
-use crate::language::{GlobalsOfOptions, InferGlobals, LanguageOptions};
+use crate::language::{GlobalsOfOptions, InferGlobals, LanguageOptions, Parser};
 use crate::options::Json;
 use crate::paths;
 use crate::rule::{Frameworks, Meta, Plugin};
@@ -663,6 +663,8 @@ pub struct Config {
     without_modules: bool,
     /// [`LanguageOptions::infers_globals`]
     infers_globals: InferGlobals,
+    /// [`ResolvedConfig::eslint`]
+    eslint: Option<Arc<js_plugin::ForEslint>>,
     /// `--no-ignore` of ESLint 8: a file that is named is linted, whatever ignores it. What is found in a directory is not.
     lints_all_that_is_named: bool,
     /// Which object has the patterns with which ESLint 8 ignores what starts with a dot.
@@ -971,6 +973,11 @@ impl Config {
     /// The same for [`LanguageOptions::infers_globals`].
     pub fn infer_globals(&mut self, how: InferGlobals) {
         self.infers_globals = how;
+    }
+
+    /// The same for [`ResolvedConfig::eslint`].
+    pub fn hand_over_to(&mut self, eslint: Option<Arc<js_plugin::ForEslint>>) {
+        self.eslint = eslint;
     }
 
     /// What the user may want to know, and nothing is wrong: a line for each.
@@ -1587,13 +1594,29 @@ impl Config {
             .map(Box::from);
         config.changes_linter = (indices.iter())
             .any(|index| (self.objects.get(*index as usize)).is_some_and(|it| it.changes_linter));
-        if config.is_for_eslint() && !config.changes_linter {
+        let is_flat = !self.is_legacy && !self.prefers_typescript_rules && !self.has_every_rule;
+        // espree ignores these options.
+        if is_flat && config.language.wants_types && config.language.parser != Parser::Espree {
+            config.js_rules_have_types = true;
+            config.eslint.clone_from(&self.eslint);
+        }
+        // For a file that Bun lints itself, ESLint's own `Linter` only ever runs rules of JavaScript plugins.
+        let is_of_js = |it: &&RuleSetting| {
+            it.severity != Severity::Off
+                && find_js_rule(&js_plugins, &it.id).flatten().is_some()
+                && config.find_rule(registry, &it.id).is_none()
+        };
+        let of_js: Option<Vec<RuleSetting>> = (!config.is_for_eslint()).then(|| {
+            let all = rules.iter().filter(|_| config.eslint.is_some());
+            all.filter(is_of_js).cloned().collect()
+        });
+        if !config.changes_linter && of_js.as_ref().is_none_or(|it| !it.is_empty()) {
             config.for_eslint = for_eslint::build(&for_eslint::Parts {
                 language: config.language_name.as_deref(),
                 language_options: &language_options,
                 settings: &config.language.settings,
                 linter,
-                rules: &rules,
+                rules: of_js.as_deref().unwrap_or(&rules),
                 parser: parser_location.filter(|it| it.get(b"module").is_some()),
                 plugins: &plugins,
                 locations: &js_locations,

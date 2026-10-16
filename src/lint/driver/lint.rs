@@ -674,11 +674,15 @@ impl Context<'_, '_> {
     pub(crate) fn result(
         &self,
         path: Vec<u8>,
-        result: LintResult,
+        mut result: LintResult,
         text: Vec<u8>,
         is_fixed: bool,
         config: &Arc<ResolvedConfig>,
     ) -> FileResult {
+        if config.language.stands_alone {
+            let all = result.messages.iter_mut().chain(&mut result.suppressed);
+            all.for_each(LintMessage::stay_in_file);
+        }
         let counts = Counts::of(&result.messages);
         let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();
         if config.may_hand_back() && text.len() < bun_lint::js_plugin::HEAVY {

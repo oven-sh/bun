@@ -21,7 +21,7 @@ use crate::run::{Environment, Fatal};
 use crate::{Linter, eslintrc, evaluate, fs, native, paths, rulesdir};
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::js_plugin::{Configuration, Host, Route};
+use bun_lint::js_plugin::{Configuration, ForEslint, Host, Route};
 use bun_lint::language::InferGlobals;
 use bun_lint::linter::config::json_for_oxlint;
 use bun_lint::linter::{
@@ -370,15 +370,7 @@ pub(crate) struct Loaded {
     /// `options.typeCheck`
     pub(crate) checks_types: bool,
     /// With an `eslint.config.js`, if the package `eslint` is installed: what ESLint's own `Linter` is told.
-    pub(crate) for_eslint: Option<ForEslint>,
-}
-
-/// What ESLint's own `Linter` is told that is the same for all files of a configuration file.
-pub(crate) struct ForEslint {
-    /// JSON: see `Host::lint_with_eslint`.
-    pub(crate) run: Vec<u8>,
-    /// For a file whose configuration has what JSON cannot say.
-    pub(crate) whole: Configuration,
+    pub(crate) for_eslint: Option<Arc<ForEslint>>,
 }
 
 impl Loaded {
@@ -1158,7 +1150,7 @@ impl<'l> Loader<'l> {
         file: Option<(&[u8], &Config)>,
         base_path: &[u8],
         named: &[NamedPlugin],
-    ) -> Option<ForEslint> {
+    ) -> Option<Arc<ForEslint>> {
         let has_eslint =
             |it: &[u8]| fs::is_file(&paths::join(it, b"node_modules/eslint/package.json"));
         let is_found_from = |from: &&[u8]| {
@@ -1193,10 +1185,10 @@ impl<'l> Loader<'l> {
                 (b"added", Json::Array(added)),
             ]),
         );
-        Some(ForEslint {
+        Some(Arc::new(ForEslint {
             run,
             whole: Configuration::whole(),
-        })
+        }))
     }
 
     /// Calls [`native::split_pairs`] with this run's settings.
@@ -1867,7 +1859,7 @@ impl<'l> Loader<'l> {
             Flavor::Oxlint => Vec::new(),
             _ => self.named_plugins(Flavor::Eslint)?,
         };
-        let config = match flavor {
+        let mut config = match flavor {
             Flavor::Eslint | Flavor::BuiltIn | Flavor::EslintRc => {
                 // ESLint throws.
                 if json == Json::Null {
@@ -1927,6 +1919,7 @@ impl<'l> Loader<'l> {
             Flavor::Eslint => self.for_eslint(Some((path, &config)), base_path, &named),
             _ => None,
         };
+        config.hand_over_to(for_eslint.clone());
         Ok(Arc::new(Loaded {
             config,
             flavor,
@@ -1989,8 +1982,12 @@ impl<'l> Loader<'l> {
             b"" if !self.options.config_lookup => {
                 self.check_flags(Flavor::Eslint, None)?;
                 let named = self.named_plugins(Flavor::Eslint)?;
+                let for_eslint = self.for_eslint(None, base_path, &named);
+                let mut config =
+                    self.flat(base_path, Json::Array(Vec::new()), true, named.clone())?;
+                config.hand_over_to(for_eslint.clone());
                 Ok(Arc::new(Loaded {
-                    config: self.flat(base_path, Json::Array(Vec::new()), true, named.clone())?,
+                    config,
                     flavor: Flavor::Eslint,
                     file: None,
                     wants_types: None,
@@ -1998,7 +1995,7 @@ impl<'l> Loader<'l> {
                     max_warnings: None,
                     respects_eslint_comments: true,
                     checks_types: false,
-                    for_eslint: self.for_eslint(None, base_path, &named),
+                    for_eslint,
                 }))
             }
             b"" => self.built_in(),
@@ -2394,10 +2391,8 @@ impl<'l> Loader<'l> {
         }
         if options.ignore {
             let path = options.ignore_path.as_ref().map(absolute);
-            files.extend(eslintrc::ignore_file(
-                path.as_deref(),
-                &self.start_of_ignore_path(),
-            )?);
+            let start = self.start_of_patterns_in(path.as_deref());
+            files.extend(eslintrc::ignore_file(path.as_deref(), &start)?);
         }
         // Only if no file says anything.
         if files.is_empty() && options.eslintrc {
@@ -2739,6 +2734,13 @@ impl<'l> Loader<'l> {
         }
     }
 
+    /// The same for `file`, which is where that file is. The patterns of the `info/exclude` of a repository start where Git has
+    /// them start.
+    fn start_of_patterns_in(&self, file: Option<&[u8]>) -> Vec<u8> {
+        file.and_then(|it| gitignore::root_of_exclude_file(it, self.cwd()))
+            .unwrap_or_else(|| self.start_of_ignore_path())
+    }
+
     /// The name of the files that count in every directory beside `.gitignore`. To oxlint, what `--ignore-path` has is such a
     /// name.
     pub(crate) fn ignore_file_name(&self, loaded: &Loaded) -> Option<&[u8]> {
@@ -2798,10 +2800,11 @@ impl<'l> Loader<'l> {
         if !self.reads_ignore_files(loaded) {
             return Some(Files::default());
         }
-        let of_git = match OfGit::for_search(directory, are_all_in_repositories) {
+        let is_for_oxc = loaded.flavor == Flavor::Oxlint;
+        let of_git = match OfGit::for_search(directory, is_for_oxc, are_all_in_repositories) {
             Some(of_git) => of_git,
-            None if loaded.flavor == Flavor::Oxlint => return None,
-            None => OfGit::above_and_in(directory, true),
+            None if is_for_oxc => return None,
+            None => OfGit::above_and_in(directory, true, is_for_oxc),
         };
         let name = self.ignore_file_name(loaded).map(paths::from_native);
         let mut files = Files::above_and_in(directory, name.as_deref(), of_git);
@@ -2816,7 +2819,7 @@ impl<'l> Loader<'l> {
             }
         } else if let Some(path) = &self.options.ignore_path {
             let path = paths::resolve(self.cwd(), &paths::from_native(path));
-            let start = self.start_of_ignore_path();
+            let start = self.start_of_patterns_in(Some(&path));
             files.named = gitignore::with_file(files.named, &start, &path, true);
         }
         Some(files)

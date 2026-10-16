@@ -440,23 +440,32 @@ impl Ignored {
             Flavor::Prettier => &[b".gitignore".to_vec(), b".prettierignore".to_vec()],
             Flavor::Oxfmt => &[b".prettierignore".to_vec()],
         };
+        let is_oxfmt = flavor == Flavor::Oxfmt;
+        // Prettier does not read it. It goes with `.gitignore`, the first of `default`, which Git asks before it.
+        let mut excludes = match is_oxfmt || options.ignore_path.is_some() {
+            true => None,
+            false => gitignore::excludes_above(cwd),
+        };
         let mut files = Vec::new();
         for file in options.ignore_path.as_deref().unwrap_or(default) {
             let file = paths::resolve(cwd, &paths::from_native(file));
-            if flavor == Flavor::Oxfmt && options.ignore_path.is_some() && !fs::is_file(&file) {
+            if is_oxfmt && options.ignore_path.is_some() && !fs::is_file(&file) {
                 return Err(Fatal([&file[..], b": File not found"].concat()));
             }
+            let excludes = excludes.take();
             match fs::read(&file) {
                 Ok(text) => files.extend(
-                    gitignore::with_text(
-                        None,
-                        paths::dirname(&file),
-                        &text,
-                        flavor == Flavor::Oxfmt,
-                    )
+                    match gitignore::root_of_exclude_file(&file, cwd) {
+                        Some(root) => gitignore::with_excludes(None, &root, &text, is_oxfmt),
+                        None => {
+                            gitignore::with_text(excludes, paths::dirname(&file), &text, is_oxfmt)
+                        }
+                    }
                     .map(Some),
                 ),
-                Err(error) if error.get_errno() == bun_sys::E::ENOENT => {}
+                Err(error) if error.get_errno() == bun_sys::E::ENOENT => {
+                    files.extend(excludes.map(Some))
+                }
                 Err(error) => {
                     return Err(Fatal(
                         [
@@ -478,7 +487,6 @@ impl Ignored {
         ] {
             if !lines.is_empty() {
                 let lines = lines.join(&b"\n"[..]);
-                let is_oxfmt = flavor == Flavor::Oxfmt;
                 files.extend(gitignore::with_text(None, start, &lines, is_oxfmt).map(Some));
             }
         }
@@ -564,7 +572,7 @@ fn search(
 ) -> Result<Vec<Target>, Fatal> {
     let (mut found, mut failure) = (Guarded::new(Vec::new()), Guarded::new(None::<Fatal>));
     let reads_gitignore = are_all_in_repositories.is_some();
-    let git = match are_all_in_repositories.map(|it| OfGit::for_search(base, it)) {
+    let git = match are_all_in_repositories.map(|it| OfGit::for_search(base, true, it)) {
         Some(Some(git)) => git,
         Some(None) => return Ok(Vec::new()),
         None => OfGit::default(),

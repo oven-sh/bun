@@ -13,6 +13,8 @@
 //! - `scopes.rs`: the scopes, variables and references of [`crate::semantic`].
 //! - [`crate::code_path::estree`]: the code paths, their segments and the events, if a rule listens for one.
 //!
+//! It can't ask for types. A rule that needs them is run by the project's installed `eslint` instead: [`Ran::asked_for_types`].
+//!
 //! So a file for which every rule returns no listeners costs no more than its text. Nothing is kept here about a realm: one
 //! that lacks a plugin, the options of a rule or the number of a selector says so.
 //!
@@ -35,8 +37,8 @@ mod tokens;
 pub(crate) mod wire;
 
 pub use engine::{Demand, Engine, HEAVY, Serve, Vm, Work};
-pub use eslint::{Configuration, Linted, Refusal, Text};
-pub use host::{Failure, Host, Loading, ParseAgain, Report, Suggested, ThrownAt};
+pub use eslint::{Configuration, ForEslint, Linted, Refusal, Text};
+pub use host::{Failure, Host, Loading, ParseAgain, Ran, Report, Suggested, ThrownAt};
 pub use prettier::Unformatted;
 pub use processor::{Block, Processor, Route, read_messages, write_messages};
 pub(crate) use rules::has_what_json_lacks;

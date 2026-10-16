@@ -486,6 +486,7 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     ["color = true", "--color"],
     ["timing = true", "--timing"],
     [`cwd = "sub"`, "--cwd"],
+    ["script = false", "--no-script"],
   ])("%s is rejected and nothing is written", async (line, flag) => {
     const key = line.split(" ")[0];
     const result = await run({ ...eslint, "bunfig.toml": `[lint]\n${line}\n` }, ["a.js"]);
@@ -1048,7 +1049,7 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     // Without `strictNullChecks` the rule says so, and nothing else.
     for (const cwd of [".", "src"]) {
       expect(await lintIn(cwd, files, [])).toMatchObject({
-        found: ["src/t.ts:0 @typescript-eslint/no-unnecessary-condition"],
+        found: ["src/t.ts:1 @typescript-eslint/no-unnecessary-condition"],
       });
     }
   });

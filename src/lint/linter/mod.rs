@@ -732,29 +732,42 @@ impl<S: RuleSet> Linter<S> {
                 }
                 !has_asked
             });
-            // Once more for each rule that asks for types.
-            while !running_js.is_empty() {
+            let mut can_have_types = config.js_rules_have_types && host.can_give_types();
+            let mut has_types = can_have_types;
+            // The rules that asked for types.
+            let mut typed: Vec<RunningJs> = Vec::new();
+            // Runs again for each rule that throws because it has no types.
+            loop {
                 let enabled: Vec<&js_plugin::Configured> =
                     running_js.iter().map(|it| &**it.configured).collect();
-                match host.run_on_block(
-                    file,
-                    settings,
-                    &enabled,
-                    !options.disables_fixes,
-                    options.physical_path_len,
-                    options.parse_again,
-                ) {
-                    Ok(reports) => {
-                        problems.reserve(reports.len());
-                        for report in reports {
+                let ran = match enabled.is_empty() {
+                    true => Ok(js_plugin::Ran::default()),
+                    false => host.run_on_block(
+                        file,
+                        settings,
+                        &enabled,
+                        (!options.disables_fixes, has_types),
+                        options.physical_path_len,
+                        options.parse_again,
+                    ),
+                };
+                match ran {
+                    Ok(ran) => {
+                        problems.reserve(ran.reports.len());
+                        for report in ran.reports {
                             if let Some(rule) = running_js.get(report.rule as usize) {
                                 problems.push(js_message(report, rule, wants_fixes));
                             }
                         }
+                        let all = std::mem::take(&mut running_js).into_iter().zip(0..);
+                        let asked = all.filter(|it| ran.asked_for_types.contains(&it.1));
+                        typed.extend(asked.map(|it| it.0));
                     }
                     Err(failure) => {
-                        let asks = |it: &RunningJs| {
-                            host.asks_for_types(&it.configured.rule, &failure.message)
+                        let asks = |it: &RunningJs| match can_have_types {
+                            // Only this file has no types.
+                            true => js_plugin::Host::is_about_types(&failure.message),
+                            false => host.asks_for_types(&it.configured.rule, &failure.message),
                         };
                         let at = failure.rule.map(|it| it as usize);
                         if let Some(at) = at.filter(|it| running_js.get(*it).is_some_and(asks)) {
@@ -774,7 +787,46 @@ impl<S: RuleSet> Linter<S> {
                         }
                     }
                 }
-                break;
+                if typed.is_empty() {
+                    break;
+                }
+                let rules = typed.iter().map(|it| &it.configured.rule);
+                match run_with_types(host, file, config, options, &typed) {
+                    // ESLint's parser rejected the file, for example because no `tsconfig.json` includes it. Bun lints it
+                    // anyway, without types.
+                    Ok(linted) if linted.messages.iter().any(|it| it.is_fatal) => {
+                        has_types = false;
+                        running_js = std::mem::take(&mut typed);
+                    }
+                    Ok(linted) => {
+                        host.has_given_types(rules);
+                        // `eslint-disable` comments are applied below, to all problems together.
+                        let reported = linted.messages.into_iter().chain(linted.suppressed);
+                        problems.extend(reported.map(|it| LintMessage {
+                            message_id: Some(it.message_id.unwrap_or(Cow::Borrowed(""))),
+                            fix: it.fix.filter(|_| wants_fixes),
+                            suggestions: match wants_fixes {
+                                true => it.suggestions,
+                                false => Vec::new(),
+                            },
+                            suppressions: Vec::new(),
+                            ..it
+                        }));
+                        break;
+                    }
+                    Err(js_plugin::Refusal::Thrown(thrown)) => {
+                        return LintResult {
+                            thrown: Some(thrown),
+                            ..LintResult::default()
+                        };
+                    }
+                    // Run them again without types.
+                    Err(why) => {
+                        host.cannot_give_types(why, rules);
+                        (can_have_types, has_types) = (false, false);
+                        running_js = std::mem::take(&mut typed);
+                    }
+                }
             }
         }
         if let Some(module) = &config.package_module {
@@ -1022,16 +1074,16 @@ impl<S: RuleSet> Linter<S> {
                         file,
                         settings,
                         &enabled,
-                        !options.disables_fixes,
+                        (!options.disables_fixes, false),
                         options.physical_path_len,
                         options.parse_again,
                     )
                 }
                 // Nothing here runs JavaScript.
-                _ => Ok(Vec::new()),
+                _ => Ok(js_plugin::Ran::default()),
             };
             match reports {
-                Ok(reports) => {
+                Ok(js_plugin::Ran { reports, .. }) => {
                     let of_rule = |it: js_plugin::Report| {
                         let (rule, id) = back.get(it.rule as usize)?;
                         Some(LintMessage {
@@ -1254,6 +1306,37 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) ->
         constant_help: None,
         reported: 0,
     }
+}
+
+/// Runs `rules`, which asked for types, on `file` with ESLint's own `Linter`.
+fn run_with_types<'a>(
+    host: &js_plugin::Host,
+    file: &'a File<'a>,
+    config: &ResolvedConfig,
+    options: &LintOptions,
+    rules: &[RunningJs],
+) -> Result<js_plugin::Linted, js_plugin::Refusal> {
+    let Some(eslint) = &config.eslint else {
+        return Err(js_plugin::Refusal::NotInstalled);
+    };
+    let ids: Vec<&[u8]> = rules.iter().map(|it| &it.configured.rule.id[..]).collect();
+    let path = crate::paths::to_native(file.path().to_vec());
+    let text = js_plugin::Text {
+        path: &path,
+        physical_path_len: options.physical_path_len.unwrap_or(path.len()),
+        text: file.text(),
+        without_fixes: options.disables_fixes,
+        only: Some(&ids),
+    };
+    let configuration = config.for_eslint.as_deref().unwrap_or(&eslint.whole);
+    let find_rule = |id: &[u8]| {
+        let found = rules.iter().find(|it| *it.configured.rule.id == *id);
+        found.map_or_else(
+            || RuleId::Unknown(id.into()),
+            |it| RuleId::Js(Arc::clone(&it.configured.rule)),
+        )
+    };
+    host.lint_with_eslint(configuration, &eslint.run, text, &find_rule)
 }
 
 /// What becomes of a rule of a JavaScript plugin that throws. `Err`: ESLint throws it on. oxlint reports it for the file.

@@ -107,6 +107,9 @@ const OTHER: &[Param] = &[
     clap::param!(
         "--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"
     ),
+    clap::param!(
+        "--no-script                     Run the linter even if the project has a <b>lint<r> script"
+    ),
     clap::param!("-v, --version                   Print the version of Bun"),
     clap::param!(
         "-h, --help                      Print the common flags. With <b>--all<r>, every flag"
@@ -211,6 +214,7 @@ const OPPOSITES: &[Param] = &[
     clap::param!("--inline-config"),
     clap::param!("--error-on-unmatched-pattern"),
     clap::param!("--eslintrc"),
+    clap::param!("--script"),
 ];
 
 pub const HELP: Help = Help {
@@ -260,6 +264,7 @@ pub const HELP: Help = Help {
         b"max-warnings",
         b"init",
         b"doctor",
+        b"no-script",
     ],
 };
 

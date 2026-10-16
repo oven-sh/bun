@@ -2133,9 +2133,10 @@ impl<'c> Configs<'c> {
             }
             (None, None) => (b"false".to_vec(), SetBy::Bun(&self.start_of_bunfig)),
         };
-        if value != b"false" {
-            let places = (set_by, directory);
-            let mut tailwind = tailwind::for_file(&self.classes, &value, places);
+        if value != b"false"
+            && let Some(mut tailwind) =
+                tailwind::for_file(&self.classes, &value, (set_by, directory))
+        {
             tailwind.oxc = self.oxc_for(scope, path, resolved.options.parser.as_deref());
             resolved.options.tailwind = Some(Arc::new(tailwind));
         }

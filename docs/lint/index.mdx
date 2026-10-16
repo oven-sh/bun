@@ -38,7 +38,7 @@ warn: 'tax' is never reassigned. Use 'const' instead.  prefer-const
 Linted 1 file [5.17ms]
 ```
 
-`bun lint` checks every `.js`, `.jsx`, `.ts`, and `.tsx` file in the current directory (plus the `.mjs`, `.cjs`, `.mts`, `.cts` variants). It skips `node_modules` and anything in your `.gitignore`.
+`bun lint` checks every `.js`, `.jsx`, `.ts`, and `.tsx` file in the current directory (plus the `.mjs`, `.cjs`, `.mts`, `.cts` variants). It skips `node_modules` and anything in your `.gitignore` or `.git/info/exclude`.
 
 To lint specific files, pass paths or globs.
 
@@ -267,6 +267,8 @@ Already have an `eslint.config.js`, `.eslintrc`, or `.oxlintrc.json`? `bun lint`
 ```
 
 If `package.json` has a `lint` script, `bun lint` runs that script. Inside the script, `bun lint` is the linter.
+
+Writing a tool that calls Bun in projects you don't control? Pass `--no-script`: `bun lint --no-script` is always the linter.
 
 Rules from built-in plugins run natively. Any other ESLint plugin still runs, in JavaScript. To see which is which, and which packages you can uninstall:
 

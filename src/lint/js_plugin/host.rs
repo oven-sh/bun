@@ -1,6 +1,7 @@
 //! What the linter talks to: loads plugins, and runs their rules on a file.
 
 use super::engine::{Engine, Vm, Work};
+use super::eslint::Refusal;
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
 use super::{ast, calls, directives, layouts, reports, schema, scopes, tokens};
@@ -48,6 +49,15 @@ pub struct Suggested {
     /// `data` as JSON, if the rule gave any.
     pub data: Option<Vec<u8>>,
     pub fix: Fix,
+}
+
+/// What happened when the rules ran on a file.
+#[derive(Default, Debug)]
+pub struct Ran {
+    pub reports: Vec<Report>,
+    /// Indices, among the rules that ran, of the rules that asked for types and were stopped. Their reports are left out. Only
+    /// ESLint's own `Linter` has types: [`Text::only`](super::Text::only).
+    pub asked_for_types: Vec<u32>,
 }
 
 /// Why there are no reports for a file.
@@ -98,6 +108,9 @@ pub struct Loading {
     pub need_the_configuration: Vec<Box<[u8]>>,
     /// How many texts ESLint's own `Linter` was given.
     pub linted_by_eslint: u64,
+    /// How many of those were for rules that asked for types, and which rules got them.
+    pub linted_for_types: u64,
+    pub given_types: Vec<Arc<Rule>>,
     /// [`Engine::sizes`]
     pub sizes: (usize, usize),
 }
@@ -132,6 +145,8 @@ struct State {
     loading: Loading,
     /// [`Host::rules_that_asked_for_types`]
     asked_for_types: Vec<Arc<Rule>>,
+    /// [`Host::rules_without_types`]
+    without_types: Option<(Refusal, Vec<Arc<Rule>>)>,
 }
 
 /// What `getParserServices` of `@typescript-eslint/utils` throws starts so, in all its versions.
@@ -145,6 +160,8 @@ pub struct Host<'e> {
     measures: bool,
     /// Whether a rule [has asked for types](Host::has_asked_for_types).
     has_been_asked_for_types: AtomicBool,
+    /// Not [`Host::can_give_types`].
+    lacks_types: AtomicBool,
     state: Guarded<State>,
 }
 
@@ -201,6 +218,7 @@ struct How<'h> {
     settings: &'h FileSettings,
     enabled: &'h [&'h Configured],
     wants_fixes: bool,
+    has_types: bool,
     physical_path_len: Option<usize>,
 }
 
@@ -215,6 +233,7 @@ impl<'e> Host<'e> {
             cwd: cwd.to_vec(),
             measures: false,
             has_been_asked_for_types: AtomicBool::new(false),
+            lacks_types: AtomicBool::new(false),
             state: Guarded::new(State::default()),
         }
     }
@@ -224,8 +243,18 @@ impl<'e> Host<'e> {
         Host { measures, ..self }
     }
 
-    pub(super) fn count_one_for_eslint(&self) {
-        self.state.lock().loading.linted_by_eslint += 1;
+    /// The same host, which [gives types](Host::can_give_types) only if `gives`.
+    pub fn giving_types(self, gives: bool) -> Host<'e> {
+        Host {
+            lacks_types: AtomicBool::new(!gives),
+            ..self
+        }
+    }
+
+    pub(super) fn count_one_for_eslint(&self, is_for_types: bool) {
+        let loading = &mut self.state.lock().loading;
+        loading.linted_by_eslint += 1;
+        loading.linted_for_types += u64::from(is_for_types);
     }
 
     /// What has been loaded so far. Only the number of realms is known unless the host is [measuring](Host::measuring).
@@ -321,12 +350,17 @@ impl<'e> Host<'e> {
             && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(it, rule))
     }
 
-    /// Whether `thrown`, the message of what `rule` has thrown, says that it needs types. From then on it
-    /// [has asked](Host::has_asked_for_types).
-    pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
+    /// Whether `thrown`, the message of what a rule has thrown, says that it needs types.
+    pub fn is_about_types(thrown: &[u8]) -> bool {
         // With an oxlint config the message comes after the class of the error.
         let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
-        if !message.starts_with(ASKS_FOR_TYPES) {
+        message.starts_with(ASKS_FOR_TYPES)
+    }
+
+    /// Whether what `rule` has thrown [is about types](Host::is_about_types). From then on it
+    /// [has asked](Host::has_asked_for_types).
+    pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
+        if !Self::is_about_types(thrown) {
             return false;
         }
         if !self.has_asked_for_types(rule) {
@@ -342,6 +376,32 @@ impl<'e> Host<'e> {
         crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
         rules.dedup_by(|a, b| Arc::ptr_eq(a, b));
         rules
+    }
+
+    /// Whether a rule that asks for types gets them, where the config has them. False once ESLint's own `Linter`
+    /// [couldn't be used](Host::cannot_give_types).
+    pub fn can_give_types(&self) -> bool {
+        !self.lacks_types.load(Ordering::Relaxed)
+    }
+
+    /// ESLint's own `Linter` ran `rules`, which asked for types.
+    pub fn has_given_types<'r>(&self, rules: impl Iterator<Item = &'r Arc<Rule>>) {
+        add_rules(&mut self.state.lock().loading.given_types, rules);
+    }
+
+    /// `rules` asked for types, but because of `why` there are none for the rest of the run.
+    pub fn cannot_give_types<'r>(&self, why: Refusal, rules: impl Iterator<Item = &'r Arc<Rule>>) {
+        self.lacks_types.store(true, Ordering::Relaxed);
+        let mut state = self.state.lock();
+        let without_types = state.without_types.get_or_insert((why, Vec::new()));
+        add_rules(&mut without_types.1, rules);
+    }
+
+    /// Why there are [no types](Host::can_give_types), and the rules that asked for them, sorted by name.
+    pub fn rules_without_types(&self) -> Option<(Refusal, Vec<Arc<Rule>>)> {
+        let (why, mut rules) = self.state.lock().without_types.clone()?;
+        crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
+        Some((why, rules))
     }
 
     /// The plugins that are known, each with where it is: `[directory, specifier, alias]` of [`Host::load`], or
@@ -541,20 +601,22 @@ impl<'e> Host<'e> {
 
     /// Runs the rules `enabled` on `file`. `physical_path_len`: how much of the path of the file is ESLint's `physicalFilename`, if
     /// not all of it. `wants_fixes`: `false` is ESLint's `disableFixes`. Not whether somebody reads them: to be asked for one is
-    /// part of what a rule does. `parse_again`: for a thread that has no realm. A thread that has one parses the text itself.
+    /// part of what a rule does. `has_types`: a rule can [ask for types](Ran::asked_for_types). `parse_again`: for a thread that
+    /// has no realm. A thread that has one parses the text itself.
     pub fn run_on_block<'a>(
         &self,
         file: &'a File<'a>,
         settings: &FileSettings,
         enabled: &[&Configured],
-        wants_fixes: bool,
+        (wants_fixes, has_types): (bool, bool),
         physical_path_len: Option<usize>,
         parse_again: Option<&ParseAgain>,
-    ) -> Result<Vec<Report>, Failure> {
+    ) -> Result<Ran, Failure> {
         let how = How {
             settings,
             enabled,
             wants_fixes,
+            has_types,
             physical_path_len,
         };
         let size = file.text().len();
@@ -566,22 +628,23 @@ impl<'e> Host<'e> {
                 parse_again(&mut |file| outcome = self.run_in(vm, file, &how));
             })?;
         }
-        let (reports, used) = outcome?;
+        let (ran, used) = outcome?;
         scopes::mark_used(file, used.into_iter());
-        Ok(reports)
+        Ok(ran)
     }
 
-    /// Returns the reports, and the indices of the variables that rules have marked as used.
+    /// Also returns the indices of the variables that rules have marked as used.
     fn run_in<'a>(
         &self,
         vm: &mut dyn Vm,
         file: &'a File<'a>,
         how: &How,
-    ) -> Result<(Vec<Report>, Vec<u32>), Failure> {
+    ) -> Result<(Ran, Vec<u32>), Failure> {
         let How {
             settings,
             enabled,
             wants_fixes,
+            has_types,
             physical_path_len,
         } = *how;
         let text = file.text();
@@ -598,7 +661,8 @@ impl<'e> Host<'e> {
             | (u32::from(settings.sources.is_some()) << 3)
             | (u32::from(file.language().is_oxlint) << 4)
             | (source_type_for_oxlint(file) << 5)
-            | (u32::from(ast::shortens_nodes(file)) << 8);
+            | (u32::from(ast::shortens_nodes(file)) << 8)
+            | (u32::from(has_types) << 9);
         wire::words(
             &mut message,
             &[
@@ -694,8 +758,16 @@ impl<'e> Host<'e> {
             let Some((&kind, content)) = returned.split_first() else {
                 return Err(OUT_OF_STEP.to_vec().into());
             };
+            let done = |asked_for_types: Vec<u32>| {
+                let mut reports = reported.take();
+                reports.retain(|it| !asked_for_types.contains(&it.rule));
+                Ran {
+                    reports,
+                    asked_for_types,
+                }
+            };
             if kind == result::DONE && content.is_empty() {
-                return Ok((reported.take(), Vec::new()));
+                return Ok((done(Vec::new()), Vec::new()));
             }
             let Some(parts) = crate::json::parse(content).and_then(Json::into_array) else {
                 return Err(OUT_OF_STEP.to_vec().into());
@@ -703,7 +775,14 @@ impl<'e> Host<'e> {
             match kind {
                 result::DONE => {
                     let used = parts.iter().filter_map(|it| number(Some(it)));
-                    return Ok((reported.take(), used.collect()));
+                    return Ok((done(Vec::new()), used.collect()));
+                }
+                result::ASKED_FOR_TYPES => {
+                    let numbers = |at: usize| -> Vec<u32> {
+                        let list = parts.get(at).and_then(Json::as_array).unwrap_or_default();
+                        list.iter().filter_map(|it| number(Some(it))).collect()
+                    };
+                    return Ok((done(numbers(0)), numbers(1)));
                 }
                 result::FAILED => {
                     return Err(Failure {
@@ -760,6 +839,14 @@ impl<'e> Host<'e> {
                 }
                 _ => return Err(OUT_OF_STEP.to_vec().into()),
             }
+        }
+    }
+}
+
+fn add_rules<'r>(all: &mut Vec<Arc<Rule>>, rules: impl Iterator<Item = &'r Arc<Rule>>) {
+    for rule in rules {
+        if !all.iter().any(|it| Arc::ptr_eq(it, rule)) {
+            all.push(Arc::clone(rule));
         }
     }
 }

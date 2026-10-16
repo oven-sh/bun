@@ -105,11 +105,11 @@ bun lint --ext .js,.ts,.tsx src # [!code ++]
 If your config asks for something Bun can't do, Bun lints everything else, tells you what it skipped, and exits with code `2`.
 
 ```txt
-error: 1 rule did not run because rules that run in JavaScript cannot use type information: local/typed
+error: 1 rule did not run because parserOptions.projectService is not set, so there is no type information: local/typed
   Everything else was linted. Use --allow-unsupported to make this a warning.
 ```
 
-There are two such cases: a JavaScript rule that needs types, and files in [other languages](/lint/plugins#other-languages) when the `eslint` package isn't installed. Pass `--allow-unsupported` to turn the error into a warning.
+There are two such cases: a JavaScript rule that needs types where the config [doesn't ask for them](/lint/plugins#type-information), and files in [other languages](/lint/plugins#other-languages) when the `eslint` package isn't installed. Pass `--allow-unsupported` to turn the error into a warning.
 
 ---
 

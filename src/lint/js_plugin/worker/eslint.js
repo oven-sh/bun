@@ -1,9 +1,10 @@
 // ------------- ESLint's own `Linter` -------------
 //
 // A file for which an `eslint.config.js` has a `language` other than JavaScript, or a parser that makes a tree of its own, is linted
-// by the `Linter` of the `eslint` that the project has installed. It is given a configuration that is made here, of what the other
-// side has found to be configured for the file and of the few objects that this takes: the parser, the plugin that has the
-// language, the rules that are on. The configuration file is not run.
+// by the `Linter` of the `eslint` that the project has installed. It also runs the rules that asked for types, on any file: see
+// `askForTypes`. It is given a configuration that is made here, of what the other side has found to be configured for the file
+// and of the few objects that this takes: the parser, the plugin that has the language, the rules that are on. The configuration
+// file is not run.
 
 const LINT_WITH_ESLINT = 20;
 const CONFIGURE_ESLINT = 21;
@@ -286,13 +287,16 @@ function isAboutLayout({ ruleId, message }, aboutLayout) {
 }
 
 // ESLint's `verifyText`, without the fixing, which the other side does. The message: `flags`, the id of the configuration, the length
-// of the path and of what it starts with that is the path of the file on disk, then the path, then the text.
+// of the path, of what it starts with that is the path of the file on disk, and of the rules, then the path, then the rules, then the
+// text. The rules are JSON: the ids of the only rules to run. Then only their messages and parse errors are returned.
 function lintWithEslint() {
-  const { 0: flags, 1: id, 2: pathLength, 3: physicalLength } = messageWords(4);
+  const { 0: flags, 1: id, 2: pathLength, 3: physicalLength, 4: rulesLength } = messageWords(5);
   const configuration = eslintConfigurations.get(id);
   if (configuration === undefined) return NEEDS_ESLINT_CONFIGURATION;
   const { linter, configs, options } = configuration;
-  const name = messageText(16, 16 + pathLength);
+  const name = messageText(20, 20 + pathLength);
+  const textStart = 20 + pathLength + rulesLength;
+  const only = rulesLength === 0 ? null : new Set(JSON.parse(messageText(20 + pathLength, textStart)));
   const how = {
     allowInlineConfig: options.allowInlineConfig,
     filename: name,
@@ -300,14 +304,14 @@ function lintWithEslint() {
   if (configs.getConfig !== undefined) how.filterCodeBlock = block => configs.getConfig(block) !== undefined;
   // The rules about layout do not run here either.
   how.ruleFilter = ({ ruleId, severity }) =>
-    !options.aboutLayout.has(ruleId) && (!options.onlyErrors || severity === 2);
-  if (physicalLength !== pathLength) how.physicalFilename = messageText(16, 16 + physicalLength);
+    only === null ? !options.aboutLayout.has(ruleId) && (!options.onlyErrors || severity === 2) : only.has(ruleId);
+  if (physicalLength !== pathLength) how.physicalFilename = messageText(20, 20 + physicalLength);
   if ((flags & WITHOUT_FIXES) !== 0) how.disableFixes = true;
   // The `Linter` of ESLint 8 knows no `ruleFilter`: there they have run.
-  const isKept = it => !isAboutLayout(it, options.aboutLayout);
-  const messages = linter.verify(messageText(16 + pathLength), configs, how).filter(isKept);
+  const isKept = it => (only === null ? !isAboutLayout(it, options.aboutLayout) : it.fatal || only.has(it.ruleId));
+  const messages = linter.verify(messageText(textStart), configs, how).filter(isKept);
   const suppressed = linter.getSuppressedMessages().filter(isKept);
-  const config = configs.getConfig?.(name);
+  const config = only === null ? configs.getConfig?.(name) : undefined;
   return DONE + JSON.stringify([messages, suppressed, config === undefined ? [] : deprecatedRulesOf(config)]);
 }
 

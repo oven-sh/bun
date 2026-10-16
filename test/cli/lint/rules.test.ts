@@ -1,7 +1,9 @@
 // Tests for rule behavior that the recorded cases from the rules' own test suites can't cover, because it takes a
 // project or the command line.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { statSync, utimesSync } from "node:fs";
+import { join } from "node:path";
 import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
@@ -216,6 +218,32 @@ describe.concurrent("`import` rules without an ESLint or oxlint config", () => {
       "3:16 import/named Deck not found in './card'",
       "5:63 import/namespace 'nobody' not found in imported namespace 'api'.",
     ]);
+  });
+
+  // To read a directory takes as long as it has entries, and a project can be in one with tens of thousands, like `$TMPDIR`.
+  test.skipIf(!isLinux)("the directory above a project is not read to resolve its imports", async () => {
+    using dir = tempDir("bun-lint-rules", {
+      "above/project/bunfig.toml": rules("default"),
+      "above/project/a.ts": `import b from "./b";\nexport const a = b;\n`,
+      "above/project/b.ts": "export const b = 1;\n",
+    });
+    const above = join(String(dir), "above");
+    // Reading it sets the time of its last access, if that is before its last change.
+    utimesSync(above, new Date(Date.now() - 3 * 86_400_000), statSync(above).mtime);
+    const before = statSync(above).atimeMs;
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "-f", "unix", "."],
+      env,
+      cwd: join(above, "project"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ reports: stdout.split("\n").filter(it => it.includes("import/default")).length, exitCode }).toEqual({
+      reports: 1,
+      exitCode: 1,
+    });
+    expect(statSync(above).atimeMs).toBe(before);
   });
 
   test("`bun` and `bun:test` are builtin modules for import/order", async () => {

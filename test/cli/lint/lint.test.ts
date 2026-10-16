@@ -11872,9 +11872,8 @@ describe.concurrent("nativePluginRules", () => {
     timeout,
   );
 
-  // Only the built-in rules have types.
   test(
-    "a rule of the package that asks for types does not run, and the run says so and fails",
+    "a rule of the package that asks for types where the configuration has none does not run, and the run says so and fails",
     async () => {
       const asks = `throw new Error("You have used a rule which requires type information, but don't have parserOptions set to generate type information for this file.")`;
       const files = {
@@ -11884,7 +11883,7 @@ describe.concurrent("nativePluginRules", () => {
       };
       const result = await lint({ ...files, ...bunfig("false") }, ["a.js"], { mayFail: true });
       expect(result.stderr).toContain(
-        "1 rule did not run because rules that run in JavaScript cannot use type information: @typescript-eslint/no-floating-promises\n  Use --native-plugin-rules=@typescript-eslint to run the built-in versions.",
+        "1 rule did not run because parserOptions.projectService is not set, so there is no type information: @typescript-eslint/no-floating-promises\n  Use --native-plugin-rules=@typescript-eslint to run the built-in versions.",
       );
       expect(result.exitCode).toBe(2);
     },

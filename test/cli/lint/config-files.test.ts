@@ -6790,6 +6790,64 @@ describe.concurrent("a pattern that leaves a working directory without a configu
   });
 });
 
+// What is left out is what `git check-ignore` has. oxlint 1.87.0 does not find the file of a submodule, and looks for a `gitdir`
+// that is not absolute from where it runs.
+describe.concurrent("info/exclude of a repository, where the configuration is not of oxlint", () => {
+  const names = ["a.js", "gen/b.js", "kept.js", "sub/a.js", "sub/anchored.js", "sub/named.js"];
+  const excludes = "/a.js\nnamed.js\ngen/\n/sub/anchored.js\n";
+  const left = ["kept.js", "sub/a.js"];
+  /** `names`, each after `prefix`. */
+  const tree = (prefix: string) => Object.fromEntries(names.map(name => [prefix + name, code]));
+  /** The files that are linted. */
+  async function linted(files: Record<string, string>, args: string[], cwd: string) {
+    const { problems } = await lint(files, args, { cwd });
+    return [...new Set(problems.map(it => it.split(":")[0]))];
+  }
+
+  test("a working tree of `git worktree add --relative-paths`", async () => {
+    const files = {
+      ...tree("wt/"),
+      "wt/.git": "gitdir: ../main/.git/worktrees/wt\n",
+      "main/.git/worktrees/wt/commondir": "../..\n",
+      "main/.git/info/exclude": excludes,
+    };
+    expect(
+      await Promise.all([linted(files, ["."], "wt"), linted(files, ["."], "wt/sub"), linted(files, ["wt"], ".")]),
+    ).toEqual([left.map(it => `wt/${it}`), ["wt/sub/a.js"], left.map(it => `wt/${it}`)]);
+  });
+
+  test("a submodule", async () => {
+    const files = {
+      ...tree("vendor/lib/"),
+      "top.js": code,
+      ".git/info/exclude": "kept.js\n",
+      ".git/modules/vendor/lib/info/exclude": excludes,
+      "vendor/lib/.git": "gitdir: ../../.git/modules/vendor/lib\n",
+    };
+    const inLib = left.map(it => `vendor/lib/${it}`);
+    expect(
+      await Promise.all([
+        linted(files, ["."], "."),
+        linted(files, ["."], "vendor/lib"),
+        linted(files, ["."], "vendor/lib/sub"),
+      ]),
+    ).toEqual([["top.js", ...inLib], inLib, ["vendor/lib/sub/a.js"]]);
+  });
+
+  test.each([
+    ["no configuration", {}],
+    ["a configuration of ESLint 8", { ".eslintrc.json": rc(eqeqeq) }],
+  ])("--ignore-path names it, with %s", async (_, configuration) => {
+    const files = { ...tree(""), ...configuration, ".git/info/exclude": excludes };
+    expect(
+      await Promise.all([
+        linted(files, ["--ignore-path", ".git/info/exclude", "."], "."),
+        linted(files, ["--ignore-path", "../.git/info/exclude", "."], "sub"),
+      ]),
+    ).toEqual([left, ["sub/a.js"]]);
+  });
+});
+
 // With a file of mode 000, as somebody who is not root.
 describe.skipIf(isWindows || process.getuid?.() === 0).concurrent("a file that cannot be opened", () => {
   const files = { "a.js": code, "locked.js": code, "sub/b.js": code };

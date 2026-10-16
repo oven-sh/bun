@@ -1016,3 +1016,436 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
     expect(result.exitCode).toBe(1);
   });
 });
+
+// Just enough of `eslint` and typescript-eslint's parser to call the `Program` listeners of rules. With `projectService` there is
+// a `program`, whose checker says that everything is a "number".
+const withTypes = {
+  "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0", main: "index.js" }),
+  "node_modules/eslint/index.js": `
+    exports.Linter = class Linter {
+      #suppressed = [];
+      verify(text, configs, { filename, ruleFilter, disableFixes }) {
+        const config = { plugins: {}, rules: {}, languageOptions: {} };
+        for (const it of configs) for (const key of Object.keys(config)) Object.assign(config[key], it[key]);
+        const { parser, parserOptions } = config.languageOptions;
+        let parsed;
+        try {
+          parsed = parser.parseForESLint(text, { ...parserOptions, filePath: filename });
+        } catch (error) {
+          return [{ ruleId: null, fatal: true, severity: 2, message: "Parsing error: " + error.message, line: 1, column: 1 }];
+        }
+        const messages = [{ ruleId: null, severity: 1, message: "Unused eslint-disable directive.", line: 1, column: 1 }];
+        for (const [ruleId, setting] of Object.entries(config.rules)) {
+          const [level, ...options] = [setting].flat();
+          const severity = { off: 0, warn: 1, error: 2 }[level] ?? level;
+          if (severity === 0 || !ruleFilter({ ruleId, severity })) continue;
+          const [plugin, rule] = ruleId.split("/");
+          const report = ({ node, message, fix }) =>
+            messages.push({
+              ruleId,
+              severity,
+              message: message + " (eslint)",
+              line: node.loc.start.line,
+              column: node.loc.start.column + 1,
+              ...(fix && !disableFixes ? { fix: fix({ insertTextAfterRange: (range, text) => ({ range: [range[1], range[1]], text }) }) } : {}),
+            });
+          const sourceCode = { text, parserServices: parsed.services };
+          config.plugins[plugin].rules[rule].create({ id: ruleId, options, filename, sourceCode, report }).Program?.(parsed.ast);
+        }
+        const isOff = it => it.ruleId !== null && text.split("\\n")[it.line - 1].includes("eslint-disable-line");
+        this.#suppressed = messages.filter(isOff).map(it => ({ ...it, suppressions: [{ kind: "directive", justification: "" }] }));
+        return messages.filter(it => !isOff(it));
+      }
+      getSuppressedMessages() {
+        return this.#suppressed;
+      }
+    };`,
+  "node_modules/@typescript-eslint/parser/package.json": JSON.stringify({
+    name: "@typescript-eslint/parser",
+    version: "8.0.0",
+    main: "index.js",
+  }),
+  "node_modules/@typescript-eslint/parser/index.js": `
+    exports.meta = { name: "typescript-eslint/parser", version: "8.0.0" };
+    exports.parseForESLint = (text, options) => {
+      if (text.includes("in no project")) throw new Error(options.filePath.split(/[\\\\/]/).at(-1) + " was not found by the project service.");
+      const checker = { typeOf: () => "number" };
+      const program = options.projectService ? { getTypeChecker: () => checker, getCompilerOptions: () => ({ strict: true }) } : null;
+      const maps = { esTreeNodeToTSNodeMap: new WeakMap(), tsNodeToESTreeNodeMap: new WeakMap() };
+      const loc = { start: { line: 1, column: 0 }, end: { line: 1, column: 0 } };
+      return { ast: { type: "Program", loc, range: [0, text.length] }, services: { program, ...maps, getTypeAtLocation: () => "number" } };
+    };`,
+  "plugin.mjs": `
+    const rule = says => ({
+      meta: { fixable: "code" },
+      create: context => ({ Program: node => says(context, context.sourceCode.parserServices, message => context.report({ node, message })) }),
+    });
+    export default {
+      rules: {
+        // As \`svelte/no-navigation-without-resolve\` does it.
+        checks: rule((context, { program, esTreeNodeToTSNodeMap }, report) => {
+          if (!context.sourceCode.text.includes("typed")) return;
+          report(program && esTreeNodeToTSNodeMap ? "checks " + program.getTypeChecker().typeOf() : "checks nothing");
+        }),
+        "at-once": {
+          create(context) {
+            const { strict } = context.sourceCode.parserServices.program.getCompilerOptions();
+            return { Program: node => context.report({ node, message: "at-once " + strict }) };
+          },
+        },
+        // As most rules of typescript-eslint do it.
+        later: {
+          create(context) {
+            const checker = context.sourceCode.parserServices.program.getTypeChecker();
+            return {
+              Program(node) {
+                context.report({ node, message: "later " + (context.sourceCode.text.includes("typed") ? checker.typeOf() : "nothing to ask") });
+              },
+            };
+          },
+        },
+        // What it reports before it asks must only be reported once.
+        "at-last": {
+          create: context => ({
+            Program: node => context.report({ node, message: "at-last" }),
+            "Program:exit": () => context.sourceCode.parserServices.program.getCompilerOptions(),
+          }),
+        },
+        calls: rule((context, services, report) => report("calls " + services.getTypeAtLocation())),
+        maps: rule((context, services, report) => report("maps " + services.esTreeNodeToTSNodeMap.has(1))),
+        catches: rule((context, services, report) => {
+          let type = "nothing";
+          try {
+            type = services.program.getTypeChecker().typeOf();
+          } catch {}
+          report("catches " + type);
+        }),
+        // As \`getParserServices(context, true)\` of @typescript-eslint/utils does it.
+        looks: rule((context, services, report) => {
+          const { program, esTreeNodeToTSNodeMap, tsNodeToESTreeNodeMap } = services;
+          report(["looks", program != null, !program, "program" in services, esTreeNodeToTSNodeMap == null, tsNodeToESTreeNodeMap == null, typeof services.getTypeAtLocation].join(" "));
+        }),
+        // As \`getParserServices(context)\` does it.
+        strict: rule((context, { program }, report) => {
+          if (program == null) throw new Error("You have used a rule which requires type information, but don't have parserOptions set to generate type information for this file.");
+          report("strict " + program.getTypeChecker().typeOf());
+        }),
+        plain: rule((context, services, report) => report("plain")),
+        fixes: {
+          meta: { fixable: "code" },
+          create: context => ({
+            Program(node) {
+              if (context.sourceCode.text.includes("fixed")) return;
+              const type = context.sourceCode.parserServices.program.getTypeChecker().typeOf();
+              context.report({ node, message: "fixes", fix: fixer => fixer.insertTextAfterRange(node.range, "// fixed: " + type + "\\n") });
+            },
+          }),
+        },
+      },
+    };`,
+};
+
+const typedConfig = (rules: string[], parserOptions = "{ projectService: true }") => `
+  import parser from "@typescript-eslint/parser";
+  import own from "./plugin.mjs";
+  export default [
+    {
+      files: ["**/*.ts"],
+      plugins: { own },
+      languageOptions: { parser, parserOptions: ${parserOptions} },
+      rules: { "no-var": "error", ${rules.map(it => `"own/${it}": "error"`).join(", ")} },
+    },
+  ];`;
+
+describe.concurrent("bun lint: JavaScript rules that ask for types", () => {
+  test(
+    "the installed eslint runs only that rule, and only on that file",
+    async () => {
+      const result = await lint(
+        {
+          ...withTypes,
+          "eslint.config.mjs": typedConfig(["checks", "plain"]),
+          "a.ts": "var typed;\n",
+          "b.ts": "var other;\n",
+        },
+        ["-f", "json", "--timing", "a.ts", "b.ts"],
+      );
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "a.ts: 1:1 own/plain plain
+        a.ts: 1:1 own/checks checks number (eslint)
+        a.ts: 1:1 no-var Unexpected var, use let or const instead. [fix 0,3 "let"]
+        b.ts: 1:1 own/plain plain
+        b.ts: 1:1 no-var Unexpected var, use let or const instead. [fix 0,3 "let"]"
+      `);
+      expect(result.stderr).toContain("the eslint package linted 1 files, 1 of them to give types to own/checks");
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "every way of asking counts, even if the rule catches the exception",
+    async () => {
+      const result = await lint(
+        {
+          ...withTypes,
+          "eslint.config.mjs": typedConfig(["at-once", "later", "at-last", "calls", "maps", "catches", "plain"]),
+          "a.ts": "let typed;\n",
+        },
+        ["-f", "json", "--timing", "a.ts"],
+      );
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "a.ts: 1:1 own/plain plain
+        a.ts: 1:1 own/at-once at-once true (eslint)
+        a.ts: 1:1 own/later later number (eslint)
+        a.ts: 1:1 own/at-last at-last (eslint)
+        a.ts: 1:1 own/calls calls number (eslint)
+        a.ts: 1:1 own/maps maps false (eslint)
+        a.ts: 1:1 own/catches catches number (eslint)"
+      `);
+      expect(result.stderr).toContain("the eslint package linted 1 files,");
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "a rule that only checks for types, or only gets the checker, stays in Bun and sees what ESLint would show it",
+    async () => {
+      const files = { ...withTypes, "eslint.config.mjs": typedConfig(["looks", "later"]), "a.ts": "let a;\n" };
+      const result = await lint(files, ["-f", "json", "--timing", "a.ts"]);
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "a.ts: 1:1 own/looks looks true false true false false function
+        a.ts: 1:1 own/later later nothing to ask"
+      `);
+      expect(result.stderr).not.toContain("the eslint package");
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "without projectService or project there are no types, as in ESLint",
+    async () => {
+      const files = {
+        ...withTypes,
+        "eslint.config.mjs": typedConfig(["checks", "looks"], "{}"),
+        "a.ts": "let typed;\n",
+      };
+      const result = await lint(files, ["-f", "json", "--timing", "a.ts"]);
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "a.ts: 1:1 own/checks checks nothing
+        a.ts: 1:1 own/looks looks false true true false false undefined"
+      `);
+      expect(result.stderr).not.toContain("the eslint package");
+      // `--no-type-aware` turns them off too.
+      const off = await lint({ ...files, "eslint.config.mjs": typedConfig(["checks"]) }, [
+        "-f",
+        "json",
+        "--timing",
+        "--no-type-aware",
+        "a.ts",
+      ]);
+      expect(summary(off.raw)).toBe("a.ts: 1:1 own/checks checks nothing");
+      expect(off.stderr).not.toContain("the eslint package");
+    },
+    timeout,
+  );
+
+  // Like the config for `.svelte.ts` files: `parserOptions.parser` is an object.
+  test(
+    "works with a config that can't be sent as JSON",
+    async () => {
+      const result = await lint(
+        {
+          ...withTypes,
+          "outer.cjs": `
+            exports.meta = { name: "svelte-eslint-parser", version: "1.0.0" };
+            exports.parseForESLint = (text, options) => options.parser.parseForESLint(text, options);`,
+          "eslint.config.mjs": `
+            import parser from "@typescript-eslint/parser";
+            import outer from "./outer.cjs";
+            import own from "./plugin.mjs";
+            export default [
+              { rules: { "no-var": "error" } },
+              {
+                files: ["**/*.svelte.ts"],
+                plugins: { own },
+                languageOptions: { parser: outer, parserOptions: { projectService: true, parser } },
+                rules: { "own/checks": "error", "own/plain": "warn" },
+              },
+            ];`,
+          "a.svelte.ts": "var typed;\n",
+        },
+        ["-f", "json", "--timing", "a.svelte.ts"],
+      );
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "a.svelte.ts: 1:1 own/plain plain
+        a.svelte.ts: 1:1 own/checks checks number (eslint)
+        a.svelte.ts: 1:1 no-var Unexpected var, use let or const instead. [fix 0,3 "let"]"
+      `);
+      expect(result.stderr).toContain("the eslint package linted 1 files, 1 of them to give types to own/checks");
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "eslint-disable and inline config comments apply to its reports too",
+    async () => {
+      const result = await lint(
+        {
+          ...withTypes,
+          "eslint.config.mjs": typedConfig(["checks", "calls", "plain"]),
+          "a.ts": "let typed; // eslint-disable-line own/checks, own/plain, no-var -- why\n",
+          "b.ts": "/* eslint own/calls: off, own/checks: warn */ let typed;\n",
+        },
+        ["-f", "json", "--report-unused-disable-directives", "a.ts", "b.ts"],
+      );
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "a.ts: 1:1 own/calls calls number (eslint)
+        a.ts: 1:12 null Unused eslint-disable directive (no problems were reported from 'no-var'). [fix 55,63 ""]
+        a.ts: 1:1 own/plain plain [suppressed: why]
+        a.ts: 1:1 own/checks checks number (eslint) [suppressed: why]
+        b.ts: 1:1 own/checks checks number (eslint)
+        b.ts: 1:47 own/plain plain"
+      `);
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "--fix applies its fixes",
+    async () => {
+      const result = await lint(
+        { ...withTypes, "eslint.config.mjs": typedConfig(["fixes"]), "a.ts": "var a = 1;\n" },
+        ["--fix", "a.ts"],
+        ["a.ts"],
+      );
+      expect(result.files["a.ts"]).toBe("let a = 1;\n// fixed: number\n");
+      expect(result.exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // Otherwise every engine would load TypeScript's program.
+  test(
+    "all type work goes to one engine",
+    async () => {
+      const files: Record<string, string> = {
+        ...withTypes,
+        "node_modules/eslint/index.js": `
+          const realm = Math.random();
+          exports.Linter = class {
+            verify = () => [{ ruleId: "own/at-once", severity: 2, message: String(realm), line: 1, column: 1 }];
+            getSuppressedMessages = () => [];
+          };`,
+        "eslint.config.mjs": typedConfig(["at-once", "plain"]),
+      };
+      // 6 MB is enough work for several engines.
+      const text = Buffer.alloc(250_000, "// comment\n").toString();
+      for (let i = 0; i < 24; i++) files[`${i}.ts`] = text;
+      const result = await lint(files, ["-f", "json", "--threads", "8", "--timing", "."]);
+      const messages: any[] = JSON.parse(result.raw).flatMap((it: any) => it.messages);
+      const realms = messages.filter(it => it.ruleId === "own/at-once").map(it => it.message);
+      expect([realms.length, new Set(realms).size]).toEqual([24, 1]);
+      expect(messages.filter(it => it.ruleId === "own/plain")).toHaveLength(24);
+      expect(Number(/JavaScript: (\d+) engines/.exec(result.stderr)?.[1])).toBeGreaterThan(1);
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // ESLint stops at such a file. `bun lint` still lints it.
+  test(
+    "a file that ESLint's parser rejects is linted without types",
+    async () => {
+      const result = await lint(
+        {
+          ...withTypes,
+          "eslint.config.mjs": typedConfig(["checks", "plain"]),
+          "a.ts": "// in no project\nvar typed;\n",
+          "b.ts": "let typed;\n",
+        },
+        ["-f", "json", "a.ts", "b.ts"],
+      );
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "a.ts: 2:1 own/plain plain
+        a.ts: 2:1 own/checks checks nothing
+        a.ts: 2:1 no-var Unexpected var, use let or const instead. [fix 17,20 "let"]
+        b.ts: 1:1 own/plain plain
+        b.ts: 1:1 own/checks checks number (eslint)"
+      `);
+      expect(result.stderr).not.toContain("warn");
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "a rule that throws without types is skipped where there are none",
+    async () => {
+      const files = {
+        ...withTypes,
+        "eslint.config.mjs": typedConfig(["strict", "plain"]),
+        "a.ts": "// in no project\n",
+        "b.ts": "let b;\n",
+      };
+      const result = await lint(files, ["-f", "json", "--threads", "1", "a.ts", "b.ts"]);
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "a.ts: 2:1 own/plain plain
+        b.ts: 1:1 own/plain plain
+        b.ts: 1:1 own/strict strict number (eslint)"
+      `);
+      expect(result.stderr).not.toContain("did not run");
+      expect(result.exitCode).toBe(1);
+      const off = await lint(files, ["-f", "json", "--no-type-aware", "a.ts", "b.ts"]);
+      expect(off.stderr).toContain(
+        "1 rule did not run because rules that run in JavaScript cannot use type information: own/strict",
+      );
+      expect(off.exitCode).toBe(2);
+    },
+    timeout,
+  );
+
+  test(
+    "without eslint, or something it needs, the rules run without types and one warning says so",
+    async () => {
+      const { "node_modules/eslint/package.json": _, "node_modules/eslint/index.js": __, ...withoutEslint } = withTypes;
+      const files = {
+        "eslint.config.mjs": typedConfig(["checks", "catches", "plain"]),
+        "a.ts": "let typed;\n",
+        "b.ts": "let typed;\n",
+      };
+      const result = await lint({ ...withoutEslint, ...files }, ["-f", "json", "a.ts", "b.ts"]);
+      // The file that is linted first has them in a different order.
+      expect(summary(result.raw).split("\n").sort()).toEqual([
+        "a.ts: 1:1 own/catches catches nothing",
+        "a.ts: 1:1 own/checks checks nothing",
+        "a.ts: 1:1 own/plain plain",
+        "b.ts: 1:1 own/catches catches nothing",
+        "b.ts: 1:1 own/checks checks nothing",
+        "b.ts: 1:1 own/plain plain",
+      ]);
+      expect(result.stderr).toStartWith(
+        "warn: own/catches, own/checks ran without type information because eslint is not installed\n  Run bun add -d eslint\nLinted",
+      );
+      expect(result.exitCode).toBe(1);
+      // eslint is installed, but something it needs isn't.
+      const broken = await lint(
+        {
+          ...withTypes,
+          ...files,
+          "node_modules/eslint/index.js": `throw new Error("Cannot find module 'typescript'");`,
+        },
+        ["-f", "json", "a.ts", "b.ts"],
+      );
+      expect(summary(broken.raw).split("\n").sort()).toEqual(summary(result.raw).split("\n").sort());
+      expect(broken.stderr).toStartWith(
+        "warn: own/catches, own/checks ran without type information because eslint could not be set up: Cannot find module 'typescript'\nLinted",
+      );
+    },
+    timeout,
+  );
+});

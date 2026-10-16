@@ -347,7 +347,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeVisitorKeys, (JSGlobalObject*, EncodedJ
     return JSValue::encode(host->nodes.visitorKeys(globalObject, host, host->nodes.kindFor(host->isEspree(), host->isOxlint(), host->shortensNodes())));
 }
 
-// What typescript-eslint's parser gives without type information. Rules take the maps for a sign of TypeScript. There are no
+// What typescript-eslint's parser gives. Without type information, rules take the maps for a sign of TypeScript. There are no
 // nodes of TypeScript's own tree to put in them. oxlint has none for any file.
 JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject*, EncodedJSValue holder, PropertyName))
 {
@@ -367,7 +367,15 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeParserServices, (JSGlobalObject*, Encod
         RETURN_IF_EXCEPTION(scope, {});
     } else if (host->isEspree())
         services = constructEmptyObject(globalObject);
-    else {
+    else if (host->hasTypes()) {
+        services = state.parserServicesWithTypes.get();
+        if (!services) {
+            JSValue made = callHook(globalObject, state.servicesWithTypes);
+            RETURN_IF_EXCEPTION(scope, {});
+            services = asObject(made);
+            state.parserServicesWithTypes.set(vm, host, services);
+        }
+    } else {
         JSValue options = callHook(globalObject, state.parserOptions);
         RETURN_IF_EXCEPTION(scope, {});
         services = constructEmptyObject(vm, state.servicesStructure.get());
@@ -1380,8 +1388,8 @@ const Member members[] = {
 
 } // namespace
 
-// `sourceCode(TokenStore, hooks)` returns the class. `hooks` is `[program, scopeManager, parserOptions, scopeManagerOfOxlint]`, three
-// functions and an object.
+// `sourceCode(TokenStore, hooks)` returns the class. `hooks` is `[program, scopeManager, parserOptions, servicesWithTypes,
+// scopeManagerOfOxlint]`, four functions and an object.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintSourceCode, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -1393,7 +1401,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsLintSourceCode, __attribute__((minsiz
     if (!tokenStore || !hooks)
         return throwVMTypeError(globalObject, scope, "Expected a class and hooks"_s);
     unsigned at = 0;
-    for (auto* hook : { &state.program, &state.scopeManager, &state.parserOptions }) {
+    for (auto* hook : { &state.program, &state.scopeManager, &state.parserOptions, &state.servicesWithTypes }) {
         JSValue function = hooks->getIndex(globalObject, at++);
         RETURN_IF_EXCEPTION(scope, {});
         if (!function.isCallable())

@@ -352,6 +352,8 @@ pub(crate) fn lint(
     let targets = discover::find_files(loader, pool, patterns, false)?;
     let (mut rules, mut files) = (Rules::default(), 0usize);
     let (mut by_eslint, mut not_linted) = (Kinds::default(), Kinds::default());
+    // Files whose JavaScript rules can ask for types. Only a real run shows whether one does.
+    let mut for_types = Kinds::default();
     let mut all_loaded: Vec<&Arc<Loaded>> = vec![&own];
     let mut seen = FxHashSet::default();
     // Some files are skipped only because the `eslint` package isn't installed.
@@ -372,6 +374,13 @@ pub(crate) fn lint(
             }
             Route::Native | Route::Processor => {
                 files += 1;
+                let mut js_rules = config.js_rules.iter();
+                if config.js_rules_have_types
+                    && js_plugins.can_give_types()
+                    && js_rules.any(|it| it.severity != Severity::Off)
+                {
+                    for_types.add(&target.path);
+                }
                 if seen.insert(Arc::as_ptr(config)) {
                     if let Some(error) = &config.error {
                         return Err(Fatal(error.clone()));
@@ -435,7 +444,9 @@ pub(crate) fn lint(
         let is_named = || sources.iter().any(|it| it.1 == name);
         if javascript.iter().any(|it| it.0 == name) {
             Some(Need::Rules)
-        } else if name == b"eslint" && (by_eslint.count() > 0 || lacks_eslint) {
+        } else if name == b"eslint"
+            && (by_eslint.count() > 0 || lacks_eslint || for_types.count() > 0)
+        {
             Some(Need::Files)
         } else if let Some(file) = file.as_ref().or_else(|| nested.first()) {
             (loaded.iter().any(|it| it == name) || is_named())
@@ -474,6 +485,7 @@ pub(crate) fn lint(
                 object(vec![
                     (b"linted", Json::Number(files as f64)),
                     (b"by_eslint", by_eslint.json()),
+                    (b"by_eslint_for_types", for_types.json()),
                     (b"not_linted", not_linted.json()),
                 ]),
             ),
@@ -558,6 +570,14 @@ pub(crate) fn lint(
         let what = noun(by_eslint.count(), "of them goes", "of them go");
         let what = format!("{what} to your installed ESLint: {}", by_eslint.shown());
         write_count(&mut out, colors, by_eslint.count(), &what);
+    }
+    if for_types.count() > 0 {
+        let what = noun(for_types.count(), "of them goes", "of them go");
+        let what = format!(
+            "{what} to your installed ESLint if a JavaScript rule asks for types: {}",
+            for_types.shown()
+        );
+        write_count(&mut out, colors, for_types.count(), &what);
     }
     if not_linted.count() > 0 {
         let what = noun(not_linted.count(), "file", "files");

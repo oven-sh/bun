@@ -316,8 +316,9 @@ impl Input<'_, '_> {
         let mut enabled_at: FxHashMap<&RuleId, u32> = FxHashMap::default();
         let mut next = 0;
         for message in messages {
+            let place = (message.line as i32, message.column as i32);
             while let Some(switch) = switches.get(next)
-                && (switch.line, switch.column) <= (message.line, message.column)
+                && (switch.line as i32, switch.column as i32) <= place
             {
                 match (switch.disables, self.rule(switch)) {
                     (true, None) => active_for_all.push(next as u32),

@@ -684,14 +684,14 @@ await query; // rejects: canceling statement due to user request
 
 What `cancel()` does depends on how far the query got:
 
-| The query                                  | PostgreSQL                                                                                                         | MySQL / MariaDB                                             |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
-| Bun has not sent it yet                    | It never runs, and rejects with `ERR_POSTGRES_QUERY_CANCELLED`                                                     | It never runs, and rejects with `ERR_MYSQL_QUERY_CANCELLED` |
-| The server runs it                         | Bun asks the server to stop it. It rejects with the server's error: `ERR_POSTGRES_SERVER_ERROR`, `errno` `"57014"` | It runs to the end and settles with its result              |
-| Bun sent it behind a query that still runs | It rejects with `ERR_POSTGRES_QUERY_CANCELLED`. The error has a `hint`, because the server may still run it        | It runs to the end and settles with its result              |
+| The query                                                                   | PostgreSQL                                                                                                         | MySQL / MariaDB                                             |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Bun has not sent it yet                                                     | It never runs, and rejects with `ERR_POSTGRES_QUERY_CANCELLED`                                                     | It never runs, and rejects with `ERR_MYSQL_QUERY_CANCELLED` |
+| The server runs it, with nothing sent behind it                             | Bun asks the server to stop it. It rejects with the server's error: `ERR_POSTGRES_SERVER_ERROR`, `errno` `"57014"` | It runs to the end and settles with its result              |
+| Bun sent it behind a query that still runs, or sent another query behind it | It rejects with `ERR_POSTGRES_QUERY_CANCELLED`. The error has a `hint`, because the server may still run it        | It runs to the end and settles with its result              |
 
 - `query.cancelled` is `true` after `cancel()`, in every case.
-- A PostgreSQL server only takes a cancel request on a second connection, so Bun opens one for the request, with the same TLS settings. A query that ends before the request arrives resolves as usual. If Bun cannot deliver the request, the query rejects like one in the last row.
+- A PostgreSQL server only takes a cancel request on a second connection, so Bun opens one for the request, with the same TLS settings. A query that ends before the request arrives resolves as usual. The request stops whatever the connection runs when it arrives, so Bun does not send one while another query that it sent on that connection waits for its result. If Bun cannot deliver the request, the query rejects like one in the last row.
 - An `ERR_POSTGRES_QUERY_CANCELLED` error without a `hint` means that the query never reached the server, so it is safe to run again.
 - SQLite runs a query inside the call that starts it. `cancel()` only stops a query that has not started, with `ERR_SQLITE_QUERY_CANCELLED`.
 

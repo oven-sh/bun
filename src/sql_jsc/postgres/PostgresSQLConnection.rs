@@ -1459,23 +1459,24 @@ impl PostgresSQLConnection {
         }
     }
 
-    /// A CancelRequest names the backend, which stops what it is at work on: the head of the queue.
+    /// A CancelRequest names the backend, which stops what it is at work on when the signal comes:
+    /// the head of the queue, or whatever is written behind it by then. So none goes out while
+    /// somebody waits for a request that is written. Nothing is written until it is dealt with.
     fn stop_cancelled_head(&self) {
+        let requests = self.requests.get();
+        let written = requests
+            .len()
+            .saturating_sub(self.pending_requests.get() as usize);
         if let Some(head) = self.current()
             && head.flags.get().cancel == Cancel::Wanted
             && self.is_running(&head)
+            && requests
+                .iter()
+                .take(written)
+                .all(|request| request.flags.get().cancel == Cancel::Wanted)
             && self.send_cancel_request(&head)
         {
             head.update_flags(|f| f.cancel = Cancel::No);
-            let requests = self.requests.get();
-            let written = requests
-                .len()
-                .saturating_sub(self.pending_requests.get() as usize);
-            for behind in requests.iter().take(written).skip(1) {
-                if behind.flags.get().cancel == Cancel::No {
-                    behind.update_flags(|f| f.cancel = Cancel::Exposed);
-                }
-            }
         }
     }
 
@@ -1806,7 +1807,6 @@ impl PostgresSQLConnection {
             head.status.set(QueryStatus::Pending);
             head.update_flags(|f| {
                 f.retry = Retry::CameBack;
-                f.cancel = Cancel::No;
                 f.binary = false;
             });
             let written = requests.len().saturating_sub(pending);
@@ -2683,22 +2683,6 @@ impl PostgresSQLConnection {
                 };
                 let js_err =
                     crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
-                let retry = request.flags.get().retry;
-                // The failure has aborted a transaction block: what runs again there gets 25P02.
-                let in_transaction = self.is_in_transaction();
-                if !in_transaction
-                    && retry == Retry::No
-                    && err.is_query_canceled()
-                    && request.flags.get().cancel == Cancel::Exposed
-                    && matches!(
-                        request.status.get(),
-                        QueryStatus::Binding | QueryStatus::Running
-                    )
-                {
-                    request.forget_rows(self.global());
-                    request.update_flags(|f| f.retry = Retry::AtReadyForQuery);
-                    return Ok(());
-                }
                 if let Some(stmt) = request.statement_mut() {
                     if stmt.status == StatementStatus::Parsing && err.is_query_canceled() {
                         // It says nothing about the statement: the next request parses it again.
@@ -2712,11 +2696,13 @@ impl PostgresSQLConnection {
                         self.statements.with_mut(|cache| cache.remove(stmt));
                     } else if stmt.status == StatementStatus::Prepared
                         && !stmt.signature.prepared_statement_name.is_empty()
-                        // After BindComplete the same code comes from the query itself.
+                        // Before BindComplete nothing of the statement has run. After it the same
+                        // code comes from the query itself.
                         && request.status.get() == QueryStatus::Binding
                         && err.invalidates_prepared_statement()
                     {
-                        if !in_transaction && retry != Retry::Done {
+                        // The failure has aborted a transaction block: a retry there gets 25P02.
+                        if !self.is_in_transaction() && request.flags.get().retry != Retry::Done {
                             let replacement = self.statements.with_mut(|cache| {
                                 cache.replace(request.query.to_utf8().slice(), stmt, || {
                                     self.take_prepared_statement_id()

@@ -918,8 +918,9 @@ declare module "bun" {
        * PostgreSQL: Bun asks the server to stop a running query, on a second
        * connection. The query rejects with the server's error, `errno`
        * `"57014"`, or resolves if it ends first. A query that Bun sent behind
-       * another one rejects with `ERR_POSTGRES_QUERY_CANCELLED` and a `hint`,
-       * because the server may still run it.
+       * another one, or that has another one sent behind it, rejects with
+       * `ERR_POSTGRES_QUERY_CANCELLED` and a `hint`, because the server may
+       * still run it.
        *
        * MySQL: a query that Bun has sent runs to the end and settles with its
        * result.

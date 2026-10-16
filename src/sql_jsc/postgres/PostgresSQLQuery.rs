@@ -88,19 +88,15 @@ pub enum CopyStream {
     WritableOpen,
 }
 
-/// What a CancelRequest has to do with a request that is written.
+/// Of a request that is written.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Cancel {
     No,
-    /// Written behind the request that the server is asked to stop. A CancelRequest names the
-    /// backend: if that request ends first, the backend stops this one.
-    Exposed,
     /// `cancel()` was called and no CancelRequest could be sent for it so far.
     Wanted,
 }
 
-/// A request that the server refused for a reason that is not its own, before it had an effect,
-/// runs again: its statement was lost or stale, or it got the CancelRequest of another.
+/// A request whose Bind the server refused because its statement is lost or stale runs again.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Retry {
     No,
@@ -175,21 +171,6 @@ impl PostgresSQLQuery {
     #[inline]
     pub(crate) fn connection(&self) -> Option<RefPtr<PostgresSQLConnection>> {
         self.connection.get().clone()
-    }
-
-    /// Of a reply that ended early and is asked for again.
-    pub(crate) fn forget_rows(&self, global_object: &JSGlobalObject) {
-        unsafe extern "C" {
-            safe fn SQL__clearRows(global: &JSGlobalObject, rows: JSValue);
-        }
-        if let Some(rows) = self
-            .this_value
-            .get()
-            .try_get()
-            .and_then(js::pending_value_get_cached)
-        {
-            SQL__clearRows(global_object, rows);
-        }
     }
 
     #[inline]

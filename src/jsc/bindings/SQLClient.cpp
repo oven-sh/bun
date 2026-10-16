@@ -415,14 +415,6 @@ extern "C" EncodedJSValue JSC__constructObjectFromDataCell(
     return JSValue::encode(toJS(array, structure, cells, count, globalObject, Bun::BunStructureFlags(flags), BunResultMode(result_mode), namesPtr, namesCount));
 }
 
-extern "C" void SQL__clearRows(JSC::JSGlobalObject* globalObject, EncodedJSValue encodedRows)
-{
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
-    if (auto* rows = dynamicDowncast<JSC::JSArray>(JSValue::decode(encodedRows)))
-        rows->setLength(globalObject, 0);
-    scope.assertNoException();
-}
-
 extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, uint32_t capacity, ExternColumnIdentifier* namesPtr)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -785,7 +785,7 @@ describe.concurrent("cancel()", () => {
     expect(await next).toEqual([{ v: "ok" }]);
   });
 
-  // A CancelRequest stops what the backend runs when it arrives.
+  // A CancelRequest stops what the backend runs when it arrives. With both cancelled, nobody waits for that.
   test("of two queries that are written asks for each when the backend runs it, on one connection at a time", async () => {
     await using server = await cancelServer({ second: "stays open" });
     await using sql = new SQL(server.url, { max: 1 });
@@ -796,62 +796,50 @@ describe.concurrent("cancel()", () => {
     const [first, second] = [sql`select 'a'`.execute(), sql`select 'b'`.execute()];
     await server.batch(4);
     first.cancel();
+    expect(await rejection(first)).toEqual(cancelledSent);
+    await server.fence();
+    expect(server.sockets).toHaveLength(2);
     second.cancel();
     expect(await rejection(second)).toEqual(cancelledSent);
     await server.request(0);
     stop(server);
-    expect(await settled(first)).toEqual(canceledError);
-    expect(server.sockets).toHaveLength(2);
+    await server.fence();
+    expect(server.sockets).toHaveLength(4);
 
-    server.sockets[1].end();
+    server.sockets[2].end();
     expect(await server.request(1)).toEqual(pgCancelRequest(...cancelKey));
     stop(server);
-    server.sockets[2].end();
+    server.sockets[4].end();
     server.auto = true;
     expect(await sql`select 'c'`).toEqual([{ v: "ok" }]);
-    expect(server.sockets).toHaveLength(3);
+    expect(server.sockets).toHaveLength(5);
   });
 
-  // The cancelled query ends by itself, and the signal finds the backend at work on the next one, which nobody
-  // cancelled. Outside a transaction block the server has undone all of that one.
-  describe("that stops the query that is written behind", () => {
-    async function stopsTheNext(server: Server, sql: SQL, status: "I" | "T") {
-      server.auto = true;
-      await Promise.all([sql`select 'a'`, sql`select 'b'`]);
-      server.auto = false;
+  // The cancelled query can end by itself, and the signal would find the backend at work on the next one.
+  test("of a query with another one written behind it asks for nothing, and that one runs once", async () => {
+    await using server = await cancelServer();
+    await using sql = new SQL(server.url, { max: 1 });
+    server.auto = true;
+    await Promise.all([sql`select 'a'`, sql`select 'b'`]);
+    server.auto = false;
 
-      const cancelled = sql`select 'a'`.execute();
-      const behind = settled(sql`select 'b'`.execute());
-      await server.batch(4);
-      cancelled.cancel();
-      await server.request();
-      server.reply(pgBindComplete(), ...rows("done"), pgReadyForQuery(status));
-      server.reply(pgBindComplete(), pgDataRow([Buffer.from("half")]), pgErrorResponse(canceled));
-      server.reply(pgReadyForQuery(status === "I" ? "I" : "E"));
-      expect(await cancelled).toEqual([{ v: "done" }]);
-      server.sockets[1].end();
-      return { behind };
-    }
-
-    test.each([
-      ["and it gets its rows", bound("whole"), [{ v: "whole" }]],
-      ["once", [pgErrorResponse(canceled), pgReadyForQuery()], canceledError],
-    ])("runs that one again, %s", async (_, answer, expected) => {
-      await using server = await cancelServer({ second: "stays open" });
-      await using sql = new SQL(server.url, { max: 1 });
-      const { behind } = await stopsTheNext(server, sql, "I");
-      await Promise.race([server.batch(5), behind]);
-      server.reply(...answer);
-      expect(await behind).toEqual(expected);
-      expect(server.messages.slice(10)).toBe("BESBESBES");
-    });
-
-    test("rejects that one in a transaction block", async () => {
-      await using server = await cancelServer({ second: "stays open" });
-      await using sql = new SQL(server.url, { max: 1 });
-      const { behind } = await stopsTheNext(server, sql, "T");
-      expect(await behind).toEqual(canceledError);
-      expect(server.messages.slice(10)).toBe("BESBES");
+    const [cancelled, behind] = [sql`select 'a'`.execute(), sql`select 'b'`.execute()];
+    await server.batch(4);
+    cancelled.cancel();
+    expect(await rejection(cancelled)).toEqual(cancelledSent);
+    server.reply(...bound("discarded"));
+    await server.fence();
+    server.reply(...bound("kept"));
+    expect(await behind).toEqual([{ v: "kept" }]);
+    // The fence is the second connection.
+    expect({
+      messages: server.messages.slice(10),
+      connections: server.sockets.length,
+      asked: server.requested,
+    }).toEqual({
+      messages: "BESBES",
+      connections: 2,
+      asked: 0,
     });
   });
 
@@ -1000,11 +988,7 @@ test("a query that has settled does not keep its connection", async () => {
     for (const query of cancelled) query.cancel();
     await server.request();
     server.reply(pgErrorResponse(canceled), pgReadyForQuery(), ...bound("discarded"));
-    expect(await Promise.all(rejections)).toMatchObject([
-      { code: "ERR_POSTGRES_SERVER_ERROR" },
-      cancelledSent,
-      cancelledUnsent,
-    ]);
+    expect(await Promise.all(rejections)).toEqual([cancelledSent, cancelledSent, cancelledUnsent]);
     kept.push(resolved, ...cancelled);
   }
 
@@ -1049,9 +1033,11 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     await closed.promise;
   };
 
+  const waitEvent = async (observer: SQL, pid: number) =>
+    (await observer`select wait_event from pg_stat_activity where pid = ${pid}`)[0]?.wait_event;
   /** Resolves when the backend `pid` is inside pg_sleep(). */
   const asleep = async (observer: SQL, pid: number) => {
-    while ((await observer`select wait_event from pg_stat_activity where pid = ${pid}`)[0]?.wait_event !== "PgSleep");
+    while ((await waitEvent(observer, pid)) !== "PgSleep");
   };
 
   test.each([
@@ -1219,7 +1205,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       await asleep(other, pid);
       for (const query of queries) query.cancel();
 
-      expect(await Promise.all(rejections)).toMatchObject([{ code: "ERR_POSTGRES_SERVER_ERROR" }, cancelledSent]);
+      expect(await Promise.all(rejections)).toEqual([cancelledSent, cancelledSent]);
       expect(await sleep(0)).toEqual([{ pid }]);
     });
 
@@ -1286,30 +1272,56 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       return proxy;
     }
 
-    // To the client the first query still runs. The backend has sent one row of the second and waits to be stopped.
-    test("that reaches the server when it runs the query that is written behind does not stop that one", async () => {
+    // To the client the first query still runs. The backend is in the procedure, behind its COMMIT, and a signal would
+    // stop it there: what it has committed stays, so nobody can run it again, and nobody asked for it to be stopped.
+    test("of a query with a CALL that commits written behind it leaves the CALL to run once", async () => {
       await using proxy = await holdingProxy();
       await using sql = new SQL(proxy.url, { max: 1 });
       await using other = await connect();
-      await sql`create temporary sequence runs`.simple();
+      await sql`
+        create temporary table committed (tag int);
+        create procedure pg_temp.commits(tag int, key bigint) language plpgsql as $$
+          begin
+            insert into committed values (tag);
+            commit;
+            perform pg_advisory_lock(key);
+            perform pg_advisory_unlock(key);
+          end
+        $$`.simple();
       const first = () => sql`select pg_backend_pid() as pid`;
-      // Every other run, from the second on, sleeps.
-      const second = () => sql`
-        select g as x from generate_series(1, 3) g
-        where pg_sleep(case when g = 2 then (nextval('runs') + 1) % 2 * 60 else 0 end) is not null`;
-      const [[{ pid }]] = await Promise.all([first(), second()]);
+      const [{ pid }] = await first();
+      const call = (tag: number) => sql`call pg_temp.commits(${tag}, ${pid})`;
+      await call(0);
 
-      for (let round = 1; round <= 3; round++) {
-        proxy.hold();
-        const cancelled = first().execute();
-        const behind = settled(second().execute());
-        cancelled.cancel();
-        await asleep(other, pid);
-        (await proxy.request.promise)();
-        proxy.release();
-        expect(await Promise.all([cancelled, behind])).toEqual([[{ pid }], [{ x: 1 }, { x: 2 }, { x: 3 }]]);
-        expect(await sql`select last_value::int as runs from runs`.simple()).toEqual([{ runs: 1 + 2 * round }]);
+      await other`select pg_advisory_lock(${pid}::bigint)`;
+      proxy.hold();
+      let passOn: (() => void) | undefined;
+      proxy.request.promise.then(pass => (passOn = pass));
+      const cancelled = first().execute();
+      const behind = settled(call(1).execute());
+      cancelled.cancel();
+      const rejected = rejection(cancelled);
+      while ((await waitEvent(other, pid)) !== "advisory");
+      // A CancelRequest that was dialed is at the proxy by now.
+      if (passOn) {
+        passOn();
+        while ((await waitEvent(other, pid)) === "advisory");
       }
+      await other`select pg_advisory_unlock(${pid}::bigint)`;
+      proxy.release();
+
+      expect({
+        cancelled: await rejected,
+        behind: await behind,
+        committed: await sql`select tag, count(*)::int as rows from committed group by tag order by tag`,
+      }).toEqual({
+        cancelled: cancelledSent,
+        behind: [],
+        committed: [
+          { tag: 0, rows: 1 },
+          { tag: 1, rows: 1 },
+        ],
+      });
     });
 
     // The backend does not look at its socket while it runs the query.
@@ -1614,6 +1626,31 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         ).toEqual([[row], [], [{ ...row, ...middle }], [], [{ ...row, ...last }]]);
         expect(await settled(select())).toEqual([{ ...row, ...last }]);
         expect(await onServer(sql)).toHaveLength(1);
+      });
+
+      // The server refuses the Bind, so it has run nothing of the statement that is sent again.
+      test("is prepared again for a CALL that commits, which runs once", async () => {
+        await using sql = await connect();
+        await sql`
+          create temporary table committed (tag int);
+          create procedure pg_temp.commits(tag int) language plpgsql as $$
+            begin
+              insert into committed values (tag);
+              commit;
+            end
+          $$`.simple();
+        const call = (tag: number) => sql`call pg_temp.commits(${tag})`;
+        await call(0);
+        expect((await onServer(sql)).map(([name]) => name)).toEqual(["P0"]);
+
+        await sql`deallocate all`.simple();
+        await Promise.all([call(1), call(2)]);
+        expect((await onServer(sql)).map(([name]) => name)).toEqual(["P1"]);
+        expect(await sql`select tag, count(*)::int as rows from committed group by tag order by tag`.simple()).toEqual([
+          { tag: 0, rows: 1 },
+          { tag: 1, rows: 1 },
+          { tag: 2, rows: 1 },
+        ]);
       });
 
       // A retry would get 25P02 in place of the reason.

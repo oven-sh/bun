@@ -5609,6 +5609,12 @@ declare module "bun" {
      *
      * Not a sandbox: synchronous calls run to completion. Idempotent.
      *
+     * Keep a reference to a graph for as long as its work should run. When
+     * nothing references a graph any more, the garbage collector frees it,
+     * and Bun then closes what its code opened as `dispose()` does. A server
+     * that listens, a child process, a worker, and an open UDP socket or
+     * terminal reference their graph until they end.
+     *
      * @see https://bun.com/docs/runtime/module-graph#disposing
      */
     dispose(): void;

@@ -744,6 +744,47 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
     )
 }
 
+/// The most bytes of a path buffer that `relative` uses for `path`, `None` when it has fewer.
+fn relative_operand_capacity<P: PlatformT>(path: &[u8]) -> Option<usize> {
+    let needed = if !P::P.is_absolute(path) {
+        // One byte more when normalized, then joined as `join_abs_string_buf_checked` bounds it.
+        join_abs_needed(Fs::FileSystem::instance().top_level_dir().len(), &[path]) + 2
+    } else if P::P == Platform::Posix {
+        // The root is byte 0 and the normalized rest follows it.
+        path.len()
+    } else {
+        // Byte 0 stays free, and `C:\..` or a bare UNC volume normalizes to one byte more.
+        path.len() + 2
+    };
+    (needed <= MAX_PATH_BYTES).then_some(needed)
+}
+
+/// Bounds a `relative_to_common_path` result: a `/..` per separator of `from` plus one, then `to`.
+#[inline]
+fn relative_result_capacity(normalized_from_len: usize, normalized_to_len: usize) -> usize {
+    (normalized_from_len + 1) * 3 + 1 + normalized_to_len
+}
+
+/// [`relative_platform`], in `spill` when the result can outgrow a path buffer. `None` when an operand does.
+pub fn relative_spill_checked<'a, P: PlatformT>(
+    spill: &'a mut Vec<u8>,
+    from: &[u8],
+    to: &[u8],
+) -> Option<&'a [u8]> {
+    let needed = relative_result_capacity(
+        relative_operand_capacity::<P>(from)?,
+        relative_operand_capacity::<P>(to)?,
+    );
+    if needed <= MAX_PATH_BYTES {
+        return Some(relative_platform::<P, false>(from, to));
+    }
+    Some(relative_platform_buf::<P, true>(
+        grow(spill, needed),
+        from,
+        to,
+    ))
+}
+
 pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
     let result = relative_platform::<platform::Auto, false>(from, to);
     Ok(Box::<[u8]>::from(result))
@@ -2681,6 +2722,173 @@ mod tests {
         let mut spill = Vec::new();
         let out = join_abs_string_spill::<platform::Posix>(b"/work", &mut spill, &[&part]);
         assert_eq!(out, b"/work/sub");
+    }
+
+    fn relative_spill<P: PlatformT>(
+        spill: &mut Vec<u8>,
+        from: &[u8],
+        to: &[u8],
+    ) -> Option<Vec<u8>> {
+        relative_spill_checked::<P>(spill, from, to).map(<[u8]>::to_vec)
+    }
+
+    #[test]
+    fn relative_spill_checked_leaves_spill_untouched_when_the_result_fits() {
+        let mut spill = Vec::new();
+        let out =
+            relative_spill_checked::<platform::Posix>(&mut spill, b"/work/a/b", b"/work/c/./d.js");
+        assert_eq!(out, Some(&b"../../c/d.js"[..]));
+        assert!(spill.is_empty());
+    }
+
+    #[test]
+    fn relative_spill_checked_spills_from_the_first_result_that_can_outgrow_a_path_buffer() {
+        let from = b"/a";
+        let mut to = b"/".to_vec();
+        to.resize(
+            MAX_PATH_BYTES - relative_result_capacity(from.len(), 0),
+            b'n',
+        );
+        let mut spill = Vec::new();
+        assert_eq!(
+            relative_spill::<platform::Posix>(&mut spill, from, &to),
+            Some([&b"../"[..], &to[1..]].concat())
+        );
+        assert!(spill.is_empty());
+
+        to.push(b'n');
+        assert_eq!(
+            relative_spill::<platform::Posix>(&mut spill, from, &to),
+            Some([&b"../"[..], &to[1..]].concat())
+        );
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn relative_spill_checked_spills_a_result_longer_than_a_path_buffer() {
+        // Both paths fit a path buffer. One `../` per level of `from` in front of `to` does not.
+        let levels = MAX_PATH_BYTES / 4;
+        let from = b"/a".repeat(levels);
+        let mut to = b"/".to_vec();
+        to.resize(MAX_PATH_BYTES / 2, b'b');
+        let mut expected = b"../".repeat(levels);
+        expected.extend_from_slice(&to[1..]);
+        assert!(expected.len() > MAX_PATH_BYTES);
+
+        let mut spill = Vec::new();
+        let out = relative_spill_checked::<platform::Posix>(&mut spill, &from, &to);
+        assert_eq!(out, Some(&expected[..]));
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn relative_spill_checked_counts_a_backslash_in_from_as_a_level() {
+        // POSIX paths are normalized with both separators, so `/a\a\a` is three levels deep.
+        let levels = MAX_PATH_BYTES / 2 - 1;
+        let mut from = b"/a".to_vec();
+        from.extend_from_slice(&b"\\a".repeat(levels - 1));
+        let mut expected = b"../".repeat(levels);
+        expected.push(b'x');
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            relative_spill::<platform::Posix>(&mut spill, &from, b"/x"),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn relative_spill_checked_takes_a_posix_path_as_long_as_a_path_buffer() {
+        // The root is not part of the bytes `relative` normalizes.
+        let mut longest = b"/".to_vec();
+        longest.resize(MAX_PATH_BYTES, b'n');
+        let mut spill = Vec::new();
+        assert_eq!(
+            relative_spill::<platform::Posix>(&mut spill, b"/", &longest),
+            Some(longest[1..].to_vec())
+        );
+        assert_eq!(
+            relative_spill::<platform::Posix>(&mut spill, &longest, b"/x"),
+            Some(b"../x".to_vec())
+        );
+
+        longest.push(b'n');
+        assert_eq!(
+            relative_spill::<platform::Posix>(&mut spill, b"/", &longest),
+            None
+        );
+        assert_eq!(
+            relative_spill::<platform::Posix>(&mut spill, &longest, b"/x"),
+            None
+        );
+    }
+
+    #[test]
+    fn relative_spill_checked_leaves_room_for_a_windows_path_that_grows_by_one_byte() {
+        // A bare UNC volume gains a separator, and `C:\..` becomes `C:\\..`.
+        let cases: [(&[u8], &[u8], &[u8]); 2] = [
+            (b"\\\\s\\", b"\\\\s\\", b"\\"),
+            (b"C:\\..\\", b"C:\\\\..\\", b""),
+        ];
+        for (prefix, normalized_prefix, normalized_suffix) in cases {
+            let mut longest = prefix.to_vec();
+            longest.resize(MAX_PATH_BYTES - 2, b'n');
+            let normalized = [
+                normalized_prefix,
+                &longest[prefix.len()..],
+                normalized_suffix,
+            ]
+            .concat();
+            assert_eq!(normalized.len(), longest.len() + 1);
+
+            // From another drive the result is `to` itself, normalized.
+            let mut spill = Vec::new();
+            assert_eq!(
+                relative_spill::<platform::Windows>(&mut spill, b"D:\\w", &longest),
+                Some(normalized)
+            );
+            assert_eq!(
+                relative_spill::<platform::Windows>(&mut spill, &longest, b"D:\\w\\x.js"),
+                Some(b"D:\\w\\x.js".to_vec())
+            );
+
+            longest.push(b'n');
+            assert_eq!(
+                relative_spill::<platform::Windows>(&mut spill, b"D:\\w", &longest),
+                None
+            );
+            assert_eq!(
+                relative_spill::<platform::Windows>(&mut spill, &longest, b"D:\\w\\x.js"),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn relative_spill_checked_counts_the_top_level_dir_for_a_path_that_is_not_absolute() {
+        Fs::FileSystem::init(b"/work");
+        let longest = vec![b'r'; MAX_PATH_BYTES - b"/work/".len() - 4];
+        let mut spill = Vec::new();
+        assert_eq!(
+            relative_spill::<platform::Posix>(&mut spill, &longest, b"/work/src/x.js"),
+            Some(b"../src/x.js".to_vec())
+        );
+        let mut expected = b"../".to_vec();
+        expected.extend_from_slice(&longest);
+        assert_eq!(
+            relative_spill::<platform::Posix>(&mut spill, b"/work/src", &longest),
+            Some(expected)
+        );
+
+        let longer = vec![b'r'; longest.len() + 1];
+        assert_eq!(
+            relative_spill::<platform::Posix>(&mut spill, &longer, b"/work/src/x.js"),
+            None
+        );
+        assert_eq!(
+            relative_spill::<platform::Posix>(&mut spill, b"/work/src", &longer),
+            None
+        );
     }
 
     #[test]

@@ -7,7 +7,9 @@ use bun_bundler::options::BundleOptions;
 use bun_collections::index_sort;
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
-use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+use bun_paths::resolve_path::{
+    buf_or_spill, join_abs_string_buf_checked, platform, relative_spill_checked,
+};
 use bun_paths::{self, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
@@ -288,21 +290,24 @@ impl<'a> Scanner<'a> {
         if self.path_ignore_patterns.is_empty() {
             return false;
         }
-        let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), abs_path);
+        let mut spill = Vec::new();
+        let rel_path =
+            relative_spill_checked::<platform::Auto>(&mut spill, self.top_level_dir(), abs_path)
+                .unwrap_or(abs_path);
 
         // Build rel_path + '/' once. rel_path is a relative path from the project
         // root; 4096 bytes covers any sane test directory depth (POSIX PATH_MAX).
         let mut buf = [0u8; 4096];
-        let rel_with_slash: Option<&[u8]> = if !rel_path.is_empty()
-            && rel_path.len() < buf.len()
-            && rel_path[rel_path.len() - 1] != b'/'
-        {
-            buf[..rel_path.len()].copy_from_slice(rel_path);
-            buf[rel_path.len()] = b'/';
-            Some(&buf[..rel_path.len() + 1])
-        } else {
-            None
-        };
+        let mut slash_spill = Vec::new();
+        let rel_with_slash: Option<&[u8]> =
+            if !rel_path.is_empty() && rel_path[rel_path.len() - 1] != b'/' {
+                let with_slash = buf_or_spill(&mut buf, &mut slash_spill, rel_path.len() + 1);
+                with_slash[..rel_path.len()].copy_from_slice(rel_path);
+                with_slash[rel_path.len()] = b'/';
+                Some(&with_slash[..rel_path.len() + 1])
+            } else {
+                None
+            };
 
         for pattern in self.path_ignore_patterns {
             if pattern.r#match(rel_path).matches() {
@@ -402,7 +407,13 @@ impl<'a> Scanner<'a> {
                 let path = &self.open_dir_buf[..path_len];
 
                 if !self.does_absolute_path_match_filter(path) {
-                    let rel_path = bun_paths::resolve_path::relative(self.top_level_dir(), path);
+                    let mut spill = Vec::new();
+                    let rel_path = relative_spill_checked::<platform::Auto>(
+                        &mut spill,
+                        self.top_level_dir(),
+                        path,
+                    )
+                    .unwrap_or(path);
                     if !self.does_path_match_filter(rel_path) {
                         return;
                     }

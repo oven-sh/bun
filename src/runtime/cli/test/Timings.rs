@@ -109,7 +109,14 @@ impl Timings {
     }
 
     fn key_for(abs_path: &[u8]) -> Vec<u8> {
-        let rel = bun_paths::resolve_path::relative(FileSystem::get().top_level_dir, abs_path);
+        use bun_paths::resolve_path::{platform, relative_spill_checked};
+        let mut spill = Vec::new();
+        let rel = relative_spill_checked::<platform::Auto>(
+            &mut spill,
+            FileSystem::get().top_level_dir,
+            abs_path,
+        )
+        .unwrap_or(abs_path);
         let mut key = rel.to_vec();
         if cfg!(windows) {
             bun_paths::resolve_path::platform_to_posix_in_place(&mut key[..]);

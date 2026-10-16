@@ -1,8 +1,9 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { bunEnv, bunExe, isLinux, isWindows, MAX_PATH_BYTES, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, parse, relative, resolve, sep } from "node:path";
 
 describe("bun test", () => {
   test("running a non-existent absolute file path is a 1 exit code", () => {
@@ -808,6 +809,105 @@ describe("bun test", () => {
       expect(testFile).toStartWith(`::error file=${basename(cwd)}${sep}workspace.test.ts,line=4,col=`);
       expect(sourceUrl).toStartWith("::error file=webpack%3A//app/./src/x.ts,line=1,col=");
       expect(sourceUrl).toContain("%0A      at fromSourceUrl (webpack://app/./src/x.ts:1:");
+    });
+    // An environment variable cannot carry a value as long as a path buffer on Windows.
+    test.skipIf(isWindows).each([
+      ["an absolute path", "/" + Buffer.alloc(MAX_PATH_BYTES, "w").toString()],
+      ["a relative path", Buffer.alloc(MAX_PATH_BYTES - 10, "w").toString()],
+    ])(
+      "should print the annotation file as-is when GITHUB_WORKSPACE is %s that does not fit a path buffer",
+      (_, workspace) => {
+        const cwd = createTest([
+          {
+            filename: "workspace.test.ts",
+            contents: `
+            import { test } from "bun:test";
+            test("in the test file", () => {
+              throw new Error("boom");
+            });
+          `,
+          },
+        ]);
+        const stderr = runTest({
+          cwd,
+          env: {
+            GITHUB_ACTIONS: "true",
+            GITHUB_WORKSPACE: workspace,
+          },
+          expectExitCode: 1,
+        });
+        const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+        expect(annotations).toHaveLength(1);
+        expect(annotations[0]).toStartWith(`::error file=${join(cwd, "workspace.test.ts")},line=4,col=`);
+      },
+    );
+    // The relative form has one "../" per level of the cwd in front, so it does not fit a path
+    // buffer although the source URL does.
+    test("should make a source URL just short of a path buffer relative", () => {
+      // `/virtual/` or `C:\virtual\`: an absolute path on the drive of the cwd.
+      const virtualRoot = join(parse(realpathSync.native(tmpdir())).root, "virtual") + sep;
+      const padding = MAX_PATH_BYTES - 4 - virtualRoot.length;
+      const sourceURL = virtualRoot + Buffer.alloc(padding, "y").toString();
+      const cwd = createTest([
+        {
+          filename: "near-limit.test.ts",
+          contents: `
+            import { test } from "bun:test";
+            test("near the limit", () => {
+              const sourceURL = ${JSON.stringify(virtualRoot)} + Buffer.alloc(${padding}, "y").toString();
+              (0, eval)("(function fromNearLimit() { throw new Error('boom'); })\\n//# sourceURL=" + sourceURL)();
+            });
+          `,
+        },
+      ]);
+      const stderr = runTest({
+        cwd,
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: undefined,
+        },
+        expectExitCode: 1,
+      });
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect(annotations).toHaveLength(1);
+      expect(annotations[0]).toStartWith(`::error file=${relative(cwd, sourceURL)},line=1,col=`);
+      expect(annotations[0]).toContain(`%0A      at fromNearLimit (${sourceURL}:1:`);
+    });
+    // The reporters work in the buffer that held the title of the file while its tests ran.
+    test("should name the test file in the group of each --rerun-each run", () => {
+      const cwd = createTest([
+        {
+          filename: "helper.ts",
+          contents: `
+            import { expect } from "bun:test";
+            export function failing() {
+              expect(1).toBe(2);
+            }
+          `,
+        },
+        {
+          filename: "rerun.test.ts",
+          contents: `
+            import { test } from "bun:test";
+            import { failing } from "./helper";
+            test("fails", failing);
+          `,
+        },
+      ]);
+      const stderr = runTest({
+        cwd,
+        args: ["--rerun-each", "3"],
+        env: {
+          GITHUB_ACTIONS: "true",
+          GITHUB_WORKSPACE: undefined,
+        },
+        expectExitCode: 1,
+      });
+      expect(stderr.split("\n").filter(line => line.startsWith("::group::"))).toEqual([
+        "::group::rerun.test.ts: (run #1)",
+        "::group::rerun.test.ts: (run #2)",
+        "::group::rerun.test.ts: (run #3)",
+      ]);
     });
   });
   describe(".each", () => {
@@ -2118,5 +2218,104 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(Number(stdout.match(/OPEN_FDS=(\d+)/)?.[1])).toBeLessThan(N);
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
+  });
+});
+
+// The name of a test file relative to the cwd has one "../" per level of the cwd in front, so
+// it can be longer than a path buffer although both paths fit one. A Windows path of ASCII
+// names is too short for that: 32,767 characters against 98,302 bytes.
+describe.skipIf(isWindows).concurrent("test files far outside a deep cwd", () => {
+  const passing = (name: string) =>
+    `import { test, expect } from "bun:test";\ntest(${JSON.stringify(name)}, () => {\n  expect(1).toBe(1);\n});\n`;
+
+  function farFixture(prefix: string, files = ["far.test.ts", "other.test.ts"]) {
+    const dir = tempDir(prefix, {});
+    const root = String(dir);
+    // As many 200-byte names as a path can hold, and enough levels of cwd for the rest.
+    const farNames = Math.floor((MAX_PATH_BYTES - 64 - root.length) / 201);
+    const cwd = join(root, ...Array(Math.ceil((MAX_PATH_BYTES + 64 - farNames * 201) / 3)).fill("c"));
+    const farDir = join(root, ...Array(farNames).fill(Buffer.alloc(200, "f").toString()));
+    const titles: Record<string, string> = {};
+    try {
+      mkdirSync(cwd, { recursive: true });
+      for (const name of files) {
+        mkdirSync(dirname(join(farDir, name)), { recursive: true });
+        writeFileSync(join(farDir, name), passing(name));
+        titles[name] = relative(cwd, join(farDir, name));
+      }
+    } catch (e) {
+      dir[Symbol.dispose]();
+      throw e;
+    }
+    return { dir, cwd, farDir, titles };
+  }
+
+  // The file headers, which name each test file relative to the cwd.
+  async function headers(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return {
+      headers: stderr
+        .split("\n")
+        .filter(line => line.endsWith(".test.ts:"))
+        .sort(),
+      exitCode,
+    };
+  }
+
+  test("a file named on the command line", async () => {
+    const { dir, cwd, farDir, titles } = farFixture("far-file");
+    using _ = dir;
+    expect(titles["far.test.ts"].length).toBeGreaterThan(MAX_PATH_BYTES);
+    expect(await headers(cwd, [join(farDir, "far.test.ts")])).toEqual({
+      headers: [titles["far.test.ts"] + ":"],
+      exitCode: 0,
+    });
+  });
+
+  test("a directory with --parallel", async () => {
+    const { dir, cwd, farDir, titles } = farFixture("far-parallel");
+    using _ = dir;
+    expect(await headers(cwd, ["--parallel=2", farDir])).toEqual({
+      headers: [titles["far.test.ts"] + ":", titles["other.test.ts"] + ":"],
+      exitCode: 0,
+    });
+  });
+
+  // "**/vendor/" matches the name of the directory with a "/" behind it.
+  test("a directory with --path-ignore-patterns", async () => {
+    const { dir, cwd, farDir, titles } = farFixture("far-ignore", ["far.test.ts", "vendor/skipped.test.ts"]);
+    using _ = dir;
+    expect(await headers(cwd, ["--path-ignore-patterns", "**/vendor/", farDir])).toEqual({
+      headers: [titles["far.test.ts"] + ":"],
+      exitCode: 0,
+    });
+  });
+
+  test("the bunfig root with a name filter", async () => {
+    const { dir, cwd, farDir, titles } = farFixture("far-root");
+    using _ = dir;
+    writeFileSync(join(cwd, "bunfig.toml"), `[test]\nroot = ${JSON.stringify(farDir)}\n`);
+    expect(await headers(cwd, ["other.test"])).toEqual({
+      headers: [titles["other.test.ts"] + ":"],
+      exitCode: 0,
+    });
+  });
+
+  test("a directory with --update-timings", async () => {
+    const { dir, cwd, farDir, titles } = farFixture("far-timings");
+    using _ = dir;
+    const timings = join(String(dir), "timings.json");
+    expect(await headers(cwd, [`--timings=${timings}`, "--update-timings", farDir])).toEqual({
+      headers: [titles["far.test.ts"] + ":", titles["other.test.ts"] + ":"],
+      exitCode: 0,
+    });
+    expect(Object.keys(JSON.parse(readFileSync(timings, "utf-8")).files).sort()).toEqual(Object.values(titles).sort());
   });
 });

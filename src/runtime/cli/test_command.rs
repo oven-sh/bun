@@ -45,7 +45,9 @@ mod coverage {
         if ignore_patterns.is_empty() {
             return false;
         }
-        let relative_path = bun_paths::resolve_path::relative(relative_dir, source_url);
+        let mut spill = Vec::new();
+        let relative_path =
+            bun_jsc::ZigStackFrame::relative_source_url(relative_dir, source_url, &mut spill);
         ignore_patterns
             .iter()
             .any(|pattern| pattern.r#match(relative_path).matches())
@@ -341,7 +343,8 @@ impl TestFailure {
         let dir = FileSystem::instance().top_level_dir;
         for frame in exception.stack.frames() {
             let source_url = frame.source_url.to_utf8();
-            let file = jsc::ZigStackFrame::relative_source_url(dir, source_url.slice());
+            let mut spill = Vec::new();
+            let file = jsc::ZigStackFrame::relative_source_url(dir, source_url.slice(), &mut spill);
             let func = frame.function_name.to_utf8();
             if file.is_empty() && func.slice().is_empty() {
                 continue;
@@ -1561,9 +1564,14 @@ fn print_coverage_table<const COLORS: bool>(
 ) {
     use coverage::text;
     let thresholds = *thresholds;
+    let mut spill = Vec::new();
     let max_filepath_length = reports
         .iter()
-        .map(|r| resolve_path::relative(relative_dir, &r.source_url).len())
+        .map(|r| {
+            jsc::ZigStackFrame::relative_source_url(relative_dir, &r.source_url, &mut spill).len()
+        })
+        // A name that is longer than a path does not widen the column for every row.
+        .filter(|&len| len <= bun_paths::MAX_PATH_BYTES)
         .fold(b"All files".len(), usize::max);
 
     let zero = Fraction {
@@ -2870,7 +2878,6 @@ impl TestCommand {
             .filename_store
             .append_slice(resolution.path_pair.primary.text)
             .expect("oom");
-        let file_title = resolve_path::relative(FileSystem::instance().top_level_dir, file_path);
         let file_id = jest::Jest::runner()
             .unwrap()
             .get_or_put_file(file_path)
@@ -2916,6 +2923,14 @@ impl TestCommand {
                 bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
             }
 
+            // Computed for each run: the reporters reuse `relative`'s buffer while the file runs.
+            let mut file_title_spill = Vec::new();
+            let file_title = resolve_path::relative_spill_checked::<bun_path::platform::Auto>(
+                &mut file_title_spill,
+                FileSystem::instance().top_level_dir,
+                file_path,
+            )
+            .unwrap_or(file_path);
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
             // split (not the defer-captured `reporter_ptr`) keeps the borrows

@@ -9391,7 +9391,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // When code splitting is enabled, always create wrapper_ref to match esbuild behavior.
             // Otherwise, use needsWrapperRef() to optimize away unnecessary wrappers.
             if self.options.bundle
-                && (self.options.code_splitting || self.needs_wrapper_ref(parts.as_slice()))
+                && (self.options.code_splitting
+                    || self.needs_wrapper_ref(parts.as_slice(), exports_kind))
             {
                 use core::fmt::Write as _;
                 let mut buf = bun_alloc::ArenaString::new_in(arena);
@@ -9614,8 +9615,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///
     /// The logic in this function must be in sync with the hoisting
     /// logic in `LinkerContext.generateCodeForFileInChunkJS`
-    fn needs_wrapper_ref(&self, parts: &[js_ast::Part]) -> bool {
+    fn needs_wrapper_ref(&self, parts: &[js_ast::Part], exports_kind: js_ast::ExportsKind) -> bool {
         debug_assert!(self.options.bundle);
+        // A CommonJS file never gets an `__esm` wrapper, so no `var` store has to stay in one.
+        let symbols = (exports_kind != js_ast::ExportsKind::Cjs).then_some(self.symbols.as_slice());
         for part in parts {
             // Part.stmts is an arena-owned slice valid for 'a.
             for stmt in part.stmts.iter() {
@@ -9636,13 +9639,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         {
                             for decl in local.decls.slice() {
                                 if let Some(value) = &decl.value {
-                                    // The linker keeps a pattern inside the wrapper.
                                     if !matches!(value.data, js_ast::ExprData::EMissing(_))
-                                        && (!value.can_be_moved()
-                                            || !matches!(
-                                                decl.binding.data,
-                                                js_ast::b::B::BIdentifier(_)
-                                            ))
+                                        && !local.value_can_leave_esm_wrapper(decl, |ref_| {
+                                            symbols?.get(ref_.inner_index() as usize)
+                                        })
                                     {
                                         return true;
                                     }

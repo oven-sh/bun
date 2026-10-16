@@ -9,9 +9,8 @@
 //!
 //! The rule that keeps this free of deadlocks: **a thread with a VM never waits for something that can itself wait for a VM.
 //! Other threads may wait for it.** So it never joins a parallel region of the pool (`keep_regions_on_this_thread`), and it
-//! never posts a job. The one exception is a job for the first VM ([`Engine::with_first_vm`]), whose own thread never posts
-//! any. And nobody posts a job while holding a lock that linting a file takes. A thread with a VM does wait for its own
-//! JavaScript, which can need Bun's pool, on which nothing of `bun lint` runs.
+//! never posts a job. And nobody posts a job while holding a lock that linting a file takes. A thread with a VM does wait for
+//! its own JavaScript, which can need Bun's pool, on which nothing of `bun lint` runs.
 //!
 //! The program is `bun_lint::js_plugin::program()`: the body of a function that is given the native functions of
 //! src/jsc/bindings/Lint*.cpp, and returns the function that [`ThreadVm::call`] calls. These functions ask with [`Bun__Lint__ask`].
@@ -890,7 +889,7 @@ impl Crew {
         let _ = Crew::start_more(crew, &mut state);
     }
 
-    /// [`Engine::with_vm`] on a thread that is no member, or [`Engine::with_first_vm`] on one that isn't the first.
+    /// [`Engine::with_vm`] on a thread that is no member.
     fn post(
         crew: &Arc<Crew>,
         size: usize,
@@ -997,15 +996,6 @@ impl Engine for Engines {
         match self.0.here() {
             Some(at) => Crew::with_vm_of(&self.0, at, size, then),
             None => return Crew::post(&self.0, size, then),
-        }
-        Ok(())
-    }
-
-    fn with_first_vm(&self, then: &mut (dyn FnMut(&mut dyn Vm) + Send)) -> Result<(), Vec<u8>> {
-        // A heavy job is for the first member, and `Demand` doesn't count it.
-        match self.0.here() {
-            Some(0) => Crew::with_vm_of(&self.0, 0, HEAVY, then),
-            _ => return Crew::post(&self.0, HEAVY, then),
         }
         Ok(())
     }

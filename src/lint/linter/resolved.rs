@@ -297,16 +297,8 @@ pub struct ResolvedConfig {
     /// One of the plugins is eslint-plugin-html, which changes ESLint's `Linter` when the configuration file loads it: that then
     /// finds the scripts in a file.
     pub changes_linter: bool,
-    /// All of this for ESLint's own `Linter`, if that is what lints such a file ([`Route::Eslint`]) and if JSON can say it. With
-    /// `eslint` set, the same without the built-in rules.
+    /// All of this for ESLint's own `Linter`, if that is what lints such a file ([`Route::Eslint`]) and if JSON can say it.
     pub for_eslint: Option<Arc<js_plugin::Configuration>>,
-    /// An `eslint.config.js` asks its parser for types in `parserOptions`. A JavaScript plugin rule that asks for them is run
-    /// on the file by ESLint's own `Linter`, which has them.
-    pub js_rules_have_types: bool,
-    /// What to tell that `Linter`, if the package is installed. Only set with `js_rules_have_types`.
-    pub eslint: Option<Arc<js_plugin::ForEslint>>,
-    /// Where the config file is. Only set with `js_rules_have_types`.
-    pub base_path: Box<[u8]>,
     /// The configuration is invalid, and ESLint would refuse to run: its message.
     pub error: Option<Vec<u8>>,
 }

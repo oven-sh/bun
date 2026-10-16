@@ -52,9 +52,6 @@ pub trait Engine: Sync {
         then: &mut (dyn FnMut(&mut dyn Vm) + Send),
     ) -> Result<(), Vec<u8>>;
 
-    /// The same, on the thread that has the first realm: for what a run should load only once.
-    fn with_first_vm(&self, then: &mut (dyn FnMut(&mut dyn Vm) + Send)) -> Result<(), Vec<u8>>;
-
     /// Has every thread with a realm work on `work` until nothing is left, and starts as many of them as the files are worth.
     /// Calls `meanwhile` on the calling thread, and returns when both are done. `Err`: no such thread could be started, so
     /// only `meanwhile` has run.

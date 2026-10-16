@@ -221,7 +221,6 @@ impl Context<'_, '_> {
             physical_path_len: it.physical_path_len,
             text: it.text,
             without_fixes: it.fixes == Fixes::Disabled,
-            only: None,
         };
         let configuration = config.for_eslint.as_deref().unwrap_or(&for_eslint.whole);
         match (self.js_plugins).lint_with_eslint(configuration, &for_eslint.run, text, &|id| {
@@ -236,11 +235,7 @@ impl Context<'_, '_> {
                 Some(linted.deprecated),
             ),
             Err(Refusal::NotInstalled) => (thrown(not_installed(it.path, config)), None),
-            Err(
-                Refusal::NotConfigured(message)
-                | Refusal::Rejected(message)
-                | Refusal::Thrown(message),
-            ) => (thrown(message), None),
+            Err(Refusal::Thrown(message)) => (thrown(message), None),
         }
     }
 

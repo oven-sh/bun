@@ -15,7 +15,7 @@ use bstr::BStr;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::formats::Reason;
-use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Refusal, Route, Work};
+use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route, Work};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
     FileConfig, LintMessage, Registry, ResolvedConfig, RuleId, formatting_rule, is_parse_error,
@@ -931,8 +931,7 @@ impl Run<'_> {
             environment.js_engine,
             &paths::to_native(environment.cwd.clone()),
         )
-        .measuring(options.timing)
-        .giving_types(options.type_aware != Some(false));
+        .measuring(options.timing);
         let loader = Loader::new(&linter, options, environment, &js_plugins);
         // `--rules` prints the same list either way, and `--doctor` has this in its report.
         let is_told = !options.rules && !options.doctor && !options.silent;
@@ -1135,16 +1134,10 @@ impl Run<'_> {
                 1 => b" rule",
                 _ => b" rules",
             };
-            // With an `eslint.config.js`, these rules get types if the config asks for them.
-            let is_flat = (of_cwd.as_ref()).is_some_and(|it| it.flavor == Flavor::Eslint);
-            let why: &[u8] = match is_flat && js_plugins.can_give_types() {
-                true => b" did not run because parserOptions.projectService is not set, so there is no type information: ",
-                false => b" did not run because rules that run in JavaScript cannot use type information: ",
-            };
             loader.cannot_do(&[
                 ids.len().to_string().as_bytes(),
                 noun,
-                why,
+                b" did not run because rules that run in JavaScript cannot use type information: ",
                 &ids.join(&b", "[..]),
                 match linter.registry().answers_for(b"@typescript-eslint") {
                     true => &b""[..],
@@ -1153,45 +1146,6 @@ impl Run<'_> {
                     }
                 },
             ]);
-        }
-        for it in js_plugins.rules_without_types() {
-            let ids: Vec<&[u8]> = it.rules.iter().map(|it| &it.id[..]).collect();
-            let ids = ids.join(&b", "[..]);
-            let (before, after): (&[u8], &[u8]) = match (it.have_run, it.rules.len()) {
-                (true, _) => (b"no type information for ", b": "),
-                (false, 1) => (b"", b" needs type information and did not run: "),
-                (false, _) => (b"", b" need type information and did not run: "),
-            };
-            let directory = paths::relative(&environment.cwd, &it.directory);
-            let within: &[u8] = if directory.is_empty() { b"" } else { b" in " };
-            let first = it.files.first().map_or(&[][..], |it| &it[..]);
-            let first = paths::relative(&environment.cwd, first);
-            let count = it.files.len().to_string();
-            let why: Vec<&[u8]> = match &it.why {
-                Refusal::NotInstalled => vec![
-                    &b"eslint is not installed"[..],
-                    within,
-                    &directory,
-                    b"\n  Run bun add -d eslint",
-                ],
-                Refusal::NotConfigured(message) | Refusal::Thrown(message) => {
-                    let what = &b"could not set up eslint"[..];
-                    vec![what, within, &directory, b": ", message]
-                }
-                Refusal::Rejected(reason) if it.files.len() == 1 => {
-                    vec![&reason[..], b": ", &first]
-                }
-                Refusal::Rejected(reason) => {
-                    let count = count.as_bytes();
-                    vec![&reason[..], b": ", count, b" files (", &first, b", ..)"]
-                }
-            };
-            let line: Vec<&[u8]> = [before, &ids[..], after].into_iter().chain(why).collect();
-            // A rule that did not run is like anything else that the config asks for and does not get.
-            match it.have_run {
-                true => self.warn(&line.concat()),
-                false => loader.cannot_do(&line),
-            }
         }
         for (reason, files) in std::mem::take(&mut *handed_back.lock()) {
             // That is so until the formatter is there, and says nothing to the user.
@@ -1802,16 +1756,6 @@ impl Run<'_> {
                 self.out.stderr,
                 "; the eslint package linted {} files",
                 loading.linted_by_eslint
-            );
-        }
-        if !loading.given_types.is_empty() {
-            let mut ids: Vec<&[u8]> = loading.given_types.iter().map(|it| &it.id[..]).collect();
-            bun_lint::utils::sort::sort_unstable(&mut ids);
-            let _ = write!(
-                self.out.stderr,
-                ", {} of them to give types to {}",
-                loading.linted_for_types,
-                BStr::new(&ids.join(&b", "[..]))
             );
         }
         if let (most @ 1.., freed) = loading.sizes {

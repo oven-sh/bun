@@ -22,9 +22,6 @@ pub(super) mod result {
     pub(crate) const NEEDS_PLUGINS: u8 = b'2';
     /// The settings of the file have to be loaded before it can be linted: [`LOAD_SETTINGS`](super::call::LOAD_SETTINGS).
     pub(crate) const NEEDS_SETTINGS: u8 = b'6';
-    /// Like [`DONE`], but some rules asked for types and were stopped. JSON: their positions among the rules that run on the
-    /// file, then the indices of the variables marked as used. Their reports don't count.
-    pub(crate) const ASKED_FOR_TYPES: u8 = b'8';
 }
 
 /// What the program asks for.

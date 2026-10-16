@@ -1844,7 +1844,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         4 problems"
       `);
       expect(stderr).toContain(
-        "2 rules did not run because parserOptions.projectService is not set, so there is no type information: typed/at-once, typed/later",
+        "2 rules did not run because rules that run in JavaScript cannot use type information: typed/at-once, typed/later",
       );
       expect(stderr).not.toContain("You have used a rule");
       expect(exitCode).toBe(2);

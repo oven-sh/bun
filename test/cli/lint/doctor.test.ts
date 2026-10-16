@@ -133,7 +133,7 @@ Not checked:    other tools' configs, CI files, Git hooks
       const { stdout, exitCode } = await doctor(flat, ["-f", "json"]);
       expect(JSON.parse(stdout)).toEqual({
         config: { path: "eslint.config.js", kind: "eslint", nested: [], ignored: null, bunfig: null },
-        files: { linted: 3, by_eslint: {}, by_eslint_for_types: {}, not_linted: {} },
+        files: { linted: 3, by_eslint: {}, not_linted: {} },
         rules: {
           native: ["eqeqeq", "no-undef", "no-var", "react-hooks/rules-of-hooks"],
           javascript: {
@@ -352,60 +352,6 @@ Still needed:   eslint (some files go to it)
     expect(installed.exitCode).toBe(0);
     expect(missing.exitCode).toBe(0);
   });
-
-  test(
-    "counts the files whose JavaScript rules can ask for types, and keeps eslint for them",
-    async () => {
-      const files = {
-        ...plugin("eslint-plugin-first", ["a"]),
-        "package.json": dependencies("eslint", "eslint-plugin-first"),
-        "eslint.config.js": `
-          import first from "eslint-plugin-first";
-          const parser = { meta: { name: "typescript-eslint/parser" }, parse() {} };
-          export default [
-            { plugins: { first }, rules: { "no-var": "error" } },
-            { files: ["**/*.ts"], languageOptions: { parser, parserOptions: { projectService: true } } },
-            { files: ["src/**"], rules: { "first/a": "error" } },
-          ];`,
-        "src/a.ts": "",
-        "src/b.ts": "",
-        "src/c.js": "",
-        "d.ts": "",
-      };
-      const eslint = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0" }) };
-      const [text, missing, json, off] = await Promise.all([
-        doctor({ ...files, ...eslint }),
-        doctor(files),
-        doctor(files, ["-f", "json"]),
-        doctor(files, ["--no-type-aware"]),
-      ]);
-      const count = "2 of them go to your installed ESLint if a JavaScript rule asks for types: 2 *.ts\n";
-      expect(missing.stdout).toBe(
-        text.stdout.replace(count, `${count}        Install eslint, or those rules get no types\n`),
-      );
-      expect(text.stdout).toBe(`Using eslint.config.js (ESLint flat config)
-
-    5 files to lint
-    2 of them go to your installed ESLint if a JavaScript rule asks for types: 2 *.ts
-
-    1 rule runs natively
-    1 rule runs in JavaScript
-        eslint-plugin-first    1
-
-Still needed:   eslint (some files go to it)
-                eslint-plugin-first (its rules run in JavaScript)
-`);
-      expect(JSON.parse(json.stdout).files).toEqual({
-        linted: 5,
-        by_eslint: {},
-        by_eslint_for_types: { "*.ts": 2 },
-        not_linted: {},
-      });
-      expect(off.stdout).not.toContain("your installed ESLint");
-      expect(off.stdout).toContain("You can remove: eslint\n");
-    },
-    timeout,
-  );
 
   test("with both an ESLint and an oxlint config, says which one is used and why", async () => {
     const files = {

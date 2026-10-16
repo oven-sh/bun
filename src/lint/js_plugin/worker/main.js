@@ -90,7 +90,6 @@ const DONE = "0";
 const FAILED = "1";
 const NEEDS_PLUGINS = "2";
 const NEEDS_SETTINGS = "6";
-const ASKED_FOR_TYPES = "8";
 
 // The content of the message that is being handled.
 const MESSAGE = 0;
@@ -365,7 +364,6 @@ const SourceCode = native.sourceCode(native.TokenStore, [
   program,
   scopeManager,
   () => fileSettings.languageOptions.parserOptions,
-  servicesWithTypes,
   oxlintScopeManager,
 ]);
 let sourceCode = new SourceCode();
@@ -657,70 +655,6 @@ function configure(id, position) {
   return entry;
 }
 
-// ------------- types -------------
-
-// When `parserOptions` ask for types, typescript-eslint's parser gives rules TypeScript's `program` and the nodes of its tree. Bun has
-// neither. Rules get stand-ins that look the same until they are used. A rule that uses one is stopped, and the other side runs
-// it on this file with the installed `eslint`.
-const asksForTypes = new Error("This rule needs type information.");
-// The positions of the rules that have asked in this file.
-let askedForTypes = [];
-const hasAskedForTypes = entry => askedForTypes.includes(entry.position);
-const doNothing = () => {};
-// Nothing catches exceptions around a listener, so that files where no rule asks cost nothing extra. A rule that asks in a
-// listener therefore stops the whole file. The file is then linted again with every listener guarded, so only that rule stops.
-let guardsListeners = false;
-
-const guarded = (entry, listener) => (first, second, third) => {
-  try {
-    listener(first, second, third);
-  } catch (error) {
-    // Either `asksForTypes`, or the rule caught that and then failed.
-    if (!hasAskedForTypes(entry)) throw error;
-  }
-};
-
-function askForTypes() {
-  if (currentRule !== null && !hasAskedForTypes(currentRule)) {
-    askedForTypes.push(currentRule.position);
-    for (const group of groups) for (const it of group) if (it.entry === currentRule) it.listener = doNothing;
-  }
-  throw asksForTypes;
-}
-
-// Any operation on it that a `Proxy` can trap asks for types, except reading a property in `known`.
-function standInForTypes(known) {
-  const get = (_, key) => (Object.hasOwn(known, key) ? known[key] : askForTypes());
-  return new Proxy({}, new Proxy({ get }, { get: (traps, name) => traps[name] ?? askForTypes }));
-}
-
-// `sourceCode.parserServices` for files that have types. Nothing in it depends on the file, so it's made once.
-function servicesWithTypes() {
-  const checker = standInForTypes({});
-  return {
-    // Most rules get the checker in `create`, and only use it in a few files.
-    program: standInForTypes({ getTypeChecker: () => checker }),
-    // These come from the program's `tsconfig.json`.
-    get emitDecoratorMetadata() {
-      return askForTypes();
-    },
-    get experimentalDecorators() {
-      return askForTypes();
-    },
-    get isolatedDeclarations() {
-      return askForTypes();
-    },
-    esTreeNodeToTSNodeMap: standInForTypes({}),
-    tsNodeToESTreeNodeMap: standInForTypes({}),
-    getContextualType: askForTypes,
-    getResolvedSignature: askForTypes,
-    getSymbolAtLocation: askForTypes,
-    getTypeAtLocation: askForTypes,
-    getTypeFromTypeNode: askForTypes,
-    getTypeOfSymbolAtLocation: askForTypes,
-  };
-}
-
 // ------------- listeners -------------
 
 // In the order of the event kinds in `code_path/estree.rs`.
@@ -781,7 +715,7 @@ function addListeners(entry, listeners) {
       groupByKey.set(key, (group = []));
       groups.push(group);
     }
-    group.push({ entry, listener: guardsListeners ? guarded(entry, listener) : listener });
+    group.push({ entry, listener });
   }
 }
 
@@ -1018,8 +952,6 @@ function reset() {
   groups = [];
   currentRule = currentNode = null;
   isCreating = false;
-  askedForTypes = [];
-  guardsListeners = false;
   // Some are left if another rule's `create` or `before` threw. They aren't for the next file.
   afterHooks = [];
   resetScopes();
@@ -1062,17 +994,11 @@ function lint() {
     // ESLint only knows `create`. A rule without it, which ESLint refuses, runs as in oxlint.
     const { create, createOnce } = entry.rule;
     isCreating = true;
-    let listeners;
-    try {
-      listeners =
-        typeof createOnce === "function" && (fileSettings.freezes || typeof create !== "function")
-          ? listenersOfOnce(entry)
-          : entry.rule.create(fileContext.extend(entry.own));
-    } catch (error) {
-      if (!hasAskedForTypes(entry)) throw error;
-    }
+    const listeners =
+      typeof createOnce === "function" && (fileSettings.freezes || typeof create !== "function")
+        ? listenersOfOnce(entry)
+        : entry.rule.create(fileContext.extend(entry.own));
     isCreating = false;
-    if (askedForTypes.length > 0 && hasAskedForTypes(entry)) continue;
     if (listeners === undefined || listeners === null) {
       throw new Error(`The create() function for rule '${entry.ruleId}' did not return an object.`);
     }
@@ -1192,14 +1118,8 @@ function respond(kind) {
     if (missing !== null) return NEEDS_PLUGINS + JSON.stringify(missing);
     const used = usedVariables();
     native.sendReports();
-    if (askedForTypes.length > 0) return ASKED_FOR_TYPES + JSON.stringify([askedForTypes, used]);
     return used.length === 0 ? DONE : DONE + JSON.stringify(used);
   } catch (error) {
-    if (askedForTypes.length > 0 && !guardsListeners) {
-      reset();
-      guardsListeners = true;
-      return respond(kind);
-    }
     // The node is the plugin's to change.
     let line = null;
     try {

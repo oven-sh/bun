@@ -147,7 +147,7 @@ bun lint --native-plugin-rules=@typescript-eslint,import # only these two stay n
 nativePluginRules = ["@typescript-eslint", "import"]
 ```
 
-ESLint's core rules are always native. Keep `@typescript-eslint` native if you use type-aware rules, because JavaScript rules [get types from ESLint](#type-information), which is much slower.
+ESLint's core rules are always native. Keep `@typescript-eslint` native if you use type-aware rules, because JavaScript rules don't get types.
 
 `nativePluginRules` picks which version of a plugin runs. It doesn't turn rules on or off. To do that, see [`lint.rules`](/runtime/bunfig#lint-rules).
 
@@ -173,20 +173,6 @@ Bun parses JavaScript and TypeScript. It hands other files to the `eslint` packa
 
 You still run `bun lint`, and these files show up in the same report.
 
-## Type information
-
-JavaScript rules get types where your `eslint.config.js` asks for them with `parserOptions.projectService` or `project`.
-
-Bun's parser doesn't make TypeScript's `program`. When a rule asks the type checker, `getTypeAtLocation()`, or `esTreeNodeToTSNodeMap` something, Bun hands that rule and that file to the `eslint` package in your project. Every other rule still runs in Bun, and everything shows up in the same report.
-
-Those files are as slow as in ESLint, because TypeScript has to load your project. `bun lint --timing` prints how many there are and which rules asked.
-
-- A rule that only checks whether `parserServices.program` is there, or only calls `program.getTypeChecker()`, stays in Bun.
-- Keep `eslint`, `typescript`, and the parser installed. Without them Bun warns, and the rules run without types.
-- A file that no `tsconfig.json` includes has no types for these rules either. ESLint stops at such a file. Bun lints it, warns, and runs the rules without types.
-- A rule that throws without types, like one that calls typescript-eslint's `getParserServices()`, is skipped in both cases, and `bun lint` exits with code `2`.
-- `--no-type-aware` turns this off.
-
 ## Processors
 
 Processors work. This config lints the code blocks in Markdown files:
@@ -202,7 +188,7 @@ export default [
 
 ## Notes
 
-- **JavaScript rules only get types from an `eslint.config.js` that [asks for them](#type-information).** Otherwise `parserServices.program` is `null`, even with `--type-aware`. A rule that calls typescript-eslint's `getParserServices()` then doesn't run, and `bun lint` exits with code `2`.
+- **JavaScript rules don't get types.** `parserServices.program` is `null`, even with `--type-aware`. A rule that calls typescript-eslint's `getParserServices()` doesn't run, and `bun lint` exits with code `2`.
 - **Plugins run on several threads.** Each thread imports the plugin, so module-level state is per thread, not per run.
 - **A renamed built-in plugin runs in JavaScript.** For example, `@antfu/eslint-config` registers `@typescript-eslint` as `ts`.
 - **A rule that throws ends the run** with exit code `2`. With an oxlint config, Bun reports the error for that file and continues.

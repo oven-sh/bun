@@ -628,8 +628,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     // module Init, #45252) must not put the termination where the addon can read
     // it: node-addon-api escalates a refused call with an unexplained pending
     // exception to napi_fatal_error, which aborts the whole process.
-    const refusedV9 = "refused: status=10 pending=0 napi_throw=10 pending_after_throw=0 get_and_clear=0 exception_type=0";
-    const refusedV10 = "refused: status=23 pending=0 napi_throw=23 pending_after_throw=0 get_and_clear=0 exception_type=0";
+    const refusedV9 =
+      "refused: status=10 pending=0 napi_throw=10 pending_after_throw=0 get_and_clear=0 exception_type=0";
+    const refusedV10 =
+      "refused: status=23 pending=0 napi_throw=23 pending_after_throw=0 get_and_clear=0 exception_type=0";
     describe.each([
       [9, "init", `${refusedV9}; node-addon-api returned`],
       [9, "method", `${refusedV9}; node-addon-api returned`],

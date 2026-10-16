@@ -163,6 +163,29 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // https://github.com/oven-sh/bun/issues/45154
+  test(
+    "a package in jsPlugins whose `exports` has nothing but `import`",
+    async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          ".oxlintrc.json": oxlintrc({ jsPlugins: ["p"], rules: { "demo/no-foo": "error" } }),
+          "node_modules/p/package.json": `{ "name": "p", "type": "module", "exports": { ".": { "import": "./i.js" } } }`,
+          "node_modules/p/i.js": noFoo,
+          "a.js": "foo;\n",
+        },
+        ["-f", "unix"],
+      );
+      expect(stdout).toMatchInlineSnapshot(`
+      "a.js:1:1: No foo in a ExpressionStatement. [Error/demo(no-foo)]
+
+      1 problem"
+    `);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   test(
     "comments disable and configure a rule of a plugin",
     async () => {

@@ -50,17 +50,20 @@ impl FormatCommand {
             Global::exit(0);
         }
         // `--debug-comments <directory> <file> ..`, for the tests: writes which node owns each comment of a file into
-        // `<directory>/<file>.txt`. `--debug-comments-oxfmt`: in the flavor of oxfmt. `--debug-unprinted-comments`: the comments
-        // that no printer has printed.
+        // `<directory>/<file>.txt`. `--debug-unprinted-comments`: the comments that no printer has printed. With `-oxfmt` at the
+        // end: in the flavor of oxfmt.
         if HAS_TEST_RUNNER
             && let [flag, directory, files @ ..] = args
             && matches!(
                 flag.as_bytes(),
-                b"--debug-comments" | b"--debug-comments-oxfmt" | b"--debug-unprinted-comments"
+                b"--debug-comments"
+                    | b"--debug-comments-oxfmt"
+                    | b"--debug-unprinted-comments"
+                    | b"--debug-unprinted-comments-oxfmt"
             )
         {
-            let only_unprinted = flag.as_bytes() == b"--debug-unprinted-comments";
-            let is_oxfmt = flag.as_bytes() == b"--debug-comments-oxfmt";
+            let only_unprinted = flag.as_bytes().starts_with(b"--debug-unprinted-comments");
+            let is_oxfmt = flag.as_bytes().ends_with(b"-oxfmt");
             for file in files {
                 let path = file.as_bytes();
                 let listed = bun_format_conformance::read_file(path).and_then(|text| {

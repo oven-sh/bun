@@ -3,7 +3,7 @@
 use super::parameters::can_avoid_parentheses;
 use super::semicolon::OptionalSemicolon;
 use crate::js::comments::OwnedComments;
-use crate::js::format::identifier;
+use crate::js::format::{identifier, name_without_comments};
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::js::utils::expression::ExpressionLeftSide;
@@ -741,7 +741,7 @@ pub(crate) fn write_labeled_statement<'a>(
         f,
         [
             FormatLeadingComments::Comments(label_comments.leading),
-            source_text(label.span())
+            name_without_comments(label.span())
         ]
     );
     let follows_line_comment = write_comments_before_token(label_comments.trailing, f);

@@ -134,7 +134,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
         Level::DisallowedLikeNode => {
             argv.push(Box::from(&b"--disallow-code-generation-from-strings"[..]));
         }
-        Level::Disallowed => {
+        Level::Strict => {
             argv.push(Box::from(
                 &b"--disallow-code-generation-from-strings=strict"[..],
             ));

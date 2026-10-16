@@ -760,11 +760,14 @@ fn list(path: &[u8]) -> Directory {
         };
         let is_dir = match entry.kind {
             EntryKind::Directory => true,
-            // A symlink has to be followed. It may be dangling.
-            EntryKind::SymLink | EntryKind::Unknown => match is_directory(directory.fd(), name) {
-                Some(is_dir) => is_dir,
-                None => continue,
-            },
+            // A symlink has to be followed, unless the listing says what it stands for. It may be dangling.
+            EntryKind::SymLink | EntryKind::Unknown => {
+                let known = entry.link_is_directory();
+                match known.or_else(|| is_directory(directory.fd(), name)) {
+                    Some(is_dir) => is_dir,
+                    None => continue,
+                }
+            }
             EntryKind::File => false,
             // A FIFO, socket or device.
             _ => continue,

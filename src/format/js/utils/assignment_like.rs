@@ -3,7 +3,7 @@
 
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use super::member_chain::is_member_call_chain;
-use super::object::{FormatKey, format_computed_or_property_key, write_member_name};
+use super::object::{FormatKey, KeyParent, format_computed_or_property_key, write_member_name};
 use super::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use super::suppressed::FormatSuppressedNode;
 use super::typecast::{
@@ -248,7 +248,7 @@ fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>)
             format_computed_or_property_key(key, member.as_ast_nodes(), f)
         }
         Some(key) => {
-            write_member_name(key, || member.as_ast_nodes(), f);
+            write_member_name(key, KeyParent::Member(member), f);
         }
         None => {}
     }
@@ -395,7 +395,7 @@ impl<'a> AssignmentLike<'a> {
                     computed_key_width(key, f).is_some_and(|width| width < text_width_for_break)
                 }
                 Some(key) => {
-                    write_member_name(key, || property.as_ast_nodes(), f) < text_width_for_break
+                    write_member_name(key, KeyParent::Property(property), f) < text_width_for_break
                         && !comments_make_name_long(key, f)
                 }
                 None => false,
@@ -412,7 +412,7 @@ impl<'a> AssignmentLike<'a> {
                         computed_key_width(key, f).is_some_and(|width| width < text_width_for_break)
                     }
                     Some(key) => {
-                        write_member_name(key, || node, f) < text_width_for_break
+                        write_member_name(key, KeyParent::Node(node), f) < text_width_for_break
                             && !comments_make_name_long(key, f)
                     }
                     None => false,

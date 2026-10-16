@@ -498,16 +498,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * rather than exact equality so the connect-complete is still
              * recognized; listen sockets only ever poll READABLE. */
             if (us_poll_events(p) & LIBUS_SOCKET_WRITABLE) {
-                /* The connecting fd became writable with an error/HUP flag also
-                 * set: the handshake may have completed and then been reset
-                 * before we collected the event. Report the kernel's actual
-                 * SO_ERROR (ECONNRESET for that race) instead of the literal
-                 * boolean, which downstream would misreport as ECONNREFUSED.
-                 * libuv does the same getsockopt in uv__stream_connect. */
+                /* An error or hangup flag on the first event: SO_ERROR has the
+                 * verdict, as in libuv's uv__stream_connect. SO_ERROR 0 has two
+                 * meanings. If connect() already returned 0, the connection is
+                 * established and its peer closed before this event: open it,
+                 * and the socket arm below reads what the peer sent, then the
+                 * end. If connect() was in progress, something took the error
+                 * first (a send() on this fd, another SO_ERROR read): the
+                 * connect failed, and ECONNRESET stands in for the lost code. */
                 int connect_error = 0;
                 if (error || eof) {
                     connect_error = us_socket_get_error((struct us_socket_t *) p);
-                    if (connect_error == 0) {
+                    if (connect_error == 0 && !((struct us_socket_t *) p)->connect_returned_zero) {
                         connect_error = LIBUS_ECONNRESET;
                     }
                 }
@@ -556,6 +558,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->unclassified_send_failures = 0;
                         s->read_eof = 0;
                         s->hangup_closes_unsent = 0;
+                        s->connect_returned_zero = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);

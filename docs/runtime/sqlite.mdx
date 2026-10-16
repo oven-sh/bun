@@ -97,6 +97,24 @@ const notStrict = new Database(":memory:");
 notStrict.query("SELECT $message;").all({ messag: "Hello world" });
 ```
 
+In strict mode, a statement from `db.query()` or `db.prepare()` that has parameters does not start a run before each of them has a value. A call without values reuses the values of the last bind that succeeded, and throws when there is none. An empty array is not a set of values. To bind `NULL`, write `null` in its place: `[null]`, `[1, null, 3]`.
+
+```ts db.ts icon="/icons/typescript.svg"
+import { Database } from "bun:sqlite";
+
+const strict = new Database(":memory:", { strict: true });
+const query = strict.query("SELECT $message;");
+
+// throws error because no values were bound yet:
+query.all();
+
+query.all({ message: "Hello world" });
+// does not throw error, reuses "Hello world":
+query.all();
+```
+
+`db.run()` and `db.exec()` are unchanged in strict mode: a statement that gets no values there runs with `NULL`.
+
 ### Load via ES module import
 
 You can also load a database with an import attribute.

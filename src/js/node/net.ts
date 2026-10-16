@@ -47,6 +47,7 @@ const {
   kDestroyOnRead,
   kPreHandshakeWrite,
   kSecureConnectDone,
+  kSocketOptionHandle,
   kStandaloneWrap,
   kUpgradeClientTLS,
   kVerifyError,
@@ -2858,18 +2859,19 @@ Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDel
   // negatives and ~~ overflow match Node's no-validate behavior.
   const initialDelay = MathMax(0, ~~initialDelayMsecs);
 
-  if (!this._handle) {
+  const handle = this._handle || this[kSocketOptionHandle];
+  if (!handle) {
     this[kSetKeepAlive] = enable;
     this[kSetKeepAliveInitialDelay] = initialDelay;
     return this;
   }
-  if (!this._handle.setKeepAlive) {
+  if (!handle.setKeepAlive) {
     return this;
   }
   if (enable !== this[kSetKeepAlive] || (enable && this[kSetKeepAliveInitialDelay] !== initialDelay)) {
     this[kSetKeepAlive] = enable;
     this[kSetKeepAliveInitialDelay] = initialDelay;
-    this._handle.setKeepAlive(enable, initialDelay);
+    handle.setKeepAlive(enable, initialDelay);
   }
   return this;
 };

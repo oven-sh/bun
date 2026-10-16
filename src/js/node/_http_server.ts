@@ -31,6 +31,7 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
+const { kSocketOptionHandle } = require("internal/net/symbols");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -1708,6 +1709,8 @@ function getNodeHTTPServerSocket() {
       this._writableState.decodeStrings = true;
       this.server = server;
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
+      // A unix socket has no keep-alive: its handle gets no setKeepAlive(), as node's Pipe handle.
+      if (listenerGeneration?.isUnix) handle.setKeepAlive = undefined;
       this[kHandle] = handle;
       this._secureEstablished = !!handle?.secureEstablished;
       handle.onclose = this.#onClose.bind(this);
@@ -2158,8 +2161,9 @@ function getNodeHTTPServerSocket() {
       return this;
     }
 
-    setKeepAlive(_enable = false, _initialDelay = 0) {
-      return this;
+    // What net.Socket#setKeepAlive() acts on.
+    get [kSocketOptionHandle]() {
+      return this[kHandle];
     }
 
     setNoDelay(_noDelay = true) {

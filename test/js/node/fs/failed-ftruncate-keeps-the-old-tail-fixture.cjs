@@ -59,6 +59,7 @@ if fd < 0 or c.syscall(446, fd, 0) < 0: sys.exit(3)  # landlock_restrict_self
 os.execv(sys.argv[1], sys.argv[1:])
 `;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ftrunc-"));
+process.on("exit", () => fs.rmSync(dir, { recursive: true, force: true }));
 let n = 0,
   ctl = true,
   bad = [0, 0],
@@ -122,7 +123,6 @@ for (const name of Object.keys(API)) {
     `${name.padEnd(56)} ftruncate fails ${E}: ${d1[0]}; on disk: ${d1[1]} | Landlock: ${d2 ? d2[0] + "; on disk: " + d2[1] : "skipped"}`,
   );
 }
-fs.rmSync(dir, { recursive: true, force: true });
 const N = Object.keys(API).length;
 if (!ctl) {
   console.log("RESULT: a control failed");

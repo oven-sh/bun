@@ -100,11 +100,7 @@ ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue m
     if (serialized.hasException())
         return serialized.releaseException();
 
-    auto disentangledPorts = MessagePort::disentanglePorts(WTF::move(ports));
-    if (disentangledPorts.hasException())
-        return disentangledPorts.releaseException();
-
-    m_contextProxy->postMessageToWorkerGlobalScope(MessageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() });
+    m_contextProxy->postMessageToWorkerGlobalScope(MessageWithMessagePorts { serialized.releaseReturnValue(), MessagePort::disentanglePorts(WTF::move(ports)) });
     return {};
 }
 
@@ -455,14 +451,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     }
     RETURN_IF_EXCEPTION(scope, {});
 
-    ExceptionOr<Vector<TransferredMessagePort>> disentangledPorts = MessagePort::disentanglePorts(WTF::move(ports));
-    if (disentangledPorts.hasException()) {
-        WebCore::propagateException(*globalObject, scope, disentangledPorts.releaseException());
-        RELEASE_AND_RETURN(scope, {});
-    }
-    RETURN_IF_EXCEPTION(scope, {});
-
-    proxy->postMessageToWorkerObject(MessageWithMessagePorts { serialized.releaseReturnValue(), disentangledPorts.releaseReturnValue() });
+    proxy->postMessageToWorkerObject(MessageWithMessagePorts { serialized.releaseReturnValue(), MessagePort::disentanglePorts(WTF::move(ports)) });
 
     return JSValue::encode(jsUndefined());
 }

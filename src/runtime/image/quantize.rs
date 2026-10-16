@@ -2,17 +2,9 @@
 //!
 //! Goal is "good enough to match Sharp's palette PNG path for screenshot
 //! compression", not perceptual perfection — Sharp uses libimagequant which
-//! is GPL, so we roll a small permissive one.
-//!
-//! It works on the image's distinct colours, each with its pixel count, so
-//! one colour is never shared between two palette entries. An image with at
-//! most N distinct colours keeps exactly those. Otherwise the colours start
-//! as one box in RGBA space (Heckbert '82) and one box is split in two until
-//! there are N, each choice by squared error (Wu '91): the box with the most,
-//! along its channel with the most, between the two values of that channel
-//! that leave the least. Each box's mean becomes a palette entry. Mapping is
-//! nearest-entry by squared RGBA distance, optionally with Floyd–Steinberg
-//! error diffusion (`dither: true`).
+//! is GPL, so we roll a small permissive one: distinct colours in boxes, each box's mean a palette
+//! entry. Mapping is nearest-entry by squared RGBA distance, optionally with
+//! Floyd–Steinberg error diffusion (`dither: true`).
 
 use bun_alloc::AllocError;
 
@@ -123,14 +115,14 @@ struct Slot {
 /// Slots that probes may pass, per pixel. The hash is fixed: colours built to collide pass more.
 const PROBE_BUDGET: usize = 4;
 
-/// The slot of `key`, or the empty slot for it, and how many slots the probe passed.
-/// `slots.len()` is 2^n and at least one slot is empty.
+/// The slot of `key` or the empty one for it, and the slots the probe passed. `slots.len()` is 2^n.
 #[inline]
 fn slot_for(slots: &mut [Slot], key: u32) -> (&mut Slot, usize) {
     let mask = slots.len() - 1;
     // Multiplicative hash: the top bits depend on every byte of the key.
     let mut i = (key.wrapping_mul(0x9E37_79B1) >> (32 - slots.len().trailing_zeros())) as usize;
     let mut passed: usize = 0;
+    // A table is never full, so the walk ends.
     while slots[i].val != 0 && slots[i].key != key {
         i = (i + 1) & mask;
         passed += 1;
@@ -242,7 +234,6 @@ impl Counts {
 }
 
 /// Every distinct colour with its pixel count, and the table when they fit it (`val` = count).
-/// `counted` is `indices[..at]` of the scan: the pixels before `at` are counted from it.
 fn count_colors(
     pixels: &[[u8; 4]],
     seen: &[u8],
@@ -265,6 +256,7 @@ fn count_colors(
         most,
     };
 
+    // `counted` is `indices[..at]` of the scan: it counts the pixels before `at`.
     let mut counts = [0u32; 256];
     for &idx in counted {
         counts[usize::from(idx)] += 1;
@@ -399,7 +391,6 @@ impl ColorBox {
 }
 
 /// Split `bins` into `want` boxes (fewer if every box is one colour). Each box's mean is an entry.
-/// The order of `bins` on entry does not change the result.
 fn split_boxes(bins: &mut [Bin], want: usize) -> Vec<u8> {
     let mut all = Moments::default();
     for &bin in bins.iter() {
@@ -430,7 +421,7 @@ fn split_boxes(bins: &mut [Bin], want: usize) -> Vec<u8> {
         let Some(value) = cut(slice, ch, &b.moments) else {
             break;
         };
-        // The bins below `value` go first.
+        // The bins below `value` go first. The order of `bins` does not change the two parts.
         let mut at: usize = 0;
         let mut left = Moments::default();
         for i in 0..slice.len() {
@@ -457,9 +448,7 @@ struct Sums {
     sum: [u64; 4],
 }
 
-/// The cut of `bins` along `ch` that leaves the least squared error: the least value of `ch` in
-/// the second part. The sum of squares is fixed, so least error is the largest
-/// L²/nL + R²/nR over the channel sums L and R of the two parts.
+/// The cut of `bins` along `ch` with the least squared error: the least value in the second part.
 fn cut(bins: &[Bin], ch: usize, total: &Moments) -> Option<u8> {
     let mut at_value = [Sums::default(); 256];
     for bin in bins {
@@ -470,6 +459,7 @@ fn cut(bins: &[Bin], ch: usize, total: &Moments) -> Option<u8> {
             sums.sum[c] += count * u64::from(bin.rgba[c]);
         }
     }
+    // The sum of squares is fixed: least error is the largest L²/nL + R²/nR over the parts' sums.
     let mut left = Sums::default();
     let mut best: Option<(u128, u8)> = None;
     for (value, sums) in at_value.iter().enumerate() {

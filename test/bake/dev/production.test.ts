@@ -369,7 +369,7 @@ export default function Docs() {
 
   // The bundler has no transform for these modules yet. The build used to abort
   // in the parser instead of reporting the file.
-  test.each([
+  test.concurrent.each([
     ["with a semicolon", `"use server";\nexport async function save() {\n  return "saved";\n}\n`],
     ["without a semicolon", `'use server'\nexport async function save() {\n  return "saved";\n}\n`],
   ])('a "use server" module is a build error (%s)', async (_, actions) => {

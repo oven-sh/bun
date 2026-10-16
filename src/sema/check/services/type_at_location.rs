@@ -406,7 +406,16 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         e: ExprId,
     ) -> TypeId {
-        // `getTypeOfExpression` asks for the quick type first: the arguments of such a call are not looked at.
+        // `getTypeOfExpression` asks for the quick type first: the arguments of such a call are not looked at. The first
+        // check of what is called resolves the calls enclosing `e`.
+        let mut called = e;
+        while let ExprKind::Await(awaited) = self.hir(file)[called].kind {
+            called = awaited;
+        }
+        if let ExprKind::Call(c) | ExprKind::New(c) = self.hir(file)[called].kind {
+            let callee = self.hir(file)[c].callee;
+            self.type_of_expr(file, callee);
+        }
         let outer = self.begin_recheck();
         let quick = self.quick_type_of_expr(file, e);
         self.end_recheck(outer);

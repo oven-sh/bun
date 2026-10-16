@@ -311,7 +311,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// method: there the one check finds out, see `is_reference_to_recheck`.
     #[inline]
     fn is_rechecked(&mut self, file: FileId, e: ExprId) -> bool {
-        self.is_rechecking() && self.depends_on_pushed_type(file, e)
+        self.is_rechecking()
+            && (self.contextual.iter().all(|info| info.is_cache)
+                || self.depends_on_pushed_type(file, e))
     }
 
     fn depends_on_pushed_type(&mut self, file: FileId, e: ExprId) -> bool {

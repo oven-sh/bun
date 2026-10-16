@@ -1081,6 +1081,11 @@ pub(crate) mod serialize {
             PseudoClass::LocalLink => dest.write_str(b":local-link")?,
             PseudoClass::Target => dest.write_str(b":target")?,
             PseudoClass::TargetWithin => dest.write_str(b":target-within")?,
+
+            // https://drafts.csswg.org/css-overflow-5/#active-before-after-scroll-markers
+            PseudoClass::TargetCurrent => dest.write_str(b":target-current")?,
+            PseudoClass::TargetBefore => dest.write_str(b":target-before")?,
+            PseudoClass::TargetAfter => dest.write_str(b":target-after")?,
             PseudoClass::Visited => dest.write_str(b":visited")?,
 
             // https://drafts.csswg.org/selectors-4/#input-pseudos

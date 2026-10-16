@@ -189,14 +189,6 @@ impl<'a> Printer<'a> {
         symbols.get_const(final_ref).unwrap().original_name.slice()
     }
 
-    pub(crate) fn lookup_ident_or_ref(&self, ident: css_values::ident::IdentOrRef) -> &'a [u8] {
-        if ident.is_ident() {
-            // SAFETY: Ident.v is an arena-owned slice packed by IdentOrRef::from_ident.
-            return unsafe { crate::arena_str(ident.as_ident().unwrap().v) };
-        }
-        self.lookup_symbol(ident.as_ref().unwrap())
-    }
-
     // The `Write` trait exposes `written_len()` directly
     // (Vec<u8> / MutableString / counting sinks override it, others panic).
     #[inline]
@@ -516,41 +508,28 @@ impl<'a> Printer<'a> {
         str_
     }
 
+    /// An `Ident` prints as written. A `Ref` is a CSS module local and prints its generated name.
     pub(crate) fn write_ident_or_ref(
         &mut self,
         ident: css_values::ident::IdentOrRef,
-        handle_css_module: bool,
     ) -> PrintResult<()> {
-        if !handle_css_module {
-            if let Some(identifier) = ident.as_ident() {
-                return self.serialize_identifier(identifier.v());
-            } else {
-                let ref_ = ident.as_ref().unwrap();
-                let Some(symbol) = self.symbols.get_const(ref_) else {
-                    return Err(self.add_fmt_error());
-                };
-                // Copy out the arena slice before re-borrowing &mut self.
-                let name = symbol.original_name.slice();
-                return self.serialize_identifier(name);
-            }
+        if let Some(identifier) = ident.as_ident() {
+            return self.serialize_identifier(identifier.v());
         }
+        // Not an `Ident`, so the ref bit is set.
+        let ref_ = ident.as_ref().unwrap();
 
         if self.local_names.is_none() {
-            if let Some(ref_) = ident.as_ref() {
-                let ref_ = self.symbols.follow(ref_);
-                let Some(symbol) = self.symbols.get_const(ref_) else {
-                    return Err(self.add_fmt_error());
-                };
-                let name: &'a [u8] = symbol.original_name.slice();
-                return self.write_ident(name, true);
-            }
+            let ref_ = self.symbols.follow(ref_);
+            let Some(symbol) = self.symbols.get_const(ref_) else {
+                return Err(self.add_fmt_error());
+            };
+            let name: &'a [u8] = symbol.original_name.slice();
+            return self.write_ident(name, true);
         }
 
-        // `lookup_ident_or_ref` returns an `'a`-lifetime slice (arena/symbol-table),
-        // independent of the `&self` borrow, so no clone is needed before re-borrowing
-        // `&mut self` for the writer.
-        let str_: &'a [u8] = self.lookup_ident_or_ref(ident);
-        self.serialize_identifier(str_)
+        let name: &'a [u8] = self.lookup_symbol(ref_);
+        self.serialize_identifier(name)
     }
 
     /// Writes a CSS identifier to the underlying destination, escaping it

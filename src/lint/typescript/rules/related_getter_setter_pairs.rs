@@ -13,9 +13,11 @@ const MISMATCH: Message = Message::new(
 );
 
 /// The function of a `MethodDefinition` or a `TSMethodSignature` of this `kind`. An abstract
-/// accessor is a `TSAbstractMethodDefinition`, which upstream does not look at.
+/// accessor is a `TSAbstractMethodDefinition`, which upstream does not look at and tsgolint does.
 fn accessor(member: Member<'_>, kind: MemberKind) -> Option<Func<'_>> {
-    (member.kind() == kind && !member.flags().contains(Flags::ABSTRACT)).then(|| member.func())?
+    let is_abstract = || member.flags().contains(Flags::ABSTRACT);
+    (member.kind() == kind && (!is_abstract() || member.file().language().is_oxlint))
+        .then(|| member.func())?
 }
 
 /// The return type of a getter that has one.
@@ -38,12 +40,86 @@ fn type_of_param(param: Param<'_>) -> Type<'_> {
     }
 }
 
+/// tsgolint's `GetNameFromMember`: a string, a number, a `bigint`, a regular expression or a
+/// template without substitutions in brackets is named by its value, in double quotes unless that
+/// is an identifier. Any other name that is not an identifier is its text, with its quotes or
+/// brackets.
+fn tsgolint_name_of(member: Member<'_>) -> Option<Cow<'_, [u8]>> {
+    let (key, file) = (member.key()?, member.file());
+    let quoted = |text: &[u8], suffix: &[u8]| [b"\"".as_slice(), text, suffix, b"\""].concat();
+    Some(match key.kind() {
+        KeyKind::Ident(name) | KeyKind::Private(name) => Cow::Borrowed(name.bytes()),
+        KeyKind::ComputedString(name) | KeyKind::ComputedNumber(name) => {
+            match bun_core::lexer::is_identifier(name.bytes()) {
+                true => Cow::Borrowed(name.bytes()),
+                false => Cow::Owned(quoted(name.bytes(), b"")),
+            }
+        }
+        KeyKind::Computed(e) if !e.is_parenthesized() => match e.kind() {
+            ExprKind::BigInt(value) => Cow::Owned(quoted(value.bytes(), b"n")),
+            ExprKind::Regex(_) => Cow::Owned(quoted(e.text(), b"")),
+            _ => Cow::Borrowed(file.slice(key.span(file))),
+        },
+        KeyKind::String(_) | KeyKind::Number(_) | KeyKind::Computed(_) => {
+            Cow::Borrowed(file.slice(key.span(file)))
+        }
+    })
+}
+
+#[derive(Clone, Copy)]
+enum Accessor<'a> {
+    Getter(Member<'a>),
+    Setter(Param<'a>),
+}
+
 impl RelatedGetterSetterPairs {
+    fn check_accessors_pair<'a>(getter: Member<'a>, param: Param<'a>, cx: &Cx<'a, Self>) {
+        let (get_type, set_type) = (getter.type_at_location(), type_of_param(param));
+        if get_type.is_unresolved() || set_type.is_unresolved() {
+            return;
+        }
+        if !get_type.is_assignable_to(set_type)
+            && let Some(return_type) = getter_type(getter)
+        {
+            cx.report(return_type, MISMATCH);
+        }
+    }
+
+    /// tsgolint's `checkMembers`: an accessor is checked against the one of the other kind that is
+    /// kept under its name, and is kept itself only when there is none.
+    fn check_members<'a>(members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
+        let mut accessors = FxHashMap::<Cow<'a, [u8]>, Accessor<'a>>::default();
+        for member in members {
+            let accessor = if getter_type(member).is_some() {
+                Accessor::Getter(member)
+            } else if let Some(param) = setter_param(member) {
+                Accessor::Setter(param)
+            } else {
+                continue;
+            };
+            let Some(name) = tsgolint_name_of(member) else {
+                continue;
+            };
+            match (accessors.get(&name).copied(), accessor) {
+                (Some(Accessor::Setter(param)), Accessor::Getter(getter))
+                | (Some(Accessor::Getter(getter)), Accessor::Setter(param)) => {
+                    Self::check_accessors_pair(getter, param, cx);
+                }
+                _ => {
+                    accessors.insert(name, accessor);
+                }
+            }
+        }
+    }
+
     fn check<'a>(members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
         if !members.iter().any(|it| getter_type(it).is_some())
             || !members.iter().any(|it| setter_param(it).is_some())
         {
             return;
+        }
+        if cx.language().is_oxlint {
+            return Self::check_members(members, cx);
         }
         // The last getter and the last setter of a name are the pair.
         let mut pairs =
@@ -68,17 +144,8 @@ impl RelatedGetterSetterPairs {
             )
         };
         for pair in utils::sort::in_order_of(pairs.into_values(), place) {
-            let (Some(getter), Some(param)) = pair else {
-                continue;
-            };
-            let (get_type, set_type) = (getter.type_at_location(), type_of_param(param));
-            if get_type.is_unresolved() || set_type.is_unresolved() {
-                continue;
-            }
-            if !get_type.is_assignable_to(set_type)
-                && let Some(return_type) = getter_type(getter)
-            {
-                cx.report(return_type, MISMATCH);
+            if let (Some(getter), Some(param)) = pair {
+                Self::check_accessors_pair(getter, param, cx);
             }
         }
     }

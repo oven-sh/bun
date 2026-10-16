@@ -2,7 +2,9 @@ use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint::utils::oxlint::AmbientAncestors;
 use bun_lint::utils::ts_scope::{
     SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_unused_variables, collect_variables,
     has_rest_sibling, is_defined_in_array_pattern, is_referenced_in_array_pattern,
@@ -13,7 +15,6 @@ use bun_lint_eslint::rules::no_unused_vars::{
     Args, NoUnusedVars as Base, Pattern, UNUSED_VAR, USED_IGNORED_VAR, VariableType, Vars,
     is_first_parameter_named,
 };
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::cell::RefCell;
 use std::cmp::Reverse;
@@ -109,6 +110,11 @@ fn oxlint_counts_as_used<'a>(
             if is_type_only_reference(variable.symbol(), it) {
                 return !reports_vars_only_used_as_types
                     && oxlint_counts_type_query_as_use(variable, it);
+            }
+            if oxlint_is_in_what_declares(variable, it)
+                && oxlint_is_read_for_a_type(variable.symbol().file(), it)
+            {
+                return false;
             }
             it.is_read()
             && !(is_variable && oxlint_is_self_reassignment(variable, it, walks))
@@ -348,6 +354,40 @@ fn oxlint_counts_type_query_as_use(variable: Variable, reference: Reference) -> 
     is_type_only_reference(variable.symbol(), reference)
         && reference.expr().is_some()
         && !oxlint_is_in_what_declares(variable, reference)
+}
+
+/// The first identifier of an expression that is evaluated for no value: of the computed name of a member of an interface or
+/// a type literal, of an `abstract` or `declare` member of a class and of a member of a class that is declared, and of
+/// what such a class extends. For oxlint that is no use of the variable from its own declaration, as a type there is none.
+fn oxlint_is_read_for_a_type<'a>(file: &'a File<'a>, reference: Reference<'a>) -> bool {
+    let Some(name) = reference.expr() else {
+        return false;
+    };
+    // oxc's `in_ambient_context`
+    let is_ambient = |class: Class<'a>| {
+        file.is_declaration_file()
+            || class.flags().contains(Flags::AMBIENT)
+            || AmbientAncestors::default().has_ambient_typescript_ancestor(Node::Class(class))
+    };
+    let owner = Node::Expr(name)
+        .ancestors()
+        .find(|it| matches!(it, Node::Member(_) | Node::Class(_) | Node::Stmt(_)));
+    let evaluated = match owner {
+        Some(Node::Member(member)) => member.computed_key().filter(|_| {
+            member.is_signature()
+                || member.flags().intersects(Flags::ABSTRACT | Flags::AMBIENT)
+                || matches!(member.parent(), Node::Class(class) if is_ambient(class))
+        }),
+        Some(Node::Class(class)) => class.extends().filter(|_| is_ambient(class)),
+        _ => None,
+    };
+    evaluated.is_some_and(|e| {
+        let (start, at) = (e.span().start, name.span().start);
+        e.span().contains(name.span())
+            && !file
+                .references_within(Span::new(start, at))
+                .any(|it| it.expr().is_some())
+    })
 }
 
 /// Whether `reference` is in the first declaration of `variable`, which for a parameter is the parameter.
@@ -1818,7 +1858,7 @@ impl NoUnusedVars {
             &SymbolSet,
             &RefCell<OxlintWalks<'a>>,
         ),
-        (reported, last_used_args): (&mut SymbolSet, &mut FxHashMap<Func<'a>, u32>),
+        (reported, last_used_args): (&mut SymbolSet, &mut IdMap<Func<'a>, u32>),
         (used, variable): (bool, Variable<'a>),
     ) -> bool {
         let Some(def) = variable.defs().next() else {
@@ -1892,7 +1932,7 @@ impl NoUnusedVars {
                     && let Some(function) = function_of_plain_parameter(def, is_oxlint)
                     && let Declaration::Param(pat) = def
                     && pat.span().start
-                        < *(last_used_args.entry(function)).or_insert_with(|| {
+                        < *last_used_args.get_or_insert_with(function, || {
                             // Upstream takes every reference for a use, also the default value. oxlint does not.
                             last_used_arg(function, |it| match (is_oxlint, Variable::new(it)) {
                                 (true, it) if unused_for_oxlint.contains(it.symbol()) => false,
@@ -2036,7 +2076,7 @@ impl NoUnusedVars {
             .map(|it| (false, *it)))
         .chain(used_variables.map(|it| (true, *it)));
         let mut unused_vars = Vec::new();
-        let mut last_used_args = FxHashMap::default();
+        let mut last_used_args = IdMap::new();
         for variable in variables {
             let seen = (&analysis, &unused_for_oxlint, &walks);
             if self.is_unused_variable(cx, seen, (&mut reported, &mut last_used_args), variable) {

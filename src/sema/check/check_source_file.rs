@@ -693,10 +693,20 @@ impl<'s> Checker<'_, 's> {
         let has_body = has_body(&hir[func]);
         let is_pattern = matches!(hir[node.pat].kind, PatKind::Object(_) | PatKind::Array(_));
         if p != hir[func].this_param {
-            if self.check_name_and_initializer(file, node.pat, node.default, !has_body) {
+            // `checkExpressionCached(initializer)`: a loop that is being analysed is hidden from it.
+            let check = |c: &mut Self| {
+                let exits = c.check_name_and_initializer(file, node.pat, node.default, !has_body);
+                if !exits {
+                    c.check_parameter_initializer(file, p);
+                }
+                exits
+            };
+            let exits = match self.flow_loops.is_empty() {
+                true => check(self),
+                false => self.outside_flow_loops(check),
+            };
+            if exits {
                 self.error(file, p, 2371, &[]);
-            } else {
-                self.check_parameter_initializer(file, p);
             }
         }
         if node.flags.contains(Flags::PARAMETER_PROPERTY) {
@@ -845,7 +855,7 @@ impl<'s> Checker<'_, 's> {
 
     /// The check of the parent of `e` returns before it checks `e`.
     pub(super) fn leave_unvisited(&mut self, file: FileId, e: ExprId) {
-        if e.is_some() {
+        if e.is_some() && !self.is_checking_in_flow_loop {
             let start = self.start_of(file, e);
             self.unvisited_exprs.push((start, e));
         }
@@ -884,9 +894,11 @@ impl<'s> Checker<'_, 's> {
                     }
                     let (name, prop) = (hir[p].value, &hir[p]);
                     if is_bodiless && self.is_renamed_binding_element(file, p) {
-                        self.renamed_binding_elements_in_types.push(p);
-                        if let PropKey::Computed(key) = prop.key {
-                            self.unvisited_exprs.push((prop.key_pos, key));
+                        if !self.is_checking_in_flow_loop {
+                            self.renamed_binding_elements_in_types.push(p);
+                            if let PropKey::Computed(key) = prop.key {
+                                self.unvisited_exprs.push((prop.key_pos, key));
+                            }
                         }
                         self.leave_unvisited(file, prop.default);
                         continue;
@@ -1929,6 +1941,10 @@ impl<'s> Checker<'_, 's> {
                 self.serialization_level = serialization_level;
                 if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
                     check_tagged_template(self, file, c);
+                }
+                // Otherwise `check_calls`, after the walk.
+                if self.is_checking_in_flow_loop {
+                    self.check_call_like(file, e);
                 }
             }
             ExprKind::BigInt(_) => self.check_grammar_big_int_literal(file, e),

@@ -236,6 +236,26 @@ jsdoc = true
  */
 ```
 
+## Svelte
+
+`.svelte` files are formatted by default, like `prettier-plugin-svelte` formats them. To change how, use a table. These are the defaults:
+
+```toml bunfig.toml icon="settings"
+[fmt.svelte]
+sortOrder = "options-scripts-markup-styles"
+allowShorthand = true
+indentScriptAndStyle = true
+```
+
+To leave `.svelte` files alone, turn it off.
+
+```toml bunfig.toml icon="settings"
+[fmt]
+svelte = false
+```
+
+See [`format.svelte`](/runtime/bunfig#format-svelte).
+
 ## Standard input
 
 Pipe text through `bun fmt`. It prints the result and writes nothing. The path picks the language and the options. The file doesn't have to exist.

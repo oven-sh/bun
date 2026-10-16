@@ -402,7 +402,7 @@ impl File {
     }
 }
 
-type Found = Vec<(&'static [u8], Vec<u8>)>;
+pub(crate) type Found = Vec<(&'static [u8], Vec<u8>)>;
 
 fn text_of(value: bool) -> Vec<u8> {
     match value {

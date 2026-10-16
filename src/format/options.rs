@@ -99,6 +99,18 @@ pub struct FormatOptions {
     pub tailwind: Option<std::sync::Arc<crate::tailwind::Tailwind>>,
     /// Format TOML even in Prettier's flavor. Only the caller that detects file types reads this.
     pub toml: bool,
+    /// For the tests: what to output instead of the formatted text.
+    pub debug_comments: DebugComments,
+}
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+pub enum DebugComments {
+    #[default]
+    Off,
+    /// Every comment and the node that owns it.
+    Owners,
+    /// The comments that no printer has printed, which is a bug.
+    Unprinted,
 }
 
 /// Formats JavaScript or TypeScript, which this crate cannot parse by itself. It is given the name of a file that
@@ -257,14 +269,14 @@ impl SveltePart {
     }
 }
 
-/// The options of `prettier-plugin-svelte`.
+/// The options of `prettier-plugin-svelte`. In `svelte` of oxfmt and of `[fmt]` they have shorter names.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct SvelteOptions {
-    /// `svelteSortOrder`. `None`: `"none"`.
+    /// `svelteSortOrder`, `svelte.sortOrder`. `None`: `"none"`.
     pub sort_order: Option<[SveltePart; 4]>,
-    /// `svelteAllowShorthand`
+    /// `svelteAllowShorthand`, `svelte.allowShorthand`
     pub allows_shorthand: bool,
-    /// `svelteIndentScriptAndStyle`
+    /// `svelteIndentScriptAndStyle`, `svelte.indentScriptAndStyle`
     pub indents_script_and_style: bool,
     /// Components are formatted, and so are the blocks of Svelte in Markdown. For components only the caller that detects
     /// file types reads this.
@@ -434,14 +446,18 @@ impl FormatOptions {
                 };
             }
             b"vueIndentScriptAndStyle" => self.vue_indent_script_and_style = boolean()?,
-            b"svelteSortOrder" => {
+            b"svelteSortOrder" | b"svelte.sortOrder" => {
                 self.svelte.sort_order = match value {
                     b"none" => None,
                     _ => Some(SveltePart::order(value).ok_or(InvalidOption)?),
                 };
             }
-            b"svelteAllowShorthand" => self.svelte.allows_shorthand = boolean()?,
-            b"svelteIndentScriptAndStyle" => self.svelte.indents_script_and_style = boolean()?,
+            b"svelteAllowShorthand" | b"svelte.allowShorthand" => {
+                self.svelte.allows_shorthand = boolean()?
+            }
+            b"svelteIndentScriptAndStyle" | b"svelte.indentScriptAndStyle" => {
+                self.svelte.indents_script_and_style = boolean()?
+            }
             b"filepath" => self.filepath = Some(value.into()),
             b"parser" => self.parser = Some(value.into()),
             b"rangeStart" => self.range_start = Some(number(u32::MAX)?),

@@ -233,5 +233,5 @@ The option is on in the builds of Bun that we publish.
 - **The executable file.** Whoever can replace or edit a compiled executable decides what is embedded in it.
 - **`BUN_BE_BUN`.** With `BUN_BE_BUN=1`, a compiled executable runs as the `bun` CLI. The embedded program does not start, and the flags embedded with it do not apply.
 - **The process's own memory.** A program that can write to its own memory can change anything, including the embedded modules and Bun itself. On Linux, writing to `/proc/self/mem` with `node:fs` does that. Native code can do it everywhere.
-- **Native code.** A native addon, or a library loaded with `bun:ffi`, can do what native code can do. `--no-addons` refuses `process.dlopen()` and `cc()` from `bun:ffi`, and `--no-ffi-cc` refuses `cc()`. Neither one refuses `dlopen()`, `linkSymbols()` or `CFunction()` from `bun:ffi`.
+- **Native code.** A native addon, or a library loaded with `bun:ffi`, can do what native code can do. `--no-addons` refuses `process.dlopen()` and [`bun:ffi`](/runtime/ffi#disabling-bun-ffi), and `--no-ffi-cc` refuses `bun:ffi`. Neither one refuses a SQLite extension loaded with `loadExtension()`.
 - **Child processes.** A process that the program spawns has its own flags.

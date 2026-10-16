@@ -315,7 +315,14 @@ impl Scripts {
         trusted: bool,
     ) -> Result<Option<List>, crate::Error> {
         if !self.has_any() && !self.filled {
-            return self.create_from_package_json(log, folder_path, folder_name, resolution.tag);
+            let list = self.create_from_package_json(log, folder_path, folder_name, resolution.tag);
+            // A `link:` dependency may point to a directory without a package.json.
+            if resolution.tag == ResolutionTag::Symlink
+                && matches!(list, Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)))
+            {
+                return Ok(None);
+            }
+            return list;
         }
 
         let add_node_gyp_rebuild_script =
@@ -337,6 +344,9 @@ impl Scripts {
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
     ) -> Result<bool, crate::Error> {
+        if folder_path.len() + "/package.json".len() >= bun_paths::MAX_PATH_BYTES {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+        }
         let json_buf;
         let parsed;
         let json: Expr = {

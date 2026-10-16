@@ -16,7 +16,11 @@ To configure Bun's package manager globally, you can also create a `.bunfig.toml
 - `$HOME/.bunfig.toml`
 - `$XDG_CONFIG_HOME/.bunfig.toml`
 
+When `XDG_CONFIG_HOME` is set to an absolute path, Bun reads the file there and not the one in `$HOME`.
+
 Only package manager commands (`bun install`, `bun add`, `bun remove`, `bun update`, `bun pm`, `bunx`, and so on) read the global file. If Bun finds both a global and a local `bunfig`, it loads both; keys set in the local file override the same keys in the global file. CLI flags override `bunfig` settings where applicable.
+
+Bun warns when one of these files exists but cannot be read. A command that installs or publishes packages then stops with an error. Other commands continue without its settings. A directory in the file's place gets the warning only.
 
 ## Runtime
 
@@ -820,6 +824,8 @@ The `[install]` section configures the behavior of `bun install`.
 # configuration here
 ```
 
+A relative path in `cafile`, `cache`, `globalDir` or `globalBinDir` is relative to the file it is written in. A relative path in a flag (`--config`, `--cafile`, `--cache-dir`) is relative to the directory you run `bun` in. A relative `BUN_INSTALL_CACHE_DIR` is relative to the project's root. In all of these, a leading `~/` is your home directory.
+
 ### `install.optional`
 
 Whether to install optional dependencies. Default `true`.
@@ -1169,9 +1175,11 @@ Then configure it in your `bunfig.toml`:
 scanner = "@oven/bun-security-scanner" # example name, replace with your scanner's package
 ```
 
+The value is a package of the project, or the path of a file. A relative path such as `./scanner.ts` is relative to the file it is written in.
+
 When a security scanner is configured:
 
-- Auto-install is automatically disabled for security
+- [Auto-install](/runtime/auto-install) is off, also with `-i` or `--install`. Run `bun install` first
 - Packages are scanned before installation
 - Installation is cancelled if fatal issues are found
 - Security warnings are displayed during installation

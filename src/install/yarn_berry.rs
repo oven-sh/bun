@@ -1375,6 +1375,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
         manager, true, // update_os_cpu
         true, // fill_integrity
+        None,
     )?;
     // Without an integrity, a tarball that an edge reaches would be installed unverified.
     let reached = reachable::packages(this, &this.buffers.resolutions, reachable::Options::all(0));
@@ -1952,7 +1953,8 @@ fn append_manifest_dependencies(
     Ok(())
 }
 
-/// `patch:` -> the range it patches, `portal:p` -> `file:p`, `link:dir` -> `link:./dir`. As a dependency called `name` writes it.
+/// Rewrites a range that only yarn understands into what a dependency called `name` would write for
+/// Bun, for example `portal:p` into `file:p`. Returns `None` if `spec` needs no rewrite.
 fn yarn_only_range_for_bun(name: &[u8], spec: &[u8]) -> Option<Vec<u8>> {
     // the patched range may itself be a patch, or yarn-only (`patch:` of a `portal:` package)
     let mut patched: Option<Vec<u8>> = None;
@@ -1977,6 +1979,10 @@ fn yarn_only_range_for_bun(name: &[u8], spec: &[u8]) -> Option<Vec<u8>> {
         .filter(|path| strings::is_npm_package_name(path))
         .map(|path| [b"link:./".as_slice(), path].concat())
         .or(patched)
+        .or_else(|| {
+            let plain = strip_npm_protocol(spec);
+            (plain.len() != spec.len()).then(|| plain.to_vec())
+        })
 }
 
 /// package.json is written before bun.lock is saved: the migration can meet its own spelling.
@@ -2149,7 +2155,7 @@ fn edit_package_json(
         }
     }
     if any {
-        changed.push("rewrote patch:/portal:/link: ranges");
+        changed.push("rewrote patch:/portal:/link:/npm: ranges");
     }
 
     if !patched.is_empty() {

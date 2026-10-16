@@ -583,22 +583,32 @@ pub(crate) mod serialize {
         })
     }
 
+    /// Where a `&` at the start of a selector lands.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum NestingPosition {
+        /// Nothing is printed before it.
+        SelectorStart,
+        /// Part of an outer selector is printed before it.
+        Inside,
+    }
+
     fn serialize_selector(
         selector: &parser::Selector,
         dest: &mut Printer,
         context: Option<&StyleContext>,
         is_relative: bool,
     ) -> Result<(), PrintErr> {
-        serialize_selector_at(selector, dest, context, is_relative, true)
+        let start = NestingPosition::SelectorStart;
+        serialize_selector_at(selector, dest, context, is_relative, start)
     }
 
-    /// `leads` is false when part of an outer selector is printed before `selector`.
+    /// `start` is where the first simple selector of `selector` lands.
     fn serialize_selector_at(
         selector: &parser::Selector,
         dest: &mut Printer,
         context: Option<&StyleContext>,
         is_relative_: bool,
-        leads: bool,
+        start: NestingPosition,
     ) -> Result<(), PrintErr> {
         let mut is_relative = is_relative_;
 
@@ -644,7 +654,7 @@ pub(crate) mod serialize {
         };
         let should_compile_nesting = dest.targets.should_compile_same(Feature::Nesting);
 
-        let mut first = leads;
+        let mut first = true;
         let mut combinators_exhausted = false;
         while let Some(compound_) = compound_selectors.next() {
             debug_assert!(!combinators_exhausted);
@@ -666,11 +676,12 @@ pub(crate) mod serialize {
 
             let has_leading_nesting = first && matches!(compound[0], Component::Nesting);
             let first_index: usize = if has_leading_nesting { 1 } else { 0 };
+            let at_selector_start = first && start == NestingPosition::SelectorStart;
             // `:local()` and `:global()` print only their argument, so it leads when they do.
             let leading_scope = match &compound[0] {
                 Component::NonTsPseudoClass(
                     PseudoClass::Local { selector } | PseudoClass::Global { selector },
-                ) if first => Some(selector),
+                ) if at_selector_start => Some(selector),
                 _ => None,
             };
             first = false;
@@ -779,10 +790,11 @@ pub(crate) mod serialize {
                 } else if has_leading_nesting && should_compile_nesting {
                     // Nesting selector may serialize differently if it is leading, due to type selectors.
                     i += 1;
-                    serialize_nesting(dest, context, true)?;
+                    serialize_nesting(dest, context, at_selector_start)?;
                 } else if let Some(selector) = leading_scope {
                     i += 1;
-                    serialize_selector_at(selector, dest, context, false, true)?;
+                    let start = NestingPosition::SelectorStart;
+                    serialize_selector_at(selector, dest, context, false, start)?;
                 }
 
                 if i < compound.len() {
@@ -1129,7 +1141,7 @@ pub(crate) mod serialize {
             PseudoClass::Autofill(prefix) => write_prefixed(dest, *prefix, b"autofill")?,
 
             PseudoClass::Local { selector } | PseudoClass::Global { selector } => {
-                serialize_selector_at(selector, dest, context, false, false)?
+                serialize_selector_at(selector, dest, context, false, NestingPosition::Inside)?
             }
 
             // https://webkit.org/blog/363/styling-scrollbars/

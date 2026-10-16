@@ -355,7 +355,8 @@ describe("css", () => {
 
   // The argument of `:global(...)` or `:local(...)` prints in place of the
   // wrapper. A `&` that starts the argument starts the printed selector only
-  // when the wrapper does. Anywhere else a parent with a combinator needs `:is()`.
+  // when the wrapper does. Anywhere else a parent with a combinator needs
+  // `:is()`. A type selector after the `&` always moves in front of it.
   itBundled("css-module/AmpersandInsideGlobalUnderAComplexParent", {
     files: {
       "/entry.js": printsStyles,
@@ -367,7 +368,9 @@ describe("css", () => {
           :global(.y &) { color: green }
           .q:local(&.z) { color: blue }
           :global(:local(&.w)) { color: pink }
+          .q :global(&div) { color: purple }
         }
+        .p { .q > :global(&div) { color: gray } }
       `,
     },
     entryPoints: ["/entry.js"],
@@ -383,6 +386,8 @@ describe("css", () => {
           .y :is(.a_HASH .b_HASH) { color: green; }
           .q_HASH:is(.a_HASH .b_HASH).z_HASH { color: #00f; }
           .a_HASH .b_HASH.w_HASH { color: pink; }
+          .q_HASH div:is(.a_HASH .b_HASH) { color: purple; }
+          .q_HASH > div.p_HASH { color: gray; }
         `),
       );
       expect(js).toEqualIgnoringWhitespace(`
@@ -392,7 +397,8 @@ describe("css", () => {
           b: "b_HASH",
           q: "q_HASH",
           z: "z_HASH",
-          w: "w_HASH"
+          w: "w_HASH",
+          p: "p_HASH"
         };
 
         // entry.js

@@ -58,7 +58,11 @@ const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"
 
 /// Newtype so the orphan rule lets us `impl ResolverLike` for the foreign
 /// `bun_resolver::Resolver`.
-struct RouterResolver<'a, 'r>(&'r mut Resolver<'a>);
+struct RouterResolver<'a, 'r> {
+    resolver: &'r mut Resolver<'a>,
+    /// `reload()`: read each directory from disk, not from the resolver's cache.
+    reread: bool,
+}
 
 impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     #[inline]
@@ -68,12 +72,27 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     #[inline]
     fn fs_impl(&self) -> *mut Fs::Implementation {
         // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-        unsafe { &raw mut (*self.0.fs()).fs }
+        unsafe { &raw mut (*self.resolver.fs()).fs }
     }
     #[inline]
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<bun_resolver::DirInfoRef> {
-        self.0.read_dir_info_ignore_error(path)
+        if self.reread {
+            bust_dir_cache(self.resolver, path);
+        }
+        self.resolver.read_dir_info_ignore_error(path)
     }
+}
+
+fn bust_dir_cache(resolver: &mut Resolver<'_>, path: &[u8]) {
+    #[cfg(windows)]
+    let normalized = WIN32_NORMALIZE_BUF.with_borrow_mut(|buf| {
+        Fs::FileSystem::get()
+            .normalize_buf(&mut buf[..], path)
+            .to_vec()
+    });
+    #[cfg(windows)]
+    let path = normalized.as_slice();
+    let _ = resolver.bust_dir_cache(strings::paths::without_trailing_slash_windows_path(path));
 }
 
 // `js.routesSetCached` codegen accessor — emitted by the `.classes.ts`
@@ -264,7 +283,10 @@ impl FileSystemRouter {
                 .load_routes(
                     &mut log,
                     &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
+                    &mut RouterResolver {
+                        resolver: &mut vm.transpiler.resolver,
+                        reread: false,
+                    },
                     &config_dir,
                 )
                 .is_err()
@@ -338,97 +360,6 @@ impl FileSystemRouter {
         Ok(fs_router)
     }
 
-    pub(crate) fn bust_dir_cache_recursive(&self, global_this: &JSGlobalObject, input_path: &[u8]) {
-        // SAFETY: `bun_vm()` returns the live VM raw pointer for this global. Re-derive the
-        // `&mut` per use site so the recursive call (which does the same) doesn't pop our
-        // SB tag mid-loop.
-        let vm = global_this.bun_vm();
-        #[cfg(not(windows))]
-        let path = input_path;
-        #[cfg(windows)]
-        let path;
-        #[cfg(windows)]
-        let normalized: Vec<u8>;
-        #[cfg(windows)]
-        {
-            // Note: `with_borrow_mut` can't hand back a slice that outlives
-            // the closure, so copy out (cold reload path).
-            normalized = WIN32_NORMALIZE_BUF
-                .with_borrow_mut(|buf| vm.fs().normalize_buf(&mut buf[..], input_path).to_vec());
-            path = normalized.as_slice();
-        }
-
-        let root_dir_info = match vm.as_mut().transpiler.resolver.read_dir_info(path) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-
-        if let Some(dir_ref) = root_dir_info {
-            // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`
-            // (other threads rewrite the map in place under that lock), then drop
-            // the guard: `bust_dir_cache` / the recursion below re-acquire it.
-            let entry_ptrs: Vec<*mut Fs::Entry> = {
-                let _entries_lock = Fs::FileSystem::instance().fs.entries_mutex.lock_guard();
-                match dir_ref.get_entries_const() {
-                    Some(entries) => entries.data.values().copied().collect(),
-                    None => Vec::new(),
-                }
-            };
-            {
-                'outer: for entry_ptr in entry_ptrs {
-                    // BACKREF: `entry_ptr` is a `*mut Entry` into the process-static
-                    // EntryStore; the store outlives this loop. Wrap once so the
-                    // shared-only reads below are safe `Deref`s.
-                    let entry = BackRef::from(
-                        core::ptr::NonNull::new(entry_ptr).expect("EntryStore entry"),
-                    );
-                    if entry.base().first() == Some(&b'.') {
-                        continue 'outer;
-                    }
-                    // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem`
-                    // accessor for the process-lifetime singleton; `&mut .fs` (the
-                    // `Implementation` field) is the lazy-stat receiver. `kind`
-                    // needs `&mut Entry` to update the cached stat; no shared
-                    // borrow of `*entry_ptr` is live across this block.
-                    let kind = {
-                        let fs_impl = &mut vm.transpiler.fs_mut().fs;
-                        // SAFETY: `entry_ptr` is a live `*mut Entry` in the process-static
-                        // EntryStore (checked non-null above); the lazy-stat rewrite is
-                        // serialized on `Entry.mutex`; fs_impl is the process-global RealFS.
-                        unsafe { (&*entry_ptr).kind(fs_impl, false) }
-                    };
-                    if kind == Fs::EntryKind::Dir {
-                        for banned_dir in Router::BANNED_DIRS.iter() {
-                            if entry.base() == *banned_dir {
-                                continue 'outer;
-                            }
-                        }
-                        let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                        // `abs()` writes into a thread-local buffer; copy out
-                        // before recursing (recursion overwrites it).
-                        let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(&full_path),
-                        );
-                        self.bust_dir_cache_recursive(global_this, &full_path);
-                    }
-                }
-            }
-        }
-
-        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
-    }
-
-    pub(crate) fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
-        let dir =
-            strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
-        // Note: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
-        // recursive walk re-derives the path from the resolver per-iteration so a one-time
-        // copy is sufficient.
-        let dir = dir.to_vec();
-        self.bust_dir_cache_recursive(global_this, &dir);
-    }
-
     #[bun_jsc::host_fn(method)]
     pub(crate) fn reload(
         this: &Self,
@@ -451,9 +382,6 @@ impl FileSystemRouter {
             )
         };
 
-        this.bust_dir_cache(global_this);
-        // Note: `bust_dir_cache` re-derives the VM borrow internally; rebind here so
-        // our `vm` borrow is fresh under Stacked Borrows.
         let vm = global_this.bun_vm().as_mut();
 
         // R-2: snapshot the config fields up front so the `JsCell::get()` borrow is
@@ -467,6 +395,7 @@ impl FileSystemRouter {
             )
         };
 
+        bust_dir_cache(&mut vm.transpiler.resolver, &cfg_dir);
         let root_dir_info = match vm.transpiler.resolver.read_dir_info(&cfg_dir) {
             Ok(Some(info)) => info,
             Ok(None) => {
@@ -494,7 +423,10 @@ impl FileSystemRouter {
                 .load_routes(
                     &mut log,
                     &root_dir_info,
-                    &mut RouterResolver(&mut vm.transpiler.resolver),
+                    &mut RouterResolver {
+                        resolver: &mut vm.transpiler.resolver,
+                        reread: true,
+                    },
                     &config_dir,
                 )
                 .is_err()

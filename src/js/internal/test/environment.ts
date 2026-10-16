@@ -1,6 +1,7 @@
 // Called by test_runner/environment.rs. Port of https://github.com/vitest-dev/vitest/tree/v5.0.3/packages/vitest/src/integrations/env
 
 const { createRequire } = require("node:module");
+const types = require("node:util/types");
 
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 const isInPreload = $newRustFunction("environment.rs", "jsIsInPreload", 0);
@@ -13,6 +14,7 @@ const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
 
 const { captureStackTrace } = Error;
 const { isExtensible } = Object;
+const ordinaryHasInstance = Function.prototype[Symbol.hasInstance];
 const NativeBlob = Blob;
 const NativeFormData = FormData;
 const NativeRequest = Request;
@@ -235,6 +237,30 @@ function addReportError(win: any, globals: Pick<Environment, "properties" | "key
   addProperty(globals, "reportError", dataProperty(reportError, false));
 }
 
+// prettier-ignore
+const BINARY_CLASSES = [
+  "ArrayBuffer", "Uint8Array", "Uint16Array", "Uint32Array", "Uint8ClampedArray", "Int8Array", "Int16Array",
+  "Int32Array", "Float32Array", "Float64Array",
+] as const;
+
+// These globals are the window's, from another realm than what Bun makes: a Buffer, what TextEncoder, fetch or fs return.
+function acceptBinaryDataOfOtherRealms(win: any) {
+  for (let i = 0; i < BINARY_CLASSES.length; i++) {
+    const name = BINARY_CLASSES[i];
+    const constructor = win[name];
+    if (typeof constructor !== "function" || constructor === globalThis[name]) continue;
+    const isInstance: (value: unknown) => boolean = types[`is${name}`];
+    $Object.$defineProperty(constructor, Symbol.hasInstance, {
+      __proto__: null,
+      // A subclass inherits this function, and only has its own instances.
+      value(this: unknown, value: unknown) {
+        return ordinaryHasInstance.$call(this, value) || (this === constructor && isInstance(value));
+      },
+      configurable: true,
+    } as PropertyDescriptor);
+  }
+}
+
 function createJSDOM(requireFromTest: NodeJS.Require, exports: any, options: any): Environment | string {
   const { CookieJar, JSDOM, ResourceLoader, VirtualConsole } = exports;
   if (typeof JSDOM !== "function") return "the package does not export JSDOM";
@@ -316,6 +342,7 @@ function createJSDOM(requireFromTest: NodeJS.Require, exports: any, options: any
   addProperty(globals, "Request", dataProperty(compat.Request, false));
   addProperty(globals, "URL", dataProperty(compat.URL, false));
   addReportError(win, globals);
+  acceptBinaryDataOfOtherRealms(win);
   return { ...globals, forgetLastFile, close: () => win.close() };
 }
 

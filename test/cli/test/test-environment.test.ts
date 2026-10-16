@@ -1769,6 +1769,80 @@ describe.concurrent("test environment with the real", () => {
     });
   });
 
+  // The typed arrays and ArrayBuffer are the window's there, as in vitest, where these are all false but Response's.
+  test.each([[], ["--isolate"], ["--isolate=modules"]])(
+    "jsdom: binary data that Bun makes is an instance of the global classes: %s",
+    async (...args) => {
+      using dir = project({
+        "binary.test.js": `// ${VITEST} jsdom
+          import { test, expect } from "bun:test";
+          import { readFileSync } from "node:fs";
+          import { runInNewContext } from "node:vm";
+
+          const names = [
+            "ArrayBuffer", "Uint8Array", "Uint16Array", "Uint32Array", "Uint8ClampedArray", "Int8Array", "Int16Array",
+            "Int32Array", "Float32Array", "Float64Array",
+          ];
+
+          test("the globals are the window's", () => {
+            for (const name of names) expect(globalThis[name]).toBe(window[name]);
+            expect(Object.getPrototypeOf(Buffer.prototype)).not.toBe(Uint8Array.prototype);
+          });
+
+          test("a Uint8Array", async () => {
+            const values = [
+              new TextEncoder().encode("a"),
+              Buffer.from("a"),
+              readFileSync(import.meta.path),
+              structuredClone(new Uint8Array(1)),
+              await new Response("a").bytes(),
+              new Uint8Array(1),
+            ];
+            for (const value of values) {
+              expect(value instanceof Uint8Array).toBe(true);
+              expect(value).toBeInstanceOf(Uint8Array);
+              expect(value).not.toBeInstanceOf(ArrayBuffer);
+            }
+          });
+
+          test("an ArrayBuffer", async () => {
+            for (const value of [Buffer.alloc(1).buffer, await new Response("a").arrayBuffer(), new ArrayBuffer(1)]) {
+              expect(value instanceof ArrayBuffer).toBe(true);
+              expect(value).not.toBeInstanceOf(Uint8Array);
+            }
+          });
+
+          test("each class has its own kind only", () => {
+            for (const made of names) {
+              const value = runInNewContext("new " + made + "(8)");
+              expect(names.filter(name => value instanceof globalThis[name])).toEqual([made]);
+            }
+          });
+
+          test("nothing else", () => {
+            for (const value of [null, undefined, 1, "a", {}, [], { byteLength: 1 }, new DataView(new ArrayBuffer(1))])
+              expect(names.filter(name => value instanceof globalThis[name])).toEqual([]);
+          });
+
+          test("what inherits from the prototype, as ever", () => {
+            expect(Object.create(Uint8Array.prototype) instanceof Uint8Array).toBe(true);
+          });
+
+          test("a subclass has its own instances only", () => {
+            class Bytes extends Uint8Array {}
+            expect(new Bytes(1) instanceof Bytes).toBe(true);
+            expect(new Bytes(1) instanceof Uint8Array).toBe(true);
+            expect(new Uint8Array(1) instanceof Bytes).toBe(false);
+            expect(Buffer.alloc(1) instanceof Bytes).toBe(false);
+          });
+        `,
+      });
+      const { stderr, exitCode } = await bunTest(String(dir), ...args);
+      expect(summary(stderr)).toEqual(["7 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // React 19 calls reportError() where there is one. Node has none, so under vitest React dispatches the event itself.
   test.each(["jsdom", "happy-dom"])("%s: reportError() dispatches an error event at the window", async name => {
     using dir = project({

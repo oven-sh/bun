@@ -20,7 +20,7 @@ describe.skipIf(!!unsupported)("compile/aot/open-layouts", () => {
     const plain = await spawned([bunExe(), "run", program], folder, bunEnv);
     expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
     expect(told(compiled)).toEqual(told(plain));
-    const open = (build.stdout + build.stderr).split("\n").flatMap(line => /^aot: foreign: ([A-Za-z]+):/.exec(line)?.[1] ?? []);
+    const open = (build.stdout + build.stderr).split("\n").flatMap(line => /^aot: foreign: ((?:typeof )?[A-Za-z]+):/.exec(line)?.[1] ?? []);
     return declared.filter(name => open.includes(name));
   }
 
@@ -52,5 +52,25 @@ describe.skipIf(!!unsupported)("compile/aot/open-layouts", () => {
   test("a constructor function that leaves typed code takes what it is handed there", () =>
     slot(async () => {
       expect(await openAmong("a-constructor-function-that-leaves-typed-code.ts", ["State", "Request"])).toContain("State");
+    }), 600_000);
+
+  test("a literal with accessors that has a layout opens no type it is handed on as", () =>
+    slot(async () => {
+      expect(await openAmong("a-literal-with-accessors-that-has-a-layout.ts", ["Factory", "Tools", "Sink"])).toEqual([]);
+    }), 600_000);
+
+  test("a literal with accessors that is made as an ordinary object still opens the type", () =>
+    slot(async () => {
+      expect(await openAmong("an-ordinary-literal-with-accessors.ts", ["Factory"])).toEqual(["Factory"]);
+    }), 600_000);
+
+  test("the object of a namespace block opens no type", () =>
+    slot(async () => {
+      expect(await openAmong("the-object-of-a-namespace-block.ts", ["typeof Debug", "typeof Inner"])).toEqual([]);
+    }), 600_000);
+
+  test("a look-alike that is held to the type of a namespace still opens it", () =>
+    slot(async () => {
+      expect(await openAmong("a-look-alike-held-to-the-type-of-a-namespace.ts", ["typeof Debug"])).toEqual(["typeof Debug"]);
     }), 600_000);
 });

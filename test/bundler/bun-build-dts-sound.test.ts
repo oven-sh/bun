@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, renameSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { unsupported } from "../aot/run-programs";
 
 const fixtures = join(import.meta.dir, "fixtures", "dts-sound");
 
@@ -98,6 +99,40 @@ describe("bun build --dts: the typed JavaScript", () => {
       ["declare global {\n  interface SymbolConstructor {\n    readonly watched: symbol;\n  }", "type Last<T> = () => T;", "interface Watched<T> {\n  [Symbol.watched]: () => T;\n}"],
     ],
     [
+      "directives",
+      [
+        "// @ts-ignore\ninterface Wide extends Narrow { value: string }",
+        "  // @ts-ignore\n  if (names.length > 9)\n    // @ts-ignore\n    found = names.missing;\n  const kept: string = found;",
+        "  if (!list.includes(wanted))\n    // @ts-ignore\n    return;\n  return wanted;",
+      ],
+    ],
+    [
+      "symbol-members",
+      [
+        "  public [type]!: string;\n  public [target]: Event | null = null;\n  private static [count]: number = 0;",
+        "  public [listeners]: Map<string, ((event: Event) => void) | null> = new Map;",
+        "  public [count](by: number): number {",
+      ],
+    ],
+    [
+      "namespaces-of-types-and-code",
+      [
+        "namespace errors {\nexport type Message = string | { message?: string };\n}\nvar errors: any;\n((errors) => {\n  type Message = string | { message?: string };\n  errors.toObject = (message?: Message): { message?: string } =>",
+        "export namespace deep {\nexport type Key = \"a\" | \"b\";\n}",
+        "  function dist(a: P, b: Hidden = util.origin): number {",
+        "function far(point: util.P, key: util.deep.Key, id: onlyTypes.Id): number {",
+      ],
+    ],
+    [
+      "casts-on-defaults-and-symbol-members",
+      [
+        "var cookie_default = { key: \"\", origin: null } as Cookie;",
+        "var settings_default = { depth: 1 } as Settings;",
+        "    return this[target] as Event;\n  }\n  public get sure(): Event {\n    return this[target]!;",
+        "    return host + ([] as string[]).length + (made.key.length as unknown as number);",
+      ],
+    ],
+    [
       "constants",
       [
         'var KEY: typeof KEY2 = Symbol.for("key") as typeof KEY2;',
@@ -140,7 +175,7 @@ describe("bun build --dts: the typed JavaScript", () => {
     expect(await text(String(dir), "dist", "index.js")).toBe(javascript);
   });
 
-  test("--aot compiles the package from its typed files", async () => {
+  test.skipIf(!!unsupported)("--aot compiles the package from its typed files", async () => {
     using dir = library("greeter");
     expect((await build(String(dir), "--dts")).exitCode).toBe(0);
     using app = tempDir("build-sound-application", {
@@ -161,7 +196,7 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     expect(await spawned([join(String(app), "app")], String(app))).toEqual(plain);
   });
 
-  test("--no-bundle: a typed file beside each JavaScript file, and --aot compiles the package from them", async () => {
+  test.skipIf(!!unsupported)("--no-bundle: a typed file beside each JavaScript file, and --aot compiles the package from them", async () => {
     using dir = library("greeter");
     const files = ["index", "mood", "options", "polite"];
     const built = await spawned([bunExe(), "build", ...files.map(name => `src/${name}.ts`), "--no-bundle", "--outdir", "dist", "--target", "bun", "--dts"], String(dir));
@@ -196,6 +231,21 @@ console.log(serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2))
     expect(await spawned([bunExe(), "build", "src/index.ts", "--outdir", "dist", "--packages", "external", "--dts"], String(dir))).toMatchObject({ stderr: "", exitCode: 0 });
     expect(await text(String(dir), "dist", "index.sound.ts")).toContain("return (require as any).apply(this, arguments);");
     expect(await text(String(dir), "dist", "index.js")).toContain("return require.apply(this, arguments);");
+  });
+
+  test("several entry points, overloads of async methods, a directive beside a template literal", async () => {
+    using dir = library("found-on-servers");
+    const built = await spawned([bunExe(), "build", "src/index.ts", "src/helper/index.ts", "--outdir", "dist", "--root", "src", "--target", "bun", "--packages", "external", "--dts"], String(dir));
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    const typed = await text(String(dir), "dist", "index.sound.ts");
+    expect(typed).toContain("  async parse(options?: Partial<Input>): Promise<Result<Input>>;\n  async parse(options?: Partial<Input>): Promise<Result<Input>> {");
+    expect(typed).toContain("  static async make(count: number): Promise<Request[]>;\n  static async make(count?: number): Promise<Request | Request[]> {");
+    expect(typed).toContain("  each(from: number): Generator<number>;\n  *each(from = 0) {");
+    expect(typed).toContain("  literal += /* @ts-ignore */`\n");
+    expect(withoutTypes(typed)).toBe(withoutTypes(await text(String(dir), "dist", "index.js")));
+    const below = await text(String(dir), "dist", "helper", "index.sound.ts");
+    expect(below).toContain("type Input = { in?: {} };\ninterface Result<T> { value: T; input: Input }");
+    expect(await text(String(dir), "dist", "helper", "index.d.ts")).toStartWith("// @sound index.sound.ts ");
   });
 
   test("needs no package.json", async () => {

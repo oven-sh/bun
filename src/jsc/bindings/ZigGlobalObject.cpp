@@ -294,7 +294,10 @@ extern "C" bool Bun__hasStandaloneModuleGraph();
 
 extern "C" void Bun__installCompilers();
 extern "C" void Bun__AOT__setImageCodec();
+extern "C" void Bun__AOT__setCachedGettersOfGeneratedClasses();
 extern "C" [[noreturn]] void Bun__outOfMemory();
+
+extern "C" bool Bun__AOTAudit__acts();
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals, bool useAOT, bool crashIfInterpreterIsUsed)
 {
@@ -320,6 +323,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 #endif
         Bun__installCompilers();
         Bun__AOT__setImageCodec();
+#if ENABLE(AOT)
+        Bun__AOT__setCachedGettersOfGeneratedClasses();
+#endif
         JSC::MarkedBlockCage::setExhaustionHandler(Bun__outOfMemory);
         JSC::initialize([&] {
 #if defined(BUN_DISABLE_WEBASSEMBLY)
@@ -353,6 +359,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useImportDefer() = true;
             JSC::Options::useTemporal() = true;
             JSC::Options::useAOT() = useAOT;
+            if (Bun__AOTAudit__acts())
+                JSC::Options::useImmutableIntrinsics() = true;
             JSC::Options::crashIfInterpreterIsUsed() = crashIfInterpreterIsUsed;
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
             // it off in Bun while upstream stabilises it.
@@ -995,6 +1003,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
         if (isModuleEvaluated(entry->record()) || isModuleEvaluatingSync(entry->record())) {
+            JSValue compiled = JSC::AOT::Typed::requireCompiledEntryPoint(globalObject, entry->record());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (compiled)
+                return JSValue::encode(compiled);
             auto* ns = entry->record()->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
@@ -1070,6 +1082,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         }
     }
 
+    JSValue compiled = JSC::AOT::Typed::requireCompiledEntryPoint(globalObject, record);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (compiled)
+        return JSValue::encode(compiled);
     auto* ns = record->getModuleNamespace(globalObject, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(ns);
@@ -3855,7 +3871,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
-    if (Bun::hasFilesOfCompiledProgram(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader) && !Bun::isModuleMocked(static_cast<Zig::GlobalObject*>(globalObject), moduleKey)) [[unlikely]] {
+    if (Bun::hasFilesOfCompiledProgram(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         JSC::JSSourceCode* compiled = Bun::sourceOfFileOfCompiledProgram(static_cast<Zig::GlobalObject*>(globalObject), moduleKey);
         if (scope.exception()) [[unlikely]] {
             JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
@@ -4421,6 +4437,127 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
     Bun__VM__noteEntryEvaluationStarted(bunVM);
 }
 
+extern "C" bool Bun__VM__hasToLookForServer(void*);
+extern "C" void Bun__VM__didLookForServer(void*);
+
+static bool isServerConfig(Zig::GlobalObject* globalObject, JSValue config)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!config.toBoolean(globalObject) || config == globalObject->globalThis())
+        return false;
+    JSValue fetch = config.get(globalObject, JSC::Identifier::fromString(vm, "fetch"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!fetch.isCallable()) {
+        JSValue app = config.get(globalObject, JSC::Identifier::fromString(vm, "app"_s));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (app.isUndefinedOrNull())
+            return false;
+    }
+    JSValue stop = config.get(globalObject, JSC::Identifier::fromString(vm, "stop"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    return !stop.isCallable();
+}
+
+static void startServerOfNamespace(Zig::GlobalObject* globalObject, JSValue entryNamespace)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (entryNamespace.isUndefinedOrNull())
+        return;
+    JSValue config = entryNamespace.get(globalObject, vm.propertyNames->defaultKeyword);
+    RETURN_IF_EXCEPTION(scope, void());
+    bool isConfig = isServerConfig(globalObject, config);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!isConfig)
+        return;
+    JSValue bun = globalObject->get(globalObject, JSC::Identifier::fromString(vm, "Bun"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    JSValue serve = bun.get(globalObject, JSC::Identifier::fromString(vm, "serve"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    JSC::MarkedArgumentBuffer serveArguments;
+    serveArguments.append(config);
+    JSValue server = JSC::call(globalObject, serve, bun, serveArguments, "Bun.serve is not a function"_s);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSValue console = globalObject->get(globalObject, JSC::Identifier::fromString(vm, "console"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    JSValue debug = console.get(globalObject, JSC::Identifier::fromString(vm, "debug"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    JSValue development = server.get(globalObject, JSC::Identifier::fromString(vm, "development"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    bool isDevelopment = development.toBoolean(globalObject);
+    std::array<String, 3> parts;
+    std::array<ASCIILiteral, 3> names { "protocol"_s, "hostname"_s, "port"_s };
+    for (size_t i = 0; i < names.size(); ++i) {
+        JSValue part = server.get(globalObject, JSC::Identifier::fromString(vm, names[i]));
+        RETURN_IF_EXCEPTION(scope, void());
+        parts[i] = part.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    JSC::MarkedArgumentBuffer debugArguments;
+    debugArguments.append(JSC::jsString(vm, makeString("Started "_s, isDevelopment ? "development "_s : ""_s, "server: "_s, parts[0], "://"_s, parts[1], ':', parts[2])));
+    scope.release();
+    JSC::call(globalObject, debug, console, debugArguments, "console.debug is not a function"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionStartServerOfNamespace, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    startServerOfNamespace(defaultGlobalObject(lexicalGlobalObject), callFrame->argument(0));
+    return JSValue::encode(jsUndefined());
+}
+
+static void lookForServer(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue moduleRecord)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun__VM__didLookForServer(globalObject->bunVM());
+    JSValue entryNamespace = moduleLoader->getModuleNamespaceObject(globalObject, moduleRecord);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSValue then = entryNamespace.get(globalObject, vm.propertyNames->then);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!then.isCallable())
+        RELEASE_AND_RETURN(scope, startServerOfNamespace(globalObject, entryNamespace));
+    JSValue reportError = globalObject->get(globalObject, JSC::Identifier::fromString(vm, "reportError"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 1, String(), functionStartServerOfNamespace, ImplementationVisibility::Private));
+    arguments.append(reportError);
+    scope.release();
+    JSC::call(globalObject, then, entryNamespace, arguments, "then is not a function"_s);
+}
+
+static JSC::AbstractModuleRecord* recordOfEntryPoint(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
+{
+    BunString rootKey = Bun__VM__entryRootKey(globalObject->bunVM());
+    auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
+    return entry ? entry->record() : nullptr;
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionLookForServerOnceEvaluated, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    if (!Bun__VM__hasToLookForServer(globalObject->bunVM()))
+        return JSValue::encode(jsUndefined());
+    if (auto* record = recordOfEntryPoint(globalObject, globalObject->moduleLoader()))
+        lookForServer(globalObject, globalObject->moduleLoader(), record);
+    if (auto* exception = scope.exception()) {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    }
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void Bun__lookForServerOnceEvaluated(JSC::JSGlobalObject* globalObject, JSC::JSPromise* promise)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* derived = promise->then(globalObject, JSC::JSFunction::create(vm, globalObject, 0, String(), functionLookForServerOnceEvaluated, ImplementationVisibility::Private), jsUndefined());
+    scope.assertNoException();
+    if (auto* derivedPromise = dynamicDowncast<JSC::JSPromise>(derived))
+        derivedPromise->markAsHandled();
+}
+
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
@@ -4431,8 +4568,18 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
-    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
-    RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    noteModuleEvaluation(globalObject, moduleLoader);
+    JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (Bun__VM__hasToLookForServer(globalObject->bunVM())) [[unlikely]] {
+        auto* record = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue);
+        if (record && !record->hasTLA() && record == recordOfEntryPoint(globalObject, moduleLoader)) {
+            lookForServer(globalObject, moduleLoader, record);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    return result;
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);

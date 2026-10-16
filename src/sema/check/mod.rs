@@ -127,8 +127,9 @@ pub use aot::given;
 pub use aot::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow, RunBy, expected_int32};
 pub use aot::{Answer, BuiltIn, Candidate, GaveUp, KindsDeclared, Literal, Meeting, Membership, Noted, OriginOfData, Place, Question, Reach, Share, WhyForeign};
 pub use aot::{Cause, FieldTypes, OpensForTheLog, Sizes, Subtypes};
-pub use aot::{Evaluates, FirstStore, Primitive, Recovery, ReferenceRead, Storage, kind};
+pub use aot::{Evaluates, FirstStore, Primitive, ReferenceRead, Storage, kind};
 pub use aot::{Claim, is_global_of_the_engine};
+pub use aot::{Constant, OtherKeys, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
 pub use aot::locked_builtins;
 pub use aot::{Callee, OnlyFunction};
 pub use aot::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopied, Receiver, argument_use};
@@ -603,8 +604,8 @@ impl<'s> Program<'s> {
         program
     }
 
-    /// Frees what the program owns on the regular heap: the diagnostics, and the keys or values of
-    /// two tables with few entries. Everything else is in the arenas of the session and is freed
+    /// Frees what the program owns on the regular heap: the diagnostics, the keys or values of
+    /// two tables with few entries, and what `--aot` has found out. Everything else is in the arenas of the session and is freed
     /// with them, so a program that is itself allocated in an arena needs no `Drop`.
     pub fn release(&mut self) {
         let session = self.session;
@@ -615,6 +616,7 @@ impl<'s> Program<'s> {
         self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
         self.key_properties = ByIdIndirect::new_in(session);
         self.distributed_intersections = ByKey::new_in(session);
+        self.aot = Default::default();
     }
 
     /// `GetGlobalDiagnostics`: the errors found that belong to no file, once all files have been

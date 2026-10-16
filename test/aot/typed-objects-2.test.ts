@@ -1,3 +1,3 @@
 import { programs } from "./run-programs";
 
-programs("typed-objects", 2, 2);
+programs("typed-objects", 2, 3);

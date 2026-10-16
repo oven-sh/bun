@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "../aot/supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
@@ -69,12 +70,12 @@ if (process.argv[2] === "as-child") {
 
   test("bun run --aot takes it, and a child process does not inherit it", async () => {
     using folder = tempDir("aot-crash-if-interpreter", { "child.mjs": startsChild, "late.mjs": loadsLateFile });
-    const withChild = await run([bunExe(), "run", "--aot", flag, "child.mjs"], String(folder));
+    const withChild = await run([bunExe(), "run", "--debug-aot", flag, "child.mjs"], String(folder));
     expect({ stdout: withChild.stdout, exitCode: withChild.exitCode }).toEqual({ stdout: childRan, exitCode: 0 });
-    const tripped = await run([bunExe(), "run", "--aot", flag, "late.mjs"], String(folder));
+    const tripped = await run([bunExe(), "run", "--debug-aot", flag, "late.mjs"], String(folder));
     expect(tripped.stderr).toMatch(tripsOnLateFile);
     expect(tripped.exitCode).not.toBe(0);
-    const without = await run([bunExe(), "run", "--aot", "late.mjs"], String(folder));
+    const without = await run([bunExe(), "run", "--debug-aot", "late.mjs"], String(folder));
     expect({ stdout: without.stdout, exitCode: without.exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
   }, 120_000);
 
@@ -85,13 +86,13 @@ test("child", () => { const child = Bun.spawnSync({ cmd: [process.env.CHILD_BUN,
       "late.test.mjs": `import { expect, test } from "bun:test"; import { writeFileSync } from "node:fs";
 test("late", () => { writeFileSync(process.cwd() + "/late.cjs", "module.exports = 1;"); expect(require(process.cwd() + "/late.cjs")).toBe(1); });`,
     });
-    const withChild = await run([bunExe(), "test", "--aot", flag, "./child.test.mjs"], String(folder));
+    const withChild = await run([bunExe(), "test", "--debug-aot", flag, "./child.test.mjs"], String(folder));
     expect(withChild.stderr).toContain("1 pass");
     expect(withChild.exitCode).toBe(0);
-    const tripped = await run([bunExe(), "test", "--aot", flag, "./late.test.mjs"], String(folder));
+    const tripped = await run([bunExe(), "test", "--debug-aot", flag, "./late.test.mjs"], String(folder));
     expect(tripped.stderr).toMatch(tripsOnLateFile);
     expect(tripped.exitCode).not.toBe(0);
-    const without = await run([bunExe(), "test", "--aot", "./late.test.mjs"], String(folder));
+    const without = await run([bunExe(), "test", "--debug-aot", "./late.test.mjs"], String(folder));
     expect(without.stderr).toContain("1 pass");
     expect(without.exitCode).toBe(0);
   }, 120_000);

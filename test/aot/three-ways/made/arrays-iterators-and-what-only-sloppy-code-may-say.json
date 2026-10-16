@@ -1,0 +1,23 @@
+{
+ "a-loop-below-its-length": "all agree",
+ "array-length-stored": "all agree",
+ "array-negative-index-read": "all agree",
+ "constructors-that-meet-setters": "alone: strict: THROWS TypeError | \"RangeError{\\\"before\\\":1}\"",
+ "engine-iterators-stepped-by-hand": "all agree",
+ "functions-got-at-by-side-roads": "alone: by the stack: \"undefined,undefined\"",
+ "has-an-index": "all agree",
+ "regexp-groups-that-may-match-nothing": "all agree",
+ "sixteen-bit-strings": "all agree",
+ "sloppy-assigning-undeclared-names": "as bun run",
+ "sloppy-caller-and-arguments-of-functions": "alone: caller: THROWS TypeError | null | null | \"length,name,prototype\" | \"length,name,prototype\" | THROWS TypeError | THROWS TypeError",
+ "sloppy-delete-of-a-name": "as bun run",
+ "sloppy-duplicate-parameters": "as the bundle",
+ "sloppy-eval-and-arguments-as-names": "as the bundle",
+ "sloppy-functions-in-blocks": "alone: the build fails",
+ "sloppy-html-comments-and-legacy-syntax": "as the bundle",
+ "sloppy-mapped-arguments": "as bun run",
+ "sloppy-octal-literals": "as the bundle",
+ "sloppy-stores-that-fail-in-silence": "alone: the build fails",
+ "sloppy-this-is-the-global-or-a-wrapper": "as bun run",
+ "sloppy-with": "alone: the build fails"
+}

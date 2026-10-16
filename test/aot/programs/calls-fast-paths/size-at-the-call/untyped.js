@@ -44,7 +44,7 @@ function eachBorrowing(list, ...args) {
 }
 function knowsInTheLoopBorrowing(list, n) { let s = 0; for (let i = 0; i < n; i++) s += eachBorrowing(list, i); return s; }
 function knowsInTheLoop(list, n) { let s = 0; for (let i = 0; i < n; i++) s += each(list, i); return s; }
-// A little over the limit, and the constant removes only a little: it is still the same function, only larger. It stays a call.
+// A little over the limit, and the constant removes only a little: it is still the same function, only larger. It stays a call. It has two calls: the body of a function with one call would move there.
 function aLittleTooLarge(flag, a) {
   let t = a * 3; if (flag) { t = t + 1; t = t ^ 2; t = t | 4; }
   t = t % 11; t = t ^ 9; t = t | 2; t = t & 127; t = t << 2; t = t >> 2; t = -t; t = ~t; t = t + 1; t = t - 2; t = t * 5; t = t % 13; t = t ^ 3; t = t | 8; t = t & 255; t = t << 1; t = t >> 1; t = -t; t = ~t; t = t + 3;
@@ -52,7 +52,8 @@ function aLittleTooLarge(flag, a) {
   return t;
 }
 function knowsLittle(n) { let s = 0; for (let i = 0; i < n; i++) s += aLittleTooLarge(false, i); return s; }
+function knowsLittleToo(n) { let s = 0; for (let i = 0; i < n; i++) s += aLittleTooLarge(true, i); return s; }
 function knowsBoth(n) { let s = 0; for (let i = 0; i < n; i++) s += dispatch("x", i); return s; }
 function knowsNeither(type, list, n) { let s = 0; for (let i = 0; i < n; i++) s += dispatch(type, ...list); return s; }
 function knowsTheNumberOnly(type, n) { let s = 0; for (let i = 0; i < n; i++) s += dispatch(type, i, 1); return s; }
-module.exports = { knowsBoth, knowsNeither, knowsTheNumberOnly, knowsInTheLoop, knowsInTheLoopBorrowing, knowsLittle, h1 };
+module.exports = { knowsBoth, knowsNeither, knowsTheNumberOnly, knowsInTheLoop, knowsInTheLoopBorrowing, knowsLittle, knowsLittleToo, h1 };

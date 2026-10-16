@@ -250,6 +250,7 @@ pub struct BundlerOptions {
     pub aot_crash_if_interpreter_is_used: bool,
     pub compile_run: bool,
     pub compile_run_args: Vec<Box<[u8]>>,
+    pub compile_in_place: bool,
     pub rewrite_jest_for_tests: bool,
     pub compile_executable_path: Option<Box<[u8]>>,
     /// `--compile-jit-policy`: JSC tier-up threshold scale baked into the executable (1 = normal).
@@ -321,6 +322,7 @@ impl Default for BundlerOptions {
             aot_crash_if_interpreter_is_used: false,
             compile_run: false,
             compile_run_args: Vec::new(),
+            compile_in_place: false,
             rewrite_jest_for_tests: false,
             compile_executable_path: None,
             compile_jit_policy: 1.0,

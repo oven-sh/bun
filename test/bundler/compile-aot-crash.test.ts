@@ -1,10 +1,13 @@
 import { spawn } from "bun";
-import { afterAll, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { afterAll, expect, setDefaultTimeout } from "bun:test";
+import { test } from "../aot/supported";
+import { bunEnv, bunExe, isASAN, isPosix, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
 setDefaultTimeout(60_000);
+
+if (isASAN) console.error("SKIPPED: compile-aot-crash.test.ts: in a Bun built with AddressSanitizer its handler answers a segmentation fault, not Bun's");
 
 const files = {
   "ffi.d.ts": `declare module "bun:ffi" {
@@ -68,7 +71,7 @@ async function crashed(flags: string[]) {
   return { stderr, exe: join(dir, "app") };
 }
 
-test.if(isPosix)("a crash in compiled code lists the compiled functions on the stack", async () => {
+test.if(isPosix && !isASAN)("a crash in compiled code lists the compiled functions on the stack", async () => {
   const { stderr, exe } = await crashed(["--aot"]);
   expect(stderr).toMatch(/^Features: .*\baot\b/m);
   const start = stderr.indexOf("Compiled JavaScript on the stack:\n");
@@ -105,7 +108,7 @@ test.if(isPosix)("a crash in compiled code lists the compiled functions on the s
   });
 });
 
-test.if(isPosix)("a crash in an executable built without --aot does not mention compiled code", async () => {
+test.if(isPosix && !isASAN)("a crash in an executable built without --aot does not mention compiled code", async () => {
   const { stderr } = await crashed([]);
   expect(stderr).not.toMatch(/^Features: .*\baot\b/m);
   expect(stderr).not.toContain("Compiled JavaScript on the stack");

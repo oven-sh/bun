@@ -59,6 +59,16 @@
     "untyped": 70.0,
     "jit": 6.5
   },
+  "built-in/number-of-a-text-handed-to-a-function": {
+    "typed": 1362.9,
+    "untyped": 1395.7,
+    "jit": 1735.2
+  },
+  "built-in/number-of-a-text-or-null": {
+    "typed": 51.5,
+    "untyped": 73.5,
+    "jit": 189.5
+  },
   "class/instanceof-not-so-in-a-function": {
     "typed": 31.0,
     "untyped": 96.0,
@@ -298,6 +308,51 @@
     "typed": 192.8,
     "untyped": 196.7,
     "jit": 856.6
+  },
+  "host-classes/request-headers-read-again": {
+    "typed": 14.0,
+    "untyped": 30.0,
+    "jit": 38.9
+  },
+  "host-classes/request-made": {
+    "typed": 1309.5,
+    "untyped": 1306.9,
+    "jit": 1260.4
+  },
+  "host-classes/request-made-and-url-read-once": {
+    "typed": 1574.1,
+    "untyped": 1586.3,
+    "jit": 1468.8
+  },
+  "host-classes/request-method": {
+    "typed": 124.0,
+    "untyped": 127.0,
+    "jit": 69.9
+  },
+  "host-classes/request-url-method-and-headers": {
+    "typed": 153.0,
+    "untyped": 209.0,
+    "jit": 143.1
+  },
+  "host-classes/request-url-read-again": {
+    "typed": 22.0,
+    "untyped": 48.0,
+    "jit": 44.0
+  },
+  "host-classes/request-url-read-again-after-a-second-realm": {
+    "typed": 22.0,
+    "untyped": 48.0,
+    "jit": 44.0
+  },
+  "host-classes/request-url-read-again-after-another-prototype-gains-the-name": {
+    "typed": 22.0,
+    "untyped": 48.0,
+    "jit": 44.0
+  },
+  "host-classes/response-status": {
+    "typed": 123.9,
+    "untyped": 126.0,
+    "jit": 70.0
   },
   "keyed/a-symbol": {
     "typed": 467.0,

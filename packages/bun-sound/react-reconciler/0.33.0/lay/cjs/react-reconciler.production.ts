@@ -11717,7 +11717,7 @@ declare var process: RR.ProcessLike;
 declare var AbortController: RR.AbortControllerConstructor;
 declare var __REACT_DEVTOOLS_GLOBAL_HOOK__: RR.DevToolsHook;
 namespace RR {
-  export type int32 = number;
+  export type int32 = import("bun").int32;
   export type Lane = int32;
   export type Lanes = int32;
   export type LaneMap<T> = T[];

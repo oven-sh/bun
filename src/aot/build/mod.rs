@@ -18,10 +18,10 @@ mod commonjs;
 mod comments;
 mod constants;
 mod fit;
+mod host_classes;
 mod imports;
 mod intrinsics;
 mod jsx;
-mod mocks;
 mod parts;
 mod pattern;
 mod predict;
@@ -30,10 +30,12 @@ mod scope;
 pub(crate) mod sets_of_strings;
 mod stmt;
 mod types;
+mod validate;
 
 use self::fit::Ty;
 pub(crate) use self::imports::ImportSource;
 use crate::builder::{FuncBuilder, Var};
+use crate::builtins_generated::Operation;
 use crate::declared::DeclaredTable;
 use crate::fragment::{Body, Definition, Fragment, FuncKey, Function, GlobalKey, LayoutKey, Mentioning, Mentions, NO_FILE, Notes, Shape, Variable};
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
@@ -70,21 +72,6 @@ pub(crate) struct Undo {
     pub(crate) this_bindings: Vec<(FnId, Option<LayoutId>)>,
     pub(crate) places: Vec<(Sym, Option<Place>)>,
     pub(crate) parameter_places: Vec<(Sym, Option<(Place, u32, u32)>)>,
-}
-
-fn written_sides_of_choice(hir: &hir::File<'_>, e: hir::ExprId, depth: u32, written: &mut Vec<Atom>) {
-    match hir[e].kind {
-        hir::ExprKind::String(text) if depth > 0 => written.push(text),
-        hir::ExprKind::Binary { op: hir::BinOp::Or | hir::BinOp::Nullish, left, right } if depth < 64 => {
-            written_sides_of_choice(hir, left, depth + 1, written);
-            written_sides_of_choice(hir, right, depth + 1, written);
-        }
-        hir::ExprKind::Cond { yes, no, .. } if depth < 64 => {
-            written_sides_of_choice(hir, yes, depth + 1, written);
-            written_sides_of_choice(hir, no, depth + 1, written);
-        }
-        _ => {}
-    }
 }
 
 fn put_back<K: Copy + Eq + std::hash::Hash, T>(map: &mut FxHashMap<K, T>, noted: Vec<(K, Option<T>)>) {
@@ -151,8 +138,10 @@ pub(crate) enum Source {
     DefaultOfExportedObject(FileId, bool),
     FilesByPath(FileId),
     EvaluationByNumber(FileId),
+    EvaluationOfOneFile(FileId, FileId),
     ExportVariablesReader(FileId),
     NamespaceForHost(FileId),
+    Validator(FileId, u32),
 }
 
 impl Source {
@@ -180,8 +169,10 @@ impl Source {
             Source::DefaultOfExportedObject(file, is_node_mode) => FuncKey::DefaultOfExportedObject(file, is_node_mode),
             Source::FilesByPath(file) => FuncKey::FilesByPath(file),
             Source::EvaluationByNumber(file) => FuncKey::EvaluationByNumber(file),
+            Source::EvaluationOfOneFile(entry, file) => FuncKey::EvaluationOfOneFile(entry, file),
             Source::ExportVariablesReader(file) => FuncKey::ExportVariablesReader(file),
             Source::NamespaceForHost(file) => FuncKey::NamespaceForHost(file),
+            Source::Validator(file, at) => FuncKey::Validator(file, at),
         }
     }
 }
@@ -279,6 +270,7 @@ pub(crate) struct Fx {
     pub(crate) given: V,
     /// `NONE`: the code is not in a constructor that is handed it.
     pub(crate) new_target: V,
+    pub(crate) fields_listed: Option<(V, Atom, bool)>,
     pub(crate) is_in_field_initializer: bool,
     /// It is a constructor that returns what `new` yields in every case.
     pub(crate) returns_this: bool,
@@ -363,11 +355,9 @@ pub struct Shared<'a> {
     modules_that_wait_for_their_place: FxHashSet<FileId>,
     pub(crate) modules_deferred: FxHashSet<FileId>,
     pub(crate) json_modules_read_by_name: FxHashSet<FileId>,
+    pub(crate) json_modules_loaded_whole: FxHashSet<FileId>,
     behind_put_off: Vec<OnceLock<Vec<(FileId, Dependency)>>>,
     imports_nobody_resolved: FxHashMap<FileId, Vec<(FileId, Atom)>>,
-    pub(crate) exports_may_be_overridden: bool,
-    pub(crate) modules_that_may_be_overridden: FxHashSet<FileId>,
-    pub(crate) modules_that_may_be_replaced: FxHashSet<FileId>,
 }
 
 /// The functions of a file that refer to their `arguments` object, and the arrow functions that refer to that of a function around
@@ -417,7 +407,7 @@ impl<'a> Shared<'a> {
                 .filter_map(|&(name, _)| program.files.by_path.get(&crate::prelude::path_of(&constants.root, name)))
                 .collect(),
             runtime_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, crate::prelude::RUNTIME_HELPERS.0)),
-            has_computed_module_names: program.files.modules.iter().any(|module| matches!(module.builtin, Some(Builtin::Module(_, LoadedBy::ComputedName)))),
+            has_computed_module_names: program.files.modules.iter().any(|module| matches!(module.builtin, Some(Builtin::Module(_, LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName)))),
             decorator_helpers: program.files.by_path.get(&crate::prelude::path_of(&constants.root, crate::prelude::DECORATORS.0)),
             modules: Vec::new(),
             is_module: Vec::new(),
@@ -430,11 +420,9 @@ impl<'a> Shared<'a> {
             modules_that_wait_for_their_place: FxHashSet::default(),
             modules_deferred: FxHashSet::default(),
             json_modules_read_by_name: FxHashSet::default(),
+            json_modules_loaded_whole: FxHashSet::default(),
             behind_put_off: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
             imports_nobody_resolved: FxHashMap::default(),
-            exports_may_be_overridden: constants.has_test_globals,
-            modules_that_may_be_overridden: FxHashSet::default(),
-            modules_that_may_be_replaced: FxHashSet::default(),
         };
         let mut c = program.checker();
         c.set_logs_type_errors(constants.logs_type_errors);
@@ -447,19 +435,11 @@ impl<'a> Shared<'a> {
         (shared.modules, shared.async_modules) = (modules, async_modules);
         shared.modules_deferred = FileBuild::new(&mut c, &shared, NO_FILE).modules_imported_deferred();
         shared.json_modules_read_by_name = FileBuild::new(&mut c, &shared, NO_FILE).json_modules_read_by_name();
+        shared.json_modules_loaded_whole = FileBuild::new(&mut c, &shared, NO_FILE).json_modules_loaded_whole();
         shared.imports_nobody_resolved = FileBuild::new(&mut c, &shared, NO_FILE).imports_nobody_resolved();
         shared.is_module = vec![false; program.files.modules.len()];
         for file in &shared.modules {
             shared.is_module[file.idx()] = true;
-        }
-        shared.exports_may_be_overridden = constants.has_test_globals && (!constants.notes_spans || constants.has_preloads || mocks::may_override_exports(program.files));
-        if shared.exports_may_be_overridden {
-            let (bindings, modules, replaced) = FileBuild::new(&mut c, &shared, NO_FILE).bindings_that_may_be_overridden();
-            c.set_bindings_that_may_be_overridden(bindings);
-            c.set_modules_that_may_be_overridden(modules.clone());
-            shared.modules_that_may_be_overridden = modules;
-            shared.modules_that_may_be_replaced = replaced;
-            c.set_members_of_globals_that_may_be_overridden(mocks::spied_members_of_globals(program.files));
         }
         let fits = |file: FileId| constants.own_paths.is_none() && program.files.module(file).builtin.is_none() && !shared.roots.contains(&file) && !shared.prelude.contains(&file) && !shared.async_modules.contains(&file);
         let is_bundled = shared.bundle.is_some();
@@ -647,7 +627,6 @@ pub(crate) struct FileBuild<'c, 'p, 's> {
     /// `is_lazy`
     lazy: FxHashMap<Sym, bool>,
     pub(crate) value_symbols: FxHashMap<Sym, Sym>,
-    pub(crate) exports_passed_by_imports: FxHashMap<Sym, Vec<(FileId, Atom)>>,
     pub(crate) ambient: std::cell::RefCell<FxHashMap<Sym, bool>>,
     /// `initializer_of`
     initializers: FxHashMap<Sym, FuncId>,
@@ -675,12 +654,15 @@ pub(crate) struct FileBuild<'c, 'p, 's> {
     declared_classes: FxHashSet<(FileId, ClassId)>,
     waiting_for_class: FxHashMap<(FileId, ClassId), Vec<FuncId>>,
     pub(crate) enum_objects: FxHashMap<Sym, FuncId>,
+    pub(crate) validators: validate::Validators,
     pub(crate) enum_globals: FxHashMap<Sym, GlobalId>,
     pub(crate) namespace_objects: FxHashMap<Sym, FuncId>,
     /// `global_of_namespace`
     pub(crate) namespace_globals: FxHashMap<Sym, GlobalId>,
     pub(crate) dynamic_imports: FxHashMap<(FileId, bool), FuncId>,
     pub(crate) evaluations_by_require: FxHashMap<FileId, FuncId>,
+    pub(crate) es_modules_required: FxHashMap<FileId, self::commonjs::RequiredEsModule>,
+    pub(crate) files_with_requires: FxHashMap<FileId, bool>,
     pub(crate) dynamic_import_bodies: FxHashMap<(FileId, bool), FuncId>,
     /// `export_variable`
     pub(crate) export_variables: FxHashMap<(FileId, Atom), GlobalId>,
@@ -762,6 +744,9 @@ pub fn translate_file(c: &mut Checker<'_, '_>, shared: &Shared<'_>, file: FileId
             build.evaluation_of(file);
             if shared.entry_points.iter().any(|files| files.first() == Some(&file)) && !build.only_declares(file) {
                 build.dynamic_import_of(file, false);
+                if !build.is_async_module(file) {
+                    build.namespace_for_host_of(file);
+                }
             }
             if shared.runtime_helpers_loadable_by_computed_name() == Some(file) && !build.may_be_asked_by_the_host() {
                 build.namespace_for_host_of(file);
@@ -879,7 +864,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             module_inners: FxHashMap::default(),
             lazy: FxHashMap::default(),
             value_symbols: FxHashMap::default(),
-            exports_passed_by_imports: FxHashMap::default(),
             ambient: Default::default(),
             initializers: FxHashMap::default(),
             lazy_globals: FxHashMap::default(),
@@ -898,11 +882,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             declared_classes: FxHashSet::default(),
             waiting_for_class: FxHashMap::default(),
             enum_objects: FxHashMap::default(),
+            validators: validate::Validators::default(),
             enum_globals: FxHashMap::default(),
             namespace_objects: FxHashMap::default(),
             namespace_globals: FxHashMap::default(),
             dynamic_imports: FxHashMap::default(),
             evaluations_by_require: FxHashMap::default(),
+            es_modules_required: FxHashMap::default(),
+            files_with_requires: FxHashMap::default(),
             dynamic_import_bodies: FxHashMap::default(),
             export_variables: FxHashMap::default(),
             imports_of_exported_objects: FxHashMap::default(),
@@ -1014,16 +1001,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let id = self.declare_function(file, func, None);
         let own_scope = if file == fx.file { self.scope_of_function_expression(file, func) } else { None };
         let closure = match own_scope {
-            Some((activation, field)) if self.open_activation(fx, activation) => {
+            Some((activation, field)) => {
+                let is_opened_here = self.open_activation(fx, activation);
                 let layout = self.layout_of_activation(activation);
                 let env = self.env_of(fx, layout);
                 let start = self.hir(file)[func].start;
                 let captures = self.capture_values(fx, id, start);
                 let closure = self.emit(fx, Op::ClosureOnce { func: id, captures, env, field });
-                self.close_env(fx);
+                if is_opened_here {
+                    self.close_env(fx);
+                }
                 closure
             }
-            _ => self.emit_as_it_is(fx, Op::Closure { func: id, captures: ir::Args::new() }),
+            None => self.emit_as_it_is(fx, Op::Closure { func: id, captures: ir::Args::new() }),
         };
         self.emit_as_it_is(fx, Op::GlobalSet(global, closure));
         fx.b.jump(goes_on);
@@ -1093,7 +1083,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn touch_module_named_by(&mut self, fx: &mut Fx, op: &Op) {
-        if matches!(self.sources[fx.id.idx()], Source::FilesByPath(_) | Source::EvaluationByNumber(_)) {
+        if matches!(self.sources[fx.id.idx()], Source::FilesByPath(_) | Source::EvaluationByNumber(_) | Source::EvaluationOfOneFile(..)) {
             return;
         }
         let file = match *op {
@@ -1104,7 +1094,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Op::FuncRef(func) | Op::Closure { func, .. } | Op::ClosureOnce { func, .. } | Op::CallDirect { func, .. } => match self.sources[func.idx()] {
                 Source::Function { file, .. } | Source::DefaultConstructor { file, .. } | Source::ModuleNamespaceReader(file) | Source::MemberOfExportedObject(file) | Source::DefaultOfExportedObject(file, _) | Source::ExportVariablesReader(file) => Some(file),
                 Source::EnumObject(sym) | Source::NamespaceObject(sym) | Source::Initializer(sym) => Some(sym.file),
-                Source::Module(_) | Source::DynamicImport(..) | Source::Required(_) | Source::DynamicImportBody(..) | Source::ModuleBody(_) | Source::ModuleDriver(_) | Source::ModuleInner(_) | Source::ModuleTouch(_) | Source::ModuleSettling(_) | Source::FilesByPath(_) | Source::EvaluationByNumber(_) | Source::NamespaceForHost(_) => None,
+                Source::Module(_) | Source::DynamicImport(..) | Source::Required(_) | Source::DynamicImportBody(..) | Source::ModuleBody(_) | Source::ModuleDriver(_) | Source::ModuleInner(_) | Source::ModuleTouch(_) | Source::ModuleSettling(_) | Source::FilesByPath(_) | Source::EvaluationByNumber(_) | Source::EvaluationOfOneFile(..) | Source::NamespaceForHost(_) | Source::Validator(..) => None,
             },
             _ => None,
         };
@@ -1180,7 +1170,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         if self.shared.constants.notes_spans {
             let (receiver, stored) = match fx.b.func.op(value) {
-                Some(&Op::PropSet { obj, value: stored, .. }) => (obj, stored),
+                Some(&(Op::PropSet { obj, value: stored, .. } | Op::ElemSet { obj, value: stored, .. })) => (obj, stored),
                 Some(&Op::PropDelete { obj, .. }) => (obj, V::NONE),
                 Some(Op::Call { args, .. } | Op::CallMethod { args, .. }) => (args.first().copied().unwrap_or(V::NONE), V::NONE),
                 _ => (V::NONE, V::NONE),
@@ -1201,13 +1191,24 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// What the language does that is no operation of its own here: the engine knows it by the name.
-    pub(crate) fn operation(&mut self, fx: &mut Fx, name: &str, args: &[V]) -> V {
-        let name = self.out.strs.intern(name.as_bytes());
-        self.emit_throwing(fx, Op::Operation { name, args: args.iter().copied().collect() })
+    pub(crate) fn operation(&mut self, fx: &mut Fx, which: Operation, args: &[V]) -> V {
+        self.emit_throwing(fx, Op::Operation { which, args: args.iter().copied().collect() })
     }
 
     /// The same for an operation that may throw.
+    pub(crate) fn name_known_by_value(&self, fx: &Fx, key: V) -> Option<StrId> {
+        match fx.b.func.op(key) {
+            Some(&Op::Str(name)) if Self::is_field_name(self.out.strs.get(name)) && !matches!(self.out.strs.get(name), [b'-' | b'#', ..] | b"Infinity" | b"NaN") => Some(name),
+            _ => None,
+        }
+    }
+
     pub(crate) fn emit_throwing(&mut self, fx: &mut Fx, op: Op) -> V {
+        let op = match op {
+            Op::ElemGet { obj, key } => self.name_known_by_value(fx, key).map_or(Op::ElemGet { obj, key }, |name| Op::PropGet { obj, name }),
+            Op::ElemDelete { obj, key } => self.name_known_by_value(fx, key).map_or(Op::ElemDelete { obj, key }, |name| Op::PropDelete { obj, name }),
+            op => op,
+        };
         let v = self.emit(fx, op);
         if let Some(&handler) = fx.handlers.last() {
             let next = fx.b.new_block();
@@ -1245,11 +1246,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(evaluation)
     }
 
-    pub(crate) fn evaluation_by_require_of(&mut self, file: FileId) -> Option<FuncId> {
-        let evaluation = self.evaluation_of(file)?;
+    pub(crate) fn is_evaluated_otherwise_by_require(&mut self, file: FileId) -> bool {
         let path = self.files.module(file).file_name();
         let is_unmarked_script = self.shared.constants.own_paths.is_some() && self.c.is_unmarked_commonjs(file);
-        if self.builtin_id(file).is_some() || self.is_async_module(file) || !(self.is_commonjs(file) || path.ends_with(b".cjs") || path.ends_with(b".cts") || is_unmarked_script) {
+        self.builtin_id(file).is_none() && !self.is_async_module(file) && (self.is_commonjs(file) || path.ends_with(b".cjs") || path.ends_with(b".cts") || is_unmarked_script)
+    }
+
+    pub(crate) fn marking_of(&mut self, file: FileId) -> FuncId {
+        if let Some(&known) = self.evaluations_by_require.get(&file) {
+            return known;
+        }
+        let name = self.name_after_file("module", file);
+        let module = self.module_of(file);
+        let marking = self.add_func(name, module, 0, FuncKind::Module, Source::Required(file));
+        self.out.funcs[marking.idx()].flags |= ir::func_flags::IS_HIDDEN_IN_STACK_TRACES;
+        self.evaluations_by_require.insert(file, marking);
+        marking
+    }
+
+    pub(crate) fn evaluation_by_require_of(&mut self, file: FileId) -> Option<FuncId> {
+        let evaluation = self.evaluation_of(file)?;
+        if !self.is_evaluated_otherwise_by_require(file) {
             return Some(evaluation);
         }
         if let Some(&known) = self.evaluations_by_require.get(&file) {
@@ -1371,7 +1388,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let Some(path) = self.own_path(importer, b"path") else { continue };
             let (path, resolve, specifier) = (self.out.strs.intern(&path), self.out.strs.intern(b"resolveSync"), self.str(specifier));
             let path = self.emit(fx, Op::Str(path));
-            let meta = self.operation(fx, "GetImportMeta", &[path]);
+            let meta = self.operation(fx, Operation::GetImportMeta, &[path]);
             let specifier = self.emit(fx, Op::Str(specifier));
             self.emit_throwing(fx, Op::CallMethod { obj: meta, name: resolve, args: [specifier].into_iter().collect() });
         }
@@ -1403,6 +1420,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     found.insert(imported);
                 }
             }
+        }
+        found
+    }
+
+    fn json_modules_loaded_whole(&self) -> FxHashSet<FileId> {
+        let mut found = FxHashSet::default();
+        if self.shared.json_modules_read_by_name.is_empty() {
+            return found;
+        }
+        for file in (0..self.files.modules.len() as u32).map(FileId) {
+            let loads = self.hir(file).specifier_uses.iter().filter(|used| matches!(used.kind, hir::SpecifierKind::Require | hir::SpecifierKind::RequireCall | hir::SpecifierKind::ImportCall));
+            found.extend(loads.filter_map(|used| self.required_file(file, used.spec)).filter(|&loaded| self.hir(loaded).kind == FileKind::Json));
         }
         found
     }
@@ -1496,66 +1525,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 Dependency::Module(imported) => Some((imported, Evaluates::First)),
                 Dependency::External(_) => None,
             });
-            let candidates = self.c.create_require_candidates(file).to_vec();
+            let holders = self.c.variables_that_may_hold_made_requires(file);
+            let symbols = &self.c.bound(file).expr_symbol;
+            let made_requires: Vec<hir::ExprId> = hir.calls.iter().map(|call| call.callee).filter(|&callee| matches!(hir[callee].kind, hir::ExprKind::Ident(_)) && holders.contains(&symbols[callee.idx()])).collect();
             let texts_of = |e: hir::ExprId| {
                 let mut found = Vec::new();
                 hir.choice_of_specifiers(e, &mut found).then_some(found)
-            };
-            let runs_in_place = self.shared.constants.own_paths.is_some();
-            let texts_held_by = |e: hir::ExprId| {
-                let hir::ExprKind::Ident(name) = hir[e].kind else { return None };
-                let held = hir.var_decls.iter().filter(|declaration| runs_in_place && declaration.init.is_some() && matches!(hir[declaration.pat].kind, hir::PatKind::Ident(declared) if declared == name));
-                let texts: Vec<Atom> = held.filter_map(|declaration| if let hir::ExprKind::String(text) = hir[declaration.init].kind { Some(text) } else { None }).collect();
-                (!texts.is_empty()).then_some((texts, Evaluates::Later))
             };
             let on_demand = hir.exprs.iter().enumerate().filter_map(|(i, e)| match e.kind {
                 hir::ExprKind::ImportCall { args } => {
                     let is_in_function = self.c.enclosing_fn_of_expr(file, hir::ExprId(i as u32)).is_some();
                     let argument = hir.ids(args).next()?;
-                    match texts_of(argument) {
-                        Some(texts) => Some((texts, if is_in_function { Evaluates::Later } else { Evaluates::LaterFromItsBody })),
-                        None => texts_held_by(argument),
-                    }
+                    Some((texts_of(argument)?, if is_in_function { Evaluates::Later } else { Evaluates::LaterFromItsBody }))
                 }
-                hir::ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, hir::ExprKind::Ident(name) if self.c.atoms().bytes(name) == b"require") => {
+                hir::ExprKind::Call(call) if hir.is_written_as_require(hir[call].callee) => {
                     let is_in_function = self.c.enclosing_fn_of_expr(file, hir::ExprId(i as u32)).is_some();
                     let argument = hir.ids(hir[call].args).next()?;
-                    match texts_of(argument) {
-                        Some(texts) => Some((texts, if is_in_function { Evaluates::AtOnce } else { Evaluates::InItsBody })),
-                        None => {
-                            let mut written = Vec::new();
-                            if self.shared.constants.own_paths.is_some() {
-                                written_sides_of_choice(hir, argument, 0, &mut written);
-                            }
-                            if written.is_empty() { texts_held_by(argument) } else { Some((written, Evaluates::Later)) }
-                        }
-                    }
+                    Some((texts_of(argument)?, if is_in_function { Evaluates::AtOnce } else { Evaluates::InItsBody }))
                 }
-                hir::ExprKind::Call(call) if hir[call].args.len() == 1 && matches!(hir[hir[call].callee].kind, hir::ExprKind::Ident(name) if candidates.contains(&name)) => {
+                hir::ExprKind::Call(call) if hir[call].args.len() == 1 && made_requires.contains(&hir[call].callee) => {
                     let is_in_function = self.c.enclosing_fn_of_expr(file, hir::ExprId(i as u32)).is_some();
                     Some((texts_of(hir.id_at(hir[call].args, 0))?, if is_in_function { Evaluates::AtOnce } else { Evaluates::InItsBody }))
-                }
-                hir::ExprKind::Call(call) if self.shared.constants.own_paths.is_some() => {
-                    if let hir::ExprKind::Ident(name) = hir[hir[call].callee].kind {
-                        let says_require = !hir[call].args.is_empty() && bun_core::strings::contains(self.c.atoms().bytes(name), b"quire");
-                        return if says_require { Some((texts_of(hir.id_at(hir[call].args, 0))?, Evaluates::Later)) } else { None };
-                    }
-                    let hir::ExprKind::Dot { obj, name, .. } = hir[hir[call].callee].kind else { return None };
-                    let is_module = |e: hir::ExprId| matches!(hir[e].kind, hir::ExprKind::Ident(name) if self.c.atoms().bytes(name) == b"module");
-                    let args = hir[call].args;
-                    let resolves = |e: hir::ExprId| match hir[e].kind {
-                        hir::ExprKind::Ident(name) => bun_core::strings::contains(self.c.atoms().bytes(name), b"equire"),
-                        hir::ExprKind::ImportMeta => true,
-                        _ => false,
-                    };
-                    let specifier = match (self.c.atoms().bytes(name), args.len()) {
-                        (b"require", 1) if is_module(obj) => hir.id_at(args, 0),
-                        (b"call", 2) if is_module(hir.id_at(args, 0)) => hir.id_at(args, 1),
-                        (b"resolve", 1..) if resolves(obj) => hir.id_at(args, 0),
-                        (b"resolveSync", 1..) if matches!(hir[obj].kind, hir::ExprKind::ImportMeta) => hir.id_at(args, 0),
-                        _ => return None,
-                    };
-                    Some((texts_of(specifier)?, Evaluates::Later))
                 }
                 _ => None,
             });
@@ -1607,7 +1597,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let file = sym.file;
         let is_lazy = self.shared.is_compiled(file)
-            && !self.c.may_be_overridden(sym)
             && !self.shared.is_prelude(file)
             && !self.is_builtin_file(file)
             && !self.exports_an_object(file)
@@ -1757,6 +1746,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let hir::ExprKind::Ident(name) = self.hir(fx.file)[e].kind else { return None };
         let sym = self.c.binding_of_identifier(fx.file, e, name)?;
         let sym = self.value_symbol(sym);
+        let sym = self.export_copied_by(sym).filter(|&exported| self.is_seen_as_declared(fx, e, exported)).unwrap_or(sym);
         Some((sym, self.lazy_function_held_by(fx, sym)?))
     }
 
@@ -1816,9 +1806,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let Some(named) = self.c.binding_of_identifier(fx.file, e, name) else { return };
         let named = self.value_symbol(named);
         fx.b.pos = self.hir(fx.file)[e].pos;
-        if self.c.may_be_overridden(named) {
-            self.read_reference(fx, named, e);
-        } else if self.is_lazy(named) {
+        if self.is_lazy(named) {
             self.check_turn_of_lazy_variable(fx, named, e);
         } else if let Some((file, bun_sema::bind::Decl::Class(class))) = self.value_declaration(named) {
             self.check_class_is_declared(fx, file, class, e);
@@ -1846,10 +1834,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn find_initialized(&mut self, fx: &mut Fx, named: Sym) {
         let named = self.value_symbol(named);
-        if self.c.may_be_overridden(named) {
-            let pos = fx.b.pos;
-            self.read_sym(fx, named, pos);
-        } else if self.is_lazy(named) {
+        if self.is_lazy(named) {
             self.check_turn_of_lazy_variable(fx, named, hir::ExprId::NONE);
         } else if let Some((file, bun_sema::bind::Decl::Class(class))) = self.value_declaration(named) {
             self.check_class_is_declared(fx, file, class, hir::ExprId::NONE);
@@ -2023,16 +2008,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let is_the_importer = file == importer;
             match dependency {
                 Dependency::Module(imported) => {
-                    let is_left_to_the_host = self.c.module_may_be_overridden(imported) && self.is_seen_through_the_host(imported);
-                    if !is_left_to_the_host
-                        && let Some(func) = self.evaluation_of(imported)
-                    {
+                    if let Some(func) = self.evaluation_of(imported) {
                         let func = if self.is_async_module(imported) { self.inner_of(imported) } else { func };
                         self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
                         if self.is_async_module(imported) {
                             let (module, required) = (self.module_record_of(file), self.module_record_of(imported));
                             let (module, required) = (self.emit(fx, Op::GlobalGet(module)), self.emit(fx, Op::GlobalGet(required)));
-                            self.operation(fx, "DidEvaluateRequiredModule", &[module, required]);
+                            self.operation(fx, Operation::DidEvaluateRequiredModule, &[module, required]);
                         }
                     }
                     if self.waits_for_its_place(imported) && self.is_imported_for_its_effects(file, imported) {
@@ -2125,7 +2107,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let has_await = self.emit(fx, Op::Bool(has_await));
         let driver = self.driver_of(file);
         let driver = self.emit(fx, Op::FuncRef(driver));
-        let made = self.operation(fx, "NewModuleRecord", &[has_await, driver]);
+        let made = self.operation(fx, Operation::NewModuleRecord, &[has_await, driver]);
         self.emit(fx, Op::GlobalSet(record, made));
         fx.b.jump(there);
         fx.b.seal(there);
@@ -2138,7 +2120,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let inner = self.inner_of(file);
         let inner = self.emit(fx, Op::FuncRef(inner));
         let ticket = if ticket.is_none() { self.emit(fx, Op::Undefined) } else { ticket };
-        let promise = self.operation(fx, "EvaluateModule", &[record, inner, ticket]);
+        let promise = self.operation(fx, Operation::EvaluateModule, &[record, inner, ticket]);
         let name = self.out.strs.intern(b"evaluation");
         let evaluation = self.add_global(name, file, Ty::NONE, GlobalKey::OfModule(file, "evaluation"));
         self.out.globals[evaluation.idx()].initialization = ir::Initialization::Undefined;
@@ -2148,7 +2130,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     fn emit_inner_module_evaluation(&mut self, fx: &mut Fx, file: FileId) {
         let record = self.emit_module_record(fx, file);
-        let enters = self.operation(fx, "EnterModule", &[record]);
+        let enters = self.operation(fx, Operation::EnterModule, &[record]);
         let (evaluate, done) = (fx.b.new_block(), fx.b.new_block());
         self.branch(fx, enters, evaluate, done);
         fx.b.seal(evaluate);
@@ -2157,7 +2139,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.terminate_with_return(fx, V::NONE);
         fx.b.switch_to(evaluate);
         self.emit_dependencies(fx, file);
-        self.operation(fx, "LeaveModule", &[record]);
+        self.operation(fx, Operation::LeaveModule, &[record]);
     }
 
     fn emit_module_driver(&mut self, fx: &mut Fx, file: FileId) {
@@ -2172,19 +2154,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.handlers.push(rejected);
         let promise = self.emit_throwing(fx, Op::CallDirect { func: body, args: ir::Args::new() });
         let module = self.emit(fx, Op::GlobalGet(record));
-        self.operation(fx, "DidStartModuleBody", &[module, promise]);
+        self.operation(fx, Operation::DidStartModuleBody, &[module, promise]);
         self.emit_throwing(fx, Op::Await(promise));
         fx.handlers.pop();
         self.emit_evaluation_finished(fx, file, false);
         let module = self.emit(fx, Op::GlobalGet(record));
-        self.operation(fx, "AsyncModuleExecutionFulfilled", &[module]);
+        self.operation(fx, Operation::AsyncModuleExecutionFulfilled, &[module]);
         self.terminate_with_return(fx, V::NONE);
         fx.b.seal(rejected);
         fx.b.switch_to(rejected);
         let error = self.emit(fx, Op::Caught);
         self.emit_evaluation_finished(fx, file, true);
         let module = self.emit(fx, Op::GlobalGet(record));
-        self.operation(fx, "AsyncModuleExecutionRejected", &[module, error]);
+        self.operation(fx, Operation::AsyncModuleExecutionRejected, &[module, error]);
     }
 
     fn emit_dynamic_import(&mut self, fx: &mut Fx, file: FileId, is_node_mode: bool, ticket: V) {
@@ -2237,10 +2219,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let importer = self.emit(fx, Op::GlobalGet(importing));
         let undefined = self.emit(fx, Op::Undefined);
         self.emit(fx, Op::GlobalSet(importing, undefined));
-        let ticket = self.operation(fx, "NewImportTicket", &[importer]);
+        let ticket = self.operation(fx, Operation::NewImportTicket, &[importer]);
         let func = self.dynamic_import_body_of(file, is_node_mode);
         let promise = self.emit_throwing(fx, Op::CallDirect { func, args: [ticket].into_iter().collect() });
-        self.operation(fx, "SetImportPromise", &[ticket, promise]);
+        self.operation(fx, Operation::SetImportPromise, &[ticket, promise]);
         self.terminate_with_return(fx, promise);
     }
 
@@ -2342,7 +2324,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         match source {
             Source::Module(file) | Source::ModuleBody(file) | Source::ModuleDriver(file) | Source::ModuleInner(file) | Source::ModuleTouch(file) | Source::ModuleSettling(file) | Source::Function { file, .. } | Source::DefaultConstructor { file, .. } => file == self.file,
             Source::Initializer(sym) => sym.file == self.file,
-            Source::EnumObject(_) | Source::NamespaceObject(_) | Source::ModuleNamespaceReader(_) | Source::DynamicImport(..) | Source::Required(_) | Source::DynamicImportBody(..) | Source::MemberOfExportedObject(_) | Source::DefaultOfExportedObject(..) | Source::FilesByPath(_) | Source::EvaluationByNumber(_) | Source::ExportVariablesReader(_) | Source::NamespaceForHost(_) => true,
+            Source::EnumObject(_) | Source::NamespaceObject(_) | Source::ModuleNamespaceReader(_) | Source::DynamicImport(..) | Source::Required(_) | Source::DynamicImportBody(..) | Source::MemberOfExportedObject(_) | Source::DefaultOfExportedObject(..) | Source::FilesByPath(_) | Source::EvaluationByNumber(_) | Source::EvaluationOfOneFile(..) | Source::ExportVariablesReader(_) | Source::NamespaceForHost(_) | Source::Validator(..) => true,
         }
     }
 
@@ -2356,11 +2338,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn place_of_text(&self, source: Source) -> u32 {
-        if self.shared.constants.own_paths.is_none() && self.shared.constants.function_texts.is_none() {
+        if self.shared.constants.own_paths.is_none() && self.shared.constants.function_texts.is_none() && !self.shared.constants.notes_spans {
             return 0;
         }
         if let Source::Function { file, .. } | Source::DefaultConstructor { file, .. } = source
-            && bun_sema::direct_eval::text_without_note_of_insertions(&self.hir(file).text).ends_with(b"\n// bun --aot: this file is not UTF-8: read as the runtime reads it")
+            && self.c.bound(file).is_non_utf8
         {
             return 0;
         }
@@ -2377,7 +2359,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Source::DefaultConstructor { file, class } => (file, self.hir(file)[class].body_pos),
             _ => return 0,
         };
-        bun_sema::direct_eval::position_in_source(&self.hir(file).text, place) + 1
+        let ahead = if self.is_second_form(file) { crate::LENGTH_AHEAD_OF_SECOND_FORM } else { 0 };
+        bun_sema::direct_eval::position_in_source(&self.c.bound(file).inserted, place).saturating_sub(ahead) + 1
     }
 
     /// A function without a body, which is built later if it is built here.
@@ -2696,7 +2679,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Source::Function { file, func, class, .. } => (file, func, class),
             Source::DefaultConstructor { file, class } => (file, FnId::NONE, Some((file, class))),
             Source::EnumObject(sym) | Source::NamespaceObject(sym) | Source::Initializer(sym) => (sym.file, FnId::NONE, None),
-            Source::DynamicImport(file, _) | Source::Required(file) | Source::DynamicImportBody(file, _) | Source::ModuleBody(file) | Source::ModuleDriver(file) | Source::ModuleInner(file) | Source::ModuleNamespaceReader(file) | Source::MemberOfExportedObject(file) | Source::DefaultOfExportedObject(file, _) | Source::FilesByPath(file) | Source::EvaluationByNumber(file) | Source::ExportVariablesReader(file) | Source::NamespaceForHost(file) => (file, FnId::NONE, None),
+            Source::DynamicImport(file, _) | Source::Required(file) | Source::DynamicImportBody(file, _) | Source::ModuleBody(file) | Source::ModuleDriver(file) | Source::ModuleInner(file) | Source::ModuleNamespaceReader(file) | Source::MemberOfExportedObject(file) | Source::DefaultOfExportedObject(file, _) | Source::FilesByPath(file) | Source::EvaluationByNumber(file) | Source::EvaluationOfOneFile(file, _) | Source::ExportVariablesReader(file) | Source::NamespaceForHost(file) | Source::Validator(file, _) => (file, FnId::NONE, None),
         };
         let role = match source {
             Source::Function { role, .. } => role,
@@ -2743,6 +2726,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             home_objects: FxHashMap::default(),
             given: V::NONE,
             new_target: V::NONE,
+            fields_listed: None,
             is_in_field_initializer: false,
             returns_this: false,
             is_static: match seen {
@@ -2857,15 +2841,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.switch_to(throwing);
                 let error = self.emit(&mut fx, Op::Caught);
                 self.emit_evaluation_finished(&mut fx, file, true);
-                let path = self.files.module(file).file_name();
-                let is_wrapped_by_a_bundle = self.shared.constants.own_paths.is_none() && (self.is_commonjs(file) || path.ends_with(b".cjs") || path.ends_with(b".cts")) && !self.c.is_evaluated_again_after_a_failure(file);
-                if is_wrapped_by_a_bundle {
-                    self.emit_exports_of_a_body_that_never_began(&mut fx, file);
-                } else {
-                    let no = self.emit(&mut fx, Op::Bool(false));
-                    self.emit(&mut fx, Op::GlobalSet(flag, no));
-                    self.emit(&mut fx, Op::GlobalSet(evaluation, error));
-                }
+                let no = self.emit(&mut fx, Op::Bool(false));
+                self.emit(&mut fx, Op::GlobalSet(flag, no));
+                self.emit(&mut fx, Op::GlobalSet(evaluation, error));
                 fx.b.terminate(Term::Throw { value: error, unwind: None, pos: 0 });
             }
             Source::ModuleTouch(file) => {
@@ -2935,6 +2913,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.terminate_with_return(&mut fx, V::NONE);
             }
             Source::ModuleBody(file) => self.emit_statements(&mut fx, file),
+            Source::Required(file) if !self.is_evaluated_otherwise_by_require(file) => self.emit_mark_of_required_module(&mut fx, file),
             Source::Required(file) => {
                 let name = self.out.strs.intern(b"evaluated");
                 let flag = self.add_global(name, file, Ty::NONE, GlobalKey::OfModule(file, "evaluated"));
@@ -2974,7 +2953,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let error = self.emit(&mut fx, Op::Caught);
                 if self.second_form_of(file).is_some() {
                     self.emit_removal_from_the_cache_of_modules(&mut fx, file);
-                } else if self.shared.constants.own_paths.is_some() || self.c.is_evaluated_again_after_a_failure(file) {
+                } else {
                     let undefined = self.emit(&mut fx, Op::Undefined);
                     self.emit(&mut fx, Op::GlobalSet(flag, undefined));
                 }
@@ -2998,9 +2977,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Source::MemberOfExportedObject(file) => self.emit_member_of_exported_object(&mut fx, file),
             Source::DefaultOfExportedObject(file, is_node_mode) => self.emit_default_of_exported_object(&mut fx, file, is_node_mode),
             Source::FilesByPath(file) => self.emit_files_by_path(&mut fx, file),
-            Source::EvaluationByNumber(_) => self.emit_evaluation_by_number(&mut fx),
+            Source::EvaluationByNumber(entry) => self.emit_evaluation_by_number(&mut fx, entry),
+            Source::EvaluationOfOneFile(_, file) => self.emit_evaluation_of_one_file(&mut fx, file),
             Source::ExportVariablesReader(file) => self.emit_export_variables_reader(&mut fx, file),
             Source::NamespaceForHost(file) => self.emit_namespace_for_host(&mut fx, file),
+            Source::Validator(_, at) => self.emit_validator(&mut fx, at),
         }
         self.terminate_with_return(&mut fx, V::NONE);
         let flags = self.out.funcs[id.idx()].flags
@@ -3028,7 +3009,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Source::Function { file, func, class, .. } => {
                 let is_constructor = self.out.funcs[id.idx()].kind == FuncKind::Constructor;
                 let mut spans = class.filter(|_| is_constructor).map_or_else(Vec::new, |(file, class)| self.spans_of_instance_fields(file, class));
-                spans.push((self.hir(file)[func].start, self.c.end_of_fn(file, func)));
+                let hir = self.hir(file);
+                let behind_decorators = match self.c.bound(file).fns[func.idx()].owner {
+                    bun_sema::bind::FnOwner::Member(member) => hir.modifier_list(hir[member].modifiers).iter().filter_map(|modifier| match modifier.kind {
+                        hir::ModifierKind::Decorator(decorator) => Some(hir[decorator].end),
+                        hir::ModifierKind::Keyword(_) => None,
+                    }).max(),
+                    _ => None,
+                };
+                spans.push((behind_decorators.unwrap_or(hir[func].start), self.c.end_of_fn(file, func)));
                 spans
             }
             Source::DefaultConstructor { file, class } => self.spans_of_instance_fields(file, class),

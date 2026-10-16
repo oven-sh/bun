@@ -423,6 +423,35 @@ impl Task {
     }
 }
 
+#[derive(Default)]
+pub struct DeferredStart(crate::Guarded<Option<(NonNull<ThreadPool>, Batch)>>);
+
+// SAFETY: what it holds is only taken out under the lock, by `start`, and `each_ptr_deferred`, which put it there, keeps the pool and the
+// tasks alive until they have run.
+unsafe impl core::marker::Send for DeferredStart {}
+// SAFETY: as above.
+unsafe impl core::marker::Sync for DeferredStart {}
+
+impl DeferredStart {
+    pub fn start(&self, most_at_a_time: usize) {
+        let mut held = self.0.lock();
+        let Some((pool, waiting)) = held.as_mut() else { return };
+        let mut started = Batch::default();
+        while started.len < most_at_a_time
+            && let Some(task) = waiting.pop()
+        {
+            started.push(Batch::from(task.as_ptr()));
+        }
+        let pool = *pool;
+        if waiting.len == 0 {
+            *held = None;
+        }
+        drop(held);
+        // SAFETY: see `Send`.
+        unsafe { pool.as_ref() }.schedule(started);
+    }
+}
+
 /// An unordered collection of Tasks which can be submitted for scheduling as a group.
 #[derive(Default, Clone, Copy)]
 pub struct Batch {
@@ -539,7 +568,7 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByValue(run_fn), values, || {});
+        self.each_impl(ctx, ByValue(run_fn), values, None, || {});
     }
 
     /// Like `each`, but calls `on_calling_thread` once the tasks are scheduled, and waits for them
@@ -555,7 +584,7 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByValue(run_fn), values, on_calling_thread);
+        self.each_impl(ctx, ByValue(run_fn), values, None, on_calling_thread);
     }
 
     /// The most threads that this pool starts.
@@ -573,7 +602,7 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByPtr(run_fn), values, || {});
+        self.each_impl(ctx, ByPtr(run_fn), values, None, || {});
     }
 
     pub fn each_ptr_while<Ctx, V, F>(
@@ -587,7 +616,22 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByPtr(run_fn), values, on_calling_thread);
+        self.each_impl(ctx, ByPtr(run_fn), values, None, on_calling_thread);
+    }
+
+    pub fn each_ptr_deferred<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        values: &mut [V],
+        deferred: &DeferredStart,
+        on_calling_thread: impl FnOnce(),
+    ) where
+        F: Fn(&Ctx, *mut V, usize) + core::marker::Sync,
+        Ctx: core::marker::Sync,
+        V: core::marker::Sync + core::marker::Send,
+    {
+        self.each_impl(ctx, ByPtr(run_fn), values, Some(deferred), on_calling_thread);
     }
 
     fn each_impl<Ctx, V, F>(
@@ -595,6 +639,7 @@ impl ThreadPool {
         ctx: Ctx,
         run_fn: F,
         values: &mut [V],
+        deferred: Option<&DeferredStart>,
         on_calling_thread: impl FnOnce(),
     ) where
         F: EachCall<Ctx, V>,
@@ -609,6 +654,7 @@ impl ThreadPool {
             ctx: Ctx,
             values: *mut [V],
             run_fn: F,
+            deferred: Option<NonNull<DeferredStart>>,
         }
 
         #[repr(C)]
@@ -634,12 +680,17 @@ impl ThreadPool {
             let value: *mut V = unsafe { &raw mut (*wctx.values)[i] };
             // SAFETY: `value` is live and exclusively owned by this task per the index.
             unsafe { wctx.run_fn.call(&wctx.ctx, value, i) };
+            if let Some(deferred) = wctx.deferred {
+                // SAFETY: borrowed by `each_impl`, which waits for this task.
+                unsafe { deferred.as_ref() }.start(1);
+            }
         }
 
         let wait_context = WaitContext {
             ctx,
             values: std::ptr::from_mut::<[V]>(values),
             run_fn,
+            deferred: deferred.map(NonNull::from),
         };
 
         let group = WaitGroup::init_with_count(values.len());
@@ -660,8 +711,14 @@ impl ThreadPool {
         for runner_task in tasks.iter_mut() {
             batch.push(Batch::from(&raw mut runner_task.task.task));
         }
-        self.schedule(batch);
+        match deferred {
+            Some(deferred) => *deferred.0.lock() = Some((NonNull::from(self), batch)),
+            None => self.schedule(batch),
+        }
         on_calling_thread();
+        if let Some(deferred) = deferred {
+            deferred.start(usize::MAX);
+        }
         group.wait();
         // `tasks` drops here after all worker threads have finished touching it.
     }
@@ -755,7 +812,7 @@ impl ThreadPool {
 
 pub const DEFAULT_THREAD_STACK_SIZE: u32 = {
     // 4mb
-    const DEFAULT: u32 = 4 * 1024 * 1024;
+    const DEFAULT: u32 = if cfg!(bun_asan) { 32 } else { 4 } * 1024 * 1024;
     #[cfg(windows)]
     {
         // `std::thread::Builder::stack_size` passes

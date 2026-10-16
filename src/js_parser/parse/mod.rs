@@ -1325,37 +1325,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value = Some(p.parse_expr(Level::Comma)?);
             }
 
-            if p.options.compiles_requires_made_by_create_require
-                && let (bun_ast::b::B::BIdentifier(id), Some(value)) = (local.data, &value)
-                && p.is_create_require_for_this_file(value)
-            {
-                let name = p.load_name_from_ref(id.r#ref);
-                p.own_require_names.push(name);
-            }
-            if p.options.compiles_requires_made_by_create_require
-                && let (bun_ast::b::B::BIdentifier(id), Some(value)) = (local.data, &value)
-            {
-                let written = match value.data {
-                    bun_ast::ExprData::EBinary(choice)
-                        if matches!(choice.op, bun_ast::OpCode::BinLogicalOr | bun_ast::OpCode::BinNullishCoalescing) =>
-                    {
-                        choice.right
-                    }
-                    _ => *value,
-                };
-                if let Some(text) = p.text_from_own_folder(&written, 0) {
-                    let name = p.load_name_from_ref(id.r#ref);
-                    let text = p.arena.alloc_slice_copy(&text);
-                    p.paths_from_own_folder.push((name, text));
-                } else if p.options.keeps_reexport_only_modules
-                    && let bun_ast::ExprData::EString(string) = written.data
-                    && let Ok(text) = string.string(p.arena)
-                {
-                    let name = p.load_name_from_ref(id.r#ref);
-                    p.written_names.push((name, text));
-                }
-            }
-
             decls.push(G::Decl {
                 binding: local,
                 value,

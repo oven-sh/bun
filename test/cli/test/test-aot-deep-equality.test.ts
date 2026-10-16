@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "../../aot/supported";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
@@ -36,7 +37,7 @@ test("asymmetric matchers against typed objects", () => {
 
 async function rowsOf(cwd: string, aot: boolean) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", ...(aot ? ["--aot"] : []), "./matchers.test.ts"],
+    cmd: [bunExe(), "test", ...(aot ? ["--debug-aot"] : []), "./matchers.test.ts"],
     env: bunEnv,
     cwd,
     stdin: "ignore",

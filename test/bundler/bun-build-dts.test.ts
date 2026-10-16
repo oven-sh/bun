@@ -126,6 +126,110 @@ describe("bun build --dts", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("documentation comments are kept", async () => {
+    using dir = tempDir("build-dts-documentation", {
+      ...sources,
+      "src/index.ts": `export * from "./greet";\n`,
+      "src/greet.ts": `/** What a greeting needs. */
+export interface Options {
+  /** Who is greeted. */
+  name: string;
+}
+/**
+ * Greets somebody.
+ * @param options who, and how
+ * @returns the greeting
+ * @example greet({ name: "you" })
+ */
+export function greet(options: Options): string {
+  return "hello " + options.name;
+}
+/** Keeps a count. */
+export class Counter {
+  /** How many so far. */
+  count = 0;
+  /**
+   * Adds one.
+   * @deprecated use \`add\`
+   */
+  increment(): number {
+    return ++this.count;
+  }
+}
+/** The default name. */
+export const fallback = "world";
+`,
+    });
+    const { stderr, exitCode } = await build(String(dir), "src/index.ts", "--outdir", "dist", "--dts");
+    expect(stderr).toBe("");
+    expect(await written(join(String(dir), "dist"))).toEqual({
+      "index.d.ts": `/** What a greeting needs. */
+interface Options {
+    /** Who is greeted. */
+    name: string;
+}
+export type { Options };
+/**
+ * Greets somebody.
+ * @param options who, and how
+ * @returns the greeting
+ * @example greet({ name: "you" })
+ */
+declare function greet(options: Options): string;
+/** Keeps a count. */
+declare class Counter {
+    /** How many so far. */
+    count: number;
+    /**
+     * Adds one.
+     * @deprecated use \`add\`
+     */
+    increment(): number;
+}
+/** The default name. */
+declare var fallback: "world";
+export { Counter, fallback, greet };
+`,
+    });
+    expect(await Bun.file(join(String(dir), "dist", "index.sound.ts")).text()).not.toContain("Greets somebody.");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a namespace that holds code keeps its declarations", async () => {
+    using dir = tempDir("build-dts-namespace", {
+      ...sources,
+      "src/index.ts": `export interface Point { x: number; y: number }
+export namespace Geo {
+  export const origin: Point = { x: 0, y: 0 };
+  export function dist(a: Point, b: Point = origin): number {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+  export namespace Deep {
+    export const k = 3;
+  }
+}
+`,
+    });
+    const { stderr, exitCode } = await build(String(dir), "src/index.ts", "--outdir", "dist", "--dts");
+    expect(stderr).toBe("");
+    expect(await written(join(String(dir), "dist"))).toEqual({
+      "index.d.ts": `export interface Point {
+    x: number;
+    y: number;
+}
+export declare namespace Geo {
+    const origin: Point;
+    function dist(a: Point, b?: Point): number;
+    namespace Deep {
+        const k = 3;
+    }
+}
+`,
+    });
+    expect(readdirSync(join(String(dir), "dist")).sort()).toEqual(["index.d.ts", "index.js", "index.sound.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("minified output gets a declaration file for every source file", async () => {
     using dir = tempDir("build-dts-minify", sources);
     const { stderr, exitCode } = await build(String(dir), "src/index.ts", "--outdir", "dist", "--minify", "--dts");

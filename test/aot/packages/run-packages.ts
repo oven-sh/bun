@@ -130,7 +130,7 @@ export function packages(topic: string, cases: Case[], part = 1, parts = 1, root
       }
       built(build);
       const ran = await spawned([executable], folder, { ...bunEnv, BUN_AOT_VERBOSE: "1" });
-      expect(ran.signal).toBeNull();
+      expect({ signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ signal: null, stderr: "" });
       // The executable really ran compiled code and did not fall back to the embedded source.
       expect(ran.stderr).toContain("[aot] module: ");
       const output = result({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\n/gm, "") });

@@ -63,7 +63,7 @@ macro_rules! bound_fields {
         $with! {
             plain: [
                 ran_out_of_stack file_symbol commonjs_indicator
-                module_exports_property flow_places one_name_is_one_binding
+                module_exports_property flow_places one_name_is_one_binding is_non_utf8 class_options
             ]
             lists: [
                 scopes tables entries ids specifiers expr_symbol expr_parent
@@ -87,7 +87,7 @@ macro_rules! bound_fields {
                 refused_decorators unused_labels import_equals_scope
                 private_names_outside_class_bodies classes_of_private_names
                 arguments_objects identifiers_in_parameters jsdoc_param_errors
-                names_resolved_for_arguments
+                names_resolved_for_arguments inserted
             ]
             maps: [
                 property_symbol expr_scope private_class

@@ -1,0 +1,16 @@
+a-constant-is-made-once-whichever-way-it-is-read-first: 23 layouts, 46 given, 23 open, places 72 of 734, reads 1 of 325
+a-function-whose-name-merges-with-an-imported-type: 5 layouts, 0 given, 2 open, places 10 of 22, reads 2 of 4
+a-typed-bundle-of-namespaces-with-types-and-code: 6 layouts, 0 given, 4 open, places 29 of 45, reads 6 of 25
+bundles-with-their-types-kept: 12 layouts, 0 given, 3 open, places 112 of 168, reads 42 of 87
+closures-made-in-earlier-iterations-of-a-loop: 7 layouts, 0 given, 1 open, places 72 of 92, reads 4 of 11
+constants-stored-to-through-rest-patterns-elsewhere: 7 layouts, 0 given, 13 open, places 48 of 60, reads 0 of 2
+constants-that-copy-from-what-a-function-made: 41 layouts, 0 given, 10 open, places 203 of 220, reads 61 of 155
+export-dead-zone: 0 layouts, 0 given, 1 open, places 2 of 14, reads 2 of 6
+export-let: 0 layouts, 0 given, 0 open, places 4 of 15, reads 0 of 3
+export-unassigned: 0 layouts, 0 given, 0 open, places 1 of 11, reads 0 of 2
+freezing-a-proxy-in-an-initializer: 1 layouts, 0 given, 5 open, places 9 of 34, reads 1 of 9
+initializers-that-change-what-others-read: 19 layouts, 0 given, 4 open, places 37 of 46, reads 11 of 41
+initializers-that-read-what-changes: 44 layouts, 0 given, 77 open, places 99 of 118, reads 13 of 22
+initializers-that-run-code-of-the-program: 37 layouts, 0 given, 15 open, places 108 of 142, reads 11 of 25
+initializers-that-throw: 17 layouts, 0 given, 8 open, places 58 of 225, reads 7 of 18
+var-counter: 1 layouts, 0 given, 0 open, places 23 of 31, reads 2 of 9

@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // `var __require = /* @__PURE__ */ createRequire(import.meta.url);` is what bundlers write at the head of the ES modules they emit.
@@ -74,7 +75,7 @@ describe.concurrent.each(Object.keys({ ...compiled, ...ordinary }))("%s", entry 
       return { stdout, stderr, exitCode };
     };
     const plain = await run([], bunEnv);
-    const aot = await run(["--aot"], entry in compiled ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv);
+    const aot = await run(["--debug-aot"], entry in compiled ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv);
     expect(plain.exitCode).toBe(0);
     expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });

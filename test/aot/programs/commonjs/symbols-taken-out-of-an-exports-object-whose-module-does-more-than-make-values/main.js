@@ -1,5 +1,5 @@
 // What a package's modules take out of an exports literal ahead of its escape is what the literal was made with, if the module that makes it is evaluated again after an evaluation that failed where the stack ends: that holds for a body that only makes values. A body that does anything more is evaluated once, and after such a failure its exports are empty: what is taken out of them stays a value that is read.
-// IR= 0 readUnderAMakerOfValuesAlone GetByVal
+// IR= 1 readUnderAMakerOfValuesAlone GetById .*:alone
 // IR= 1 readUnderAMakerThatDoesMore GetByVal
 "use strict";
 const alone = require("./gathers-alone");

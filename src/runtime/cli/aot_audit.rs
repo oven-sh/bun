@@ -1,4 +1,4 @@
-use bun_ast::audited::{AuditedExpression, AuditedFile, AuditedParameter, PrintedAudit};
+use bun_ast::audited::{AuditedExpression, AuditedFile, AuditedParameter, AuditedValidation, PrintedAudit};
 use bun_sema_driver::FxHashMap as HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use bun_threading::Guarded;
@@ -50,7 +50,33 @@ impl Trust {
 static STATE: Guarded<Option<State>> = Guarded::new(None);
 static IS_LOOKING_AT_THE_WHOLE: AtomicBool = AtomicBool::new(false);
 static IS_WANTED: AtomicBool = AtomicBool::new(false);
+static ACTS: AtomicBool = AtomicBool::new(false);
 static LAST_ASKED: AtomicU64 = AtomicU64::new(0);
+static SEEN_BY_OTHERS: Guarded<Vec<(Vec<u8>, u64, Vec<u8>)>> = Guarded::new(Vec::new());
+static BEGINS_AT_ONCE: AtomicBool = AtomicBool::new(false);
+static STOPS_A_BUILD: AtomicBool = AtomicBool::new(false);
+#[cfg(unix)]
+const STOPS: &[u8] = b"what stops a build\0";
+
+fn say_which_road(text: &str) {
+    // SAFETY: getenv only reads, and the name is NUL-terminated.
+    if unsafe { libc::getenv(c"BUN_AOT_VERBOSE".as_ptr()) }.is_null() {
+        return;
+    }
+    let line = format!("[aot] look: {text}\n");
+    bun_core::Output::flush();
+    // SAFETY: `line` is readable for `line.len()` bytes.
+    unsafe { libc::write(2, line.as_ptr().cast(), line.len()) };
+}
+static SAID: Guarded<Vec<u8>> = Guarded::new(Vec::new());
+/// The test files that `bun test --aot` does not run: a file with a type error is reached from them.
+static LEFT_OUT: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+
+pub(crate) fn is_left_out_for_type_errors(entry_point: &[u8]) -> bool {
+    LEFT_OUT.lock().iter().any(|path| path == entry_point)
+}
+static IS_WATCHED: AtomicBool = AtomicBool::new(false);
+static IS_STOPPED: AtomicBool = AtomicBool::new(false);
 static LOOKED_AT_ALONE: Guarded<std::collections::BTreeSet<Vec<u8>>> = Guarded::new(std::collections::BTreeSet::new());
 static IS_LOOKED_AT: bun_threading::Condvar = bun_threading::Condvar::new();
 #[cfg(unix)]
@@ -80,6 +106,9 @@ unsafe extern "C" {
 }
 
 fn note(text: &str) {
+    if acts() {
+        return;
+    }
     let line = format!("[aot] note: {text}\n");
     bun_core::Output::flush();
     // SAFETY: `line` is readable for `line.len()` bytes.
@@ -97,6 +126,7 @@ fn log() -> (i32, bool) {
             (!value.is_null()).then(|| unsafe { core::ffi::CStr::from_ptr(value) }).filter(|value| !value.is_empty())
         };
         let (descriptor, is_file) = match said(c"BUN_AOT_TYPE_ERROR_LOG") {
+            None if ACTS.load(Ordering::Acquire) => (-1, false),
             None => (2, false),
             Some(to) if to == c"stderr" => (2, false),
             Some(to) if to == c"off" => (-1, false),
@@ -199,10 +229,19 @@ impl State {
                 id,
             });
         }
+        for validation in &module.validations {
+            audited.validations.push(AuditedValidation {
+                next: start_of_next_token(text, validation.end as usize) as u32,
+                start: validation.start,
+                which: validation.which,
+                plan: validation.plan.clone().into_boxed_slice(),
+            });
+        }
         audited.sort();
         // SAFETY: just allocated. It is freed only by `merge`, and only if it is of a `State` that
         // nobody has read from yet.
         let audited: &'static AuditedFile = unsafe { &*bun_core::heap::alloc(audited) };
+        bun_core::asan::ignore_object(core::ptr::from_ref(audited).cast());
         self.files.insert(native_path(cwd, &module.path), File { audited, groups, parameters });
         audited
     }
@@ -215,6 +254,7 @@ impl State {
                 ..Default::default()
             })
         };
+        bun_core::asan::ignore_object(core::ptr::from_ref(audited).cast());
         self.files.insert(path.to_vec(), File { audited, groups: HashMap::default(), parameters: HashMap::default() });
         audited
     }
@@ -260,6 +300,7 @@ impl State {
                 };
                 audited.expressions.extend(theirs.audited.expressions.iter().map(|it| AuditedExpression { next: it.next, start: it.start, id: renumbered(it.id) }));
                 audited.parameters.extend(theirs.audited.parameters.iter().map(|it| AuditedParameter { function: it.function, index: it.index, id: renumbered(it.id) }));
+                audited.validations.extend(theirs.audited.validations.iter().cloned());
                 audited.sort();
                 // SAFETY: as in `add`.
                 let audited: &'static AuditedFile = unsafe { &*bun_core::heap::alloc(audited) };
@@ -325,19 +366,45 @@ fn on_a_thread_of_its_own<T: Send>(run: impl FnOnce() -> T + Send) -> T {
     })
 }
 
-fn look_at_the_whole(entry_points: &[Vec<u8>], code: &[Vec<u8>], is_for_tests: bool, before_read: Option<bun_sema_driver::host::BeforeRead>, audited: Audited<'_>) {
+fn look_at_the_whole(entry_points: &[Vec<u8>], code: &[Vec<u8>], hinted: &[Vec<u8>], is_for_tests: bool, before_read: Option<bun_sema_driver::host::BeforeRead>, audited: Audited<'_>) -> bool {
     let cwd = crate::cli::check_command::working_directory();
-    let entries: Vec<EntryPoint> = entry_points.iter().map(|path| EntryPoint::file(path)).collect();
+    let mut entry_points = entry_points.to_vec();
     let (mut code, mut before_read) = (code.to_vec(), before_read);
+    let (given, mut taken_out) = (code.len(), Vec::new());
+    code.extend_from_slice(hinted);
     let found = loop {
+        let entries: Vec<EntryPoint> = entry_points.iter().map(|path| EntryPoint::file(path)).collect();
         let mut found = audit_before(&entries, before_read.take(), is_for_tests, audited, &code, None).unwrap_or_default();
-        if found.never_visited.is_empty() {
+        if !found.not_in_the_program.is_empty() && code.len() > given {
+            code.retain(|path| !found.not_in_the_program.contains(path));
+            taken_out.append(&mut found.not_in_the_program);
+            continue;
+        }
+        if !found.never_visited.is_empty() {
+            code.append(&mut found.never_visited);
+            for path in found.may_be_visited {
+                if !code.contains(&path) && !taken_out.contains(&path) {
+                    code.push(path);
+                }
+            }
+            continue;
+        }
+        if found.reach_errors.is_empty() || found.reach_errors.len() == entry_points.len() || !matches!(audited, Audited::Whole) || !ACTS.load(Ordering::Acquire) || IS_WATCHED.load(Ordering::Acquire) {
             break found;
         }
-        code.append(&mut found.never_visited);
+        entry_points.retain(|path| !found.reach_errors.contains(path));
+        LEFT_OUT.lock().append(&mut found.reach_errors);
     };
+    if found.stops_a_build && matches!(audited, Audited::Whole) && ACTS.load(Ordering::Acquire) {
+        bun_core::Output::flush();
+        if !IS_WATCHED.load(Ordering::Acquire) {
+            bun_core::Global::exit(1);
+        }
+        IS_STOPPED.store(true, Ordering::Release);
+    }
     let mut state = STATE.lock();
     let state = state.get_or_insert_with(State::default);
+    state.entry_points.retain(|path| !is_left_out_for_type_errors(path));
     for path in code {
         if !state.code.contains(&path) {
             state.code.push(path);
@@ -348,6 +415,307 @@ fn look_at_the_whole(entry_points: &[Vec<u8>], code: &[Vec<u8>], is_for_tests: b
     }
     state.shapes = found.shapes.into_iter().map(|(key, text)| (key, text.into_boxed_str())).collect();
     state.is_renewed();
+    *SAID.lock() = found.said;
+    STOPS_A_BUILD.store(found.stops_a_build, Ordering::Release);
+    *SEEN_BY_OTHERS.lock() = found.seen_by_others;
+    !found.stops_a_build && !found.has_errors && LEFT_OUT.lock().is_empty()
+}
+
+/// A look that is kept from one start to the next, see `bun_sema_driver::asked`.
+#[cfg(unix)]
+mod kept {
+    use bun_sema_driver::asked::{Kind, Question};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    const MAGIC: &[u8; 8] = b"bunlook3";
+
+    const MOST_KEPT: u64 = 1 << 30;
+    static IS_WRITING: AtomicBool = AtomicBool::new(false);
+
+    pub(super) struct Taken {
+        pub(super) read: Vec<Vec<u8>>,
+        pub(super) said: Vec<u8>,
+        pub(super) tables: Vec<u8>,
+        /// What is answered otherwise.
+        pub(super) changed: Vec<Vec<u8>>,
+        /// Nothing is answered otherwise but the texts of TypeScript files of the program itself.
+        pub(super) holds: bool,
+        pub(super) seen_by_others: Vec<(Vec<u8>, u64, Vec<u8>)>,
+    }
+
+    pub(super) fn hash(bytes: &[u8]) -> u64 {
+        bun_wyhash::hash(bytes)
+    }
+
+    fn folder() -> Option<Vec<u8>> {
+        use bun_core::env_var;
+        let inside = |parts: &[&[u8]]| Some(parts.join(&b"/"[..])).filter(|path| path.starts_with(b"/"));
+        if let Some(folder) = env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH.get() {
+            return if folder.is_empty() || folder == b"0" { None } else { inside(&[folder, b"@aot@"]) };
+        }
+        if let Some(folder) = env_var::XDG_CACHE_HOME.get() {
+            return inside(&[folder, b"bun", b"@aot@"]);
+        }
+        let home = env_var::HOME.get()?;
+        if cfg!(target_os = "macos") { inside(&[home, b"Library/Caches/bun", b"@aot@"]) } else { inside(&[home, b".bun/install/cache", b"@aot@"]) }
+    }
+
+    /// How this process was started, as far as a look depends on it, and the files of settings that Bun itself has read.
+    pub(super) struct Start {
+        key: Vec<u8>,
+        path: Vec<u8>,
+        settings: Vec<Vec<u8>>,
+    }
+
+    impl Start {
+        pub(super) fn of(entry_points: &[Vec<u8>], is_for_tests: bool, acts: bool) -> Option<Start> {
+            let folder = folder()?;
+            let executable = bun_core::self_exe_path().ok()?;
+            // SAFETY: `stat` is plain data for which all zeros is a valid value.
+            let mut found: libc::stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+            // SAFETY: the path is NUL-terminated and `found` is a valid out-param.
+            if unsafe { libc::stat(executable.as_ptr().cast(), &mut found) } != 0 {
+                return None;
+            }
+            let cwd = crate::cli::check_command::working_directory();
+            let form = crate::cli::check_command::form_of_what_is_said();
+            let mut key = format!("{} {} {} {} {is_for_tests} {acts} {form:?}\0", bun_core::Global::package_json_version_with_sha, found.st_size, found.st_mtime, found.st_mtime_nsec).into_bytes();
+            for part in [executable.as_bytes(), &cwd[..]] {
+                key.extend_from_slice(part);
+                key.push(0);
+            }
+            let names_the_entry = |argument: &[u8]| {
+                let written = argument.strip_prefix(b"./").unwrap_or(argument);
+                !argument.starts_with(b"-") && !written.is_empty() && entry_points.iter().any(|path| path.ends_with(written))
+            };
+            for argument in bun_core::argv().into_iter().skip(1).filter(|it| !matches!(*it, b"--watch" | b"--hot")) {
+                key.extend_from_slice(argument);
+                key.push(0);
+                if names_the_entry(argument) {
+                    break;
+                }
+            }
+            for path in entry_points {
+                key.extend_from_slice(path);
+                key.push(0);
+            }
+            let path = [&folder[..], format!("/{:02x}.look", hash(&key) & 63).as_bytes()].concat();
+            let mut settings = vec![[&cwd[..], b"/bunfig.toml"].concat()];
+            for home in [bun_core::env_var::HOME.get(), bun_core::env_var::XDG_CONFIG_HOME.get()].into_iter().flatten() {
+                settings.push([home, b"/.bunfig.toml"].concat());
+            }
+            Some(Start { key, path, settings })
+        }
+
+        /// What the look that was kept for a start like this one had to say, its tables, the files it had read, and whether the disk still
+        /// answers as it did.
+        pub(super) fn take(&self) -> Option<Taken> {
+            let file = bun_sys::File::read_from(bun_sys::Fd::cwd(), &self.path).ok()?;
+            let rest = file.strip_prefix(MAGIC)?;
+            let (checksum, mut rest) = rest.split_first_chunk::<8>()?;
+            if u64::from_le_bytes(*checksum) != hash(rest) {
+                return None;
+            }
+            let number = |rest: &mut &[u8]| -> Option<u64> {
+                let (value, after) = rest.split_first_chunk::<8>()?;
+                *rest = after;
+                Some(u64::from_le_bytes(*value))
+            };
+            let bytes = |rest: &mut &[u8]| -> Option<Vec<u8>> {
+                let length = usize::try_from(number(rest)?).ok()?;
+                let (value, after) = rest.split_at_checked(length)?;
+                *rest = after;
+                Some(value.to_vec())
+            };
+            if bytes(&mut rest)? != self.key {
+                return None;
+            }
+            let count = usize::try_from(number(&mut rest)?).ok()?;
+            let mut questions = Vec::new();
+            for _ in 0..count {
+                let (kind, answer) = (Kind::from_number(number(&mut rest)?)?, number(&mut rest)?);
+                questions.push(Question { kind, path: bytes(&mut rest)?, answer });
+            }
+            let count = usize::try_from(number(&mut rest)?).ok()?;
+            let mut seen_by_others = Vec::new();
+            for _ in 0..count {
+                let seen = number(&mut rest)?;
+                let path = bytes(&mut rest)?;
+                seen_by_others.push((path, seen, bytes(&mut rest)?));
+            }
+            let said = bytes(&mut rest)?;
+            let threads = usize::from(bun_core::get_thread_count()).min(16);
+            let mut holds = true;
+            let mut changed = Vec::new();
+            for at in bun_sema_driver::asked::answered_otherwise(&questions, hash, threads) {
+                let path = bun_sema_driver::host::to_native(&questions[at].path).to_vec();
+                holds &= questions[at].kind == Kind::Text && seen_by_others.iter().any(|it| it.0 == path);
+                changed.push(path);
+            }
+            let read = questions.into_iter().filter(|question| question.kind == Kind::Text).map(|question| question.path).collect();
+            Some(Taken { read, said, tables: rest.to_vec(), changed, seen_by_others, holds })
+        }
+
+        pub(super) fn note_settings(&self) {
+            for path in &self.settings {
+                let text = bun_sys::File::read_from(bun_sys::Fd::cwd(), path).ok();
+                bun_sema_driver::asked::note(Kind::NativeText, path, |hash| bun_sema_driver::asked::of_text(hash, text.as_deref()));
+            }
+        }
+
+        fn ticket_path(&self) -> Vec<u8> {
+            [self.path.strip_suffix(b".look").unwrap_or(&self.path), b".ticket"].concat()
+        }
+
+        /// From here on only a child that is started now goes on.
+        pub(super) fn write_ticket(&self) {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |it| it.as_nanos());
+            let Ok(path) = std::ffi::CString::new(self.ticket_path()) else { return };
+            let ticket = format!("{} {now}", std::process::id());
+            // SAFETY: the path is NUL-terminated.
+            let fd = unsafe { libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC | libc::O_CLOEXEC, 0o600) };
+            if fd >= 0 {
+                // SAFETY: `ticket` is readable for its length; `fd` is ours and is not used again.
+                unsafe {
+                    libc::write(fd, ticket.as_ptr().cast(), ticket.len());
+                    libc::close(fd);
+                }
+            }
+        }
+
+        /// Ends the process as soon as another ticket is written.
+        pub(super) fn end_at_another_ticket(&self) {
+            let path = self.ticket_path();
+            let read = move || bun_sys::File::read_from(bun_sys::Fd::cwd(), &path).ok();
+            let mine = read();
+            let _ = std::thread::Builder::new().spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    if read() != mine && !IS_WRITING.load(Ordering::Acquire) {
+                        // SAFETY: _exit(2) has no preconditions.
+                        unsafe { libc::_exit(0) };
+                    }
+                }
+            });
+        }
+
+        pub(super) fn forget(&self) {
+            if let Ok(path) = std::ffi::CString::new(&self.path[..]) {
+                // SAFETY: the path is NUL-terminated.
+                unsafe { libc::unlink(path.as_ptr()) };
+            }
+        }
+
+        pub(super) fn put(&self, questions: &[Question], seen_by_others: &[(Vec<u8>, u64, Vec<u8>)], said: &[u8], tables: &[u8]) {
+            let mut rest = Vec::with_capacity(tables.len() + questions.len() * 96);
+            let bytes = |rest: &mut Vec<u8>, value: &[u8]| {
+                rest.extend_from_slice(&(value.len() as u64).to_le_bytes());
+                rest.extend_from_slice(value);
+            };
+            bytes(&mut rest, &self.key);
+            rest.extend_from_slice(&(questions.len() as u64).to_le_bytes());
+            for question in questions {
+                rest.extend_from_slice(&(question.kind as u64).to_le_bytes());
+                rest.extend_from_slice(&question.answer.to_le_bytes());
+                bytes(&mut rest, &question.path);
+            }
+            rest.extend_from_slice(&(seen_by_others.len() as u64).to_le_bytes());
+            for (path, seen, declarations) in seen_by_others {
+                rest.extend_from_slice(&seen.to_le_bytes());
+                bytes(&mut rest, path);
+                bytes(&mut rest, declarations);
+            }
+            bytes(&mut rest, said);
+            rest.extend_from_slice(tables);
+            let head = [&MAGIC[..], &hash(&rest).to_le_bytes()].concat();
+            for (at, _) in self.path.iter().enumerate().filter(|&(at, &byte)| at > 0 && byte == b'/') {
+                let Ok(folder) = std::ffi::CString::new(&self.path[..at]) else { return };
+                // SAFETY: the path is NUL-terminated.
+                unsafe { libc::mkdir(folder.as_ptr(), 0o700) };
+            }
+            let Ok(path) = std::ffi::CString::new(&self.path[..]) else { return };
+            let mut temporary = [&self.path[..], b".XXXXXX\0"].concat();
+            // SAFETY: `temporary` is writable and ends with "XXXXXX" and a NUL.
+            let fd = unsafe { libc::mkstemp(temporary.as_mut_ptr().cast()) };
+            if fd < 0 {
+                return;
+            }
+            IS_WRITING.store(true, Ordering::Release);
+            let mut is_written = true;
+            for part in [&head[..], &rest[..]] {
+                let mut at = 0;
+                while is_written && at < part.len() {
+                    // SAFETY: the rest of `part` is readable for that many bytes.
+                    let written = unsafe { libc::write(fd, part[at..].as_ptr().cast(), part.len() - at) };
+                    is_written = written > 0;
+                    at += written.max(0) as usize;
+                }
+            }
+            // SAFETY: `fd` is ours and is not used again; both paths are NUL-terminated.
+            unsafe {
+                libc::close(fd);
+                if !is_written || libc::rename(temporary.as_ptr().cast(), path.as_ptr()) != 0 {
+                    libc::unlink(temporary.as_ptr().cast());
+                }
+            }
+            IS_WRITING.store(false, Ordering::Release);
+            self.make_room();
+        }
+
+        /// The kept looks take `MOST_KEPT` bytes at most: the oldest go first, this one never. So does what a writer that died left behind.
+        fn make_room(&self) {
+            let Some(slash) = self.path.iter().rposition(|&byte| byte == b'/') else { return };
+            let Ok(folder) = std::ffi::CString::new(&self.path[..slash]) else { return };
+            // SAFETY: the path is NUL-terminated.
+            let directory = unsafe { libc::opendir(folder.as_ptr()) };
+            if directory.is_null() {
+                return;
+            }
+            // SAFETY: time(2) takes a null pointer.
+            let now = unsafe { libc::time(core::ptr::null_mut()) };
+            let mut kept = Vec::new();
+            loop {
+                // SAFETY: `directory` is open. The entry is read before the next call.
+                let entry = unsafe { libc::readdir(directory) };
+                if entry.is_null() {
+                    break;
+                }
+                // SAFETY: `d_name` is NUL-terminated.
+                let name = unsafe { core::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+                let is_kept = name.ends_with(b".look");
+                if !is_kept && !bun_core::strings::contains(name, b".look.") {
+                    continue;
+                }
+                let Ok(path) = std::ffi::CString::new([&self.path[..=slash], name].concat()) else { continue };
+                // SAFETY: `stat` is plain data for which all zeros is a valid value.
+                let mut found: libc::stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+                // SAFETY: the path is NUL-terminated and `found` is a valid out-param.
+                if unsafe { libc::stat(path.as_ptr(), &mut found) } != 0 {
+                    continue;
+                }
+                if is_kept {
+                    kept.push(((found.st_mtime, found.st_mtime_nsec), found.st_size.max(0) as u64, path));
+                } else if now - found.st_mtime > 600 {
+                    // SAFETY: the path is NUL-terminated.
+                    unsafe { libc::unlink(path.as_ptr()) };
+                }
+            }
+            // SAFETY: `directory` is open and is not used again.
+            unsafe { libc::closedir(directory) };
+            kept.sort();
+            let mut all: u64 = kept.iter().map(|it| it.1).sum();
+            for (_, size, path) in kept {
+                if all <= MOST_KEPT {
+                    break;
+                }
+                if path.as_bytes() != &self.path[..] {
+                    // SAFETY: the path is NUL-terminated.
+                    unsafe { libc::unlink(path.as_ptr()) };
+                    all -= size;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -384,7 +752,18 @@ fn look_at_the_whole_in_a_child(entry_points: &[Vec<u8>], code: &[Vec<u8>]) -> O
             *running = 0;
             let _ = child.wait();
         }
-        State::from_bytes(&read_whole(fd)?)
+        let bytes = read_whole(fd)?;
+        if let Some(said) = bytes.strip_prefix(STOPS) {
+            if acts() {
+                let _ = bun_core::Output::error_writer().write_all(said);
+                bun_core::Output::flush();
+                if !IS_WATCHED.load(Ordering::Acquire) {
+                    bun_core::Global::exit(1);
+                }
+            }
+            return None;
+        }
+        State::from_bytes(&bytes)
     })();
     // SAFETY: `fd` is ours, from `unlinked_file_with`, and is not used again.
     unsafe { libc::close(fd) };
@@ -402,10 +781,6 @@ fn stop_the_child() {
     *running = 0;
 }
 
-extern "C" fn stop_the_child_at_exit() {
-    stop_the_child();
-}
-
 #[cfg(not(unix))]
 fn stop_the_child() {}
 
@@ -418,7 +793,7 @@ fn look_at_the_whole_in_the_background() {
     let thread = std::thread::Builder::new().stack_size(64 << 20).spawn(move || {
         bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Audit"));
         while still_waits() {
-            while milliseconds().saturating_sub(LAST_ASKED.load(Ordering::Acquire)) < 300 {
+            while !BEGINS_AT_ONCE.load(Ordering::Acquire) && milliseconds().saturating_sub(LAST_ASKED.load(Ordering::Acquire)) < 300 {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
             let Some((entry_points, code, is_for_tests)) = STATE.lock().as_mut().map(|state| {
@@ -436,7 +811,7 @@ fn look_at_the_whole_in_the_background() {
                 }
             }
             #[cfg(not(unix))]
-            look_at_the_whole(&entry_points, &code, is_for_tests, None, Audited::WholeInTheBackground);
+            look_at_the_whole(&entry_points, &code, &[], is_for_tests, None, Audited::WholeInTheBackground);
         }
         bun_core::Output::flush();
         IS_LOOKING_AT_THE_WHOLE.store(false, Ordering::Release);
@@ -550,6 +925,7 @@ fn table_for(path: &[u8], text: &[u8]) -> Option<&'static AuditedFile> {
     LAST_ASKED.store(milliseconds(), Ordering::Release);
     match known(path, hash_of(text)) {
         Some(found) => found,
+        None if acts() => None,
         None => look_at_it_alone(path, text),
     }
 }
@@ -619,6 +995,12 @@ impl State {
                 number(&mut out, u64::from(function) << 32 | u64::from(index));
                 number(&mut out, u64::from(id));
             }
+            number(&mut out, file.audited.validations.len() as u64);
+            for it in &file.audited.validations {
+                number(&mut out, u64::from(it.next) << 32 | u64::from(it.start));
+                number(&mut out, u64::from(it.which));
+                bytes(&mut out, &it.plan);
+            }
         }
         out
     }
@@ -679,6 +1061,15 @@ impl State {
                     function: (place >> 32) as u32,
                     index: place as u32,
                     id: id as u32,
+                });
+            }
+            for _ in 0..number(input)? {
+                let (place, which) = (number(input)?, number(input)?);
+                audited.validations.push(AuditedValidation {
+                    next: (place >> 32) as u32,
+                    start: place as u32,
+                    which: which as u8,
+                    plan: Box::from(bytes(input)?),
                 });
             }
             audited.sort();
@@ -773,8 +1164,30 @@ fn look_for_another(is_for_tests: bool) {
     let asked = read_whole(fd).unwrap_or_default();
     let of_kind = |kind: u8| -> Vec<Vec<u8>> { bun_core::strings::split(&asked, b"\0").filter(|it| it.first() == Some(&kind)).map(|it| it[1..].to_vec()).collect() };
     let (entry_points, code) = (of_kind(b'E'), of_kind(b'C'));
-    on_a_thread_of_its_own(|| look_at_the_whole(&entry_points, &code, is_for_tests, None, Audited::WholeInTheBackground));
+    let start = kept::Start::of(&entry_points, is_for_tests, acts());
+    if let Some(start) = &start {
+        start.end_at_another_ticket();
+        bun_sema_driver::asked::begin(kept::hash);
+        start.note_settings();
+    }
+    let (given, hinted) = if acts() { (&[][..], &code[..]) } else { (&code[..], &[][..]) };
+    let may_be_kept = on_a_thread_of_its_own(|| look_at_the_whole(&entry_points, given, hinted, is_for_tests, None, Audited::WholeInTheBackground));
     let bytes = STATE.lock().as_ref().map_or_else(Vec::new, State::to_bytes);
+    let questions = bun_sema_driver::asked::end();
+    let bytes = match (&start, questions) {
+        (Some(start), _) if STOPS_A_BUILD.load(Ordering::Acquire) => {
+            start.forget();
+            [&STOPS[..], &SAID.lock()[..]].concat()
+        }
+        (Some(start), Some(questions)) if may_be_kept => {
+            let threads = usize::from(bun_core::get_thread_count()).min(16);
+            if bun_sema_driver::asked::answered_otherwise(&questions, kept::hash, threads).is_empty() {
+                start.put(&questions, &SEEN_BY_OTHERS.lock(), &SAID.lock(), &bytes);
+            }
+            bytes
+        }
+        _ => bytes,
+    };
     let mut at = 0;
     // SAFETY: ftruncate(2) takes no pointers.
     unsafe { libc::ftruncate(fd, 0) };
@@ -796,20 +1209,103 @@ fn take_what_was_handed_over() -> Option<State> {
     None
 }
 
-pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_driver::host::BeforeRead>, is_for_tests: bool) {
+pub(crate) fn preloads_of(vm: &mut bun_jsc::virtual_machine::VirtualMachine) -> Vec<Vec<u8>> {
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let named = vm.preload.clone();
+    (named.iter())
+        .filter_map(|preload| {
+            let name = preload.strip_prefix(b"file://".as_slice()).unwrap_or(preload);
+            if name.starts_with(b"node:") || name.starts_with(b"bun:") {
+                return None;
+            }
+            match vm.transpiler.resolver.resolve_and_auto_install(top_level_dir, name, bun_ast::ImportKind::Stmt, bun_resolver::GlobalCache::read_only) {
+                bun_resolver::ResultUnion::Success(found) => found.path_const().filter(|path| path.is_file()).map(|path| path.text.to_vec()),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// Whether the program may start. Type errors end the process, unless a file watcher is there to start it again.
+pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_driver::host::BeforeRead>, is_for_tests: bool) -> bool {
+    IS_WATCHED.store(before_read.is_some(), Ordering::Release);
     #[cfg(unix)]
     look_for_another(is_for_tests);
     let paths: Vec<Vec<u8>> = entry_points.iter().map(|it| it.path.to_vec()).collect();
-    let handed_over = take_what_was_handed_over();
+    let handed_over = take_what_was_handed_over().filter(|_| !acts());
     let is_handed_over = handed_over.is_some();
-    let waits_for_the_whole = handed_over.as_ref().is_some_and(|state| state.waits_for_the_whole);
+    let mut waits_for_the_whole = false;
+    #[cfg(unix)]
+    let start = kept::Start::of(&paths, is_for_tests, acts());
+    #[cfg(unix)]
+    let taken = start.as_ref().and_then(kept::Start::take);
+    #[cfg(unix)]
+    let mut kept = taken.as_ref().and_then(|taken| State::from_bytes(&taken.tables));
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut hinted: Vec<Vec<u8>> = Vec::new();
+    #[cfg(unix)]
+    if taken.as_ref().is_some_and(|taken| !taken.holds) {
+        hinted = kept.take().map_or_else(Vec::new, |state| state.code);
+    }
+    #[cfg(unix)]
+    if let (Some(state), Some(taken)) = (&mut kept, &taken)
+        && !taken.changed.is_empty()
+    {
+        let entries: Vec<EntryPoint> = paths.iter().chain(taken.changed.iter().filter(|path| !paths.contains(path))).map(|path| EntryPoint::file(path)).collect();
+        let changed = Audited::Changed { paths: &taken.changed, seen_by_others: &taken.seen_by_others };
+        let found = on_a_thread_of_its_own(|| audit_before(&entries, None, is_for_tests, changed, &state.code, None)).unwrap_or_default();
+        if found.is_seen_otherwise || found.stops_a_build {
+            say_which_road(if found.stops_a_build { "what has changed has errors: the whole look decides whether they stand" } else { "what has changed looks otherwise to other files" });
+            hinted = core::mem::take(&mut state.code);
+            kept = None;
+        } else {
+            let cwd = crate::cli::check_command::working_directory();
+            for (module, text) in &found.modules {
+                state.add(&cwd, module, text, Trust::Unsure);
+            }
+            state.waits_for_the_whole = true;
+            waits_for_the_whole = true;
+            say_which_road(&format!("{} changed in a way that no other file can see", taken.changed.len()));
+        }
+    }
+    #[cfg(not(unix))]
+    let kept: Option<State> = None;
+    let is_kept = kept.is_some();
+    #[cfg(unix)]
+    if let (true, Some(taken)) = (is_kept, &taken) {
+        if let Some(before_read) = &before_read {
+            taken.read.iter().for_each(|path| before_read(path));
+        }
+        let _ = bun_core::Output::error_writer().write_all(&taken.said);
+        bun_core::Output::flush();
+    }
+    if !waits_for_the_whole {
+        say_which_road(if is_kept { "nothing has changed" } else { "a fresh look" });
+    }
+    let (handed_over, is_handed_over) = if is_kept { (None, false) } else { (handed_over, is_handed_over) };
+    waits_for_the_whole |= handed_over.as_ref().is_some_and(|state| state.waits_for_the_whole);
     *STATE.lock() = Some(State {
         entry_points: paths.clone(),
         is_for_tests,
-        ..handed_over.unwrap_or_default()
+        ..handed_over.or(kept).unwrap_or_default()
     });
-    if !is_handed_over {
-        on_a_thread_of_its_own(|| look_at_the_whole(&paths, &[], is_for_tests, before_read, Audited::Whole));
+    if !is_handed_over && !is_kept {
+        #[cfg(unix)]
+        if let Some(start) = &start {
+            bun_sema_driver::asked::begin(kept::hash);
+            start.note_settings();
+        }
+        let may_be_kept = on_a_thread_of_its_own(|| look_at_the_whole(&paths, &[], &hinted, is_for_tests, before_read, Audited::Whole));
+        #[cfg(unix)]
+        if let Some(start) = &start
+            && let Some(questions) = bun_sema_driver::asked::end()
+            && may_be_kept
+            && let Some(tables) = STATE.lock().as_ref().filter(|state| !state.waits_for_the_whole).map(State::to_bytes)
+        {
+            start.put(&questions, &SEEN_BY_OTHERS.lock(), &SAID.lock(), &tables);
+        }
+        #[cfg(not(unix))]
+        let _ = may_be_kept;
     }
     LAST_ASKED.store(milliseconds(), Ordering::Release);
     bun_ast::audited::set_finish(finish);
@@ -818,15 +1314,42 @@ pub(crate) fn prepare(entry_points: &[EntryPoint], before_read: Option<bun_sema_
         look_at_what_has_changed();
     }
     if waits_for_the_whole {
+        BEGINS_AT_ONCE.store(is_kept, Ordering::Release);
+        #[cfg(unix)]
+        if let Some(start) = &start {
+            start.write_ticket();
+        }
         look_at_the_whole_in_the_background();
+        #[cfg(unix)]
+        for _ in 0..200 {
+            if !is_kept || *CHILD.lock() != 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_micros(500));
+        }
     }
     #[cfg(unix)]
     bun_core::before_reload(hand_over);
-    bun_core::add_exit_callback(stop_the_child_at_exit);
+    !IS_STOPPED.load(Ordering::Acquire)
 }
 
 pub(crate) fn is_on() -> bool {
     bun_ast::audited::is_on()
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__AOTAudit__waitForTheWhole() -> u32 {
+    let is_under_way = || IS_LOOKING_AT_THE_WHOLE.load(Ordering::Acquire) || STATE.lock().as_ref().is_some_and(|state| state.waits_for_the_whole);
+    if !is_under_way() {
+        return 0;
+    }
+    let begun = milliseconds();
+    while is_under_way() {
+        LAST_ASKED.store(0, Ordering::Release);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    say_which_road(&format!("a check failed and waited {} ms for the whole look", milliseconds() - begun));
+    STATE.lock().as_ref().map_or(0, |state| state.generation)
 }
 
 #[unsafe(no_mangle)]
@@ -842,7 +1365,8 @@ fn finish(written: &[u8]) -> Option<Box<bun_ast::audited::Finished>> {
     bun_ast::audited::set_current(None);
     let state = STATE.lock();
     let state = state.as_ref()?;
-    let of = |id: u32| state.described.get(id as usize).map_or([0, 1, 0], |it| [it.passes, it.least as u32, it.most as u32]);
+    let acts = u32::from(ACTS.load(Ordering::Acquire)) << 11;
+    let of = |id: u32| state.described.get(id as usize).map_or([0, 1, 0], |it| [it.passes | acts, it.least as u32, it.most as u32]);
     let expressions: Vec<[u32; 6]> = (expressions.iter())
         .map(|&[mut start, mut end, id]| {
             while start < end && written.get(start as usize).is_some_and(u8::is_ascii_whitespace) {
@@ -888,6 +1412,20 @@ pub(crate) extern "C" fn Bun__AOTAudit__describe(id: u32, out: *mut bun_core::St
 
 pub(crate) fn want() {
     IS_WANTED.store(true, Ordering::Release);
+}
+
+pub(crate) fn act() {
+    ACTS.store(true, Ordering::Release);
+    bun_ast::audited::keep_directives();
+}
+
+pub(crate) fn acts() -> bool {
+    ACTS.load(Ordering::Acquire)
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__AOTAudit__acts() -> bool {
+    ACTS.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
@@ -936,6 +1474,8 @@ pub(crate) extern "C" fn Bun__AOTAudit__describeShape(key: &bun_core::String, ou
     let text = match (state.as_ref(), core::str::from_utf8(&key)) {
         (Some(state), Ok("")) => state.generation.to_string(),
         (_, Ok("format")) => String::from(if log().1 { "json" } else { "text" }),
+        (_, Ok("acts")) => ACTS.load(Ordering::Acquire).to_string(),
+        (_, Ok("logs")) => (log().0 >= 0).to_string(),
         (Some(state), Ok(key)) => state.shapes.get(key).map_or_else(|| String::from("null"), |text| text.to_string()),
         _ => String::from("null"),
     };

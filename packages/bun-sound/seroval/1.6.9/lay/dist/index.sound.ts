@@ -2873,7 +2873,7 @@ async function crossSerializeAsync(source: SV.Given, options: SV.Options = {}): 
 		markedRefs: ctx.base.marked
 	}), tree);
 }
-function toCrossJSON(source: SV.Given, options: SV.Options = {}): SV.SerovalNode {
+function toCrossJSON(source: SV.Given, options: SV.Options = {}): SV.ExportedNode {
 	const plugins = resolvePlugins(options.plugins);
 	return parseTop(createSyncParserContext(2, {
 		compactArrayBufferViews: options.compactArrayBufferViews,
@@ -2882,7 +2882,7 @@ function toCrossJSON(source: SV.Given, options: SV.Options = {}): SV.SerovalNode
 		refs: options.refs
 	}), source);
 }
-async function toCrossJSONAsync(source: SV.Given, options: SV.Options = {}): Promise<SV.SerovalNode> {
+async function toCrossJSONAsync(source: SV.Given, options: SV.Options = {}): Promise<SV.ExportedNode> {
 	const plugins = resolvePlugins(options.plugins);
 	return await parseTopAsync(createAsyncParserContext(2, {
 		compactArrayBufferViews: options.compactArrayBufferViews,
@@ -3049,7 +3049,7 @@ async function serializeAsync(source: SV.Given, options: SV.Options = {}): Promi
 function deserialize(source: SV.GivenString): SV.Deserialized {
 	return (0, eval)(source);
 }
-function toJSON(source: SV.Given, options: SV.Options = {}): SV.SerovalJSON {
+function toJSON(source: SV.Given, options: SV.Options = {}): SV.ExportedJSON {
 	const plugins = resolvePlugins(options.plugins);
 	const ctx = createSyncParserContext(1, {
 		compactArrayBufferViews: options.compactArrayBufferViews,
@@ -3062,7 +3062,7 @@ function toJSON(source: SV.Given, options: SV.Options = {}): SV.SerovalJSON {
 		m: Array.from(ctx.base.marked)
 	};
 }
-async function toJSONAsync(source: SV.Given, options: SV.Options = {}): Promise<SV.SerovalJSON> {
+async function toJSONAsync(source: SV.Given, options: SV.Options = {}): Promise<SV.ExportedJSON> {
 	const plugins = resolvePlugins(options.plugins);
 	const ctx = createAsyncParserContext(1, {
 		compactArrayBufferViews: options.compactArrayBufferViews,
@@ -3103,7 +3103,7 @@ namespace SV {
 declare var Temporal: any;
 declare var AggregateError: any;
 namespace SV {
-  export type int32 = number;
+  export type int32 = import("bun").int32;
   export type NodeType = int32;
   export type RefId = int32;
   export type Mode = int32;
@@ -3146,6 +3146,8 @@ namespace SV {
   export type GivenRecord = any;
   export type GivenId = any;
   export type GivenJSON = any;
+  export type ExportedNode = any;
+  export type ExportedJSON = any;
   export type StringTable = { [tag: number]: string };
   export type FlagTable = { [flag: number]: string | undefined };
   export type SymbolTable = { [tag: number]: symbol };

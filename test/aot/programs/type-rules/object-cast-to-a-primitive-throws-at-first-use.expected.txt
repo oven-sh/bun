@@ -16,7 +16,7 @@ USE <: TypeError
 USE template: TypeError
 USE +=: TypeError
 USE ++: TypeError
-USE a read through a cast object: TypeError
+USE a read through a cast object: 7
 honest member: 3
 honest +: 3
 honest read: 4

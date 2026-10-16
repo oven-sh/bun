@@ -31,7 +31,7 @@ use crate::declared::{Declared, DeclaredTable, Part};
 use crate::format::line_table;
 use crate::fragment::{Definition, Fragment, FuncKey, Function, Ids, LayoutKey, LocalToProgram, Mentioning, Mentions, ModulePart, NO_FILE, Notes, Outline, ProgramIds, RuntimeModule, Shape, Used, for_each_id_of_func, for_each_id_of_global, for_each_id_of_layout, outline_flags};
 use crate::id::{FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
-use crate::ir::{self, Def, Func, FuncKind, Layout, LayoutKind, Literal, NO_VARIABLE, Op, Prediction, Program, Strs, Term, Why, class_flags, field_flags, func_flags, method_flags};
+use crate::ir::{self, Def, Func, FuncKind, Layout, LayoutKind, Literal, NO_VARIABLE, Op, Operation, Prediction, Program, Strs, Term, Why, class_flags, field_flags, func_flags, method_flags};
 use bun_sema::atom::Atom;
 use bun_sema::check::task::Finished;
 use bun_sema::check::{Answer, Checker, CompilerDiagnostic, Identity, Int32Verdict, KindsDeclared, MethodStore, Noted, NumberFlow, Program as Checked, Question, ReplacedMethods, compute_ecma_line_starts, expected_int32};
@@ -45,7 +45,7 @@ use smallvec::SmallVec;
 use std::collections::VecDeque;
 use std::mem::MaybeUninit;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
@@ -81,6 +81,7 @@ pub struct Linked {
 pub struct Explain {
     /// Why each view that admits objects that are not laid out does: `Checker::explain_foreign`.
     pub foreign: bool,
+    pub includes_builtin_modules: bool,
     /// How many layouts a built-in may freeze or give another prototype, and how many stores test for it, in numbers alone: `Checker::explain_alterations`.
     pub alterations: bool,
     /// Which fields have a name that nothing stores: `explain_fields`.
@@ -336,6 +337,10 @@ struct Reach {
     runtime_by_number: FxHashMap<i64, FileId>,
     runtime_by_name: FxHashMap<Vec<u8>, FileId>,
     evaluations_of_runtime: FxHashMap<FileId, u32>,
+    doors_to_the_loader: FxHashSet<At>,
+    runtime_behind_doors: Vec<u32>,
+    runtime_hidden_behind_doors: Vec<(i64, Vec<u8>, FileId, u32)>,
+    asked_the_runtime_in_vain: Vec<At>,
     /// The object types whose layouts are reached and that no fragment defines, with the shape that names each and what mentions it.
     missing: Vec<(Identity, At, By)>,
     /// What else is reached and not defined.
@@ -553,6 +558,15 @@ impl Reach {
         }
     }
 
+    fn add_runtime_module(&mut self, number: i64, name: &[u8], file: FileId, evaluation: u32) {
+        self.runtime_by_number.insert(number, file);
+        self.evaluations_of_runtime.insert(file, evaluation);
+        self.runtime_by_name.insert(name.to_vec(), file);
+        if let Some(short) = name.strip_prefix(b"node:") {
+            self.runtime_by_name.insert(short.to_vec(), file);
+        }
+    }
+
     /// See `runtime_by_number`.
     fn ask_the_runtime(&mut self, fragments: &[Fragment], index: &Index, at: At) {
         let fragment = &fragments[at.fragment as usize];
@@ -561,6 +575,7 @@ impl Reach {
             return;
         }
         let mut asked: Vec<FileId> = Vec::new();
+        let mut is_served = true;
         let file = fragment.file;
         if function.has(outline_flags::EVALUATES_MODULE)
             && self.evaluations_of_runtime.contains_key(&file)
@@ -568,6 +583,7 @@ impl Reach {
         {
             let besides = bun_builtin_syntax::Archive::embedded().manifest().required_besides(number as u32);
             asked.extend(besides.iter().filter_map(|&id| self.runtime_by_number.get(&i64::from(id))));
+            is_served &= asked.len() == besides.len();
         }
         let of_fragment = &fragment.summary.runtime_modules;
         for &(_, module) in of_fragment[of_fragment.partition_point(|found| found.0 < at.index)..].iter().take_while(|found| found.0 == at.index) {
@@ -575,7 +591,11 @@ impl Reach {
                 RuntimeModule::Number(number) => self.runtime_by_number.get(&number),
                 RuntimeModule::Name(name) => self.runtime_by_name.get(fragment.strs.get(name)),
             };
+            is_served &= found.is_some();
             asked.extend(found.copied());
+        }
+        if !is_served && !self.runtime_hidden_behind_doors.is_empty() {
+            self.asked_the_runtime_in_vain.push(at);
         }
         for file in asked {
             let evaluation = self.evaluations_of_runtime[&file];
@@ -593,6 +613,17 @@ impl Reach {
                     let function = &fragment.outline.funcs[at.index as usize];
                     if !function.has(outline_flags::HAS_BODY) {
                         continue;
+                    }
+                    if !(self.runtime_behind_doors.is_empty() && self.runtime_hidden_behind_doors.is_empty()) && self.doors_to_the_loader.contains(&at) {
+                        for (number, name, file, evaluation) in std::mem::take(&mut self.runtime_hidden_behind_doors) {
+                            self.add_runtime_module(number, &name, file, evaluation);
+                        }
+                        for evaluation in std::mem::take(&mut self.runtime_behind_doors) {
+                            self.key(fragments, index, evaluation, true);
+                        }
+                        for asker in std::mem::take(&mut self.asked_the_runtime_in_vain) {
+                            self.ask_the_runtime(fragments, index, asker);
+                        }
                     }
                     self.ask_the_runtime(fragments, index, at);
                     self.mention_of_function(fragments, index, at);
@@ -828,25 +859,34 @@ fn add_rank_of_text(text: &[u8], rank: &mut Rank) {
     rank.extend([0, text.len() as u64]);
 }
 
-fn places_of_records(fragments: &[Fragment], index: &Index, ids: &ProgramIds) -> Vec<u32> {
-    let mut ranked: Vec<(Rank, u32)> = Vec::new();
-    for id in 0..ids.layouts.bound() as u32 {
-        let Some(at) = index.layout(id) else { continue };
-        let defining = &fragments[at.fragment as usize];
-        let shape = &defining.layouts[at.index as usize];
-        let LayoutKey::Record(identity) = shape.key else { continue };
-        let mut rank = Rank::new();
-        add_rank_of_text(if shape.name.is_none() { &[] } else { defining.strs.get(shape.name) }, &mut rank);
-        if let Some(definition) = &shape.definition {
-            rank.push(definition.layout.fields.len() as u64);
-            for field in &definition.layout.fields {
-                add_rank_of_text(defining.strs.get(field.name), &mut rank);
+fn ranks_of_records(fragments: &[Fragment], index: &Index, ids: &ProgramIds, in_parallel: InParallel<'_>) -> Vec<(Rank, u32)> {
+    const LAYOUTS_OF_A_RUN: usize = 2048;
+    let bound = ids.layouts.bound();
+    let mut runs: Vec<(usize, Vec<(Rank, u32)>)> = (0..bound).step_by(LAYOUTS_OF_A_RUN).map(|first| (first, Vec::new())).collect();
+    for_each_mut(&mut runs, in_parallel, &|(first, ranked)| {
+        for id in (*first..bound.min(*first + LAYOUTS_OF_A_RUN)).map(|id| id as u32) {
+            let Some(at) = index.layout(id) else { continue };
+            let defining = &fragments[at.fragment as usize];
+            let shape = &defining.layouts[at.index as usize];
+            let LayoutKey::Record(identity) = shape.key else { continue };
+            let mut rank = Rank::new();
+            add_rank_of_text(if shape.name.is_none() { &[] } else { defining.strs.get(shape.name) }, &mut rank);
+            if let Some(definition) = &shape.definition {
+                rank.push(definition.layout.fields.len() as u64);
+                for field in &definition.layout.fields {
+                    add_rank_of_text(defining.strs.get(field.name), &mut rank);
+                }
             }
+            rank.extend(identity);
+            ranked.push((rank, id));
         }
-        rank.extend(identity);
-        ranked.push((rank, id));
-    }
-    ranked.sort_unstable();
+        ranked.sort_unstable();
+    });
+    runs.into_iter().flat_map(|run| run.1).collect()
+}
+
+fn places_of_records(mut ranked: Vec<(Rank, u32)>, ids: &ProgramIds) -> Vec<u32> {
+    ranked.sort();
     let mut places = vec![u32::MAX; ids.layouts.bound()];
     for (place, (_, id)) in ranked.into_iter().enumerate() {
         places[id as usize] = place as u32;
@@ -854,8 +894,50 @@ fn places_of_records(fragments: &[Fragment], index: &Index, ids: &ProgramIds) ->
     places
 }
 
+const FUNCTIONS_LOOKED_AT_TOGETHER: usize = 1024;
+
+#[derive(Default)]
+struct FirstMentions {
+    places: Vec<u32>,
+    ends: Vec<[u32; 4]>,
+}
+
+fn first_mentions(fragments: &[Fragment], included: &[(At, bool)], ids: &ProgramIds, in_parallel: InParallel<'_>) -> Vec<FirstMentions> {
+    const LISTS: [usize; 4] = [Outline::STRS, Outline::TYS, Outline::LAYOUTS, Outline::GLOBALS];
+    let earliest: [Vec<AtomicU32>; 4] = [ids.bound_of_strs(), ids.bound_of_tys(), ids.layouts.bound(), ids.globals.bound()].map(|bound| (0..bound).map(|_| AtomicU32::new(0)).collect());
+    let rank_of = |position: usize| u32::MAX - position as u32;
+    let mut runs: Vec<(usize, &[(At, bool)], FirstMentions)> = (included.chunks(FUNCTIONS_LOOKED_AT_TOGETHER).enumerate()).map(|(run, functions)| (run * FUNCTIONS_LOOKED_AT_TOGETHER, functions, FirstMentions::default())).collect();
+    for_each_mut(&mut runs, in_parallel, &|(first, functions, _)| {
+        for (offset, &(at, _)) in functions.iter().enumerate().filter(|function| function.1.1) {
+            let Outline { funcs, program, .. } = &fragments[at.fragment as usize].outline;
+            let rank = rank_of(*first + offset);
+            for (list, earliest) in LISTS.into_iter().zip(&earliest) {
+                for &id in &program[funcs[at.index as usize].list(list)] {
+                    if earliest[id as usize].load(Ordering::Relaxed) < rank {
+                        earliest[id as usize].fetch_max(rank, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+    });
+    for_each_mut(&mut runs, in_parallel, &|(first, functions, found)| {
+        found.ends.reserve_exact(functions.len());
+        for (offset, &(at, has_body)) in functions.iter().enumerate() {
+            let Outline { funcs, program, .. } = &fragments[at.fragment as usize].outline;
+            let rank = rank_of(*first + offset);
+            let mut ends = [found.places.len() as u32; 4];
+            for (number, (list, earliest)) in LISTS.into_iter().zip(&earliest).enumerate().filter(|_| has_body) {
+                found.places.extend(funcs[at.index as usize].list(list).filter(|&place| earliest[program[place] as usize].load(Ordering::Relaxed) == rank).map(|place| place as u32));
+                ends[number..].fill(found.places.len() as u32);
+            }
+            found.ends.push(ends);
+        }
+    });
+    runs.into_iter().map(|run| run.2).collect()
+}
+
 impl<'a> Numbering<'a> {
-    fn new(fragments: &'a [Fragment], index: &'a Index, ids: &ProgramIds, func_ids: &[FuncId], in_parallel: InParallel<'_>) -> Numbering<'a> {
+    fn new(fragments: &'a [Fragment], index: &'a Index, ids: &ProgramIds, func_ids: &[FuncId], places_of_records: Vec<u32>, in_parallel: InParallel<'_>) -> Numbering<'a> {
         let mut maps_of: Vec<(&Fragment, Option<Maps>)> = fragments.iter().map(|fragment| (fragment, None)).collect();
         for_each_mut(&mut maps_of, in_parallel, &|(fragment, maps)| {
             *maps = Some(Maps {
@@ -884,7 +966,7 @@ impl<'a> Numbering<'a> {
             layout_ids: vec![LayoutId::NONE; ids.layouts.bound()],
             global_ids: vec![GlobalId::NONE; ids.globals.bound()],
             module_ids: FxHashMap::default(),
-            places_of_records: places_of_records(fragments, index, ids),
+            places_of_records,
             pending: VecDeque::new(),
         }
     }
@@ -902,9 +984,9 @@ impl<'a> Numbering<'a> {
         *known
     }
 
-    fn lay_strs(&mut self, in_parallel: InParallel<'_>) {
+    fn gather_strs(&self, in_parallel: InParallel<'_>) -> Vec<(Vec<u8>, Vec<u32>, Vec<u64>)> {
         const STRINGS_OF_A_RUN: usize = 4096;
-        let Numbering { fragments, strs, strs_not_laid, .. } = self;
+        let Numbering { fragments, strs_not_laid, .. } = self;
         let fragments = *fragments;
         let mut runs: Vec<(&[(u32, StrId)], Vec<u8>, Vec<u32>, Vec<u64>)> = strs_not_laid.chunks(STRINGS_OF_A_RUN).map(|run| (run, Vec::new(), Vec::new(), Vec::new())).collect();
         for_each_mut(&mut runs, in_parallel, &|(run, bytes, lengths, hashes)| {
@@ -915,9 +997,7 @@ impl<'a> Numbering<'a> {
                 hashes.push(of_fragment.hash(local));
             }
         });
-        for (_, bytes, lengths, hashes) in &runs {
-            strs.add_all(bytes, lengths, hashes);
-        }
+        runs.into_iter().map(|(_, bytes, lengths, hashes)| (bytes, lengths, hashes)).collect()
     }
 
     /// Orders the parts of a type by what they are, not by the numbers of the fragment.
@@ -1068,26 +1148,25 @@ impl<'a> Numbering<'a> {
         }
     }
 
-    fn mention_of_function(&mut self, at: At) {
+    fn mention_of_function(&mut self, at: At, [strs, tys, layouts, globals]: [&[u32]; 4]) {
         let fragments = self.fragments;
-        let Outline { funcs, local, program } = &fragments[at.fragment as usize].outline;
-        let function = &funcs[at.index as usize];
-        for i in function.list(Outline::STRS) {
+        let Outline { local, program, .. } = &fragments[at.fragment as usize].outline;
+        for i in strs.iter().map(|&place| place as usize) {
             if self.str_ids[program[i] as usize].is_none() {
                 self.str(at.fragment, StrId(local[i]));
             }
         }
-        for i in function.list(Outline::TYS) {
+        for i in tys.iter().map(|&place| place as usize) {
             if self.ty_ids[program[i] as usize].is_none() {
                 self.ty(at.fragment, TyId(local[i]));
             }
         }
-        for i in function.list(Outline::LAYOUTS) {
+        for i in layouts.iter().map(|&place| place as usize) {
             if self.layout_ids[program[i] as usize].is_none() {
                 self.layout(at.fragment, LayoutId(local[i]));
             }
         }
-        for i in function.list(Outline::GLOBALS) {
+        for i in globals.iter().map(|&place| place as usize) {
             if self.global_ids[program[i] as usize].is_none() {
                 self.global(at.fragment, GlobalId(local[i]));
             }
@@ -1516,7 +1595,7 @@ fn explain_start(program: &Program, evaluating: &[(FuncId, FuncKey)]) -> Vec<Str
                     let of_class = |func: FuncId| if program.funcs[func.idx()].kind == FuncKind::Constructor { " of a class" } else { "" };
                     let name = match op {
                         Op::Undefined | Op::Null | Op::Bool(_) | Op::Int(_) | Op::Double(_) => continue,
-                        Op::Operation { name, .. } => text_of(&program.strs, *name),
+                        Op::Operation { which, .. } => which.name().to_owned(),
                         Op::FuncRef(func) => format!("FuncRef{}", of_class(*func)),
                         Op::Closure { func, .. } => format!("Closure{}", of_class(*func)),
                         Op::CallDirect { func, .. } if program.funcs[func.idx()].kind == FuncKind::Module => "CallDirect of such a function".to_owned(),
@@ -1535,7 +1614,7 @@ fn explain_start(program: &Program, evaluating: &[(FuncId, FuncKey)]) -> Vec<Str
         .collect()
 }
 
-fn entry_function(name: StrId, anything: TyId, roots: &[FuncId], import: Option<FuncId>, first_operation: Option<StrId>) -> Func {
+fn entry_function(name: StrId, anything: TyId, roots: &[FuncId], import: Option<FuncId>, first_operation: Option<Operation>) -> Func {
     let mut func = Func {
         name,
         module: ModuleId::NONE,
@@ -1555,8 +1634,8 @@ fn entry_function(name: StrId, anything: TyId, roots: &[FuncId], import: Option<
         spans: Vec::new(),
     };
     let entry = func.add_block();
-    if let Some(name) = first_operation {
-        func.append(entry, Op::Operation { name, args: ir::Args::new() }, 0, anything);
+    if let Some(which) = first_operation {
+        func.append(entry, Op::Operation { which, args: ir::Args::new() }, 0, anything);
     }
     for &root in roots {
         func.append(entry, Op::CallDirect { func: root, args: ir::Args::new() }, 0, anything);
@@ -1799,6 +1878,7 @@ fn describe_in_tasks<'s>(
     missing: &[(Identity, TypeId)],
     index: &Index,
     ids: &ProgramIds,
+    kinds_declared: &KindsDeclared,
     in_parallel: InParallel<'_>,
     describe: Describe<'_>,
     (times, since): (&mut Times, &mut Instant),
@@ -1838,8 +1918,10 @@ fn describe_in_tasks<'s>(
                 described.push(fragment);
             }
         }
-        program.link(&mut finished, in_parallel);
-        program.publish(&mut finished, in_parallel, false);
+        kinds_declared.publish(|| {
+            program.link(&mut finished, in_parallel);
+            program.publish(&mut finished, in_parallel, false);
+        });
         times.add("barriers", since);
         slices = retried;
     }
@@ -1982,16 +2064,18 @@ impl Names {
 /// How many of the layouts that objects are made as have a field of each name that is flagged, the most first. Then those layouts, each
 /// with the fields that are flagged, those with the most first. Then what else goes by the names and is not acted on.
 /// In the functions that are written in TypeScript: how many places and reads have a type that says something. The rest holds anything, with or without a prediction.
-fn explain_given(program: &Program) -> Vec<String> {
+fn explain_given(program: &Program, is_layout_of_runtime: &[bool]) -> Vec<String> {
+    let is_own = |layout: usize| !is_layout_of_runtime.get(layout).copied().unwrap_or(false);
     let is_fact = |ty: TyId| ty.is_some() && ty != program.tys.anything;
     // Facts, and all.
     let (mut parameters, mut results, mut joins, mut fields) = ((0usize, 0usize), (0usize, 0usize), (0usize, 0usize), (0usize, 0usize));
     let (mut receivers, mut properties, mut containers, mut elements) = ((0usize, 0usize), (0usize, 0usize), (0usize, 0usize), (0usize, 0usize));
+    let mut read_through = vec![0usize; program.layouts.len()];
     let count = |counter: &mut (usize, usize), ty: TyId| {
         counter.0 += usize::from(is_fact(ty));
         counter.1 += 1;
     };
-    for func in program.funcs.iter().filter(|func| func.flags & func_flags::IS_TYPED != 0) {
+    for func in program.funcs.iter().filter(|func| func.flags & func_flags::IS_TYPED != 0 && func.flags & (func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE) == 0) {
         for &parameter in &func.params {
             count(&mut parameters, parameter);
         }
@@ -2000,8 +2084,16 @@ fn explain_given(program: &Program) -> Vec<String> {
             match &value.def {
                 ir::Def::Param(block, _) if *block != Func::ENTRY => count(&mut joins, value.ty),
                 ir::Def::Op(Op::PropGet { obj, .. }) => {
-                    count(&mut receivers, func.values[obj.idx()].ty);
+                    let receiver = func.values[obj.idx()].ty;
+                    count(&mut receivers, receiver);
                     count(&mut properties, value.ty);
+                    if receiver.is_some() {
+                        for part in &program.tys.get(receiver).parts {
+                            if let Part::Class(view) = part {
+                                read_through[view.idx()] += 1;
+                            }
+                        }
+                    }
                 }
                 ir::Def::Op(Op::ElemGet { obj, .. }) => {
                     count(&mut containers, func.values[obj.idx()].ty);
@@ -2011,7 +2103,9 @@ fn explain_given(program: &Program) -> Vec<String> {
             }
         }
     }
-    for layout in program.layouts.iter().filter(|layout| layout.kind != LayoutKind::Environment && layout.is_allocated) {
+    let mut made = 0usize;
+    for (_, layout) in program.layouts.iter().enumerate().filter(|&(index, layout)| is_own(index) && layout.kind != LayoutKind::Environment && layout.is_allocated) {
+        made += 1;
         for field in &layout.fields {
             count(&mut fields, field.declared);
         }
@@ -2030,9 +2124,16 @@ fn explain_given(program: &Program) -> Vec<String> {
     let sum = |counted: &[(usize, usize)]| counted.iter().fold((0, 0), |sum, counted| (sum.0 + counted.0, sum.1 + counted.1));
     let in_all = format!("given: facts: {} of the places, {} of the reads", share(sum(&[parameters, results, joins, fields])), share(sum(&[properties, elements])));
     // A view that admits objects that are not laid out stays a type, and every read through it tests for them.
-    let views = program.layouts.iter().filter(|layout| layout.kind != LayoutKind::Environment);
+    let views = program.layouts.iter().enumerate().filter(|&(index, layout)| is_own(index) && layout.kind != LayoutKind::Environment).map(|(_, layout)| layout);
     let strangers = format!("given: layouts that admit strangers: {}", share((views.clone().filter(|layout| layout.admits_foreign).count(), views.count())));
-    [in_all, strangers].into_iter().chain(rows.iter().map(|&(what, counted)| format!("given: {what}: {} are facts", share(counted)))).collect()
+    let made = format!("given: layouts that objects are made as: {made}");
+    let mut most_read: Vec<usize> = (0..program.layouts.len()).filter(|&view| read_through[view] > 0 && is_own(view) && program.layouts[view].name.is_some()).collect();
+    most_read.sort_by(|&a, &b| read_through[b].cmp(&read_through[a]).then_with(|| program.strs.get(program.layouts[a].name).cmp(program.strs.get(program.layouts[b].name))).then(a.cmp(&b)));
+    let named = most_read.iter().take(10).map(|&view| {
+        let layout = &program.layouts[view];
+        format!("given: read through: {}: {} reads: {}", text_of(&program.strs, layout.name), read_through[view], if layout.admits_foreign { "open" } else { "closed" })
+    });
+    [in_all, strangers, made].into_iter().chain(rows.iter().map(|&(what, counted)| format!("given: {what}: {} are facts", share(counted)))).chain(named).collect()
 }
 
 fn explain_fields(program: &Program, names: &Names) -> Vec<String> {
@@ -2277,6 +2378,10 @@ fn place_of_error(checked: &Checked<'_>, fragments: &[Fragment], index: &Index, 
         return Some(Elsewhere::Cut(start));
     }
     let Some(&number) = index.by_file.get(&file) else {
+        let in_its_place = checked.files.by_path.get(&[checked.files.module(file).file_name(), b".js"].concat());
+        if in_its_place.is_some_and(|code| reach.has_body_by_key(ids, FuncKey::Module(code))) {
+            return None;
+        }
         return if is_imported_for_types(file) { code_around(checked, file, pos).map(Elsewhere::NotReached) } else { Some(Elsewhere::NoModule) };
     };
     let fragment = &fragments[number as usize];
@@ -2362,9 +2467,11 @@ pub fn link(
         }
         spawn_beside_the_pool(scope, || {
             named_by_typeof.get_or_init(|| {
-                let mut c = checked.checker();
-                c.begin_stack_budget();
-                c.classes_named_by_typeof()
+                kinds_declared.while_nothing_is_published(|| {
+                    let mut c = checked.checker();
+                    c.begin_stack_budget();
+                    c.classes_named_by_typeof()
+                })
             });
         });
         let (stores_known, stores_awaited) = channel::<Vec<MethodStore>>();
@@ -2457,11 +2564,56 @@ fn link_beside(
         reach.key(&fragments, &index, import, true);
         reach.funcs[import as usize] |= reached::VALUE;
     }
+    for yielded in entry_points.iter().filter_map(|files| files.first()).filter_map(|&first| index.func_by_key(ids, FuncKey::NamespaceForHost(first))) {
+        reach.key(&fragments, &index, yielded, true);
+        reach.funcs[yielded as usize] |= reached::VALUE;
+    }
     // No code outside a module of the runtime names a function of it, so one that cannot be translated is left out by itself.
     let mut builtin_modules_left_out: Vec<(u32, Problem)> = Vec::new();
     let mut builtin_functions_left_out: Vec<(u32, Problem)> = Vec::new();
     let mut builtin_roots: Vec<(u32, FuncKey)> = Vec::new();
     let number_of: FxHashMap<FileId, usize> = fragments.iter().enumerate().map(|(number, fragment)| (fragment.file, number)).collect();
+    let files_with_doors = checked.files.modules.iter().filter(|module| !module.doors_to_the_loader.is_empty()).count();
+    let mut doors_have_places = files_with_doors != 0;
+    if doors_have_places {
+        let c = checked.checker();
+        let mut files_seen: FxHashSet<FileId> = FxHashSet::default();
+        for (number, fragment) in fragments.iter().enumerate().filter(|it| it.1.file != NO_FILE) {
+            let file = fragment.file;
+            let places = checked.files.module(file).doors_to_the_loader;
+            if places.is_empty() {
+                continue;
+            }
+            files_seen.insert(file);
+            let hir = checked.files.hir(file);
+            let holders: FxHashSet<Option<hir::FnId>> = places
+                .iter()
+                .filter(|place| place.is_none() || checked.files.enclosing_cut_start(file, hir[**place].pos).is_none())
+                .map(|&place| {
+                    let mut holder = if place.is_none() { None } else { c.enclosing_fn_of_expr(file, place) };
+                    while let Some(member) = holder.filter(|&member| matches!(hir[member].kind, hir::FnKind::Method | hir::FnKind::Getter | hir::FnKind::Setter) && hir[place].pos < hir[member].anchor) {
+                        holder = checked.files.bound(file).fns[member.idx()].enclosing.some();
+                    }
+                    holder
+                })
+                .collect();
+            let mut defined: FxHashSet<Option<hir::FnId>> = FxHashSet::default();
+            defined.insert(None);
+            for (index, function) in fragment.funcs.iter().enumerate() {
+                let held: [Option<hir::FnId>; 2] = match function.key {
+                    FuncKey::Function(_, held) | FuncKey::TypedBody(_, held) | FuncKey::EntryBeside(_, held) => [Some(held), Some(held)],
+                    FuncKey::SecondBody(_, held, root) => [Some(held), Some(root)],
+                    _ => [None, None],
+                };
+                defined.extend(held);
+                if held.iter().any(|held| holders.contains(held)) {
+                    reach.doors_to_the_loader.insert(At::new(number, index));
+                }
+            }
+            doors_have_places &= holders.iter().all(|holder| defined.contains(holder));
+        }
+        doors_have_places &= files_seen.len() == files_with_doors;
+    }
     for &(id, file) in builtin_modules {
         let Some(evaluation) = index.func_by_key(ids, FuncKey::Module(file)) else { continue };
         let fragment = &fragments[number_of[&file]];
@@ -2471,15 +2623,20 @@ fn link_beside(
             Some(&Problem { file, pos, ref what }) => builtin_modules_left_out.push((id, Problem { file, pos, what: what.clone() })),
             None => {
                 builtin_roots.push((id, FuncKey::Module(file)));
-                reach.runtime_by_number.insert(i64::from(id), file);
-                reach.evaluations_of_runtime.insert(file, evaluation);
                 let name: &[u8] = bun_builtin_syntax::Archive::embedded().manifest().module(id).map_or(&[][..], |module| &module.name);
-                reach.runtime_by_name.insert(name.to_vec(), file);
-                if let Some(short) = name.strip_prefix(b"node:") {
-                    reach.runtime_by_name.insert(short.to_vec(), file);
+                let loaded_by = match checked.files.module(file).builtin {
+                    Some(Builtin::Module(_, loaded_by)) => loaded_by,
+                    _ => LoadedBy::RuntimeModulesOnly,
+                };
+                if doors_have_places && matches!(loaded_by, LoadedBy::ComputedName | LoadedBy::RuntimeModulesBehindADoor) {
+                    reach.runtime_hidden_behind_doors.push((i64::from(id), name.to_vec(), file, evaluation));
+                } else {
+                    reach.add_runtime_module(i64::from(id), name, file, evaluation);
                 }
-                if matches!(checked.files.module(file).builtin, Some(Builtin::Module(_, LoadedBy::NativeCodeOrWrittenName | LoadedBy::ComputedName))) {
-                    reach.key(&fragments, &index, evaluation, true);
+                match loaded_by {
+                    LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName if doors_have_places => reach.runtime_behind_doors.push(evaluation),
+                    LoadedBy::NativeCodeOrWrittenName | LoadedBy::ComputedName | LoadedBy::RuntimeModulesOrComputedName => reach.key(&fragments, &index, evaluation, true),
+                    LoadedBy::RuntimeModulesOnly | LoadedBy::RuntimeModulesBehindADoor => {}
                 }
             }
         }
@@ -2487,7 +2644,11 @@ fn link_beside(
     let runtime_helpers = checked.files.by_path.get(&crate::prelude::path_of(shown_from, crate::prelude::RUNTIME_HELPERS.0)).map(FuncKey::NamespaceForHost);
     if let Some((namespace, id)) = runtime_helpers.and_then(|namespace| Some((namespace, index.func_by_key(ids, namespace)?))) {
         builtin_roots.push((0x7fff_fffe, namespace));
-        reach.key(&fragments, &index, id, true);
+        if doors_have_places {
+            reach.runtime_behind_doors.push(id);
+        } else {
+            reach.key(&fragments, &index, id, true);
+        }
     }
     if let Some((files, id)) = entry_points.iter().filter_map(|files| files.first()).map(|&first| FuncKey::FilesByPath(first)).find_map(|files| Some((files, index.func_by_key(ids, files)?))) {
         builtin_roots.push((0x7fff_ffff, files));
@@ -2613,7 +2774,7 @@ fn link_beside(
             problems.push(by.problem(&fragments, nowhere, format!("a type that expands without end, such as {} (used by {})", name_of_layout(&fragments, at), by.name(&fragments))));
             break;
         }
-        let (described, has_run_out) = describe_in_tasks(checked, &missing, &index, ids, in_parallel, describe, (&mut times, &mut since));
+        let (described, has_run_out) = describe_in_tasks(checked, &missing, &index, ids, kinds_declared, in_parallel, describe, (&mut times, &mut since));
         ran_out_of_stack |= has_run_out;
         let described_fragments = described.len();
         index.grow(ids);
@@ -2749,7 +2910,13 @@ fn link_beside(
     }
     let func_ids = func_ids;
     let mut funcs_of: Vec<Vec<Function>> = fragments.iter_mut().map(|fragment| std::mem::take(&mut fragment.funcs)).collect();
-    let mut numbering = Numbering::new(&fragments, &index, ids, &func_ids.by_program_id, in_parallel);
+    let ranks_of_records = ranks_of_records(&fragments, &index, ids, in_parallel);
+    let (places_of_records, first_mentions) = std::thread::scope(|scope| {
+        let places = spawn_beside_the_pool(scope, || places_of_records(ranks_of_records, ids));
+        let first_mentions = first_mentions(&fragments, &included, ids, in_parallel);
+        (places.join().expect("the thread that places the records panicked"), first_mentions)
+    });
+    let mut numbering = Numbering::new(&fragments, &index, ids, &func_ids.by_program_id, places_of_records, in_parallel);
     numbering.str_ids[name_of_entry as usize] = numbering.strs.intern(b"main");
     let name_of_entry = numbering.str_ids[name_of_entry as usize];
     // A module for each file that has a function in the program, in the order of those.
@@ -2774,14 +2941,16 @@ fn link_beside(
     // By layout: a function of the runtime is the first to lead to it. Those of the program come first: so nothing of the program leads to it.
     let mut is_layout_of_runtime: Vec<bool> = Vec::new();
     let mut module_before = (u32::MAX, ModuleId::NONE);
-    for &(at, has_body) in &included {
+    for (position, &(at, has_body)) in included.iter().enumerate() {
         let outline = &fragments[at.fragment as usize].outline;
         let function = &outline.funcs[at.index as usize];
         if has_body {
             if std::mem::replace(&mut module_before, (at.fragment, function.module)) != (at.fragment, function.module) {
                 numbering.module(at.fragment, function.module);
             }
-            numbering.mention_of_function(at);
+            let (FirstMentions { places, ends }, offset) = (&first_mentions[position / FUNCTIONS_LOOKED_AT_TOGETHER], position % FUNCTIONS_LOOKED_AT_TOGETHER);
+            let mut start = offset.checked_sub(1).map_or(0, |before| ends[before][3]);
+            numbering.mention_of_function(at, ends[offset].map(|end| &places[std::mem::replace(&mut start, end) as usize..end as usize]));
         } else {
             numbering.header_of_function(at);
         }
@@ -2820,10 +2989,12 @@ fn link_beside(
         noted: [Noted; 2],
         lost: [Vec<(Identity, Problem)>; 2],
     }
-    let mut notes_of: Vec<NotesOf<'_>> = (funcs_of.iter_mut().zip(&fragments).zip(included_by_fragment.iter().copied()))
-        .filter(|(_, functions)| functions.iter().any(|group| !group.is_empty()))
-        .map(|((funcs, fragment), functions)| NotesOf { program_ids: &fragment.program_ids.funcs, funcs, functions, noted: Default::default(), lost: Default::default() })
-        .collect();
+    let mut notes_of: Vec<NotesOf<'_>> = Vec::with_capacity(included_by_fragment.iter().filter(|functions| functions.iter().any(|group| !group.is_empty())).count());
+    notes_of.extend(
+        (funcs_of.iter_mut().zip(&fragments).zip(included_by_fragment.iter().copied()))
+            .filter(|(_, functions)| functions.iter().any(|group| !group.is_empty()))
+            .map(|((funcs, fragment), functions)| NotesOf { program_ids: &fragment.program_ids.funcs, funcs, functions, noted: Default::default(), lost: Default::default() }),
+    );
     for_each_mut(&mut notes_of, in_parallel, &|of| {
         for (group, functions) in of.functions.iter().enumerate() {
             let (noted, lost) = (&mut of.noted[group], &mut of.lost[group]);
@@ -2869,9 +3040,20 @@ fn link_beside(
     drop(notes_of);
     numbered.join().expect("the thread that numbers panicked")
     });
-    numbering.lay_strs(in_parallel);
-    numbering.fill_maps(&included_by_fragment, in_parallel);
-    numbering.number_parts_of_types(in_parallel);
+    let gathered = numbering.gather_strs(in_parallel);
+    let mut strs = std::mem::take(&mut numbering.strs);
+    std::thread::scope(|scope| {
+        let laid = spawn_beside_the_pool(scope, || {
+            strs.make_room_for_bytes(gathered.iter().map(|run| run.0.len()).sum());
+            for (bytes, lengths, hashes) in &gathered {
+                strs.add_all(bytes, lengths, hashes);
+            }
+        });
+        numbering.fill_maps(&included_by_fragment, in_parallel);
+        numbering.number_parts_of_types(in_parallel);
+        laid.join().expect("the thread that lays the strings panicked");
+    });
+    numbering.strs = strs;
     let Numbering { maps, strs, tys, layouts, globals, modules, str_ids, layout_ids, global_ids, .. } = numbering;
     for (fragment, funcs) in fragments.iter_mut().zip(funcs_of) {
         fragment.funcs = funcs;
@@ -2908,9 +3090,9 @@ fn link_beside(
     for entry_point in entry_points {
         // A file that only declares has no code to start with.
         let run: Vec<FuncId> = entry_point.iter().filter_map(|&root| func_ids.get(FuncKey::Module(root))).collect();
-        let import = entry_point.first().and_then(|&first| func_ids.get(FuncKey::DynamicImport(first, false)));
+        let import = entry_point.first().and_then(|&first| func_ids.get(FuncKey::NamespaceForHost(first)).or_else(|| func_ids.get(FuncKey::DynamicImport(first, false))));
         let is_commonjs = shows_whole_paths && entry_point.first().is_some_and(|&first| checked.files.module(first).is_commonjs() || checked.files.module(first).file_name().ends_with(b".cjs"));
-        let first_operation = is_commonjs.then(|| program.strs.intern(b"NoteCommonJSEntryPoint"));
+        let first_operation = is_commonjs.then_some(Operation::NoteCommonJSEntryPoint);
         program.funcs.push(entry_function(name_of_entry, program.tys.anything, &run, import, first_operation));
     }
     // By layout: the type it stands for, the class it is of, and the class that it constructs by its value.
@@ -2936,6 +3118,8 @@ fn link_beside(
         }
         *taken = Some(definition);
     });
+    program.layouts.reserve_exact(taken.len());
+    views.reserve_exact(taken.len());
     for (id, (at, shape, definition)) in taken.into_iter().enumerate() {
         let Definition { layout, mentions: _, constructs, notes: of_layout, problems: mut of_declaration } = *definition.expect("every layout has been taken");
         program.layouts.push(layout);
@@ -2960,7 +3144,6 @@ fn link_beside(
         number_flows: [Vec<(FileId, NumberFlow<StrId>)>; 2],
         regexp_literals: Vec<(StrId, StrId)>,
     }
-    let literal = program.strs.find(b"RegExpLiteral");
     let marks = Marks { names: (0..program.strs.len()).map(|_| AtomicU8::new(0)).collect(), is_copied_to: (0..program.tys.list.len()).map(|_| AtomicBool::new(false)).collect() };
     for func in &program.funcs {
         marks.add(func, &program.layouts, &mut Vec::new(), &mut Vec::new());
@@ -3020,12 +3203,9 @@ fn link_beside(
             if reach.has(program_ids.funcs[at.index as usize], reached::VALUE) {
                 func.flags |= func_flags::IS_VALUE;
             }
-            if let Some(literal) = literal
-                && !modules.get(func.module.idx()).is_some_and(|file| of_the_runtime.contains(file))
-            {
+            if !modules.get(func.module.idx()).is_some_and(|file| of_the_runtime.contains(file)) {
                 for value in &func.values {
-                    if let Def::Op(Op::Operation { name, args }) = &value.def
-                        && *name == literal
+                    if let Def::Op(Op::Operation { which: Operation::RegExpLiteral, args }) = &value.def
                         && let [pattern, flags] = args[..]
                         && let (Some(pattern), Some(flags)) = (constant_string(&func, pattern), constant_string(&func, flags))
                     {
@@ -3038,6 +3218,10 @@ fn link_beside(
             place.write(func);
         }
     });
+    classes_as_values.reserve_exact(runs.iter().map(|run| run.classes_as_values.len()).sum());
+    stored_besides.reserve_exact(runs.iter().map(|run| run.stored_besides.len()).sum());
+    number_flows.reserve_exact(runs.iter().map(|run| run.number_flows[0].len()).sum());
+    flows_of_runtime.reserve_exact(runs.iter().map(|run| run.number_flows[1].len()).sum());
     for mut run in runs {
         problems.append(&mut run.problems);
         classes_as_values.append(&mut run.classes_as_values);
@@ -3328,6 +3512,7 @@ fn link_beside(
     membership
     });
     times.add("type texts", &mut since);
+    checked.release_tables_of_expressions();
     let _ = std::thread::Builder::new().spawn(move || drop((fragments, index, reach, maps, types, seen, included, layout_ids, global_ids)));
     say("the subtypes are found");
     if ran_out_of_stack || has_run_out || c.take_ran_out_of_stack() {
@@ -3498,7 +3683,8 @@ fn link_beside(
     say("the texts of the types");
     let mut explained = Vec::new();
     if explain.foreign {
-        explained.append(&mut c.explain_foreign(&asked, &membership));
+        let is_left_out: Vec<bool> = views.iter().map(|view| !explain.includes_builtin_modules && is_layout_of_runtime.get(view.0.idx()).copied().unwrap_or(false)).collect();
+        explained.append(&mut c.explain_foreign(&asked, &membership, &is_left_out));
     }
     if explain.alterations {
         explained.append(&mut c.explain_alterations(&membership));
@@ -3562,7 +3748,7 @@ fn link_beside(
     }
     if explain.given {
         explained.append(&mut opened_for_the_log);
-        explained.append(&mut explain_given(&program));
+        explained.append(&mut explain_given(&program, &is_layout_of_runtime));
         let (in_part, by_looks, all) = checked.checker().count_unions_given_in_part();
         explained.push(format!("given: written unions of records that are given in part: {in_part} of {all}; in {by_looks} of them no member was found: one only looks like what is given"));
     }

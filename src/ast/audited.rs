@@ -14,17 +14,32 @@ pub struct AuditedParameter {
     pub id: u32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuditedValidation {
+    pub next: u32,
+    pub start: u32,
+    pub which: u8,
+    pub plan: Box<[u8]>,
+}
+
 #[derive(Default)]
 pub struct AuditedFile {
     pub hash_of_text: u64,
     pub expressions: Vec<AuditedExpression>,
     pub parameters: Vec<AuditedParameter>,
+    pub validations: Vec<AuditedValidation>,
 }
 
 impl AuditedFile {
     pub fn sort(&mut self) {
         self.expressions.sort_unstable_by_key(|it| (it.next, core::cmp::Reverse(it.start)));
         self.parameters.sort_unstable_by_key(|it| (it.function, it.index));
+        self.validations.sort_unstable_by_key(|it| (it.next, it.start));
+    }
+
+    pub fn validation_at(&self, start: u32, next: u32) -> Option<&AuditedValidation> {
+        let at = self.validations.binary_search_by_key(&(next, start), |it| (it.next, it.start)).ok()?;
+        Some(&self.validations[at])
     }
 
     pub fn ending_before(&self, next: u32) -> &[AuditedExpression] {
@@ -80,6 +95,16 @@ pub fn set_source_of_tables(source: SourceOfTables) {
 
 pub fn is_on() -> bool {
     SOURCE_OF_TABLES.get().is_some()
+}
+
+static KEEPS_DIRECTIVES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn keep_directives() {
+    KEEPS_DIRECTIVES.store(true, std::sync::atomic::Ordering::Release);
+}
+
+pub fn keeps_directives() -> bool {
+    KEEPS_DIRECTIVES.load(std::sync::atomic::Ordering::Acquire)
 }
 
 pub fn table_for(path: &[u8], text: &[u8]) -> Option<&'static AuditedFile> {

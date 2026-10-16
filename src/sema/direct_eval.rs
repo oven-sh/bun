@@ -1,46 +1,31 @@
 use crate::atom::{Atom, Interner};
-use crate::bind::{Bound, Decl, PatParent, ScopeId, ScopeKind, SymFlags, SymbolId};
-use crate::hir::{Chain, ClassId, ExprId, ExprKind, File, FnBody, FnKind, IdList, PropKey, StmtId, StmtKind, VarKind};
+use crate::bind::{Bound, ClassOwner, Decl, Parent, PatParent, ScopeId, ScopeKind, SymFlags, SymbolId};
+use crate::hir::{BinOp, Chain, ClassId, ExprId, ExprKind, File, FnBody, FnKind, IdList, PropKey, StmtId, StmtKind, VarKind};
 use crate::util::FxHashSet;
+use std::cell::RefCell;
 
 pub const KEY_OF_SCOPE: &[u8] = b"\0eval";
 
-pub const END_OF_INSERTIONS: &[u8] = b" (bun --aot: where direct evals were given their scopes)";
-
-fn insertions_noted_in(text: &[u8]) -> Option<(usize, &[u8])> {
-    let noted = text.strip_suffix(END_OF_INSERTIONS)?;
-    let start = bun_core::strings::last_index_of_char(noted, b'\n')?;
-    let list = noted[start..].strip_prefix(b"\n//")?;
-    list.iter().all(|c| c.is_ascii_digit() || matches!(c, b' ' | b'+')).then_some((start, list))
+pub fn position_in_source(inserted: &[(u32, u32)], pos: u32) -> u32 {
+    locate_in_source(inserted, pos).0
 }
 
-pub fn text_without_note_of_insertions(text: &[u8]) -> &[u8] {
-    insertions_noted_in(text).map_or(text, |(start, _)| &text[..start])
+pub fn is_inserted(inserted: &[(u32, u32)], pos: u32) -> bool {
+    locate_in_source(inserted, pos).1
 }
 
-pub fn position_in_source(text: &[u8], pos: u32) -> u32 {
-    locate_in_source(text, pos).0
-}
-
-pub fn is_inserted(text: &[u8], pos: u32) -> bool {
-    locate_in_source(text, pos).1
-}
-
-fn locate_in_source(text: &[u8], pos: u32) -> (u32, bool) {
-    let Some((_, noted)) = insertions_noted_in(text) else { return (pos, false) };
-    let mut inserted = 0;
-    for entry in bun_core::strings::split(noted, b" ").filter(|entry| !entry.is_empty()) {
-        let mut numbers = bun_core::strings::split(entry, b"+").map(|digits| digits.iter().fold(0u32, |n, c| n.saturating_mul(10).saturating_add(u32::from(c - b'0'))));
-        let (Some(at), Some(len)) = (numbers.next(), numbers.next()) else { break };
-        if pos < at + inserted {
+fn locate_in_source(inserted: &[(u32, u32)], pos: u32) -> (u32, bool) {
+    let mut ahead = 0;
+    for &(at, len) in inserted {
+        if pos < at + ahead {
             break;
         }
-        if pos < at + inserted + len {
+        if pos < at + ahead + len {
             return (at, true);
         }
-        inserted += len;
+        ahead += len;
     }
-    (pos - inserted, false)
+    (pos - ahead, false)
 }
 
 const RESERVED: [&[u8]; 47] = [
@@ -58,15 +43,24 @@ struct Rewriting<'a, 's> {
     hir: &'a File<'s>,
     bound: &'a Bound<'s>,
     atoms: &'a Interner<'s>,
+    classes_stored_to_by_evals: RefCell<FxHashSet<ClassId>>,
     insertions: Vec<(u32, Vec<u8>)>,
 }
 
-pub fn give_direct_evals_their_scopes<'s>(hir: &File<'s>, bound: &Bound<'s>, atoms: &Interner<'s>) -> Option<Vec<u8>> {
+struct ClassDeclaration {
+    class: ClassId,
+    start: u32,
+    keyword: u32,
+    end: u32,
+}
+
+pub fn give_direct_evals_their_scopes<'s>(hir: &File<'s>, bound: &Bound<'s>, atoms: &Interner<'s>) -> Option<(Vec<u8>, Vec<(u32, u32)>)> {
     if hir.has_errors || hir.text.is_empty() {
         return None;
     }
-    let mut it = Rewriting { hir, bound, atoms, insertions: Vec::new() };
+    let mut it = Rewriting { hir, bound, atoms, classes_stored_to_by_evals: RefCell::default(), insertions: Vec::new() };
     it.add_scopes_of_direct_evals();
+    it.add_variables_of_classes_that_are_stored_to();
     if it.insertions.is_empty() {
         return None;
     }
@@ -81,12 +75,8 @@ pub fn give_direct_evals_their_scopes<'s>(hir: &File<'s>, bound: &Bound<'s>, ato
         copied = at;
     }
     rewritten.extend_from_slice(&text[copied..]);
-    rewritten.extend_from_slice(b"\n//");
-    for (at, inserted) in &it.insertions {
-        rewritten.extend_from_slice(format!(" {}+{}", (*at as usize).min(text.len()), inserted.len()).as_bytes());
-    }
-    rewritten.extend_from_slice(END_OF_INSERTIONS);
-    Some(rewritten)
+    let inserted = it.insertions.iter().map(|(at, inserted)| ((*at).min(text.len() as u32), inserted.len() as u32)).collect();
+    Some((rewritten, inserted))
 }
 
 impl<'a, 's> Rewriting<'a, 's> {
@@ -120,11 +110,63 @@ impl<'a, 's> Rewriting<'a, 's> {
         self.hir.exprs.iter().enumerate().any(|(i, e)| matches!(e.kind, ExprKind::Ident(_)) && self.bound.expr_symbol[i] == symbol)
     }
 
-    fn is_assignable(&self, symbol: SymbolId) -> bool {
+    fn class_declaration(&self, symbol: SymbolId) -> Option<ClassDeclaration> {
+        let (hir, bound) = (self.hir, self.bound);
+        let of = &bound.symbols[symbol.idx()];
+        let mut decls = of.decls.iter();
+        let (Some(&Decl::Class(class)), None) = (decls.next(), decls.next()) else { return None };
+        let ClassOwner::Stmt(stmt) = bound.class_owner[class.idx()] else { return None };
+        if !hir.is_js || hir[class].name.is_none() {
+            return None;
+        }
+        let (start, end) = (hir[stmt].start, hir[stmt].loc.end);
+        let text: &[u8] = &hir.text;
+        let written = text.get(start as usize..end as usize)?;
+        let keyword = if written.starts_with(b"class") {
+            0
+        } else {
+            let exported = written.strip_prefix(b"export")?;
+            let blanks = exported.iter().take_while(|c| c.is_ascii_whitespace()).count();
+            (blanks > 0 && exported[blanks..].starts_with(b"class")).then_some(b"export".len() + blanks)?
+        };
+        Some(ClassDeclaration { class, start, keyword: start + keyword as u32, end })
+    }
+
+    fn add_variables_of_classes_that_are_stored_to(&mut self) {
+        let (hir, bound) = (self.hir, self.bound);
+        let by_evals = self.classes_stored_to_by_evals.take();
+        for stmt in hir.stmts.iter() {
+            let StmtKind::Class(class) = stmt.kind else { continue };
+            let symbol = bound.class_symbol[class.idx()];
+            if symbol.is_none() {
+                continue;
+            }
+            let Some(declaration) = self.class_declaration(symbol) else { continue };
+            let is_stored_to = |&(_, target): &(SymbolId, ExprId)| {
+                let never_stores = matches!(bound.expr_parent[target.idx()], Parent::Expr(parent) if parent.is_some()
+                    && matches!(hir[parent].kind, ExprKind::Assign { op: Some(BinOp::Or | BinOp::Nullish), target: assigned, .. } if assigned == target));
+                !never_stores && !(declaration.start <= hir[target].pos && hir[target].pos < declaration.end)
+            };
+            if by_evals.contains(&class) || bound.assignments_to(symbol).iter().any(is_stored_to) {
+                self.insertions.push((declaration.keyword, [&b"let "[..], self.atoms.bytes(hir[class].name), b"="].concat()));
+                self.insertions.push((declaration.end, b";".to_vec()));
+            }
+        }
+    }
+
+    fn is_assignable(&self, symbol: SymbolId, from: u32) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let of = &bound.symbols[symbol.idx()];
         if !of.flags.intersects(SymFlags::VARIABLE) {
-            return hir.is_js && of.flags.contains(SymFlags::FUNCTION) && !of.flags.intersects(SymFlags::CLASS | SymFlags::ALIAS);
+            if !hir.is_js || of.flags.contains(SymFlags::ALIAS) {
+                return false;
+            }
+            if !of.flags.contains(SymFlags::CLASS) {
+                return of.flags.contains(SymFlags::FUNCTION);
+            }
+            let Some(declaration) = self.class_declaration(symbol).filter(|it| !(it.start <= from && from < it.end)) else { return false };
+            self.classes_stored_to_by_evals.borrow_mut().insert(declaration.class);
+            return true;
         }
         of.decls.iter().all(|decl| match *decl {
             Decl::Var(mut pat) | Decl::Require(mut pat) => {
@@ -140,13 +182,14 @@ impl<'a, 's> Rewriting<'a, 's> {
     fn starts_with_use_strict(&self, body: IdList<StmtId>) -> bool {
         let hir = self.hir;
         for stmt in hir.ids(body) {
-            match hir[stmt].kind {
-                StmtKind::Expr(e) => match hir[e].kind {
-                    ExprKind::String(text) if self.atoms.bytes(text) == b"use strict" => return true,
-                    ExprKind::String(_) => {}
-                    _ => return false,
-                },
-                _ => return false,
+            let StmtKind::Expr(e) = hir[stmt].kind else { return false };
+            let ExprKind::String(text) = hir[e].kind else { return false };
+            let written = hir.text.get(hir[stmt].start as usize..).filter(|_| !hir.text.is_empty());
+            if written.is_some_and(|written| !matches!(written.first(), Some(b'"' | b'\''))) {
+                return false;
+            }
+            if self.atoms.bytes(text) == b"use strict" && written.is_none_or(|written| matches!(written.get(..12), Some(b"\"use strict\"" | b"'use strict'"))) {
+                return true;
             }
         }
         false
@@ -169,6 +212,8 @@ impl<'a, 's> Rewriting<'a, 's> {
         let mut new_target: Option<Option<&[u8]>> = None;
         let mut is_in_field = false;
         let mut has_super = false;
+        let mut is_in_constructor = false;
+        let mut may_lack_this = false;
         let mut private_names: Vec<u8> = Vec::new();
         let mut scope = innermost;
         while scope.is_some() {
@@ -200,6 +245,7 @@ impl<'a, 's> Rewriting<'a, 's> {
                         FnKind::Constructor => {
                             new_target = Some(Some(b"new.target"));
                             has_super = true;
+                            is_in_constructor = true;
                         }
                         FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::StaticBlock => {
                             new_target = Some(Some(b"void 0"));
@@ -216,6 +262,7 @@ impl<'a, 's> Rewriting<'a, 's> {
                 }
             }
             if let ScopeKind::Class(class) = at.kind {
+                may_lack_this |= std::mem::take(&mut is_in_constructor) && hir[class].extends.is_some();
                 for member in hir[class].members.iter() {
                     if let PropKey::Private(name) = hir[member].key {
                         let name = self.atoms.bytes(name);
@@ -235,7 +282,13 @@ impl<'a, 's> Rewriting<'a, 's> {
             parameter.push(b'_');
         }
         let is_this_of_module = has_arguments.is_none() && bound.commonjs_indicator.is_none();
-        let mut text = if is_this_of_module { b"(void{\"\\u0000eval\":void 0,__proto__:null".to_vec() } else { b"(void{\"\\u0000eval\":this,__proto__:null".to_vec() };
+        let mut text = if is_this_of_module {
+            b"(void{\"\\u0000eval\":void 0,__proto__:null".to_vec()
+        } else if may_lack_this {
+            b"(void{\"\\u0000eval\":(()=>{try{return this}catch{}})(),__proto__:null".to_vec()
+        } else {
+            b"(void{\"\\u0000eval\":this,__proto__:null".to_vec()
+        };
         if has_arguments == Some(true) {
             text.extend_from_slice(b",arguments:arguments");
         }
@@ -281,7 +334,7 @@ impl<'a, 's> Rewriting<'a, 's> {
             for part in [&b",get "[..], name, b"(){return ", name, b"}"] {
                 text.extend_from_slice(part);
             }
-            if self.is_assignable(symbol) {
+            if self.is_assignable(symbol, pos) {
                 for part in [&b",set "[..], name, b"(", &parameter, b"){", name, b"=", &parameter, b"}"] {
                     text.extend_from_slice(part);
                 }

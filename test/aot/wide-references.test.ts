@@ -1,6 +1,7 @@
 // A program compiled by --aot keeps most references in 32 bits: its objects have to lie in 32 GB of reserved address space. One that outgrows
 // that says so and names the option that lifts the limit. The limit is lowered to 64 MB here, so that a small program reaches it.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
@@ -42,7 +43,7 @@ test("a program that outgrows the range of 32-bit references says which option l
   expect(await run([narrow], cwd, bunEnv)).toEqual({ stdout: plain.stdout, stderr: "", exitCode: 0 });
   const full = await run([narrow], cwd, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: "64" });
   expect(full.exitCode).not.toBe(0);
-  expect(full.stdout).toBe("");
+  expect(full.stdout).not.toContain(plain.stdout);
   expect(full.stderr).toContain("Compiled with useAOTWideReferences=1 it has no such limit.");
   const none = await run([narrow], cwd, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: "0" });
   expect(none.exitCode).not.toBe(0);

@@ -3,7 +3,7 @@
 use crate::declared::Part;
 use crate::format::{Opcode, end_of, record};
 use crate::id::{FuncId, StrId, TyId, V};
-use crate::ir::{LayoutKind, Literal, Prediction, Program, Target, Term, Why, class_flags, method_flags, only_function_flags};
+use crate::ir::{LayoutKind, Literal, Operation, Prediction, Program, Target, Term, Why, class_flags, method_flags, only_function_flags};
 use std::fmt::Write;
 
 impl Program {
@@ -330,10 +330,12 @@ impl Program {
                         | Opcode::PutById
                         | Opcode::InById
                         | Opcode::DeleteById
-                        | Opcode::CallMethod
-                        | Opcode::Operation => {
+                        | Opcode::CallMethod => {
                             o.push(' ');
                             self.quoted(o, StrId(r.immediates[0]));
+                        }
+                        Opcode::Operation => {
+                            let _ = write!(o, " \"{}\"", Operation::numbered(r.immediates[0]).map_or("?", Operation::name));
                         }
                         Opcode::FunctionReference | Opcode::NewClosure | Opcode::CallDirect => {
                             let _ = write!(o, " f{}", r.immediates[0]);

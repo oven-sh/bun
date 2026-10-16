@@ -15,7 +15,7 @@ declare namespace FU {
   // ---------------------------------------------------------------------------------------------------------------------
   // 1. Numbers. An int32 takes four bytes; storing anything else there throws at run time.
   // ---------------------------------------------------------------------------------------------------------------------
-  type int32 = number;
+  type int32 = import("bun").int32;
   type DocIndex = int32; // IndexRecord.i, InternalResult.idx, FuseResult.refIndex: where the item stands in the user's list. forEach's index (344 349) or records.length (358); `-= 1` at 372. A carried index brings its own: section E
   type ItemIndex = int32; // ArrayEntry.i, Match.idx, ResultMatch.refIndex, StackItem.nestedArrIndex: where a string stands in its array. forEach's index (425); -1 for the stack's first item (407)
   type KeyIndex = int32; // where a key stands in FuseIndex.keys: KeysMap's values, the keys of RecordEntries

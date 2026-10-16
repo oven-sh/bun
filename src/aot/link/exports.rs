@@ -1,6 +1,6 @@
 use crate::fragment::{Fragment, FuncKey, Mentioning};
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, V};
-use crate::ir::{self, Def, Func, FuncKind, Op, Term, Why, func_flags};
+use crate::ir::{self, Def, Func, FuncKind, Op, Operation, Term, Why, func_flags};
 use bun_sema::program::FileId;
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::FxHashMap;
@@ -194,12 +194,11 @@ fn uses_of(fragment: &Fragment, starts_in: FuncId, start: V, is_promise: bool) -
                         Some(&Op::PropGet { obj, name }) if obj == held => uses.methods_called.push(fragment.strs.get(name).to_vec()),
                         _ => uses.gets_away = true,
                     },
-                    Op::Operation { name, ref args }
+                    Op::Operation { which: Operation::DefineField, ref args }
                         if next.is_awaited
                             && times_used == 1
                             && args.len() == 3
                             && args[0] == held
-                            && fragment.strs.get(name) == b"DefineField"
                             && matches!(func.op(args[1]), Some(&Op::Str(key)) if fragment.strs.get(key) == b"__esModule")
                             && matches!(func.op(args[2]), Some(Op::Bool(_))) =>
                     {
@@ -289,7 +288,7 @@ fn stores_what_may_read_this(fragment: &Fragment, func: &Func, stored: V) -> boo
 fn names_of_namespace(fragment: &Fragment, func: &Func, file: FileId) -> Option<Vec<Vec<u8>>> {
     let made: Vec<&ir::Args> = (func.values.iter())
         .filter_map(|value| match &value.def {
-            Def::Op(Op::Operation { name, args }) if fragment.strs.get(*name) == b"MakeModuleNamespace" => Some(args),
+            Def::Op(Op::Operation { which: Operation::MakeModuleNamespace, args }) => Some(args),
             _ => None,
         })
         .collect();
@@ -303,16 +302,25 @@ fn names_of_namespace(fragment: &Fragment, func: &Func, file: FileId) -> Option<
 
 pub(super) fn drop_exports_nobody_reads(fragments: &mut [Fragment], entry_points: &[Vec<FileId>], in_parallel: InParallel<'_>) -> (usize, usize, usize) {
     let mut namespaces: FxHashMap<FileId, Namespace> = FxHashMap::default();
-    for fragment in fragments.iter() {
-        for function in fragment.funcs.iter().filter(|function| function.body.is_some()) {
-            let (FuncKey::NamespaceObject(file, _), Some(func)) = (function.key, &function.func) else { continue };
-            if !func.values.iter().any(|value| matches!(&value.def, Def::Op(Op::Operation { name, .. }) if fragment.strs.get(*name) == b"MakeModuleNamespace")) {
-                continue;
+    let mut looked_at: Vec<(&Fragment, Vec<(FileId, Option<Vec<Vec<u8>>>)>, Vec<u32>)> = fragments.iter().map(|fragment| (fragment, Vec::new(), Vec::new())).collect();
+    for_each_mut(&mut looked_at, in_parallel, &|(fragment, made, readers)| {
+        let fragment: &Fragment = *fragment;
+        for (index, function) in fragment.funcs.iter().enumerate().filter(|function| function.1.body.is_some()) {
+            match (function.key, &function.func) {
+                (FuncKey::NamespaceObject(file, _), Some(func)) => {
+                    if func.values.iter().any(|value| matches!(&value.def, Def::Op(Op::Operation { which: Operation::MakeModuleNamespace, .. }))) {
+                        made.push((file, names_of_namespace(fragment, func, file)));
+                    }
+                }
+                (FuncKey::ModuleNamespaceReader(_), Some(_)) => readers.push(index as u32),
+                _ => {}
             }
-            let names = names_of_namespace(fragment, func, file);
-            let known = namespaces.entry(file).or_insert_with(|| Namespace { names: names.clone().unwrap_or_default(), ..Namespace::default() });
-            known.gets_away |= names.as_ref() != Some(&known.names) || known.names.iter().any(|name| name == b"then");
         }
+    });
+    let readers: Vec<Vec<u32>> = looked_at.iter_mut().map(|found| std::mem::take(&mut found.2)).collect();
+    for (file, names) in looked_at.into_iter().flat_map(|found| found.1) {
+        let known = namespaces.entry(file).or_insert_with(|| Namespace { names: names.clone().unwrap_or_default(), ..Namespace::default() });
+        known.gets_away |= names.as_ref() != Some(&known.names) || known.names.iter().any(|name| name == b"then");
     }
     for file in entry_points.iter().flatten() {
         if let Some(namespace) = namespaces.get_mut(file) {
@@ -373,8 +381,8 @@ pub(super) fn drop_exports_nobody_reads(fragments: &mut [Fragment], entry_points
         }
     }
     let mut called_on_their_namespace: FxHashMap<u32, Vec<FileId>> = FxHashMap::default();
-    for fragment in fragments.iter() {
-        for function in fragment.funcs.iter().filter(|function| function.body.is_some()) {
+    for (fragment, readers) in fragments.iter().zip(&readers) {
+        for function in readers.iter().map(|&index| &fragment.funcs[index as usize]) {
             let (FuncKey::ModuleNamespaceReader(file), Some(func)) = (function.key, &function.func) else { continue };
             let Some(namespace) = namespaces.get_mut(&file) else { continue };
             let Some(Term::Switch { cases, .. }) = &func.blocks[Func::ENTRY.idx()].term else {

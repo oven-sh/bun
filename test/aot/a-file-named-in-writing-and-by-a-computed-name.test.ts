@@ -1,0 +1,51 @@
+import { expect } from "bun:test";
+import { test } from "./supported";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
+
+// A file that one place of a program names in writing and another by a name that is computed is one module under `bun run`. In an
+// executable that runs in place it is too. In an ordinary executable the computed name is looked for on the disk: the file runs a
+// second time, interpreted, with a state of its own.
+
+const files = {
+  "lib.cjs": `globalThis.runs = (globalThis.runs || 0) + 1;\nlet n = 0;\nexports.name = "lib";\nexports.next = () => ++n;\n`,
+  "made-require.mjs": `import { createRequire } from "node:module";
+const made = createRequire(import.meta.url);
+const name = ["./lib", ".cjs"].join("");
+console.log(made("./lib.cjs") === made(name), globalThis.runs);
+`,
+  "require.cjs": `const name = ["./lib", ".cjs"].join("");
+console.log(require("./lib.cjs") === require(name), globalThis.runs);
+`,
+  "import-and-made-require.mjs": `import lib from "./lib.cjs";
+import { createRequire } from "node:module";
+const name = ["./lib", ".cjs"].join("");
+console.log(lib === createRequire(import.meta.url)(name), globalThis.runs, (await import(name)).default === lib, globalThis.runs);
+`,
+  "state.mjs": `import { createRequire } from "node:module";
+const made = createRequire(import.meta.url);
+const name = ["./lib", ".cjs"].join("");
+console.log(made("./lib.cjs").next(), made(name).next(), made("./lib.cjs") === made(name), globalThis.runs);
+`,
+};
+
+async function run(cmd: string[], cwd: string) {
+  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+async function sameAsPlain(main: string, ...flags: string[]) {
+  using dir = tempDir("written-and-computed", files);
+  const plain = await run([bunExe(), "run", main], String(dir));
+  expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const build = await run([bunExe(), "build", "--compile", "--aot", ...flags, main, "--outfile", "program"], String(dir));
+  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+  const ran = await run([join(String(dir), "program")], String(dir));
+  expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+}
+
+for (const main of Object.keys(files).filter(name => name !== "lib.cjs")) {
+  test(`in place, a file is one module however it is named: ${main}`, () => sameAsPlain(main, "--compile-in-place"), 120_000);
+  test.todo(`in an ordinary executable, a file is one module however it is named: ${main}`, () => sameAsPlain(main), 120_000);
+}

@@ -4053,6 +4053,20 @@ unsafe fn get_loader_and_virtual_source<'a>(
             }
             None => return Err(crate::Error::BlobNotFound),
         }
+    } else if virtual_source.is_none()
+        && let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| graph.find_text_of_module(path.text))
+        && !bun_sys::exists(path.text)
+    {
+        // What an executable that runs in place holds for this path is the module's text, where the disk has no such file: a JSON
+        // module is read when it is required, and read again after it is evicted from require.cache, as `bun run` reads it.
+        // SAFETY: the specifier outlives the synchronous transpile that this feeds, as for a blob above.
+        let path_text: &'static [u8] = unsafe { core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()) };
+        *virtual_source_to_use = Some(bun_ast::Source {
+            path: bun_paths::fs::Path::init(path_text),
+            contents: std::borrow::Cow::Borrowed(file.utf8_contents()),
+            ..Default::default()
+        });
+        virtual_source = virtual_source_to_use.as_ref();
     }
 
     if query == b"?raw" {
@@ -4837,6 +4851,52 @@ fn extract_owner_uid() -> u32 {
     bun_sys::windows::user_unique_id()
 }
 
+/// An addon may load libraries by a path from its own place (`$ORIGIN/../lib`, `@loader_path/../lib`). Where the executable holds
+/// shared libraries at their paths, the addon and they are written out at those paths under one folder, which only this user can
+/// write to. `None` where it holds none, or a step fails.
+#[cfg(unix)]
+fn write_out_beside_its_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Write as _;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
+    let as_path = |bytes: &[u8]| std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes));
+
+    let graph = bun_standalone_graph::Graph::get_ref()?;
+    let addon = graph.find_ref(addon_path)?.contents.as_bytes();
+    let mut files: Vec<(&[u8], &[u8])> = graph.held_shared_libraries().collect();
+    if files.is_empty() {
+        return None;
+    }
+    let mut hash = bun_wyhash::hash(addon);
+    for (path, contents) in &files {
+        hash = hash.rotate_left(7) ^ bun_wyhash::hash(path) ^ contents.len() as u64;
+    }
+    files.push((addon_path, addon));
+
+    let uid = extract_owner_uid();
+    let mut folder = Fs::RealFS::tmpdir_path().to_vec();
+    folder.extend_from_slice(format!("/.bun-{uid}-{hash:x}").as_bytes());
+    let _ = std::fs::DirBuilder::new().mode(0o700).create(as_path(&folder));
+    // `symlink_metadata`: a planted link is not followed.
+    let is_ours = std::fs::symlink_metadata(as_path(&folder)).is_ok_and(|it| it.is_dir() && it.uid() == uid && it.mode() & 0o077 == 0);
+    if !is_ours {
+        return None;
+    }
+    for (path, contents) in files {
+        let to = as_path(&[&folder[..], path].concat());
+        if std::fs::symlink_metadata(&to).is_ok_and(|it| it.is_file() && it.len() == contents.len() as u64) {
+            continue;
+        }
+        std::fs::DirBuilder::new().mode(0o700).recursive(true).create(to.parent()?).ok()?;
+        let scratch = as_path(&[&folder[..], path, format!(".{}", std::process::id()).as_bytes()].concat());
+        let mut file = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&scratch).ok()?;
+        file.write_all(contents).ok()?;
+        drop(file);
+        std::fs::rename(&scratch, &to).ok()?;
+    }
+    Some([&folder[..], addon_path].concat())
+}
+
 /// Support embedded .node files. `Dead` when `path` is not an embedded file.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
@@ -4845,6 +4905,15 @@ pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -
         return bun_core::String::DEAD;
     }
     let input_path = path.to_utf8();
+    if !bun_standalone_graph::is_bun_standalone_file_path(input_path.slice()) {
+        if bun_sys::exists(input_path.slice()) {
+            return bun_core::String::DEAD;
+        }
+        #[cfg(unix)]
+        if let Some(path) = write_out_beside_its_libraries(input_path.slice()) {
+            return bun_core::String::clone_utf8(&path);
+        }
+    }
     let mut path_buf = bun_paths::path_buffer_pool::get();
     match resolve_embedded_file_to_buf(input_path.slice(), b"node", &mut path_buf[..]) {
         Some(len) => bun_core::String::clone_utf8(&path_buf[..len]),

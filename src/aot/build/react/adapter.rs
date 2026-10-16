@@ -6,7 +6,7 @@
 
 use super::super::FileBuild;
 use super::super::constants::Constant;
-use super::super::jsx::jsx_text;
+use super::super::jsx::{decode_entities, jsx_text};
 use super::host::Host;
 use bun_alloc::{Arena, AstAlloc, AstVec};
 use bun_ast::{
@@ -734,7 +734,16 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
             }
             let PropKey::Name(name) = attr.key else { continue };
             let name_loc = self.loc(Origin::Prop(id));
-            let value = if has_value(attr) { self.expr(attr.value) } else { Expr::init(E::Boolean { value: true }, name_loc) };
+            let value = if !has_value(attr) {
+                Expr::init(E::Boolean { value: true }, name_loc)
+            } else if let ExprKind::String(text) = hir[attr.value].kind
+                && hir::jsx_expression_around(hir, attr.value).is_none()
+            {
+                let loc = self.loc(Origin::Expr(attr.value));
+                Expr::init(self.string(&decode_entities(self.text(text))), loc)
+            } else {
+                self.expr(attr.value)
+            };
             if Some(index) == key_index && !calls_create_element {
                 key = Some(value);
                 continue;

@@ -1,0 +1,8 @@
+automatic-runtime-and-tagged-templates: 5 layouts, 0 given, 3 open, places 32 of 54, reads 8 of 23
+automatic-runtime-from-a-commonjs-module: 5 layouts, 0 given, 3 open, places 25 of 45, reads 8 of 23
+classic-runtime-by-pragma: 2 layouts, 0 given, 0 open, places 8 of 24, reads 1 of 9
+elements-of-the-host: 4 layouts, 0 given, 7 open, places 27 of 57, reads 8 of 38
+entities-in-the-strings-of-attributes: 1 layouts, 0 given, 0 open, places 4 of 19, reads 0 of 5
+react-memo: 3 layouts, 0 given, 4 open, places 11 of 29, reads 7 of 33
+react-ref: 0 layouts, 0 given, 2 open, places 3 of 11, reads 1 of 24
+react-state: 3 layouts, 0 given, 8 open, places 22 of 44, reads 3 of 32

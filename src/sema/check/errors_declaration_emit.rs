@@ -809,6 +809,14 @@ impl<'p, 's> Checker<'p, 's> {
         self.transform_declarations(file, true)
     }
 
+    /// `emit_declaration_file`, and nothing is reported.
+    pub fn declaration_file_without_reports(&mut self, file: FileId) -> Option<Vec<u8>> {
+        let reported = self.reported.len();
+        let text = self.transform_declarations(file, true);
+        self.reported.truncate(reported);
+        text
+    }
+
     fn transform_declarations(&mut self, file: FileId, writes: bool) -> Option<Vec<u8>> {
         let files = self.files();
         let module = files.module(file);

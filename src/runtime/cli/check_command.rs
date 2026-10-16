@@ -8,7 +8,7 @@ use bun_bundler::options::{DeclarationFiles, Declarations, SOUND_FILES_LEFT_OUT,
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
-use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
+use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided, ReadLater};
 use bun_sema_driver::{
     Category, CommandLine, CompilerOption, Diagnostic, FlagError, Progress, RejectedFlag, Report,
     Request, ScriptKind,
@@ -30,6 +30,9 @@ struct Options {
     timing: bool,
     aot: bool,
     aot_explain: Vec<Box<[u8]>>,
+    aot_out: Option<Box<[u8]>>,
+    without_builtin_modules: bool,
+    logs_type_errors: bool,
 }
 
 fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
@@ -153,7 +156,22 @@ fn parse(args: &[&ZStr]) -> Options {
     let after_dashes =
         (args.iter().position(|arg| arg.as_bytes() == b"--")).map_or(0, |at| args.len() - at - 1);
     let (flags, paths) = positionals.split_at(positionals.len().saturating_sub(after_dashes));
-    let mut command_line = bun_sema_driver::parse_command_line(flags, &working_directory());
+    let mut flags = flags.to_vec();
+    if CAN_WRITE_THE_PROGRAM {
+        flags.retain(|flag| {
+            if let Some(path) = flag.strip_prefix(b"--aot-out=") {
+                options.aot_out = Some(path.into());
+            } else if *flag == b"--no-builtin-modules" {
+                options.without_builtin_modules = true;
+            } else if *flag == b"--aot-type-errors=log" {
+                options.logs_type_errors = true;
+            } else {
+                return true;
+            }
+            false
+        });
+    }
+    let mut command_line = bun_sema_driver::parse_command_line(&flags, &working_directory());
     if let Some(rejected) = command_line.rejected.first() {
         reject(rejected);
     }
@@ -319,6 +337,7 @@ fn with_pages(cwd: &[u8], provided: Provided) -> Provided {
     Provided {
         scripts_of_page: Some(Box::new(move |page| {
             let _turn = turn.lock();
+            bun_sema_driver::asked::spoil();
             let scripts = imports_of_page(&cwd, to_native(page)).into_iter();
             let scripts = scripts.filter(|path| has_types(path));
             scripts.map(|path| from_native(&path)).collect()
@@ -440,6 +459,9 @@ fn style_for(cwd: &[u8], pretty: Option<bool>, to: Destination, show_all: bool) 
 const HAS_TYPESCRIPT_TEST_RUNNER: bool =
     bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
 
+const CAN_WRITE_THE_PROGRAM: bool =
+    bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
+
 impl CheckCommand {
     pub(crate) fn exec(args: &[&ZStr]) -> ! {
         if HAS_TYPESCRIPT_TEST_RUNNER
@@ -471,8 +493,8 @@ impl CheckCommand {
         if command_line.paths.is_empty() || command_line.build {
             usage_error(format_args!("--aot takes the entry points of a program"));
         }
-        let constants = bun_aot::Constants { root: from_native(&cwd), ..Default::default() };
-        let (mut code, mut provided) = (Vec::new(), Provided::default());
+        let constants = bun_aot::Constants { root: from_native(&cwd), logs_type_errors: options.logs_type_errors, ..Default::default() };
+        let (mut code, mut provided) = (Vec::new(), Provided { without_builtin_modules: options.without_builtin_modules, ..Default::default() });
         for &(name, text) in bun_aot::prelude::FILES {
             let path = bun_aot::prelude::path_of(&cwd, name);
             provided.already_read.insert(from_native(&path), text.as_bytes().into());
@@ -489,7 +511,14 @@ impl CheckCommand {
         let note_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| translation.note_file(checker, file);
         let merge_notes = |program: &bun_sema_driver::Program| translation.merge_notes(program);
         let analyze = |program: &bun_sema_driver::Program, in_parallel: bun_sema_driver::InParallel<'_>, errors: &[(bun_sema_driver::FileId, u32)]| {
-            let translated = translation.finish(program, in_parallel, errors);
+            let mut translated = translation.finish(program, in_parallel, errors);
+            if let Some(path) = &options.aot_out
+                && translated.problems.is_empty()
+                && !translated.errors_that_stand.contains(&true)
+            {
+                let written = bun_aot::format::write_releasing(&mut translated.program, in_parallel);
+                let _ = bun_sys::File::write_file(bun_sys::Fd::cwd(), &bun_core::ZBox::from_bytes(path), &written);
+            }
             *said.lock() = (translated.explained, translated.problems);
             bun_aot::release(translated.program, in_parallel);
             translated.errors_that_stand
@@ -885,7 +914,7 @@ fn analyze_on_this_thread(
         dropped_imports,
         without_side_effects,
         lifted_commonjs,
-        commonjs,
+        kinds,
         statements,
         texts,
         assets,
@@ -900,7 +929,9 @@ fn analyze_on_this_thread(
         preserve_source_paths,
         react_compiler_outputs,
         jsx,
+        classes,
         function_texts,
+        printing_of_function_texts,
         explain,
         explains_into_log,
         logs_type_errors,
@@ -927,9 +958,12 @@ fn analyze_on_this_thread(
     let (resolved, statements_by_file, texts_already_read) = std::thread::scope(|scope| {
         let resolved = scope.spawn(move || {
             let imports = imports.take();
-            let mut converted_paths: bun_sema_driver::FxHashMap<(*const u8, usize), Vec<u8>> = Default::default();
-            let mut from_native_once = |path: &[u8]| converted_paths.entry((path.as_ptr(), path.len())).or_insert_with(|| from_native(path)).clone();
-            let resolved: bun_sema_driver::FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>> = (imports.map(|(from, spec, to)| ((from_native_once(from), spec.to_vec()), from_native_once(to)))).collect();
+            let mut resolved = bun_aot::ResolvedImports::default();
+            let mut numbers: bun_sema_driver::FxHashMap<(*const u8, usize), u32> = Default::default();
+            for (from, specifier, to) in imports {
+                let [from, to] = [from, to].map(|path| *numbers.entry((path.as_ptr(), path.len())).or_insert_with(|| resolved.number_of(&from_native(path))));
+                resolved.insert(from, specifier, to);
+            }
             resolved
         });
         let statements_by_file = scope.spawn(move || {
@@ -989,7 +1023,7 @@ fn analyze_on_this_thread(
             })
         }),
     };
-    let commonjs: Vec<&[u8]> = commonjs.collect();
+    let kinds_of_code = kinds.map(|(path, is_commonjs)| (path.to_vec(), is_commonjs)).collect();
     release_asts();
     let mut provided = Provided {
         already_read: texts_already_read,
@@ -1003,29 +1037,27 @@ fn analyze_on_this_thread(
             (path.to_vec(), of_file)
         }))
         .collect(),
+        classes_of_files: (classes.map(|(path, of_file)| {
+            let of_file = bun_sema_driver::host::ClassOptions {
+                use_define_for_class_fields: of_file.use_define_for_class_fields,
+                experimental_decorators: of_file.experimental_decorators,
+                emit_decorator_metadata: of_file.emit_decorator_metadata,
+            };
+            (path.to_vec(), of_file)
+        }))
+        .collect(),
+        is_run_from_its_sources: preserve_source_paths,
+        kinds_of_code,
         ..Default::default()
     };
-    if preserve_source_paths {
-        let may_leave_the_cache = provided.already_read.values().any(|text| bun_aot::mentions_the_cache_of_modules(text));
-        for path in commonjs {
-            let (written, again) = (from_native(path), [path, bun_aot::SECOND_FORM_SUFFIX].concat());
-            let may_run_again = |text: &[u8]| may_leave_the_cache || constants.statements.get(&written).is_some_and(|statements| bun_aot::has_a_throw_at_the_top(text, statements));
-            let Some(text) = provided.already_read.get(&written).filter(|text| may_run_again(&text[..])).and_then(|text| bun_aot::second_form_of_commonjs(text)) else { continue };
-            provided.already_read.insert(from_native(&again), text.into());
-            script_kinds.push((again.clone(), ScriptKind::Js));
-            if let Some(resolved) = &mut constants.resolved {
-                let own: Vec<_> = (resolved.iter()).filter(|((from, _), _)| *from == written).map(|((_, specifier), to)| ((from_native(&again), specifier.clone()), to.clone())).collect();
-                resolved.extend(own);
-                resolved.insert((written, bun_aot::SPECIFIER_OF_SECOND_FORM.to_vec()), from_native(&again));
-            }
-            code.push(again);
-        }
-    }
     provided.build_constants = Some(constants.build_constants());
-    provided.constants_of_imports = (constants.resolved.iter().flatten())
-        .filter(|(_, to)| to.ends_with(b".text.json") || to.ends_with(b".file.json"))
-        .map(|(import, to)| (import.clone(), to.clone()))
-        .collect();
+    if let Some(resolved) = &constants.resolved {
+        let is_constant: Vec<bool> = resolved.paths().iter().map(|to| to.ends_with(b".text.json") || to.ends_with(b".file.json")).collect();
+        provided.constants_of_imports = (resolved.by_number())
+            .filter(|import| is_constant[import.2 as usize])
+            .map(|(from, specifier, to)| ((resolved.path(from).to_vec(), specifier.to_vec()), resolved.path(to).to_vec()))
+            .collect();
+    }
     for &(name, text) in bun_aot::prelude::FILES {
         let path = bun_aot::prelude::path_of(cwd, name);
         provided.already_read.insert(from_native(&path), text.as_bytes().into());
@@ -1042,11 +1074,7 @@ fn analyze_on_this_thread(
     }
     if rewrite_jest_for_tests {
         let path = bun_aot::prelude::path_of(cwd, "test-globals.d.ts");
-        let also = br#"
-declare module "@jest/globals*" { export * from "bun:test"; }
-declare module "vitest*" { export * from "bun:test"; }
-"#;
-        provided.already_read.insert(from_native(&path), [&b"// @ts-nocheck\n"[..], &include_bytes!("../../../packages/bun-types/test-globals.d.ts")[..], &also[..]].concat().into());
+        provided.already_read.insert(from_native(&path), declarations_of_the_test_runner().into());
         paths.push(path);
     }
     // `TypeChecked::react_compiler_outputs`: the code is under a path of its own. What is written is no code any more, so no root by that: it is
@@ -1057,9 +1085,12 @@ declare module "vitest*" { export * from "bun:test"; }
         places_in_code.entry(known.clone()).or_default().push(place);
     }
     let mut known_paths: bun_sema_driver::FxHashSet<Vec<u8>> = paths.iter().cloned().collect();
-    for (path, javascript) in react_compiler_outputs.wait() {
+    let bun_bundler::options::ReactCompilerOutputsLater { printed, paths: lowered } = react_compiler_outputs;
+    let mut printed_as: Vec<Vec<u8>> = Vec::with_capacity(lowered.len());
+    for path in lowered {
         let elsewhere = [path, b".js"].concat();
-        provided.already_read.insert(from_native(&elsewhere), javascript.into_vec().into());
+        provided.already_read.insert(from_native(&elsewhere), std::borrow::Cow::Borrowed(&[]));
+        printed_as.push(from_native(&elsewhere));
         if let Some(places) = places_in_code.remove(path) {
             for &place in &places {
                 code[place].clone_from(&elsewhere);
@@ -1072,15 +1103,33 @@ declare module "vitest*" { export * from "bun:test"; }
         code_of.insert(from_native(path), from_native(&elsewhere));
     }
     if let Some(resolved) = &mut constants.resolved {
-        let own: Vec<_> = (resolved.iter())
-            .filter_map(|((from, specifier), to)| Some(((code_of.get(from)?.clone(), specifier.clone()), to.clone())))
+        let written: Vec<Vec<u8>> = resolved.paths().to_vec();
+        let elsewhere: Vec<Option<u32>> = written.iter().map(|path| code_of.get(path).map(|elsewhere| resolved.number_of(elsewhere))).collect();
+        let own: Vec<(u32, Vec<u8>, u32)> = (resolved.by_number())
+            .filter_map(|(from, specifier, to)| Some((elsewhere[from as usize]?, specifier.to_vec(), to)))
             .collect();
-        resolved.extend(own);
-        for to in resolved.values_mut() {
-            if let Some(elsewhere) = code_of.get(to) {
-                to.clone_from(elsewhere);
-            }
+        for (from, specifier, to) in own {
+            resolved.insert(from, &specifier, to);
         }
+        resolved.retarget(&elsewhere);
+    }
+    let not_printed: std::sync::Arc<bun_threading::Guarded<Vec<Vec<u8>>>> = Default::default();
+    let read_later: Option<ReadLater> = (!printed_as.is_empty()).then(|| -> ReadLater {
+        let not_printed = std::sync::Arc::clone(&not_printed);
+        Box::new(move || {
+            let mut texts = AlreadyRead::default();
+            for _ in 0..printed_as.len() {
+                if let Ok((number, Some(javascript))) = printed.recv() {
+                    texts.insert(std::mem::take(&mut printed_as[number]), javascript.into_vec().into());
+                }
+            }
+            not_printed.lock().extend(printed_as.into_iter().filter(|path| !path.is_empty()));
+            texts
+        })
+    });
+    match read_later {
+        Some(wait) if bun_core::env_var::BUN_AOT_TYPED_SNAPSHOT.get().is_some() => provided.already_read.extend(wait()),
+        read_later => provided.read_later = read_later,
     }
     // What one entry function runs: an entry point of the bundle, then what `bun:main` does once that has run.
     let mut entry_functions: Vec<[Vec<u8>; 2]> = Vec::new();
@@ -1098,7 +1147,8 @@ declare module "vitest*" { export * from "bun:test"; }
         if let Some(resolved) = &mut constants.resolved {
             let to = from_native(entry_point);
             let to = code_of.get(&to).cloned().unwrap_or(to);
-            resolved.insert((from_native(&main), entry_point.to_vec()), to);
+            let [from, to] = [from_native(&main), to].map(|path| resolved.number_of(&path));
+            resolved.insert(from, entry_point, to);
         }
         let is_replaced = code_of.contains_key(&from_native(entry_point));
         let root = if is_replaced { [entry_point, b".js"].concat() } else { entry_point.to_vec() };
@@ -1118,10 +1168,11 @@ declare module "vitest*" { export * from "bun:test"; }
             script_kinds: script_kinds.clone(),
             script_kinds_by_extension: by_extension.clone(),
             already_read: provided.already_read.clone(),
-            resolved: constants.resolved.clone().unwrap_or_default(),
+            resolved: constants.resolved.iter().flat_map(|resolved| resolved.iter()).map(|(from, specifier, to)| ((from.to_vec(), specifier.to_vec()), to.to_vec())).collect(),
             dropped_imports: constants.dropped_imports.iter().cloned().collect(),
             without_side_effects: constants.without_side_effects.iter().cloned().collect(),
             lifted_commonjs: constants.lifted_commonjs.iter().cloned().collect(),
+            kinds_of_code: provided.kinds_of_code.iter().map(|(path, is_commonjs)| (path.clone(), *is_commonjs)).collect(),
             statements: constants.statements.iter().flat_map(|(path, list)| list.iter().map(move |&(start, verdict)| (path.clone(), start, verdict))).collect(),
             texts: constants.texts.iter().map(|(path, text)| (path.clone(), text.clone())).collect(),
             assets: constants.assets.iter().map(|(path, key)| (path.clone(), key.clone())).collect(),
@@ -1138,6 +1189,7 @@ declare module "vitest*" { export * from "bun:test"; }
     let explained: bun_threading::Guarded<Vec<String>> = bun_threading::Guarded::new(Vec::new());
     let translation = bun_aot::Translation::new(&constants).explaining(explaining(explain));
     let begin = |program: &bun_sema_driver::Program, in_parallel: bun_sema_driver::InParallel<'_>| {
+        printing_of_function_texts.start(usize::from(bun_core::get_thread_count()).div_ceil(2));
         // The executable runs its first entry point. The others are what it starts workers with.
         let entry_points: Vec<Vec<_>> = (entry_functions.iter())
             .map(|roots| roots.iter().filter_map(|path| program.files.by_path.get(&from_native(path))).collect())
@@ -1214,6 +1266,9 @@ declare module "vitest*" { export * from "bun:test"; }
     print_explained(&explained.lock());
     for problem in not_compiled.lock().iter() {
         log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{problem}"));
+    }
+    for path in not_printed.lock().iter() {
+        log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: internal error: the module could not be printed as the React Compiler or the lowering of decorators leaves it; please report it", BStr::new(path)));
     }
     found.lock().take().filter(|_| report.is_ok())
 }
@@ -1308,7 +1363,7 @@ pub(crate) fn sound_files_for_build(asked: SoundFilesRequest<'_>, log: &mut bun_
     if let Some(first) = report.diagnostics.iter().find(|reported| matches!(reported.category, Category::Error)).filter(|_| !report.is_ok()) {
         let path = bun_sema_driver::host::to_native(&first.path);
         let shown = BStr::new(path.strip_prefix(outdir).map_or(&path[..], |inside| inside.strip_prefix(b"/").unwrap_or(inside)));
-        let text = BStr::new(first.text.split(|&byte| byte == b'\n').next().unwrap_or_default());
+        let text = BStr::new(bun_core::strings::split(&first.text[..], b"\n").next().unwrap_or_default());
         log.add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{SOUND_FILES_LEFT_OUT}: with its types put back it has type errors, the first at {shown}:{}:{}: TS{}: {text}", first.line, first.column, first.code));
         return TypedOutputs { sound_files: Vec::new(), declaration_files };
     }
@@ -1344,7 +1399,7 @@ fn check_and_emit_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_
         dropped_imports: _,
         without_side_effects: _,
         lifted_commonjs: _,
-        commonjs: _,
+        kinds: _,
         statements: _,
         texts: _,
         assets: _,
@@ -1359,7 +1414,9 @@ fn check_and_emit_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_
         preserve_source_paths: _,
         react_compiler_outputs: _,
         jsx: _,
+        classes: _,
         function_texts: _,
+        printing_of_function_texts: _,
         explain: _,
         explains_into_log: _,
         logs_type_errors: _,
@@ -1505,6 +1562,17 @@ pub(crate) fn has_types(path: &[u8]) -> bool {
 
 /// The files to name in the check of `entry_points`, which are relative to `cwd`, and
 /// `Request::script_kinds`. `None` if none of them has types to check.
+fn declarations_of_the_test_runner() -> Vec<u8> {
+    let also = br#"
+declare module "@jest/globals*" { export * from "bun:test"; }
+declare module "vitest*" { export * from "bun:test"; }
+"#;
+    let module = &include_bytes!("../../../packages/bun-types/test.d.ts")[..];
+    let named = &b"declare module \"bun:test\" {"[..];
+    let at = module.windows(named.len()).position(|text| text == named).expect("bun-types declares the module");
+    [&b"// @ts-nocheck\n"[..], &include_bytes!("../../../packages/bun-types/test-globals.d.ts")[..], &also[..], &module[..at], &b"declare module \"bun:test*\" {"[..], &module[at + named.len()..]].concat()
+}
+
 fn what_to_check(
     cwd: &[u8],
     entry_points: &[EntryPoint],
@@ -1515,6 +1583,7 @@ fn what_to_check(
     for entry_point in entry_points {
         let path = entry_point.path;
         if path.ends_with(b".html") {
+            bun_sema_driver::asked::spoil();
             for page in pages_of(cwd, path) {
                 let scripts = imports_of_page(cwd, &page);
                 paths.extend(scripts.into_iter().filter(|path| has_types(path)));
@@ -1592,7 +1661,48 @@ pub(crate) struct AuditFound {
     pub(crate) modules: Vec<(bun_aot::audit::Module, Vec<u8>)>,
     pub(crate) shapes: Vec<(String, String)>,
     pub(crate) has_errors: bool,
+    pub(crate) stops_a_build: bool,
     pub(crate) never_visited: Vec<Vec<u8>>,
+    /// The TypeScript files of dependencies that are loaded and were not visited: whatever further looks could find never visited is among them.
+    pub(crate) may_be_visited: Vec<Vec<u8>>,
+    /// Of the files that were handed in as more code: those that the linked program does not hold.
+    pub(crate) not_in_the_program: Vec<Vec<u8>>,
+    pub(crate) said: Vec<u8>,
+    pub(crate) seen_by_others: Vec<(Vec<u8>, u64, Vec<u8>)>,
+    pub(crate) is_seen_otherwise: bool,
+    /// Of a look for tests: the entry points from which a file with an error is reached.
+    pub(crate) reach_errors: Vec<Vec<u8>>,
+}
+
+/// `imports`: by file, its name and the files it imports. Nothing where an error belongs to no file of those.
+fn entry_points_that_reach_errors(cwd: &[u8], entry_points: &[Vec<u8>], imports: &[(Vec<u8>, Vec<u32>)], diagnostics: &[Diagnostic]) -> Vec<Vec<u8>> {
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    let mut has_errors = vec![false; imports.len()];
+    for error in diagnostics.iter().filter(|reported| matches!(reported.category, Category::Error)) {
+        let Some(file) = imports.iter().position(|(name, _)| *name == error.path) else { return Vec::new() };
+        has_errors[file] = true;
+    }
+    let reaches_one = |path: &Vec<u8>| {
+        let name = bun_sema_driver::host::from_native(join_abs_string::<Auto>(cwd, &[path]));
+        let mut is_walked = vec![false; imports.len()];
+        let mut left: Vec<u32> = imports.iter().position(|(known, _)| *known == name).map(|file| file as u32).into_iter().collect();
+        while let Some(file) = left.pop() {
+            if has_errors[file as usize] {
+                return true;
+            }
+            if !core::mem::replace(&mut is_walked[file as usize], true) {
+                left.extend_from_slice(&imports[file as usize].1);
+            }
+        }
+        false
+    };
+    entry_points.iter().filter(|path| reaches_one(path)).cloned().collect()
+}
+
+/// What the form of `AuditFound::said` depends on.
+pub(crate) fn form_of_what_is_said() -> [bool; 4] {
+    let to = Destination::stderr();
+    [to.is_tty, to.colors, Output::is_ai_agent(), Output::is_github_action()]
 }
 
 #[derive(Clone, Copy)]
@@ -1600,6 +1710,7 @@ pub(crate) enum Audited<'a> {
     Whole,
     WholeInTheBackground,
     Alone { path: &'a [u8], text: &'a [u8], is_quiet: bool },
+    Changed { paths: &'a [Vec<u8>], seen_by_others: &'a [(Vec<u8>, u64, Vec<u8>)] },
 }
 
 pub(crate) fn audit_before(
@@ -1622,7 +1733,6 @@ pub(crate) fn audit_before(
     let mut provided = Provided {
         already_read: already_read(&cwd, &mut in_memory),
         before_read,
-        without_builtin_modules: true,
         ..Default::default()
     };
     let mut code: Vec<Vec<u8>> = Vec::new();
@@ -1632,20 +1742,35 @@ pub(crate) fn audit_before(
         code.push(path);
     }
     code.extend(more_code.iter().cloned());
-    let alone = match audited {
+    let mut roots = paths.clone();
+    if is_for_tests {
+        let path = bun_aot::prelude::path_of(&cwd, "test-globals.d.ts");
+        provided.already_read.insert(from_native(&path), declarations_of_the_test_runner().into());
+        roots.push(path);
+    }
+    let alone: Option<Vec<Vec<u8>>> = match audited {
         Audited::Whole | Audited::WholeInTheBackground => None,
         Audited::Alone { path, text, .. } => {
             provided.already_read.insert(from_native(path), bun_core::strings::without_utf8_bom(text).to_vec().into());
-            Some(from_native(path))
+            Some(vec![from_native(path)])
+        }
+        Audited::Changed { paths, seen_by_others } => {
+            for (path, _, declarations) in seen_by_others.iter().filter(|it| !paths.contains(&it.0)) {
+                provided.already_read.insert(from_native(path), declarations.clone().into());
+            }
+            Some(paths.iter().map(|path| from_native(path)).collect())
         }
     };
+    let only = alone.as_ref().map(|alone| alone.join(&0u8));
     let is_left_out = |checker: &bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| {
-        alone.as_ref().is_some_and(|alone| checker.p.files.modules[file.idx()].file_name() != &alone[..])
+        alone.as_ref().is_some_and(|alone| !alone.iter().any(|alone| checker.p.files.modules[file.idx()].file_name() == &alone[..]))
     };
     let constants = bun_aot::Constants {
         root: from_native(&cwd),
         has_test_globals: is_for_tests,
         notes_spans: true,
+        defines: (args.and_then(|args| args.define.as_ref())).map_or_else(Vec::new, |define| define.keys.iter().zip(&define.values).map(|(name, value)| (name.to_vec(), value.to_vec())).collect()),
+        features: args.map_or_else(Vec::new, |args| args.feature_flags.iter().map(|flag| flag.to_vec()).collect()),
         has_preloads: bun_options_types::context::try_get().is_some_and(|ctx| !ctx.preloads.is_empty()),
         ..Default::default()
     };
@@ -1658,10 +1783,18 @@ pub(crate) fn audit_before(
         translation.begin(program, &entry_points, in_parallel);
     };
     let visited: bun_threading::Guarded<bun_sema_driver::FxHashSet<usize>> = bun_threading::Guarded::new(Default::default());
+    let seen_by_others: bun_threading::Guarded<Vec<(Vec<u8>, u64, Vec<u8>)>> = bun_threading::Guarded::new(Vec::new());
     let translate_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| {
         if !is_left_out(checker, file) {
             visited.lock().insert(file.idx());
             translation.translate_file(checker, file);
+            let module = &checker.p.files.modules[file.idx()];
+            if matches!(bun_paths::extension(module.file_name()), b".ts" | b".tsx" | b".mts" | b".cts") && !module.is_untyped() && !module.is_of_a_dependency {
+                let path = bun_sema_driver::host::to_native(module.file_name()).to_vec();
+                if let Some(declarations) = checker.declaration_file_without_reports(file) {
+                    seen_by_others.lock().push((path, bun_wyhash::hash(&declarations), declarations));
+                }
+            }
         }
     };
     let note_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| {
@@ -1671,6 +1804,7 @@ pub(crate) fn audit_before(
     };
     let merge_notes = |program: &bun_sema_driver::Program| translation.merge_notes(program);
     let found: bun_threading::Guarded<AuditFound> = bun_threading::Guarded::new(AuditFound::default());
+    let imports: bun_threading::Guarded<Vec<(Vec<u8>, Vec<u32>)>> = bun_threading::Guarded::new(Vec::new());
     let list = |program: &bun_sema_driver::Program,
                 in_parallel: bun_sema_driver::InParallel<'_>,
                 errors: &[(bun_sema_driver::FileId, u32)]|
@@ -1689,16 +1823,28 @@ pub(crate) fn audit_before(
         };
         if alone.is_some() {
             for of_fragment in translation.take_programs_of_fragments(program) {
-                found.lock().modules.extend(with_texts(bun_aot::audit::table(&of_fragment, false, &text_of)));
+                found.lock().modules.extend(with_texts(bun_aot::audit::table(&of_fragment, false, &text_of, in_parallel)));
             }
             found.lock().has_errors = !errors.is_empty();
+            if let Audited::Changed { paths, seen_by_others: before } = audited {
+                let mut found = found.lock();
+                found.seen_by_others = core::mem::take(&mut *seen_by_others.lock());
+                found.is_seen_otherwise = paths.iter().any(|path| {
+                    let of = |list: &[(Vec<u8>, u64, Vec<u8>)]| list.iter().find(|it| it.0 == *path).map(|it| it.1);
+                    of(before).is_none() || of(before) != of(&found.seen_by_others)
+                });
+            }
             if let Some(as_soon_as_found) = as_soon_as_found {
                 as_soon_as_found(core::mem::take(&mut *found.lock()));
             }
-            return vec![false; errors.len()];
+            return vec![matches!(audited, Audited::Changed { .. }); errors.len()];
         }
-        let translated = translation.finish(program, in_parallel, errors);
-        let modules = with_texts(bun_aot::audit::table(&translated.program, true, &text_of));
+        if is_for_tests {
+            *imports.lock() = (program.files.modules.iter()).map(|module| (module.file_name().to_vec(), module.imports.values().map(|imported| imported.idx() as u32).collect())).collect();
+        }
+        let mut translated = translation.finish(program, in_parallel, errors);
+        bun_aot::audit::let_any_object_pass_for_classes_without_a_layout(&mut translated.program);
+        let modules = with_texts(bun_aot::audit::table(&translated.program, true, &text_of, in_parallel));
         let never_visited = (modules.iter())
             .filter(|(module, _)| matches!(bun_paths::extension(&module.path), b".ts" | b".tsx" | b".mts" | b".cts"))
             .filter_map(|(module, _)| {
@@ -1707,17 +1853,31 @@ pub(crate) fn audit_before(
                 (!visited.lock().contains(&file.idx()) && !more_code.contains(&path)).then_some(path)
             })
             .collect();
+        let may_be_visited = (program.files.modules.iter().enumerate())
+            .filter(|(index, module)| module.is_of_a_dependency && matches!(bun_paths::extension(module.file_name()), b".ts" | b".tsx" | b".mts" | b".cts") && ![&b".d.ts"[..], b".d.mts", b".d.cts"].iter().any(|ending| module.file_name().ends_with(ending)) && !visited.lock().contains(index))
+            .map(|(_, module)| bun_sema_driver::host::to_native(module.file_name()).to_vec())
+            .filter(|path| !more_code.contains(path))
+            .collect();
+        let in_the_program: bun_sema_driver::FxHashSet<Vec<u8>> = modules.iter().map(|(module, _)| join_abs_string::<Auto>(&cwd, &[bun_sema_driver::host::to_native(&module.path)]).to_vec()).collect();
+        let not_in_the_program = more_code.iter().filter(|path| !in_the_program.contains(*path)).cloned().collect();
         *found.lock() = AuditFound {
             modules,
             shapes: bun_aot::audit::shapes(&translated.program),
             has_errors: translated.errors_that_stand.contains(&true),
+            stops_a_build: false,
             never_visited,
+            may_be_visited,
+            not_in_the_program,
+            said: Vec::new(),
+            seen_by_others: core::mem::take(&mut *seen_by_others.lock()),
+            is_seen_otherwise: false,
+            reach_errors: Vec::new(),
         };
         bun_aot::release(translated.program, in_parallel);
         translated.errors_that_stand
     };
     let entries = Paths::EntryPoints(Entries {
-        paths: &paths,
+        paths: &roots,
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
         conditions: args.map_or(&[][..], |args| &args.conditions[..]),
@@ -1730,17 +1890,33 @@ pub(crate) fn audit_before(
         before_visits: Some(&note_file),
         all_visited_once: Some(&merge_notes),
         compile: Some(&list),
-        only: alone.as_deref(),
+        only: only.as_deref(),
         threads: match audited {
-            Audited::Whole => 0,
+            Audited::Whole | Audited::Changed { .. } => 0,
             Audited::WholeInTheBackground => usize::from(bun_core::get_thread_count()).div_ceil(2),
             Audited::Alone { .. } => usize::from(bun_core::get_thread_count()).min(8),
         },
         ..request(&cwd, tsconfig_override(), &entries, &[], 0, None)
     };
-    let report = bun_sema_driver::check_provided_then(&request, with_pages(&cwd, provided), |report| report);
-    let is_looked_at_again = report.is_ok() && !found.lock().never_visited.is_empty();
-    if !is_looked_at_again && !matches!(audited, Audited::WholeInTheBackground | Audited::Alone { is_quiet: true, .. }) && (!report.diagnostics.is_empty() || !report.incomplete.is_empty()) {
+    let mut report = bun_sema_driver::check_provided_then(&request, with_pages(&cwd, provided), |report| report);
+    let is_ok = report.is_ok();
+    let is_looked_at_again = is_ok && !found.lock().never_visited.is_empty();
+    if !is_ok && report.incomplete.is_empty() {
+        found.lock().reach_errors = entry_points_that_reach_errors(&cwd, &paths, &imports.lock(), &report.diagnostics);
+    }
+    if is_for_tests && !is_looked_at_again && matches!(audited, Audited::Whole) {
+        static SAID: bun_threading::Guarded<Vec<(Vec<u8>, u32, u32)>> = bun_threading::Guarded::new(Vec::new());
+        let mut said = SAID.lock();
+        report.diagnostics.retain(|reported| {
+            let key = (reported.path.clone(), reported.start, reported.code);
+            let is_new = !said.contains(&key);
+            if is_new {
+                said.push(key);
+            }
+            is_new
+        });
+    }
+    if !is_looked_at_again && !found.lock().is_seen_otherwise && !matches!(audited, Audited::Alone { is_quiet: true, .. }) && (!report.diagnostics.is_empty() || !report.incomplete.is_empty()) {
         let shown_from = from_native(&cwd);
         let style = Style {
             is_case_sensitive: report.is_case_sensitive,
@@ -1748,15 +1924,21 @@ pub(crate) fn audit_before(
         };
         let mut out = Vec::new();
         format::write_diagnostics(&mut out, &report, &style);
-        if matches!(audited, Audited::Whole) && !report.is_ok() && found.lock().modules.iter().all(|(module, _)| module.groups.is_empty() && module.parameters.is_empty()) {
+        if matches!(audited, Audited::Whole) && !is_ok && !crate::cli::aot_audit::acts() && found.lock().modules.iter().all(|(module, _)| module.groups.is_empty() && module.parameters.is_empty()) {
             out.extend_from_slice(b"[aot] note: fix these type errors first: bun build --compile --aot stops at them, and nothing is audited until they are fixed\n");
         }
-        let _ = Output::error_writer().write_all(&out);
-        Output::flush();
+        static WRITTEN: bun_threading::Guarded<Vec<u8>> = bun_threading::Guarded::new(Vec::new());
+        if *WRITTEN.lock() != out && !matches!(audited, Audited::WholeInTheBackground) {
+            let _ = Output::error_writer().write_all(&out);
+            Output::flush();
+        }
+        *WRITTEN.lock() = out.clone();
+        found.lock().said = out;
     }
     if !is_looked_at_again {
         found.lock().never_visited.clear();
     }
+    found.lock().stops_a_build = !is_ok;
     Some(core::mem::take(&mut *found.lock()))
 }
 

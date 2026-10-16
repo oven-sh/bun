@@ -3,7 +3,7 @@
 
 use super::{FileBuild, Fx};
 use crate::id::V;
-use crate::ir::Op;
+use crate::ir::{Op, Operation};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Decl, SymFlags};
 use bun_sema::check::Primitive;
@@ -35,7 +35,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let name = self.out.strs.intern(name);
                     let name = self.emit(fx, Op::Str(name));
                     let value = self.emit_constant(fx, value);
-                    self.operation(fx, "DefineField", &[object, name, value]);
+                    self.operation(fx, Operation::DefineField, &[object, name, value]);
                 }
                 object
             }
@@ -139,6 +139,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some(found)
     }
 
+    fn is_dropped_call(&mut self, file: FileId, callee: ExprId) -> bool {
+        let mut named = callee;
+        while !self.shared.defines.dropped.is_empty() && !self.is_builtin_file(file) {
+            if self.global_path(file, named).is_some_and(|path| self.shared.defines.dropped.contains(&path)) {
+                return true;
+            }
+            let ExprKind::Dot { obj, .. } = self.hir(file)[named].kind else { break };
+            named = obj;
+        }
+        false
+    }
+
     fn replacement_of(&mut self, file: FileId, e: ExprId) -> Option<Constant> {
         let hir = self.hir(file);
         let defines = if self.is_builtin_file(file) { &self.shared.builtin_defines } else { &self.shared.defines };
@@ -167,6 +179,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             // `feature("FLAG")`, imported from `bun:bundle`.
             ExprKind::Call(call) => {
+                if self.is_dropped_call(file, hir[call].callee) {
+                    return Some(Constant::Undefined);
+                }
                 let ExprKind::Ident(name) = hir[hir[call].callee].kind else { return None };
                 if self.c.atoms().bytes(name) != b"feature" || hir[call].args.len() != 1 {
                     return None;
@@ -201,9 +216,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let found = self.c.symbol_of_identifier(file, e, name)?;
         let sym = self.value_symbol(found);
         // What it holds is known. Where it may not hold it yet, the reference is translated, and throws.
-        if self.c.may_be_in_dead_zone(sym, file, e) || self.c.may_be_overridden_at(sym, file, e) {
+        if self.c.may_be_in_dead_zone(sym, file, e) {
             return None;
         }
+        let sym = self.export_copied_by(sym).unwrap_or(sym);
         if let Some(value) = self.c.constant_held_by(sym) {
             return Some(self.constant_of(value));
         }

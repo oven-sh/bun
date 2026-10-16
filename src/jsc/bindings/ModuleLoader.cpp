@@ -703,6 +703,19 @@ static bool isFileOfCompiledProgram(Zig::GlobalObject* globalObject, const Strin
     return number && number.isInt32();
 }
 
+extern "C" bool Bun__isFileOfCompiledProgram(Zig::GlobalObject* globalObject, const BunString* path)
+{
+    if (!hasFilesOfCompiledProgram(globalObject)) [[likely]]
+        return false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    bool isFile = isFileOfCompiledProgram(globalObject, path->toWTFString());
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return false;
+    }
+    return isFile;
+}
+
 static bool evaluateFileOfCompiledProgramAgain(Zig::GlobalObject* globalObject, JSCommonJSModule* target, const String& path)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -769,56 +782,6 @@ static JSValue askCompiledProgram(Zig::GlobalObject* globalObject, JSValue numbe
     arguments.append(jsNumber(how));
     arguments.append(value);
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, function, JSC::getCallData(function), jsUndefined(), arguments));
-}
-
-bool overrideExportOfCompiledNamespace(Zig::GlobalObject* globalObject, JSC::JSObject* namespaceObject, const JSC::Identifier& name, JSC::JSValue value)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!hasFilesOfCompiledProgram(globalObject))
-        return false;
-    JSValue number = askCompiledProgram(globalObject, jsNumber(0), namespaceObject, 4, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!number.isInt32())
-        return false;
-    JSValue isDone = askCompiledProgram(globalObject, number, jsString(vm, name.string()), value ? 3 : 22, value ? value : jsUndefined());
-    RETURN_IF_EXCEPTION(scope, false);
-    return isDone.isTrue();
-}
-
-bool overrideBuiltinOfCompiledProgram(Zig::GlobalObject* globalObject, JSC::JSValue builtin, JSC::JSValue value)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!hasFilesOfCompiledProgram(globalObject))
-        return false;
-    JSValue isDone = askCompiledProgram(globalObject, jsNumber(-1), builtin, 20, value);
-    RETURN_IF_EXCEPTION(scope, false);
-    return isDone.isTrue();
-}
-
-JSC::JSValue overrideOfBuiltinInCompiledProgram(Zig::GlobalObject* globalObject, JSC::JSValue builtin)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!hasFilesOfCompiledProgram(globalObject))
-        return jsNull();
-    JSValue found = askCompiledProgram(globalObject, jsNumber(-1), builtin, 21, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, {});
-    return found.isTrue() ? jsUndefined() : found.isCell() ? found : jsNull();
-}
-
-JSC::JSObject* compiledNamespaceBehind(Zig::GlobalObject* globalObject, JSC::JSObject* object)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* namespaceObject = dynamicDowncast<JSC::JSModuleNamespaceObject>(object);
-    if (!namespaceObject || !hasFilesOfCompiledProgram(globalObject) || !dynamicDowncast<JSC::SyntheticModuleRecord>(namespaceObject->moduleRecord()))
-        return nullptr;
-    JSValue compiled = askCompiledProgramForFile(globalObject, namespaceObject->moduleRecord()->moduleKey().string(), jsUndefined(), AskedOfCompiledProgram::Namespace);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* result = compiled.getObject();
-    return result && JSC::AOT::Typed::isModuleNamespace(result) ? result : nullptr;
 }
 
 NEVER_INLINE static void registerFilesOfCompiledProgramThatHaveRun(Zig::GlobalObject* globalObject)
@@ -896,45 +859,6 @@ void appendEvaluatedCompiledModules(Zig::GlobalObject* globalObject, JSC::Marked
         if (moduleNamespace.isObject())
             keys.append(jsString(vm, name.string()));
     }
-}
-
-bool overrideExportsOfCompiledModule(Zig::GlobalObject* globalObject, const String& path, JSC::JSObject* exports)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!hasFilesOfCompiledProgram(globalObject))
-        return false;
-    JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    exports->methodTable()->getOwnPropertyNames(exports, globalObject, names, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, false);
-    MarkedArgumentBuffer values;
-    for (auto& name : names) {
-        JSValue value = exports->get(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, false);
-        values.append(value);
-    }
-    if (values.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return false;
-    }
-    JSString* key = jsString(vm, path);
-    JSValue isKnown = askCompiledProgram(globalObject, key, jsUndefined(), 5, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, false);
-    if (isKnown.isInt32())
-        return true;
-    if (!isKnown.isBoolean())
-        return false;
-    for (size_t i = 0; i < names.size(); ++i) {
-        askCompiledProgram(globalObject, key, jsString(vm, names[i].string()), 3, values.at(i));
-        RETURN_IF_EXCEPTION(scope, false);
-    }
-    return true;
-}
-
-bool isModuleMocked(Zig::GlobalObject* globalObject, const String& path)
-{
-    auto* virtualModules = globalObject->onLoadPlugins.virtualModules;
-    return virtualModules && virtualModules->contains(path);
 }
 
 bool hasFilesOfCompiledProgram(JSC::JSGlobalObject* globalObject)
@@ -1046,7 +970,7 @@ JSValue fetchCommonJSModule(
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (hasFilesOfCompiledProgram(globalObject) && !target->moduleGraph() && !isModuleMocked(globalObject, specifierWtfString)) [[unlikely]] {
+    if (hasFilesOfCompiledProgram(globalObject) && !target->moduleGraph()) [[unlikely]] {
         bool hasRun = evaluateFileOfCompiledProgram(globalObject, target, specifierWtfString);
         RETURN_IF_EXCEPTION(scope, {});
         if (hasRun) {

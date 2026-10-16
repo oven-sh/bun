@@ -1,4 +1,4 @@
-// An instance has all its declared fields from the start, including those of the subclass, so `in` and `Object.keys` in the base constructor differ from plain JavaScript.
+// An instance has room for all its declared fields from the start, including those of the subclass. What the program sees is as in plain JavaScript: its keys are those of the fields that are defined or stored to so far, in that order, and it has no other property.
 class B { s = "s"; constructor() { console.log(Object.keys(this).join(), "x" in this, JSON.stringify(this)); this.hook() } hook() {} }
 class D extends B { x = 1; y?: number; z: string | undefined; hook() { this.y = 5; this.z = "hook"; console.log(Object.keys(this).join()) } }
 const d = new D()

@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -10,7 +11,7 @@ test.concurrent.each(programs)(
   "bun run --aot %s",
   async name => {
     await using ran = Bun.spawn({
-      cmd: [bunExe(), "run", "--aot", join(folder, name + ".js")],
+      cmd: [bunExe(), "run", "--debug-aot", join(folder, name + ".js")],
       env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
       stdout: "pipe",
       stderr: "pipe",

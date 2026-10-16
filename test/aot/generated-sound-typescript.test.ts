@@ -1,0 +1,15 @@
+import { readFileSync } from "fs";
+import { join } from "path";
+import { generated } from "./generated/run-generated";
+
+generated("sound TypeScript", [
+  {
+    name: "a catalogue of what programs write",
+    isAlwaysRun: true,
+    make: () => ({
+      file: "main.ts",
+      text: readFileSync(join(import.meta.dir, "programs", "language", "sound-typescript-is-never-refused.ts"), "utf8"),
+      files: { "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "ESNext", "module": "Preserve", "noEmit": true, "lib": ["ESNext"] } }` },
+    }),
+  },
+]);

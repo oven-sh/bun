@@ -10,8 +10,8 @@
 //! require("./other")`: then what it exports is what the other does.
 //!
 //! `Object.defineProperty(E, "name", { enumerable: true, get: function () { return m.other; } })`, where `m` stands for the exports of a module that keeps them
-//! in variables: the name is another name for that variable, whatever `exports.name = void 0` has come before. `__exportStar(require("./other"), E)`, with TypeScript's own
-//! text for the helper: every name that the other module is sure to have by then, but for `default` and what `E` has already, is another name for its variable.
+//! in variables: the name is another name for that variable, whatever `exports.name = void 0` has come before. `__exportStar(require("./other"), E)`, the function known by what it
+//! does: every name that the other module is sure to have by then, but for `default` and what `E` has already, is another name for its variable.
 //! `module.exports = { a, b: value }`, once, before anything else is done with
 //! `module.exports`, in a module that is in no cycle and does not mention `exports`: a store to each name.
 //!
@@ -86,29 +86,91 @@ impl ExportsMention {
     }
 }
 
-/// What TypeScript has emitted for `__exportStar` and `__createBinding` after `(this && this.__name) ||`, without white space.
-const EXPORT_STAR: [&[u8]; 2] = [
-    b"function(m,exports){for(varpinm)if(p!==\"default\"&&!Object.prototype.hasOwnProperty.call(exports,p))__createBinding(exports,m,p);}",
-    b"function(m,exports){for(varpinm)if(p!==\"default\"&&!exports.hasOwnProperty(p))__createBinding(exports,m,p);}",
-];
-const CREATE_BINDING: [&[u8]; 2] = [
-    b"(Object.create?(function(o,m,k,k2){if(k2===undefined)k2=k;vardesc=Object.getOwnPropertyDescriptor(m,k);if(!desc||(\"get\"indesc?!m.__esModule:desc.writable||desc.configurable)){desc={enumerable:true,get:function(){returnm[k];}};}Object.defineProperty(o,k2,desc);}):(function(o,m,k,k2){if(k2===undefined)k2=k;o[k2]=m[k];}))",
-    b"(Object.create?(function(o,m,k,k2){if(k2===undefined)k2=k;Object.defineProperty(o,k2,{enumerable:true,get:function(){returnm[k];}});}):(function(o,m,k,k2){if(k2===undefined)k2=k;o[k2]=m[k];}))",
-];
-const ESBUILD_EXPORT: &[u8] = b"(target,all)=>{for(varnameinall)__defProp(target,name,{get:all[name],enumerable:true});}";
-const ESBUILD_COPY_PROPS: &[u8] = b"(to,from,except,desc)=>{if(from&&typeoffrom===\"object\"||typeoffrom===\"function\"){for(letkeyof__getOwnPropNames(from))if(!__hasOwnProp.call(to,key)&&key!==except)__defProp(to,key,{get:()=>from[key],enumerable:!(desc=__getOwnPropDesc(from,key))||desc.enumerable});}returnto;}";
-const ESBUILD_TO_COMMONJS: &[u8] = b"(mod)=>__copyProps(__defProp({},\"__esModule\",{value:true}),mod)";
-const ESBUILD_HELPERS: [(&[u8], &[u8]); 7] = [
-    (b"__export", ESBUILD_EXPORT),
-    (b"__copyProps", ESBUILD_COPY_PROPS),
-    (b"__toCommonJS", ESBUILD_TO_COMMONJS),
-    (b"__defProp", b"Object.defineProperty"),
-    (b"__getOwnPropDesc", b"Object.getOwnPropertyDescriptor"),
-    (b"__getOwnPropNames", b"Object.getOwnPropertyNames"),
-    (b"__hasOwnProp", b"Object.prototype.hasOwnProperty"),
-];
-const START_OF_TSLIB: &[u8] = b"function(factory){varroot=typeofglobal===\"object\"?global:typeofself===\"object\"?self:typeofthis===\"object\"?this:{};if(typeofdefine===\"function\"&&define.amd){define(\"tslib\",[\"exports\"],function(exports){factory(createExporter(root,createExporter(exports)));});}elseif(typeofmodule===\"object\"&&typeofmodule.exports===\"object\"){factory(createExporter(root,createExporter(module.exports)));}else{factory(createExporter(root));}functioncreateExporter(exports,previous){if(exports!==root){if(typeofObject.create===\"function\"){Object.defineProperty(exports,\"__esModule\",{value:true});}else{exports.__esModule=true;}}returnfunction(id,v){returnexports[id]=previous?previous(id,v):v;};}}";
-const EXPORT_STAR_OF_TSLIB: &[u8] = b"function(m,o){for(varpinm)if(p!==\"default\"&&!Object.prototype.hasOwnProperty.call(o,p))__createBinding(o,m,p);}";
+#[derive(Clone, Copy)]
+enum Tree {
+    Local(usize),
+    OfObject(&'static [&'static [u8]]),
+    Known(&'static KnownFunction),
+    Call(&'static Tree, &'static [Tree]),
+    Member(&'static Tree, &'static [u8]),
+    Element(&'static Tree, &'static Tree),
+    Literal(&'static [(&'static [u8], Tree)]),
+    Getter(&'static Tree),
+    Text(&'static [u8]),
+    True,
+    Not(&'static Tree),
+    And(&'static Tree, &'static Tree),
+    Or(&'static Tree, &'static Tree),
+    Differs(&'static Tree, &'static Tree),
+    Same(&'static Tree, &'static Tree),
+    Undefined,
+    Has(&'static [u8], &'static Tree),
+    Choice(&'static Tree, &'static Tree, &'static Tree),
+    Either(&'static Tree, &'static Tree),
+    Store(&'static Tree, &'static Tree),
+}
+
+#[derive(Clone, Copy)]
+enum Step {
+    ForIn(usize, Tree, &'static Step),
+    If(Tree, &'static Step),
+    Declare(usize, Tree),
+    Do(Tree),
+}
+
+#[derive(Clone, Copy)]
+enum Held {
+    UnlessTheExportsHaveOne,
+    UnlessTheExportsHaveOneAndWhereObjectCreateIs(&'static [Step]),
+}
+
+struct KnownFunction {
+    held: Held,
+    params: usize,
+    bodies: &'static [&'static [Step]],
+}
+
+const LOCALS_OF_KNOWN_FUNCTIONS: usize = 5;
+const DEFINE_PROPERTY: Tree = Tree::OfObject(&[b"defineProperty"]);
+const TAKES_THE_SAME_NAME_WHERE_NONE_IS_GIVEN: Step = Step::If(Tree::Same(&Tree::Local(3), &Tree::Undefined), &Step::Do(Tree::Store(&Tree::Local(3), &Tree::Local(2))));
+const GETTER_OF_THE_OTHER: Tree = Tree::Literal(&[(b"enumerable", Tree::True), (b"get", Tree::Getter(&Tree::Element(&Tree::Local(1), &Tree::Local(2))))]);
+const BINDS_A_NAME_TO_THE_OTHER: KnownFunction = KnownFunction {
+    held: Held::UnlessTheExportsHaveOneAndWhereObjectCreateIs(&[TAKES_THE_SAME_NAME_WHERE_NONE_IS_GIVEN, Step::Do(Tree::Store(&Tree::Element(&Tree::Local(0), &Tree::Local(3)), &Tree::Element(&Tree::Local(1), &Tree::Local(2))))]),
+    params: 4,
+    bodies: &[
+        &[
+            TAKES_THE_SAME_NAME_WHERE_NONE_IS_GIVEN,
+            Step::Declare(4, Tree::Call(&Tree::OfObject(&[b"getOwnPropertyDescriptor"]), &[Tree::Local(1), Tree::Local(2)])),
+            Step::If(
+                Tree::Or(
+                    &Tree::Not(&Tree::Local(4)),
+                    &Tree::Choice(&Tree::Has(b"get", &Tree::Local(4)), &Tree::Not(&Tree::Member(&Tree::Local(1), b"__esModule")), &Tree::Or(&Tree::Member(&Tree::Local(4), b"writable"), &Tree::Member(&Tree::Local(4), b"configurable"))),
+                ),
+                &Step::Do(Tree::Store(&Tree::Local(4), &GETTER_OF_THE_OTHER)),
+            ),
+            Step::Do(Tree::Call(&DEFINE_PROPERTY, &[Tree::Local(0), Tree::Local(3), Tree::Local(4)])),
+        ],
+        &[TAKES_THE_SAME_NAME_WHERE_NONE_IS_GIVEN, Step::Do(Tree::Call(&DEFINE_PROPERTY, &[Tree::Local(0), Tree::Local(3), GETTER_OF_THE_OTHER]))],
+    ],
+};
+const BINDS_EVERY_NAME_OF_THE_OTHER: KnownFunction = KnownFunction {
+    held: Held::UnlessTheExportsHaveOne,
+    params: 2,
+    bodies: &[&[Step::ForIn(
+        2,
+        Tree::Local(0),
+        &Step::If(
+            Tree::And(
+                &Tree::Differs(&Tree::Local(2), &Tree::Text(b"default")),
+                &Tree::Not(&Tree::Either(
+                    &Tree::Call(&Tree::Member(&Tree::OfObject(&[b"prototype", b"hasOwnProperty"]), b"call"), &[Tree::Local(1), Tree::Local(2)]),
+                    &Tree::Call(&Tree::Member(&Tree::Local(1), b"hasOwnProperty"), &[Tree::Local(2)]),
+                )),
+            ),
+            &Step::Do(Tree::Call(&Tree::Known(&BINDS_A_NAME_TO_THE_OTHER), &[Tree::Local(1), Tree::Local(0), Tree::Local(2)])),
+        ),
+    )]],
+};
 
 const NAMES_OF_OBJECT_PROTOTYPE: [&[u8]; 12] = [
     b"constructor",
@@ -150,8 +212,6 @@ impl Graph {
 /// What has been asked so far. It belongs to a checker.
 #[derive(Default)]
 pub(super) struct State {
-    tslibs: FxHashMap<FileId, bool>,
-    stars_by_tslib: Vec<(FileId, FileId)>,
     /// `function_exported_whole`. `None` also while it is being found.
     exported_whole: FxHashMap<FileId, Option<(FileId, FnId, bool)>>,
     names_of_export_variables: Option<FxHashMap<FileId, Vec<Atom>>>,
@@ -182,7 +242,6 @@ struct Found {
     stars: FxHashSet<(FileId, ExprId)>,
     making_values_alone: FxHashSet<FileId>,
     keeping_values_alone_in_an_object: FxHashSet<FileId>,
-    esbuild_exports: FxHashMap<FileId, ExprId>,
     named_literals: FxHashMap<FileId, (ExprId, ExprId)>,
     /// By module that is in no cycle: where its prologue ends.
     prologues: FxHashMap<FileId, u32>,
@@ -243,7 +302,6 @@ struct Module {
     reads: FxHashSet<Atom>,
     /// `__exportStar(.., exports)`: the calls, in their order.
     stars: Vec<ExprId>,
-    esbuild_export: ExprId,
     /// What only holds as long as nobody gets at the module while it is evaluated.
     is_exact_outside_cycles: bool,
 }
@@ -502,7 +560,7 @@ impl<'p, 's> Checker<'p, 's> {
         let found = self.commonjs();
         let files = self.p.aot.commonjs.files_with_exports_expressions.get_or_init(|| {
             let by_expression = found.mentions.keys().chain(&found.defining_aliases).chain(&found.stars).chain(&found.whole).map(|at| at.0);
-            by_expression.chain(found.marked.keys().copied()).chain(found.esbuild_exports.keys().copied()).collect()
+            by_expression.chain(found.marked.keys().copied()).collect()
         });
         files.contains(&file)
     }
@@ -544,8 +602,24 @@ impl<'p, 's> Checker<'p, 's> {
         let (Some(&prologue), ExprKind::Ident(name)) = (self.commonjs().prologues.get(&file), hir[e].kind) else { return false };
         let Some((of, Decl::Var(pat))) = self.binding_of_identifier(file, e, name).and_then(|sym| self.declaration_of_variable(sym)) else { return false };
         let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return false };
+        if hir[declaration].init.is_none() {
+            let Some(end) = self.end_of_the_only_store_to(file, bound.pat_symbol[pat.idx()]).filter(|_| of == file) else { return false };
+            return if self.enclosing_fn_of_expr(file, e).is_some() { end <= prologue } else { hir[e].pos >= end };
+        }
         let end = hir[declaration].loc.end;
         of == file && end <= prologue && self.enclosing_fn(file, Parent::VarInit(declaration)).is_none() && (self.enclosing_fn_of_expr(file, e).is_some() || hir[e].pos >= end)
+    }
+
+    fn end_of_the_only_store_to(&self, file: FileId, local: crate::bind::SymbolId) -> Option<u32> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let graph = self.p.aot.commonjs.graph.get()?;
+        let mut stores = bound.assignments_to(local).iter().filter_map(|&(_, target)| match bound.expr_parent[target.idx()] {
+            Parent::Expr(around) if self.runs(file, graph, around) == Runs::Never => None,
+            Parent::Expr(around) => Some(around),
+            _ => Some(ExprId::NONE),
+        });
+        let (store, None) = (stores.next()?, stores.next()) else { return None };
+        (store.is_some() && self.runs(file, graph, store) == Runs::Always).then(|| hir[store].end)
     }
 
     /// Whether the call is `__exportStar(require("./other"), exports)` and does no more than evaluate the other module.
@@ -564,10 +638,6 @@ impl<'p, 's> Checker<'p, 's> {
         self.commonjs().defining_aliases.contains(&(file, call))
     }
 
-    pub fn esbuild_export_call(&mut self, file: FileId) -> Option<ExprId> {
-        self.commonjs().esbuild_exports.get(&file).copied()
-    }
-
     /// `module.exports = { a, b: value }` in a module that keeps its exports in variables: the literal.
     pub fn is_literal_of_export_variables(&mut self, file: FileId, literal: ExprId) -> bool {
         let is_name_of_literal = self.commonjs().named_literals.get(&file).is_some_and(|named| named.1 == literal);
@@ -580,11 +650,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn is_module_that_only_makes_values(&mut self, module: FileId) -> bool {
         self.commonjs().making_values_alone.contains(&module)
-    }
-
-    pub fn is_evaluated_again_after_a_failure(&mut self, module: FileId) -> bool {
-        let found = self.commonjs();
-        found.making_values_alone.contains(&module) || found.keeping_values_alone_in_an_object.contains(&module)
     }
 
     pub fn is_export_variable_stored_before_every_read(&mut self, module: FileId, name: Atom) -> bool {
@@ -721,10 +786,7 @@ impl<'p, 's> Checker<'p, 's> {
         let looked_into: Vec<FileId> = graph.modules.iter().copied().filter(is_looked_into).collect();
         let found = self.in_slices(&looked_into, FILES_OF_A_CHECKER, in_parallel, &|c, files| files.iter().map(|&file| c.find_commonjs_module(file, graph)).collect::<Vec<Module>>());
         let mut modules: FxHashMap<FileId, Module> = FxHashMap::default();
-        for (&file, mut found) in looked_into.iter().zip(found.into_iter().flatten()) {
-            if self.module_may_be_overridden(file) {
-                found.obstacle = found.obstacle.or(Some("a test may override what it exports"));
-            }
+        for (&file, found) in looked_into.iter().zip(found.into_iter().flatten()) {
             modules.insert(file, found);
         }
         for &file in &graph.modules {
@@ -780,12 +842,6 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for &(module, why) in &uses.looked_at {
             with_object.entry(keeper_of(&modules, module)).or_insert(why);
-        }
-        for (file, tslib) in std::mem::take(&mut self.aot.commonjs.stars_by_tslib) {
-            if uses.looked_at.iter().any(|looked_at| looked_at.0 == tslib) {
-                with_object.entry(file).or_insert("__exportStar of a tslib that is stored to from outside, or used as a value");
-                self.aot.commonjs.tslibs.insert(tslib, false);
-            }
         }
         let standing_for: FxHashMap<(FileId, ExprId), ExportsMention> = uses.mentions.iter().map(|&(file, e, mention)| ((file, e), mention)).collect();
         let mut aliases: FxHashMap<(FileId, Atom), (FileId, Atom)> = FxHashMap::default();
@@ -1006,9 +1062,6 @@ impl<'p, 's> Checker<'p, 's> {
             if self.only_makes_values(file) && !uses.imported_by_es_modules.iter().any(|import| keeper_of(&modules, import.1) == file) {
                 found.making_values_alone.insert(file);
             }
-            if module.esbuild_export.is_some() {
-                found.esbuild_exports.insert(file, module.esbuild_export);
-            }
             if module.name_of_literal.is_some() {
                 found.named_literals.insert(file, (module.literal, module.name_of_literal));
             }
@@ -1062,11 +1115,6 @@ impl<'p, 's> Checker<'p, 's> {
             Decl::ImportNamespace(import) | Decl::ImportDefault(import) => self.names_builtin_module(self.hir(of)[import].spec, module),
             _ => false,
         })
-    }
-
-    pub fn is_path_join_or_resolve(&mut self, file: FileId, callee: ExprId) -> bool {
-        let members: Vec<Atom> = [&b"join"[..], b"resolve"].into_iter().filter_map(|name| self.atoms().lookup(name)).collect();
-        members.into_iter().any(|member| self.is_member_of_builtin_module(file, callee, b"path", member))
     }
 
     fn is_member_of_builtin_module(&mut self, file: FileId, callee: ExprId, module: &[u8], member: Atom) -> bool {
@@ -1146,6 +1194,30 @@ impl<'p, 's> Checker<'p, 's> {
         &self.aot.commonjs.create_require_candidates[&file]
     }
 
+    pub fn variables_that_may_hold_made_requires(&self, file: FileId) -> Vec<crate::bind::SymbolId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let may_locate_its_own_file = |e: ExprId| match hir[e].kind {
+            ExprKind::Dot { obj, .. } => matches!(hir[obj].kind, ExprKind::ImportMeta),
+            ExprKind::Ident(name) => {
+                let symbol = bound.expr_symbol[e.idx()];
+                self.atoms().bytes(name) == b"__filename" && (symbol.is_none() || bound.symbols[symbol.idx()].decls.iter().all(|&decl| matches!(decl, Decl::CommonJsVariable)))
+            }
+            ExprKind::Binary { op: BinOp::Add, right, .. } => matches!(hir[right].kind, ExprKind::String(_)),
+            _ => false,
+        };
+        let declarations = hir.var_decls.iter().filter(|declaration| declaration.init.is_some() && matches!(hir[declaration.pat].kind, PatKind::Ident(_)));
+        declarations
+            .filter(|declaration| matches!(hir[declaration.init].kind, ExprKind::Call(call) if hir[call].args.len() == 1 && may_locate_its_own_file(hir.id_at(hir[call].args, 0))))
+            .map(|declaration| bound.pat_symbol[declaration.pat.idx()])
+            .collect()
+    }
+
+    pub fn makes_require_for_its_file(&mut self, file: FileId, call: crate::hir::CallId) -> bool {
+        let hir = self.hir(file);
+        let Some(create_require) = self.atoms().lookup(b"createRequire") else { return false };
+        hir[call].args.len() == 1 && self.is_member_of_builtin_module(file, hir[call].callee, b"module", create_require) && self.locates_its_own_file(file, hir.id_at(hir[call].args, 0))
+    }
+
     pub fn names_require_made_for_its_file(&mut self, file: FileId, e: ExprId) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::Ident(name) = hir[e].kind else { return false };
@@ -1197,7 +1269,13 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let ExprKind::String(specifier) = hir[hir.id_at(hir[call].args, 0)].kind else { return None };
-        self.names_require_made_for_its_file(file, hir[call].callee).then_some(specifier)
+        let callee = hir[call].callee;
+        let is_own = match hir[callee].kind {
+            ExprKind::Ident(known::require) => self.names_commonjs_variable(file, callee, known::require),
+            ExprKind::Dot { obj, name: known::require, chain: Chain::No, .. } if matches!(hir[obj].kind, ExprKind::Ident(known::module)) => self.files().module(file).is_commonjs() && self.names_commonjs_variable(file, obj, known::module),
+            _ => false,
+        };
+        (is_own || self.names_require_made_for_its_file(file, callee)).then_some(specifier)
     }
 
     /// Whether the identifier is `module`, `exports` or `require` as every CommonJS module gets them, not a declaration of the program by that name.
@@ -1278,6 +1356,32 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    fn variable_stored_once_with(&self, file: FileId, graph: &Graph, value: ExprId) -> Option<(Atom, crate::bind::SymbolId)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Parent::Expr(assignment) = bound.expr_parent[value.idx()] else { return None };
+        let ExprKind::Assign { op: None, target, value: stored } = hir[assignment].kind else { return None };
+        let ExprKind::Ident(name) = hir[target].kind else { return None };
+        let is_statement = matches!(bound.expr_parent[assignment.idx()], Parent::Stmt(stmt) if matches!(hir[stmt].kind, StmtKind::Expr(_)));
+        if stored != value || !is_statement || self.runs(file, graph, assignment) != Runs::Always {
+            return None;
+        }
+        let local = bound.expr_symbol[target.idx()];
+        let symbol = bound.symbols.get(local.idx())?;
+        let &[Decl::Var(pat)] = &symbol.decls[..] else { return None };
+        let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return None };
+        let is_plain = hir[declaration].kind == VarKind::Var
+            && hir[declaration].pat == pat
+            && hir[declaration].init.is_none()
+            && hir[declaration].ty.is_none()
+            && !hir[declaration].flags.intersects(Flags::EXPORT | Flags::AMBIENT)
+            && !symbol.flags.contains(SymFlags::MERGED)
+            && !self.has_direct_eval(file)
+            && !self.is_stored_through_casts(file, local)
+            && !hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == name));
+        let is_left_out = |other: ExprId| matches!(bound.expr_parent[other.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Assign { op: None, target, .. } if target == other) && self.runs(file, graph, around) == Runs::Never);
+        (is_plain && bound.assignments_to(local).iter().all(|&(_, other)| other == target || is_left_out(other))).then_some((name, local))
+    }
+
     fn use_of_exports(&mut self, file: FileId, e: ExprId) -> Use {
         let (hir, bound) = (self.hir(file), self.bound(file));
         match bound.expr_parent[e.idx()] {
@@ -1311,13 +1415,6 @@ impl<'p, 's> Checker<'p, 's> {
                     Use::Other(match hir[hir[call].callee].kind {
                         ExprKind::Dot { obj, name: known::defineProperty, .. } if matches!(hir[obj].kind, ExprKind::Ident(known::Object)) => "it is passed to Object.defineProperty, otherwise than for a marker or a getter",
                         ExprKind::Dot { obj, .. } if matches!(hir[obj].kind, ExprKind::Ident(known::Object)) => "it is passed to another function of Object",
-                        ExprKind::Ident(name) | ExprKind::Dot { name, .. } => match self.atoms().bytes(name) {
-                            b"__exportStar" => "it is passed to __exportStar",
-                            b"__export" | b"__reExport" | b"__toCommonJS" | b"__copyProps" => "it is passed to __export, __reExport, __toCommonJS",
-                            b"__createBinding" => "it is passed to __createBinding",
-                            b"__importDefault" | b"__importStar" | b"_interopRequireDefault" | b"_interopRequireWildcard" | b"_interop_require_default" | b"_interop_require_wildcard" | b"__toESM" => "it is passed to an interop helper that is not seen through",
-                            _ => "it is passed to a function",
-                        },
                         _ => "it is passed to a function",
                     })
                 }
@@ -1471,297 +1568,180 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What follows `(this && this.name) ||` in the initializer of the variable that the identifier names, which is declared once, before the body of the module does
-    /// anything, and is never stored to.
-    fn text_of_helper(&self, file: FileId, named: ExprId) -> Option<(ExprId, Vec<u8>)> {
+    fn value_held_from_the_start(&self, file: FileId, named: ExprId) -> Option<ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let local = bound.expr_symbol[named.idx()];
         let symbol = bound.symbols.get(local.idx())?;
-        if symbol.decls.len() != 1 || symbol.flags.contains(SymFlags::MERGED) || !bound.assignments_to(local).is_empty() || self.is_stored_through_casts(file, local) {
+        if !matches!(hir[named].kind, ExprKind::Ident(_)) || symbol.decls.len() != 1 || symbol.flags.contains(SymFlags::MERGED) || !bound.assignments_to(local).is_empty() || self.is_stored_through_casts(file, local) {
             return None;
         }
         let Decl::Var(pat) = symbol.decls[0] else { return None };
         let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return None };
         let init = hir[declaration].init.some()?;
-        let ExprKind::Binary { op: BinOp::Or, left, right } = hir[init].kind else { return None };
+        (matches!(hir[pat].kind, PatKind::Ident(_)) && hir[declaration].loc.end <= self.first_effect_of_module(file) && self.enclosing_fn_of_expr(file, init).is_none()).then_some(init)
+    }
+
+    fn is_function_of_object(&mut self, file: FileId, e: ExprId, path: &[&[u8]]) -> bool {
+        let hir = self.hir(file);
+        let mut at = match hir[e].kind {
+            ExprKind::Ident(_) => match self.value_held_from_the_start(file, e) {
+                Some(init) => init,
+                None => return false,
+            },
+            _ => e,
+        };
+        for &wanted in path.iter().rev() {
+            let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[at].kind else { return false };
+            if self.atoms().bytes(name) != wanted {
+                return false;
+            }
+            at = obj;
+        }
+        matches!(hir[at].kind, ExprKind::Ident(object @ known::Object) if self.names_global(file, at, object))
+    }
+
+    fn value_unless_the_exports_have_one(&self, file: FileId, named: ExprId) -> Option<ExprId> {
+        let hir = self.hir(file);
+        let ExprKind::Binary { op: BinOp::Or, left, right } = hir[self.value_held_from_the_start(file, named)?].kind else { return None };
         let ExprKind::Binary { op: BinOp::And, left: this, right: own } = hir[left].kind else { return None };
         let ExprKind::Dot { obj, chain: Chain::No, .. } = hir[own].kind else { return None };
         let is_exports = |e: ExprId| matches!(hir[e].kind, ExprKind::This) && self.this_container(file, e).is_none() && self.enclosing_fn_of_expr(file, e).is_none();
-        if !is_exports(this) || !is_exports(obj) || !self.files().module(file).is_commonjs() || hir[declaration].loc.end > self.first_effect_of_module(file) || self.enclosing_fn_of_expr(file, init).is_some() {
-            return None;
-        }
-        // From behind the `||` to the end of the declaration, which takes in the parentheses around it.
-        let text = &hir.text[hir[left].end as usize..hir[declaration].loc.end as usize];
-        let text: Vec<u8> = text.iter().copied().filter(|byte| !byte.is_ascii_whitespace()).collect();
-        let text = text.strip_prefix(b")").unwrap_or(&text).strip_prefix(b"||")?;
-        Some((right, text.to_vec()))
+        (is_exports(this) && is_exports(obj) && self.files().module(file).is_commonjs()).then_some(right)
     }
 
-    fn names_esbuild_helper(&mut self, file: FileId, named: ExprId, depth: u32) -> bool {
-        let (hir, bound, by_kind) = (self.hir(file), self.bound(file), self.exprs_by_kind_of(file));
-        let ExprKind::Ident(name) = hir[named].kind else { return false };
-        let Some(&(_, expected)) = ESBUILD_HELPERS.iter().find(|helper| helper.0 == self.atoms().bytes(name)) else { return false };
-        let local = bound.expr_symbol[named.idx()];
-        let Some(symbol) = bound.symbols.get(local.idx()) else { return false };
-        if depth > 4 || symbol.decls.len() != 1 || symbol.flags.contains(SymFlags::MERGED) || !bound.assignments_to(local).is_empty() || self.is_stored_through_casts(file, local) {
+    fn is_known_function(&mut self, file: FileId, named: ExprId, known: &'static KnownFunction, depth: u32) -> bool {
+        let hir = self.hir(file);
+        let function_at = |e: ExprId| match hir[e].kind {
+            ExprKind::Fn(function) => Some(function),
+            _ => None,
+        };
+        let function = match known.held {
+            Held::UnlessTheExportsHaveOne => self.value_unless_the_exports_have_one(file, named).and_then(function_at),
+            Held::UnlessTheExportsHaveOneAndWhereObjectCreateIs(otherwise) => match self.value_unless_the_exports_have_one(file, named).map(|value| hir[value].kind) {
+                Some(ExprKind::Cond { test, yes, no }) if self.is_function_of_object(file, test, &[b"create"]) && function_at(no).is_some_and(|no| self.is_function_with_body(file, no, known.params, otherwise, depth)) => function_at(yes),
+                _ => None,
+            },
+        };
+        function.is_some_and(|function| known.bodies.iter().any(|body| self.is_function_with_body(file, function, known.params, body, depth)))
+    }
+
+    fn is_function_with_body(&mut self, file: FileId, function: FnId, params: usize, steps: &'static [Step], depth: u32) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let of = &hir[function];
+        if depth > 4 || !matches!(of.kind, FnKind::Arrow | FnKind::Expr) || of.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || of.params.iter().len() != params {
             return false;
         }
-        let Decl::Var(pat) = symbol.decls[0] else { return false };
-        let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return false };
-        let Some(init) = hir[declaration].init.some() else { return false };
-        if !matches!(hir[pat].kind, PatKind::Ident(_)) || hir[declaration].loc.end > self.first_effect_of_module(file) || self.enclosing_fn_of_expr(file, init).is_some() {
-            return false;
-        }
-        let text = hir.text[hir[init].pos as usize..hir[init].end as usize].iter().copied().filter(|byte| !byte.is_ascii_whitespace());
-        if !text.eq(expected.iter().copied()) {
-            return false;
-        }
-        for &e in by_kind.of(ExprTag::Ident) {
-            let ExprKind::Ident(mentioned) = hir[e].kind else { continue };
-            if hir[e].pos < hir[init].pos || hir[e].end > hir[init].end || bound.expr_parent[e.idx()] == Parent::None {
-                continue;
-            }
-            let text = self.atoms().bytes(mentioned);
-            let (is_object, is_helper) = (text == b"Object", text.starts_with(b"__"));
-            if is_object && !self.names_global(file, e, mentioned) || is_helper && !self.names_esbuild_helper(file, e, depth + 1) {
+        let mut locals = [crate::bind::SymbolId::NONE; LOCALS_OF_KNOWN_FUNCTIONS];
+        for (number, param) in of.params.iter().enumerate() {
+            if !matches!(hir[hir[param].pat].kind, PatKind::Ident(_)) || hir[param].default.is_some() || hir[param].flags.contains(Flags::REST) {
                 return false;
             }
+            locals[number] = bound.pat_symbol[hir[param].pat.idx()];
         }
-        true
+        match of.body {
+            FnBody::Block(stmts) => {
+                let stmts: Vec<StmtId> = hir.ids(stmts).collect();
+                stmts.len() == steps.len() && stmts.iter().zip(steps).all(|(&stmt, step)| self.is_step(file, stmt, step, &mut locals, depth))
+            }
+            FnBody::Expr(_) | FnBody::None => false,
+        }
     }
 
-    fn is_settled_when_the_body_ends(&self, file: FileId, graph: &Graph, named: ExprId) -> bool {
+    fn is_step(&mut self, file: FileId, stmt: StmtId, step: &Step, locals: &mut [crate::bind::SymbolId; LOCALS_OF_KNOWN_FUNCTIONS], depth: u32) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let local = bound.expr_symbol[named.idx()];
-        let Some(symbol) = bound.symbols.get(local.idx()) else { return false };
-        if !matches!(hir[named].kind, ExprKind::Ident(_)) || symbol.decls.len() != 1 || symbol.flags.contains(SymFlags::MERGED) || self.is_stored_through_casts(file, local) {
-            return false;
+        let mut stmt = stmt;
+        while let StmtKind::Block(inner) = hir[stmt].kind {
+            let mut inner = hir.ids(inner);
+            let (Some(only), None) = (inner.next(), inner.next()) else { return false };
+            stmt = only;
         }
-        if bound.assignments_to(local).iter().any(|assignment| self.runs(file, graph, assignment.1) == Runs::Later) {
-            return false;
-        }
-        match symbol.decls[0] {
-            Decl::Fn(_) | Decl::Class(_) => true,
-            Decl::Var(pat) => match bound.pat_parent[pat.idx()] {
-                PatParent::Var(declaration) => self.enclosing_fn(file, Parent::VarInit(declaration)).is_none() && hir[declaration].init.some().is_none_or(|init| self.runs(file, graph, init) != Runs::Later),
+        let declared_by = |left: StmtId| {
+            let StmtKind::Var(declarations) = hir[left].kind else { return None };
+            let mut declarations = declarations.iter();
+            let (Some(one), None) = (declarations.next(), declarations.next()) else { return None };
+            let is_plain = hir[one].init.is_none() && matches!(hir[hir[one].pat].kind, PatKind::Ident(_));
+            is_plain.then(|| bound.pat_symbol[hir[one].pat.idx()])
+        };
+        match (*step, hir[stmt].kind) {
+            (Step::ForIn(number, of, body), StmtKind::ForIn { left, expr, body: run }) => {
+                let Some(variable) = declared_by(left) else { return false };
+                locals[number] = variable;
+                self.is_tree(file, expr, &of, locals, depth) && self.is_step(file, run, body, locals, depth)
+            }
+            (Step::If(test, then), StmtKind::If { test: tested, yes, no }) => no.is_none() && self.is_tree(file, tested, &test, locals, depth) && self.is_step(file, yes, then, locals, depth),
+            (Step::If(test, &Step::Do(then)), StmtKind::Expr(e)) => match hir[e].kind {
+                ExprKind::Binary { op: BinOp::And, left, right } => self.is_tree(file, left, &test, locals, depth) && self.is_tree(file, right, &then, locals, depth),
                 _ => false,
             },
+            (Step::Declare(number, value), StmtKind::Var(declarations)) => {
+                let mut declarations = declarations.iter();
+                let (Some(one), None) = (declarations.next(), declarations.next()) else { return false };
+                if hir[one].init.is_none() || !matches!(hir[hir[one].pat].kind, PatKind::Ident(_)) {
+                    return false;
+                }
+                locals[number] = bound.pat_symbol[hir[one].pat.idx()];
+                self.is_tree(file, hir[one].init, &value, locals, depth)
+            }
+            (Step::Do(tree), StmtKind::Expr(e)) => self.is_tree(file, e, &tree, locals, depth),
             _ => false,
         }
     }
 
-    fn exports_defined_by_esbuild(&mut self, file: FileId, graph: &Graph, value: ExprId) -> Option<(ExprId, Vec<(Atom, ExprId)>)> {
-        let (hir, bound, by_kind) = (self.hir(file), self.bound(file), self.exprs_by_kind_of(file));
-        let ExprKind::Call(converted) = hir[value].kind else { return None };
-        let callee = hir[converted].callee;
-        if hir[converted].args.len() != 1 || hir[converted].chain != Chain::No || !matches!(hir[callee].kind, ExprKind::Ident(name) if self.atoms().bytes(name) == b"__toCommonJS") || !self.names_esbuild_helper(file, callee, 0) {
-            return None;
-        }
-        let holder = hir.id_at(hir[converted].args, 0);
-        let ExprKind::Ident(name_of_holder) = hir[holder].kind else { return None };
-        let local = bound.expr_symbol[holder.idx()];
-        let symbol = bound.symbols.get(local.idx())?;
-        if symbol.decls.len() != 1 || symbol.flags.contains(SymFlags::MERGED) || !bound.assignments_to(local).is_empty() || self.is_stored_through_casts(file, local) {
-            return None;
-        }
-        let Decl::Var(pat) = symbol.decls[0] else { return None };
-        let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return None };
-        let init = hir[declaration].init.some()?;
-        if !matches!(hir[pat].kind, PatKind::Ident(_)) || !matches!(hir[init].kind, ExprKind::Object(props) if props.is_empty()) || self.runs(file, graph, init) != Runs::Always || hir[init].pos > hir[value].pos {
-            return None;
-        }
-        let mut call = None;
-        for &reference in by_kind.of(ExprTag::Ident) {
-            if reference == holder || !matches!(hir[reference].kind, ExprKind::Ident(named) if named == name_of_holder) || bound.expr_parent[reference.idx()] == Parent::None || bound.expr_symbol[reference.idx()] != local {
-                continue;
-            }
-            let Parent::Expr(parent) = bound.expr_parent[reference.idx()] else { return None };
-            let ExprKind::Call(exporting) = hir[parent].kind else { return None };
-            let callee = hir[exporting].callee;
-            let is_plain = call.is_none()
-                && hir[exporting].args.len() == 2
-                && hir[exporting].chain == Chain::No
-                && hir.id_at(hir[exporting].args, 0) == reference
-                && matches!(bound.expr_parent[parent.idx()], Parent::Stmt(_))
-                && self.runs(file, graph, parent) == Runs::Always
-                && hir[init].pos < hir[parent].pos
-                && hir[parent].pos < hir[value].pos
-                && matches!(hir[callee].kind, ExprKind::Ident(name) if self.atoms().bytes(name) == b"__export")
-                && self.names_esbuild_helper(file, callee, 0);
-            if !is_plain {
-                return None;
-            }
-            call = Some(parent);
-        }
-        let call = call?;
-        let ExprKind::Call(exporting) = hir[call].kind else { return None };
-        let ExprKind::Object(props) = hir[hir.id_at(hir[exporting].args, 1)].kind else { return None };
-        let mut names: Vec<(Atom, ExprId)> = Vec::new();
-        for prop in props.iter() {
-            let (PropKind::Init, PropKey::Name(name), ExprKind::Fn(getter)) = (hir[prop].kind, hir[prop].key, hir[hir[prop].value].kind) else { return None };
-            let FnBody::Expr(returned) = hir[getter].body else { return None };
-            let is_plain = hir[getter].kind == FnKind::Arrow
-                && hir[getter].params.is_empty()
-                && !hir[getter].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
-                && name != known::__esModule
-                && !self.is_name_of_object_prototype(name)
-                && names.iter().all(|known| known.0 != name)
-                && self.is_settled_when_the_body_ends(file, graph, returned);
-            if !is_plain {
-                return None;
-            }
-            names.push((name, returned));
-        }
-        Some((call, names))
-    }
-
-    /// Whether the identifier names TypeScript's `__exportStar`.
-    fn is_export_star(&mut self, file: FileId, callee: ExprId) -> bool {
-        let hir = self.hir(file);
-        if let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[callee].kind {
-            return self.atoms().bytes(name) == b"__exportStar" && self.is_export_star_of_tslib(file, callee, obj);
-        }
-        if !matches!(hir[callee].kind, ExprKind::Ident(_)) {
-            return false;
-        }
-        let Some((function, text)) = self.text_of_helper(file, callee) else { return false };
-        if !EXPORT_STAR.contains(&&text[..]) {
-            return false;
-        }
-        let within = hir[function].pos..hir[function].end;
-        let binding = self.exprs_by_kind_of(file).of(ExprTag::Ident).iter().copied().find(|&e| within.contains(&hir[e].pos) && matches!(hir[e].kind, ExprKind::Ident(name) if self.atoms().bytes(name) == b"__createBinding"));
-        binding.and_then(|binding| self.text_of_helper(file, binding)).is_some_and(|(_, text)| CREATE_BINDING.contains(&&text[..]))
-    }
-
-    fn is_export_star_of_tslib(&mut self, file: FileId, callee: ExprId, holder: ExprId) -> bool {
-        let program = self.p;
+    fn is_tree(&mut self, file: FileId, e: ExprId, tree: &Tree, locals: &mut [crate::bind::SymbolId; LOCALS_OF_KNOWN_FUNCTIONS], depth: u32) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let (Some(graph), ExprKind::Ident(_)) = (program.aot.commonjs.graph.get(), hir[holder].kind) else { return false };
-        let local = bound.expr_symbol[holder.idx()];
-        let Some(symbol) = bound.symbols.get(local.idx()) else { return false };
-        if symbol.decls.len() != 1 || symbol.flags.contains(SymFlags::MERGED) || !bound.assignments_to(local).is_empty() || self.is_stored_through_casts(file, local) || self.has_direct_eval(file) {
-            return false;
+        let is_local = |e: ExprId, local: crate::bind::SymbolId| matches!(hir[e].kind, ExprKind::Ident(_)) && local.is_some() && bound.expr_symbol[e.idx()] == local;
+        match (*tree, hir[e].kind) {
+            (Tree::Local(number), _) => is_local(e, locals[number]),
+            (Tree::OfObject(path), _) => self.is_function_of_object(file, e, path),
+            (Tree::Known(known), _) => self.is_known_function(file, e, known, depth + 1),
+            (Tree::Call(callee, args), ExprKind::Call(call)) => {
+                let given: Vec<ExprId> = hir.ids(hir[call].args).collect();
+                hir[call].chain == Chain::No && given.len() == args.len() && self.is_tree(file, hir[call].callee, callee, locals, depth) && given.iter().zip(args).all(|(&given, arg)| self.is_tree(file, given, arg, locals, depth))
+            }
+            (Tree::Member(of, wanted), ExprKind::Dot { obj, name, chain: Chain::No, .. }) => self.atoms().bytes(name) == wanted && self.is_tree(file, obj, of, locals, depth),
+            (Tree::Element(of, key), ExprKind::Index { obj, index, chain: Chain::No }) => self.is_tree(file, obj, of, locals, depth) && self.is_tree(file, index, key, locals, depth),
+            (Tree::Literal(wanted), ExprKind::Object(props)) => {
+                props.iter().len() == wanted.len()
+                    && wanted.iter().all(|(name, value)| {
+                        let found = props.iter().find(|&prop| hir[prop].kind == PropKind::Init && matches!(hir[prop].key, PropKey::Name(key) if self.atoms().bytes(key) == *name));
+                        found.is_some_and(|prop| self.is_tree(file, hir[prop].value, value, locals, depth))
+                    })
+            }
+            (Tree::Getter(returned), ExprKind::Fn(getter)) => {
+                let of = &hir[getter];
+                let value = match of.body {
+                    FnBody::Expr(value) if of.kind == FnKind::Arrow => Some(value),
+                    FnBody::Block(stmts) if matches!(of.kind, FnKind::Arrow | FnKind::Expr) => {
+                        let mut stmts = hir.ids(stmts);
+                        match (stmts.next().map(|stmt: StmtId| hir[stmt].kind), stmts.next()) {
+                            (Some(StmtKind::Return(value)), None) => value.some(),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                of.params.is_empty() && !of.flags.intersects(Flags::ASYNC | Flags::GENERATOR) && value.is_some_and(|value| self.is_tree(file, value, returned, locals, depth))
+            }
+            (Tree::Text(wanted), ExprKind::String(text)) => self.atoms().bytes(text) == wanted,
+            (Tree::True, ExprKind::True) => true,
+            (Tree::True, ExprKind::Unary { op: UnOp::Not, operand }) => matches!(hir[operand].kind, ExprKind::Number(index) if hir.numbers[index as usize] == 0.0),
+            (Tree::Not(inner), ExprKind::Unary { op: UnOp::Not, operand }) => self.is_tree(file, operand, inner, locals, depth),
+            (Tree::And(first, second), ExprKind::Binary { op: BinOp::And, left, right })
+            | (Tree::Or(first, second), ExprKind::Binary { op: BinOp::Or, left, right })
+            | (Tree::Differs(first, second), ExprKind::Binary { op: BinOp::NotEqEq, left, right })
+            | (Tree::Same(first, second), ExprKind::Binary { op: BinOp::EqEqEq, left, right })
+            | (Tree::Store(first, second), ExprKind::Assign { op: None, target: left, value: right }) => self.is_tree(file, left, first, locals, depth) && self.is_tree(file, right, second, locals, depth),
+            (Tree::Undefined, ExprKind::Ident(name @ known::undefined)) => self.names_global(file, e, name),
+            (Tree::Undefined, ExprKind::Unary { op: UnOp::Void, operand }) => matches!(hir[operand].kind, ExprKind::Number(_)),
+            (Tree::Has(wanted, of), ExprKind::Binary { op: BinOp::In, left, right }) => matches!(hir[left].kind, ExprKind::String(text) if self.atoms().bytes(text) == wanted) && self.is_tree(file, right, of, locals, depth),
+            (Tree::Choice(asked, first, second), ExprKind::Cond { test, yes, no }) => self.is_tree(file, test, asked, locals, depth) && self.is_tree(file, yes, first, locals, depth) && self.is_tree(file, no, second, locals, depth),
+            (Tree::Either(first, second), _) => self.is_tree(file, e, first, locals, depth) || self.is_tree(file, e, second, locals, depth),
+            _ => false,
         }
-        let (Decl::Var(pat) | Decl::Require(pat)) = symbol.decls[0] else { return false };
-        let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return false };
-        let Some(init) = hir[declaration].init.some() else { return false };
-        let (Some(specifier), ExprKind::Call(call)) = (required_specifier(hir, init), hir[init].kind) else { return false };
-        let Some(tslib) = graph.required(file, specifier) else { return false };
-        let is_at_the_top = self.enclosing_fn_of_expr(file, init).is_none() && self.enclosing_fn_of_expr(file, callee).is_none();
-        if !is_at_the_top
-            || hir[init].end > hir[callee].pos
-            || !matches!(hir[pat].kind, PatKind::Ident(_))
-            || !self.names_commonjs_variable(file, hir[call].callee, known::require)
-            || self.runs(file, graph, init) != Runs::Always
-            || !self.is_tslib(tslib)
-        {
-            return false;
-        }
-        if !self.aot.commonjs.stars_by_tslib.contains(&(file, tslib)) {
-            self.aot.commonjs.stars_by_tslib.push((file, tslib));
-        }
-        true
     }
 
-    fn is_tslib(&mut self, module: FileId) -> bool {
-        if let Some(&known) = self.aot.commonjs.tslibs.get(&module) {
-            return known;
-        }
-        let found = self.exports_known_export_star(module).is_some();
-        self.aot.commonjs.tslibs.insert(module, found);
-        found
-    }
-
-    fn exports_known_export_star(&mut self, module: FileId) -> Option<()> {
-        let (hir, bound, by_kind) = (self.hir(module), self.bound(module), self.exprs_by_kind_of(module));
-        if !self.files().module(module).is_commonjs() || self.has_direct_eval(module) {
-            return None;
-        }
-        let text_of = |e: ExprId| -> Vec<u8> { hir.text[hir[e].pos as usize..hir[e].end as usize].iter().copied().filter(|byte| !byte.is_ascii_whitespace()).collect() };
-        let (mut whole, mut never_run) = (None, 0..0);
-        for stmt in hir.ids(hir.body) {
-            match hir[stmt].kind {
-                StmtKind::Var(declarations) if declarations.iter().all(|declaration| hir[declaration].init.is_none()) => {}
-                StmtKind::Expr(e) => match hir[e].kind {
-                    ExprKind::Binary { op: BinOp::And, left, .. } if whole.is_some() && never_run.is_empty() && text_of(left) == b"0" => never_run = hir[e].pos..hir[e].end,
-                    _ if whole.is_none() => whole = Some(e),
-                    _ => return None,
-                },
-                _ => return None,
-            }
-        }
-        let ExprKind::Call(call) = hir[whole?].kind else { return None };
-        if hir[call].args.len() != 1 || hir[call].chain != Chain::No {
-            return None;
-        }
-        let start = hir[call].callee;
-        let (ExprKind::Fn(_), ExprKind::Fn(rest)) = (hir[start].kind, hir[hir.id_at(hir[call].args, 0)].kind) else { return None };
-        let FnBody::Block(body) = hir[rest].body else { return None };
-        let mut params = hir[rest].params.iter();
-        let (Some(param), None) = (params.next(), params.next()) else { return None };
-        let exporter = bound.pat_symbol[hir[param].pat.idx()];
-        if text_of(start) != START_OF_TSLIB
-            || !matches!(hir[hir[param].pat].kind, PatKind::Ident(_))
-            || hir[param].default.is_some()
-            || !bound.assignments_to(exporter).is_empty()
-            || hir[rest].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
-        {
-            return None;
-        }
-        let is_statement_of_body = |e: ExprId| matches!(bound.expr_parent[e.idx()], Parent::Stmt(stmt) if matches!(hir[stmt].kind, StmtKind::Expr(_)) && hir.ids(body).any(|of_body: StmtId| of_body == stmt));
-        let (mut star, mut binding) = (None, None);
-        for &e in by_kind.of(ExprTag::Ident) {
-            if bound.expr_symbol[e.idx()] != exporter {
-                continue;
-            }
-            let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { return None };
-            let ExprKind::Call(call) = hir[parent].kind else { return None };
-            if hir[call].callee != e || hir[call].args.len() != 2 || hir[call].chain != Chain::No {
-                return None;
-            }
-            let ExprKind::String(name) = hir[hir.id_at(hir[call].args, 0)].kind else { return None };
-            let exported = match self.atoms().bytes(name) {
-                b"__exportStar" => &mut star,
-                b"__createBinding" => &mut binding,
-                _ => continue,
-            };
-            if exported.replace((parent, hir.id_at(hir[call].args, 1))).is_some() || !is_statement_of_body(parent) {
-                return None;
-            }
-        }
-        let stored_once = |(handed_over_by, named): (ExprId, ExprId)| {
-            let ExprKind::Ident(_) = hir[named].kind else { return None };
-            let local = bound.expr_symbol[named.idx()];
-            let symbol = bound.symbols.get(local.idx()).filter(|symbol| symbol.decls.len() == 1 && !symbol.flags.contains(SymFlags::MERGED))?;
-            let &[(_, target)] = bound.assignments_to(local) else { return None };
-            let Parent::Expr(store) = bound.expr_parent[target.idx()] else { return None };
-            let ExprKind::Assign { op: None, target: stored_to, value } = hir[store].kind else { return None };
-            let Decl::Var(pat) = symbol.decls[0] else { return None };
-            let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return None };
-            let is_plain = hir[declaration].init.is_none() && !self.is_stored_through_casts(module, local);
-            (is_plain && stored_to == target && is_statement_of_body(store) && hir[store].end <= hir[handed_over_by].pos).then_some((local, value))
-        };
-        let ((_, star), (binding, made_by)) = (stored_once(star?)?, stored_once(binding?)?);
-        let within = hir[star].pos..hir[star].end;
-        let in_parentheses = [&b"("[..], &text_of(made_by)[..], &b")"[..]].concat();
-        if text_of(star) != EXPORT_STAR_OF_TSLIB || !CREATE_BINDING.contains(&&in_parentheses[..]) || !by_kind.of(ExprTag::Ident).iter().any(|&e| within.contains(&hir[e].pos) && bound.expr_symbol[e.idx()] == binding) {
-            return None;
-        }
-        let is_run_by_the_rest = |e: ExprId| !(hir[start].pos..hir[start].end).contains(&hir[e].pos) && !never_run.contains(&hir[e].pos);
-        for &e in by_kind.of(ExprTag::Ident) {
-            if matches!(hir[e].kind, ExprKind::Ident(known::arguments)) && matches!(self.this_container(module, e), Some(Ok(function)) if function == rest) {
-                return None;
-            }
-            if let ExprKind::Ident(name @ (known::module | known::exports | known::require)) = hir[e].kind
-                && is_run_by_the_rest(e)
-                && self.names_commonjs_variable(module, e, name)
-            {
-                return None;
-            }
-        }
-        let returns_early = |stmt: &StmtId| matches!(hir[*stmt].kind, StmtKind::Return(_)) && self.enclosing_fn(module, bound.stmt_parent[stmt.idx()]) == Some(rest);
-        let is_exports = |e: ExprId| self.this_container(module, e).is_none() && self.enclosing_fn_of_expr(module, e).is_none();
-        (!(0..hir.stmts.len() as u32).map(StmtId).any(|stmt| returns_early(&stmt)) && !by_kind.of(ExprTag::This).iter().any(|&e| is_exports(e))).then_some(())
+    fn is_export_star(&mut self, file: FileId, callee: ExprId) -> bool {
+        self.is_known_function(file, callee, &BINDS_EVERY_NAME_OF_THE_OTHER, 0)
     }
 
     /// Whether evaluating the expression runs no function of the module and hands none to anybody: it makes functions and literals, reads variables and its own exports, and
@@ -2007,7 +1987,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn find_commonjs_module(&mut self, file: FileId, graph: &Graph) -> Module {
         let (hir, bound, by_kind) = (self.hir(file), self.bound(file), self.exprs_by_kind_of(file));
-        let mut module = Module { obstacle: None, needs_module: None, values: Vec::new(), values_stored_always: 0, is_redirect: false, re_exports: None, mentions: Vec::new(), stores: FxHashMap::default(), methods: Vec::new(), marker: ExprId::NONE, getters: FxHashMap::default(), literal: ExprId::NONE, name_of_literal: ExprId::NONE, reads: FxHashSet::default(), stars: Vec::new(), esbuild_export: ExprId::NONE, is_exact_outside_cycles: false };
+        let mut module = Module { obstacle: None, needs_module: None, values: Vec::new(), values_stored_always: 0, is_redirect: false, re_exports: None, mentions: Vec::new(), stores: FxHashMap::default(), methods: Vec::new(), marker: ExprId::NONE, getters: FxHashMap::default(), literal: ExprId::NONE, name_of_literal: ExprId::NONE, reads: FxHashSet::default(), stars: Vec::new(), is_exact_outside_cycles: false };
+        if graph.entry_points.contains(&file) {
+            module.obstacle = Some("it is an entry point: the host hands out what it exports");
+        }
         if self.has_direct_eval(file) {
             module.obstacle = Some("eval");
             module.needs_module = module.obstacle;
@@ -2106,22 +2089,6 @@ impl<'p, 's> Checker<'p, 's> {
                     let other = required_specifier(hir, value).and_then(|specifier| graph.required(file, specifier));
                     let is_statement = matches!(bound.expr_parent[assignment.idx()], Parent::Stmt(_));
                     let is_whole = is_statement && !matches!(hir[e].kind, ExprKind::Ident(_) | ExprKind::This) && self.runs(file, graph, assignment) == Runs::Always;
-                    if is_whole
-                        && other.is_none()
-                        && let Some((call, names)) = self.exports_defined_by_esbuild(file, graph, value)
-                    {
-                        if module.is_marked() || module.literal.is_some() || module.esbuild_export.is_some() {
-                            module.obstacle = Some("module.exports = __toCommonJS(..) is not all that defines the exports");
-                        }
-                        module.marker = value;
-                        module.esbuild_export = call;
-                        module.stores.entry(known::__esModule).or_default().push(Store { value: ExprId::NONE, runs: Runs::Always });
-                        for (name, returned) in names {
-                            module.stores.entry(name).or_default().push(Store { value: returned, runs: Runs::Always });
-                        }
-                        module.is_exact_outside_cycles = true;
-                        continue;
-                    }
                     let named_literal = if is_whole && other.is_none() && module.literal.is_none() { self.literal_named_only_by(file, assignment, value) } else { None };
                     match other {
                         Some(other) if is_whole => {
@@ -2207,9 +2174,6 @@ impl<'p, 's> Checker<'p, 's> {
                 Use::Exported => module.obstacle = Some("module.exports or exports is assigned"),
                 Use::Other(why) => module.obstacle = Some(why),
             }
-        }
-        if module.esbuild_export.is_some() && module.mentions.len() != 1 {
-            module.obstacle = Some("module.exports = __toCommonJS(..) is not all that defines the exports");
         }
         if module.re_exports.is_some() && module.mentions.len() != 1 {
             module.obstacle = Some("module.exports = require(..), and more is done with it");
@@ -2470,6 +2434,10 @@ impl<'p, 's> Checker<'p, 's> {
             while let Some((e, mention)) = pending.pop() {
                 uses.mentions.push((file, e, mention));
                 let module = mention.module;
+                if let Some((name, local)) = self.variable_stored_once_with(file, graph, e) {
+                    held.push((name, Holder::Variable(self.files().sym(file, local)), mention));
+                    continue;
+                }
                 let found = self.use_of_exports(file, e);
                 if !matches!(found, Use::Nothing) && !matches!(found, Use::Held(declaration) if matches!(hir[hir[declaration].pat].kind, PatKind::Ident(_))) {
                     uses.read_by.insert((file, module));
@@ -2561,6 +2529,9 @@ impl<'p, 's> Checker<'p, 's> {
             for &e in by_kind.of(ExprTag::Ident) {
                 let ExprKind::Ident(name) = hir[e].kind else { continue };
                 if !names.iter().any(|binding| binding.0 == name) || bound.expr_parent[e.idx()] == Parent::None || bound.is_in_type_query(e) {
+                    continue;
+                }
+                if matches!(bound.expr_parent[e.idx()], Parent::Expr(around) if matches!(hir[around].kind, ExprKind::Assign { target, .. } if target == e)) {
                     continue;
                 }
                 let Some(found) = self.binding_of_identifier(file, e, name) else { continue };

@@ -342,11 +342,8 @@ impl<'p, 's> Checker<'p, 's> {
         let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[e].kind else { return false };
         let ExprKind::Ident(written) = hir[obj].kind else { return false };
         let Some(declared) = self.symbol_named_by(file, obj, written).filter(|&declared| self.files().flags(declared).intersects(SymFlags::ENUM)) else { return false };
-        if declared.file != file && self.may_be_overridden(declared) {
-            return false;
-        }
         let Some(member) = self.files().export(declared, name) else { return false };
-        matches!(self.files().value_declaration(member), Some((of, Decl::EnumMember(member))) if self.enum_member_value(of, member).is_some())
+        matches!(self.files().value_declaration(member), Some((of, Decl::EnumMember(member))) if self.enum_member_value(of, member).is_some() && !self.is_enum_member_read_from_object(file, of, member))
     }
 
     /// `undefined!`, `null!`: of type `never`, which nothing is held to.

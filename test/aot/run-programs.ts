@@ -14,6 +14,7 @@
 //                                         "compiled": compare with `bun build --compile` without --aot, for features that
 //                                         only the bundler provides (--define, --feature, files imported as text)
 //                                         "skipInShell": why shell/quick.py skips the program; not read here
+//                                         "skipWithASAN": why a Bun built with AddressSanitizer skips the program
 //   programs/**/tsconfig.json             the compiler options for the programs below it
 //   programs/jsc-shell-functions.ts       noInline(), gc() and similar functions, for the programs that import it
 //   packages/, packages-<topic>.test.ts   programs that import packages, with a runner of their own: packages/run-packages.ts
@@ -26,7 +27,9 @@
 //   AOT_PROGRAMS_JOBS=4 bun test ..                       how many programs run at once (default: one per core)
 //   AOT_PROGRAMS_UPDATE=1 bun test ..                     rewrites the .expected.txt and .build-errors.txt files
 //
-// shell/ has two tools for working on the compiler without building Bun; perf/ has an opt-in performance test.
+// shell/ has two tools for working on the compiler without building Bun; perf/ has an opt-in performance test; servers/ has
+// opt-in tests of HTTP servers written with Bun.serve, node:http and popular frameworks, and the tools that measure them.
+// generated-code.test.ts runs shell/expectations.py, which checks the `// IR` and `// CALLS` lines of the programs, where its two tools are built.
 //
 // Terms used in the first lines of the programs:
 //   plain Bun             `bun run` on the same file, without --aot
@@ -49,9 +52,9 @@
 //   untyped-code          code without type information
 //   untyped-stress        the same, ported from stress tests that were written for the `jsc` shell
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { availableParallelism } from "os";
+import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { availableParallelism, tmpdir } from "os";
 import { join, relative } from "path";
 
 const root = join(import.meta.dir, "programs");
@@ -63,6 +66,7 @@ const updates = !!process.env.AOT_PROGRAMS_UPDATE;
 export const unsupported = /^error: --aot: (.*)$/m.exec(
   Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--aot", "./no-such-file.ts"], cwd: root, env: bunEnv, stdout: "ignore", stderr: "pipe" }).stderr.toString(),
 )?.[1];
+if (unsupported) console.error(`SKIPPED: the tests of --aot in this file: ${unsupported}`);
 
 function find(folder: string, into: string[]) {
   const entries = readdirSync(folder, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1));
@@ -112,9 +116,35 @@ export function built(build: { stderr: string; exitCode: number }) {
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
 }
 
+// Every build writes the Bun that runs it once more, and CI tests bun-profile, which on Linux has its debug information in it:
+// three times the bytes of the Bun that ships. A file of many programs builds on a copy without it. The copy lies in the
+// temporary directory under a name that tells this Bun from any other. It is made once and found again by every test file,
+// process and run, so no test removes it; whoever makes one removes those that nobody has used for a day.
+export function withoutDebugInformation(_folder?: string): string[] {
+  const strip = isLinux && Bun.which("strip");
+  const { ino, size, mtimeMs } = statSync(bunExe());
+  if (!strip || size < 200 * 1024 * 1024) return [];
+  const prefix = "bun-without-debug-information-";
+  const copy = join(tmpdir(), `${prefix}${ino}-${size}-${Math.trunc(mtimeMs)}`);
+  if (existsSync(copy)) {
+    utimesSync(copy, new Date(), new Date());
+    return ["--compile-executable-path", copy];
+  }
+  for (const name of readdirSync(tmpdir())) {
+    if (name.startsWith(prefix) && Date.now() - statSync(join(tmpdir(), name)).mtimeMs > 24 * 60 * 60 * 1000) rmSync(join(tmpdir(), name), { force: true });
+  }
+  const unfinished = `${copy}.${process.pid}`;
+  if (Bun.spawnSync({ cmd: [strip, "-o", unfinished, bunExe()], stdout: "ignore", stderr: "ignore" }).exitCode !== 0) {
+    rmSync(unfinished, { force: true });
+    return [];
+  }
+  renameSync(unfinished, copy);
+  return ["--compile-executable-path", copy];
+}
+
 let executables = 0;
 
-async function run(path: string, beside: string, folder: string, buildEnv: Record<string, string>, runEnv: Record<string, string>) {
+async function run(path: string, beside: string, folder: string, carrier: string[], buildEnv: Record<string, string>, runEnv: Record<string, string>) {
   const options: { build?: string[]; env?: Record<string, string>; reference?: "compiled"; skipInShell?: string } = existsSync(beside + ".json")
     ? JSON.parse(readFileSync(beside + ".json", "utf8"))
     : {};
@@ -123,7 +153,7 @@ async function run(path: string, beside: string, folder: string, buildEnv: Recor
   const cwd = join(path, "..");
   const executable = join(folder, `program-${executables++}${isWindows ? ".exe" : ""}`);
   try {
-    const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, path, "--outfile", executable], cwd, { ...bunEnv, ...buildEnv });
+    const build = await spawned([bunExe(), "build", "--compile", "--aot", ...carrier, ...flags, path, "--outfile", executable], cwd, { ...bunEnv, ...buildEnv });
     if (existsSync(beside + ".build-errors.txt")) {
       // Each distinct error counts once; how often it is repeated for different positions is not what is tested.
       const errors = [...new Set(build.stderr.split("\n").filter(line => line.startsWith("error: ")))].join("\n") + "\n";
@@ -134,7 +164,7 @@ async function run(path: string, beside: string, folder: string, buildEnv: Recor
     built(build);
 
     const ran = await spawned([executable], cwd, { ...env, ...runEnv, BUN_AOT_VERBOSE: "1" });
-    expect(ran.signal).toBeNull();
+    expect({ signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ signal: null, stderr: "" });
     // The executable really ran compiled code and did not fall back to the embedded source.
     expect(ran.stderr).toContain("[aot] module: ");
     const compiled = told({ ...ran, stderr: ran.stderr.replace(/^\[aot\] .*\n/gm, "") });
@@ -145,7 +175,7 @@ async function run(path: string, beside: string, folder: string, buildEnv: Recor
       expect(text).toBe(readFileSync(beside + ".expected.txt", "utf8"));
       return;
     }
-    if (options.reference === "compiled") built(await spawned([bunExe(), "build", "--compile", ...flags, path, "--outfile", executable], cwd, bunEnv));
+    if (options.reference === "compiled") built(await spawned([bunExe(), "build", "--compile", ...carrier, ...flags, path, "--outfile", executable], cwd, bunEnv));
     const plain = await spawned(options.reference === "compiled" ? [executable] : [bunExe(), "run", path], cwd, env);
     // A reference run that fails is useless: two runs that end with the same error would compare equal and prove nothing.
     expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
@@ -162,6 +192,7 @@ const besideOf = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replac
 function define(title: string, chosen: string[], buildEnv: Record<string, string>, runEnv: Record<string, string> = {}) {
   const folder = String(tempDir("aot-programs", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
+  const carrier = !unsupported && chosen.length >= 20 ? withoutDebugInformation() : [];
 
   describe.concurrent(title, () => {
     if (unsupported) return void test.skip(unsupported, () => {});
@@ -170,9 +201,14 @@ function define(title: string, chosen: string[], buildEnv: Record<string, string
     for (const path of chosen) {
       const beside = besideOf(path);
       const name = relative(root, beside).replaceAll("\\", "/");
+      const skipWithASAN: string | undefined = isASAN && existsSync(beside + ".json") ? JSON.parse(readFileSync(beside + ".json", "utf8")).skipWithASAN : undefined;
       if (existsSync(beside + ".todo.txt")) test.todo(name);
+      else if (skipWithASAN) {
+        console.error(`SKIPPED: ${name}: ${skipWithASAN}`);
+        test.skip(name, () => {});
+      }
       // The child processes have their own time limits; this one also covers the wait for a free slot.
-      else test(name, () => slot(() => run(path, beside, folder, buildEnv, runEnv)), 600_000);
+      else test(name, () => slot(() => run(path, beside, folder, carrier, buildEnv, runEnv)), 600_000);
     }
   });
 }
@@ -193,8 +229,9 @@ export function programs(topic: string, part = 1, parts = 1) {
 /**
  * Runs the quick subset of all topics once more, built with a JavaScriptCore option that forces the compiler down a path which
  * small programs otherwise never take. AOT_PROGRAMS=<text> selects other programs, as above. `runEnv` is set where the executable runs.
+ * It is split into `parts` as a large folder is. A build with a sanitizer takes a third of them.
  */
-export function variant(label: string, buildEnv: Record<string, string>, runEnv: Record<string, string> = {}) {
+export function variant(label: string, buildEnv: Record<string, string>, runEnv: Record<string, string> = {}, part = 1, parts = 1) {
   const all: string[] = [];
   find(root, all);
   define(
@@ -203,6 +240,8 @@ export function variant(label: string, buildEnv: Record<string, string>, runEnv:
       // A file directly in ./programs is a helper, not a program.
       .filter(path => /[\\/]/.test(relative(root, path)))
       .filter(path => (wanted === "" || wanted === "quick" ? isQuick(path) : relative(root, path).includes(wanted)))
+      .filter(path => Number((hash(path) >> 16n) % BigInt(parts)) === part - 1)
+      .filter(path => !isASAN || (hash(path) >> 32n) % 3n === 0n)
       // Nothing is compiled for a program that the build rejects.
       .filter(path => !existsSync(besideOf(path) + ".build-errors.txt") && !existsSync(besideOf(path) + ".todo.txt")),
     buildEnv,

@@ -1478,8 +1478,10 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
     ) -> (TypeId, bool) {
         let hir = self.hir(file);
-        let ExprKind::Index { obj, index, chain } = hir[e].kind else {
-            return (TypeId::UNRESOLVED, false);
+        let (obj, index, chain, written) = match hir[e].kind {
+            ExprKind::Index { obj, index, chain } => (obj, index, chain, None),
+            ExprKind::Dot { obj, name, name_pos, chain } => (obj, ExprId::NONE, chain, Some((name, name_pos))),
+            _ => return (TypeId::UNRESOLVED, false),
         };
         let (object, stops) = self.chain_receiver(file, obj, chain);
         let receiver = self.check_non_null_type(file, obj, object);
@@ -1491,14 +1493,17 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             receiver
         };
-        let key = self.type_of_expr(file, index);
+        let key = match written {
+            Some((name, _)) => self.string_literal(name, true),
+            None => self.type_of_expr(file, index),
+        };
         // `isErrorType(objectType) || objectType == silentNeverType`: it is the result, neither
         // indexed nor narrowed.
         if self.is_error_type(receiver) || receiver == TypeId::SILENT_NEVER {
             return (receiver, stops);
         }
         // A `const` enum can only be indexed by a string literal.
-        if !is_string_literal_like(hir, index) && self.is_const_enum_object(receiver) {
+        if written.is_none() && !is_string_literal_like(hir, index) && self.is_const_enum_object(receiver) {
             if !hir.has_errors {
                 self.error_at(self.span_of_parenthesized_expr(file, index), 2476, &[]);
             }
@@ -1506,7 +1511,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `isForInVariableForNumericPropertyNames`: the variable of a `for..in` over an object with
         // numeric property names is treated as a number here.
-        let key = if self.is_for_in_variable_for_numeric_names(file, index) {
+        let key = if written.is_none() && self.is_for_in_variable_for_numeric_names(file, index) {
             TypeId::NUMBER
         } else {
             key
@@ -1565,11 +1570,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
             None => None,
         };
-        let index_expression = (
-            file,
-            self.start_of(file, index),
-            self.end_of_expr(file, index),
-        );
+        let index_expression = match written {
+            Some((_, name_pos)) => (file, name_pos, hir[e].end - 1),
+            None => (file, self.start_of(file, index), self.end_of_expr(file, index)),
+        };
         (
             self.get_flow_type_of_access_expression(
                 file,
@@ -1619,8 +1623,8 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_of_link(&mut self, file: FileId, e: ExprId) -> (TypeId, bool) {
         let hir = self.hir(file);
         match hir[e].kind {
-            ExprKind::Dot { .. } => self.type_of_property_access(file, e),
-            ExprKind::Index { .. } => {
+            ExprKind::Dot { name_pos, .. } if !is_written_in_brackets(hir, name_pos) => self.type_of_property_access(file, e),
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                 let (ty, stops) = self.type_of_element_access_unchecked(file, e);
                 // Its source position is only computed when there is something to check.
                 if !matches!(self.data(ty), TypeData::IndexedAccess { .. }) {

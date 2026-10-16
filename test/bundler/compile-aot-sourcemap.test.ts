@@ -1,5 +1,6 @@
 import { spawn } from "bun";
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
+import { test } from "../aot/supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
@@ -57,7 +58,7 @@ test.each([[["--aot"]], [["--aot", "--sourcemap=none"]], [["--sourcemap=external
 test("bun run --aot, which requests a source map itself: prints no note", async () => {
   using folder = tempDir("compile-aot-sourcemap", files);
   const dir = String(folder);
-  await using run = spawn({ cmd: [bunExe(), "run", "--aot", "app.ts"], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  await using run = spawn({ cmd: [bunExe(), "run", "--debug-aot", "app.ts"], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
   expect(stderr).not.toContain(note);
   expect(stdout).toContain("Error: failed\n    at fail (");

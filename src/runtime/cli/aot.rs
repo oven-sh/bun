@@ -372,7 +372,7 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
             is_value_of_cwd = !is_value_of_cwd && arg == b"--cwd";
             continue;
         }
-        if !has_replaced_option && arg == b"--aot" {
+        if !has_replaced_option && (arg == b"--aot" || arg == b"--debug-aot") {
             has_replaced_option = true;
             option(b"--compile-run-arg", b"--aot-graph-fd=");
         } else {

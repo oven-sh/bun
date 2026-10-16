@@ -2,7 +2,7 @@
 
 use super::nil::{before_casts, targets_of};
 use crate::id::{FuncId, StrId, V};
-use crate::ir::{Func, Op, Program, Term, func_flags};
+use crate::ir::{Func, Op, Operation, Program, Term, func_flags};
 
 pub(super) fn find_receivers_of_one_row(program: &Program, in_parallel: bun_sema::util::InParallel<'_>) -> (Vec<(FuncId, V)>, Vec<String>) {
     struct Receiver {
@@ -11,7 +11,6 @@ pub(super) fn find_receivers_of_one_row(program: &Program, in_parallel: bun_sema
         made: u32,
     }
     const NO_ROW: u32 = u32::MAX;
-    let define_field = program.strs.find(b"DefineField");
     const FUNCTIONS_OF_A_TASK: usize = 256;
     const RECEIVERS_OF_A_TASK: usize = 1024;
     #[derive(Default)]
@@ -43,11 +42,11 @@ pub(super) fn find_receivers_of_one_row(program: &Program, in_parallel: bun_sema
                             literals.push((v, Some(Vec::new())));
                             continue;
                         }
-                        Some(Op::Operation { name, args }) => {
+                        Some(Op::Operation { which, args }) => {
                             let Some(&made) = args.first() else { continue };
                             let made = before_casts(func, made);
-                            let is_definition = Some(*name) == define_field && args.len() == 3;
-                            if !is_definition && !program.strs.get(*name).starts_with(b"CopyDataProperties") {
+                            let is_definition = *which == Operation::DefineField && args.len() == 3;
+                            if !is_definition && !matches!(which, Operation::CopyDataProperties | Operation::CopyDataPropertiesExcluding) {
                                 continue;
                             }
                             if let Some(literal) = literals.iter_mut().find(|literal| literal.0 == made) {
@@ -433,7 +432,7 @@ struct WindowOfLiteral {
     ends_at_a_spread: bool,
 }
 
-fn window_of_literal(func: &Func, flow: &FlowOfLiterals<'_>, strs: &crate::ir::Strs, define_field: Option<StrId>, copy_data_properties: Option<StrId>, it: V, allocated_in: usize, behind: usize) -> WindowOfLiteral {
+fn window_of_literal(func: &Func, flow: &FlowOfLiterals<'_>, strs: &crate::ir::Strs, it: V, allocated_in: usize, behind: usize) -> WindowOfLiteral {
     let mut window = WindowOfLiteral::default();
     let is_it = |operand: V| operand.is_some() && before_casts(func, operand) == it;
     let no_uses = Vec::new();
@@ -455,7 +454,7 @@ fn window_of_literal(func: &Func, flow: &FlowOfLiterals<'_>, strs: &crate::ir::S
             let goes_on = match op {
                 &Op::Coerce { value, why, .. } => !is_it(value) || why == crate::ir::Why::Upcast,
                 Op::Await(_) | Op::Yield(_) => false,
-                Op::Operation { name, args } if Some(*name) == define_field && args.len() == 3 && is_it(args[0]) => match func.op(before_casts(func, args[1])) {
+                Op::Operation { which: Operation::DefineField, args } if args.len() == 3 && is_it(args[0]) => match func.op(before_casts(func, args[1])) {
                     Some(&Op::Str(key)) if !is_it(args[2]) && window.stores.is_empty() && strs.get(key) != b"__proto__" => {
                         if !window.row.contains(&key) {
                             window.row.push(key);
@@ -480,7 +479,7 @@ fn window_of_literal(func: &Func, flow: &FlowOfLiterals<'_>, strs: &crate::ir::S
                     goes_on
                 }
                 &Op::PropGet { obj, name } if is_it(obj) => window.row.contains(&name),
-                Op::Operation { name, args } if Some(*name) == copy_data_properties && args.len() == 2 && is_it(args[0]) && !is_it(args[1]) => {
+                Op::Operation { which: Operation::CopyDataProperties, args } if args.len() == 2 && is_it(args[0]) && !is_it(args[1]) => {
                     window.ends_at_a_spread = true;
                     false
                 }
@@ -517,8 +516,6 @@ fn window_of_literal(func: &Func, flow: &FlowOfLiterals<'_>, strs: &crate::ir::S
 
 pub(super) fn find_first_stores(program: &mut Program, contents: &[u8], in_parallel: bun_sema::util::InParallel<'_>) {
     const FUNCTIONS_OF_A_TASK: usize = 256;
-    let define_field = program.strs.find(b"DefineField");
-    let copy_data_properties = program.strs.find(b"CopyDataProperties");
     let strs = &program.strs;
     type Found = Vec<(FuncId, V, u32)>;
     let mut tasks: Vec<(usize, &mut [Func], Found)> = program.funcs.chunks_mut(FUNCTIONS_OF_A_TASK).enumerate().map(|(number, funcs)| (number * FUNCTIONS_OF_A_TASK, funcs, Found::default())).collect();
@@ -531,7 +528,7 @@ pub(super) fn find_first_stores(program: &mut Program, contents: &[u8], in_paral
             let flow = FlowOfLiterals::of(func);
             let mut rewritten: Vec<(V, V, StrId, V)> = Vec::new();
             for (it, allocated_in, behind) in births {
-                let window = window_of_literal(func, &flow, strs, define_field, copy_data_properties, it, allocated_in, behind);
+                let window = window_of_literal(func, &flow, strs, it, allocated_in, behind);
                 if window.ends_at_a_spread || window.row.len() == window.defined_at_allocation || window.row.len() > 62 || window.row.iter().any(|&name| is_index_name(strs.get(name))) {
                     continue;
                 }

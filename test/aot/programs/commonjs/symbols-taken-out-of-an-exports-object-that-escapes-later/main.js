@@ -1,7 +1,7 @@
-// A CommonJS module that only makes values exports them in a literal, and the module that gathers the package hands that object out at its end. What the package's modules took out of the object at their top level, ahead of that, is what the literal was made with: symbols among it are names. What is taken out later, or by a module that may be evaluated by another road, is not.
-// IR= 0 write GetByVal
-// IR= 0 info GetByVal
-// IR= 0 mini PutByVal
+// A CommonJS module that only makes values exports them in a literal, and the module that gathers the package hands that object out at its end. What the package's modules took out of the object at their top level, ahead of that, is what the literal was made with: symbols among it are names for as long as the module that took them out has not failed: that is tested where they are used, and a module that failed and was evaluated again goes by key. What is taken out later, or by a module that may be evaluated by another road, is not.
+// IR= 2 write GetById .*mini\.stream
+// IR= 1 info GetById .*mini\.write
+// IR= 1 mini PutById .*mini\.stream
 // IR= 1 readLate GetByVal
 // IR= 1 readByAnotherRoad GetByVal
 // IR= 1 readOfStoredTo GetByVal

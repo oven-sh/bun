@@ -388,6 +388,7 @@ impl JSBundleCompletionTask {
                 &compile_options.assets,
                 entry_key,
                 output_files,
+                false,
             ) {
                 return CompileResult::fail_fmt(format_args!("{}", msg));
             }

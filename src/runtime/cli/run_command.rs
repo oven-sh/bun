@@ -791,13 +791,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         check_before(&entry_points, before_read)
     }
 
-    fn audit_main(ctx: &ContextData, vm: &mut VirtualMachine) {
+    fn audit_main(ctx: &ContextData, vm: &mut VirtualMachine) -> bool {
+        let preloads = cli::aot_audit::preloads_of(vm);
         let main = crate::cli::check_command::EntryPoint {
             path: vm.main(),
             loader: Some(Self::loader_of_main(ctx, vm.main(), None)),
             text: Some(&ctx.runtime_options.eval.script[..]).filter(|it| !it.is_empty()),
         };
-        cli::aot_audit::prepare(&[main], crate::cli::check_command::watching(vm), false);
+        let entry_points: Vec<_> = std::iter::once(main).chain(preloads.iter().map(|path| crate::cli::check_command::EntryPoint::file(path))).collect();
+        cli::aot_audit::prepare(&entry_points, crate::cli::check_command::watching(vm), false)
     }
 
     /// What the module loader loads the main module at `path` with, where `boot` is given `loader`.
@@ -977,7 +979,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
-            if ctx.runtime_options.aot {
+            if ctx.runtime_options.aot || cli::aot_audit::acts() {
                 pretty_errorln!(
                     "<r><red>error<r>: <b>--aot<r> does not apply to a shell script (<b>{}<r>). Run a JavaScript or TypeScript file.",
                     bstr::BStr::new(&entry_path),
@@ -1532,12 +1534,10 @@ impl Run<'_> {
             let watching = crate::cli::check_command::watching(vm);
             !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching)
         });
+        let has_type_errors = has_type_errors || ctx.runtime_options.aot_audit && !RunCommand::audit_main(ctx, vm);
         if has_type_errors {
             // It is not read if the options are wrong.
             vm.add_main_to_watcher_if_needed();
-        }
-        if ctx.runtime_options.aot_audit && !has_type_errors {
-            RunCommand::audit_main(ctx, vm);
         }
         let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
         match loaded {
@@ -2491,7 +2491,7 @@ impl RunCommand {
             if let Some(package_json) = root_dir.enclosing_package_json {
                 if let Some(scripts) = package_json.scripts.as_deref() {
                     if let Some(&script_content) = scripts.get(target_name) {
-                        if ctx.runtime_options.aot {
+                        if ctx.runtime_options.aot || cli::aot_audit::acts() {
                             pretty_errorln!(
                                 "<r><red>error<r>: <b>--aot<r> does not apply to a package.json script (<b>{}<r>). Add it to the command inside the script, or run a file.",
                                 bstr::BStr::new(target_name),
@@ -2743,7 +2743,7 @@ impl RunCommand {
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
-                    if ctx.runtime_options.aot {
+                    if ctx.runtime_options.aot || cli::aot_audit::acts() {
                         pretty_errorln!(
                             "<r><red>error<r>: <b>--aot<r> does not apply to an executable (<b>{}<r>). Run a JavaScript or TypeScript file.",
                             bstr::BStr::new(destination.as_bytes()),

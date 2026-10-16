@@ -13,6 +13,7 @@ const {
   kSocket,
   kRejectNonStandardBodyWrites,
   kUniqueHeaders,
+  kHandle,
   utcDate,
 } = require("internal/http");
 const {
@@ -139,8 +140,22 @@ function isContentDispositionField(s) {
   return s.length === 19 && s.toLowerCase() === "content-disposition";
 }
 
-function OutgoingMessage(options) {
-  Stream.$call(this, options);
+function OutgoingMessage(
+  options,
+  highWaterMark: any = undefined,
+  rejectNonStandardBodyWrites: any = undefined,
+  keepAliveTimeout: any = undefined,
+) {
+  if (options === kHandle) {
+    Stream.$call(this, undefined);
+    highWaterMark ??= getDefaultHighWaterMark();
+    if (rejectNonStandardBodyWrites === undefined) rejectNonStandardBodyWrites = false;
+  } else {
+    Stream.$call(this, options);
+    highWaterMark = options?.highWaterMark ?? getDefaultHighWaterMark();
+    rejectNonStandardBodyWrites = options?.rejectNonStandardBodyWrites ?? false;
+    keepAliveTimeout = 0;
+  }
 
   // Queue that holds all currently pending data, until the response will be
   // assigned to the socket (until it will its turn in the HTTP pipeline).
@@ -184,13 +199,13 @@ function OutgoingMessage(options) {
   this._header = null;
   this[kOutHeaders] = null;
 
-  this._keepAliveTimeout = 0;
+  this._keepAliveTimeout = keepAliveTimeout;
 
   this._onPendingData = nop;
 
   this[kErrored] = null;
-  this[kHighWaterMark] = options?.highWaterMark ?? getDefaultHighWaterMark();
-  this[kRejectNonStandardBodyWrites] = options?.rejectNonStandardBodyWrites ?? false;
+  this[kHighWaterMark] = highWaterMark;
+  this[kRejectNonStandardBodyWrites] = rejectNonStandardBodyWrites;
   // Declared here so the memoizing _isLenientHeaderValidation never
   // shape-transitions the message when it caches.
   this[kLenientValidation] = undefined;

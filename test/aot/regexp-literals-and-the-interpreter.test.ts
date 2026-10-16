@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -37,6 +38,14 @@ test("a literal that cannot be compiled is named and stops the program", async (
   expect({ stdout: withoutTheOption.stdout, hasFailed: withoutTheOption.hasFailed }).toEqual({ stdout: "before\nfalse\n", hasFailed: false });
   expect(withTheOption.stderr).toContain("crashIfInterpreterIsUsed: regular expression /a{2147483648}/");
   expect({ stdout: withTheOption.stdout, hasFailed: withTheOption.hasFailed }).toEqual({ stdout: "before\n", hasFailed: true });
+});
+
+test("a written empty pattern given to the constructor is compiled", async () => {
+  const { withoutTheOption, withTheOption } = await compileAndRun(`
+console.log(new RegExp("").test("a"), RegExp("").exec("a")?.index, "abc".replace(new RegExp(""), "-"), "abc".replace(new RegExp("", "g"), "-"), new RegExp("").source, new RegExp("" + "").test(""));
+`);
+  expect(withTheOption).toEqual(withoutTheOption);
+  expect({ stdout: withTheOption.stdout, hasFailed: withTheOption.hasFailed }).toEqual({ stdout: "true 0 -abc -a-b-c- (?:) true\n", hasFailed: false });
 });
 
 test("compiled literals, plain-text literals and expressions built at run time go on", async () => {

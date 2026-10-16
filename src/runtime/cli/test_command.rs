@@ -2361,8 +2361,17 @@ impl TestCommand {
 
         if ctx.runtime_options.aot_audit && !has_type_errors {
             use crate::cli::check_command::{EntryPoint, watching};
-            let paths = test_files.iter().map(|path| EntryPoint::file(path));
-            crate::cli::aot_audit::prepare(&paths.collect::<Vec<_>>(), watching(vm), true);
+            let preloads = crate::cli::aot_audit::preloads_of(vm);
+            let paths = test_files.iter().map(|path| EntryPoint::file(path)).chain(preloads.iter().map(|path| EntryPoint::file(path)));
+            if !crate::cli::aot_audit::prepare(&paths.collect::<Vec<_>>(), watching(vm), true) {
+                // No test is run.
+                let vm_ptr: *mut VirtualMachine = vm;
+                // SAFETY: as where `--check` has found type errors, above.
+                vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+            }
+            if preloads.iter().any(|path| crate::cli::aot_audit::is_left_out_for_type_errors(path)) {
+                Global::exit(1);
+            }
         }
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
@@ -2985,25 +2994,35 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(
-                vm.standalone_module_graph
-                    .and_then(|graph| graph.find_by_source_path(file_path))
-                    .unwrap_or(file_path),
-            )?;
+            let promise = if crate::cli::aot_audit::is_left_out_for_type_errors(file_name) {
+                None
+            } else {
+                Some(vm.load_entry_point_for_test_runner(
+                    vm.standalone_module_graph
+                        .and_then(|graph| graph.find_by_source_path(file_path))
+                        .unwrap_or(file_path),
+                )?)
+            };
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            match jsc::JSInternalPromise::opaque_mut(promise).status() {
-                jsc::js_promise::Status::Rejected => {
-                    // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                    // `unhandled_rejection(&mut self, ...)` can reborrow.
-                    let global = vm.global();
-                    let p = jsc::JSInternalPromise::opaque_mut(promise);
-                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
-                    vm.unhandled_rejection(global, result, promise_js);
+            match promise.map(|promise| jsc::JSInternalPromise::opaque_mut(promise).status()) {
+                None | Some(jsc::js_promise::Status::Rejected) => {
+                    if let Some(promise) = promise {
+                        // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
+                        // `unhandled_rejection(&mut self, ...)` can reborrow.
+                        let global = vm.global();
+                        let p = jsc::JSInternalPromise::opaque_mut(promise);
+                        let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                        vm.unhandled_rejection(global, result, promise_js);
+                    } else {
+                        reporter.jest.current_file.print_if_needed();
+                        pretty_error!("<r><red>error<r>: bun test --aot does not run this file: it has a type error, or it imports a file that has one (see above)\n");
+                        Output::flush();
+                    }
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {

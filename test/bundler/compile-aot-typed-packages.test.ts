@@ -1,4 +1,5 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, expect } from "bun:test";
+import { describe, test } from "../aot/supported";
 import { createHash } from "crypto";
 import { appendFileSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -264,7 +265,7 @@ describe("compile/aot/TypedPackages", () => {
       "build.ts": `const result = await Bun.build({ entrypoints: ["app.ts"], compile: { outfile: "./app", aot: true }, throw: false });\nconsole.log(result.success, result.logs.filter(log => log.level === "error").map(log => log.message.slice(0, 65)));\n`,
     });
     expect(await spawned([bunExe(), "build.ts"], folder)).toEqual({ stdout: `false [ "TS100021: The typed version of 'shapes' in .sound/shapes has type" ]\n`, stderr: "", exitCode: 0 });
-    const run = await spawned([bunExe(), "run", "--aot", "app.ts"], folder);
+    const run = await spawned([bunExe(), "run", "--debug-aot", "app.ts"], folder);
     expect(run.stderr).toContain("error: TS100021: The typed version of 'shapes' in .sound/shapes has type errors (1), the first at ");
     expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: "", exitCode: 1 });
   });
@@ -313,8 +314,8 @@ describe("compile/aot/TypedPackages", () => {
   test("bun run --aot prints neither", async () => {
     const folder = project("aot-typed-run");
     typedVersion(join(folder, ".sound", "shapes"));
-    expect(await spawned([bunExe(), "run", "--aot", "app.ts"], folder)).toEqual({ stdout: "42 index.sound.ts\n", stderr: "", exitCode: 0 });
+    expect(await spawned([bunExe(), "run", "--debug-aot", "app.ts"], folder)).toEqual({ stdout: "42 index.sound.ts\n", stderr: "", exitCode: 0 });
     appendFileSync(join(folder, "node_modules", "shapes", "index.js"), "\n");
-    expect(await spawned([bunExe(), "run", "--aot", "app.ts"], folder)).toEqual({ stdout: "42 index.js\n", stderr: "", exitCode: 0 });
+    expect(await spawned([bunExe(), "run", "--debug-aot", "app.ts"], folder)).toEqual({ stdout: "42 index.js\n", stderr: "", exitCode: 0 });
   });
 });

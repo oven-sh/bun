@@ -308,6 +308,14 @@ pub(crate) mod js_bundler {
             };
             // errdefer this.deinit() — Drop handles owned fields
 
+            for name in ["aot", "aotExplain", "aotTypeErrors"] {
+                if config.get(global_this, name)?.is_some() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "{name} is an option of compile. Write compile: {{ {name}: .. }}"
+                    )));
+                }
+            }
+
             let object = 'brk: {
                 let Some(compile_value) = config.get_truthy(global_this, "compile")? else {
                     return Ok(None);
@@ -1510,7 +1518,6 @@ pub(crate) mod js_bundler {
                     return Err(global_this.throw_invalid_arguments(format_args!("compile.aot requires format: 'esm'")));
                 }
                 let not_honoured = [
-                    ("drop", this.drop.keys().iter().any(|dropped| **dropped != *b"debugger")),
                     ("banner with code", !crate::cli::aot::is_only_comments(&this.banner.list)),
                     ("footer with code", !crate::cli::aot::is_only_comments(&this.footer.list)),
                     ("bytecodeDepth", this.bytecode_depth != u32::MAX),

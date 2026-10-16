@@ -1,10 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 // A CommonJS module that is first required where the stack ends: the RangeError comes before its first statement. Whoever requires it
-// later gets an object: the whole one, as in `bun run`, or the empty one that a bundle's wrapper had made by then, as in an executable
-// built without --aot. Where exactly the stack ends differs between builds, so either answer is right. `undefined` is not.
+// later gets the whole object, as in `bun run`: the module is evaluated again. An executable built without --aot hands out the empty
+// one that the bundle's wrapper had made by then.
 
 const main = `function lazy() { return require("./lib"); }
 function dive(n) { try { return dive(n + 1); } catch (e) { return lazy(); } }
@@ -28,7 +29,7 @@ const libraries: Record<string, Record<string, string>> = {
 };
 
 describe.concurrent.each(Object.keys(libraries))("%s", name => {
-  test("an executable built with --aot answers as bun run or as an executable built without it", async () => {
+  test("an executable built with --aot answers as bun run", async () => {
     using dir = tempDir("first-required-at-the-end-of-the-stack", { "main.js": main, ...libraries[name] });
     const run = async (cmd: string[]) => {
       await using proc = Bun.spawn({ cmd, cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -42,10 +43,9 @@ describe.concurrent.each(Object.keys(libraries))("%s", name => {
       return run([join(String(dir), outfile)]);
     };
     const plain = await run([bunExe(), "run", "main.js"]);
-    const bundled = await built([], "bundled");
     const compiled = await built(["--aot"], "compiled");
     expect(plain.exitCode).toBe(0);
-    expect([plain.stdout, bundled.stdout]).toContain(compiled.stdout);
+    expect(compiled.stdout).toBe(plain.stdout);
     expect(compiled.exitCode).toBe(0);
   });
 });

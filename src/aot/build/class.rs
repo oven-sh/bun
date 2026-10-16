@@ -21,7 +21,7 @@ use super::{FileBuild, Fx, Place, Source};
 use crate::declared::{Declared, prim};
 use crate::fragment::{GlobalKey, LayoutKey};
 use crate::id::{FuncId, LayoutId, ModuleId, StrId, TyId, V};
-use crate::ir::{self, Args, Field, FuncKind, LayoutKind, Method, MethodKind, NO_VARIABLE, Op, Why, class_flags, field_flags, func_flags, method_flags};
+use crate::ir::{self, Args, Field, FuncKind, LayoutKind, Method, MethodKind, NO_VARIABLE, Op, Operation, Why, class_flags, field_flags, func_flags, method_flags};
 use bun_sema::atom::{Atom, PRIVATE_NAME_PREFIX};
 use bun_sema::bind::{Decl, FnOwner, MemberOwner, SymbolId};
 use bun_sema::check::{Activation, Capture, ClassFacts, Receiver};
@@ -221,7 +221,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// The class of the program an expression names, if nothing else can be its value.
     pub(crate) fn class_for_expr(&mut self, file: FileId, e: ExprId) -> Option<(FileId, ClassId)> {
         let sym = self.binding_named_by(file, e)?;
-        if self.is_ambient(sym) || self.is_assigned(sym) || self.c.may_be_overridden_at(sym, file, e) {
+        if self.is_ambient(sym) || self.is_assigned(sym) {
             return None;
         }
         match self.value_declaration(sym)? {
@@ -519,7 +519,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     self.declare_member_function(file, class, m.func, true);
                 }
                 MemberKind::Property => {
-                    if m.flags.contains(Flags::ACCESSOR) {
+                    if m.flags.contains(Flags::ACCESSOR) && !matches!(m.key, PropKey::Private(_)) {
                         self.problem(file, m.name_pos, "an `accessor` field");
                     }
                     let symbol = bound.member_symbol[member.idx()];
@@ -931,15 +931,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         self.did_declare_class(file, class);
 
-        let mut base = V::NONE;
-        if c.extends.is_some() {
-            match info.base {
-                Some((file, extended)) if self.classes[&(file, extended)].facts.is_evaluated_once => self.check_class_is_declared(fx, file, extended, c.extends),
-                _ => base = self.expr(fx, c.extends),
-            }
-        }
-        let has_computed_names = c.members.iter().any(|member| self.class_variables.contains_key(&(file, class, ClassVariable::Key(member))));
-        let parent_of_prototype = if base.is_some() && info.base.is_none() && has_computed_names { self.read_heritage(fx, base, c.extends) } else { V::NONE };
         let environment = self.out.layouts[layout.idx()].environment;
         let mut env = V::NONE;
         if environment.is_some() {
@@ -950,6 +941,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             self.push_env(fx, environment, env);
         }
+        let mut base = V::NONE;
+        if c.extends.is_some() {
+            match info.base {
+                Some((file, extended)) if self.classes[&(file, extended)].facts.is_evaluated_once => self.check_class_is_declared(fx, file, extended, c.extends),
+                _ => base = self.expr(fx, c.extends),
+            }
+        }
+        let has_computed_names = c.members.iter().any(|member| self.class_variables.contains_key(&(file, class, ClassVariable::Key(member))));
+        let parent_of_prototype = if base.is_some() && info.base.is_none() && has_computed_names { self.read_heritage(fx, base, c.extends) } else { V::NONE };
         for member in c.members.iter() {
             let m = &hir[member];
             match m.key {
@@ -957,7 +957,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let text = self.private_name_text(name).unwrap_or_default();
                     let text = self.out.strs.intern(&text);
                     let text = self.emit(fx, Op::Str(text));
-                    let key = self.operation(fx, "NewPrivateName", &[text]);
+                    let key = self.operation(fx, Operation::NewPrivateName, &[text]);
                     self.write_class_variable(fx, file, class, ClassVariable::PrivateName(name), key);
                 }
                 _ => {}
@@ -986,9 +986,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.pos = self.last_pos(fx, c.extends);
             }
             if parent_of_prototype.is_some() {
-                self.operation(fx, "MakeClass", &[closure, base, parent_of_prototype]);
+                self.operation(fx, Operation::MakeClass, &[closure, base, parent_of_prototype]);
             } else {
-                self.operation(fx, "MakeClass", &[closure, base]);
+                self.operation(fx, Operation::MakeClass, &[closure, base]);
             }
             fx.b.pos = outer;
             let declares_name = c.members.iter().any(|member| {
@@ -997,7 +997,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             });
             if named_by_key.is_some() && !declares_name {
                 let kind = self.emit(fx, Op::Int(0));
-                self.operation(fx, "SetFunctionName", &[closure, named_by_key, kind]);
+                self.operation(fx, Operation::SetFunctionName, &[closure, named_by_key, kind]);
             }
             self.write_class_variable(fx, file, class, ClassVariable::Class, closure);
             self.write_class_variable(fx, file, class, ClassVariable::Base, base);
@@ -1007,9 +1007,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let outer = fx.b.pos;
                 fx.b.pos = self.last_pos(fx, c.extends);
                 if parent_of_prototype.is_some() {
-                    self.operation(fx, "MakeClass", &[closure, base, parent_of_prototype]);
+                    self.operation(fx, Operation::MakeClass, &[closure, base, parent_of_prototype]);
                 } else {
-                    self.operation(fx, "MakeClass", &[closure, base]);
+                    self.operation(fx, Operation::MakeClass, &[closure, base]);
                 }
                 fx.b.pos = outer;
             }
@@ -1191,7 +1191,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let file = fx.file;
         let hir = self.hir(file);
         let c = &hir[class];
-        let emits_metadata = self.files.options.emit_decorator_metadata;
+        let emits_metadata = self.c.bound(file).class_options.map_or(self.files.options.emit_decorator_metadata, |own| own.emit_decorator_metadata);
         let written_on = |owner: DecoratorOwner| -> Vec<ExprId> { hir.decorators.iter().filter(|written| written.0 == owner).map(|written| written.1).collect() };
         let target = if class_object.is_some() { class_object } else { self.class_as_value(fx, file, class) };
         let mut constructor = FnId::NONE;
@@ -1300,7 +1300,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.branch(fx, is_null, done, test);
         fx.b.seal(test);
         fx.b.switch_to(test);
-        let is_constructor = self.operation(fx, "IsConstructor", &[base]);
+        let is_constructor = self.operation(fx, Operation::IsConstructor, &[base]);
         let (read, refused) = (fx.b.new_block(), fx.b.new_block());
         self.branch(fx, is_constructor, read, refused);
         fx.b.seal(read);
@@ -1367,10 +1367,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.emit(fx, Op::Closure { func, captures })
             };
             if m.kind == MemberKind::Method {
-                self.operation(fx, "DefineMethod", &[holder, key, closure]);
+                self.operation(fx, Operation::DefineMethod, &[holder, key, closure]);
             } else {
                 let shows = self.emit(fx, Op::Bool(false));
-                let define = if m.kind == MemberKind::Getter { "DefineGetter" } else { "DefineSetter" };
+                let define = if m.kind == MemberKind::Getter { Operation::DefineGetter } else { Operation::DefineSetter };
                 self.operation(fx, define, &[holder, key, closure, shows]);
             }
         }
@@ -1421,7 +1421,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         }
                     };
                     let class_object = self.class_as_value(fx, file, class);
-                    self.operation(fx, "DefineField", &[class_object, key, value]);
+                    self.operation(fx, Operation::DefineField, &[class_object, key, value]);
                 }
                 MemberKind::StaticBlock => {
                     let Some(&func) = self.funcs.get(&(file, m.func)) else { continue };
@@ -1618,7 +1618,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(class);
         fx.b.seal(other);
         fx.b.switch_to(other);
-        let is_object = self.operation(fx, "IsObject", &[value]);
+        let is_object = self.operation(fx, Operation::IsObject, &[value]);
         self.branch(fx, is_object, join, throw);
         fx.b.seal(throw);
         fx.b.switch_to(throw);
@@ -1740,7 +1740,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let object = if info.facts.is_evaluated_once {
             self.emit(fx, Op::New(info.layout))
         } else {
-            let object = self.operation(fx, "NewObjectOfClass", &[class_object]);
+            let object = self.operation(fx, Operation::NewObjectOfClass, &[class_object]);
             let instance = self.instance_type(file, class);
             self.fit(fx, object, instance, Why::Claim)
         };
@@ -1790,6 +1790,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         };
         if is_passed_this {
             fx.this = fx.given;
+            if self.lists_fields_as_they_are_defined(file, class)
+                && info.base.is_some()
+                && self.is_let_go_of_by_extended_classes(info.layout)
+                && let Some(&first) = self.own_fields_in_order(file, class).first()
+            {
+                self.list_fields(fx, pos, first, false);
+            }
         } else if let Some(layout) = self.layout_of_this_binding(Receiver::Function(fx.func)) {
             let binding = self.emit(fx, Op::New(layout));
             let unbound = self.emit(fx, Op::Undefined);
@@ -1835,6 +1842,61 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
+    fn lists_fields_as_they_are_defined(&mut self, file: FileId, class: ClassId) -> bool {
+        self.class_info(file, class).facts.is_laid_out
+    }
+
+    fn own_fields_in_order(&mut self, file: FileId, class: ClassId) -> Vec<Atom> {
+        let hir = self.hir(file);
+        let info = self.class_info(file, class);
+        let mut names = Vec::new();
+        if let Some(constructor) = self.c.constructor_of_class(file, class) {
+            for p in hir[constructor].params.iter() {
+                if hir[p].flags.contains(Flags::PARAMETER_PROPERTY)
+                    && let PatKind::Ident(name) = hir[hir[p].pat].kind
+                {
+                    names.push(name);
+                }
+            }
+        }
+        for member in hir[class].members.iter() {
+            let m = &hir[member];
+            if m.kind == MemberKind::Property
+                && !m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT)
+                && !self.c.is_field_left_out(file, member)
+                && let PropKey::Name(name) = m.key
+            {
+                names.push(name);
+            }
+        }
+        let extended = info.base.map(|(file, class)| self.class_info(file, class).layout);
+        names.retain(|&name| {
+            let name = self.str(name);
+            self.out.layouts[info.layout.idx()].field(name).is_some() && !extended.is_some_and(|extended| self.out.layouts[extended.idx()].field(name).is_some())
+        });
+        names
+    }
+
+    fn list_fields(&mut self, fx: &mut Fx, pos: u32, name: Atom, includes_name: bool) {
+        let text = self.str(name);
+        let (this, text) = (self.this(fx, pos), self.emit(fx, Op::Str(text)));
+        let word = match fx.fields_listed {
+            None if !includes_name && fx.this == fx.given => self.operation(fx, Operation::UnlistFields, &[this, text]),
+            None => {
+                let includes_name = self.emit(fx, Op::Bool(includes_name));
+                self.operation(fx, Operation::ListFields, &[this, text, includes_name]);
+                return;
+            }
+            Some((word, listed, includes_listed)) => {
+                let listed = self.str(listed);
+                let (includes_name, listed, includes_listed) = (self.emit(fx, Op::Bool(includes_name)), self.emit(fx, Op::Str(listed)), self.emit(fx, Op::Bool(includes_listed)));
+                self.operation(fx, Operation::ListFields, &[this, text, includes_name, listed, includes_listed, word]);
+                word
+            }
+        };
+        fx.fields_listed = Some((word, name, includes_name));
+    }
+
     /// What follows once `this` is there: at the start of the constructor of a class that extends nothing, else after `super()`.
     fn did_bind_this(&mut self, fx: &mut Fx, pos: u32) {
         self.initialize_instance_elements(fx, pos);
@@ -1873,7 +1935,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.class_variables.contains_key(&(file, class, ClassVariable::PrivateMethods)) {
             let private_methods = self.read_class_variable(fx, file, class, ClassVariable::PrivateMethods);
             let this = self.this(fx, pos);
-            self.operation(fx, "PrivateMethodsAdd", &[this, private_methods]);
+            self.operation(fx, Operation::PrivateMethodsAdd, &[this, private_methods]);
         }
         if self.c.assigns_fields(file, class) {
             self.store_parameter_properties(fx, pos);
@@ -1887,7 +1949,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 {
                     let name = self.str(name);
                     let (name, undefined, this) = (self.emit(fx, Op::Str(name)), self.emit(fx, Op::Undefined), self.this(fx, pos));
-                    self.operation(fx, "DefineField", &[this, name, undefined]);
+                    self.operation(fx, Operation::DefineField, &[this, name, undefined]);
                 }
             }
         }
@@ -1923,9 +1985,28 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let bound = self.c.bound(file);
         let info = self.class_info(file, class);
         // A field starts as `undefined`: without an initializer it is stored to only if what the class extends or an initializer may have been there.
-        let mut is_untouched = info.base.is_none();
+        let mut is_untouched = info.base.is_none() || info.facts.is_laid_out && !self.is_let_go_of_by_extended_classes(info.layout);
+        let uses_this = self.c.initializers_that_use_this(file, class);
         // `this.x = init`: a store like any other, and a function takes no name from it.
         let assigns = self.c.assigns_fields(file, class);
+        let lists_fields = self.lists_fields_as_they_are_defined(file, class);
+        let (own_fields, lets_go) = if lists_fields { (self.own_fields_in_order(file, class), self.initializers_that_let_go_of_this(info.layout, file, class)) } else { Default::default() };
+        let mut may_be_seen = lists_fields && info.base.is_some() && self.is_let_go_of_by_extended_classes(info.layout);
+        let mut has_unlisted_fields = may_be_seen;
+        let runs_code = |init: ExprId| init.is_some() && !matches!(hir[init].kind, ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_) | ExprKind::Fn(_));
+        let begins_run: Vec<bool> = (own_fields.iter())
+            .map(|&own| hir[class].members.iter().map(|member| &hir[member]).any(|m| m.kind == MemberKind::Property && !m.flags.contains(Flags::STATIC) && matches!(m.key, PropKey::Name(key) if key == own) && runs_code(m.init)))
+            .collect();
+        let end_of_run = |from: usize| (from + 1..begins_run.len()).take_while(|&at| !begins_run[at]).last().unwrap_or(from);
+        let mut listed = 0;
+        if may_be_seen && !own_fields.is_empty() {
+            if begins_run[0] {
+                self.list_fields(fx, pos, own_fields[0], false);
+            } else {
+                listed = end_of_run(0) + 1;
+                self.list_fields(fx, pos, own_fields[listed - 1], true);
+            }
+        }
         for member in hir[class].members.iter() {
             let m = &hir[member];
             if m.kind != MemberKind::Property || m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT) || self.c.is_field_left_out(file, member) || !assigns && self.files.is_decorated_member(file, member) {
@@ -1950,7 +2031,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     }
                     continue;
                 }
-                is_untouched &= matches!(hir[m.init].kind, ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_));
+                is_untouched &= !uses_this.contains(&member);
+                may_be_seen |= lets_go.contains(&member);
+                let place = own_fields.iter().position(|&own| own == name);
+                if may_be_seen && !has_unlisted_fields && runs_code(m.init) && let Some(place) = place {
+                    self.list_fields(fx, pos, name, false);
+                    has_unlisted_fields = true;
+                    listed = place;
+                }
                 let field = self.str(name);
                 self.note_callee_stored(fx, info.layout, name, m.init, false);
                 let value = match self.out.layouts[info.layout.idx()].field(field) {
@@ -1960,6 +2048,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     }
                     None => self.expr_named(fx, m.init, given),
                 };
+                if has_unlisted_fields && let Some(place) = place.filter(|&place| place >= listed) {
+                    listed = end_of_run(place) + 1;
+                    self.list_fields(fx, pos, own_fields[listed - 1], true);
+                }
                 let this = self.this(fx, pos);
                 if assigns && matches!(m.key, PropKey::Name(_)) {
                     if self.inherits_accessor(file, class, name) {
@@ -1994,8 +2086,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 PropKey::None => continue,
             };
             let this = self.this(fx, pos);
-            let define = if matches!(m.key, PropKey::Private(_)) { "PrivateFieldAdd" } else { "DefineField" };
+            let define = if matches!(m.key, PropKey::Private(_)) { Operation::PrivateFieldAdd } else { Operation::DefineField };
             self.operation(fx, define, &[this, key, value]);
+        }
+        if has_unlisted_fields && listed < own_fields.len() {
+            self.list_fields(fx, pos, own_fields[own_fields.len() - 1], true);
         }
         fx.is_in_field_initializer = was_in_field_initializer;
     }
@@ -2032,7 +2127,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.emit_throwing(fx, Op::PropSet { obj: this, name, value });
         } else {
             let name = self.emit(fx, Op::Str(name));
-            self.operation(fx, "DefineField", &[this, name, value]);
+            self.operation(fx, Operation::DefineField, &[this, name, value]);
         }
     }
 
@@ -2058,9 +2153,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 return self.this(fx, pos);
             }
             let class_object = self.class_object(fx, file, class);
-            let parent = self.operation(fx, "GetSuperConstructor", &[class_object]);
+            let parent = self.operation(fx, Operation::GetSuperConstructor, &[class_object]);
             let args = self.emit_array_with_spread(fx, args);
-            let this = self.operation(fx, "SuperConstruct", &[class_object, fx.new_target, args, parent]);
+            let this = self.operation(fx, Operation::SuperConstruct, &[class_object, fx.new_target, args, parent]);
             self.bind_this(fx, this);
             self.did_bind_this(fx, pos);
             return self.this(fx, pos);
@@ -2123,7 +2218,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let named = handed.len() - usize::from(has_rest);
             let mut array = self.emit_throwing(fx, Op::NewArray(handed[..named].iter().copied().collect()));
             if has_rest {
-                array = self.operation(fx, "AppendSpread", &[array, handed[named]]);
+                array = self.operation(fx, Operation::AppendSpread, &[array, handed[named]]);
             }
             self.emit_construct_on(fx, base, array)
         };
@@ -2137,7 +2232,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             _ => self.class_object(fx, base.0, base.1),
         };
         let new_target = if fx.new_target.is_some() { fx.new_target } else { self.emit(fx, Op::Undefined) };
-        self.operation(fx, "ConstructOn", &[extended, fx.given, new_target, args])
+        self.operation(fx, Operation::ConstructOn, &[extended, fx.given, new_target, args])
     }
 
     fn did_call_base_constructor(&mut self, fx: &mut Fx, base: (FileId, ClassId), result: V, pos: u32) {
@@ -2152,7 +2247,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn emit_super_construct(&mut self, fx: &mut Fx, args: V, pos: u32) {
         let Some((file, class)) = fx.class else { return };
         let class_object = self.class_object(fx, file, class);
-        let this = self.operation(fx, "SuperConstruct", &[class_object, fx.new_target, args]);
+        let this = self.operation(fx, Operation::SuperConstruct, &[class_object, fx.new_target, args]);
         self.bind_this(fx, this);
         self.did_bind_this(fx, pos);
     }
@@ -2194,6 +2289,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if value.is_none() {
             return self.this(fx, pos);
         }
+        let constructed = fx.class.map(|(file, class)| self.class_info(file, class).layout);
+        if fx.is_typed
+            && matches!(fx.b.func.op(value), Some(Op::New(_) | Op::NewWith { .. }))
+            && let Some(constructed) = constructed
+            && self.out.layouts[constructed.idx()].fields.is_empty()
+            && let Some(&view) = self.layout_types.get(&constructed)
+        {
+            let returned = self.ty(fx, value);
+            for source in self.types_of_layouts_in(returned) {
+                if source != view {
+                    self.c.note_upcast(source, view);
+                }
+            }
+        }
         // An object can be returned before `super()` has been called.
         let unchecked = self.this_if_bound(fx);
         let this = match unchecked {
@@ -2202,7 +2311,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         };
         // Of a class that extends something: a primitive other than `undefined` throws.
         let is_derived = fx.class.is_some_and(|(file, class)| self.class_info(file, class).is_derived);
-        let result = self.operation(fx, if is_derived { "DerivedConstructorResult" } else { "ConstructorResult" }, &[value, this]);
+        let result = self.operation(fx, if is_derived { Operation::DerivedConstructorResult } else { Operation::ConstructorResult }, &[value, this]);
         if unchecked.is_some() {
             self.check_this_is_bound(fx, result);
         }
@@ -2216,8 +2325,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             source = *value;
         }
         // What `super()` came back with, on the only way here.
-        let constructs = [self.out.strs.intern(b"SuperConstruct"), self.out.strs.intern(b"ConstructOn")];
-        if matches!(fx.b.func.op(source), Some(Op::CallDirect { .. })) || matches!(fx.b.func.op(source), Some(Op::Operation { name, .. }) if constructs.contains(name)) {
+        if matches!(fx.b.func.op(source), Some(Op::CallDirect { .. } | Op::Operation { which: Operation::SuperConstruct | Operation::ConstructOn, .. })) {
             return;
         }
         let undefined = self.emit(fx, Op::Undefined);
@@ -2268,7 +2376,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn super_get_by_key(&mut self, fx: &mut Fx, key: V, pos: u32) -> V {
         let (class, is_static) = self.home_of_super(fx, pos);
         let this = self.this(fx, pos);
-        self.operation(fx, "SuperGet", &[class, key, this, is_static])
+        self.operation(fx, Operation::SuperGet, &[class, key, this, is_static])
     }
 
     /// `super.name = value`
@@ -2284,6 +2392,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn super_set_by_key(&mut self, fx: &mut Fx, key: V, value: V, pos: u32) {
         let (class, is_static) = self.home_of_super(fx, pos);
         let this = self.this(fx, pos);
-        self.operation(fx, "SuperSet", &[class, key, value, this, is_static]);
+        self.operation(fx, Operation::SuperSet, &[class, key, value, this, is_static]);
     }
 }

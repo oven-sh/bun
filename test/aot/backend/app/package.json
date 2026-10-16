@@ -1,0 +1,11 @@
+{
+  "name": "aot-backend",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.3"
+  }
+}

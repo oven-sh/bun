@@ -5,7 +5,7 @@ use super::{FileBuild, Fx, ImportSource, Place, Problem, Role, UsingArguments};
 use crate::declared::{Declared, prim};
 use crate::fragment::GlobalKey;
 use crate::id::{FuncId, GlobalId, LayoutId, StrId, TyId, V};
-use crate::ir::{self, Field, LayoutKind, Op, Why, func_flags};
+use crate::ir::{self, Field, LayoutKind, Op, Operation, Why, func_flags};
 use bun_sema::types::TypeId;
 use bun_sema::atom::Atom;
 use bun_sema::bind::{ClassOwner, Decl, Parent, PatParent, SymFlags};
@@ -26,11 +26,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// `seen`: see `value_symbol_of_export_after`.
     pub(crate) fn binding_exported_as_default_after(&mut self, file: FileId, e: hir::ExprId, seen: &mut Vec<Sym>) -> Option<Sym> {
         let hir::ExprKind::Ident(name) = self.hir(file)[e].kind else { return None };
-        if self.shared.exports_may_be_overridden
-            && (!self.c.is_told_what_may_be_overridden() || self.files.export(self.files.file_symbol(file), bun_sema::atom::known::default).is_some_and(|exported| self.c.may_be_overridden(exported)))
-        {
-            return None;
-        }
         let named = self.c.binding_of_identifier(file, e, name)?;
         let sym = self.value_symbol_after(named, seen);
         let is_assigned_later = self.c.is_hoisted(sym) && !self.c.is_constant(sym) && !self.is_var_initialized_once_before(sym, file, self.hir(file)[e].pos);
@@ -272,7 +267,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let Some(&Place::Global(global)) = self.places.get(&sym) else { return false };
         let Some(&(is_bound, file, hoisted)) = self.hoisted_functions.get(&global) else { return false };
         if hoisted != func {
-            return false;
+            let hir = self.hir(file);
+            return file == fx.file && hir.ids(hir.body).any(|stmt| matches!(hir[stmt].kind, StmtKind::Fn(declared) if declared == func));
         }
         self.bind_hoisted_function(fx, global, is_bound, file, hoisted);
         true
@@ -516,6 +512,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let layout = self.layout_of_activation(activation);
                 self.env_of(fx, layout)
             }
+            Capture::Variable(sym) if self.es_module_held_by(sym).is_some() => match fx.locals.get(&sym) {
+                Some(&var) => self.read(fx, var),
+                None => self.read_from_storage(fx, sym, ExprId::NONE, pos),
+            },
             Capture::Variable(sym) => self.read_sym(fx, sym, pos),
             Capture::This(receiver) => match (fx.receivers.get(&receiver), fx.this_binding) {
                 (Some(&this), _) => this,
@@ -719,337 +719,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         false
     }
 
-    pub(crate) fn bindings_that_may_be_overridden(&mut self) -> (rustc_hash::FxHashSet<Sym>, rustc_hash::FxHashSet<FileId>, rustc_hash::FxHashSet<FileId>) {
-        let shared = self.shared;
-        let is_candidate = |this: &Self, file: FileId| !this.is_builtin_file(file) && !shared.is_prelude(file) && !this.is_commonjs(file) && this.files.module(file).is_module();
-        let candidates: Vec<FileId> = shared.modules.iter().copied().filter(|&file| is_candidate(&*self, file)).collect();
-        let seen = super::mocks::overrides_seen_in(self.files);
-        let mut whole: rustc_hash::FxHashSet<FileId> = Default::default();
-        let mut members: rustc_hash::FxHashSet<(FileId, Atom)> = Default::default();
-        for &(file, specifier) in &seen.modules {
-            whole.extend(self.modules_named_by(file, specifier));
-        }
-        let mut replaced = whole.clone();
-        if seen.overrides || shared.constants.has_preloads {
-            replaced.extend(candidates.iter().copied());
-        }
-        let (mut spies_on_an_object, mut spies_on_anything) = (false, seen.names_spy_on);
-        for &(file, target, name) in &seen.spies {
-            match self.c.modules_spied_on(file, target) {
-                Some(modules) if modules.is_empty() => spies_on_an_object = true,
-                Some(modules) if name.is_some() => members.extend(modules.into_iter().map(|module| (module, name))),
-                Some(modules) => whole.extend(modules),
-                None => spies_on_anything = true,
-            }
-        }
-        let (as_values, is_any_computed) = if spies_on_an_object || spies_on_anything { self.modules_whose_namespaces_are_values() } else { (Vec::new(), false) };
-        if seen.overrides || seen.may_load_the_test_runner || shared.constants.has_preloads || spies_on_anything && is_any_computed {
-            whole.extend(candidates.iter().copied());
-        } else {
-            whole.extend(as_values);
-        }
-        let mut bindings = rustc_hash::FxHashSet::default();
-        for &file in &candidates {
-            for (name, source) in self.exports_of_file(file) {
-                let ImportSource::Declaration(member) = source else { continue };
-                if !whole.contains(&file) && !members.contains(&(file, name)) {
-                    continue;
-                }
-                let binding = self.value_symbol_of_export(member);
-                let named_by_the_checker = if self.files.flags(member).contains(SymFlags::ALIAS) { self.files.resolve_alias(member) } else { None };
-                for binding in std::iter::once(binding).chain(named_by_the_checker) {
-                    if is_candidate(&*self, binding.file) {
-                        bindings.insert(binding);
-                    }
-                }
-            }
-        }
-        (bindings, whole, replaced)
-    }
-
-    fn modules_named_by(&mut self, file: FileId, specifier: Atom) -> Vec<FileId> {
-        if let Some(found) = self.imported_file(file, specifier) {
-            return vec![found];
-        }
-        let shared = self.shared;
-        let text = self.c.atoms().bytes(specifier).to_vec();
-        if !text.starts_with(b"./") && !text.starts_with(b"../") && !text.starts_with(b"/") {
-            return shared.modules.iter().filter_map(|&importer| self.imported_file(importer, specifier)).collect();
-        }
-        let mut path: Vec<&[u8]> = if text.starts_with(b"/") { Vec::new() } else { bun_core::strings::split(self.files.module(file).file_name(), b"/").collect() };
-        path.pop();
-        for part in bun_core::strings::split(&text, b"/") {
-            match part {
-                b"" | b"." => {}
-                b".." => {
-                    path.pop();
-                }
-                _ => path.push(part),
-            }
-        }
-        let path = if text.starts_with(b"/") { [&b"/"[..], &path.join(&b'/')].concat() } else { path.join(&b'/') };
-        let without_extension = |name: &[u8]| -> usize {
-            let last = name.rsplit(|&byte| byte == b'/').next().unwrap_or(name);
-            bun_core::strings::last_index_of_char(last, b'.').filter(|&at| at > 0).map_or(name.len(), |at| name.len() - last.len() + at)
-        };
-        let names = |name: &[u8]| {
-            let stem = &name[..without_extension(name)];
-            name == &path[..] || stem == &path[..] || stem == &path[..without_extension(&path)] || stem.strip_suffix(b"/index") == Some(&path[..])
-        };
-        shared.modules.iter().copied().filter(|&module| names(self.files.module(module).file_name())).collect()
-    }
-
-    fn modules_whose_namespaces_are_values(&mut self) -> (Vec<FileId>, bool) {
-        let shared = self.shared;
-        let (mut found, mut is_any_computed) = (Vec::new(), false);
-        for &file in &shared.modules {
-            if self.is_builtin_file(file) || shared.is_prelude(file) {
-                continue;
-            }
-            let (hir, bound) = (self.hir(file), self.c.bound(file));
-            for stmt in hir.ids(hir.body) {
-                if let StmtKind::ExportStar { spec, alias, .. } = hir[stmt].kind
-                    && alias.is_some()
-                {
-                    found.extend(self.imported_file(file, spec));
-                }
-            }
-            for index in 0..hir.exprs.len() {
-                let e = ExprId(index as u32);
-                let module = match hir[e].kind {
-                    hir::ExprKind::Ident(name) if bound.expr_symbol[index].is_some() && bound.symbols[bound.expr_symbol[index].idx()].flags.contains(SymFlags::ALIAS) => {
-                        let Some(sym) = self.c.binding_of_identifier(file, e, name) else { continue };
-                        let sym = self.value_symbol(sym);
-                        if !matches!(self.value_declaration(sym), Some((_, Decl::File))) {
-                            continue;
-                        }
-                        sym.file
-                    }
-                    hir::ExprKind::ImportCall { args } => match hir.ids(args).next().map(|specifier| hir[specifier].kind) {
-                        Some(hir::ExprKind::String(specifier)) => match self.imported_file(file, specifier) {
-                            Some(module) => module,
-                            None => continue,
-                        },
-                        _ => {
-                            is_any_computed = true;
-                            continue;
-                        }
-                    },
-                    hir::ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, hir::ExprKind::Ident(name) if self.c.atoms().bytes(name) == b"require") => {
-                        match hir.ids(hir[call].args).next().map(|specifier| hir[specifier].kind) {
-                            Some(hir::ExprKind::String(specifier)) => match self.imported_file(file, specifier) {
-                                Some(module) => module,
-                                None => continue,
-                            },
-                            _ => {
-                                is_any_computed = true;
-                                continue;
-                            }
-                        }
-                    }
-                    _ => continue,
-                };
-                let mut at = e;
-                let is_only_read_from = loop {
-                    match bound.expr_parent[at.idx()] {
-                        Parent::Expr(around) if around.is_some() => match hir[around].kind {
-                            hir::ExprKind::Await(_) | hir::ExprKind::As { .. } | hir::ExprKind::Satisfies { .. } | hir::ExprKind::NonNull(_) => at = around,
-                            hir::ExprKind::Dot { obj, .. } | hir::ExprKind::Index { obj, .. } => break obj == at,
-                            hir::ExprKind::Call(call) => break !matches!(hir[e].kind, hir::ExprKind::Call(_)) && hir[call].args.len() >= 2 && hir.id_at(hir[call].args, 0) == at && matches!(hir[hir[call].callee].kind, hir::ExprKind::Ident(name) | hir::ExprKind::Dot { name, .. } if self.c.atoms().bytes(name) == b"spyOn"),
-                            hir::ExprKind::Unary { op: hir::UnOp::Typeof, .. } => break true,
-                            _ => break false,
-                        },
-                        Parent::VarInit(declaration) => break matches!(hir[hir[declaration].pat].kind, PatKind::Object(_)),
-                        Parent::Prop(prop) => break hir[prop].kind == hir::PropKind::Spread,
-                        _ => break bound.is_in_type_query(at),
-                    }
-                };
-                if !is_only_read_from {
-                    found.push(module);
-                }
-            }
-        }
-        (found, is_any_computed)
-    }
-
-    pub(crate) fn override_of_member_of_global(&mut self, holder: Atom, name: Atom) -> GlobalId {
-        let path = [self.c.atoms().bytes(holder), b".", self.c.atoms().bytes(name)].concat();
-        let path = self.c.atoms().intern(&path);
-        self.export_variable(self.shared.roots()[0], path)
-    }
-
-    pub(crate) fn member_of_global_as_compiled(&mut self, fx: &mut Fx, holder: Atom, name: Atom) -> (V, V) {
-        let path = self.c.atoms().bytes(holder).to_vec();
-        let mut obj = V::NONE;
-        for part in bun_core::strings::split(&path, b".") {
-            let part = self.out.strs.intern(part);
-            obj = if obj.is_none() { self.emit_throwing(fx, Op::FreeGet { name: part, is_typeof: false }) } else { self.emit_throwing(fx, Op::PropGet { obj, name: part }) };
-        }
-        let name = self.str(name);
-        (obj, self.emit_throwing(fx, Op::PropGet { obj, name }))
-    }
-
-    pub(crate) fn spy_in_the_place_of_member(&mut self, fx: &mut Fx, found: V, holders: &[Atom], name: Atom) -> V {
-        let result = self.new_temporary(fx);
-        self.write(fx, result, found);
-        for &holder in holders {
-            let global = self.override_of_member_of_global(holder, name);
-            let original = self.member_of_global_as_compiled(fx, holder, name).1;
-            let is_it = self.emit(fx, Op::StrictEq { a: found, b: original });
-            let (found, set, next) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
-            self.branch(fx, is_it, found, next);
-            fx.b.seal(found);
-            fx.b.switch_to(found);
-            let known = self.emit(fx, Op::GlobalGet(global));
-            let undefined = self.emit(fx, Op::Undefined);
-            let is_unset = self.emit(fx, Op::StrictEq { a: known, b: undefined });
-            self.branch(fx, is_unset, next, set);
-            fx.b.seal(set);
-            fx.b.switch_to(set);
-            self.write(fx, result, known);
-            fx.b.jump(next);
-            fx.b.seal(next);
-            fx.b.switch_to(next);
-        }
-        self.read(fx, result)
-    }
-
-    pub(crate) fn overrides_of_replaced_modules(&mut self, passed: Vec<(FileId, Atom)>, sym: Sym) -> Vec<GlobalId> {
-        let own = self.override_of(sym);
-        let shared = self.shared;
-        let replaceable = passed.into_iter().filter(|export| shared.modules_that_may_be_replaced.contains(&export.0));
-        let globals: Vec<GlobalId> = replaceable.map(|(module, name)| self.export_variable(module, name)).collect();
-        globals.into_iter().filter(|&global| Some(global) != own).collect()
-    }
-
-    pub(crate) fn read_behind_replaced_modules(&mut self, fx: &mut Fx, replaced: &[GlobalId], sym: Sym, e: Option<ExprId>, pos: u32) -> V {
-        match (replaced.split_first(), e) {
-            (Some((&global, rest)), _) => self.unless_overridden(fx, global, e.unwrap_or(ExprId::NONE), |_, _, known| known, |this, fx| this.read_behind_replaced_modules(fx, rest, sym, e, pos)),
-            (None, Some(e)) => self.read_reference(fx, sym, e),
-            (None, None) => self.read_sym(fx, sym, pos),
-        }
-    }
-
-    pub(crate) fn read_export_of_module(&mut self, fx: &mut Fx, module: FileId, name: Atom, member: Sym, pos: u32) -> V {
-        if self.shared.modules_that_may_be_replaced.is_empty() {
-            return self.read_sym(fx, member, pos);
-        }
-        let passed = self.exports_passed_from(module, name);
-        let replaced = self.overrides_of_replaced_modules(passed, member);
-        self.read_behind_replaced_modules(fx, &replaced, member, None, pos)
-    }
-
-    pub(crate) fn override_of(&mut self, sym: Sym) -> Option<GlobalId> {
-        if !self.c.may_be_overridden(sym) {
-            return None;
-        }
-        let name = self.files.symbol(sym).name;
-        Some(self.export_variable(sym.file, name))
-    }
-
-    fn value_of_override(&mut self, fx: &mut Fx, known: V) -> V {
-        let stands_for_undefined = self.variable_of_program("what stands for undefined in an override");
-        let stands_for_undefined = self.emit(fx, Op::GlobalGet(stands_for_undefined));
-        let is_undefined = self.emit(fx, Op::StrictEq { a: known, b: stands_for_undefined });
-        let (undefined, other, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
-        let result = self.new_temporary(fx);
-        self.branch(fx, is_undefined, undefined, other);
-        fx.b.seal(undefined);
-        fx.b.seal(other);
-        fx.b.switch_to(undefined);
-        let value = self.emit(fx, Op::Undefined);
-        self.write(fx, result, value);
-        fx.b.jump(join);
-        fx.b.switch_to(other);
-        self.write(fx, result, known);
-        fx.b.jump(join);
-        fx.b.seal(join);
-        fx.b.switch_to(join);
-        self.read(fx, result)
-    }
-
-    pub(crate) fn value_kept_as_override(&mut self, fx: &mut Fx, value: V) -> V {
-        let variable = self.variable_of_program("what stands for undefined in an override");
-        let undefined = self.emit(fx, Op::Undefined);
-        let is_undefined = self.emit(fx, Op::StrictEq { a: value, b: undefined });
-        let (stands_in, makes, has, other, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
-        let result = self.new_temporary(fx);
-        self.branch(fx, is_undefined, stands_in, other);
-        fx.b.seal(stands_in);
-        fx.b.seal(other);
-        fx.b.switch_to(stands_in);
-        let existing = self.emit(fx, Op::GlobalGet(variable));
-        let is_missing = self.emit(fx, Op::StrictEq { a: existing, b: undefined });
-        self.branch(fx, is_missing, makes, has);
-        fx.b.seal(makes);
-        fx.b.seal(has);
-        fx.b.switch_to(makes);
-        let made = self.emit(fx, Op::NewObject);
-        self.emit(fx, Op::GlobalSet(variable, made));
-        self.write(fx, result, made);
-        fx.b.jump(join);
-        fx.b.switch_to(has);
-        self.write(fx, result, existing);
-        fx.b.jump(join);
-        fx.b.switch_to(other);
-        self.write(fx, result, value);
-        fx.b.jump(join);
-        fx.b.seal(join);
-        fx.b.switch_to(join);
-        self.read(fx, result)
-    }
-
-    pub(crate) fn unless_overridden(&mut self, fx: &mut Fx, global: GlobalId, e: ExprId, overridden: impl FnOnce(&mut Self, &mut Fx, V) -> V, compiled: impl FnOnce(&mut Self, &mut Fx) -> V) -> V {
-        let known = self.emit(fx, Op::GlobalGet(global));
-        let undefined = self.emit(fx, Op::Undefined);
-        let is_unset = self.emit(fx, Op::StrictEq { a: known, b: undefined });
-        let (unset, set, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
-        let result = self.new_temporary(fx);
-        self.branch(fx, is_unset, unset, set);
-        fx.b.seal(unset);
-        fx.b.seal(set);
-        fx.b.switch_to(set);
-        let known = self.value_of_override(fx, known);
-        let mut value = overridden(self, fx, known);
-        if e.is_some() && fx.is_typed {
-            let checked = self.type_of_value(fx, e);
-            let want = Ty { id: self.ty_of_expression(fx, e, checked), checked };
-            let said = self.c.type_of_expr(fx.file, e);
-            let promised = self.c.awaited(said);
-            if promised != said {
-                let id = self.ty_of(promised);
-                self.note_untyped_inflow(Ty { id, checked: promised });
-            }
-            let mut views = Vec::new();
-            let said_in_the_program = self.ty_of(said);
-            self.types_of_layouts_within(said_in_the_program, 3, &mut views);
-            for view in views {
-                self.c.note_foreign(view, TypeId::ANY);
-            }
-            self.note_produced_types(said, true);
-            fx.checked.insert(value, TypeId::ANY);
-            value = self.fit(fx, value, want, Why::Cast);
-        }
-        self.write(fx, result, value);
-        fx.b.jump(join);
-        fx.b.switch_to(unset);
-        let value = compiled(self, fx);
-        self.write(fx, result, value);
-        fx.b.jump(join);
-        fx.b.seal(join);
-        fx.b.switch_to(join);
-        let value = self.read(fx, result);
-        if e.is_some() { self.fit_to_expression(fx, value, e) } else { value }
-    }
-
     fn read_sym_at(&mut self, fx: &mut Fx, sym: Sym, e: ExprId, pos: u32) -> V {
-        match self.override_of(sym).filter(|_| self.c.may_be_overridden_at(sym, fx.file, e)) {
-            Some(global) => self.unless_overridden(fx, global, e, |_, _, known| known, |this, fx| this.read_sym_as_compiled(fx, sym, e, pos)),
-            None => self.read_sym_as_compiled(fx, sym, e, pos),
-        }
-    }
-
-    fn read_sym_as_compiled(&mut self, fx: &mut Fx, sym: Sym, e: ExprId, pos: u32) -> V {
         if e.is_some()
             && self.files.flags(sym).contains(SymFlags::CLASS)
             && let Some((file, Decl::Class(class))) = self.value_declaration(sym)
@@ -1061,13 +731,25 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return self.class_as_value(fx, file, class);
         }
         self.check_default_exports_passed(fx, e);
+        if let Some(module) = self.es_module_held_by(sym) {
+            self.find_holder_initialized(fx, sym, e);
+            return self.read_sym(fx, self.files.file_symbol(module), pos);
+        }
+        if matches!(self.places.get(&sym), Some(Place::Global(_)))
+            && let Some(exported) = self.export_copied_by(sym)
+            && let Some(value) = self.c.constant_held_by(exported)
+        {
+            self.find_holder_initialized(fx, sym, e);
+            let constant = self.constant_of(value);
+            return self.emit_constant(fx, &constant);
+        }
         if let Some(namespace) = self.namespace_with_property(sym) {
             return self.read_property_of_namespace(fx, namespace, sym);
         }
         if let Some((owner, index)) = self.c.mapped_parameter(sym) {
             let arguments = self.capture_value(fx, Capture::Arguments(owner), pos);
             let index = self.emit(fx, Op::Int(index as i64));
-            return self.operation(fx, "GetMappedParameter", &[arguments, index]);
+            return self.operation(fx, Operation::GetMappedParameter, &[arguments, index]);
         }
         if let Some(&var) = fx.locals.get(&sym) {
             self.check_dead_zone(fx, sym, e);
@@ -1084,6 +766,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return self.emit_constant(fx, &constant);
         }
         self.read_from_storage(fx, sym, e, pos)
+    }
+
+    pub(crate) fn find_holder_initialized(&mut self, fx: &mut Fx, sym: Sym, e: ExprId) {
+        if fx.locals.contains_key(&sym) {
+            self.check_dead_zone(fx, sym, e);
+        } else if self.may_be_in_dead_zone(fx, sym, e) {
+            let pos = if e.is_some() { self.hir(fx.file)[e].pos } else { fx.b.pos };
+            self.read_from_storage(fx, sym, e, pos);
+        }
     }
 
     fn place_at(&self, sym: Sym, pos: u32) -> Option<Place> {
@@ -1131,7 +822,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     return self.read_place(fx, sym, Op::GlobalGet(g), e);
                 }
                 // Of an overloaded function, the declaration with the body.
-                if let Some((file, func)) = self.own_function_declared_as(sym)
+                if let Some((file, func)) = self.function_declared_as(sym)
                     && let Some(id) = self.function_of_declaration(fx, file, func)
                 {
                     return self.closure_of_declaration(fx, sym, id, pos);
@@ -1161,7 +852,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let text = self.str(text);
                     self.emit(fx, Op::Str(text))
                 }
-                None => self.unsupported(fx, pos, "an enum member whose value is computed at run time"),
+                None => match self.files.parent_of_symbol(sym) {
+                    Some(owner) => {
+                        let maker = self.enum_object_getter(owner);
+                        let obj = self.emit_throwing(fx, Op::CallDirect { func: maker, args: ir::Args::new() });
+                        let name = self.str(self.files.symbol(sym).name);
+                        self.emit_throwing(fx, Op::PropGet { obj, name })
+                    }
+                    None => self.unsupported(fx, pos, "an enum member whose value is computed at run time"),
+                },
             },
             Some((_, Decl::Module(_))) if self.c.is_reified_namespace(sym) => self.namespace_object(fx, sym),
             Some((_, Decl::Module(_) | Decl::File)) => {
@@ -1274,14 +973,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.names_function_expression(sym) && fx.func.is_some() && self.c.is_sloppy_function(fx.file, fx.func) {
             return;
         }
-        if self.c.is_constant(sym) || self.names_function_expression(sym) {
+        let names_the_class_around = matches!(self.value_declaration(sym), Some((file, Decl::Class(class))) if file == fx.file && self.c.is_written_in_class(file, e, class));
+        if self.c.is_constant(sym) || self.names_function_expression(sym) || names_the_class_around {
             self.throw_error(fx, b"TypeError", b"Attempted to assign to readonly property.");
             let after = fx.b.new_block();
             fx.b.seal(after);
             fx.b.switch_to(after);
             return;
         }
-        self.overwrite_sym(fx, sym, value, pos);
+        self.write_sym(fx, sym, value, pos);
     }
 
     /// `value` is stored to the variable, which is kept in a place of the type `place`. Where that has room besides the type of the variable,
@@ -1295,14 +995,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// What enters a variable whose type is written down is held to it as by `as`.
-    pub(crate) fn overwrite_sym(&mut self, fx: &mut Fx, sym: Sym, value: V, pos: u32) {
-        self.write_sym(fx, sym, value, pos);
-        if let Some(global) = self.override_of(sym) {
-            let nothing = self.emit(fx, Op::Undefined);
-            self.emit(fx, Op::GlobalSet(global, nothing));
-        }
-    }
-
     pub(crate) fn write_sym(&mut self, fx: &mut Fx, sym: Sym, value: V, pos: u32) {
         if let Some(namespace) = self.namespace_with_property(sym) {
             let obj = self.namespace_object(fx, namespace);
@@ -1313,7 +1005,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let Some((owner, index)) = self.c.mapped_parameter(sym) {
             let arguments = self.capture_value(fx, Capture::Arguments(owner), pos);
             let index = self.emit(fx, Op::Int(index as i64));
-            self.operation(fx, "PutMappedParameter", &[arguments, index, value]);
+            self.operation(fx, Operation::PutMappedParameter, &[arguments, index, value]);
             return;
         }
         let why = if self.c.is_annotated(sym) { Why::Cast } else { Why::Store };
@@ -1405,10 +1097,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let global = self.enum_global(sym);
         let known = self.emit(fx, Op::GlobalGet(global));
         let declarations = self.declarations_of_enum(sym);
-        let [(file, declaration)] = declarations[..] else {
+        let is_made_already = self.is_enum_made_where_it_is_declared(sym, &declarations);
+        let ([(file, declaration)], false) = (&declarations[..], is_made_already) else {
             self.terminate_with_return(fx, known);
             return;
         };
+        let (file, declaration) = (*file, *declaration);
         let null = self.emit(fx, Op::Null);
         let is_missing = self.emit(fx, Op::StrictEq { a: known, b: null });
         let (make, done) = (fx.b.new_block(), fx.b.new_block());
@@ -1432,15 +1126,31 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.files.decls(sym).iter().filter_map(runs).collect()
     }
 
+    pub(crate) fn is_enum_made_where_it_is_declared(&mut self, sym: Sym, declarations: &[(FileId, bun_sema::hir::EnumId)]) -> bool {
+        declarations.len() != 1
+            || self.files.flags(sym).contains(SymFlags::VALUE_MODULE)
+            || declarations.iter().any(|&(file, declaration)| {
+                let hir = self.hir(file);
+                hir[declaration].members.iter().any(|member| self.c.enum_member_value(file, member).is_none())
+            })
+    }
+
     pub(crate) fn emit_enum_members(&mut self, fx: &mut Fx, obj: V, file: FileId, declaration: bun_sema::hir::EnumId) {
         let hir = self.hir(file);
         for member in hir[declaration].members.iter() {
             let m = &hir[member];
+            let member_name = self.str(m.name);
             let Some(value) = self.c.enum_member_value(file, member) else {
-                self.problem(file, m.pos, "an enum member whose value is computed at run time");
+                if m.init.is_none() || file != fx.file {
+                    self.problem(file, m.pos, "an enum member whose value is computed at run time");
+                    continue;
+                }
+                let value = self.expr(fx, m.init);
+                self.emit_throwing(fx, Op::PropSet { obj, name: member_name, value });
+                let text = self.emit(fx, Op::Str(member_name));
+                self.emit_throwing(fx, Op::ElemSet { obj, key: value, value: text });
                 continue;
             };
-            let member_name = self.str(m.name);
             match value {
                 bun_sema::types::EnumValue::Number(bits) => {
                     let value = self.number(fx, f64::from_bits(bits));
@@ -1530,6 +1240,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// A block of the reified namespace is entered: the first one makes the object.
+    pub(crate) fn make_enum_object_unless_made(&mut self, fx: &mut Fx, sym: Sym) {
+        let global = self.enum_global(sym);
+        let known = self.emit(fx, Op::GlobalGet(global));
+        let undefined = self.emit(fx, Op::Undefined);
+        let is_missing = self.emit(fx, Op::StrictEq { a: known, b: undefined });
+        let (make, made) = (fx.b.new_block(), fx.b.new_block());
+        self.branch(fx, is_missing, make, made);
+        fx.b.seal(make);
+        fx.b.switch_to(make);
+        let fresh = self.emit(fx, Op::NewObject);
+        self.emit(fx, Op::GlobalSet(global, fresh));
+        fx.b.jump(made);
+        fx.b.seal(made);
+        fx.b.switch_to(made);
+    }
+
     pub(crate) fn enter_block_of_namespace(&mut self, fx: &mut Fx, namespace: Sym) {
         if self.is_merged_with_another_object(namespace) {
             return;
@@ -1548,7 +1274,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.c.note_object_allocated_empty(self.layout_types[&layout], namespace.file);
                 self.emit(fx, Op::New(layout))
             }
-            None => self.emit(fx, Op::NewObject),
+            None => {
+                let checked = self.c.type_of_symbol(namespace);
+                self.c.note_object_without_a_layout(checked);
+                self.emit(fx, Op::NewObject)
+            }
         };
         self.emit(fx, Op::GlobalSet(global, obj));
         if let Some(outer) = self.reified_namespace_exporting(namespace) {
@@ -1625,6 +1355,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if matches!(self.value_declaration(sym), Some((_, Decl::File))) {
             let obj = self.make_module_namespace(fx, sym.file, false);
             self.emit(fx, Op::GlobalSet(global, obj));
+            self.emit_mark_if_required(fx, sym.file, obj);
             return self.terminate_with_return(fx, obj);
         }
         let members = self.members_of_namespace(sym);
@@ -1635,7 +1366,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let value = self.read_member_of_namespace(fx, source);
             let name = self.str(name);
             let key = self.emit(fx, Op::Str(name));
-            self.operation(fx, "DefineField", &[obj, key, value]);
+            self.operation(fx, Operation::DefineField, &[obj, key, value]);
         }
         self.terminate_with_return(fx, obj);
     }
@@ -1664,6 +1395,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         if let Some((importer, object)) = self.only_object_behind_stars(file) {
             arguments.push(self.namespace_of_exported_object(fx, importer, object));
+        } else if let Some(assigned) = self.files.export(self.files.file_symbol(file), bun_sema::atom::known::export_equals).filter(|_| !is_deferred) {
+            let assigned = self.read_member_of_namespace(fx, ImportSource::Declaration(assigned));
+            let is_node_mode = self.emit(fx, Op::Bool(true));
+            arguments.push(self.operation(fx, Operation::ToESM, &[assigned, is_node_mode]));
         }
         if self.shared.constants.own_paths.is_some() {
             arguments.push(self.emit(fx, Op::Bool(true)));
@@ -1671,7 +1406,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if is_deferred {
             arguments.push(self.emit(fx, Op::Null));
         }
-        self.operation(fx, "MakeModuleNamespace", &arguments)
+        self.operation(fx, Operation::MakeModuleNamespace, &arguments)
     }
 
     pub(crate) fn deferred_namespace_object(&mut self, fx: &mut Fx, file: FileId) -> V {
@@ -1703,8 +1438,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         } else {
             self.files.exports(sym).into_iter().map(|(name, member)| (name, if self.entity_alias_declaration(member).is_some() { ImportSource::Entity(member) } else { ImportSource::Declaration(member) })).collect()
         };
+        let is_assigned_whole = self.files.export(sym, bun_sema::atom::known::export_equals).is_some();
         let mut members = Vec::with_capacity(exports.len());
         for (name, source) in exports {
+            if is_assigned_whole && self.c.atoms().bytes(name) == b"module.exports" {
+                continue;
+            }
             let is_value = match source {
                 ImportSource::Declaration(member) => {
                     let member = self.value_symbol_of_export(member);
@@ -1715,6 +1454,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 ImportSource::Entity(alias) => !matches!(self.entity_alias_kind(alias), super::imports::EntityAlias::TypeOnly),
                 ImportSource::Unknown => false,
+                ImportSource::ExportedObject { file: object, name: Some(_), .. } => !matches!(self.member_of_only_object_behind_stars(sym.file, name), ImportSource::ExportedObject { file, .. } if file == object),
                 _ => true,
             };
             if is_value {
@@ -1754,16 +1494,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let none = fx.b.new_block();
         let cases = arms.iter().enumerate().map(|(number, &arm)| (number as i64, ir::Target::new(arm))).collect();
         fx.b.terminate(ir::Term::Switch { value: number, cases, default: ir::Target::new(none) });
-        for (&arm, (name, source)) in arms.iter().zip(members) {
+        for (&arm, (_, source)) in arms.iter().zip(members) {
             fx.b.seal(arm);
             fx.b.switch_to(arm);
-            let value = match source {
-                ImportSource::Declaration(member) => {
-                    let member = self.value_symbol_of_export(member);
-                    self.read_export_of_module(fx, file, name, member, 0)
-                }
-                _ => self.read_member_of_namespace(fx, source),
-            };
+            let value = self.read_member_of_namespace(fx, source);
             self.terminate_with_return(fx, value);
         }
         fx.b.seal(none);
@@ -1994,6 +1728,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 signature.result = Some(result);
                 signature.is_result_annotated = is_annotated;
                 let described = self.declared(result);
+                let described = if described.is_none() && f.flags.contains(Flags::ASYNC) && !f.flags.contains(Flags::GENERATOR) { self.out.tys.intern(crate::declared::Declared::any_object().nilable()) } else { described };
                 let written = self.ask(|c| c.integers_written_for_result(file, func));
                 self.with_integers(described, written)
             }
@@ -2076,10 +1811,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// The declaration with a body of a function that nothing is stored to.
     pub(crate) fn function_declared_as(&self, sym: Sym) -> Option<(FileId, FnId)> {
-        self.own_function_declared_as(sym).filter(|_| !self.c.may_be_overridden(sym))
-    }
-
-    fn own_function_declared_as(&self, sym: Sym) -> Option<(FileId, FnId)> {
         let decls = self.files.decls(sym);
         if self.is_ambient(sym) || self.is_assigned(sym) || decls.iter().any(|declared| matches!(declared.1, Decl::Var(_) | Decl::Param(_))) {
             return None;
@@ -2094,7 +1825,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// The closure of the function declaration `sym`, which is `id`, where the name is used as a value. It is the same object for as long
     /// as the scope of the declaration is not entered anew.
     fn closure_of_declaration(&mut self, fx: &mut Fx, sym: Sym, id: FuncId, pos: u32) -> V {
-        let declared = self.own_function_declared_as(sym).filter(|declared| declared.0 == self.file);
+        let declared = self.function_declared_as(sym).filter(|declared| declared.0 == self.file);
         if let Some((file, func)) = declared
             && self.names_function_expression(sym)
             && let Some((activation, field)) = self.scope_of_function_expression(file, func)
@@ -2141,7 +1872,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         if matches!(self.c.bound(file).fns[func.idx()].owner, bun_sema::bind::FnOwner::Stmt(_)) {
             let sym = self.function_symbol(file, func);
-            if self.own_function_declared_as(sym) == Some((file, func)) {
+            if self.function_declared_as(sym) == Some((file, func)) {
                 return self.closure_of_declaration(fx, sym, id, pos);
             }
         }

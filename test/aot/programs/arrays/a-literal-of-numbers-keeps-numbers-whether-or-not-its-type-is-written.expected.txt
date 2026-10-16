@@ -1,0 +1,13 @@
+written: ArrayWithDouble [31,28,31,30] 120
+workedOut: ArrayWithDouble [31,28,31,30] 120
+halves: ArrayWithDouble [0.5,1.5] 2
+writtenResult: ArrayWithDouble [1,2] 3
+workedOutResult: ArrayWithDouble [1,2] 3
+constants: ArrayWithDouble [1,2,3] 6
+nested: ArrayWithDouble [3,4] 7
+inAnObject: ArrayWithDouble [31,28] 59
+texts: ArrayWithContiguous ["a","b"]
+mixed: ArrayWithContiguous [1,"a"]
+asAny: ArrayWithContiguous [1,2,3]
+tuple: ArrayWithInt32 [1,2]
+outer: ArrayWithContiguous [[1,2],[3,4]]

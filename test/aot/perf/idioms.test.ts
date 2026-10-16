@@ -40,6 +40,9 @@ async function spawned(cmd: string[], env: Record<string, string | undefined>) {
   return { stdout, stderr, exitCode };
 }
 
+if (!mode) console.error("SKIPPED: test/aot/perf/idioms.test.ts: it wants a quiet machine. AOT_PERF=1 runs it");
+else if (!perf) console.error("SKIPPED: test/aot/perf/idioms.test.ts: perf is not installed");
+
 describe.skipIf(!mode || !perf)("compile/aot/perf/idioms", () => {
   const folder = tempDir("aot-perf", {});
   console.log(["instructions per iteration".padEnd(64), "typed", "untyped", "JIT"].join("\t"));

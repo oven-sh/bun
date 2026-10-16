@@ -59,7 +59,6 @@ Function.prototype | Function.prototype.zzz = f;
 String.prototype | String.prototype.zzz = f;
 Promise.prototype | Promise.prototype.zzz = f;
 Iterator.prototype | Iterator.prototype.zzz = f;
-Error.prototype | Error.prototype.zzz = f;
 Uint8Array.prototype | Uint8Array.prototype.zzz = f;
 Intl.Collator.prototype | Intl.Collator.prototype.zzz = f;
 Intl.DateTimeFormat.prototype | Object.defineProperty(Intl.DateTimeFormat.prototype, "zzz", d);
@@ -81,9 +80,6 @@ Array.prototype | Object.defineProperty(Array.prototype, "hasOwnProperty", d);
 Array.prototype | Array.prototype.length = 3;
 Object.prototype | Object.prototype.toString = f;
 Object.prototype | delete Object.prototype.hasOwnProperty;
-Error.prototype | Error.prototype.name = "x";
-Error.prototype | Error.prototype.message = "x";
-TypeError.prototype | TypeError.prototype.toString = f;
 Map.prototype | Object.defineProperty(Map.prototype, "size", d);
 Map.prototype | delete Map.prototype.size;
 Map.prototype | Object.defineProperty(Map.prototype, Symbol.toStringTag, d);
@@ -168,10 +164,6 @@ Array.prototype | Array.prototype.flat &&= f;
 Array.prototype | if (Array.prototype.flat) Array.prototype.flat = f;
 Array.prototype | if (!Array.prototype.flat || !Array.prototype.zzz) Array.prototype.zzz = f;
 Array.prototype | if (typeof Math === "object") Array.prototype.zzz = f;
-Error.prototype | if (!Error.prototype.message) Error.prototype.message = "x";
-Error.prototype | Error.prototype.message ||= "x";
-Error.prototype | Error.prototype.name &&= "x";
-Error.prototype | if (typeof Error.prototype.name !== "function") Error.prototype.name = "x";
 Temporal | if (typeof Temporal.Now !== "function") Temporal.Now = f;
 Array.prototype | { const P = Array.prototype; P.zzz = f; }
 Array.prototype | { const P = Array.prototype; P.push = f; }
@@ -182,6 +174,14 @@ Array.prototype | Array.prototype.zzz++;
 `;
 
 const same = `
+Error.prototype | Error.prototype.zzz = f;
+Error.prototype | Error.prototype.name = "x";
+Error.prototype | Error.prototype.message = "x";
+TypeError.prototype | TypeError.prototype.toString = f;
+Error.prototype | if (!Error.prototype.message) Error.prototype.message = "x";
+Error.prototype | Error.prototype.message ||= "x";
+Error.prototype | Error.prototype.name &&= "x";
+Error.prototype | if (typeof Error.prototype.name !== "function") Error.prototype.name = "x";
 globalThis | globalThis.undefined = 1;
 globalThis | globalThis.NaN = 1;
 globalThis | globalThis.Infinity = 1;
@@ -396,9 +396,9 @@ describe.skipIf(!!unsupported)("writes to built-in objects under --aot", () => {
     const cwd = String(dir);
     const [plain, compiled, plainSloppy, compiledSloppy, build, lint] = await Promise.all([
       bun(cwd, "run", "run.js"),
-      bun(cwd, "run", "--aot", "run.js"),
+      bun(cwd, "run", "--debug-aot", "run.js"),
       bun(cwd, "run", "run.cjs"),
-      bun(cwd, "run", "--aot", "run.cjs"),
+      bun(cwd, "run", "--debug-aot", "run.cjs"),
       bun(cwd, "build", "--compile", "--aot", "writes/main.js", "--outfile", "writes.out"),
       bun(cwd, "lint", "--no-ignore", "-f", "json", "writes"),
     ]);

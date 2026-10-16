@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { unsupported } from "../../../aot/run-programs";
 
 // ── sources embedded into the executable ──────────────────────────────────────────────────────────
 const sources: Record<string, string> = {
@@ -205,7 +206,7 @@ const combos: Combo[] = [
   { name: "esm+splitting+bytecode", args: ["--format=esm", "--splitting", "--bytecode"] },
   { name: "esm+splitting+bytecode+minify", args: ["--format=esm", "--splitting", "--bytecode", "--minify"] },
   { name: "esm+splitting+bytecode+sourcemap", args: ["--format=esm", "--splitting", "--bytecode", "--sourcemap"] },
-  { name: "esm+splitting+aot", args: ["--format=esm", "--splitting", "--aot"] },
+  ...(unsupported ? [] : [{ name: "esm+splitting+aot", args: ["--format=esm", "--splitting", "--aot"] }]),
 ];
 
 // All executables are built up front, concurrently; each describe awaits its own.

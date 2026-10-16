@@ -277,7 +277,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
 
     // Called in a Bun.ModuleGraph's context: that graph's require().
     RELEASE_AND_RETURN(
-        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::currentModuleGraph(defaultGlobalObject(globalObject)))));
+        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::currentModuleGraph(defaultGlobalObject(globalObject)), dynamicDowncast<Bun::JSCommonJSModule>(callFrame->thisValue()))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
@@ -449,7 +449,9 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
         globalObject->m_moduleResolveFilenameOverride.set(
             lexicalGlobalObject->vm(), globalObject, value);
         globalObject->hasOverriddenModuleResolveFilenameFunction = true;
+        auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
         Bun::noteThatRequireCacheIsRead(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
     }
 
     return true;

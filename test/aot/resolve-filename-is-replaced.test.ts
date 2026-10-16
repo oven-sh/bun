@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // A replaced `Module._resolveFilename` is asked for every name that is required from then on, also for one that the build could resolve
@@ -54,7 +55,7 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
       return { stdout, stderr, exitCode };
     };
     const plain = await run([], bunEnv);
-    const aot = await run(["--aot"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+    const aot = await run(["--debug-aot"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
     expect(plain.exitCode).toBe(0);
     expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });

@@ -187,6 +187,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// `sym`: the place, if it has a name of its own.
     fn ty_of_storage(&mut self, storage: Storage, sym: Option<Sym>) -> Ty {
         let mut id = self.declared(storage.ty);
+        if id.is_none()
+            && let Some(sym) = sym
+            && let Some((file, initializer)) = self.c.initializer_of_const(sym)
+            && let Some(made) = self.ty_made_by(file, initializer)
+        {
+            id = made;
+        }
         if let Some(sym) = sym
             && id.is_some()
             && self.out.tys.get(id).prims & prim::NUMBER != 0
@@ -217,6 +224,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn field_starts_undefined(&mut self, layout: LayoutId, sym: Sym) -> bool {
         let extended = self.classes_extended_by(layout);
         self.c.field_starts_undefined(sym, &extended)
+    }
+
+    pub(crate) fn is_let_go_of_by_extended_classes(&mut self, layout: LayoutId) -> bool {
+        let extended = self.classes_extended_by(layout);
+        extended.is_empty() || self.c.is_let_go_of_while_constructed_by(&extended)
+    }
+
+    pub(crate) fn initializers_that_let_go_of_this(&mut self, layout: LayoutId, file: FileId, class: ClassId) -> Vec<bun_sema::hir::MemberId> {
+        let extended = self.classes_extended_by(layout);
+        self.c.initializers_that_let_go_of_this(file, class, &extended)
     }
 
     /// The type as what a cast makes of plain data. No object is made as what the parts of a union have in common: it is made as one of
@@ -451,7 +468,58 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if ty == TypeId::UNRESOLVED || self.c.says_nothing(ty) {
             return false;
         }
-        self.c.parts(ty).to_vec().into_iter().any(|part| matches!(self.c.data(part), TypeData::Ref { target, .. } if self.only_declares(target.file) && !self.files.module(target.file).is_lib))
+        self.c.parts(ty).to_vec().into_iter().any(|part| match *self.c.data(part) {
+            TypeData::Ref { target, .. } => self.only_declares(target.file) && (!self.files.module(target.file).is_lib || self.ty_of(part) == self.out.tys.anything),
+            _ => false,
+        })
+    }
+
+    fn ty_made_by(&mut self, file: FileId, e: bun_sema::hir::ExprId) -> Option<TyId> {
+        match self.hir(file)[e].kind {
+            bun_sema::hir::ExprKind::New(_) => self.ty_made_by_new(file, e),
+            bun_sema::hir::ExprKind::Call(_) => self.ty_made_by_call(file, e),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn ty_made_by_call(&mut self, file: FileId, e: bun_sema::hir::ExprId) -> Option<TyId> {
+        if !self.c.has_declared_type(file, e) {
+            return None;
+        }
+        let made = self.c.type_of_expr(file, e);
+        if self.ty_of(made) != self.out.tys.anything {
+            return None;
+        }
+        let TypeData::Ref { target, .. } = *self.c.data(made) else { return None };
+        let name = self.files.symbol(target).name;
+        if self.c.global_type_symbol(name) != Some(target) || !self.files.module(target.file).is_lib || !self.c.calls_static_of_global_object(file, e, name) {
+            return None;
+        }
+        Some(self.out.tys.intern(Declared::any_object()))
+    }
+
+    pub(crate) fn ty_made_by_new(&mut self, file: FileId, e: bun_sema::hir::ExprId) -> Option<TyId> {
+        if !self.c.has_declared_type(file, e) {
+            return None;
+        }
+        let made = self.c.type_of_expr(file, e);
+        if self.ty_of(made) != self.out.tys.anything {
+            return None;
+        }
+        let root = match self.c.built_in_extended_by(made) {
+            Some(BuiltIn::Instance(root)) => root,
+            _ => made,
+        };
+        let TypeData::Ref { target, .. } = *self.c.data(root) else { return None };
+        let name = self.files.symbol(target).name;
+        if self.c.global_type_symbol(name) != Some(target) || !self.files.module(target.file).is_lib {
+            return None;
+        }
+        if root == made && !matches!(self.c.atoms().bytes(name), b"Error" | b"Promise") && self.c.constructs_global_object(file, e, name) {
+            let name = self.str(name);
+            return Some(self.out.tys.intern(Declared::part(Part::Global(name, Default::default()))));
+        }
+        Some(self.out.tys.intern(Declared::any_object()))
     }
 
     fn ty_of_reference(&mut self, ty: TypeId, target: Sym, depth: u8) -> Declared {
@@ -488,16 +556,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 return Declared::any_object().or(&Declared::prims(primitives));
             }
             // What the host makes and the library declares an `Error` need be no error object of the engine: `interface DOMException extends Error`, a wrapper of a native object with
-            // `Error.prototype` on its chain. So a place for an `Error` takes any object.
+            // `Error.prototype` on its chain. And what is thrown need be no object: `throw "text"`, `catch (e) { report(e as Error) }`. So a place for an `Error` takes anything.
             if self.c.atoms().bytes(name) == b"Error" {
-                return Declared::any_object();
+                return Declared::anything();
             }
             // Nor need what is handed on as a `Promise<T>` be a promise of the engine: a thenable of a library, which may declare it `extends Promise<T>`. `await` and `.then` take it the language's own
             // way. Nothing is made of it: to call its `then` may be to start what it stands for.
             if self.c.atoms().bytes(name) == b"Promise" {
-                return Declared::any_object();
+                return Declared::anything();
             }
-            if self.only_declares(target.file) && !self.files.module(target.file).is_lib {
+            let is_only_predicted = matches!(self.c.atoms().bytes(name), b"ArrayBuffer" | b"SharedArrayBuffer" | b"DataView" | b"WeakMap" | b"WeakSet" | b"WeakRef" | b"FinalizationRegistry");
+            if self.only_declares(target.file) && (is_only_predicted || !self.files.module(target.file).is_lib) {
                 return Declared::anything();
             }
             let arguments: Vec<TypeId> = self.c.type_arguments(ty).to_vec();

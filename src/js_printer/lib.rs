@@ -1805,12 +1805,12 @@ pub(crate) mod __gated_printer {
             match e.op {
                 // "??" can't directly contain "||" or "&&" without being wrapped in parentheses
                 Op::Code::BinNullishCoalescing => {
-                    if let ExprData::EBinary(left) = &e.left.data {
+                    if let ExprData::EBinary(left) = &bun_ast::audited::unmarked(e.left).data {
                         if matches!(left.op, Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr) {
                             v.left_level = Level::Prefix;
                         }
                     }
-                    if let ExprData::EBinary(right) = &e.right.data {
+                    if let ExprData::EBinary(right) = &bun_ast::audited::unmarked(e.right).data {
                         if matches!(right.op, Op::Code::BinLogicalAnd | Op::Code::BinLogicalOr) {
                             v.right_level = Level::Prefix;
                         }
@@ -1818,7 +1818,7 @@ pub(crate) mod __gated_printer {
                 }
                 // "**" can't contain certain unary expressions
                 Op::Code::BinPow => {
-                    match &e.left.data {
+                    match &bun_ast::audited::unmarked(e.left).data {
                         ExprData::EUnary(left) => {
                             if Op::Code::unary_assign_target(left.op) == js_ast::AssignTarget::None
                             {
@@ -2557,6 +2557,11 @@ pub(crate) mod __gated_printer {
         }
 
         pub(crate) fn print_class(&mut self, class: &G::Class, text_start: i32) {
+            if let Some(audited) = self.options.audited {
+                for parameter in audited.parameters_of(class.body_loc.start as u32) {
+                    bun_ast::audited::note_printed_parameter(text_start as u32, parameter.index, parameter.id);
+                }
+            }
             if let Some(extends) = &class.extends {
                 self.print(b" extends");
                 self.print_space();
@@ -3355,6 +3360,10 @@ pub(crate) mod __gated_printer {
                     {
                         // Node.js doesn't support import.meta.main
                         // Most of the time, leave it in there
+                        let wrap = data.inverted && level.gte(Level::Prefix);
+                        if wrap {
+                            self.print(b"(");
+                        }
                         if data.inverted {
                             self.add_source_mapping(expr.loc);
                             self.print(b"!");
@@ -3366,11 +3375,18 @@ pub(crate) mod __gated_printer {
                             mi.flags.contains_import_meta = true;
                         }
                         self.print(b"import.meta.main");
+                        if wrap {
+                            self.print(b")");
+                        }
                     } else {
                         debug_assert!(
                             self.options.module_type != bundle_opts::Format::InternalBakeDev
                         );
 
+                        let wrap = level.gte(Level::Equals);
+                        if wrap {
+                            self.print(b"(");
+                        }
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
 
@@ -3398,6 +3414,9 @@ pub(crate) mod __gated_printer {
                             self.print_symbol(self.options.commonjs_module_ref);
                         } else {
                             self.print(b"module");
+                        }
+                        if wrap {
+                            self.print(b")");
                         }
                     }
                 }

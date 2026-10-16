@@ -77,6 +77,31 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
       expect(told(compiled)).toEqual(told(plain));
     }), 600_000);
 
+  const typesInstalled: Record<string, (folder: string) => object> = {
+    "a bun-types that lacks int32": folder => {
+      const types = join(folder, "node_modules", "@types", "bun");
+      mkdirSync(types, { recursive: true });
+      writeFileSync(join(types, "package.json"), JSON.stringify({ name: "@types/bun", version: "1.0.0", types: "index.d.ts" }));
+      writeFileSync(join(types, "index.d.ts"), `declare module "bun" { function inspect(value: unknown): string; }\n`);
+      return { types: ["bun"] };
+    },
+    "the bun-types of this repository": () => ({ typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"] }),
+  };
+  for (const [world, install] of Object.entries(typesInstalled))
+    test(`the typed react-reconciler is compiled typed with ${world}`, () =>
+      slot(async () => {
+        expect(readFileSync(join(typedVersion, "cjs", "react-reconciler.production.ts"), "utf8")).toContain(`type int32 = import("bun").int32;`);
+        const folder = project("aot-typed-reconciler-types");
+        const options = JSON.parse(readFileSync(join(folder, "tsconfig.json"), "utf8"));
+        Object.assign(options.compilerOptions, install(folder));
+        writeFileSync(join(folder, "tsconfig.json"), JSON.stringify(options));
+        const map = join(folder, "app.map");
+        const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts"], folder, { ...bunEnv, BUN_JSC_aotMapFilePath: map });
+        built(build);
+        expect(build.stdout + build.stderr).not.toContain("compiled untyped");
+        expectTyped(map);
+      }), 600_000);
+
   test("the reconciler runs as plain Bun beside look-alikes of its records", () =>
     slot(async () => {
       const folder = project("aot-typed-reconciler-look-alikes");

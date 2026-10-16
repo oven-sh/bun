@@ -4,16 +4,17 @@
 // CALLS- is5L (?<!Typed)StringIsText
 // CALLS+ is5L operationAOTTypedStringIsText
 // CALLS- is5L StringHasAt
-// CALLS- ofAnyL (?<!Typed)StringIsText
+// CALLS- ofAnyL (?<!Typed)(String|Value)IsText
 // CALLS+ is5 (?<!Typed)StringIsText
 // CALLS- is5 (^|[ f])TypedString(;|$)
 // CALLS+ branch1 (?<!Typed)StringIsText
 // CALLS+ branch2 (?<!Typed)StringIsText
-// CALLS+ branch3 (?<!Typed)StringIsText
+// CALLS+ branch3 ShortTextOfValue
+// CALLS- branch3 (?<!Typed)(String|Value)IsText
 // CALLS+ switched (?<!Typed)StringIsText
 // CALLS- branch3 StringHasAt|Flatten
 // CALLS- inLoop (?<!Typed)StringIsText
-// CALLS+ ofAny (?<!Typed)StringIsText
+// CALLS+ ofAny ValueIsText
 // CALLS- isEmpty StringIsText
 // CALLS- isAccented StringIsText
 const print = (s: string) => console.log(s);

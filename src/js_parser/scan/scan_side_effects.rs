@@ -576,6 +576,28 @@ impl SideEffects {
         }
     }
 
+    pub(crate) fn always_throws_or_returns<'a, const TS: bool, const SCAN: bool>(
+        p: &P<'a, TS, SCAN>,
+        stmt: Stmt,
+    ) -> bool {
+        match stmt.data {
+            StmtData::SThrow(_) | StmtData::SReturn(_) => true,
+            StmtData::SBlock(block) => block
+                .stmts
+                .slice()
+                .iter()
+                .any(|child| Self::always_throws_or_returns(p, *child)),
+            StmtData::SIf(if_) => match Self::to_boolean(p, &if_.test.data) {
+                Some(known) if known.value => Self::always_throws_or_returns(p, if_.yes),
+                Some(_) => if_
+                    .no
+                    .is_some_and(|no| Self::always_throws_or_returns(p, no)),
+                None => false,
+            },
+            _ => false,
+        }
+    }
+
     fn should_keep_stmts_in_dead_control_flow(stmts: bun_ast::StmtNodeList, bump: &Bump) -> bool {
         for child in stmts.slice() {
             if Self::should_keep_stmt_in_dead_control_flow(*child, bump) {

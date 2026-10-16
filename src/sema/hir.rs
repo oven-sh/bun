@@ -2586,15 +2586,25 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
+    pub fn is_written_as_require(&self, callee: ExprId) -> bool {
+        use crate::atom::known;
+        match self[callee].kind {
+            ExprKind::Ident(known::require) => true,
+            ExprKind::Dot {
+                obj,
+                name: known::require,
+                chain: Chain::No,
+                ..
+            } => matches!(self[obj].kind, ExprKind::Ident(known::module)),
+            _ => false,
+        }
+    }
+
     pub fn specifiers_of_folded_require(&self, e: ExprId) -> Vec<Atom> {
         let ExprKind::Call(call) = self[e].kind else {
             return Vec::new();
         };
-        let is_require = matches!(
-            self[self[call].callee].kind,
-            ExprKind::Ident(crate::atom::known::require)
-        );
-        if self[call].args.len() != 1 || !is_require {
+        if self[call].args.len() != 1 || !self.is_written_as_require(self[call].callee) {
             return Vec::new();
         }
         self.folded_choice_of_specifiers(self.id_at(self[call].args, 0))
@@ -2995,6 +3005,11 @@ pub fn is_in_comment(hir: &File, pos: u32) -> bool {
 #[inline]
 pub fn is_private_name_at(hir: &File, pos: u32) -> bool {
     hir.text.get(pos as usize) == Some(&b'#')
+}
+
+#[inline]
+pub fn is_written_in_brackets(hir: &File, name_pos: u32) -> bool {
+    matches!(hir.text.get(name_pos as usize), Some(b'"' | b'\'' | b'`'))
 }
 
 /// `IsBigIntLiteral` for the token at `pos`: a number that ends in `n`.

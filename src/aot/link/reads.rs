@@ -6,7 +6,7 @@
 
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{LayoutId, StrId, TyId, V};
-use crate::ir::{Def, Func, Layout, LayoutKind, Op, Prediction, Program, Strs, Why, class_flags, field_flags};
+use crate::ir::{Def, Func, Layout, LayoutKind, Op, Operation, Prediction, Program, Strs, Why, class_flags, field_flags};
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -62,7 +62,6 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
             looked_at_as[member.idx()].push(LayoutId(view as u32));
         }
     }
-    let initialize = strs.intern(b"Initialize");
     let mut stored_through: FxHashSet<(LayoutId, StrId)> = FxHashSet::default();
     let is_on_object_prototype = |strs: &Strs, name: StrId| super::NAMES_ON_OBJECT_PROTOTYPE.contains(&std::str::from_utf8(strs.get(name)).unwrap_or_default());
     let mut described: FxHashMap<(LayoutId, StrId), Option<Declared>> = FxHashMap::default();
@@ -81,7 +80,7 @@ pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel
                     match &value.def {
                         Def::Op(Op::PropSet { obj, name, .. }) => note(*obj, *name),
                         // `Initialize this, "a", x, "b", 0, ..`: the first stores of a constructor function.
-                        Def::Op(Op::Operation { name, args }) if *name == initialize => {
+                        Def::Op(Op::Operation { which: Operation::Initialize, args }) => {
                             for store in args[1..].chunks_exact(2) {
                                 if let Some(&Op::Str(name)) = func.op(store[0]) {
                                     note(args[0], name);

@@ -1,10 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 async function run(cwd: string, program: string, env: Record<string, string> = {}) {
-  await using ran = Bun.spawn({ cmd: [bunExe(), "run", "--aot", program], cwd, env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
+  await using ran = Bun.spawn({ cmd: [bunExe(), "run", "--debug-aot", program], cwd, env: { ...bunEnv, ...env }, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
   return { stdout, stderr, exitCode };
 }

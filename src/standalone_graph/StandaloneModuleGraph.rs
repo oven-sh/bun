@@ -114,6 +114,8 @@ pub const BASE_PUBLIC_PATH: &str = "/$bunfs/";
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("B:/~BUN/", "root/");
 #[cfg(not(windows))]
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
+/// `StandaloneModuleGraph::held_as`.
+const HELD_AT_THEIR_PATHS: &str = const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, ".held");
 
 // A process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
 // `get()` returns a raw `*mut`; the only post-init mutation is
@@ -214,11 +216,106 @@ impl StandaloneModuleGraph {
         self.files.get(name)
     }
 
-    pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
-        if !is_bun_standalone_file_path(name) {
+    /// Under which name the executable would hold `name`. Where modules keep their paths, what lay at `/a/b` when it was
+    /// built is held as `/$bunfs/root/.held/a/b`: in a folder of its own, for the code of the executable lies under
+    /// `/$bunfs/root` too and is no file of the disk.
+    fn held_as<'a>(&self, name: &'a [u8], buf: &'a mut PathBuffer) -> Option<&'a [u8]> {
+        if is_bun_standalone_file_path(name) {
+            return Some(name);
+        }
+        let root = HELD_AT_THEIR_PATHS.as_bytes();
+        if cfg!(windows) || !self.flags.intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HOLDS_PATHS_OF_ENTRY_POINTS) || name.first() != Some(&b'/') || root.len() + name.len() > buf.len() {
             return None;
         }
-        self.lookup_file(name)
+        buf[..root.len()].copy_from_slice(root);
+        buf[root.len()..root.len() + name.len()].copy_from_slice(name);
+        Some(&buf[..root.len() + name.len()])
+    }
+
+    pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
+        let mut held = bun_paths::path_buffer_pool::get();
+        self.lookup_file(self.held_as(name, &mut held)?)
+    }
+
+    /// Without the JSON modules: to node:fs such a one is a file of the disk, which the program may write.
+    fn compiled_sources(&self) -> impl Iterator<Item = &'static [u8]> + '_ {
+        let name = const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, "sources-of-the-compiled-program");
+        let paths: &'static [u8] = self.find_ref(name.as_bytes()).map_or(&[][..], |file| file.contents.as_bytes());
+        let of_entry_points = self.files.values().iter().map(|file| file.source_path);
+        paths.split(|&c| c == b'\n').chain(of_entry_points).filter(|path| {
+            !path.is_empty() && self.lookup_file(&[BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), b".modules-of-the-program", path].concat()).is_none()
+        })
+    }
+
+    /// `Some(is_folder)` where `path` is a file of the compiled program or a folder above one. The text of such a file is not in
+    /// the executable. For a path that the disk does not have.
+    pub fn of_compiled_program(&self, path: &[u8]) -> Option<bool> {
+        if !self.flags.intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HOLDS_PATHS_OF_ENTRY_POINTS) || is_bun_standalone_file_path(path) {
+            return None;
+        }
+        static NAMES: std::sync::OnceLock<std::collections::HashMap<&'static [u8], bool>> = std::sync::OnceLock::new();
+        let names = NAMES.get_or_init(|| {
+            let mut names = std::collections::HashMap::new();
+            for path in self.compiled_sources() {
+                names.insert(path, false);
+                let mut folder = path;
+                while let Some(at) = folder.iter().rposition(|&c| c == b'/') {
+                    folder = &folder[..at];
+                    if folder.is_empty() || names.insert(folder, true).is_some() {
+                        break;
+                    }
+                }
+            }
+            names
+        });
+        let mut path = path;
+        while path.len() > 1 && path.last() == Some(&b'/') {
+            path = &path[..path.len() - 1];
+        }
+        names.get(path).copied()
+    }
+
+    pub fn stat_of_compiled_program(&self, path: &[u8]) -> Option<Stat> {
+        if self.of_compiled_program(path)? {
+            return Some(dir_stat());
+        }
+        let mut result: Stat = bun_core::ffi::zeroed();
+        result.st_mode = (libc::S_IFREG | 0o644) as _;
+        Some(result)
+    }
+
+    /// The shared libraries that are held at their paths: `(path, contents)`.
+    pub fn held_shared_libraries(&self) -> impl Iterator<Item = (&'static [u8], &'static [u8])> + '_ {
+        self.files.values().iter().filter_map(|file| {
+            let path = file.name.strip_prefix(HELD_AT_THEIR_PATHS.as_bytes())?;
+            let name = bun_paths::basename(path);
+            let is_one = name.ends_with(b".so") || name.ends_with(b".dylib") || name.windows(4).any(|window| window == b".so.");
+            is_one.then(|| (path, file.contents.as_bytes()))
+        })
+    }
+
+    /// The text of the module at `path`, where modules keep their paths: of a JSON module of the program, or of an asset.
+    pub fn find_text_of_module(&self, path: &[u8]) -> Option<&File> {
+        if is_bun_standalone_file_path(path) || !self.flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
+            return None;
+        }
+        let name = [BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), b".modules-of-the-program", path].concat();
+        self.lookup_file(&name).or_else(|| self.find_ref(path))
+    }
+
+    /// Whether the entries of the folder `name` are those that the executable holds. A folder that is on the disk too is listed
+    /// from there: the executable may hold a part of it only, as of every folder above an asset.
+    pub fn lists(&self, name: &[u8]) -> bool {
+        if is_bun_standalone_file_path(name) {
+            return true;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt as _;
+            (self.find_dir(name) || self.of_compiled_program(name) == Some(true)) && !std::path::Path::new(std::ffi::OsStr::from_bytes(name)).is_dir()
+        }
+        #[cfg(not(unix))]
+        false
     }
 
     pub fn contains_file(&self, name: &[u8]) -> bool {
@@ -226,13 +323,12 @@ impl StandaloneModuleGraph {
     }
 
     pub fn stat(&self, name: &[u8]) -> Option<Stat> {
-        if !is_bun_standalone_file_path(name) {
-            return None;
-        }
-        if let Some(file) = self.lookup_file(name) {
+        let mut held = bun_paths::path_buffer_pool::get();
+        if let Some(file) = self.lookup_file(self.held_as(name, &mut held)?) {
             return Some(file.stat());
         }
-        if self.find_dir(name) {
+        // A folder that is on the disk too is what the disk says of it.
+        if self.lists(name) && self.find_dir(name) {
             return Some(dir_stat());
         }
         None
@@ -251,9 +347,10 @@ impl StandaloneModuleGraph {
     }
 
     pub fn find_dir(&self, name: &[u8]) -> bool {
-        if !is_bun_standalone_file_path(name) {
+        let mut held = bun_paths::path_buffer_pool::get();
+        let Some(name) = self.held_as(name, &mut held) else {
             return false;
-        }
+        };
         let mut buf = bun_paths::path_buffer_pool::get();
         let name = Self::normalize_dir_path(name, &mut buf);
         self.dirs.contains_key(name)
@@ -262,9 +359,10 @@ impl StandaloneModuleGraph {
     /// Directory `name`'s stored key (posix-separated, no trailing `/`), or
     /// the errno an `open(O_DIRECTORY)` of it would produce.
     pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
-        if !is_bun_standalone_file_path(name) {
+        let mut held = bun_paths::path_buffer_pool::get();
+        let Some(name) = self.held_as(name, &mut held) else {
             return Err(E::ENOENT);
-        }
+        };
         let mut buf = bun_paths::path_buffer_pool::get();
         let name = Self::normalize_dir_path(name, &mut buf);
         if let Some(index) = self.dirs.get_index(name) {
@@ -279,12 +377,12 @@ impl StandaloneModuleGraph {
 
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
-        if !is_bun_standalone_file_path(name) {
-            return None;
-        }
+        let mut held = bun_paths::path_buffer_pool::get();
+        let name = self.held_as(name, &mut held)?;
         let mut buf = bun_paths::path_buffer_pool::get();
         let name = Self::normalize_dir_path(name, &mut buf);
-        if !self.dirs.contains_key(name) {
+        let has_compiled_files = name.strip_prefix(HELD_AT_THEIR_PATHS.as_bytes()).is_some_and(|path| self.of_compiled_program(path) == Some(true));
+        if !self.dirs.contains_key(name) && !has_compiled_files {
             return None;
         }
         let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 1);
@@ -310,6 +408,22 @@ impl StandaloneModuleGraph {
         }
         for key in self.dirs.keys() {
             push(key, true);
+        }
+        if has_compiled_files {
+            let folder = &prefix[HELD_AT_THEIR_PATHS.len()..];
+            for rel in self.compiled_sources().filter_map(|path| path.strip_prefix(folder)) {
+                let mut folders = rel.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| &rel[..at]);
+                if recursive {
+                    for folder in folders {
+                        let _ = seen.put(folder, true);
+                    }
+                    let _ = seen.put(rel, false);
+                } else if let Some(folder) = folders.next() {
+                    let _ = seen.put(folder, true);
+                } else {
+                    let _ = seen.put(rel, false);
+                }
+            }
         }
 
         let mut out: Vec<(Box<[u8]>, bool)> = Vec::with_capacity(seen.count());
@@ -377,6 +491,149 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         let name = const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, "sources-of-the-compiled-program");
         self.find_ref(name.as_bytes()).map_or(&[][..], |file| file.contents.as_bytes())
     }
+    fn resolution(&self, source_dir: &[u8], specifier: &[u8], is_require: bool) -> Option<&'static [u8]> {
+        type Written = std::collections::HashMap<&'static [u8], &'static [u8]>;
+        type Sources = std::collections::HashSet<&'static [u8]>;
+        type Packages = std::collections::HashMap<Vec<u8>, &'static [u8]>;
+        /// `@scope/name/sub` -> `@scope/name`.
+        fn package_of(specifier: &[u8]) -> &[u8] {
+            let mut slashes = specifier.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
+            let end = if specifier.first() == Some(&b'@') { slashes.nth(1) } else { slashes.next() };
+            &specifier[..end.unwrap_or(specifier.len())]
+        }
+        static TABLES: std::sync::OnceLock<(Written, Sources, Packages, Sources)> = std::sync::OnceLock::new();
+        let (written, sources, packages, folders_of_packages) = TABLES.get_or_init(|| {
+            let name = const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, "resolutions-of-the-compiled-program");
+            let lines: &'static [u8] = self.find_ref(name.as_bytes()).map_or(&[][..], |file| file.contents.as_bytes());
+            // A line: the folder, the specifier, `r` or `i`, the path, each closed by a NUL.
+            let written: Written = lines
+                .split(|&c| c == b'\n')
+                .filter_map(|line| {
+                    let line = line.strip_suffix(&[0])?;
+                    let at = line.iter().rposition(|&c| c == 0)?;
+                    Some((&line[..at], &line[at + 1..]))
+                })
+                .collect();
+            let of_entry_points = self.files.values().iter().map(|file| file.source_path);
+            let sources: Sources = self.sources_of_compiled_program().split(|&c| c == b'\n').chain(of_entry_points).filter(|path| !path.is_empty()).collect();
+            let mut folders_of_packages = Sources::new();
+            for &path in &sources {
+                let mut from = 0;
+                while let Some(at) = path[from..].windows(14).position(|window| window == b"/node_modules/") {
+                    from += at + 14;
+                    folders_of_packages.insert(&path[..from + package_of(&path[from..]).len()]);
+                }
+            }
+            // By the folder that holds the node_modules a package was found in, in place of the folder that asked.
+            let mut packages = Packages::new();
+            for (&key, &path) in &written {
+                let Some(end_of_folder) = key.iter().position(|&c| c == 0) else { continue };
+                let asked = &key[end_of_folder + 1..];
+                let specifier = &asked[..asked.len().saturating_sub(2)];
+                if specifier.is_empty() || matches!(specifier[0], b'.' | b'/') {
+                    continue;
+                }
+                let inside = [b"/node_modules/".as_slice(), package_of(specifier), b"/"].concat();
+                let Some(at) = path.windows(inside.len()).rposition(|window| window == &inside[..]) else { continue };
+                packages.entry([&path[..at], b"\0", asked].concat()).or_insert(path);
+                // Behind a link: the application's own node_modules holds the link and the store.
+                let is_asked_by_the_application = !key[..end_of_folder].windows(14).any(|window| window == b"/node_modules/");
+                for store in [&b"/node_modules/.bun/"[..], b"/node_modules/.pnpm/"] {
+                    if is_asked_by_the_application && let Some(at) = path.windows(store.len()).position(|window| window == store) {
+                        packages.entry([&path[..at], b"\0", asked].concat()).or_insert(path);
+                    }
+                }
+            }
+            (written, sources, packages, folders_of_packages)
+        });
+        let source_dir = source_dir.strip_suffix(b"/").unwrap_or(source_dir);
+        let mut key: Vec<u8> = Vec::with_capacity(source_dir.len() + specifier.len() + 3);
+        key.extend_from_slice(source_dir);
+        key.push(0);
+        key.extend_from_slice(specifier);
+        key.extend_from_slice(if is_require { b"\0r" } else { b"\0i" });
+        thread_local! {
+            static ANSWERS: core::cell::RefCell<std::collections::HashMap<Vec<u8>, Option<&'static [u8]>>> = Default::default();
+        }
+        if let Some(answer) = ANSWERS.with_borrow(|answers| answers.get(&key[..]).copied()) {
+            return answer;
+        }
+        let question = key.clone();
+        let answer = (move || {
+            if let Some(&path) = written.get(&key[..]) {
+                return Some(path);
+            }
+            // A path that is made when the program runs.
+            let is_relative = specifier.starts_with(b"./") || specifier.starts_with(b"../");
+            if !is_relative && !specifier.starts_with(b"/") {
+                #[cfg_attr(not(unix), allow(unused_mut))]
+                let mut is_inside_a_package_of_the_program = false;
+                // The name of a package, made when the program runs: from the asking folder upward, as the same name was resolved where it is written.
+                #[cfg(unix)]
+                {
+                    use std::os::unix::ffi::OsStrExt as _;
+                    let asked = key[source_dir.len()..].to_vec();
+                    let mut folder = source_dir;
+                    while !folder.is_empty() {
+                        key.clear();
+                        key.extend_from_slice(folder);
+                        key.extend_from_slice(&asked);
+                        if let Some(&path) = packages.get(&key) {
+                            return Some(path);
+                        }
+                        // A nearer package of that name on the disk is the one that is meant.
+                        key.truncate(folder.len());
+                        key.extend_from_slice(b"/node_modules/");
+                        key.extend_from_slice(package_of(specifier));
+                        if std::path::Path::new(std::ffi::OsStr::from_bytes(&key)).is_dir() {
+                            return None;
+                        }
+                        // The program has that package there: another copy further up is not the one that is meant.
+                        let path_inside = &specifier[package_of(specifier).len()..];
+                        if !path_inside.is_empty() && folders_of_packages.contains(&key[..]) {
+                            key.extend_from_slice(path_inside);
+                            is_inside_a_package_of_the_program = true;
+                            break;
+                        }
+                        folder = &folder[..folder.iter().rposition(|&c| c == b'/').unwrap_or(0)];
+                    }
+                }
+                if !is_inside_a_package_of_the_program {
+                    return None;
+                }
+            } else {
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let joined = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(source_dir, &mut buf[..], &[specifier])?;
+                key.clear();
+                key.extend_from_slice(joined);
+            }
+            let length = key.len();
+            for ending in [
+                &b""[..], b".js", b".cjs", b".mjs", b".json", b".ts", b".tsx", b".jsx", b".mts", b".cts",
+                b"/index.js", b"/index.cjs", b"/index.mjs", b"/index.json", b"/index.ts", b"/index.tsx",
+            ] {
+                key.truncate(length);
+                key.extend_from_slice(ending);
+                if let Some(&path) = sources.get(&key[..]) {
+                    return Some(path);
+                }
+                // An asset that is held at that path: a JSON file, a script that was not compiled.
+                if !is_bun_standalone_file_path(&key)
+                    && let Some(file) = self.find_ref(&key)
+                {
+                    return Some(&file.name[HELD_AT_THEIR_PATHS.len()..]);
+                }
+            }
+            None
+        })();
+        ANSWERS.with_borrow_mut(|answers| {
+            if answers.len() >= 4096 {
+                answers.clear();
+            }
+            answers.insert(question, answer);
+        });
+        answer
+    }
     fn is_compiled_module(&self, name: &[u8]) -> bool {
         !self.aot_image.is_empty()
             && !self.prelinked_module_graph.is_empty()
@@ -431,14 +688,21 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         Some(self.find_ref(name)?.source_path).filter(|path| !path.is_empty())
     }
     fn find_by_source_path(&self, source_path: &[u8]) -> Option<&'static [u8]> {
-        if !self.flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
+        if !self.flags.intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HOLDS_PATHS_OF_ENTRY_POINTS) {
             return None;
         }
-        self.files
-            .values()
-            .iter()
-            .find(|file| file.source_path == source_path)
-            .map(|file| file.name)
+        static NAMES: std::sync::OnceLock<std::collections::HashMap<&'static [u8], &'static [u8]>> = std::sync::OnceLock::new();
+        let names = NAMES.get_or_init(|| self.files.values().iter().filter(|file| !file.source_path.is_empty()).map(|file| (file.source_path, file.name)).collect());
+        names.get(source_path).copied()
+    }
+    fn holds_paths_of_entry_points(&self) -> bool {
+        self.flags.contains(Flags::HOLDS_PATHS_OF_ENTRY_POINTS)
+    }
+    fn entry_point_at(&self, source_dir: &[u8], specifier: &[u8], is_require: bool) -> Option<&'static [u8]> {
+        if !self.flags.contains(Flags::HOLDS_PATHS_OF_ENTRY_POINTS) {
+            return None;
+        }
+        self.find_by_source_path(self.resolution(source_dir, specifier, is_require)?)
     }
     fn aot_image_file(&self) -> Option<(i32, i64)> {
         let (fd, base) = self.file?;
@@ -792,6 +1056,8 @@ impl File {
         // A text module's bytes are not the file's UTF-8.
         !self.is_text_module()
             && !self.name.ends_with(b"/sources-of-the-compiled-program")
+            && !self.name.ends_with(b"/resolutions-of-the-compiled-program")
+            && !self.name.starts_with(const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, ".modules-of-the-program/").as_bytes())
             && (self.side == FileSide::Client || !self.loader.is_javascript_like())
     }
 
@@ -1018,6 +1284,7 @@ bitflags::bitflags! {
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
         const HAS_AOT_IMAGE                 = 1 << 14;
         const PRESERVES_SOURCE_PATHS        = 1 << 15;
+        const HOLDS_PATHS_OF_ENTRY_POINTS   = 1 << 16;
     }
 }
 
@@ -1298,7 +1565,7 @@ impl StandaloneModuleGraph {
             }
         }
         let mut source_paths: Option<usize> = None;
-        if offsets.flags.contains(Flags::PRESERVES_SOURCE_PATHS)
+        if offsets.flags.intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HOLDS_PATHS_OF_ENTRY_POINTS)
             && record_at + size_of::<StringPointer>() * modules_list_count <= raw_len
         {
             source_paths = Some(record_at);
@@ -1612,13 +1879,21 @@ pub(crate) fn to_bytes(
             && (output_file.side.is_none() || output_file.side == Some(options::Side::Server))
     };
 
+    let is_compiled_ahead_of_time = output_files.iter().any(|file| file.output_kind == options::OutputKind::AotImage);
+    let has_further_entry_points = output_files.iter().filter(|file| is_entry_point(file)).count() > 1;
+    let flags = if is_compiled_ahead_of_time && has_further_entry_points && !flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
+        flags | Flags::HOLDS_PATHS_OF_ENTRY_POINTS
+    } else {
+        flags
+    };
+    let holds_source_paths = flags.intersects(Flags::PRESERVES_SOURCE_PATHS | Flags::HOLDS_PATHS_OF_ENTRY_POINTS);
     let mut has_entry_point = false;
     let mut string_builder = bun_core::StringBuilder::default();
     let mut module_count: usize = 0;
     for output_file in output_files {
         string_builder.count_z(&output_file.dest_path);
         string_builder.count_z(prefix);
-        if flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
+        if holds_source_paths {
             string_builder.count_z(output_file.src_path.text);
         }
         if let options::OutputFileValue::Buffer { bytes } = &output_file.value {
@@ -1670,7 +1945,7 @@ pub(crate) fn to_bytes(
     string_builder.cap += 16 + 4 * size_of::<u32>();
     string_builder.cap += (2 + bun_bundler::bytecode_order::REGION_COUNT) * size_of::<u32>();
     string_builder.cap += output_files.len() * size_of::<u32>();
-    if flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
+    if holds_source_paths {
         string_builder.cap += output_files.len() * size_of::<StringPointer>();
     }
     string_builder.cap += size_of::<Offsets>();
@@ -2038,7 +2313,7 @@ pub(crate) fn to_bytes(
             module.bytecode_origin_path = string_builder
                 .append_count_z(&output_files[output_file.bytecode_index as usize].dest_path);
         }
-        if flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
+        if holds_source_paths {
             let source_path = if output_file.output_kind == options::OutputKind::EntryPoint {
                 string_builder.append_count_z(output_file.src_path.text)
             } else {
@@ -2128,7 +2403,7 @@ pub(crate) fn to_bytes(
         let _ = string_builder.append_count(&program_data_indices);
         flags |= Flags::HAS_AOT_IMAGE;
     }
-    if flags.contains(Flags::PRESERVES_SOURCE_PATHS) {
+    if holds_source_paths {
         let _ = string_builder.append_count(&source_paths);
     }
     if !target.is_host_platform()

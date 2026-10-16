@@ -1,10 +1,11 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 async function run(files: Record<string, string>) {
   using dir = tempDir("aot-reports", files);
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--aot", "main.ts"],
+    cmd: [bunExe(), "--debug-aot", "main.ts"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",

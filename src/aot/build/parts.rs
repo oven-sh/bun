@@ -14,7 +14,7 @@
 use super::{FileBuild, Fx};
 use crate::fragment::{Mentioning, Mentions, ModulePart};
 use crate::id::{BlockId, GlobalId, V};
-use crate::ir::{Def, Func, Initialization, Op, Term, Why};
+use crate::ir::{Def, Func, Initialization, Op, Operation, Term, Why};
 use bun_sema::hir::{ExprKind, StmtId, StmtKind};
 use bun_sema::program::FileId;
 
@@ -72,22 +72,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
-    pub(crate) fn begin_part_without_statement(&self, fx: &Fx) -> Option<Mark> {
-        if !fx.b.is_open() {
-            return None;
-        }
-        let from = fx.b.block;
-        Some(Mark {
-            from,
-            before: fx.b.func.blocks[from.idx()].ops.last().copied().unwrap_or(V::NONE),
-            first_block: fx.b.func.blocks.len() as u32,
-            to: from,
-            last: V::NONE,
-            end_block: 0,
-            is_removable: false,
-        })
-    }
-
     pub(crate) fn end_part(&mut self, fx: &mut Fx, mark: Option<Mark>) {
         let Some(mark) = mark.filter(|_| fx.b.is_open()) else { return };
         self.modules_touched.2.clear();
@@ -116,9 +100,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Op::GlobalGet(global) => !matches!(self.out.globals[global.idx()].initialization, Initialization::Uninitialized),
             Op::FieldSet { obj, .. } | Op::PropSet { obj, .. } => is_made(*obj),
             Op::Coerce { why: Why::Upcast, .. } => true,
-            Op::Operation { name, args } => {
-                matches!(self.out.strs.get(*name), b"DefineField" | b"DefineGetter" | b"DefineSetter") && args.len() >= 3 && is_made(args[0]) && is_constant_key(args[1])
-            }
+            Op::Operation { which: Operation::DefineField | Operation::DefineGetter | Operation::DefineSetter, args } => args.len() >= 3 && is_made(args[0]) && is_constant_key(args[1]),
             _ => false,
         }
     }

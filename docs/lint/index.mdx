@@ -230,7 +230,7 @@ warn: Under `--aot`, this `any` is checked against `number` here when the progra
 | [`bun/aot-no-any-to-typed`](/lint/rules/bun/aot-no-any-to-typed)           | an `any` where it is checked against a type                          |
 | [`bun/aot-cast-lacks-member`](/lint/rules/bun/aot-cast-lacks-member)       | an object literal cast to a type that it does not match              |
 | [`bun/aot-locked-builtin-write`](/lint/rules/bun/aot-locked-builtin-write) | a write to a built-in object, such as `Array.prototype`              |
-| [`bun/aot-spy-on-builtin`](/lint/rules/bun/aot-spy-on-builtin)             | `spyOn(Math, "random")`                                              |
+| [`bun/aot-spy-on-builtin`](/lint/rules/bun/aot-spy-on-builtin)             | `sinon.stub(Math, "random")`                                         |
 | [`bun/aot-non-null-escapes`](/lint/rules/bun/aot-non-null-escapes)         | `x!` that is stored, passed on or returned. Off until you turn it on |
 
 They are warnings, and most of them need types. To keep them on:

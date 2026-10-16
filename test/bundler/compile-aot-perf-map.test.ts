@@ -1,5 +1,6 @@
 import { spawn } from "bun";
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { expect, setDefaultTimeout } from "bun:test";
+import { test } from "../aot/supported";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";

@@ -128,7 +128,7 @@ fn is_blank(bytes: &[u8]) -> bool {
 }
 
 fn line_start(text: &[u8], at: usize) -> usize {
-    text[..at].iter().rposition(|&byte| byte == b'\n').map_or(0, |newline| newline + 1)
+    bun_core::strings::last_index_of_char(&text[..at], b'\n').map_or(0, |newline| newline + 1)
 }
 
 fn is_inside(sorted_ranges: &[(u32, u32)], at: u32) -> bool {
@@ -168,6 +168,13 @@ impl<'a, 's> Syntax<'a, 's> {
 
     fn before_trivia(&self, at: u32) -> u32 {
         skip_trivia_back(self.text, at as usize) as u32
+    }
+
+    fn documentation_before(&self, at: u32) -> Option<&'a [u8]> {
+        let trivia: &'a [u8] = &self.text[self.before_trivia(at) as usize..at as usize];
+        let start = trivia.windows(3).rposition(|window| window == b"/**")?;
+        let end = start + 3 + trivia[start + 3..].windows(2).position(|window| window == b"*/")? + 2;
+        trivia[end..].iter().all(u8::is_ascii_whitespace).then_some(&trivia[start..end])
     }
 
     fn byte(&self, at: u32) -> u8 {
@@ -362,8 +369,35 @@ impl<'a, 's> Syntax<'a, 's> {
         }
     }
 
+    fn is_in_computed_key(&self, mut name: u32) -> bool {
+        while name > 0 {
+            let before = self.before_trivia(name) - 1;
+            match self.byte(before) {
+                b'[' => return true,
+                b'.' => {
+                    name = self.before_trivia(before);
+                    while name > 0 && matches!(self.byte(name - 1), b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$' | 0x80..) {
+                        name -= 1;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
     fn member_key(&self, member: &Member) -> u32 {
-        if self.byte(member.name_pos) == b'[' { self.after_trivia(member.name_pos + 1) } else { member.name_pos }
+        if self.byte(member.name_pos) != b'[' {
+            return member.name_pos;
+        }
+        let mut key = self.after_trivia(member.name_pos + 1);
+        while let dot = self.after_trivia(self.token_end(key))
+            && self.byte(dot) == b'.'
+            && self.byte(dot + 1) != b'.'
+        {
+            key = self.after_trivia(dot + 1);
+        }
+        key
     }
 
     fn member_slots(&self, member: &Member, slots: &mut Vec<Slot>) {
@@ -490,6 +524,10 @@ impl<'a, 's> Syntax<'a, 's> {
             _ => None,
         }));
         lists.extend(file.cases.iter().map(|case| case.body));
+        lists.extend((0..file.stmts.len()).map(|index| StmtId(index as u32)).filter_map(|id| match file[id].kind {
+            StmtKind::Module(module) if !self.is_type_only_statement(id) => Some(file[module].body),
+            _ => None,
+        }));
         lists
     }
 
@@ -734,6 +772,14 @@ impl<'a, 's> Syntax<'a, 's> {
         }
     }
 
+    fn name_of_dotted_index(&self, expr: ExprId) -> Option<u32> {
+        let ExprKind::Index { index, .. } = self.file[expr].kind else { return None };
+        match self.file.exprs.get(index.idx())?.kind {
+            ExprKind::Dot { name_pos, .. } => Some(name_pos),
+            _ => None,
+        }
+    }
+
     fn why_not_erasable(&self, erased: &[(u32, u32)]) -> Option<String> {
         let file = self.file;
         let is_kept = |at: u32| !is_inside(erased, at);
@@ -877,12 +923,12 @@ impl Mappings {
         let source_lines: Vec<Vec<u32>> = sources.iter().map(|source| compute_ecma_line_starts(source.text)).collect();
         let mut entries = Vec::new();
         let (mut source, mut line, mut column) = (0i64, 0i64, 0i64);
-        for (generated_line, segments) in mappings.split(|&byte| byte == b';').enumerate() {
+        for (generated_line, segments) in bun_core::strings::split(mappings, b";").enumerate() {
             let Some(&line_offset) = generated_lines.get(generated_line) else {
                 break;
             };
             let (mut generated_column, mut generated_offset, mut walked) = (0i64, line_offset as usize, 0i64);
-            for segment in segments.split(|&byte| byte == b',').filter(|segment| !segment.is_empty()) {
+            for segment in bun_core::strings::split(segments, b",").filter(|segment| !segment.is_empty()) {
                 let mut fields = [0i64; 5];
                 let (mut count, mut value, mut shift) = (0, 0i64, 0);
                 for &byte in segment {
@@ -937,6 +983,8 @@ impl Mappings {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Order {
     Line,
+    Documentation,
+    Directive,
     MemberStart,
     MemberName,
     Open(u32),
@@ -956,8 +1004,12 @@ impl Insertions {
     }
 
     fn add_line_before(&mut self, javascript: &[u8], at: u32, text: &[u8]) {
+        self.add_line_in_order(javascript, at, Order::Line, text);
+    }
+
+    fn add_line_in_order(&mut self, javascript: &[u8], at: u32, order: Order, text: &[u8]) {
         let indent = &javascript[line_start(javascript, at as usize)..at as usize];
-        self.add(at, Order::Line, [text, b"\n", if is_blank(indent) { indent } else { b"" }].concat());
+        self.add(at, order, [text, b"\n", if is_blank(indent) { indent } else { b"" }].concat());
     }
 
     fn apply(mut self, javascript: &[u8]) -> Vec<u8> {
@@ -1032,6 +1084,20 @@ impl Written<'_, '_> {
 
     fn trimmed_text(&self, start: u32, end: u32) -> Vec<u8> {
         trimmed(&self.text(start, end)).to_vec()
+    }
+
+    fn types_of_namespace(&self, id: StmtId, dropped_modifiers: Flags) -> Option<Vec<u8>> {
+        let (syntax, file) = (&self.syntax, self.syntax.file);
+        let StmtKind::Module(declared) = file[id].kind else { return None };
+        let inside: Vec<Vec<u8>> = (file.ids(file[declared].body))
+            .filter_map(|inner| if syntax.is_type_only_statement(inner) { Some(self.statement_text(&file[inner], Flags::empty())) } else { self.types_of_namespace(inner, Flags::empty()) })
+            .collect();
+        if inside.is_empty() {
+            return None;
+        }
+        let is_exported = file.modifiers_to_flags(file[id].modifiers).contains(Flags::EXPORT) && !dropped_modifiers.contains(Flags::EXPORT);
+        let name = self.trimmed_text(file[declared].name_pos, syntax.token_end(file[declared].name_pos));
+        Some([if is_exported { &b"export namespace "[..] } else { b"namespace " }, &name, b" {\n", &inside.join(&b"\n"[..]), b"\n}"].concat())
     }
 
     fn statement_text(&self, statement: &Stmt, dropped_modifiers: Flags) -> Vec<u8> {
@@ -1240,6 +1306,15 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
     }
     let entry = entry_point.and_then(|path| index_of.get(path)).and_then(|&index| written[index].as_ref()).and_then(|module| module.types);
     queue.extend(entry.iter().flat_map(|types| types.exports.iter().filter_map(|export| place_of(&export.1))));
+    let mut namespaces_with_code: Vec<Vec<u8>> = Vec::new();
+    for module in written.iter().take(mapped).flatten() {
+        let file = module.syntax.file;
+        let with_code = file.ids(file.body).filter(|&id| matches!(file[id].kind, StmtKind::Module(_)) && !module.syntax.is_type_only_statement(id));
+        namespaces_with_code.extend(with_code.filter_map(|id| match file[id].kind {
+            StmtKind::Module(declared) => Some(module.syntax.word(file[declared].name_pos).to_vec()),
+            _ => None,
+        }));
+    }
     let mut augmentations: Vec<(usize, StmtId)> = Vec::new();
     for (index, module) in written.iter().enumerate().skip(mapped) {
         let Some((module, types)) = module.as_ref().and_then(|module| Some((module, module.types?))) else { continue };
@@ -1267,7 +1342,7 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
     let mut names: Vec<FxHashMap<&[u8], Vec<u8>>> = vec![FxHashMap::default(); written.len()];
     let mut values: Vec<FxHashMap<&[u8], &[u8]>> = vec![FxHashMap::default(); written.len()];
     let mut imports: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
-    let mut linked = Linked::default();
+    let mut linked = Linked { untyped_exports: namespaces_with_code, ..Default::default() };
     let unique = |name: &[u8], taken: &mut FxHashSet<Vec<u8>>| {
         let mut candidate = name.to_vec();
         let mut number = 1;
@@ -1315,7 +1390,7 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
                 let (file, statement) = (module.syntax.file, &module.syntax.file[statement]);
                 let StmtKind::Import(import) = statement.kind else { continue };
                 let tail = trimmed(&module.syntax.text[file[import].clause_end as usize..statement.loc.end as usize]);
-                if tail.iter().position(|byte| matches!(byte, b'"' | b'\'')).is_some_and(|quote| matches!(tail.get(quote + 1), Some(b'.' | b'/'))) {
+                if bun_core::strings::index_of_any(tail, b"\"'").is_some_and(|quote| matches!(tail.get(quote + 1), Some(b'.' | b'/'))) {
                     continue;
                 }
                 let imported = match imported_as {
@@ -1540,6 +1615,12 @@ fn link(written: &mut [Option<Written<'_, '_>>], paths: &[&[u8]], mapped: usize,
     let mut declarations = Vec::new();
     for (index, statement) in hoisted_statements {
         let Some(module) = &written[index] else { continue };
+        if module.syntax.file.comment_directives.iter().any(|directive| module.syntax.after_trivia(directive.end) == module.syntax.file[statement].start) {
+            declarations.extend_from_slice(b"// @ts-ignore\n");
+        }
+        if let Some(documentation) = module.syntax.documentation_before(module.syntax.file[statement].start).filter(|_| is_for_declarations) {
+            declarations.extend_from_slice(&[documentation, b"\n"].concat());
+        }
         if linked.ambient_enums.contains(&(index, statement.0)) {
             declarations.extend_from_slice(b"declare ");
         }
@@ -1671,7 +1752,7 @@ impl<'a> Transfer<'_, 'a, '_> {
             }
             let (Some(found), Some(module)) = (source_slots.get(&(slot.place, source, key)), &written[source as usize]) else { continue };
             let text = module.trimmed_text(found.start, found.end);
-            let is_computed = found.key > 0 && module.syntax.byte(module.syntax.before_trivia(found.key) - 1) == b'[';
+            let is_computed = module.syntax.is_in_computed_key(found.key);
             let (order, text) = match slot.place {
                 Place::MemberType if is_computed && text.starts_with(b":") && output.byte(output.after_trivia(slot.start)) != b'=' => (Order::Slot, [&b"!"[..], &text].concat()),
                 Place::Implements => (Order::Slot, [&b" "[..], &text[..]].concat()),
@@ -1734,7 +1815,7 @@ impl<'a> Transfer<'_, 'a, '_> {
         for index in 0..output_file.exprs.len() {
             let expr = ExprId(index as u32);
             let (shape, key) = output.shape(expr);
-            if let Some((source, key)) = mappings.original(key) {
+            for (source, key) in [Some(key), output.name_of_dotted_index(expr)].into_iter().flatten().filter_map(|key| mappings.original(key)) {
                 output_expressions.entry((shape, source, key)).or_insert(expr);
             }
         }
@@ -1754,9 +1835,24 @@ impl<'a> Transfer<'_, 'a, '_> {
             let Some(module) = module else { continue };
             let syntax = &module.syntax;
             let places = syntax.parent_links();
+            let without_casts = |mut expr: ExprId| {
+                while let Some(operand) = syntax.operand_of_cast(expr) {
+                    expr = operand;
+                }
+                expr
+            };
+            let default_exports = syntax.file.stmts.iter().filter_map(|statement| match statement.kind {
+                StmtKind::ExportDefault(value) => Some((value, syntax.file.exprs.get(without_casts(value).idx())?.pos)),
+                _ => None,
+            });
             let initialized: FxHashMap<ExprId, u32> = (syntax.file.var_decls.iter().filter(|declaration| declaration.init.is_some()))
                 .filter_map(|declaration| Some((declaration.init, syntax.first_identifier(declaration.pat)?)))
+                .chain(default_exports)
                 .collect();
+            let find = |expr: ExprId| {
+                let (shape, key) = syntax.shape(expr);
+                [Some(key), syntax.name_of_dotted_index(expr)].into_iter().flatten().find_map(|key| output_expressions.get(&(shape, index as u32, key)).copied())
+            };
             let find_via_ancestor = |chain: &CastChain| {
                 let (mut at, mut way) = (chain.outermost, Vec::new());
                 let mut found = loop {
@@ -1769,9 +1865,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                         continue;
                     }
                     way.push((parent, place));
-                    let (shape, key) = syntax.shape(parent);
-                    if let Some(found) = output_expressions.get(&(shape, index as u32, key)) {
-                        break *found;
+                    if let Some(found) = find(parent) {
+                        break found;
                     }
                 };
                 for (parent, place) in way.into_iter().rev() {
@@ -1803,9 +1898,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                 if is_inside(&module.type_ranges, syntax.file[chain.operand].pos) {
                     continue;
                 }
-                let (shape, key) = syntax.shape(chain.operand);
                 let source_position = syntax.file[chain.operand].pos;
-                let found = output_expressions.get(&(shape, index as u32, key)).copied();
+                let found = find(chain.operand);
                 let found = found.or_else(|| [Shape::Leaf, Shape::Prefix].iter().find_map(|&shape| output_expressions.get(&(shape, index as u32, source_position)).copied().filter(|&literal| is_literal(literal))));
                 let Some(operand) = found.or_else(|| find_via_ancestor(&chain)) else { continue };
                 let member = enum_member_cast(chain.operand).filter(|_| is_literal(operand));
@@ -1959,6 +2053,19 @@ impl<'a> Transfer<'_, 'a, '_> {
                 let statements: Vec<StmtId> = file.ids(list).collect();
                 for (place, &id) in statements.iter().enumerate() {
                     let statement = &file[id];
+                    let anchor_of = |next: &Stmt| {
+                        let first_name = match next.kind {
+                            StmtKind::Var(declarations) => declarations.iter().next().map(|declaration: VarDeclId| file[file[declaration].pat].pos),
+                            _ => None,
+                        };
+                        [Some(next.start), Some(syntax.after_modifiers(next)), first_name].iter().flatten().find_map(|&key| output_statements.get(&(index as u32, key)).copied())
+                    };
+                    let documentation = syntax.documentation_before(statement.start).filter(|_| self.is_for_declarations && depth == 0);
+                    if let (Some(documentation), StmtKind::Fn(_) | StmtKind::Class(_) | StmtKind::Var(_) | StmtKind::ExportDefault(_), false) = (documentation, statement.kind, syntax.is_type_only_statement(id))
+                        && let Some(at) = anchor_of(statement)
+                    {
+                        insertions.add_line_in_order(javascript, at, Order::Documentation, documentation);
+                    }
                     let text: Vec<u8> = match statement.kind {
                         StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } if self.is_bundle => continue,
                         StmtKind::Enum(enum_statement) if linked.ambient_enums.contains(&(index, id.0)) => {
@@ -1975,7 +2082,15 @@ impl<'a> Transfer<'_, 'a, '_> {
                             }
                             module.statement_text(statement, Flags::EXPORT | Flags::DEFAULT)
                         }
-                        _ if syntax.is_type_only_statement(id) => module.statement_text(statement, if self.is_bundle { Flags::EXPORT | Flags::DEFAULT } else { Flags::empty() }),
+                        StmtKind::Module(_) if depth > 0 => continue,
+                        StmtKind::Module(declared) if !syntax.is_type_only_statement(id) => {
+                            let is_exported_below = self.is_bundle || exported_names.contains(syntax.word(file[declared].name_pos));
+                            match module.types_of_namespace(id, if is_exported_below { Flags::EXPORT } else { Flags::empty() }) {
+                                Some(types) => types,
+                                None => continue,
+                            }
+                        }
+                        _ if syntax.is_type_only_statement(id) => module.statement_text(statement, if self.is_bundle || depth > 0 { Flags::EXPORT | Flags::DEFAULT } else { Flags::empty() }),
                         StmtKind::Import(import) => {
                             let import = &file[import];
                             let tail = trimmed(&syntax.text[import.clause_end as usize..statement.loc.end as usize]);
@@ -2020,9 +2135,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                     };
                     let is_ignored = file.comment_directives.iter().any(|directive| syntax.after_trivia(directive.end) == statement.start);
                     let text = if is_ignored { [&b"// @ts-ignore\n"[..], &text].concat() } else { text };
-                    let next = statements[place..].iter().map(|&next| &file[next]).find_map(|next| {
-                        [next.start, syntax.after_modifiers(next)].iter().find_map(|&key| output_statements.get(&(index as u32, key)).copied())
-                    });
+                    let text = documentation.map_or(text.clone(), |documentation| [documentation, b"\n", &text].concat());
+                    let next = statements[place..].iter().map(|&next| &file[next]).find_map(anchor_of);
                     match next {
                         Some(next) => insertions.add_line_before(javascript, next, &text),
                         None if depth == 0 => self.hoisted.extend_from_slice(&[&text[..], b"\n"].concat()),
@@ -2037,6 +2151,8 @@ impl<'a> Transfer<'_, 'a, '_> {
         let (javascript, mappings, written, insertions) = (self.javascript, self.mappings, self.modules, &mut self.insertions);
         let mut by_original: Vec<(u32, u32, u32)> = mappings.entries.iter().map(|&(generated, source, original)| (source, original, generated)).collect();
         by_original.sort_unstable();
+        let mut ignored: Vec<usize> = Vec::new();
+        let templates: Vec<(usize, usize)> = (self.output.file.exprs.iter()).filter(|expr| javascript.get(expr.pos as usize) == Some(&b'`')).map(|expr| (expr.pos as usize, expr.end as usize)).collect();
         for (index, module) in written.iter().enumerate() {
             let Some(module) = module else { continue };
             for directive in module.syntax.file.comment_directives.iter().filter(|directive| !is_inside(&module.type_ranges, directive.start)) {
@@ -2045,10 +2161,25 @@ impl<'a> Transfer<'_, 'a, '_> {
                     continue;
                 }
                 let from = by_original.partition_point(|entry| (entry.0, entry.1) < (index as u32, next));
-                let Some(&(_, _, generated)) = by_original.get(from).filter(|entry| entry.0 == index as u32) else { continue };
-                let line = line_start(javascript, generated as usize);
-                let indent = javascript[line..].iter().take_while(|byte| matches!(byte, b' ' | b'\t')).count();
-                insertions.add_line_before(javascript, (line + indent) as u32, b"// @ts-ignore");
+                let text = module.syntax.text;
+                let end_of_line = text[next as usize..].iter().position(|&byte| byte == b'\n').map_or(text.len(), |length| next as usize + length) as u32;
+                let is_at_a_token = |entry: &&(u32, u32, u32)| !javascript.get(entry.2 as usize).is_some_and(u8::is_ascii_whitespace);
+                let on_the_line = by_original[from..].iter().take_while(|entry| entry.0 == index as u32 && entry.1 < end_of_line).filter(is_at_a_token);
+                ignored.extend(on_the_line.chain(by_original.get(from).filter(|entry| entry.0 == index as u32)).map(|entry| line_start(javascript, entry.2 as usize)));
+            }
+            let file = module.syntax.file;
+            let returned: FxHashSet<u32> = file.stmts.iter().filter(|statement| matches!(statement.kind, StmtKind::Return(value) if value.is_some())).map(|statement| statement.start).collect();
+            let returns_nothing = self.output.file.stmts.iter().filter(|statement| matches!(statement.kind, StmtKind::Return(value) if value.is_none()));
+            ignored.extend(returns_nothing.filter(|statement| mappings.original(statement.start).is_some_and(|original| original.0 == index as u32 && returned.contains(&original.1))).map(|statement| line_start(javascript, statement.start as usize)));
+        }
+        ignored.sort_unstable();
+        ignored.dedup();
+        for line in ignored {
+            let indent = javascript[line..].iter().take_while(|byte| matches!(byte, b' ' | b'\t')).count();
+            match templates.iter().filter(|template| template.0 < line && line < template.1).min() {
+                None => insertions.add_line_in_order(javascript, (line + indent) as u32, Order::Directive, b"// @ts-ignore"),
+                Some(&(start, _)) if line_start(javascript, line - 1) <= start => insertions.add(start as u32, Order::Directive, b"/* @ts-ignore */".to_vec()),
+                Some(_) => {}
             }
         }
     }
@@ -2074,7 +2205,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                 output_classes.insert(original, end - 1);
             }
             for member in class.members.iter().map(|member| &output_file[member]) {
-                if let Some(original) = mappings.original(output.member_key(member)) {
+                let key = output.member_key(member);
+                let space_before = key.checked_sub(1).filter(|&before| javascript.get(before as usize) == Some(&b' '));
+                if let Some(original) = mappings.original(key).or_else(|| mappings.original(space_before?)) {
                     output_members.entry(original).or_insert(member.start);
                 }
             }
@@ -2093,6 +2226,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                     }
                 };
                 for (place, member) in members.iter().enumerate() {
+                    if let Some(documentation) = syntax.documentation_before(member.start).filter(|_| self.is_for_declarations) {
+                        add(place, documentation);
+                    }
                     if syntax.is_type_only_member(member) {
                         add(place, &module.text(member.start, member.loc.end));
                     } else if member.kind == MemberKind::Property && !output_members.contains_key(&(index as u32, syntax.member_key(member))) && member.ty.is_some() {
@@ -2129,8 +2265,8 @@ impl<'a> Transfer<'_, 'a, '_> {
 }
 
 fn absolute(directory: &[u8], path: &[u8]) -> Vec<u8> {
-    let mut parts: Vec<&[u8]> = if path.starts_with(b"/") { Vec::new() } else { directory.split(|&byte| byte == b'/').filter(|part| !part.is_empty()).collect() };
-    for part in path.split(|&byte| byte == b'/') {
+    let mut parts: Vec<&[u8]> = if path.starts_with(b"/") { Vec::new() } else { bun_core::strings::split(directory, b"/").filter(|part| !part.is_empty()).collect() };
+    for part in bun_core::strings::split(path, b"/") {
         match part {
             b"" | b"." => {}
             b".." => drop(parts.pop()),
@@ -2147,8 +2283,11 @@ pub fn add_types_by_source_map(path: &[u8], javascript: &[u8], source_map: &[u8]
     if paths.len() != texts.len() {
         return Err("the source map does not hold the text of its sources".into());
     }
-    let directory = &path[..path.iter().rposition(|&byte| byte == b'/').unwrap_or(0)];
-    let paths: Vec<Vec<u8>> = paths.iter().map(|source| absolute(directory, source)).collect();
+    let directory = &path[..bun_core::strings::last_index_of_char(&path[..], b'/').unwrap_or(0)];
+    let is_known = |path: &Vec<u8>| bundle.is_some_and(|bundle| bundle.modules.iter().any(|module| module.path[..] == path[..]));
+    let paths: Vec<Vec<u8>> = (paths.iter())
+        .map(|source| crate::typed_packages::ancestors(directory).map(|from| absolute(from, source)).find(is_known).unwrap_or_else(|| absolute(directory, source)))
+        .collect();
     let sources: Vec<Source<'_>> = paths.iter().zip(&texts).map(|(path, &text)| Source { path, text }).collect();
     let mappings = source_map.get(b"mappings").and_then(Json::as_str).ok_or("the source map has no mappings")?;
     add_types(path, javascript, mappings, &sources, bundle)
@@ -2280,7 +2419,7 @@ pub fn typed_outputs(outdir: &[u8], outputs: &[Output<'_>], modules: Option<&[Mo
         let typed = add_types_by_source_map(output.path, output.javascript, output.source_map, bundle.as_ref()).map_err(|why| format!("{shown}: {why}"))?;
         let typed_path = crate::typed_packages::typed_path_beside(output.path).ok_or_else(|| format!("{shown} is not named .js, .mjs or .cjs"))?;
         let erased = erase_types(&typed_path, &typed.text).map_err(|why| format!("{shown}: {why}"))?;
-        if erased != output.javascript {
+        if erased != output.javascript && !is_for_declarations {
             let at = erased.iter().zip(output.javascript).position(|(erased, written)| erased != written).unwrap_or(erased.len().min(output.javascript.len()));
             return Err(format!("{shown}: with its types erased the typed file differs from the JavaScript at offset {at}"));
         }
@@ -2320,7 +2459,7 @@ pub fn sound_files(outdir: &[u8], outputs: &[Output<'_>], modules: Option<&[Modu
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = SoundFiles { typed: Vec::new(), declarations_while_checked: Vec::new(), marks: Vec::new(), dropped_casts: 0 };
     for (output, (typed_path, typed)) in outputs.iter().zip(typed_outputs(outdir, outputs, modules, false, keeps_modules_apart)?) {
-        let name_of = |path: &[u8]| path[path.iter().rposition(|&byte| byte == b'/').map_or(0, |slash| slash + 1)..].to_vec();
+        let name_of = |path: &[u8]| path[bun_core::strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1)..].to_vec();
         let Some(declarations) = declarations_path_beside(output.path) else { continue };
         found.marks.push((declarations, mark(&name_of(&typed_path), &hex(&sha256(output.javascript)))));
         found.dropped_casts += typed.dropped_casts;

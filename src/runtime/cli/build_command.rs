@@ -88,9 +88,20 @@ impl BuildCommand {
             ctx.bundler_options.compile = false;
         }
 
-        let compile_target = &ctx.bundler_options.compile_target;
+        if ctx.bundler_options.compile && ctx.bundler_options.aot && !ctx.bundler_options.compile_run {
+            match entry_points_of_patterns(&ctx.args.entry_points) {
+                Ok(entry_points) => ctx.args.entry_points = entry_points,
+                Err(message) => {
+                    Output::err_generic("{}", (message.as_str(),));
+                    Global::exit(1);
+                }
+            }
+        }
 
-        if ctx.bundler_options.compile && !ctx.bundler_options.compile_run {
+        let compile_target = &ctx.bundler_options.compile_target;
+        let runs_in_place = ctx.bundler_options.compile_run || ctx.bundler_options.compile_in_place;
+
+        if ctx.bundler_options.compile && !runs_in_place {
             let compile_define_keys = compile_target.define_keys();
             let compile_define_values = compile_target.define_values();
 
@@ -184,7 +195,7 @@ impl BuildCommand {
                 dropped_imports: &mut std::iter::empty(),
                 without_side_effects: &mut std::iter::empty(),
                 lifted_commonjs: &mut std::iter::empty(),
-                commonjs: &mut std::iter::empty(),
+                kinds: &mut std::iter::empty(),
                 statements: &mut std::iter::empty(),
                 texts: &mut std::iter::empty(),
                 assets: &mut std::iter::empty(),
@@ -205,7 +216,9 @@ impl BuildCommand {
                 preserve_source_paths: false,
                 react_compiler_outputs: bun_bundler::options::ReactCompilerOutputsLater::none(),
                 jsx: &mut core::iter::empty(),
+                classes: &mut core::iter::empty(),
                 function_texts: None,
+                printing_of_function_texts: Default::default(),
                 explain: &[],
                 explains_into_log: false,
                 logs_type_errors: false,
@@ -358,11 +371,11 @@ impl BuildCommand {
             );
         }
         this_transpiler.options.typed_package = Some(bun_sema_driver::typed_packages::typed_package);
-        this_transpiler.options.preserve_source_paths = ctx.bundler_options.compile_run;
+        this_transpiler.options.preserve_source_paths = runs_in_place;
         this_transpiler.options.compile_function_source =
             ctx.bundler_options.compile_function_source;
         // What is run from its sources finds out that a module is missing when it asks for it, if it ever does.
-        if ctx.bundler_options.compile_run {
+        if runs_in_place {
             this_transpiler.options.ignore_module_resolution_errors = true;
             this_transpiler.resolver.prefer_module_field = false;
         }
@@ -565,7 +578,7 @@ impl BuildCommand {
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.transform_only = ctx.bundler_options.transform_only;
 
-        this_transpiler.options.env.behavior = if ctx.bundler_options.compile_run {
+        this_transpiler.options.env.behavior = if runs_in_place {
             api::DotEnvBehavior::LoadAllWithoutInlining
         } else {
             ctx.bundler_options.env_behavior
@@ -620,7 +633,7 @@ impl BuildCommand {
             options::CompileTargetBuiltins::Host
         };
 
-        if !this_transpiler.options.production && !ctx.bundler_options.compile_run {
+        if !this_transpiler.options.production && !runs_in_place {
             this_transpiler
                 .options
                 .conditions
@@ -951,6 +964,7 @@ impl BuildCommand {
                 &ctx.bundler_options.compile_assets,
                 compile_outfile(outfile),
                 &mut output_files,
+                ctx.bundler_options.compile_in_place,
             ) {
                 Output::err_generic("{}", (msg.as_str(),));
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
@@ -1091,6 +1105,9 @@ impl BuildCommand {
                     }
                     if !ctx.bundler_options.compile_autoload_package_json {
                         flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
+                    }
+                    if ctx.bundler_options.compile_in_place {
+                        flags |= Flags::PRESERVES_SOURCE_PATHS;
                     }
                     flags
                 };
@@ -1269,7 +1286,7 @@ impl BuildCommand {
                 let compiled_untyped = log_ref
                     .msgs
                     .iter()
-                    .filter(|msg| msg.kind == bun_ast::Kind::Warn && strings::contains(&msg.data.text, b"compiled untyped"))
+                    .filter(|msg| matches!(msg.metadata, bun_ast::Metadata::TypeScript { code: 100009..=100011, .. }))
                     .count();
                 if compiled_untyped > 0 {
                     bun_core::pretty!("  <r><yellow>{} compiled untyped<r>", compiled_untyped);
@@ -1509,10 +1526,44 @@ fn print_summary(
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
 
+/// With `--compile --aot` an entry point may be a pattern, as of `Bun.Glob`, from the working directory: `.next/server/**/*.js`.
+fn entry_points_of_patterns(written: &[Box<[u8]>]) -> Result<Vec<Box<[u8]>>, String> {
+    use bun_glob::{BunGlobWalker, walk};
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let Ok(working_directory) = bun_core::getcwd(&mut cwd_buf) else {
+        return Err("failed to read the working directory".to_string());
+    };
+    let mut entry_points: Vec<Box<[u8]>> = Vec::with_capacity(written.len());
+    for entry_point in written {
+        if !strings::contains_any(entry_point, b"*{") {
+            entry_points.push(entry_point.clone());
+            continue;
+        }
+        let pattern = strings::remove_leading_dot_slash(entry_point);
+        let mut found: Vec<Box<[u8]>> = Vec::new();
+        // Files only, and what is in hidden folders too.
+        if let Ok(Ok(mut walker)) = BunGlobWalker::init_with_cwd(pattern, working_directory.as_bytes(), true, false, false, false, true, None) {
+            let mut matches = walk::Iterator::new(&mut walker);
+            if matches!(matches.init(), Ok(Ok(()))) {
+                while let Ok(Ok(Some(path))) = matches.next() {
+                    found.push([b"./".as_slice(), &path.into_vec()[..]].concat().into_boxed_slice());
+                }
+            }
+        }
+        if found.is_empty() {
+            return Err(format!("no file matches the entry point {}", bun_fmt::quote(entry_point)));
+        }
+        found.sort_unstable();
+        entry_points.append(&mut found);
+    }
+    Ok(entry_points)
+}
+
 pub(crate) fn collect_compile_assets(
     assets: &[Box<[u8]>],
     outfile: &[u8],
     out: &mut Vec<options::OutputFile>,
+    in_place: bool,
 ) -> Result<(), String> {
     use bun_ast::Loader;
     use bun_collections::StringArrayHashMap;
@@ -1527,6 +1578,29 @@ pub(crate) fn collect_compile_assets(
     };
     let entry_name = bun_paths::basename(outfile);
 
+    #[cfg(unix)]
+    let at_their_real_paths_too: Vec<Box<[u8]>>;
+    #[cfg(unix)]
+    let assets = if in_place {
+        let mut all = assets.to_vec();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let mut absolute_buf = bun_paths::path_buffer_pool::get();
+        let mut real_buf = bun_paths::path_buffer_pool::get();
+        if let Ok(working_directory) = bun_core::getcwd(&mut cwd_buf) {
+            for asset in assets {
+                let Ok(real) = bun_sys::realpath(&bun_core::ZBox::from_bytes(asset), &mut real_buf) else { continue };
+                let as_written = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(working_directory.as_bytes(), &mut absolute_buf[..], &[&asset[..]]);
+                if strings::without_trailing_slash(as_written) != real {
+                    all.push(Box::from(real));
+                }
+            }
+        }
+        at_their_real_paths_too = all;
+        &at_their_real_paths_too[..]
+    } else {
+        assets
+    };
+
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
     for f in out.iter() {
         if !f.output_kind.is_file_in_standalone_mode() {
@@ -1537,6 +1611,9 @@ pub(crate) fn collect_compile_assets(
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
             if seen.contains_key(&dest) {
+                if in_place {
+                    return Ok(());
+                }
                 return Err(format!(
                     "asset {} collides with another embedded file at {}",
                     bun_fmt::quote(asset),
@@ -1576,6 +1653,20 @@ pub(crate) fn collect_compile_assets(
                 bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::open).with_path(asset),
             );
         }
+        // In place a file is held at the path it has: `StandaloneModuleGraph::held_as`.
+        let mut absolute_buf = bun_paths::path_buffer_pool::get();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let held: Vec<u8>;
+        let base: &[u8] = if in_place {
+            let Ok(working_directory) = bun_core::getcwd(&mut cwd_buf) else {
+                return Err("failed to read the working directory".to_string());
+            };
+            let absolute = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(working_directory.as_bytes(), &mut absolute_buf[..], &[asset_trimmed]);
+            held = [b".held".as_slice(), absolute].concat();
+            &held
+        } else {
+            base
+        };
         if base == entry_name {
             return Err(format!(
                 "asset {} would embed at the same path as the entry point; use a different outfile",

@@ -4,6 +4,7 @@
 // IR= 0 knowsBoth StrictEq
 // IR= 2 knowsTheNumberOnly CallDirect
 // IR= 2 knowsLittle CallDirect
+// IR= 2 knowsLittleToo CallDirect
 // IR= 1 knowsInTheLoop CallDirect
 // IR= 0 knowsInTheLoop NewArray
 // IR= 0 knowsInTheLoop StrictEq
@@ -14,5 +15,5 @@
 import untyped from "./untyped.js";
 declare const console: any;
 const m: any = untyped;
-console.log(m.knowsBoth(5_000_000), m.knowsNeither("x", [1, 2], 1_000_000), m.knowsTheNumberOnly("x", 1_000_000), m.knowsTheNumberOnly("other", 1000), m.knowsInTheLoop([m.h1, m.h1], 1_000_000), m.knowsInTheLoopBorrowing([m.h1, m.h1], 1_000_000), m.knowsLittle(1_000_000));
+console.log(m.knowsBoth(5_000_000), m.knowsNeither("x", [1, 2], 1_000_000), m.knowsTheNumberOnly("x", 1_000_000), m.knowsTheNumberOnly("other", 1000), m.knowsInTheLoop([m.h1, m.h1], 1_000_000), m.knowsInTheLoopBorrowing([m.h1, m.h1], 1_000_000), m.knowsLittle(1_000_000), m.knowsLittleToo(1000));
 export {};

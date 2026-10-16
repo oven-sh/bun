@@ -888,7 +888,7 @@ description: "Every rule built into bun lint"
 | [`bun/aot-no-any-to-typed`](/lint/rules/bun/aot-no-any-to-typed) | Report an `any` where `--aot` checks it against a type when the program runs |  |  | yes |
 | [`bun/aot-non-null-escapes`](/lint/rules/bun/aot-non-null-escapes) | Disallow `x!` on a value that can be missing, where `--aot` throws and plain JavaScript goes on |  |  | yes |
 | [`bun/aot-outside-data`](/lint/rules/bun/aot-outside-data) | Report `as` on an `any` or `unknown` value that comes from outside your typed code |  |  | yes |
-| [`bun/aot-spy-on-builtin`](/lint/rules/bun/aot-spy-on-builtin) | Report spies, stubs and fake timers that replace built-in objects, which `bun test --aot` refuses |  |  |  |
+| [`bun/aot-spy-on-builtin`](/lint/rules/bun/aot-spy-on-builtin) | Report stubs and fake timers written in JavaScript that replace built-in objects, which `bun test --aot` refuses |  |  |  |
 | [`bun/axios-no-unbounded-requests`](/lint/rules/bun/axios-no-unbounded-requests) | Require an axios request to have a `timeout` or a `signal` |  |  |  |
 | [`bun/consistent-directive-prefix`](/lint/rules/bun/consistent-directive-prefix) | Require comments that turn rules off to start with the same word, `eslint` or `oxlint` |  | yes |  |
 | [`bun/fast-check-no-unseeded-random`](/lint/rules/bun/fast-check-no-unseeded-random) | Disallow `Math.random()` and `fc.sample()` inside a fast-check property |  |  |  |

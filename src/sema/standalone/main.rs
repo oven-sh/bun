@@ -197,6 +197,10 @@ fn run(args: &[String]) {
                 Some(it) => (text(&it.cwd), it.entry_points.clone(), command_line.project.clone().or_else(|| it.tsconfig.clone())),
                 None => (cwd, command_line.paths.clone(), command_line.project.clone()),
             };
+            if has("--aot") && paths.is_empty() && project.is_none() {
+                error_line!("bun-sema: --aot needs an entry point");
+                std::process::exit(2);
+            }
             let mut code = snapshot.as_ref().map_or_else(Vec::new, |it| it.code.clone());
             if has("--aot") {
                 code.extend(bun_aot::prelude::FILES.iter().map(|&(name, _)| bun_aot::prelude::path_of(cwd.as_bytes(), name)));
@@ -209,7 +213,12 @@ fn run(args: &[String]) {
             if let Some(it) = &snapshot {
                 constants.defines = it.defines.clone();
                 constants.features = it.features.clone();
-                constants.resolved = Some(it.resolved.clone());
+                let mut resolved = bun_aot::ResolvedImports::default();
+                for ((from, specifier), to) in &it.resolved {
+                    let [from, to] = [from, to].map(|path| resolved.number_of(path));
+                    resolved.insert(from, specifier, to);
+                }
+                constants.resolved = Some(resolved);
                 constants.dropped_imports = it.dropped_imports.iter().cloned().collect();
                 constants.without_side_effects = it.without_side_effects.iter().cloned().collect();
                 constants.lifted_commonjs = it.lifted_commonjs.iter().cloned().collect();
@@ -347,7 +356,7 @@ fn run(args: &[String]) {
             // `--aot-explain=integers`: by name of a field, whether the numbers stored under it are expected to be int32s, and if not, the first evidence to the contrary.
             // `--aot-explain=progress`: where the soundness closure of the link is, on stderr as it goes, with the sizes of its tables, and at the end what has grown, in numbers alone.
             // `--aot-explain=deferred`: how many modules and top-level statements may run at their first use, and what stands in the way for the others. Numbers alone.
-            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), alterations: has("--aot-explain=alterations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), progress: has("--aot-explain=progress").then_some((|line: std::fmt::Arguments<'_>| eprintln!("{line}")) as fn(std::fmt::Arguments<'_>)), deferred: has("--aot-explain=deferred") };
+            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), includes_builtin_modules: true, alterations: has("--aot-explain=alterations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), progress: has("--aot-explain=progress").then_some((|line: std::fmt::Arguments<'_>| eprintln!("{line}")) as fn(std::fmt::Arguments<'_>)), deferred: has("--aot-explain=deferred") };
             let translation = bun_aot::Translation::new(&constants).explaining(explain);
             // `--aot-explain=react`, with or without `--aot`: what the React Compiler makes of the checker's tree of each `.jsx` and `.tsx` file: the candidates, the compiled functions with their scopes and slots, the bail-outs with their reasons.
             // `--aot-explain=react-locations`: the same, and each function is compiled again with its locations renumbered, which is to make no difference.
@@ -432,7 +441,7 @@ fn run(args: &[String]) {
                 if audited_alone.is_some() {
                     let path = args.iter().find_map(|a| a.strip_prefix("--audit-sites-out=")).expect("--audit-only goes with --audit-sites-out");
                     let tables: Vec<String> = (translation.take_programs_of_fragments(program).iter())
-                        .map(|of_fragment| bun_aot::audit::to_json(&bun_aot::audit::table(of_fragment, false, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(bstr::BStr::new(path).to_string()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..])), &[]))
+                        .map(|of_fragment| bun_aot::audit::to_json(&bun_aot::audit::table(of_fragment, false, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(bstr::BStr::new(path).to_string()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..]), in_parallel), &[]))
                         .collect();
                     let is_written = write_file(path, tables.join("\n").as_bytes()).is_ok();
                     lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
@@ -475,7 +484,8 @@ fn run(args: &[String]) {
                 );
                 if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--audit-sites-out=")) {
                     let linked_in = started.elapsed().as_secs_f64();
-                    let is_written = write_file(path, bun_aot::audit::to_json(&bun_aot::audit::table(&translated.program, true, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(bstr::BStr::new(path).to_string()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..])), &bun_aot::audit::shapes(&translated.program)).as_bytes()).is_ok();
+                    bun_aot::audit::let_any_object_pass_for_classes_without_a_layout(&mut translated.program);
+                    let is_written = write_file(path, bun_aot::audit::to_json(&bun_aot::audit::table(&translated.program, true, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(bstr::BStr::new(path).to_string()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..]), in_parallel), &bun_aot::audit::shapes(&translated.program)).as_bytes()).is_ok();
                     lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
                     error_line!("aot: linked in {:.3} s, sites written in {:.3} s", linked_in, started.elapsed().as_secs_f64() - linked_in);
                     return translated.errors_that_stand;
@@ -669,6 +679,7 @@ fn run(args: &[String]) {
             }
             let mut provided = snapshot.as_mut().map_or_else(Default::default, |it| bun_sema_driver::host::Provided {
                 already_read: std::mem::take(&mut it.already_read),
+                kinds_of_code: std::mem::take(&mut it.kinds_of_code).into_iter().collect(),
                 ..Default::default()
             });
             if has("--aot") {
@@ -679,6 +690,7 @@ fn run(args: &[String]) {
             }
             // `--no-builtin-modules`: for a program that is run where nothing runs the modules of the runtime, in the `jsc` shell.
             provided.without_builtin_modules = has("--no-builtin-modules");
+            provided.is_run_from_its_sources = constants.own_paths.is_some();
             // `--builtin-sources=<folder>`: a source of the runtime is read from `<folder>/<path under src/js>` if that file is there, else
             // from the archive. The ids, the names and what requires what stay the manifest's.
             if let Some(folder) = args.iter().find_map(|a| a.strip_prefix("--builtin-sources=")) {
@@ -741,6 +753,9 @@ fn run(args: &[String]) {
                             Why::RequiredBy(by) => format!("{} can require it", name_of(*by)),
                         };
                         error_line!("aot: builtins: included {} {} {} {size} bytes: {why}", module.id, name_of(module.id), text(archive.path(module.id)));
+                    }
+                    for (door, path, position) in &found.doors {
+                        error_line!("aot: builtins: door: {door} at {}:{position}", text(path));
                     }
                     for file in archive.manifest().function_files() {
                         error_line!("aot: builtins: functions {}{}", text(bun_builtin_syntax::VIRTUAL_ROOT), text(file));

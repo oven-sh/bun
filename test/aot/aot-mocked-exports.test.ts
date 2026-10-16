@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 type When = "top" | "late" | "spied" | "preload" | "ahead";
@@ -2156,12 +2157,29 @@ for (const [name, files] of Object.entries(ways)) cases[name] = files;
 async function printed(cwd: string, args: string[]) {
   await using ran = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  const noise = /^bun test v|^Ran \d+ tests? across|^\s+at |^\s*\d+ \| |^\s+\^|^note: |^warn: /;
+  const noise = /^bun test v|^Ran \d+ tests? across|^\s+at |^\s*\d+ \| |^\s+\^|^note: |^warn: |^\S+\(\d+,\d+\): warning TS\d+: /;
   const lines = (stdout + "\n" + stderr).split("\n").map(line => line.replace(/ \[\d+(\.\d+)?m?s\]$/, "")).filter(line => line !== "" && !noise.test(line));
   return { lines, exitCode };
 }
 
-test.concurrent.each(Object.keys(cases))(
+const suppliesWhatTheTypeDoesNotAllow = /^(inferred-primitives|inferred-record-in-part|inferred-record-of-other-kinds|namespace), /;
+
+test.concurrent.each(Object.keys(cases).filter(name => suppliesWhatTheTypeDoesNotAllow.test(name)))(
+  "bun test --aot holds what a mock supplies to the type of the export: %s",
+  async name => {
+    const { "flags.txt": flags, ...files } = cases[name];
+    using dir = tempDir("aot-mocked-exports", files);
+    const rest = [...(flags ? flags.split(" ") : []), "./main.test.ts"];
+    const plain = await printed(String(dir), ["test", ...rest]);
+    const held = await printed(String(dir), ["test", "--aot", ...rest]);
+    expect(held.lines.length).toBe(plain.lines.length);
+    expect(held.lines.filter((line, i) => line !== plain.lines[i] && !line.includes(" THROWS TypeError expected "))).toEqual([]);
+    expect(held.exitCode).toBe(plain.exitCode);
+  },
+  240_000,
+);
+
+test.concurrent.each(Object.keys(cases).filter(name => !suppliesWhatTheTypeDoesNotAllow.test(name)))(
   "bun test --aot prints what bun test prints: %s",
   async name => {
     const { "flags.txt": flags, ...files } = cases[name];

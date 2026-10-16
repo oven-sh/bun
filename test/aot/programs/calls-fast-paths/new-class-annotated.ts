@@ -1,6 +1,8 @@
-// `new` on a class held in an annotated `const` or in a `let` that is assigned once.
+// `new` on a class held in an annotated `const` or in a `let` that is assigned once: the class is known, its constructor is inlined, and an object that does not leave the loop is never made.
 // IR- = Construct v
-// IR+ NewObjectWithShape
+// IR- NewObjectWithShape
+// IRM= 1 frame [0-9]+ = Integer 2$
+// IRM= 1 frame [0-9]+ = Integer 3$
 declare const console: any;
 const Links: any = class { a = 1; b = 2; sum() { return this.a + this.b; } };
 let Other: any = class { c = 3; };

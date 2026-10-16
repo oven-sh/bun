@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // Some early errors of the language are not reported by Bun's parser but by JavaScriptCore's, when it is handed the transpiled
@@ -21,7 +22,7 @@ async function expectSameSyntaxError(file: string, source: string, line: number,
   const expected = syntaxErrorOf(plain.stderr);
   expect({ expected, stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ expected: expect.any(String), stdout: "", exitCode: 1 });
   for (const args of [
-    ["run", "--aot", `./${file}`],
+    ["run", "--debug-aot", `./${file}`],
     ["build", "--compile", "--aot", ...buildFlags, `./${file}`, "--outfile", "app"],
   ]) {
     const { stdout, stderr, exitCode } = await run(cwd, ...args);
@@ -83,7 +84,7 @@ describe.concurrent("an early error that only JavaScriptCore reports stops the b
     const expected = syntaxErrorOf((await run(cwd, "run", "./main.ts")).stderr);
     expect(expected).toBe("SyntaxError: Cannot declare multiple constructors in a single class.");
     for (const args of [
-      ["run", "--aot", "./main.ts"],
+      ["run", "--debug-aot", "./main.ts"],
       ["build", "--compile", "--aot", "./main.ts", "--outfile", "app"],
     ]) {
       const { stderr, exitCode } = await run(cwd, ...args);
@@ -104,7 +105,7 @@ test("what is valid in a CommonJS module and not in a module still builds and ru
   const cwd = String(dir);
   const plain = await run(cwd, "run", "./main.cjs");
   expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "7\n", exitCode: 0 });
-  const compiled = await run(cwd, "run", "--aot", "./main.cjs");
+  const compiled = await run(cwd, "run", "--debug-aot", "./main.cjs");
   expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: "7\n", exitCode: 0 });
 });
 

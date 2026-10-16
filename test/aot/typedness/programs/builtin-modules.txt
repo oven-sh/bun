@@ -1,0 +1,12 @@
+a-class-that-extends-buffer-without-its-declarations: 0 layouts, 0 given, 1 open, places 4 of 21, reads 1 of 15
+async-local-storage-get-store: 6 layouts, 0 given, 9 open, places 43 of 97, reads 0 of 67
+buffer-reads-and-writes-numbers: 4 layouts, 0 given, 4 open, places 979 of 1101, reads 237 of 474
+environment-variables-read-by-key: 0 layouts, 0 given, 0 open, places 30 of 41, reads 12 of 66
+functions-of-internal-modules-are-called-as-ever: 7 layouts, 0 given, 7 open, places 23 of 47, reads 1 of 27
+listeners-and-ticks-that-are-not-functions: 3 layouts, 0 given, 2 open, places 38 of 55, reads 4 of 34
+members-of-process-in-stack-traces: 0 layouts, 0 given, 0 open, places 13 of 27, reads 0 of 21
+members-of-process: 0 layouts, 0 given, 0 open, places 38 of 55, reads 0 of 75
+next-tick-and-listeners-that-are-no-functions: 2 layouts, 0 given, 2 open, places 29 of 45, reads 1 of 21
+node-path-answers-as-node-does: 2 layouts, 0 given, 0 open, places 270 of 303, reads 52 of 89
+node-path: 2 layouts, 0 given, 2 open, places 46 of 59, reads 5 of 118
+the-fields-of-built-in-classes-under-another-tsconfig: 1 layouts, 0 given, 0 open, places 5 of 16, reads 0 of 10

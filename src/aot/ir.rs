@@ -5,6 +5,8 @@ use crate::declared::DeclaredTable;
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
 use std::ptr::NonNull;
 
+pub use crate::builtins_generated::Operation;
+
 /// A list of values in eight bytes: a pointer to its length, its capacity and the values, none while it is empty. Most operations and
 /// most targets have none.
 pub struct Args(Option<NonNull<ArgsHead>>);
@@ -307,6 +309,9 @@ impl Strs {
         let hashes = &self.hashes;
         self.ids.insert_unique(hash, id, |&id| hashes[id.idx()]);
         id
+    }
+    pub fn make_room_for_bytes(&mut self, bytes: usize) {
+        self.bytes.reserve_exact(bytes);
     }
     pub fn add_all(&mut self, bytes: &[u8], lengths: &[u32], hashes: &[u64]) {
         let mut end = self.bytes.len();
@@ -787,8 +792,8 @@ pub enum Op {
     CaughtException,
     /// Once around a loop.
     Poll,
-    /// What the language does without having syntax for it, by the name the compiler behind the front end knows it by.
-    Operation { name: StrId, args: Args },
+    /// What the language does without having syntax for it.
+    Operation { which: Operation, args: Args },
     /// `yield value`: a suspension point of a generator. Its result is the value the generator is resumed with, whatever the mode.
     Yield(V),
     /// How the generator was last resumed: 0 by `next`, 1 by `throw`, 2 by `return`.
@@ -1163,6 +1168,8 @@ pub struct Program {
     /// The run time lets no other name of a field be defined on the `prototype` object of a function. Sorted.
     pub prototype_property_names: Vec<StrId>,
     pub regexp_literals: Vec<(StrId, StrId)>,
+    /// The bytes of the modules of WebAssembly that the program may load, for the engine to compile. See `webassembly::add_files_named_in`.
+    pub webassembly_modules: Vec<Vec<u8>>,
     pub logs_type_errors: bool,
     pub marked_values: Vec<Vec<V>>,
     /// By registry id, ascending: the function that evaluates a builtin module and returns its value.

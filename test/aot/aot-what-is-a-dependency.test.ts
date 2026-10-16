@@ -1,0 +1,71 @@
+import { expect } from "bun:test";
+import { test } from "./supported";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkdirSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
+
+async function build(directory: string, entryPoint: string) {
+  const outfile = join(directory, "out" + (isWindows ? ".exe" : ""));
+  await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", entryPoint, "--outfile", outfile], cwd: directory, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [said, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  if (exitCode) return { said, exitCode, stdout: "" };
+  await using ran = Bun.spawn({ cmd: [outfile], cwd: directory, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout] = await Promise.all([ran.stdout.text(), ran.exited]);
+  return { said, exitCode, stdout };
+}
+const strict = (more: object = {}) => JSON.stringify({ compilerOptions: { strict: true, typeRoots: ["./no-types-here"], ...more } });
+
+test("an application that lies under node_modules is held to its types", async () => {
+  using dir = tempDir("aot-dependency-own", {
+    "node_modules/app/package.json": JSON.stringify({ name: "app" }),
+    "node_modules/app/tsconfig.json": strict(),
+    "node_modules/app/main.ts": `import { half } from "./half";\nconsole.log(half(4));\n`,
+    "node_modules/app/half.ts": `export function half(n: number): string { return n / 2; }\n`,
+  });
+  const { said, exitCode } = await build(join(String(dir), "node_modules", "app"), "./main.ts");
+  expect(said).toContain("TS2322");
+  expect(exitCode).not.toBe(0);
+}, 120_000);
+
+test("a package that ships its TypeScript is not held to the application's rules that only report", async () => {
+  using dir = tempDir("aot-dependency-rules", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict({ noUncheckedIndexedAccess: true, noImplicitReturns: true, noUnusedLocals: true }),
+    "main.ts": `import { first } from "ships-typescript";\nconsole.log(first([3, 4]));\n`,
+    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/index.ts": `export function first(list: number[]): number { const unused = 1; const found: number = list[0]; return found; }\n`,
+  });
+  const { said, exitCode, stdout } = await build(String(dir), "./main.ts");
+  expect(said).not.toContain("ships-typescript");
+  expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "3\n" });
+}, 120_000);
+
+test("a type error beside a decorated class of a dependency does not stop the build either", async () => {
+  using dir = tempDir("aot-dependency-decorated", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict({ experimentalDecorators: true }),
+    "main.ts": `import { Marked } from "decorates";\nconsole.log(new Marked().two(), JSON.stringify((Marked.prototype as any).marked));\n`,
+    "node_modules/decorates/package.json": JSON.stringify({ name: "decorates", main: "index.ts", types: "index.ts" }),
+    "node_modules/decorates/index.ts": `function mark(target: any, key: string) { (target.marked ??= []).push(key); }\nexport class Marked { @mark two(): number { const wrong: string = 2; return 2; } }\n`,
+  });
+  const { said, exitCode, stdout } = await build(String(dir), "./main.ts");
+  expect(said).toContain("TS100009");
+  expect(said).toContain("decorates");
+  expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: '2 ["two"]\n' });
+}, 120_000);
+
+test.skipIf(isWindows)("a workspace package imported by its name is a dependency", async () => {
+  using dir = tempDir("aot-dependency-workspace", {
+    "apps/web/package.json": JSON.stringify({ name: "web" }),
+    "apps/web/tsconfig.json": strict(),
+    "apps/web/main.ts": `import { half } from "shared";\nconsole.log(half(4));\n`,
+    "packages/shared/package.json": JSON.stringify({ name: "shared", main: "index.ts", types: "index.ts" }),
+    "packages/shared/index.ts": `export function half(n: number): number { const wrong: string = n; return n / 2; }\n`,
+  });
+  mkdirSync(join(String(dir), "apps", "web", "node_modules"));
+  symlinkSync(join(String(dir), "packages", "shared"), join(String(dir), "apps", "web", "node_modules", "shared"));
+  const { said, exitCode, stdout } = await build(join(String(dir), "apps", "web"), "./main.ts");
+  expect(said).toContain("TS100009");
+  expect(said).toContain("shared");
+  expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "2\n" });
+}, 120_000);

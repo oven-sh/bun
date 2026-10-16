@@ -28,12 +28,6 @@ pub(super) static BUILTINS: &[Builtin] = &[
         properties: "!prototype:object -length:number -name:string",
     },
     Builtin {
-        name: "AggregateError.prototype",
-        inherits: "Error.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string",
-    },
-    Builtin {
         name: "Array",
         inherits: "Function.prototype",
         takes_new_properties: true,
@@ -166,22 +160,10 @@ pub(super) static BUILTINS: &[Builtin] = &[
         properties: "!prototype:object -length:number -name:string -prepareStackTrace -stackTraceLimit:number appendStackTrace captureStackTrace isError",
     },
     Builtin {
-        name: "Error.prototype",
-        inherits: "Object.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string toString",
-    },
-    Builtin {
         name: "EvalError",
         inherits: "Error",
         takes_new_properties: true,
         properties: "!prototype:object -length:number -name:string",
-    },
-    Builtin {
-        name: "EvalError.prototype",
-        inherits: "Error.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string",
     },
     Builtin {
         name: "FinalizationRegistry",
@@ -490,22 +472,10 @@ pub(super) static BUILTINS: &[Builtin] = &[
         properties: "!prototype:object -length:number -name:string",
     },
     Builtin {
-        name: "RangeError.prototype",
-        inherits: "Error.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string",
-    },
-    Builtin {
         name: "ReferenceError",
         inherits: "Error",
         takes_new_properties: true,
         properties: "!prototype:object -length:number -name:string",
-    },
-    Builtin {
-        name: "ReferenceError.prototype",
-        inherits: "Error.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string",
     },
     Builtin {
         name: "Reflect",
@@ -580,12 +550,6 @@ pub(super) static BUILTINS: &[Builtin] = &[
         properties: "!prototype:object -length:number -name:string",
     },
     Builtin {
-        name: "SuppressedError.prototype",
-        inherits: "Error.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string",
-    },
-    Builtin {
         name: "Symbol",
         inherits: "Function.prototype",
         takes_new_properties: true,
@@ -602,12 +566,6 @@ pub(super) static BUILTINS: &[Builtin] = &[
         inherits: "Error",
         takes_new_properties: true,
         properties: "!prototype:object -length:number -name:string",
-    },
-    Builtin {
-        name: "SyntaxError.prototype",
-        inherits: "Error.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string",
     },
     Builtin {
         name: "Temporal",
@@ -724,22 +682,10 @@ pub(super) static BUILTINS: &[Builtin] = &[
         properties: "!prototype:object -length:number -name:string",
     },
     Builtin {
-        name: "TypeError.prototype",
-        inherits: "Error.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string",
-    },
-    Builtin {
         name: "URIError",
         inherits: "Error",
         takes_new_properties: true,
         properties: "!prototype:object -length:number -name:string",
-    },
-    Builtin {
-        name: "URIError.prototype",
-        inherits: "Error.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string",
     },
     Builtin {
         name: "Uint16Array",
@@ -838,12 +784,6 @@ pub(super) static BUILTINS: &[Builtin] = &[
         properties: "!prototype:object -length:number -name:string",
     },
     Builtin {
-        name: "WebAssembly.CompileError.prototype",
-        inherits: "Error.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string",
-    },
-    Builtin {
         name: "WebAssembly.Exception",
         inherits: "Function.prototype",
         takes_new_properties: true,
@@ -886,12 +826,6 @@ pub(super) static BUILTINS: &[Builtin] = &[
         properties: "!prototype:object -length:number -name:string",
     },
     Builtin {
-        name: "WebAssembly.LinkError.prototype",
-        inherits: "Error.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string",
-    },
-    Builtin {
         name: "WebAssembly.Memory",
         inherits: "Function.prototype",
         takes_new_properties: true,
@@ -922,22 +856,10 @@ pub(super) static BUILTINS: &[Builtin] = &[
         properties: "!prototype:object -length:number -name:string",
     },
     Builtin {
-        name: "WebAssembly.RuntimeError.prototype",
-        inherits: "Error.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string",
-    },
-    Builtin {
         name: "WebAssembly.SuspendError",
         inherits: "Error",
         takes_new_properties: true,
         properties: "!prototype:object -length:number -name:string",
-    },
-    Builtin {
-        name: "WebAssembly.SuspendError.prototype",
-        inherits: "Error.prototype",
-        takes_new_properties: false,
-        properties: "constructor message:string? name:string",
     },
     Builtin {
         name: "WebAssembly.Suspending",

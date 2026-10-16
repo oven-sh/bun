@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -100,7 +101,7 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
     using dir = tempDir("create-require", tree);
     const plain = await spawned([bunExe(), "run", entry], String(dir));
     expect(plain.exitCode).toBe(0);
-    const aot = await spawned([bunExe(), "run", "--aot", entry], String(dir), compiledOnly);
+    const aot = await spawned([bunExe(), "run", "--debug-aot", entry], String(dir), compiledOnly);
     expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });
@@ -137,7 +138,7 @@ console.log(before, isDeleted, load("./lib.cjs").name, globalThis.evaluations);
 ])("a require off which more than resolve is read stays the host's: %s", async (entry, text, output) => {
   using dir = tempDir("create-require", { ...files, [entry]: `import { createRequire } from "node:module";\nconst load = createRequire(import.meta.url);\n` + text });
   const plain = await spawned([bunExe(), "run", entry], String(dir));
-  const aot = await spawned([bunExe(), "run", "--aot", entry], String(dir));
+  const aot = await spawned([bunExe(), "run", "--debug-aot", entry], String(dir));
   expect(plain.stdout).toBe(output);
   expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
 });
@@ -152,7 +153,7 @@ console.log(use(require), require("./lib.cjs").name);
 `,
   });
   const plain = await spawned([bunExe(), "run", "handed-on.mjs"], String(dir));
-  const aot = await spawned([bunExe(), "run", "--aot", "handed-on.mjs"], String(dir));
+  const aot = await spawned([bunExe(), "run", "--debug-aot", "handed-on.mjs"], String(dir));
   expect(plain.stdout).toBe("lib lib\n");
   expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
 });

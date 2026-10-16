@@ -20,7 +20,7 @@ declare var __REACT_DEVTOOLS_GLOBAL_HOOK__: RR.DevToolsHook;
 declare namespace RR {
   // -------------------------------------------------------------------------------------------------------------------
   // 1. Numbers
-  type int32 = number; // a true int32 where the annotation itself is the name; to every other tool a number. NOT Milliseconds, NOT NoTimeout: a time is a fraction
+  type int32 = import("bun").int32; // a true int32 where the annotation itself is the name; to every other tool a number. NOT Milliseconds, NOT NoTimeout: a time is a fraction
   type Lane = int32;
   type Lanes = int32;
   type LaneMap<T> = T[]; // 31 entries, createLaneMap

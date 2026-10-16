@@ -14,7 +14,7 @@
 use crate::build::Problem;
 use crate::declared::{Declared, DeclaredTable, Part};
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
-use crate::ir::{Block, Def, Field, Func, FuncKind, Global, Layout, Literal, Method, NO_VARIABLE, Op, Prediction, Strs, Value, Why};
+use crate::ir::{Block, Def, Field, Func, FuncKind, Global, Layout, Literal, Method, NO_VARIABLE, Op, Operation, Prediction, Strs, Value, Why};
 use bun_sema::bind::SymbolId;
 use bun_sema::check::{Identity, MethodStore, Noted, NumberFlow};
 use bun_sema::hir::{ClassId, FnId};
@@ -58,8 +58,10 @@ pub enum FuncKey {
     DefaultOfExportedObject(FileId, bool),
     FilesByPath(FileId),
     EvaluationByNumber(FileId),
+    EvaluationOfOneFile(FileId, FileId),
     ExportVariablesReader(FileId),
     NamespaceForHost(FileId),
+    Validator(FileId, u32),
 }
 
 impl FuncKey {
@@ -88,8 +90,10 @@ impl FuncKey {
             | FuncKey::DefaultOfExportedObject(file, _)
             | FuncKey::FilesByPath(file)
             | FuncKey::EvaluationByNumber(file)
+            | FuncKey::EvaluationOfOneFile(file, _)
             | FuncKey::ExportVariablesReader(file)
-            | FuncKey::NamespaceForHost(file) => file,
+            | FuncKey::NamespaceForHost(file)
+            | FuncKey::Validator(file, _) => file,
         }
     }
 }
@@ -439,8 +443,7 @@ pub fn for_each_id_of_op(op: &mut Op, ids: &mut impl Ids) {
         | Op::PropSet { obj: _, name, value: _ }
         | Op::PropHas { obj: _, name }
         | Op::PropDelete { obj: _, name }
-        | Op::CallMethod { obj: _, name, args: _ }
-        | Op::Operation { name, args: _ } => pass!(ids.str(name)),
+        | Op::CallMethod { obj: _, name, args: _ } => pass!(ids.str(name)),
         Op::FuncRef(func) | Op::Closure { func, captures: _ } | Op::ClosureOnce { func, captures: _, env: _, field: _ } => pass!(ids.func(func, Used::AsValue)),
         Op::CallDirect { func, args: _ } => pass!(ids.func(func, Used::Called)),
         Op::GlobalGet(global) | Op::GlobalSet(global, _) => pass!(ids.global(global)),
@@ -492,6 +495,7 @@ pub fn for_each_id_of_op(op: &mut Op, ids: &mut impl Ids) {
         | Op::Caught
         | Op::CaughtException
         | Op::Poll
+        | Op::Operation { .. }
         | Op::Yield(_)
         | Op::ResumeMode
         | Op::Await(_) => {}
@@ -841,7 +845,6 @@ pub struct Summary {
 impl Summary {
     fn of(fragment: &Fragment) -> Summary {
         let mut summary = Summary::default();
-        let [require_builtin, require_external, import_external] = [&b"RequireBuiltinModule"[..], b"RequireExternalModule", b"ImportExternalModule"].map(|name| fragment.strs.find(name).unwrap_or(StrId::NONE));
         for (index, function) in fragment.funcs.iter().enumerate() {
             let index = index as u32;
             if matches!(function.key, FuncKey::Module(file) | FuncKey::ModuleBody(file) | FuncKey::ModuleSettling(file) | FuncKey::ModuleDriver(file) | FuncKey::ModuleInner(file) | FuncKey::Required(file) if file == fragment.file) {
@@ -856,11 +859,11 @@ impl Summary {
             }
             for value in &func.values {
                 let found = match &value.def {
-                    Def::Op(Op::Operation { name, args }) if !args.is_empty() && *name == require_builtin => match func.op(args[0]) {
+                    Def::Op(Op::Operation { which: Operation::RequireBuiltinModule, args }) if !args.is_empty() => match func.op(args[0]) {
                         Some(&Op::Int(number)) => Some(RuntimeModule::Number(number)),
                         _ => None,
                     },
-                    Def::Op(Op::Operation { name, args }) if !args.is_empty() && (*name == require_external || *name == import_external) => crate::link::constant_string(func, args[0]).map(RuntimeModule::Name),
+                    Def::Op(Op::Operation { which: Operation::RequireExternalModule | Operation::ImportExternalModule, args }) if !args.is_empty() => crate::link::constant_string(func, args[0]).map(RuntimeModule::Name),
                     Def::Op(Op::ExternalModule(name)) => Some(RuntimeModule::Name(*name)),
                     _ => None,
                 };
@@ -1046,7 +1049,7 @@ impl Fragments {
 
     /// Once every task has ended.
     pub fn take(&self) -> Vec<Fragment> {
-        let fragments = self.by_file.iter().filter_map(|place| place.lock().take());
-        fragments.map(|fragment| *fragment).collect()
+        let boxes: Vec<Box<Fragment>> = self.by_file.iter().filter_map(|place| place.lock().take()).collect();
+        boxes.into_iter().map(|fragment| *fragment).collect()
     }
 }

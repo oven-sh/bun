@@ -140,6 +140,10 @@ fn is_in_list_of_type(text: &[u8], end: usize) -> bool {
 /// The operator that a compound assignment combines with. `None` for `=`.
 /// A name or a member that is not part of an optional chain.
 #[inline(always)]
+fn is_written_as_a_name(key: &[u8]) -> bool {
+    !matches!(key.first(), None | Some(b'0'..=b'9' | b'-' | b'#')) && key != b"Infinity" && key != b"NaN"
+}
+
 fn is_plain_target(kind: ExprKind) -> bool {
     matches!(
         kind,
@@ -1521,119 +1525,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    fn text_from_own_folder(&mut self, e: ExprId, depth: u32) -> Option<Vec<u8>> {
-        if self.is_too_deep() {
-            return None;
-        }
-        if depth > 64 {
-            return None;
-        }
-        match self.f.exprs.get(e.idx())?.kind {
-            ExprKind::Ident(name) if self.lx.text_of(name) == b"__dirname" => Some(b".".to_vec()),
-            ExprKind::Dot {
-                obj,
-                name,
-                chain: Chain::No,
-                ..
-            } if matches!(self.f.exprs.get(obj.idx())?.kind, ExprKind::ImportMeta)
-                && matches!(self.lx.text_of(name), b"dirname" | b"dir") =>
-            {
-                Some(b".".to_vec())
-            }
-            ExprKind::Binary {
-                op: BinOp::Add,
-                left,
-                right,
-            } => {
-                let mut folded = self.text_from_own_folder(left, depth + 1)?;
-                folded.extend(self.folded_text(right, depth + 1)?);
-                Some(folded)
-            }
-            ExprKind::Template { exprs } if !exprs.is_empty() => {
-                let texts = self.f.template_texts(exprs);
-                if !self.lx.text_of(self.f.id_at(texts, 0)).is_empty() {
-                    return None;
-                }
-                let mut folded = self.text_from_own_folder(self.f.id_at(exprs, 0), depth + 1)?;
-                folded.extend_from_slice(self.lx.text_of(self.f.id_at(texts, 1)));
-                for i in 1..exprs.len() {
-                    folded.extend(self.folded_text(self.f.id_at(exprs, i), depth + 1)?);
-                    folded.extend_from_slice(self.lx.text_of(self.f.id_at(texts, i + 1)));
-                }
-                Some(folded)
-            }
-            ExprKind::Call(call) => {
-                let (callee, args) = (self.f[call].callee, self.f[call].args);
-                let (object, name) = match self.f.exprs.get(callee.idx())?.kind {
-                    ExprKind::Ident(name) => (None, name),
-                    ExprKind::Dot {
-                        obj,
-                        name,
-                        chain: Chain::No,
-                        ..
-                    } => (Some(obj), name),
-                    _ => return None,
-                };
-                if self.f[call].chain != Chain::No || args.is_empty() {
-                    return None;
-                }
-                let is_require = |this: &Self, e: ExprId| {
-                    matches!(
-                        this.f.exprs.get(e.idx()),
-                        Some(Expr {
-                            kind: ExprKind::Ident(bun_sema::atom::known::require),
-                            ..
-                        })
-                    )
-                };
-                if object.is_some_and(|object| is_require(self, object)) {
-                    let is_resolve = self.lx.text_of(name) == b"resolve" && args.len() == 1;
-                    let text = self.folded_text(self.f.id_at(args, 0), depth + 1)?;
-                    return (is_resolve && (text.starts_with(b"./") || text.starts_with(b"../")))
-                        .then_some(text);
-                }
-                if !matches!(self.lx.text_of(name), b"join" | b"resolve") {
-                    return None;
-                }
-                let mut folded = self.text_from_own_folder(self.f.id_at(args, 0), depth + 1)?;
-                for i in 1..args.len() {
-                    let part = self.folded_text(self.f.id_at(args, i), depth + 1)?;
-                    if part.starts_with(b"/") {
-                        return None;
-                    }
-                    folded.push(b'/');
-                    folded.extend(part);
-                }
-                Some(folded)
-            }
-            _ => None,
-        }
-    }
-
-    fn note_path_from_own_folder(&mut self, argument: ExprId, depth: u32) {
-        if self.is_too_deep() {
-            return;
-        }
-        if depth > 64 || self.f.folded_specifiers.iter().any(|folded| folded.0 == argument) {
-            return;
-        }
-        if let Some(&Expr {
-            kind: ExprKind::Cond { yes, no, .. },
-            ..
-        }) = self.f.exprs.get(argument.idx())
-        {
-            self.note_path_from_own_folder(yes, depth + 1);
-            self.note_path_from_own_folder(no, depth + 1);
-            return;
-        }
-        if let Some(folded) = self.text_from_own_folder(argument, 0)
-            && (folded.starts_with(b"./") || folded.starts_with(b"../"))
-        {
-            let folded = self.atom(&folded);
-            self.f.folded_specifiers.push((argument, folded));
-        }
-    }
-
     fn note_folded_specifiers(&mut self, argument: ExprId, depth: u32) {
         if self.is_too_deep() {
             return;
@@ -1989,6 +1880,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseElementAccessExpressionRest`, at the `[`.
     fn element_access(&mut self, start: u32, obj: ExprId, chain: Chain) -> ExprId {
         self.next();
+        let parens = self.f.parens.len();
         let index = match self.token() {
             T::CloseBracket => {
                 self.error(1011, (self.full_start(), Diagnostic::NO_LENGTH), &[]);
@@ -1998,6 +1890,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             _ => self.expression_allowing_in(),
         };
         self.expect(T::CloseBracket);
+        if self.options.constant_keys_are_names
+            && index.idx() + 1 == self.f.exprs.len()
+            && let Some(&Expr { kind: ExprKind::String(name), pos, end }) = self.f.exprs.get(index.idx())
+            && is_written_as_a_name(self.lx.text_of(name))
+        {
+            self.f.parens.truncate(parens);
+            self.drop_last_expr(index);
+            self.finish_name(pos, end);
+            return self.finish_expr(ExprKind::Dot { obj, name, name_pos: pos, chain }, start);
+        }
         self.finish_expr(ExprKind::Index { obj, index, chain }, start)
     }
 
@@ -2080,7 +1982,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         {
             let argument = self.f.id_at(args, 0);
             self.note_folded_specifiers(argument, 0);
-            self.note_path_from_own_folder(argument, 0);
         }
         if is_require && args.len() == 1 {
             let argument = self.f.id_at(args, 0);

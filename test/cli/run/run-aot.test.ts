@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { unsupported } from "../../aot/run-programs";
 import { spawn } from "child_process";
 import { once } from "events";
 import { chmodSync, readdirSync } from "fs";
@@ -7,7 +8,7 @@ import { join } from "path";
 import type { Readable } from "stream";
 import { text } from "stream/consumers";
 
-const supported = !isWindows;
+const supported = !unsupported;
 
 type Options = { args?: string[]; env?: Record<string, string>; stdin?: string; flags?: string[]; builds?: boolean };
 
@@ -25,7 +26,7 @@ async function run(
   { args = [], env = {}, stdin, flags = [], builds = true }: Options = {},
 ) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", ...(aot ? ["--aot"] : []), ...flags, entry, ...args],
+    cmd: [bunExe(), "run", ...(aot ? ["--debug-aot"] : []), ...flags, entry, ...args],
     env: { ...bunEnv, ...env, ...(aot ? { BUN_AOT_VERBOSE: "1" } : {}) },
     cwd,
     stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
@@ -341,7 +342,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
   test.concurrent("process.execArgv has it, for what is started with the same options", async () => {
     using dir = tempDir("run-aot", { "entry.ts": `console.log(JSON.stringify(process.execArgv));` });
     const { stdout, exitCode } = await run(String(dir), true, "entry.ts", { flags: ["--smol"], args: ["--aot"] });
-    expect(stdout).toBe(`["--aot","--smol"]\n`);
+    expect(stdout).toBe(`["--debug-aot","--smol"]\n`);
     expect(exitCode).toBe(0);
   });
 
@@ -813,65 +814,45 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(stdout).toContain(`"fib":6765`);
   });
 
-  test.concurrent("the file of a Worker is compiled too", async () => {
-    const isCompiled = `function isCompiled(none: string[]) { try { const first: string = none[0]!; return first !== undefined; } catch { return true; } }`;
+  test.concurrent("nothing is interpreted for a Worker whose file is in the program but is no entry point", async () => {
     using dir = tempDir("run-aot", {
       "app/entry.ts": `
-        import { viaNode } from "./via-node.ts";
-        const said: Record<string, unknown> = {};
-        const listen = (name: string, worker: Worker) =>
-          new Promise<void>(done => { worker.onmessage = e => { said[name] = e.data; worker.terminate(); done(); }; });
-        const name = "./computed";
-        await Promise.all([
-          listen("href", new Worker(new URL("./href.ts", import.meta.url).href)),
-          listen("url", new Worker(new URL("./sub/url.ts", import.meta.url))),
-          listen("bare", new Worker(new URL("bare.ts", import.meta.url))),
-          listen("path", new Worker("./app/path.ts")),
-          listen("computed", new Worker(new URL(name + ".ts", import.meta.url))),
-          viaNode().then(data => { said.node = data; }),
-        ]);
-        function isNeverCalled() { return new Worker(new URL("./missing.ts", import.meta.url)); }
-        ${isCompiled}
-        console.log(JSON.stringify({ ...said, entry: isCompiled([]) && typeof isNeverCalled === "function" }));
-      `,
-      "app/shared.ts": `
-        export function answer(isCompiled: boolean, path: string) { return [isCompiled, path.split("/").slice(-2).join("/")]; }
-      `,
-      ...Object.fromEntries(
-        ["href", "bare", "path", "computed"].map(name => [
-          `app/${name}.ts`,
-          `import { answer } from "./shared.ts"; ${isCompiled} postMessage(answer(isCompiled([]), import.meta.path));`,
-        ]),
-      ),
-      "app/sub/url.ts": `import { answer } from "../shared.ts"; ${isCompiled} postMessage(answer(isCompiled([]), import.meta.path));`,
-      "app/via-node.ts": `
         import { Worker } from "node:worker_threads";
-        export const viaNode = () => new Promise(done => {
-          const worker = new Worker(new URL("./node.ts", import.meta.url));
-          worker.on("message", data => { worker.terminate(); done(data); });
+        import { fileURLToPath } from "node:url";
+        if (process.argv.length > 9) { await import("./waits.ts"); await import("./serves.ts"); await import("./plain.ts"); }
+        const start = (name: string) => new Promise<void>(done => {
+          const worker = new Worker(fileURLToPath(import.meta.resolve(name)));
+          worker.on("message", (message: unknown) => console.log(name, message));
+          worker.on("exit", (code: number) => { console.log(name, "exit", code); done(); });
         });
+        await start("./plain.ts");
+        await start("./waits.ts");
+        await start("./serves.ts");
       `,
-      "app/node.ts": `
+      "app/plain.ts": `
         import { parentPort } from "node:worker_threads";
-        import { answer } from "./shared.ts";
-        ${isCompiled}
-        parentPort!.postMessage(answer(isCompiled([]), import.meta.path));
+        parentPort!.postMessage("ran");
+        export default { fetch: "no function" };
+      `,
+      "app/waits.ts": `
+        import { parentPort } from "node:worker_threads";
+        parentPort!.postMessage("ran");
+        await new Promise(resolve => setTimeout(resolve, 20));
+        parentPort!.postMessage("waited");
+      `,
+      "app/serves.ts": `
+        import { parentPort } from "node:worker_threads";
+        setTimeout(() => { parentPort!.postMessage("still here"); process.exit(0); }, 200);
+        export default { port: 0, fetch() { return new Response("served"); } };
       `,
     });
-    const { stdout, stderr, exitCode } = await run(String(dir), true, "app/entry.ts");
-    expect({ said: JSON.parse(stdout), stderr, exitCode }).toEqual({
-      said: {
-        href: [true, "app/href.ts"],
-        url: [true, "sub/url.ts"],
-        bare: [true, "app/bare.ts"],
-        path: [true, "app/path.ts"],
-        node: [true, "app/node.ts"],
-        computed: [false, "app/computed.ts"],
-        entry: true,
-      },
-      stderr: "",
-      exitCode: 0,
-    });
+    const [expected, actual] = await Promise.all([
+      run(String(dir), false, "app/entry.ts"),
+      run(String(dir), true, "app/entry.ts", { env: { BUN_JSC_crashIfInterpreterIsUsed: "1" } }),
+    ]);
+    const withoutPort = (ran: typeof actual) => ({ ...ran, stdout: ran.stdout.replace(/:\d+\n/, ":<port>\n") });
+    expect(withoutPort(actual)).toEqual(withoutPort(expected));
+    expect(actual.stdout).toMatch(/Started (development )?server: http:\/\/localhost:\d+\n/);
   });
 
   test.concurrent("a Worker that loads nothing that was compiled calls built-in functions that were", async () => {
@@ -944,7 +925,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
   test.concurrent("stays one process", async () => {
     using dir = tempDir("run-aot", { "entry.ts": `console.log(process.pid);` });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--aot", "entry.ts"],
+      cmd: [bunExe(), "run", "--debug-aot", "entry.ts"],
       env: { ...bunEnv, BUN_AOT_VERBOSE: "1" },
       cwd: String(dir),
       stdout: "pipe",
@@ -965,12 +946,12 @@ describe.skipIf(!supported)("bun run --aot", () => {
   });
 
   test.concurrent.each<[string, string[], string]>([
-    ["a package.json script", ["run", "--aot", "start"], "error: --aot does not apply to a package.json script (start). "],
-    ["a package.json script, without run", ["--aot", "start"], "error: --aot does not apply to a package.json script (start). "],
-    ["--filter", ["run", "--aot", "--filter", "*", "start"], "error: --aot does not apply to the processes that --filter, "],
-    ["--parallel", ["run", "--aot", "--parallel", "start"], "error: --aot does not apply to the processes that --filter, "],
-    ["an executable in node_modules/.bin", ["run", "--aot", "tool"], "error: --aot does not apply to an executable ("],
-    ["a shell script", ["run", "--aot", "./script.sh"], "error: --aot does not apply to a shell script ("],
+    ["a package.json script", ["run", "--debug-aot", "start"], "error: --aot does not apply to a package.json script (start). "],
+    ["a package.json script, without run", ["--debug-aot", "start"], "error: --aot does not apply to a package.json script (start). "],
+    ["--filter", ["run", "--debug-aot", "--filter", "*", "start"], "error: --aot does not apply to the processes that --filter, "],
+    ["--parallel", ["run", "--debug-aot", "--parallel", "start"], "error: --aot does not apply to the processes that --filter, "],
+    ["an executable in node_modules/.bin", ["run", "--debug-aot", "tool"], "error: --aot does not apply to an executable ("],
+    ["a shell script", ["run", "--debug-aot", "./script.sh"], "error: --aot does not apply to a shell script ("],
   ])("--aot with %s is an error", async (_what, args, message) => {
     using dir = tempDir("run-aot", {
       "package.json": JSON.stringify({ name: "app", scripts: { start: "echo the script ran" } }),
@@ -1278,7 +1259,7 @@ test.skipIf(!supported).each([false, true])("inherited file descriptors stay ope
       writeSync(4, "written to 4");
     `,
   });
-  const child = spawn(bunExe(), ["run", ...(aot ? ["--aot"] : []), "entry.js"], {
+  const child = spawn(bunExe(), ["run", ...(aot ? ["--debug-aot"] : []), "entry.js"], {
     cwd: String(dir),
     env: bunEnv,
     stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],

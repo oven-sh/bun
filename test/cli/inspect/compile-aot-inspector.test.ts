@@ -1,5 +1,6 @@
 import { spawn, type Subprocess } from "bun";
-import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, expect, setDefaultTimeout } from "bun:test";
+import { beforeAll, describe, test } from "../../aot/supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { SocketFramer } from "./socket-framer";

@@ -1,4 +1,4 @@
-// More constant names are asked of one object than a row of the table by name has columns (2,048), so names meet in one column: every answer is still that of the language.
+// Thousands of constant names are asked of one object: every answer is that of the language.
 function readAll(o) {
   let s = 0;
   s = s * 3 + (o.a0 | 0) | 0; s = s * 3 + (o.a1 | 0) | 0; s = s * 3 + (o.a2 | 0) | 0; s = s * 3 + (o.a3 | 0) | 0; s = s * 3 + (o.a4 | 0) | 0; s = s * 3 + (o.a5 | 0) | 0;

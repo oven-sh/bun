@@ -6,7 +6,7 @@ const { Stream, prependListener } = require("internal/streams/legacy");
 const { addAbortSignal, addAbortSignalNoValidate } = require("internal/streams/add-abort-signal");
 const eos = require("internal/streams/end-of-stream");
 const destroyImpl = require("internal/streams/destroy");
-const { ReadableState, createReadableState, isReadableState, isWritableState, internals } =
+const { ReadableState, createReadableState, createReadableStateOfBytes, isReadableState, isWritableState, internals } =
   require("internal/streams/state") as typeof import("internal/streams/state").default;
 type ReadableState = import("internal/streams/state").ReadableState;
 type WritableState = import("internal/streams/state").WritableState;
@@ -114,6 +114,22 @@ function onConstructed(stream, state: ReadableState): void {
 }
 
 internals.onReadableConstructed = onConstructed;
+
+function constructReadable(stream, highWaterMark: unknown): void {
+  stream._events ??= preallocatedEvents();
+
+  stream._readableState = createReadableStateOfBytes(highWaterMark);
+
+  Stream.$call(stream, undefined);
+
+  if (stream._construct != null) {
+    destroyImpl.construct(stream, () => {
+      onConstructed(stream, stream._readableState);
+    });
+  }
+}
+
+internals.constructReadable = constructReadable;
 
 Readable.prototype.destroy = destroyImpl.destroy;
 Readable.prototype._undestroy = destroyImpl.undestroy;
@@ -1039,6 +1055,8 @@ function resume_(stream, state: ReadableState): void {
   if ((state.flags & (kFlowing | kReading)) === kFlowing) stream.read(0);
 }
 
+internals.resumeInItsTick = resume_;
+
 Readable.prototype.pause = function () {
   const state: ReadableState = this._readableState;
   if ((state.flags & kDestroyed) !== 0) {
@@ -1202,9 +1220,9 @@ async function* createAsyncIterator(stream, options) {
 
   stream.on("readable", next);
 
-  let error: Error | null | undefined;
+  let error: any;
   const cleanup = eos(stream, { writable: false }, err => {
-    error = err ? aggregateTwoErrors(error as Error, err) : null;
+    error = err ? aggregateTwoErrors(error, err) : null;
     callback();
     callback = nop;
   });
@@ -1223,7 +1241,7 @@ async function* createAsyncIterator(stream, options) {
       }
     }
   } catch (err: unknown) {
-    error = aggregateTwoErrors(error as Error, err as Error);
+    error = aggregateTwoErrors(error, err as any);
     throw error;
   } finally {
     if ((error || options?.destroyOnReturn !== false) && (error === undefined || stream._readableState.autoDestroy)) {
@@ -1563,6 +1581,8 @@ function endReadableNT(state: ReadableState, stream): void {
     }
   }
 }
+
+internals.endInItsTick = endReadableNT;
 
 function endWritableNT(stream) {
   const writable = stream.writable && !stream.writableEnded && !stream.destroyed;

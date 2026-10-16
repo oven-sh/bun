@@ -358,8 +358,32 @@ fn exponentiate(base: f64, exponent: f64) -> f64 {
     pow(base, exponent)
 }
 
+fn exponentiate_as_the_engine(base: f64, exponent: f64) -> f64 {
+    if exponent.is_nan() || base.abs() == 1.0 && exponent.is_infinite() {
+        return f64::NAN;
+    }
+    if exponent == 0.5 {
+        return if base == 0.0 { 0.0 } else if base.is_infinite() { f64::INFINITY } else { base.sqrt() };
+    }
+    if exponent == -0.5 {
+        return if base == 0.0 { f64::INFINITY } else if base.is_infinite() { 0.0 } else { 1.0 / base.sqrt() };
+    }
+    if (0.0..=1000.0).contains(&exponent) && exponent == exponent.trunc() {
+        let (mut result, mut factor, mut left) = (1.0, base, exponent as u32);
+        while left != 0 {
+            if left & 1 == 1 {
+                result *= factor;
+            }
+            factor *= factor;
+            left >>= 1;
+        }
+        return result;
+    }
+    base.powf(exponent)
+}
+
 /// The operators `evaluate` knows, on numbers.
-pub(super) fn number_operation(op: BinOp, a: f64, b: f64) -> Option<f64> {
+pub(super) fn number_operation(op: BinOp, a: f64, b: f64, as_the_engine: bool) -> Option<f64> {
     let shift = to_int32(b) as u32 & 31;
     Some(match op {
         BinOp::BitOr => f64::from(to_int32(a) | to_int32(b)),
@@ -373,6 +397,7 @@ pub(super) fn number_operation(op: BinOp, a: f64, b: f64) -> Option<f64> {
         BinOp::Add => a + b,
         BinOp::Sub => a - b,
         BinOp::Rem => a % b,
+        BinOp::Pow if as_the_engine => exponentiate_as_the_engine(a, b),
         BinOp::Pow => exponentiate(a, b),
         _ => return None,
     })
@@ -605,7 +630,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn evaluate_binary(&self, op: Option<BinOp>, l: Evaluated, r: Evaluated) -> Evaluated {
         let value = match (l.value, r.value, op) {
             (Some(EnumValue::Number(a)), Some(EnumValue::Number(b)), Some(op)) => {
-                number_operation(op, f64::from_bits(a), f64::from_bits(b))
+                number_operation(op, f64::from_bits(a), f64::from_bits(b), self.p.files.options.computes_as_the_engine)
                     .and_then(|n| Evaluated::number(n).value)
             }
             (Some(a), Some(b), Some(BinOp::Add)) => {

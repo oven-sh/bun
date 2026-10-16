@@ -760,22 +760,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback, specifierString);
 
-    if (isCompiledWithTheProgram && !Bun::hasFilesOfCompiledProgram(globalObject)) {
+    if (isCompiledWithTheProgram) {
         scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, makeString("mock(module, fn) cannot replace a module that was compiled ahead of time: \""_s, specifier, "\""_s)));
         return {};
-    }
-
-    if (isCompiledWithTheProgram) {
-        JSValue exportsValue = mock->executeOnce(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (auto* promise = dynamicDowncast<JSC::JSPromise>(exportsValue); promise && promise->status() == JSC::JSPromise::Status::Fulfilled)
-            exportsValue = promise->result();
-        bool isDone = exportsValue.isObject() && !exportsValue.inherits<JSC::JSPromise>() && Bun::overrideExportsOfCompiledModule(globalObject, specifier, exportsValue.getObject());
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!isDone) {
-            scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, makeString("mock(module, fn) cannot replace a module that was compiled ahead of time: \""_s, specifier, "\""_s)));
-            return {};
-        }
     }
 
     LoadedModule loaded = findLoadedModule(globalObject, specifierString);

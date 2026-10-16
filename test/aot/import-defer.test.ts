@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -163,7 +164,7 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
     using dir = tempDir("import-defer", tree);
     const plain = await spawned([bunExe(), "run", entry], String(dir));
     expect(plain.exitCode).toBe(0);
-    const aot = await spawned([bunExe(), "run", "--aot", entry], String(dir), compiledOnly);
+    const aot = await spawned([bunExe(), "run", "--debug-aot", entry], String(dir), compiledOnly);
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });
 

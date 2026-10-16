@@ -1,7 +1,9 @@
-// In an executable, as in any bundle, a CommonJS module that threw while it was evaluated is not evaluated again: the next require hands out what it had exported by then. Its code runs once, so the symbols it makes are names, as those of a module that cannot throw.
+// A CommonJS module that threw while it was evaluated is evaluated again at the next require, as under `bun run`: each evaluation makes symbols of its own. That of the first evaluation is a name, for as long as the module has not failed: that is tested where the symbol is used. Those of a module that cannot throw are names without a test.
 // IR+ ConstantSymbol "[^"]*:own"
+// IR= 1 readOwn GetById .*:own
+// IR= 1 readOwn GetByVal
+// IR= 0 readKept GetByVal
 // IR+ ConstantSymbol "[^"]*:kept"
-// IR= 0 readOwn GetByVal
 "use strict";
 globalThis.seen = [];
 globalThis.holder = {};

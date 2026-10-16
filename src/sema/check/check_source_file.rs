@@ -26,7 +26,7 @@ use smallvec::SmallVec;
 /// thread is 4 MB (`DEFAULT_THREAD_STACK_SIZE`: Linux with glibc or musl, macOS). `StackCheck`
 /// reserves up to 512 KB of it (under a sanitizer), and the frames of the pool and of the driver
 /// are subtracted too.
-const TASK_STACK: usize = 3 << 20;
+const TASK_STACK: usize = if cfg!(bun_asan) { 24 << 20 } else { 3 << 20 };
 
 /// The barrier after a step. `finished`: the tasks of that step, in task order. No task is running.
 impl<'s> Program<'s> {
@@ -261,10 +261,17 @@ impl<'s> Checker<'_, 's> {
         SIGNAL_STACK.with(|_| {});
         let left = bun_core::StackCheck::init().remaining();
         assert!(
-            left >= TASK_STACK,
+            cfg!(bun_asan) || left >= TASK_STACK,
             "the thread has too little stack for a task"
         );
-        self.set_stack_limit(TASK_STACK);
+        self.set_stack_limit(if cfg!(bun_asan) { TASK_STACK.min(left) } else { TASK_STACK });
+        #[cfg(bun_data_race_for_testing)]
+        {
+            static mut TASKS: u64 = 0;
+            let tasks = core::ptr::addr_of_mut!(TASKS);
+            // SAFETY: none: two threads at once are the data race that ThreadSanitizer has to report.
+            unsafe { tasks.write(tasks.read() + 1) };
+        }
     }
 
     pub fn begin_stack_budget_with(&mut self, more: usize) -> (usize, usize) {

@@ -10,7 +10,7 @@ declare namespace FZ {
   // -------------------------------------------------------------------------------------------------------------------
   // 1. Numbers. int32: four bytes and integer arithmetic; a value that is no int32 stored there is a TypeError at run time.
   // -------------------------------------------------------------------------------------------------------------------
-  type int32 = number;
+  type int32 = import("bun").int32;
   type RequestStatus = int32; // Request.status: 10 OPENING 11 OPEN 12 ABORTING 13 CLOSING 14 CLOSED
   type SegmentStatus = int32; // Segment.status: 0 PENDING 1 COMPLETED 2 FLUSHED 3 ABORTED 4 ERRORED 5 POSTPONED 6 RENDERING
   type BoundaryStatus = int32; // SuspenseBoundary.status: 0 PENDING 1 COMPLETED 4 CLIENT_RENDERED 5 POSTPONED
@@ -142,7 +142,7 @@ declare namespace FZ {
     onFatalError: (error: Thrown) => void;
     formState: ReactFormState; // null when none
   }
-  /** function RequestInstance(this: FZ.Request, ..) and new (RequestInstance as unknown as FZ.RequestConstructor)(..) */
+  /** function RequestInstance(this: FZ.Request, ..) and new (RequestInstance as FZ.RequestConstructor)(..): with the call signature beside the construct signature the cast needs no `unknown`, through which the function would leave typed code */
   interface RequestConstructor {
     new (
       resumableState: ResumableState,
@@ -157,6 +157,19 @@ declare namespace FZ {
       onPostpone: PostponeHandler | undefined,
       formState: ReactFormState
     ): Request;
+    (this: Request,
+      resumableState: ResumableState,
+      renderState: RenderState,
+      rootFormatContext: FormatContext,
+      progressiveChunkSize: number | undefined,
+      onError: ErrorHandler | undefined,
+      onAllReady: (() => void) | undefined,
+      onShellReady: (() => void) | undefined,
+      onShellError: ((error: Thrown) => void) | undefined,
+      onFatalError: ((error: Thrown) => void) | undefined,
+      onPostpone: PostponeHandler | undefined,
+      formState: ReactFormState
+    ): void;
   }
   type ErrorHandler = (error: Thrown, errorInfo: ThrownInfo) => any; // the user's, or defaultErrorHandler. The result: a digest; what is no string | null | undefined is dropped
   type ErrorDigest = string | null | undefined; // logRecoverableError's result

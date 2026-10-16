@@ -8,7 +8,7 @@ use crate::atom::{Atom, known};
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, SymFlags, SymbolId};
 use crate::check::Checker;
 use crate::hir::{
-    BinOp, CallId, Chain, ClassId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, ImportEqualsId, ImportEqualsTarget, MemberId, MemberKind, ModuleId, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, TypeNodeId, TypeNodeKind, UnOp,
+    BinOp, CallId, Chain, ClassId, EnumMemberId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, ImportEqualsId, ImportEqualsTarget, MemberId, MemberKind, ModuleId, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, TypeNodeId, TypeNodeKind, UnOp,
     VarKind,
 };
 use crate::program::{FileId, Sym};
@@ -32,6 +32,7 @@ pub(super) struct Shared {
     builtin_requires: OnceLock<FxHashMap<(FileId, Atom), FileId>>,
     /// `is_reified_namespace`
     reified_namespaces: OnceLock<ReifiedNamespaces>,
+    enum_members_stored_to: OnceLock<FxHashSet<(FileId, EnumMemberId)>>,
     /// `prototype_property_names`
     prototype_property_names: OnceLock<FxHashSet<Atom>>,
     stores_of_checked_texts: OnceLock<FxHashMap<Atom, Vec<(FileId, ExprId)>>>,
@@ -245,7 +246,7 @@ impl crate::program::Files<'_> {
         if hir.decorators.is_empty() || !hir.legacy_decorators || hir.is_js {
             return false;
         }
-        let emits_metadata = self.options.emit_decorator_metadata;
+        let emits_metadata = bound.class_options.map_or(self.options.emit_decorator_metadata, |own| own.emit_decorator_metadata);
         hir.decorators.iter().all(|&(owner, _)| {
             if let crate::hir::DecoratorOwner::Class(class) = owner {
                 let mut constructors = hir[class].members.iter().filter(|&member| hir[member].kind == crate::hir::MemberKind::Constructor);
@@ -389,6 +390,69 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
+    pub fn is_enum_member_read_from_object(&self, reader: FileId, of: FileId, member: EnumMemberId) -> bool {
+        reader != of && self.p.aot.classes.enum_members_stored_to.get_or_init(|| self.find_enum_members_stored_to()).contains(&(of, member))
+    }
+
+    fn find_enum_members_stored_to(&self) -> FxHashSet<(FileId, EnumMemberId)> {
+        let files = self.files();
+        let mut found = FxHashSet::default();
+        let mut add = |member: Sym| {
+            found.extend(files.decls_of(member).iter().filter_map(|&(of, decl)| match decl {
+                Decl::EnumMember(member) => Some((of, member)),
+                _ => None,
+            }));
+        };
+        for file in self.files_declaring_classes() {
+            let (hir, bound, index) = (self.hir(file), self.bound(file), self.exprs_by_kind_of(file));
+            for &e in index.of(ExprTag::Dot).iter().chain(index.of(ExprTag::Index)) {
+                let is_deleted = matches!(bound.expr_parent[e.idx()], Parent::Expr(parent) if parent.is_some() && matches!(hir[parent].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
+                if !is_deleted && bound.get_assignment_target(hir, e).is_none() {
+                    continue;
+                }
+                let (obj, name) = match hir[e].kind {
+                    ExprKind::Dot { obj, name, .. } => (obj, Some(name)),
+                    ExprKind::Index { obj, index, .. } => match hir[index].kind {
+                        ExprKind::String(name) => (obj, Some(name)),
+                        ExprKind::Number(_) => continue,
+                        _ => (obj, None),
+                    },
+                    _ => continue,
+                };
+                let Some(declared) = self.enum_named_by(file, obj) else { continue };
+                match name {
+                    Some(name) => files.export(declared, name).into_iter().for_each(&mut add),
+                    None => files.exports(declared).into_iter().for_each(|(_, member)| add(member)),
+                }
+            }
+            for &e in index.of(ExprTag::Call) {
+                let ExprKind::Call(call) = hir[e].kind else { continue };
+                if !matches!(self.method_of_global(file, call), Some((b"Object", b"assign" | b"defineProperty" | b"defineProperties") | (b"Reflect", b"set" | b"defineProperty" | b"deleteProperty"))) {
+                    continue;
+                }
+                if let Some(declared) = hir.ids(hir[call].args).next().and_then(|target| self.enum_named_by(file, target)) {
+                    files.exports(declared).into_iter().for_each(|(_, member)| add(member));
+                }
+            }
+        }
+        found
+    }
+
+    fn enum_named_by(&self, file: FileId, e: ExprId) -> Option<Sym> {
+        self.declaration_named_by_path(file, e).filter(|&declared| self.files().flags(declared).intersects(SymFlags::ENUM))
+    }
+
+    fn declaration_named_by_path(&self, file: FileId, e: ExprId) -> Option<Sym> {
+        let (hir, files) = (self.hir(file), self.files());
+        let e = skip_assertions(hir, e);
+        let named = match hir[e].kind {
+            ExprKind::Ident(name) => self.resolve_identifier(file, e, name, true).ok().flatten()?,
+            ExprKind::Dot { obj, name, chain: Chain::No, .. } => files.export(self.declaration_named_by_path(file, obj)?, name)?,
+            _ => return None,
+        };
+        if files.flags(named).contains(SymFlags::ALIAS) { files.resolve_alias(named) } else { Some(named) }
+    }
+
     fn reified_namespaces(&self) -> &'p ReifiedNamespaces {
         self.p.aot.classes.reified_namespaces.get_or_init(|| self.find_reified_namespaces())
     }
@@ -496,8 +560,29 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
+    fn is_imported_for_its_type_alone(&self, sym: Sym) -> bool {
+        self.files().flags(sym).contains(SymFlags::ALIAS)
+            && self.files().decls_of(sym).iter().all(|&(of, decl)| {
+                let hir = self.hir(of);
+                match decl {
+                    Decl::ImportDefault(import) | Decl::ImportNamespace(import) => hir[import].type_only,
+                    Decl::ImportSpec(spec) => hir[spec].type_only || hir[hir[spec].import].type_only,
+                    _ => false,
+                }
+            })
+    }
+
+    fn import_of_a_value_named(&self, file: FileId, name: Atom) -> Option<Sym> {
+        let is_import = |decl: &Decl| matches!(decl, Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_));
+        let named = self.bound(file).symbols.iter().enumerate().filter(|(_, symbol)| symbol.name == name && symbol.flags.contains(SymFlags::ALIAS) && symbol.decls.iter().all(is_import));
+        named.map(|(index, _)| self.files().sym(file, SymbolId(index as u32))).find(|&sym| !self.is_imported_for_its_type_alone(sym))
+    }
+
     pub fn binding_of_identifier(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Sym> {
         let local = self.bound(file).expr_symbol[e.idx()];
+        if local.is_some() && self.is_imported_for_its_type_alone(self.files().sym(file, local)) {
+            return self.import_of_a_value_named(file, name).or_else(|| self.files().global(name, SymFlags::VALUE).filter(|&global| !self.is_imported_for_its_type_alone(global)));
+        }
         if self.hir(file).is_js && local.is_some() {
             let own = self.files().sym(file, local);
             let flags = self.files().flags(own);
@@ -906,9 +991,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// instance fields has a computed key.
     pub fn assigns_fields(&self, file: FileId, class: ClassId) -> bool {
         let hir = self.hir(file);
-        self.files().options.specified_use_define_for_class_fields == Some(false)
+        self.bound(file).class_options.map_or(self.files().options.specified_use_define_for_class_fields == Some(false), |own| !own.use_define_for_class_fields)
             && !hir.is_js
-            && !self.is_restricted_to_fixed_set(file)
+            && self.files().module(file).builtin.is_none()
             && !hir[class].members.iter().any(|member| {
                 let m = &hir[member];
                 m.kind == MemberKind::Property && !m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT) && matches!(m.key, PropKey::Computed(_))
@@ -1166,6 +1251,9 @@ impl<'p, 's> Checker<'p, 's> {
                 && self.symbol_of_identifier(file, c.extends, name).is_none()
             {
                 out.extend([name, self.atoms().intern(b"Error")]);
+                if self.atoms().bytes(name) == b"Buffer" {
+                    out.push(self.atoms().intern(b"Uint8Array"));
+                }
             }
             let signatures = self.signatures(extended, true).into_vec();
             if signatures.is_empty() {
@@ -1325,7 +1413,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// This is no fact. Where it is not seen, the run time keeps the `prototype` object of the function as it is and refuses the rest.
     pub fn has_mutable_prototype(&self, file: FileId, func: FnId) -> bool {
         let known = self.mutable_prototypes();
-        known.functions.contains(&(file, func)) || known.every && self.discriminants().constructor_functions.iter().any(|it| it.function == (file, func)) && self.may_be_a_value(file, func)
+        known.functions.contains(&(file, func)) || known.every && self.is_constructor_function(file, func) && self.may_be_a_value(file, func)
     }
 
     pub fn functions_with_mutable_prototype(&self) -> Vec<(FileId, FnId)> {
@@ -1335,7 +1423,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn has_no_field_names_on_prototype(&self, file: FileId, func: FnId) -> bool {
-        self.discriminants().constructor_functions.iter().any(|it| it.function == (file, func)) && !self.may_be_a_value(file, func)
+        self.is_constructor_function(file, func) && !self.may_be_a_value(file, func)
+    }
+
+    fn is_constructor_function(&self, file: FileId, func: FnId) -> bool {
+        let hir = self.hir(file);
+        hir[func].this_ty(hir).is_some() && self.discriminants().constructor_functions.iter().any(|it| it.function == (file, func))
     }
 
     fn may_be_a_value(&self, file: FileId, func: FnId) -> bool {
@@ -1518,7 +1611,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn function_named_by(&self, file: FileId, e: ExprId, depth: u32) -> NamedFunction {
         let hir = self.hir(file);
         let e = skip_assertions(hir, e);
-        let constructor = |of: FileId, func: FnId| self.discriminants().constructor_functions.iter().any(|it| it.function == (of, func)).then_some(NamedFunction::Constructor(of, func));
+        let constructor = |of: FileId, func: FnId| self.is_constructor_function(of, func).then_some(NamedFunction::Constructor(of, func));
         match hir[e].kind {
             ExprKind::Fn(func) => constructor(file, func).unwrap_or(NamedFunction::Other),
             ExprKind::Class(_) | ExprKind::Object(_) | ExprKind::Array(_) => NamedFunction::Other,
@@ -1770,35 +1863,22 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn methods_with_fields(&mut self, file: FileId, class: ClassId) -> Vec<Atom> {
-        let storing = self.method_assignments_by_name();
-        if storing.is_empty() {
-            return Vec::new();
-        }
-        let hir = self.hir(file);
-        let mut found: Vec<Atom> = Vec::new();
-        for member in hir[class].members.iter() {
-            let PropKey::Name(name) = hir[member].key else { continue };
-            let Some(classes) = storing.get(&name) else { continue };
-            if found.contains(&name) || !self.class_declares_method((file, class), name) {
-                continue;
-            }
-            let is_stored_to = classes.iter().any(|&storing| {
-                let mut at = storing;
-                for _ in 0..256 {
-                    if at == (file, class) {
-                        return true;
-                    }
-                    match self.superclass_of(at.0, at.1) {
-                        Superclass::Known(extended) => at = extended,
-                        _ => return false,
-                    }
+        let assignments = self.method_assignments_by_name();
+        let mut found: Vec<Atom> = assignments.iter().filter(|(_, classes)| classes.contains(&(file, class))).map(|(&name, _)| name).collect();
+        found.retain(|&name| {
+            let mut at = (file, class);
+            for _ in 0..256 {
+                if self.class_declares_method(at, name) {
+                    return true;
                 }
-                false
-            });
-            if is_stored_to {
-                found.push(name);
+                match self.superclass_of(at.0, at.1) {
+                    Superclass::Known(extended) => at = extended,
+                    _ => return false,
+                }
             }
-        }
+            false
+        });
+        found.sort_unstable_by(|&a, &b| self.atoms().bytes(a).cmp(self.atoms().bytes(b)));
         found
     }
 

@@ -33,14 +33,14 @@ mapped "four" mapped 4
 firstValue "four" first 4
 found "four" found 4
 popped "four" threw TypeError: expected string[], got string "four" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-caughtFailure "four" threw TypeError: expected object, got string "four" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+caughtFailure "four" caught undefined
 caughtText "four" caught 4
 reflected 4 threw TypeError: expected string, got number 4 (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
 mapped 4 threw TypeError: expected string, got number 4 (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
 firstValue 4 threw TypeError: expected string, got number 4 (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
 found 4 threw TypeError: expected string, got number 4 (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
 popped 4 threw TypeError: expected string[], got number 4 (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-caughtFailure 4 threw TypeError: expected object, got number 4 (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+caughtFailure 4 caught undefined
 caughtText 4 threw TypeError: expected string, got number 4 (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
 reflected ["a","b"] threw TypeError: expected string, got Array (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
 mapped ["a","b"] threw TypeError: expected string, got Array (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
@@ -68,7 +68,7 @@ mapped false threw TypeError: expected string, got boolean false (bun --aot: htt
 firstValue false threw TypeError: expected string, got boolean false (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
 found false threw TypeError: expected string, got boolean false (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
 popped false threw TypeError: expected string[], got boolean false (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-caughtFailure false threw TypeError: expected object, got boolean false (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+caughtFailure false caught undefined
 caughtText false threw TypeError: expected string, got boolean false (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
 reflected function threw TypeError: expected string, got function (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
 mapped function threw TypeError: expected string, got function (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)

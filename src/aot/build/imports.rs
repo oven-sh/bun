@@ -64,6 +64,7 @@ pub(crate) enum ImportSource {
     External { specifier: Atom, name: Option<Atom> },
     /// The default export of a file that is imported as a string, which `file` imports as `specifier`.
     Text { file: FileId, specifier: Atom },
+    Required(FileId),
     Unknown,
 }
 
@@ -116,13 +117,19 @@ impl<'p> Bundle<'p> {
     /// `None`: there is no bundler.
     pub(crate) fn new(files: &Files<'_>, roots: &[FileId], constants: &'p crate::Constants) -> Option<Bundle<'p>> {
         let mut resolved: FxHashMap<(FileId, &'p [u8]), (&'p [u8], Option<FileId>)> = FxHashMap::default();
-        for ((from, specifier), to) in constants.resolved.as_ref()? {
-            let Some(from) = files.by_path.get(from) else { continue };
-            let printed = files.by_path.get(to);
-            let code = printed.map(|printed| written_in_the_place_of(files, printed));
-            let found = (if code == printed { to.as_slice() } else { &to[..to.len() - b".js".len()] }, code);
+        let imports = constants.resolved.as_ref()?;
+        let files_of_paths: Vec<Option<FileId>> = imports.paths().iter().map(|path| files.by_path.get(path)).collect();
+        let found_at: Vec<(&'p [u8], Option<FileId>)> = (imports.paths().iter().zip(&files_of_paths))
+            .map(|(to, &printed)| {
+                let code = printed.map(|printed| written_in_the_place_of(files, printed));
+                (if code == printed { to.as_slice() } else { &to[..to.len() - b".js".len()] }, code)
+            })
+            .collect();
+        for (from, specifier, to) in imports.by_number() {
+            let Some(from) = files_of_paths[from as usize] else { continue };
+            let found = found_at[to as usize];
             // Two paths can be one file of the program. Then it is the lesser one, in whichever order they come here.
-            let known = resolved.entry((from, specifier.as_slice())).or_insert(found);
+            let known = resolved.entry((from, specifier)).or_insert(found);
             if found.0 < known.0 {
                 *known = found;
             }
@@ -441,50 +448,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.files.flags(sym).contains(SymFlags::ALIAS) && self.is_declared_by_import(sym)
     }
 
-    fn export_imported_by(&self, alias: Sym) -> Option<(FileId, Atom)> {
-        for (file, decl) in self.files.decls(alias) {
-            let hir = self.hir(file);
-            let (specifier, name) = match decl {
-                Decl::ImportDefault(import) => (hir[import].spec, known::default),
-                Decl::ImportSpec(spec) => (hir[hir[spec].import].spec, hir[spec].imported),
-                Decl::ExportSpec(spec) if hir[hir[spec].export].spec.is_some() => (hir[hir[spec].export].spec, hir[spec].local),
-                Decl::ExportSpec(_) => match self.files.alias_target(alias) {
-                    Some(next) if next != alias && self.is_import(next) => return self.export_imported_by(next),
-                    _ => return None,
-                },
-                _ => continue,
-            };
-            return Some((self.imported_file(file, specifier)?, name));
-        }
-        None
-    }
-
-    fn export_behind(&self, module: FileId, name: Atom) -> Option<(FileId, Atom)> {
-        match self.files.exports(self.files.file_symbol(module)).into_iter().find(|export| export.0 == name) {
-            Some((_, exported)) => self.export_imported_by(exported),
-            None => {
-                let whole = self.modules_exported_whole(module).into_iter().filter_map(|specifier| self.imported_file(module, specifier));
-                whole.filter(|&next| !self.exports_an_object(next)).find(|&next| self.exports_of_file(next).iter().any(|export| export.0 == name)).map(|next| (next, name))
-            }
-        }
-    }
-
-    pub(crate) fn exports_passed_from(&self, module: FileId, name: Atom) -> Vec<(FileId, Atom)> {
-        let (mut passed, mut at) = (Vec::new(), Some((module, name)));
-        while let Some(export) = at {
-            if passed.len() == 16 || passed.contains(&export) || self.exports_an_object(export.0) {
-                break;
-            }
-            passed.push(export);
-            at = self.export_behind(export.0, export.1);
-        }
-        passed
-    }
-
-    pub(crate) fn exports_passed_by(&self, alias: Sym) -> Vec<(FileId, Atom)> {
-        self.export_imported_by(alias).map_or(Vec::new(), |(module, name)| self.exports_passed_from(module, name))
-    }
-
     /// The symbol that stands for the value `sym` refers to: the end of a chain of imports, and the export of a declaration.
     pub(crate) fn value_symbol(&mut self, sym: Sym) -> Sym {
         if !self.files.flags(sym).contains(SymFlags::ALIAS) {
@@ -568,6 +531,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// Whether the object that stands for the ES module `file` has no property `name`, whatever happens when the program runs: the module exports nothing by the name, or only a type, and all
     /// that it re-exports whole is ES modules of the program.
     pub(crate) fn is_known_not_to_export(&mut self, file: FileId, name: Atom) -> bool {
+        if self.files.export(self.files.file_symbol(file), known::export_equals).is_some() {
+            return false;
+        }
         match self.source_of_export(file, name) {
             ImportSource::Declaration(exported) => {
                 let member = self.value_symbol_of_export(exported);
@@ -636,7 +602,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         match self.imported_file(file, spec).filter(|&imported| !self.exports_an_object(imported) && self.builtin_id(imported).is_none()) {
                             Some(imported) => {
                                 let stands_for_all = self.c.atoms().intern(b"module.exports");
-                                (spec, self.exports_of_file(imported).iter().any(|export| export.0 == stands_for_all).then_some(stands_for_all))
+                                let is_exported = self.exports_of_file(imported).iter().any(|export| export.0 == stands_for_all);
+                                if is_exported && self.files.export(self.files.file_symbol(imported), known::export_equals).is_none() {
+                                    return ImportSource::Required(imported);
+                                }
+                                (spec, is_exported.then_some(stands_for_all))
                             }
                             None => (spec, Some(known::default)),
                         }
@@ -645,6 +615,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 },
                 _ => continue,
             };
+            if specifier.is_none() {
+                return ImportSource::Unknown;
+            }
             if name == Some(known::default) && self.text_imported_as(file, specifier).is_some() {
                 return ImportSource::Text { file, specifier };
             }
@@ -713,7 +686,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         found
     }
 
-    fn member_of_only_object_behind_stars(&self, file: FileId, name: Atom) -> ImportSource {
+    pub(crate) fn member_of_only_object_behind_stars(&self, file: FileId, name: Atom) -> ImportSource {
         let (mut found, mut seen, mut left) = (None, vec![file], vec![file]);
         while let Some(module) = left.pop() {
             if self.files.export(self.files.file_symbol(module), name).is_some() {
@@ -1053,9 +1026,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn is_immutable_binding(&mut self, binding: Sym) -> bool {
-        if self.c.may_be_overridden(binding) {
-            return false;
-        }
         match self.value_declaration(binding) {
             Some((_, Decl::Fn(_))) => !self.is_assigned(binding),
             Some((_, Decl::Class(_) | Decl::Enum(_) | Decl::EnumMember(_) | Decl::Module(_) | Decl::File)) => true,
@@ -1086,7 +1056,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         path.source = Some(ImportSource::Declaration(root));
         while let Some(ImportSource::Declaration(found) | ImportSource::Entity(found)) = path.source {
             let holder = self.value_symbol_after(found, &mut path.aliases_crossed);
-            if path.resolved_count == path.names.len() || self.is_ambient(holder) || self.exports_an_object(holder.file) || self.c.may_be_overridden(holder) {
+            if path.resolved_count == path.names.len() || self.is_ambient(holder) || self.exports_an_object(holder.file) {
                 break;
             }
             let (name, flags) = (path.names[path.resolved_count], self.files.flags(holder));
@@ -1229,6 +1199,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             ImportSource::ExportedObject { importer, file, name: None } => (self.namespace_of_exported_object(fx, importer, file), None),
             ImportSource::DeferredNamespace(file) => return self.deferred_namespace_object(fx, file),
+            ImportSource::Required(file) => return self.what_require_has_yielded(fx, file),
             _ if self.report_unknown_runtime_helpers(fx.file) => return self.emit(fx, Op::Undefined),
             _ => return self.unsupported(fx, pos, "an import of a name that the module does not export"),
         };

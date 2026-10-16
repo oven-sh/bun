@@ -150,7 +150,9 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
     if (propertyName.isSymbol()) return;
     auto* name = propertyName.publicName();
     if (!name->startsWith('.')) return;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     Bun::noteThatRequireCacheIsRead(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
     BunString ext = Bun::toString(name);
     JSC::CallData callData = JSC::getCallData(value);
     if (callData.type == JSC::CallData::Type::None) {
@@ -176,20 +178,24 @@ void onAssign(Zig::GlobalObject* globalObject, JSC::PropertyName propertyName, J
 bool JSCommonJSExtensions::defineOwnProperty(JSC::JSObject* object, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, const JSC::PropertyDescriptor& descriptor, bool shouldThrow)
 {
     if (!isAllowedToMutateExtensions(globalObject)) return true;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     JSValue value = descriptor.value();
     if (value) {
         onAssign(defaultGlobalObject(globalObject), propertyName, value);
     } else {
         onAssign(defaultGlobalObject(globalObject), propertyName, JSC::jsUndefined());
     }
-    return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
 }
 
 bool JSCommonJSExtensions::put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::JSValue value, JSC::PutPropertySlot& slot)
 {
     if (!isAllowedToMutateExtensions(globalObject)) return true;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     onAssign(defaultGlobalObject(globalObject), propertyName, value);
-    return Base::put(cell, globalObject, propertyName, value, slot);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
 }
 
 bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::DeletePropertySlot& slot)
@@ -201,6 +207,7 @@ bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject
     RETURN_IF_EXCEPTION(scope, false);
     if (deleted) {
         onAssign(defaultGlobalObject(globalObject), propertyName, JSC::jsUndefined());
+        RETURN_IF_EXCEPTION(scope, false);
     }
     return deleted;
 }

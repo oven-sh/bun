@@ -1,0 +1,1 @@
+It lacks originalColumn and originalLine.

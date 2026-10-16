@@ -18,6 +18,7 @@ mod names;
 pub mod prelude;
 mod print;
 mod verify;
+mod webassembly;
 
 use build::Problem;
 use bun_sema::check::{Checker, Program as Checked};
@@ -65,65 +66,15 @@ pub fn written_path(path: &[u8]) -> &[u8] {
     path.strip_suffix(SECOND_FORM_SUFFIX).unwrap_or(path)
 }
 
-pub fn mentions_the_cache_of_modules(text: &[u8]) -> bool {
-    let has = |needle: &[u8]| bun_core::strings::contains(text, needle);
-    let names_the_module_constructor = || has(b"\"module\"") || has(b"'module'") || has(b"node:module") || has(b".constructor");
-    has(b"delete") && (has(b"require.cache") || has(b"._cache") && names_the_module_constructor() || has(b"createRequire") && has(b".cache"))
-}
-
-fn names_the_word(text: &[u8], word: &[u8]) -> bool {
-    let is_part_of_a_name = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80;
-    let mut from = 0;
-    while let Some(found) = bun_core::strings::index_of(&text[from..], word) {
-        let at = from + found;
-        if !(at > 0 && (is_part_of_a_name(text[at - 1]) || text[at - 1] == b'.')) && !text.get(at + word.len()).is_some_and(|&c| is_part_of_a_name(c)) {
-            return true;
-        }
-        from = at + 1;
-    }
-    false
-}
-
-fn names_eval(text: &[u8]) -> bool {
-    names_the_word(text, b"eval")
-}
-
-pub fn has_a_throw_at_the_top(text: &[u8], statements: &[(u32, bool)]) -> bool {
-    let is_part_of_a_name = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80;
-    let mut starts: Vec<usize> = statements.iter().map(|statement| statement.0 as usize).filter(|&start| start < text.len()).collect();
-    starts.sort_unstable();
-    starts.dedup();
-    starts.iter().enumerate().any(|(index, &start)| {
-        let statement = &text[start..starts.get(index + 1).copied().unwrap_or(text.len())];
-        let begins_with = |word: &[u8]| statement.starts_with(word) && !statement.get(word.len()).is_some_and(|&c| is_part_of_a_name(c));
-        let may_hold_one = statement.starts_with(b"{") || [&b"throw"[..], b"if", b"try", b"switch", b"for", b"while", b"do"].into_iter().any(begins_with);
-        may_hold_one && names_the_word(statement, b"throw")
-    })
-}
-
 const AHEAD_OF_SECOND_FORM: &[u8] = b"module.exports = function (exports, require, module, __filename, __dirname) {";
 const BEHIND_SECOND_FORM: &[u8] = b"\n}";
 pub const LENGTH_AHEAD_OF_SECOND_FORM: u32 = AHEAD_OF_SECOND_FORM.len() as u32;
-
-pub fn second_form_of_commonjs(text: &[u8]) -> Option<Vec<u8>> {
-    if names_eval(text) {
-        return None;
-    }
-    let mut wrapped = [AHEAD_OF_SECOND_FORM, text, BEHIND_SECOND_FORM].concat();
-    if text.starts_with(b"#!") {
-        wrapped[AHEAD_OF_SECOND_FORM.len()..AHEAD_OF_SECOND_FORM.len() + 2].copy_from_slice(b"//");
-    }
-    wrapped.extend_from_slice(format!("\n// 0+{} {}+{}", AHEAD_OF_SECOND_FORM.len(), text.len(), BEHIND_SECOND_FORM.len()).as_bytes());
-    wrapped.extend_from_slice(bun_sema::direct_eval::END_OF_INSERTIONS);
-    Some(wrapped)
-}
 
 pub fn written_text<'a>(path: &[u8], text: &'a [u8]) -> &'a [u8] {
     if !path.ends_with(SECOND_FORM_SUFFIX) {
         return text;
     }
-    let wrapped = bun_sema::direct_eval::text_without_note_of_insertions(text);
-    wrapped.strip_prefix(AHEAD_OF_SECOND_FORM).and_then(|rest| rest.strip_suffix(BEHIND_SECOND_FORM)).unwrap_or(text)
+    text.strip_prefix(AHEAD_OF_SECOND_FORM).and_then(|rest| rest.strip_suffix(BEHIND_SECOND_FORM)).unwrap_or(text)
 }
 
 /// What the bundler has decided: what it replaces by constants, and which code each import stands for.
@@ -140,7 +91,7 @@ pub struct Constants {
     /// runs. The checker resolves an import for its types, often to another file. An import that is not here is of a module that is
     /// not compiled with the program. The paths are in the checker's format.
     /// `None`: there is no bundler, and an import stands for the file the checker resolves it to.
-    pub resolved: Option<rustc_hash::FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>>,
+    pub resolved: Option<ResolvedImports>,
     /// The imports the bundler has left out, by the importing file and the specifier: nothing is evaluated for them.
     pub dropped_imports: rustc_hash::FxHashSet<(Vec<u8>, Vec<u8>)>,
     pub without_side_effects: rustc_hash::FxHashSet<Vec<u8>>,
@@ -171,14 +122,98 @@ pub struct Constants {
 
 pub type FunctionTexts = rustc_hash::FxHashMap<Vec<u8>, (Vec<u8>, Vec<(u32, u32, u32)>)>;
 
+#[derive(Clone, Copy)]
+struct ResolvedImport {
+    from: u32,
+    to: u32,
+    specifier: (u32, u32),
+    earlier_of_importer: u32,
+}
+
+#[derive(Default, Clone)]
+pub struct ResolvedImports {
+    paths: Vec<Vec<u8>>,
+    numbers: rustc_hash::FxHashMap<Vec<u8>, u32>,
+    latest_of_importer: Vec<u32>,
+    specifiers: Vec<u8>,
+    imports: Vec<ResolvedImport>,
+}
+
+impl ResolvedImports {
+    const NONE: u32 = u32::MAX;
+
+    pub fn number_of(&mut self, path: &[u8]) -> u32 {
+        if let Some(&number) = self.numbers.get(path) {
+            return number;
+        }
+        let number = self.paths.len() as u32;
+        self.paths.push(path.to_vec());
+        self.latest_of_importer.push(Self::NONE);
+        self.numbers.insert(path.to_vec(), number);
+        number
+    }
+
+    fn specifier_of(&self, import: &ResolvedImport) -> &[u8] {
+        let (start, length) = import.specifier;
+        &self.specifiers[start as usize..(start + length) as usize]
+    }
+
+    pub fn insert(&mut self, from: u32, specifier: &[u8], to: u32) {
+        let mut place = self.latest_of_importer[from as usize];
+        while place != Self::NONE {
+            let import = self.imports[place as usize];
+            if self.specifier_of(&import) == specifier {
+                self.imports[place as usize].to = to;
+                return;
+            }
+            place = import.earlier_of_importer;
+        }
+        let start = self.specifiers.len() as u32;
+        self.specifiers.extend_from_slice(specifier);
+        let earlier_of_importer = std::mem::replace(&mut self.latest_of_importer[from as usize], self.imports.len() as u32);
+        self.imports.push(ResolvedImport { from, to, specifier: (start, specifier.len() as u32), earlier_of_importer });
+    }
+
+    pub fn path(&self, number: u32) -> &[u8] {
+        &self.paths[number as usize]
+    }
+
+    pub fn paths(&self) -> &[Vec<u8>] {
+        &self.paths
+    }
+
+    pub fn by_number(&self) -> impl Iterator<Item = (u32, &[u8], u32)> + '_ {
+        self.imports.iter().map(|import| (import.from, self.specifier_of(import), import.to))
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8], &[u8])> + '_ {
+        self.by_number().map(|(from, specifier, to)| (self.path(from), specifier, self.path(to)))
+    }
+
+    pub fn targets(&self) -> impl Iterator<Item = &[u8]> + '_ {
+        let mut is_target = vec![false; self.paths.len()];
+        for import in &self.imports {
+            is_target[import.to as usize] = true;
+        }
+        self.paths.iter().zip(is_target).filter(|it| it.1).map(|it| it.0.as_slice())
+    }
+
+    pub fn retarget(&mut self, to_instead: &[Option<u32>]) {
+        for import in &mut self.imports {
+            if let Some(instead) = to_instead.get(import.to as usize).copied().flatten() {
+                import.to = instead;
+            }
+        }
+    }
+}
+
 impl Constants {
     pub fn build_constants(&self) -> std::sync::Arc<bun_sema::fold::BuildConstants> {
         std::sync::Arc::new(bun_sema::fold::BuildConstants {
             defines: bun_sema::fold::Defines::new(self.defines.iter().map(|(name, value)| (&name[..], &value[..]))),
             features: self.features.iter().cloned().collect(),
             locks_builtins: true,
-            exports_may_be_overridden: self.has_test_globals,
-            bundled_files: self.resolved.as_ref().map(|resolved| resolved.values().cloned().collect()),
+            bundled_files: self.resolved.as_ref().map(|resolved| resolved.targets().map(<[u8]>::to_vec).collect()),
         })
     }
 
@@ -227,7 +262,7 @@ impl<'a> Translation<'a> {
         let mut without_whole_trees = program.files_without_whole_trees();
         without_whole_trees.retain(|&file| program.files.hir(file).kind != FileKind::Declaration);
         if let Some(resolved) = self.constants.resolved.as_ref().filter(|_| !without_whole_trees.is_empty()) {
-            let of_the_bundle: rustc_hash::FxHashSet<FileId> = resolved.values().filter_map(|path| program.files.by_path.get(path)).chain(entry_points.iter().flatten().copied()).collect();
+            let of_the_bundle: rustc_hash::FxHashSet<FileId> = resolved.targets().filter_map(|path| program.files.by_path.get(path)).chain(entry_points.iter().flatten().copied()).collect();
             without_whole_trees.retain(|file| of_the_bundle.contains(file));
         }
         let translating = without_whole_trees.is_empty().then(|| (build::Shared::new(program, entry_points, self.constants, in_parallel), Fragments::new(program.files.modules.len())));
@@ -349,6 +384,7 @@ impl<'a> Translation<'a> {
             }
         };
         linked.program.logs_type_errors = self.constants.logs_type_errors;
+        webassembly::add_files_named_in(&mut linked.program);
         let said = self.constants.shortens_names.then(|| names::shorten(&mut linked.program, in_parallel));
         for (elsewhere, _) in linked.errors.iter_mut().zip(errors).filter(|(_, place)| program.files.hir(place.0).kind == FileKind::Declaration) {
             *elsewhere = None;

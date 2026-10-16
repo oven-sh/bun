@@ -188,6 +188,7 @@ fn with_file<R>(
         before_es2017: false,
         names_make_commonjs: false,
         one_name_is_one_binding: false,
+        is_commonjs_by_decree: None,
     };
     let mut recycled = Recycled::of_this_thread();
     let bound = bind_for_lint_in(&hir, bind_options, &atoms, &mut recycled);

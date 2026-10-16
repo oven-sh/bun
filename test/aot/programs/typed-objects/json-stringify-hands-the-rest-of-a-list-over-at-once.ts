@@ -1,6 +1,7 @@
 declare const aotOperationCount: (name: string) => number;
 interface Item { id: number; title?: string; price?: number }
 interface Page { total: number; rows: Item[] }
+interface Pair { id: number; name: string }
 function whole(i: number): Item {
     return { id: i, title: "item " + i, price: i + 0.25 };
 }
@@ -41,6 +42,13 @@ wide[2].title = "中文";
 const withNull: (Item | null)[] = [whole(0), null, builtUp(2), null];
 const extra = list(3, whole);
 (extra[1] as any).more = true;
+const pairs: Pair[] = [{ id: 0, name: "zero" }, { id: 1, name: "one" }, { id: 2, name: "two" }, { id: 3, name: "three" }];
+(pairs[1] as any).more = true;
+const manyPairs: Pair[] = [];
+for (let i = 0; i < 400; i++) manyPairs.push({ id: i, name: "pair " + i });
+(manyPairs[200] as any).more = true;
+const widePairs: Pair[] = [{ id: 0, name: "zero" }, { id: 1, name: "one" }, { id: 2, name: "\u4e2d\u6587" }];
+(widePairs[1] as any).more = true;
 const page: Page = { total: 3, rows: allBuiltUp };
 const pages: Page[] = [{ total: 3, rows: allBuiltUp }, { total: 3, rows: allWhole }, { total: 3, rows: lastBuiltUp }];
 const lists: Item[][] = [allWhole, allBuiltUp, lastBuiltUp];
@@ -56,6 +64,9 @@ measure("two hundred built up behind two hundred", () => JSON.stringify(longBehi
 measure("a 16-bit string in the rest", () => JSON.stringify(wide));
 measure("nulls among them", () => JSON.stringify(withNull));
 measure("one with an extra property", () => JSON.stringify(extra));
+measure("no optional members, one with an extra property", () => JSON.stringify(pairs));
+measure("the same among four hundred", () => JSON.stringify(manyPairs));
+measure("the same with a 16-bit string behind it", () => JSON.stringify(widePairs));
 measure("in a record", () => JSON.stringify(page));
 measure("in records in a list", () => JSON.stringify(pages));
 measure("lists in a list", () => JSON.stringify(lists));

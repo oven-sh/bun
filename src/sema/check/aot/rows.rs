@@ -16,6 +16,14 @@ pub(super) const KNOWS_NESTING: u64 = 1 << 8;
 pub(super) const IS_NESTED_TOO_DEEPLY: u64 = 1 << 9;
 pub(super) const KNOWS_WHETHER_BEYOND_THE_LAYOUTS: u64 = 1 << 10;
 pub(super) const IS_BEYOND_THE_LAYOUTS: u64 = 1 << 11;
+pub(super) const KNOWS_WHETHER_IT_ACCEPTS_PRIMITIVES: u64 = 1 << 12;
+pub(super) const ACCEPTS_PRIMITIVES: u64 = 1 << 13;
+pub(super) const KNOWS_WHETHER_ARRAY_SUBTYPE: u64 = 1 << 14;
+pub(super) const IS_ARRAY_SUBTYPE: u64 = 1 << 15;
+pub(super) const KNOWS_WHETHER_REDEFINED: u64 = 1 << 16;
+pub(super) const IS_REDEFINED_SOMEWHERE: u64 = 1 << 17;
+pub(super) const KNOWS_PRIMITIVES: u64 = 1 << 18;
+pub(super) const FIRST_PRIMITIVE: u32 = 19;
 
 impl Checker<'_, '_> {
     #[inline]
@@ -58,5 +66,33 @@ impl Checker<'_, '_> {
     pub(super) fn keep_in_row(&self, ty: TypeId, knows: u64, holds: u64, found: bool) -> bool {
         self.types().row(ty).fetch_or(if found { knows | holds } else { knows }, Ordering::Relaxed);
         found
+    }
+
+    #[inline]
+    pub(super) fn shares_rows(&self) -> bool {
+        self.p.aot.storage.given.is_made_for_good() && !self.is_warming_up()
+    }
+
+    #[inline]
+    pub(super) fn shared_row(&self, ty: TypeId) -> u64 {
+        if self.shares_rows() { self.types().row(ty).load(Ordering::Relaxed) } else { 0 }
+    }
+
+    #[inline]
+    pub(super) fn shared_answer(&self, ty: TypeId, knows: u64, holds: u64) -> Option<bool> {
+        let row = self.shared_row(ty);
+        (row & knows != 0).then_some(row & holds != 0)
+    }
+
+    pub(super) fn share_bits(&self, ty: TypeId, bits: u64) -> bool {
+        let is_shared = self.shares_rows() && !self.has_answers_that_depend_on_order();
+        if is_shared {
+            self.types().row(ty).fetch_or(bits, Ordering::Relaxed);
+        }
+        is_shared
+    }
+
+    pub(super) fn share_answer(&self, ty: TypeId, knows: u64, holds: u64, found: bool) -> bool {
+        self.share_bits(ty, if found { knows | holds } else { knows })
     }
 }

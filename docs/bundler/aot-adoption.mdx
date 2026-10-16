@@ -45,7 +45,7 @@ bun app.ts
 31
 ```
 
-`bun run --aot` compiles the program the way `bun build --compile --aot` does, and runs it. It is the shortest way to see what changes:
+`bun run --aot` runs the program from its sources under the rules of `bun build --compile --aot`. It is the shortest way to see what changes:
 
 ```bash terminal icon="terminal"
 bun run --aot app.ts
@@ -289,7 +289,7 @@ TypeError: expected number | undefined, got string "3" (bun --aot: https://bun.c
 
 Unlike a line of the log, the message of the `TypeError` contains the value. If you send error messages to a service, it receives that data.
 
-The default build writes no log. Set `BUN_AOT_TYPE_ERROR_LOG` to `stderr` or to a file, and it writes a line for each `TypeError` that `--aot` throws, also for one that your program catches. These lines have the action `threw`. Most have the kind `type-mismatch` and their own id. The report from step 2 prints that id on the line for the same location, as `logged as 19df4e0e09b7`. A wrong argument for a function that is called as a value or through `any` has the kind `enter-function`: the line names the function, not the call, and has the id of the function's line in the report. The call comes first after `from`.
+The default build writes no log. Set `BUN_AOT_TYPE_ERROR_LOG` to `stderr` or to a file, and it writes a line for each `TypeError` that `--aot` throws, also for one that your program catches. These lines have the action `threw`. Most have the kind `type-mismatch` and their own id. The report from step 2 prints that id on the line for the same location, as `logged as 19df4e0e09b7`. A wrong argument for a function that is called as a value or through `any` has the kind `enter-function`: the line names the function, not the call, and has the id of the function's line in the report. The call comes first after `from`. `bun run --aot` and `bun test --aot` write these lines too when the variable is set, with the kind and the id that `--aot-audit` prints for the same location.
 
 ## Common fixes
 
@@ -334,6 +334,57 @@ function sum(n: number, total = 0): number {
 function shout(text: string) { // [!code --]
 function shout(text: string | Buffer) { // [!code ++]
 ```
+
+## Packages that change built-in objects
+
+Built-in objects are immutable in a compiled program. That is what lets the compiler turn `array.push(x)`, or a read of a property that an object does not have, into a few instructions, without first checking whether somebody has replaced `push` or added to `Object.prototype`. A few packages change built-ins, mostly to support old browsers or to offer a shorter syntax in tests. The `TypeError` names the object and the property, and its stack leads to the line of the package that tried:
+
+```txt
+TypeError: Cannot change 'call$0' of Function.prototype: built-ins are locked in a program compiled with --aot
+      at dartProgram (node_modules/sass/sass.dart.js:125905:12)
+```
+
+| Package                             | What it does                                                                              | What you see                                                            | What works                                                                                                                                                                                                 |
+| ----------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chai` 6, `vitest` 4 through it     | `chai.should()` defines `Object.prototype.should`                                         | `Cannot change 'should' of Object.prototype`, when `should()` is called | `expect` and `assert` of `chai`, `expect` of `vitest`                                                                                                                                                      |
+| `sinon`                             | `useFakeTimers()` replaces `globalThis.Date`                                              | `Cannot change 'Date' of globalThis`, when `useFakeTimers()` is called  | Spies and stubs. In `sinon` 6, also `useFakeTimers({ toFake: ["setTimeout", "setInterval"] })`. In `sinon` 22, every form of `useFakeTimers()` throws                                                      |
+| `@colors/colors` 1                  | Its default entry point adds getters such as `"text".red` to `String.prototype`           | `Cannot change 'strip' of String.prototype`, on import                  | `import colors from "@colors/colors/safe"`, then `colors.red("text")`                                                                                                                                      |
+| `sass` 1                            | The Dart runtime inside it adds `call$0`, `call$1` and so on to `Function.prototype`      | `Cannot change 'call$0' of Function.prototype`, on import               | Compile your stylesheets before you build the executable. Or use `compileStringAsync()` of `sass-embedded`, with `node_modules` next to the executable: it starts a compiler that is a program of its own. Its `compileString()` hangs in any executable, with or without `--aot` |
+| `core-js` 3                         | Every entry point, even `core-js/actual/array/at`, replaces `Function.prototype.toString` | `Cannot change 'toString' of Function.prototype`, on import             | Remove the import: Bun implements what it fills in. With Babel, set `useBuiltIns: false`. Or import one feature at a time from `core-js-pure`, such as `core-js-pure/actual/array/at`. `core-js-pure/stable` throws `Cannot change 'isError' of Error` |
+| `envinfo` 7, `@webpack-cli/info`    | They contain `core-js` 2, which deletes `Function.prototype.toString`                     | `Cannot delete 'toString' of Function.prototype`, on import             | Nothing that we know of                                                                                                                                                                                    |
+
+[`bun --aot-audit`](#1-audit-while-you-develop) reports these writes while your program still runs as usual, and the lint rule [`bun/aot-locked-builtin-write`](/lint/rules/bun/aot-locked-builtin-write) finds them in your own code. `Error.prototype` and the prototypes that inherit from it are not locked, and neither is anything that Bun or your program defines, such as `process`, `console` or `setTimeout`.
+
+## Frameworks that load your pages by path
+
+`bun build` compiles what the entry point reaches through string literals. Next.js and Angular load the pages and routes of your application by paths that they put together while the server runs, so this command leaves them out:
+
+```bash terminal icon="terminal"
+cd .next/standalone
+bun build --compile --aot --compile-in-place ./server.js --outfile server
+```
+
+The server starts and every response is correct, because it finds those files on disk and Bun interprets them. Nothing tells you, and a request takes about a quarter more instructions. Name the files as additional entry points:
+
+```bash terminal icon="terminal"
+# Next.js, in .next/standalone
+bun build --compile --aot --compile-in-place ./server.js $(find .next/server -name '*.js') --asset .next --asset public --outfile server
+```
+
+For Angular the files are `$(find dist/site/server -name '*.mjs' -not -name server.mjs)`. Nuxt, SvelteKit, Astro and React Router need no additional entry points.
+
+To check, start the server once with `BUN_JSC_crashIfInterpreterIsUsed=1` in its environment and request every route. It stops at the first function that is interpreted and names the file.
+
+## Syntax the compiler refuses
+
+The build stops and names the file and the line.
+
+| You wrote                       | The build says                                                  | Write instead                                                                        |
+| ------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `with (options) { run(name); }` | ``--aot does not support a `with` statement``                   | `run(options.name);`                                                                 |
+| `eval(...parts)`                | ``--aot does not support a direct `eval` with spread arguments`` | `eval(parts[0])`, or `(0, eval)(...parts)` if the code does not read local variables |
+
+`with` is only valid in files that are not modules and not in strict mode. Code that a template engine generates when the program runs and passes to `new Function` may use it.
 
 ## Reading a line
 

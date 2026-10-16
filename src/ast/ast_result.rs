@@ -101,6 +101,7 @@ pub struct Ast<'a> {
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
+    pub is_es_module_by_its_own_syntax: bool,
     pub import_meta_ref: Ref,
 }
 
@@ -146,6 +147,7 @@ impl<'a> Ast<'a> {
             ts_enums: Default::default(),
             has_commonjs_export_names: false,
             has_import_meta: false,
+            is_es_module_by_its_own_syntax: false,
             import_meta_ref: Ref::NONE,
         }
     }

@@ -80,7 +80,6 @@ static OWN_MESSAGES: &[(u32, Category, &str)] = &[
     (100013, Category::Error, "This always throws a TypeError under --aot: {2} expects '{1}' and always gets {0}."),
     (100014, Category::Error, "This always fails under --aot: {0}."),
     (100015, Category::Error, "This always throws a TypeError under --aot: {0}."),
-    (100016, Category::Error, "This always throws a TypeError under --aot: {0}."),
     (100017, Category::Error, "'as {0}' is applied to a value that is always {1}: under --aot the cast converts it or throws, whereas plain JavaScript leaves it unchanged."),
     (100018, Category::Message, "The value comes from {0}."),
     (100019, Category::Warning, "{2} expects '{1}' and always gets {0}: with --aot-type-errors=log the executable logs a record here and continues as plain JavaScript would; any other --aot build fails with TS100013."),

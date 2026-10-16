@@ -1779,7 +1779,7 @@ namespace FU {
   export type OnlyGiven<T> = 0 extends 1 & T ? T : never;
 }
 namespace FU {
-  export type int32 = number;
+  export type int32 = import("bun").int32;
   export type DocIndex = int32;
   export type ItemIndex = int32;
   export type KeyIndex = int32;

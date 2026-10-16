@@ -1,0 +1,14 @@
+{
+  "name": "site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "astro build"
+  },
+  "dependencies": {
+    "@astrojs/node": "11.1.8",
+    "@types/node": "26.6.5",
+    "astro": "7.4.0",
+    "typescript": "7.0.2"
+  }
+}

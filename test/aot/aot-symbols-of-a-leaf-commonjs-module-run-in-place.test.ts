@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -47,10 +48,10 @@ test(
     using dir = tempDir("aot-symbols-of-a-leaf-module-in-place", files);
     const mapPath = join(String(dir), "main.map");
     const plain = await run(String(dir), ["run", "./main.cjs"]);
-    const compiled = await run(String(dir), ["run", "--aot", "./main.cjs"], { BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_aotMapFilePath: mapPath });
+    const compiled = await run(String(dir), ["run", "--debug-aot", "./main.cjs"], { BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_JSC_aotMapFilePath: mapPath });
     expect(compiled.stderr).not.toContain("crashIfInterpreterIsUsed");
     expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-    const asked = await run(String(dir), ["run", "--aot", "./asks-the-host.cjs"], { BUN_JSC_crashIfInterpreterIsUsed: "1" });
+    const asked = await run(String(dir), ["run", "--debug-aot", "./asks-the-host.cjs"], { BUN_JSC_crashIfInterpreterIsUsed: "1" });
     expect({ stdout: asked.stdout, exitCode: asked.exitCode }).toEqual({ stdout: (await run(String(dir), ["run", "./asks-the-host.cjs"])).stdout, exitCode: 0 });
     const map = readFileSync(mapPath, "utf8");
     for (const name of ["Thing", "bump"]) {

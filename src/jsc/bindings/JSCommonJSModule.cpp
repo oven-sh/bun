@@ -353,6 +353,39 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
     return true;
 }
 
+void JSCommonJSModule::addChild(JSC::VM& vm, JSCommonJSModule* child)
+{
+    if (m_lastRequiredChild == child)
+        return;
+
+    constexpr size_t maxChildrenToScan = 8;
+    bool isListed;
+    if (m_children.size() <= maxChildrenToScan)
+        isListed = m_children.containsIf([&](const WriteBarrier<Unknown>& each) { return each.get() == JSValue(child); });
+    else {
+        if (m_childrenSet.isEmpty()) {
+            for (auto& each : m_children)
+                m_childrenSet.add(each.get().asCell());
+        }
+        isListed = !m_childrenSet.add(child).isNewEntry;
+    }
+    m_lastRequiredChild = child;
+    if (isListed)
+        return;
+
+    WTF::Locker locker { cellLock() };
+    m_children.append(WriteBarrier<Unknown>());
+    m_children.last().set(vm, this, child);
+}
+
+void JSCommonJSModule::clearChildren()
+{
+    WTF::Locker locker { cellLock() };
+    m_children.clear();
+    m_childrenSet.clear();
+    m_lastRequiredChild = nullptr;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -374,9 +407,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
             returnValue = referrer->m_childrenValue.get();
         } else {
-            WTF::Locker locker { referrer->cellLock() };
-            referrer->m_children.append(WriteBarrier<Unknown>());
-            referrer->m_children.last().set(vm, referrer, moduleObject);
+            referrer->addChild(vm, moduleObject);
         }
     }
 
@@ -668,10 +699,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterChildren,
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
     if (!thisObject)
         return false;
-    {
-        WTF::Locker locker { thisObject->cellLock() };
-        thisObject->m_children.clear();
-    }
+    thisObject->clearChildren();
     thisObject->m_childrenValue.set(globalObject->vm(), thisObject, JSValue::decode(value));
     return true;
 }
@@ -716,10 +744,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         RETURN_IF_EXCEPTION(throwScope, {});
         mod->m_childrenValue.set(globalObject->vm(), mod, array);
 
-        {
-            WTF::Locker locker { mod->cellLock() };
-            mod->m_children.clear();
-        }
+        mod->clearChildren();
 
         return JSValue::encode(array);
     }
@@ -1808,7 +1833,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL, graph);
 }
 
-JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph)
+JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* graph, JSCommonJSModule* askingModule)
 {
     ASSERT(!pathString.startsWith("file://"_s));
 
@@ -1825,10 +1850,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
         dirname = jsEmptyString(vm);
     }
 
-    auto moduleObject = Bun::JSCommonJSModule::create(
-        vm,
-        globalObject->CommonJSModuleObjectStructure(),
-        filename, filename, dirname, SourceCode(), graph);
+    auto moduleObject = askingModule ? askingModule : Bun::JSCommonJSModule::create(vm, globalObject->CommonJSModuleObjectStructure(), filename, filename, dirname, SourceCode(), graph);
 
     SourceCode requireSourceCode = makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted);
 

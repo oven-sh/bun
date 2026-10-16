@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { symlinkSync } from "node:fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -7,7 +8,7 @@ async function run(files: Record<string, string>, links: Record<string, string> 
   using dir = tempDir("aot-outside-the-bundle", files);
   for (const [link, target] of Object.entries(links)) symlinkSync(target, join(String(dir), link), "dir");
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--aot", "src/main.ts"],
+    cmd: [bunExe(), "--debug-aot", "src/main.ts"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -287,4 +288,19 @@ test("a file outside the bundle that the build script writes while it bundles co
   await using proc = Bun.spawn({ cmd: [join(String(dir), "out")], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "string undefined\n", exitCode: 0 });
+});
+
+test("a folder of packages that is itself a link is looked into", async () => {
+  expectSeen(
+    await run(
+      {
+        "tsconfig.json": tsconfig(),
+        ...typedPackage("store/linked", "linked", "fromLinkedFolder"),
+        "tests/nested/deeper/setup.ts": `import { value } from "linked";\nexport const one = value;\n`,
+        "src/main.ts": `console.log(typeof fromLinkedFolder);\n`,
+      },
+      { "tests/node_modules": "../store" },
+    ),
+    1,
+  );
 });

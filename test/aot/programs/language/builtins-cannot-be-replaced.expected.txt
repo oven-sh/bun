@@ -13,7 +13,6 @@ DataView.prototype: 23: store: refused (TypeError) | defineProperty: refused (Ty
 Date: 3: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
 Date.prototype: 48: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
 Error: 2: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
-Error.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
 FinalizationRegistry.prototype: 2: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
 Float16Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
 Float32Array.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)

@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { unsupported } from "../aot/run-programs";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, tempDir } from "harness";
 import { join } from "path";
@@ -58,7 +59,7 @@ function lines(text: string, word: "type-error" | "type-check"): Line[] {
 }
 const brief = (found: Line[]) => found.map(line => `${line.kind} ${line.place} ${line.action}`);
 
-const compiles = (isMacOS && isArm64) || (isLinux && !isArm64);
+const compiles = !unsupported;
 
 describe.concurrent("bun --aot-audit", () => {
   test("the program runs as usual, and every difference is reported", async () => {
@@ -71,7 +72,7 @@ describe.concurrent("bun --aot-audit", () => {
     expect(audited.exitCode).toBe(0);
   });
 
-  test("a false cast among the program's own types is named where the executable throws; what the executable accepts has no line", async () => {
+  test.skipIf(!compiles)("a false cast among the program's own types is named where the executable throws; what the executable accepts has no line", async () => {
     const types = `interface Circle { kind: "circle"; radius: number }
 interface Square { kind: "square"; side: number }
 interface Label { kind: "label"; text: string }
@@ -205,7 +206,7 @@ test("half", () => {
     const plain = await bun(dir, "test", "--aot-audit", "a.test.ts");
     expect(lines(plain.stderr, "type-error").map(line => `${line.place.replace(/:\d+$/, "")} ${line.action}`)).toEqual(["a.test.ts:4 would-throw"]);
     const mocked = await bun(dir, "test", "--aot-audit", "mocked.test.ts");
-    expect(lines(mocked.stderr, "type-error")).toEqual([]);
+    expect(lines(mocked.stderr, "type-error").map(line => `${line.place.replace(/:\d+$/, "")} ${line.action}`)).toEqual(["mocked.test.ts:5 would-throw"]);
     expect(mocked.stderr).toContain("1 pass");
   });
 

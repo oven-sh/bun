@@ -13,6 +13,8 @@ import { built, slot, spawned, unsupported } from "./run-programs";
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const programs = join(import.meta.dir, "napi-addon");
 
+if (!isWindows && !systemCC) console.error("SKIPPED: test/aot/napi-addon.test.ts: there is no C compiler: not in $CC, no cc, gcc or clang");
+
 describe.skipIf(isWindows || !systemCC || !!unsupported)("compile/aot/napi-addon", () => {
   const folder = String(tempDir("aot-napi-addon", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));

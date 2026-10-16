@@ -32,16 +32,16 @@ function highWaterMarkFrom(options, isDuplex: boolean, duplexKey: Key): unknown 
   return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
 }
 
-function getDefaultHighWaterMark(objectMode: boolean = false): number {
+function getDefaultHighWaterMark(objectMode: unknown = false): number {
   return objectMode ? defaultHighWaterMarkObjectMode : defaultHighWaterMarkBytes;
 }
 
-function setDefaultHighWaterMark(objectMode: boolean, value: number): void {
+function setDefaultHighWaterMark(objectMode: unknown, value: unknown): void {
   validateInteger(value, "value", 0);
   if (objectMode) {
-    defaultHighWaterMarkObjectMode = value;
+    defaultHighWaterMarkObjectMode = value as number;
   } else {
-    defaultHighWaterMarkBytes = value;
+    defaultHighWaterMarkBytes = value as number;
   }
 }
 
@@ -96,6 +96,9 @@ class Internals {
   onWritableConstructed: ((stream: any, state: WritableState) => void) | undefined = undefined;
   writeToWritable: ((stream: any, state: WritableState, chunk: any, encoding: any, cb: any) => any) | undefined = undefined;
   methodThatWrites: Function | undefined = undefined;
+  constructReadable: ((stream: any, highWaterMark: unknown) => void) | undefined = undefined;
+  resumeInItsTick: ((stream: any, state: ReadableState) => void) | undefined = undefined;
+  endInItsTick: ((state: ReadableState, stream: any) => void) | undefined = undefined;
 }
 
 const internals = new Internals();
@@ -871,6 +874,23 @@ function createReadableState(options, stream, isDuplex: boolean): ReadableState 
   return new ReadableState(options, stream, isDuplex);
 }
 
+function createReadableStateOfBytes(highWaterMark: unknown): ReadableState {
+  const state = new ReadableState(undefined, undefined, false);
+  if (highWaterMark != null) {
+    if (typeof highWaterMark !== "number" || !NumberIsInteger(highWaterMark) || highWaterMark < 0) {
+      throw $ERR_INVALID_ARG_VALUE("options.highWaterMark", highWaterMark);
+    }
+    state.highWaterMark = highWaterMark;
+  }
+  return state;
+}
+
+function advanceFlags(state: ReadableState, from: number, to: number): boolean {
+  if (state.flags !== from || state.length !== 0) return false;
+  state.flags = to | 0;
+  return true;
+}
+
 function createWritableState(options, stream, isDuplex: boolean): WritableState {
   return new WritableState(options, stream, isDuplex);
 }
@@ -899,12 +919,14 @@ export default {
   ReadableState,
   WritableState,
   createReadableState,
+  createReadableStateOfBytes,
   createWritableState,
   isReadableState,
   isWritableState,
   flagsOf,
   addFlags,
   removeFlags,
+  advanceFlags,
   internals,
   nop,
 };

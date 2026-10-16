@@ -35,6 +35,7 @@ pub struct Snapshot {
     pub statements: Vec<(Vec<u8>, u32, bool)>,
     pub without_side_effects: Vec<Vec<u8>>,
     pub lifted_commonjs: Vec<Vec<u8>>,
+    pub kinds_of_code: Vec<(Vec<u8>, bool)>,
 }
 
 const MAGIC: &[u8] = b"bun aot snapshot 4\n";
@@ -178,6 +179,13 @@ impl Snapshot {
         for path in lifted_commonjs {
             put(&mut out, path);
         }
+        let mut kinds_of_code: Vec<_> = self.kinds_of_code.iter().collect();
+        kinds_of_code.sort();
+        put_count(&mut out, kinds_of_code.len());
+        for (path, is_commonjs) in kinds_of_code {
+            put(&mut out, path);
+            put_count(&mut out, usize::from(*is_commonjs));
+        }
         out
     }
 
@@ -204,6 +212,7 @@ impl Snapshot {
         let statements = statements.into_iter().map(|(path, word)| (path, (word >> 1) as u32, word & 1 != 0)).collect();
         let without_side_effects = (0..reader.count().unwrap_or(0)).map(|_| reader.bytes()).collect::<Option<_>>()?;
         let lifted_commonjs = (0..reader.count().unwrap_or(0)).map(|_| reader.bytes()).collect::<Option<_>>()?;
+        let kinds_of_code = (0..reader.count().unwrap_or(0)).map(|_| Some((reader.bytes()?, reader.count()? != 0))).collect::<Option<_>>()?;
         Some(Snapshot {
             entry_functions,
             defines,
@@ -212,6 +221,7 @@ impl Snapshot {
             statements,
             without_side_effects,
             lifted_commonjs,
+            kinds_of_code,
             cwd,
             tsconfig: has_tsconfig.then_some(tsconfig),
             conditions,

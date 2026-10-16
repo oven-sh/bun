@@ -15,7 +15,7 @@ import { isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } f
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
-import { webkitTestFFIPath } from "./deps/webkit.ts";
+import { webkitJSCPath, webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
@@ -246,6 +246,7 @@ const TIMINGS_META_DATA = "timings:";
 //     └── ${bunTriplet}-profile/
 //           ├── bun-profile[.exe]
 //           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
+//           ├── jsc                      (WebKit's shell, where `bun build --compile --aot` works)
 //           ├── features.json
 //           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
 //           ├── bun-profile.map          (windows; with the above, what the
@@ -329,6 +330,12 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   if (existsSync(testFFI)) {
     chmodSync(testFFI, 0o755);
     files.push(testFFI);
+  }
+  const jsc = webkitJSCPath(cfg);
+  const compilesAheadOfTime = (cfg.darwin && cfg.arm64) || (cfg.linux && cfg.x64 && cfg.abi === "gnu");
+  if (compilesAheadOfTime && existsSync(jsc)) {
+    chmodSync(jsc, 0o755);
+    files.push(jsc);
   }
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {

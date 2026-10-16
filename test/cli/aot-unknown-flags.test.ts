@@ -101,4 +101,23 @@ describe.concurrent("an unknown flag that starts with --aot is an error", () => 
       `compile.${key} is not an option.${meant ? ` Did you mean compile.${meant}?` : ""} The options that start with aot are aot, aotExplain, aotTypeErrors\n`,
     );
   });
+
+  test.each([
+    ["aot", "true", '{ outfile: "./out" }'],
+    ["aot", "false", "true"],
+    ["aotTypeErrors", '"log"', '{ outfile: "./out", aot: true }'],
+    ["aotExplain", '"throws"', "undefined"],
+  ])("Bun.build: %s: %s beside compile: %s", async (key, value, compile) => {
+    using dir = tempDir("aot-option-beside-compile", {
+      ...files,
+      "build.ts": `try {
+  await Bun.build({ entrypoints: ["./app.ts"], compile: ${compile}, ${key}: ${value} } as any);
+  console.log("built");
+} catch (error) {
+  console.log((error as Error).message);
+}
+`,
+    });
+    expect((await bun(String(dir), "build.ts")).stdout).toBe(`${key} is an option of compile. Write compile: { ${key}: .. }\n`);
+  });
 });

@@ -423,9 +423,14 @@ Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
 The compiler sees your whole program at once, and the executable differs from one built without `--aot` in these ways:
 
 - **Types are enforced.** The compiler relies on your TypeScript types, so a value that does not match its type throws a `TypeError`, and `as` between primitive types converts. [Adopting `--aot`](/bundler/aot-adoption) shows how to find the places this affects before you ship.
-- **An array type means an ordinary array.** When the TypeScript type of a value is an array or a tuple, such as `number[]`, reading an element that is defined as a getter throws a `TypeError` instead of calling the getter. The same applies to an element that the array would inherit from a getter or a `Proxy` on its prototype chain. `a[i]`, `for...of` and destructuring are affected. Assignments still call setters, methods such as `map` and `join` and the spread syntax still call getters, and arrays that typed code never sees behave as usual.
+- **`int32` is a 32-bit integer.** `import type { int32 } from "bun"` names a whole number from -2147483648 to 2147483647. To TypeScript it is `number`. With `--aot`, a field, variable, parameter or result of that type takes four bytes, a value that is not such a number throws a `TypeError` where it enters, and a constant that is not stops the build. Only the type that `"bun"` declares has this meaning, under whatever name you import or alias it. A `type int32 = number` of your own is a `number`.
+- **Data can be validated by its TypeScript type.** `Bun.validate<T>(value)` and `Bun.parse<T>(text)` check what comes from outside against the type `T` that you have already written. See [Validate data by its type](#validate-data-by-its-type).
+- **An array type means an ordinary array.** When the TypeScript type of a value is an array or a tuple, such as `number[]`, reading an element that is defined as a getter throws a `TypeError` instead of calling the getter. The same applies to an element that the array would inherit from a getter or a `Proxy` on its prototype chain. `a[i]`, `for...of` and destructuring are affected. `for...of` and destructuring also throw for an array, or an instance of a subclass of `Array`, that has its own `[Symbol.iterator]` method, instead of calling that method. The same goes for typed arrays such as `Uint8Array`. Declare the value as `Iterable<T>` if you want the method to be called. Assignments still call setters, methods such as `map` and `join` and the spread syntax still call getters, and arrays that typed code never sees behave as usual.
 - **The JIT is off.** Bun interprets code that the build cannot see: `eval`, `new Function`, `import()` of a `data:` or `blob:` URL that your program puts together when it runs, files that your program loads from disk when it runs, and Workers created from a blob URL. Some libraries generate their hot code with `new Function` when they start, among them zod 4, ajv, fast-json-stringify and Elysia, and that code stays interpreted for as long as your program runs. If a library has an option to work without generated code, measure both ways: `z.config({ jitless: true })` makes `parse` in zod 4 about 2.5 times cheaper, while `new Elysia({ aot: false })` makes a request slower.
+- **A file that your program names in two ways can run twice.** `require(name)` and `import(name)` look for the file on disk when your program puts the name together as it runs. If the executable already contains that file, because other code names it with a string literal, the copy on disk runs as a second module with its own state, and Bun interprets it. If the file is not on disk, the call throws. Use a string literal where you can, or pass the file to `bun build` as another entry point. An executable built with `--compile-in-place` loads the compiled module both ways.
+- **Additional entry points are found by their paths.** Files that your program only loads by a name it puts together as it runs, such as a folder of plugins or a worker, are not part of the executable unless you pass them as additional entry points. An entry point can be a glob pattern: `bun build --compile --aot ./app.ts './plugins/*.ts' ./worker.ts`. The executable finds each of them by the path it had when you built it. `require(path.join(__dirname, "plugins", name))`, `require("./plugins/" + name)`, `import()` and `new Worker()` load the compiled code, `require(name)` finds a package whose main file is one of them (`'./node_modules/pg/lib/**/*.js'`), and `fs.existsSync()`, `fs.statSync()` and `fs.readdirSync()` report the files, on a machine that does not have your sources. Reading the text of such a file still fails there.
 - **Built-in objects are immutable.** Assigning to, redefining or deleting a property of a built-in object, such as `Array.prototype.push` or `Math.random`, throws a `TypeError` in both strict and sloppy mode. So does adding a property to a built-in prototype such as `Object.prototype`, changing the prototype of a built-in object, or replacing a global variable that names one, such as `Promise`. You can add new properties to a constructor or a namespace such as `Date` or `Math`, unless the new property would hide one that it inherits from another built-in object: `Date.toString = f` throws because it would hide `Function.prototype.toString`. The `Reflect` functions return `false` instead of throwing. `bun build` reports a write that always runs as error `TS100014`, and the lint rule [`bun/aot-locked-builtin-write`](/lint/rules/bun/aot-locked-builtin-write) finds the others. Objects that Bun or your program defines, such as `console` and `process`, stay mutable. So do the built-in objects of a context that your program creates with `node:vm`, and of a `ShadowRealm`: each has its own.
+- **A few things that only sloppy-mode code can do are unavailable.** They concern CommonJS files without `"use strict"`. A `with` statement stops the build. A direct `eval` whose code declares a `var` or a function in the function that calls it throws a `SyntaxError`. `let` and `const` in that code are fine, and so is `(0, eval)(code)`, which declares globals. `f.caller` and `f.arguments` are `null` while `f` runs. `arguments.callee`, `arguments[0]` as another name for the first parameter, `this` as the global object, and writes to read-only properties that do nothing all work as they do without `--aot`.
 - **`bun:ffi` callbacks are unavailable.** `dlopen` and calls into native code work. `JSCallback` needs the JIT, and throws a `TypeError` that says so.
 - **Breakpoints are unavailable.** The inspector connects, and its console, heap snapshots and CPU profiles work. Breakpoints, stepping and `debugger` statements do not. [Debugging and profiling with `--aot`](/bundler/aot-debugging) lists what each tool shows.
 - **[Macros](/bundler/macros) are unavailable**, and so are `bun --aot -e` and `bun --aot -p`.
@@ -435,28 +440,87 @@ The compiler sees your whole program at once, and the executable differs from on
 - **The executable has no bytecode.** It keeps the text of your functions for `Function.prototype.toString()`. With `--no-compile-function-source` it does not, and `toString()` returns `function name() { [native code] }`. Stack traces have the files, lines and columns of your sources either way.
 - **`--minify` shortens names and the paths of your sources in stack traces**, as it does without `--aot`. With `--sourcemap=external`, `bun build` writes a file that turns them back: see [Minified executables](/bundler/aot-debugging#minified-executables).
 - **Each thread can hold 32 GB of objects.** References between objects take 32 bits, so the objects of the main thread live in a 32 GB range of address space, and each `Worker` gets a range of its own. Objects and small arrays count toward the limit. The characters of strings, large arrays, `ArrayBuffer`s and typed arrays do not. A thread that fills its range ends the process with an out-of-memory error. `--aot-huge-heap` compiles with 64-bit references, which removes the limit. The executable then uses more memory and runs slower, so only reach for it if you hit the limit. It is a flag of `bun build`, `bun run --aot` and `bun test --aot`; `Bun.build` does not have it.
+- **A variable that is not used again keeps nothing alive.** That also holds across an `await`. A `FinalizationRegistry` that nothing refers to any more is collected, and its callback never runs, in every JavaScript engine. Without `--aot`, a local variable that a closure mentions lives as long as the other variables of its function. With `--aot` it ends with its last use, so a registry in such a variable can be collected while the function waits. Keep the registry at module level, or use it after the wait.
 - **Some error messages differ.** `null is not an object (evaluating 'o.a.c')` becomes `Cannot read properties of null (reading 'c')`, and `o.b is not a function` becomes `b is not a function, it is undefined`. A service that groups errors by message sees new groups.
 
 The build target must be the platform and the version of Bun that runs the build. `bun build` reports an error for any other `--target`.
 
+#### Validate data by its type
+
+With `--aot` the compiler knows your types, so it can write the code that checks a value against one. There is no schema to keep in step with the type.
+
+```ts server.ts icon="/icons/typescript.svg"
+import type { Int, Min, Max, MinLength, MaxLength, MinItems, Format } from "bun";
+
+interface Order {
+  customer: { id: number & Int & Min<1>; email: string & Format<"email"> };
+  items: { sku: string & MinLength<1> & MaxLength<32>; quantity: number & Int & Min<1> & Max<1000> }[] & MinItems<1>;
+  coupon?: string & MaxLength<16>;
+}
+
+Bun.serve({
+  routes: {
+    "/orders": {
+      async POST(request) {
+        const result = Bun.safeValidate<Order>(await request.json());
+        if (!result.success) return Response.json({ issues: result.issues }, { status: 400 });
+        return Response.json({ items: result.data.items.length });
+      },
+    },
+  },
+});
+```
+
+| Call                         | A value that is a `T`         | A value that is not                            |
+| ---------------------------- | ----------------------------- | ---------------------------------------------- |
+| `Bun.validate<T>(value)`     | returns a copy that is a `T`  | throws a `TypeError` with an `issues` property |
+| `Bun.safeValidate<T>(value)` | `{ success: true, data }`     | `{ success: false, issues }`                   |
+| `Bun.parse<T>(text)`         | returns a `T`                 | throws a `TypeError` with an `issues` property |
+| `Bun.schema<T>()`            | a [Standard Schema](https://standardschema.dev) for libraries that take one |          |
+
+- Each issue has a `path`, a `code`, `expected`, `received` and a `message`.
+- Properties that `T` does not declare are left out of the result. A type with an index signature, such as `{ id: number; [key: string]: unknown }`, keeps them. `T & Strict` makes them an issue.
+- The required properties of the result come first, in the order in which `T` declares them, then the optional ones, then the ones that an index signature keeps.
+- `number` means a finite number: `NaN` and `Infinity` are issues.
+- `Bun.parse<T>(text)` parses JSON. It leaves out an optional property whose value does not match its type. A required property that is missing or does not match is an issue, and text that is not JSON throws a `SyntaxError`.
+- Without `--aot` TypeScript's types are gone when the program runs, so these functions throw a `TypeError` that says so.
+- Objects, optional properties, arrays, tuples, unions, literal types, enums, `null`, `undefined`, `bigint`, `Record<string, T>`, and types that refer to themselves can be checked. A type that holds a function, a symbol, a class such as `Date`, or a type parameter cannot, and `bun build` reports an error that names the property.
+
+The types `Int`, `Min`, `Max`, `Above`, `Below`, `MultipleOf`, `MinLength`, `MaxLength`, `MinItems`, `MaxItems`, `Pattern`, `Format`, `Message`, `Default`, `Strict` and `StrictAllTheWayDown` from `"bun"` say what a plain type cannot. To TypeScript, `number & Min<1>` is a `number`.
+
 #### Try your code without building an executable
 
-`bun run --aot` and `bun test --aot` compile your program the way `--aot` does, then run the result. Use them to find out whether your code and your dependencies work with immutable built-in objects.
+`bun run --aot` and `bun test --aot` run your program from its sources, with the interpreter and the JIT, under the rules of `--aot`. Nothing is compiled ahead of time. Use them while you develop and in CI, and build the executable for production.
 
 ```bash icon="terminal" terminal
 bun run --aot ./app.ts
 bun test --aot
 ```
 
-Your program sees the paths of its source files, as it does with `bun run`. An HTML import works as it does in an executable: Bun bundles the page once, before your program starts, and there is no hot reloading. In `bun test --aot`, `spyOn` throws a `TypeError` for a property of a built-in object, such as `spyOn(Math, "random")`.
+Before the first line of your program runs, Bun type checks it together with everything it imports. A type error, or anything else that stops `bun build --compile --aot`, ends the process with exit code 1. While the program runs:
 
-`bun test --aot` compiles each test file and everything it imports before running it. Expect seconds per file. It does not support `--isolate`, `--parallel` and `--rerun-each`. Neither it nor `bun run --aot` supports `--watch` and `--hot`, because the program is built before it runs and is not built again when a file changes. Bun reports an error for each of these flags. `--coverage` is ignored, with a warning.
+- A value that does not match its declared type throws the `TypeError` that the executable throws, at the same place.
+- `as` converts between `string`, `number` and `boolean`, and `x!` throws for `null` and `undefined`.
+- Built-in objects are immutable, and objects of a declared type keep their shape.
+
+The check takes a fraction of a second for a small program and seconds for a large one. Bun keeps its result. If no file that the check read has changed since, the next start skips it and is almost as fast as `bun run`. If you have only edited your own TypeScript files, and in a way that no other file can see (inside a function, say, without changing what it takes or returns), only those files are checked before your program starts, and the check of the whole program runs beside it. A problem that only the whole-program check can find is then reported late: your program, or your tests, have already begun when Bun prints it and exits with code 1. The result is kept beside the transpiler's cache, so `BUN_RUNTIME_TRANSPILER_CACHE_PATH=0` turns this off, and deleting that folder is always safe. Kept results take at most 1 GiB together: the oldest are deleted first.
+
+With `--watch`, every restart checks again. A type error does not end the process: Bun prints it, runs nothing, and waits for the next save.
+
+In `bun test --aot`, `mock.module()`, `spyOn()`, mock functions and fake timers work as they do in `bun test`. The test runner can also spy on built-in objects, as in `spyOn(Date, "now")` or `spyOn(Array.prototype, "push")`, which your own code cannot change. What a mock returns is held to its type like any other value. A type error does not stop the whole run: the test files that import the file with the error, directly or through other files, fail without running, and the other test files run. An error in a `--preload` script stops the run.
+
+This mode finds most of what changes under `--aot`, but it does not match the executable in everything yet:
+
+- `bun build` reports some errors that have nothing to do with types, such as an assignment to a `const` or to an import. Here they show when that line runs.
+- A type error in code that only the bundler removes, such as the last arm of `table ? a : b` where `table` is a `const` that holds an object, stops `bun run --aot` but not the build.
+- When untyped code stores into an object of a declared type, the value is held to the type of the field, with two gaps. An object of the wrong class is not noticed where the field's type is a class or a union of object types. And an object that came from outside, such as the result of `JSON.parse`, is not protected from untyped code after typed code has taken it as a declared type. An executable throws in both cases.
+- A stack trace can show one frame more: the first of a chain of tail calls whose result is checked.
 
 `--aot` applies to a file. For a `package.json` script, a shell script, or an executable in `node_modules/.bin`, `bun run --aot` exits with an error: put `--aot` in the script's own command instead.
 
-A `--preload` script is compiled with your program. A build type-checks with a single `tsconfig.json`, the one your entry point uses. If the preload's nearest `tsconfig.json` is a different one, or it has none, a type error in it does not stop the build. Bun prints a warning and compiles that file without its types, which is slower but behaves the same.
+A `--preload` script is compiled with your program. A build type-checks with a single `tsconfig.json`, the one your entry point uses. The exceptions are `paths` and `baseUrl`: as when Bun runs your program, the imports of a file resolve by the `tsconfig.json` nearest to that file, so each package of a monorepo can have its own aliases. If the preload's nearest `tsconfig.json` is a different one, or it has none, a type error in it does not stop the build. Bun prints a warning and compiles that file without its types, which is slower but behaves the same.
 
-To find what your tests would hit under `--aot` without that cost, use [`bun test --aot-audit`](/bundler/aot-adoption).
+To list every place where your program would behave differently, without stopping at the first one, use [`bun --aot-audit`](/bundler/aot-adoption).
 
 #### Typed versions of packages
 

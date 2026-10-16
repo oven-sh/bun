@@ -1,7 +1,8 @@
 use crate::declared::{Declared, Part, prim};
 use crate::format::record;
 use crate::id::{BlockId, TyId, V};
-use crate::ir::{BinOp, Def, Func, LayoutKind, Op, Program, Span, Term, UnOp, Why, func_flags};
+use crate::ir::{BinOp, Def, Func, LayoutKind, Op, Operation, Program, Span, Term, UnOp, Why, func_flags};
+use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::FxHashMap;
 use std::fmt::Write;
 
@@ -113,6 +114,7 @@ impl PostDominators {
 pub(crate) const RECEIVER: i32 = i32::MIN;
 pub(crate) const STORED: i32 = i32::MIN + 1;
 pub(crate) const READ_LATER: i32 = i32::MIN + 2;
+pub(crate) const VALIDATION: i32 = i32::MIN + 3;
 
 pub(crate) fn settle(func: &Func, noted: &FxHashMap<V, Noted>) -> Vec<Span> {
     let mut made_in: Vec<u32> = vec![u32::MAX; func.values.len()];
@@ -146,7 +148,13 @@ pub(crate) fn settle(func: &Func, noted: &FxHashMap<V, Noted>) -> Vec<Span> {
             continue;
         }
         let after = after.get_or_insert_with(|| PostDominators::of(func));
-        if here as usize == span.block.idx() || after.is_always_reached_from(here as usize, span.block.idx()) {
+        let mut origin = value;
+        while let Some(&Op::Coerce { value: held, .. }) = func.op(origin) {
+            origin = held;
+        }
+        let is_made_within = func.op(origin).is_some() && (span.start..span.end).contains(&func.values[origin.idx()].pos) && made_in[origin.idx()] != u32::MAX;
+        let from = if is_made_within { made_in[origin.idx()] as usize } else { span.block.idx() };
+        if here as usize == from || after.is_always_reached_from(here as usize, from) {
             spans.push(Span { value, start: span.start, end: span.end, step: span.step });
             continue;
         }
@@ -173,6 +181,18 @@ pub(crate) fn settle(func: &Func, noted: &FxHashMap<V, Noted>) -> Vec<Span> {
     spans.sort_unstable_by_key(|span| span.value);
     spans.dedup_by_key(|span| span.value);
     spans
+}
+
+/// The parameter of a block that `value` is handed to, from the end of the block that makes it or, in a `try`, of one that follows.
+fn handed_to<'a>(func: &'a Func, value: V, mut end: &'a Option<Term>) -> Option<V> {
+    for _ in 0..16 {
+        match end {
+            Some(Term::Invoke { normal, .. }) if !normal.args.contains(&value) => end = &func.blocks[normal.block.idx()].term,
+            Some(Term::Jump(target) | Term::Invoke { normal: target, .. }) => return target.args.iter().position(|&arg| arg == value).map(|index| func.blocks[target.block.idx()].params[index]),
+            _ => return None,
+        }
+    }
+    None
 }
 
 fn at_the_join(func: &Func, noted: &FxHashMap<V, Noted>, value: V, to: TyId, mut at: usize) -> Option<Span> {
@@ -247,6 +267,14 @@ pub fn name_of_layout(program: &Program, layout: crate::id::LayoutId) -> String 
     }
     result.push_str(if layout.fields.len() > 4 { ", ... }" } else { " }" });
     result
+}
+
+pub fn let_any_object_pass_for_classes_without_a_layout(program: &mut Program) {
+    for declared in program.tys.list.iter_mut().chain(&mut program.tys.widened) {
+        let before = declared.parts.len();
+        declared.parts.retain(|part| !matches!(part, Part::Class(layout) if layout.is_none()));
+        declared.any_object |= declared.parts.len() != before;
+    }
 }
 
 pub fn describe(program: &Program, ty: TyId) -> String {
@@ -326,7 +354,7 @@ struct Held {
     from: V,
 }
 
-fn held(program: &Program, func: &Func, v: V, is_linked: bool) -> Option<Held> {
+fn held(program: &Program, func: &Func, v: V, is_linked: bool, linked: Option<&Linked>) -> Option<Held> {
     let value = &func.values[v.idx()];
     let Def::Op(op) = &value.def else { return None };
     let anything = program.tys.anything;
@@ -361,6 +389,8 @@ fn held(program: &Program, func: &Func, v: V, is_linked: bool) -> Option<Held> {
             false
         }
         Op::PropGet { obj, .. } | Op::ElemGet { obj, .. } => may_hold_what_is_not_laid_out(program, program.tys.get(func.ty(*obj)), is_linked),
+        Op::Call { .. } if linked.is_some() && value.is_in_tail_position() => false,
+        Op::CallDirect { func: called, .. } => !value.is_in_tail_position() && linked.is_some_and(|linked| linked.yields_unheld[called.idx()]),
         Op::Call { .. } | Op::CallMethod { .. } | Op::Construct { .. } | Op::Await(_) | Op::Yield(_) | Op::Operation { .. } | Op::IterGet { .. } | Op::Caught | Op::FreeGet { is_typeof: false, .. } => true,
         Op::Binary { .. } | Op::Unary { .. } => !is_vouched_by_operands(program, func, op, program.tys.get(value.ty)),
         _ => false,
@@ -391,12 +421,20 @@ pub struct Parameter {
     pub step: String,
 }
 
+pub struct Validation {
+    pub start: u32,
+    pub end: u32,
+    pub which: u8,
+    pub plan: Vec<u8>,
+}
+
 pub struct Module {
     pub path: Vec<u8>,
     pub length_of_text: Option<usize>,
     pub groups: Vec<Group>,
     pub parameters: Vec<Parameter>,
     pub without_span: Vec<String>,
+    pub validations: Vec<Validation>,
 }
 
 pub mod class {
@@ -405,6 +443,11 @@ pub mod class {
     pub const ALL: u32 = (1 << 10) - 1;
     /// No class of its own: an object with the tag that the audit gives to what typed code has made and to what has entered a record type.
     pub const TAGGED: u32 = 1 << 10;
+    /// No class of its own either: an array that is no Proxy.
+    pub const ARRAY: u32 = 1 << 14;
+    pub const HAS_SECOND_BODY: u32 = 1 << 12;
+    pub const READS_ELEMENT_OF_ARRAY: u32 = 1 << 13;
+    pub const STORES_THROUGH_UNTYPED: u32 = 1 << 15;
 }
 
 fn is_closed(program: &Program, layout: crate::id::LayoutId) -> bool {
@@ -419,35 +462,93 @@ struct Linked {
     keys: Vec<String>,
     /// By layout: an operation of the program allocates it. `Layout::is_allocated` also says so of what only a cast makes.
     is_made_by_an_operation: Vec<bool>,
+    /// By layout: the views that have it among their members.
+    seen_as: Vec<Vec<u32>>,
+    /// By layout: `Layout::mayGiveUp` in AOTTypedReader.cpp.
+    gives_up: Vec<bool>,
+    /// By function: what it returns may come straight from a call in tail position that nothing holds: of a value, or of such a function.
+    yields_unheld: Vec<bool>,
+    /// By layout and name of a field: the kinds of primitives of all the fields that may share its slot, `shareSlots()` in AOTTypedPlacement.cpp.
+    primitives_of_slot: FxHashMap<(u32, crate::id::StrId), u32>,
 }
 
 impl Linked {
     fn of(program: &Program) -> Linked {
+        let mut seen_as: Vec<Vec<u32>> = vec![Vec::new(); program.layouts.len()];
+        for (index, view) in program.layouts.iter().enumerate() {
+            for member in &view.members {
+                seen_as[member.idx()].push(index as u32);
+            }
+        }
+        let mut place_of: FxHashMap<(u32, crate::id::StrId), u32> = FxHashMap::default();
+        let (mut first_of, mut primitives): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
+        for (index, layout) in program.layouts.iter().enumerate() {
+            for field in &layout.fields {
+                place_of.insert((index as u32, field.name), first_of.len() as u32);
+                first_of.push(first_of.len() as u32);
+                primitives.push(program.tys.get(if field.declared.is_some() { field.declared } else { program.tys.anything }).clone().with_literal_string_widened().prims);
+            }
+        }
+        fn first(first_of: &mut [u32], mut place: u32) -> u32 {
+            while first_of[place as usize] != place {
+                first_of[place as usize] = first_of[first_of[place as usize] as usize];
+                place = first_of[place as usize];
+            }
+            place
+        }
+        for (index, view) in program.layouts.iter().enumerate() {
+            for field in &view.fields {
+                for member in &view.members {
+                    let Some(&theirs) = place_of.get(&(member.idx() as u32, field.name)) else { continue };
+                    let (ours, theirs) = (first(&mut first_of, place_of[&(index as u32, field.name)]), first(&mut first_of, theirs));
+                    if ours != theirs {
+                        first_of[theirs as usize] = ours;
+                        primitives[ours as usize] |= primitives[theirs as usize];
+                    }
+                }
+            }
+        }
+        let primitives_of_slot = place_of.iter().map(|(&field, &place)| (field, primitives[first(&mut first_of, place) as usize])).collect();
+        let gives_up: Vec<bool> = (program.layouts.iter().zip(&seen_as))
+            .map(|(described, views)| {
+                matches!(described.kind, LayoutKind::Record | LayoutKind::Instance)
+                    && described.is_allocated
+                    && described.admits_unchecked_objects()
+                    && !views.iter().any(|&view| !program.layouts[view as usize].admits_foreign)
+            })
+            .collect();
         let mut alike: FxHashMap<String, u32> = FxHashMap::default();
         let keys = (0..program.layouts.len())
             .map(|index| {
                 let layout = crate::id::LayoutId::new(index);
-                if !keeps_its_fields(program, layout) {
+                if !keeps_its_fields(program, layout, &gives_up) {
                     return String::new();
                 }
                 let key = key_of_shape(program, layout);
-                if program.layouts[index].kind == LayoutKind::Instance {
-                    return key;
-                }
                 let earlier = alike.entry(key.clone()).or_insert(0);
                 *earlier += 1;
                 if *earlier == 1 { key } else { format!("{key}.{earlier}") }
             })
             .collect();
         let mut is_made_by_an_operation = vec![false; program.layouts.len()];
-        for func in &program.funcs {
+        let mut yields_unheld = vec![false; program.funcs.len()];
+        let mut direct_tail_calls: Vec<(usize, usize)> = Vec::new();
+        for (index, func) in program.funcs.iter().enumerate() {
             for &v in func.blocks.iter().flat_map(|block| &block.ops) {
-                if let Some(&Op::New(layout)) = func.op(v) {
-                    is_made_by_an_operation[layout.idx()] = true;
+                match func.op(v) {
+                    Some(&(Op::New(layout) | Op::NewWith { layout, .. })) => is_made_by_an_operation[layout.idx()] = true,
+                    Some(Op::Call { .. }) if func.values[v.idx()].is_in_tail_position() && func.ty(v).is_some() && func.ty(v) != program.tys.anything && !program.tys.get(func.ty(v)).is_never() => yields_unheld[index] = true,
+                    Some(&Op::CallDirect { func: called, .. }) if func.values[v.idx()].is_in_tail_position() => direct_tail_calls.push((index, called.idx())),
+                    _ => {}
                 }
             }
         }
-        Linked { keys, is_made_by_an_operation }
+        while direct_tail_calls.iter().fold(false, |grew, &(caller, called)| {
+            let grows = yields_unheld[called] && !yields_unheld[caller];
+            yields_unheld[caller] |= grows;
+            grew || grows
+        }) {}
+        Linked { keys, is_made_by_an_operation, seen_as, gives_up, yields_unheld, primitives_of_slot }
     }
 }
 
@@ -483,7 +584,8 @@ fn made_as(program: &Program, view: crate::id::LayoutId) -> Vec<crate::id::Layou
 }
 
 /// What the helper asks for by the `view` of a part that is a closed record: once a view, not at every mention.
-fn text_of_view(program: &Program, view: crate::id::LayoutId, keys: &[String]) -> String {
+fn text_of_view(program: &Program, view: crate::id::LayoutId, linked: &Linked, generalizations: &[Vec<u32>]) -> String {
+    let keys = &linked.keys;
     let mut text = String::from("{\"made\":[");
     for (i, made) in made_as(program, view).into_iter().enumerate() {
         if i > 0 {
@@ -492,7 +594,7 @@ fn text_of_view(program: &Program, view: crate::id::LayoutId, keys: &[String]) -
         quoted(&mut text, keys[made.idx()].as_bytes());
     }
     text.push_str("],\"members\":[");
-    for (i, key) in member_keys(program, view, keys).into_iter().enumerate() {
+    for (i, key) in member_keys(program, view, linked, generalizations).into_iter().enumerate() {
         if i > 0 {
             text.push(',');
         }
@@ -506,30 +608,39 @@ fn key_of_what_may_give_up(layout: crate::id::LayoutId) -> String {
     format!("gives up {}", layout.idx())
 }
 
-fn member_keys(program: &Program, view: crate::id::LayoutId, keys: &[String]) -> Vec<String> {
-    let members = &program.layouts[view.idx()].members;
-    let becomes_member = |layout: usize| {
-        let (mut pending, mut seen) = (vec![layout], vec![layout]);
-        while let Some(next) = pending.pop() {
-            if members.iter().any(|member| member.idx() == next) {
-                return true;
-            }
-            for specialization in &program.layouts[next].specializations {
-                if !seen.contains(&specialization.idx()) {
-                    seen.push(specialization.idx());
-                    pending.push(specialization.idx());
-                }
+/// By layout: the layouts that have it among their specializations.
+fn generalizations(program: &Program) -> Vec<Vec<u32>> {
+    let mut found = vec![Vec::new(); program.layouts.len()];
+    for (index, layout) in program.layouts.iter().enumerate() {
+        for specialization in &layout.specializations {
+            found[specialization.idx()].push(index as u32);
+        }
+    }
+    found
+}
+
+fn member_keys(program: &Program, view: crate::id::LayoutId, linked: &Linked, generalizations: &[Vec<u32>]) -> Vec<String> {
+    let keys = &linked.keys;
+    let mut become_members: Vec<usize> = program.layouts[view.idx()].members.iter().map(|member| member.idx()).collect();
+    let mut seen: rustc_hash::FxHashSet<usize> = become_members.iter().copied().collect();
+    let mut at = 0;
+    while at < become_members.len() {
+        for &general in &generalizations[become_members[at]] {
+            if seen.insert(general as usize) {
+                become_members.push(general as usize);
             }
         }
-        false
-    };
-    (0..program.layouts.len())
-        .filter(|&layout| program.layouts[layout].kind == LayoutKind::Record && becomes_member(layout))
+        at += 1;
+    }
+    become_members.sort_unstable();
+    become_members.dedup();
+    (become_members.into_iter())
+        .filter(|&layout| program.layouts[layout].kind == LayoutKind::Record)
         .filter_map(|layout| {
             let id = crate::id::LayoutId::new(layout);
             if !keys[layout].is_empty() {
                 Some(keys[layout].clone())
-            } else if may_give_up(program, id) {
+            } else if linked.gives_up[layout] {
                 Some(key_of_what_may_give_up(id))
             } else {
                 None
@@ -566,9 +677,10 @@ fn passes(program: &Program, declared: &Declared, linked: Option<&Linked>) -> u3
         || declared.parts.iter().any(|part| match part {
             Part::Array(_) => false,
             Part::Class(layout) => !(is_held && is_closed_record(program, *layout)),
-            Part::Global(..) => true,
+            Part::Global(..) => linked.is_none(),
         });
-    declared.clone().with_literal_string_widened().prims | if is_any_object_taken { class::OBJECT | class::TAGGED } else { 0 } | if is_any_function_taken { class::FUNCTION } else { 0 }
+    let is_any_array_taken = is_any_object_taken || declared.parts.iter().any(|part| matches!(part, Part::Array(_)));
+    declared.clone().with_literal_string_widened().prims | if is_any_object_taken { class::OBJECT | class::TAGGED } else { 0 } | if is_any_function_taken { class::FUNCTION } else { 0 } | if is_any_array_taken { class::ARRAY } else { 0 }
 }
 
 fn write_type(program: &Program, out: &mut String, ty: TyId, depth: u32, linked: Option<&Linked>) {
@@ -655,7 +767,7 @@ fn places_entered(program: &Program, func: &Func) -> FxHashMap<V, Enters> {
                 Some(&Op::FieldSet { value, layout, .. }) => {
                     entered.entry(value).or_insert(if program.layouts[layout.idx()].kind == LayoutKind::Environment { Enters::Variable } else { Enters::Field });
                 }
-                Some(Op::Operation { name, args }) if program.strs.get(*name) == b"Initialize" => {
+                Some(Op::Operation { which: Operation::Initialize, args }) => {
                     for &arg in args {
                         entered.entry(arg).or_insert(Enters::Field);
                     }
@@ -861,19 +973,11 @@ fn conversions_behind(func: &Func, v: V) -> Vec<u32> {
     found
 }
 
-pub fn may_give_up(program: &Program, layout: crate::id::LayoutId) -> bool {
-    let described = &program.layouts[layout.idx()];
-    matches!(described.kind, LayoutKind::Record | LayoutKind::Instance)
-        && described.is_allocated
-        && described.admits_unchecked_objects()
-        && !program.layouts.iter().any(|view| !view.admits_foreign && view.members.contains(&layout))
-}
-
-fn keeps_its_fields(program: &Program, layout: crate::id::LayoutId) -> bool {
+fn keeps_its_fields(program: &Program, layout: crate::id::LayoutId, gives_up: &[bool]) -> bool {
     let described = &program.layouts[layout.idx()];
     match described.kind {
-        LayoutKind::Instance => described.class_flags & crate::ir::class_flags::IS_LAID_OUT != 0 && described.is_allocated && !may_give_up(program, layout),
-        LayoutKind::Record => described.is_allocated && !may_give_up(program, layout),
+        LayoutKind::Instance => described.class_flags & crate::ir::class_flags::IS_LAID_OUT != 0 && described.is_allocated && !gives_up[layout.idx()],
+        LayoutKind::Record => described.is_allocated && !gives_up[layout.idx()],
         _ => false,
     }
 }
@@ -883,7 +987,7 @@ fn text_of_shape(program: &Program, layout: crate::id::LayoutId, linked: Option<
     let mut text = String::from("{\"name\":");
     quoted(&mut text, name_of_layout(program, layout).as_bytes());
     text.push_str(",\"fields\":{");
-    let seen_as: Vec<&crate::ir::Layout> = if linked.is_some() { program.layouts.iter().filter(|view| view.members.contains(&layout)).collect() } else { Vec::new() };
+    let seen_as: Vec<&crate::ir::Layout> = linked.map_or_else(Vec::new, |linked| linked.seen_as[layout.idx()].iter().map(|&view| &program.layouts[view as usize]).collect());
     for (i, field) in described.fields.iter().filter(|field| field.flags & (crate::ir::field_flags::METHOD | crate::ir::field_flags::NEVER_STORED) == 0).enumerate() {
         if i > 0 {
             text.push(',');
@@ -894,9 +998,19 @@ fn text_of_shape(program: &Program, layout: crate::id::LayoutId, linked: Option<
         if field.flags & crate::ir::field_flags::OPTIONAL == 0 && seen_as.iter().any(|view| view.fields.iter().any(|other| other.name == field.name && other.flags & crate::ir::field_flags::OPTIONAL != 0)) {
             text.push_str(",\"absent\":true");
         }
+        if let Some(&prims) = linked.and_then(|linked| linked.primitives_of_slot.get(&(layout.idx() as u32, field.name))) {
+            let _ = write!(text, ",\"also\":{{\"p\":{prims},\"o\":false,\"fn\":false,\"parts\":[],\"t\":\"\"}}");
+        }
         text.push('}');
     }
-    text.push_str(if linked.is_some() && (described.kind == LayoutKind::Record || described.may_be_frozen) { "},\"frozen\":true}" } else { "}}" });
+    text.push('}');
+    if described.kind == LayoutKind::Record {
+        text.push_str(",\"record\":true");
+    }
+    if described.class_flags & crate::ir::class_flags::MAY_HAVE_OTHER_PROTOTYPE != 0 {
+        text.push_str(",\"otherPrototype\":true");
+    }
+    text.push_str(if linked.is_some() && (described.kind == LayoutKind::Record || described.may_be_frozen) { ",\"frozen\":true}" } else { "}" });
     text
 }
 
@@ -911,9 +1025,10 @@ fn key_of_shape(program: &Program, layout: crate::id::LayoutId) -> String {
 pub fn shapes(program: &Program) -> Vec<(String, String)> {
     let linked = Linked::of(program);
     let mut found: Vec<(String, String)> = Vec::new();
+    let mut place_of: FxHashMap<String, usize> = FxHashMap::default();
     for index in 0..program.layouts.len() {
         let layout = crate::id::LayoutId::new(index);
-        if !keeps_its_fields(program, layout) {
+        if linked.keys[index].is_empty() {
             continue;
         }
         let described = &program.layouts[index];
@@ -922,10 +1037,13 @@ pub fn shapes(program: &Program) -> Vec<(String, String)> {
         }
         let text = text_of_shape(program, layout, Some(&linked));
         let key = linked.keys[index].clone();
-        match found.iter_mut().find(|known| known.0 == key) {
+        match place_of.get(&key).map(|&place| &mut found[place]) {
             Some(known) if known.1 != text => known.1 = String::from("null"),
             Some(_) => {}
-            None => found.push((key, text)),
+            None => {
+                place_of.insert(key.clone(), found.len());
+                found.push((key, text));
+            }
         }
     }
     let mut views: Vec<crate::id::LayoutId> = (program.tys.list.iter().flat_map(|declared| &declared.parts))
@@ -936,7 +1054,8 @@ pub fn shapes(program: &Program) -> Vec<(String, String)> {
         .collect();
     views.sort_unstable();
     views.dedup();
-    found.extend(views.into_iter().map(|view| (format!("view {}", view.idx()), text_of_view(program, view, &linked.keys))));
+    let generalizations = generalizations(program);
+    found.extend(views.into_iter().map(|view| (format!("view {}", view.idx()), text_of_view(program, view, &linked, &generalizations))));
     found
 }
 
@@ -962,7 +1081,8 @@ fn is_function_of_object(program: &Program, func: &Func, v: V) -> Option<&'stati
     ["setPrototypeOf", "defineProperty", "defineProperties", "assign"].into_iter().find(|known| known.as_bytes() == program.strs.get(name))
 }
 
-fn rules(program: &Program, func: &Func, v: V, spans: &FxHashMap<V, Span>, operands: &FxHashMap<(V, i32), Span>, keys: Option<&[String]>) -> Vec<(Rule, Option<Span>, u32)> {
+fn rules(program: &Program, func: &Func, v: V, spans: &FxHashMap<V, Span>, operands: &FxHashMap<(V, i32), Span>, linked: Option<&Linked>) -> Vec<(Rule, Option<Span>, u32)> {
+    let keys = linked.map(|linked| &linked.keys[..]);
     let objects_alone = class::ALL & !(class::OBJECT | class::FUNCTION);
     let is_seen_through = |obj: V| {
         let declared = program.tys.get(func.ty(obj));
@@ -976,14 +1096,16 @@ fn rules(program: &Program, func: &Func, v: V, spans: &FxHashMap<V, Span>, opera
     let suspends_within = |span: &Span| func.blocks.iter().flat_map(|block| &block.ops).any(|&other| matches!(func.op(other), Some(Op::Await(_) | Op::Yield(_))) && (span.start..span.end).contains(&func.values[other.idx()].pos));
     let mut found = Vec::new();
     match func.op(v) {
-        Some(&Op::New(layout)) if keys.is_some() && program.layouts[layout.idx()].kind == LayoutKind::Record && keeps_its_fields(program, layout) => {
+        Some(&(Op::New(layout) | Op::NewWith { layout, .. })) if program.layouts[layout.idx()].kind == LayoutKind::Record && keys.is_some_and(|keys| !keys[layout.idx()].is_empty()) => {
             let mut rest = String::from(",\"shape\":");
             quoted(&mut rest, keys.map_or(&b""[..], |keys| keys[layout.idx()].as_bytes()));
             found.push((Rule { kind: Kind::Made, what: "NewObjectWithShape", rest }, spans.get(&v).copied(), objects_alone));
         }
-        Some(&Op::New(layout)) if keys.is_some() && program.layouts[layout.idx()].kind == LayoutKind::Record && may_give_up(program, layout) => {
+        Some(&(Op::New(layout) | Op::NewWith { layout, .. })) if program.layouts[layout.idx()].kind == LayoutKind::Record && linked.is_some_and(|linked| linked.gives_up[layout.idx()]) => {
             let mut rest = String::from(",\"shape\":");
             quoted(&mut rest, key_of_what_may_give_up(layout).as_bytes());
+            rest.push_str(",\"named\":");
+            quoted(&mut rest, name_of_layout(program, layout).as_bytes());
             found.push((Rule { kind: Kind::Made, what: "NewObjectWithShape", rest }, spans.get(&v).copied(), objects_alone));
         }
         Some(&Op::PropDelete { obj, name }) if !is_seen_through(obj) => {
@@ -999,7 +1121,10 @@ fn rules(program: &Program, func: &Func, v: V, spans: &FxHashMap<V, Span>, opera
             found.push((Rule { kind: Kind::FieldStoreUntyped, what: "PutById", rest: named(name) + &of_pair + ",\"stores\":true" }, pair.map(|pair| pair.1), 0));
         }
         Some(Op::Call { .. } | Op::CallMethod { .. }) => match is_function_of_object(program, func, v) {
-            Some("setPrototypeOf") => found.push((Rule { kind: Kind::ObjectSetPrototype, what: "Call", rest: String::new() }, operands.get(&(v, RECEIVER)).copied(), objects_alone)),
+            Some("setPrototypeOf") => {
+                let is_to_null = matches!(func.op(v), Some(Op::Call { args, .. } | Op::CallMethod { args, .. }) if args.get(1).is_some_and(|&given| matches!(func.op(before_casts(func, given)), Some(Op::Null))));
+                found.push((Rule { kind: Kind::ObjectSetPrototype, what: "Call", rest: String::from(if is_to_null { ",\"toNull\":true" } else { "" }) }, operands.get(&(v, RECEIVER)).copied(), objects_alone));
+            }
             Some(name) => {
                 let kind = if name == "assign" { Kind::FieldStoreUntyped } else { Kind::FieldRedefine };
                 found.push((Rule { kind, what: "Call", rest: String::from(",\"validates\":true") }, spans.get(&v).copied(), objects_alone));
@@ -1086,15 +1211,58 @@ fn as_int32s(whole_numbers: Option<(i64, i64)>) -> (i32, i32) {
     }
 }
 
-pub fn table<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Option<&'t [u8]>) -> Vec<Module> {
-    walk(program, is_linked, text_of).0
+pub fn table<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Option<&'t [u8]>, in_parallel: InParallel<'_>) -> Vec<Module> {
+    let mut modules = walk(program, is_linked, text_of, in_parallel).0;
+    if is_linked {
+        add_classes(program, &mut modules);
+    }
+    modules
 }
 
-pub fn sites(program: &Program) -> Vec<Site> {
-    walk(program, true, &|_| None).1
+pub const THE_CLASS_ITSELF: u32 = u32::MAX;
+
+fn add_classes(program: &Program, modules: &mut [Module]) {
+    use crate::ir::{class_flags, method_flags};
+    let linked = Linked::of(program);
+    for (index, layout) in program.layouts.iter().enumerate().filter(|(_, layout)| layout.kind == LayoutKind::Instance && layout.constructor.is_some() && layout.class_flags & class_flags::IS_LAID_OUT != 0) {
+        let constructor = &program.funcs[layout.constructor.idx()];
+        if constructor.module.is_none() || constructor.place_of_text == 0 || constructor.has(func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE) {
+            continue;
+        }
+        let mut replaceable = layout.methods.iter().filter(|method| method.flags & method_flags::STATIC == 0 && method.flags & method_flags::MAY_BE_REPLACED != 0);
+        if replaceable.clone().any(|method| method.name.is_none()) {
+            continue;
+        }
+        let mut step = String::from("{\"kind\":\"class-made\",\"replaceable\":[");
+        for (i, method) in replaceable.by_ref().enumerate() {
+            if i != 0 {
+                step.push(',');
+            }
+            quoted(&mut step, program.strs.get(method.name));
+        }
+        let _ = write!(step, "],\"constructorMayBeReplaced\":{}", layout.class_flags & class_flags::CONSTRUCTOR_MAY_BE_REPLACED != 0);
+        let key = &linked.keys[index];
+        if !key.is_empty() {
+            step.push_str(",\"shape\":");
+            quoted(&mut step, key.as_bytes());
+        }
+        step.push_str(",\"named\":");
+        quoted(&mut step, name_of_layout(program, crate::id::LayoutId::new(index)).as_bytes());
+        step.push('}');
+        let found = &mut modules[constructor.module.idx()];
+        found.parameters.push(Parameter { function: constructor.place_of_text - 1, index: THE_CLASS_ITSELF, start: 0, end: 0, body: (0, 0), passes: 0, least: 1, most: 0, step });
+    }
+    for module in modules {
+        module.parameters.sort_by_key(|parameter| (parameter.function, parameter.index));
+        module.parameters.dedup_by_key(|parameter| (parameter.function, parameter.index));
+    }
 }
 
-fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Option<&'t [u8]>) -> (Vec<Module>, Vec<Site>) {
+pub fn sites(program: &Program, in_parallel: InParallel<'_>) -> Vec<Site> {
+    walk(program, true, &|_| None, in_parallel).1
+}
+
+fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Option<&'t [u8]>, in_parallel: InParallel<'_>) -> (Vec<Module>, Vec<Site>) {
     let lines: Vec<Option<Lines>> = program.modules.iter().map(|module| Lines::read(&module.line_table)).collect();
     let linked = is_linked.then(|| Linked::of(program));
     let linked = linked.as_ref();
@@ -1102,16 +1270,67 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
         .filter(|entry| entry.kind == crate::ir::FuncKind::Method && entry.has(func_flags::IS_GENERAL_ENTRY) && entry.module.is_some())
         .map(|entry| (entry.module.idx(), entry.pos))
         .collect();
-    let mut numbers = Numbers::default();
-    let mut chains_by_module: Vec<Vec<Chain>> = program.modules.iter().map(|_| Vec::new()).collect();
-    let mut modules: Vec<Module> = (program.modules.iter())
-        .map(|module| Module { path: program.strs.get(module.display_path).to_vec(), length_of_text: text_of(program.strs.get(module.display_path)).map(<[u8]>::len), groups: Vec::new(), parameters: Vec::new(), without_span: Vec::new() })
+    let mut bodies_at: FxHashMap<(usize, u32), (bool, u32)> = FxHashMap::default();
+    for func in program.funcs.iter().filter(|func| func.module.is_some() && !func.blocks.is_empty()) {
+        let bodies = bodies_at.entry((func.module.idx(), func.pos)).or_default();
+        if func.has(func_flags::IS_HIDDEN_IN_STACK_TRACES) {
+            bodies.0 = true;
+        } else {
+            bodies.1 += 1;
+        }
+    }
+    let modules: Vec<Module> = (program.modules.iter())
+        .map(|module| Module { path: program.strs.get(module.display_path).to_vec(), length_of_text: text_of(program.strs.get(module.display_path)).map(<[u8]>::len), groups: Vec::new(), parameters: Vec::new(), without_span: Vec::new(), validations: Vec::new() })
+        .collect();
+    let mut walked: Vec<Walked<'_>> = (modules.into_iter().enumerate())
+        .map(|(index, module)| Walked { index, funcs: Vec::new(), module, chains: Vec::new(), numbers: Numbers::default() })
         .collect();
     for func in &program.funcs {
         if func.module.is_none() || func.blocks.is_empty() || !func.has(func_flags::IS_TYPED) || func.has(func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE) {
             continue;
         }
-        let module = func.module.idx();
+        walked[func.module.idx()].funcs.push(func);
+    }
+    walked.sort_by_key(|of_module| std::cmp::Reverse(of_module.funcs.iter().map(|func| func.values.len()).sum::<usize>()));
+    for_each_mut(&mut walked, in_parallel, &|of_module| walk_module(program, is_linked, linked, &lines, &entered_by_a_second_body, &bodies_at, of_module));
+    walked.sort_by_key(|of_module| of_module.index);
+    let mut sites = Vec::new();
+    let modules = (walked.into_iter())
+        .map(|mut of_module| {
+            sites.append(&mut of_module.numbers.sites);
+            of_module.module
+        })
+        .collect();
+    (modules, sites)
+}
+
+struct Walked<'p> {
+    index: usize,
+    funcs: Vec<&'p Func>,
+    module: Module,
+    chains: Vec<Chain>,
+    numbers: Numbers,
+}
+
+fn walk_module(
+    program: &Program,
+    is_linked: bool,
+    linked: Option<&Linked>,
+    lines: &[Option<Lines>],
+    entered_by_a_second_body: &rustc_hash::FxHashSet<(usize, u32)>,
+    bodies_at: &FxHashMap<(usize, u32), (bool, u32)>,
+    walked: &mut Walked<'_>,
+) {
+    let Walked { index, funcs, module: found, chains: chains_of_module, numbers } = walked;
+    let module = *index;
+    for func in std::mem::take(funcs) {
+        for span in func.spans.iter().filter(|span| span.step == VALIDATION) {
+            if let Some(&Op::Str(noted)) = func.op(span.value)
+                && let [which, plan @ ..] = program.strs.get(noted)
+            {
+                found.validations.push(Validation { start: span.start, end: span.end, which: which - b'0', plan: plan.to_vec() });
+            }
+        }
         let entered = places_entered(program, func);
         let members = members_entered(program, func);
         let calls = calls_entered(program, func);
@@ -1121,7 +1340,7 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                 _ => None,
             })
             .collect();
-        let path = &modules[module].path;
+        let path = &found.path;
         let mut step = |pos: u32, kind: Kind, what: &str, rest: &str, fixed: Option<u32>| {
             let name = program.strs.get(func.name);
             let name: &[u8] = if name.is_empty() { b"<anonymous>" } else if name.starts_with(b"module ") { b"module" } else { name };
@@ -1144,7 +1363,8 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
         };
         let spans: FxHashMap<V, Span> = func.spans.iter().filter(|span| span.value.is_some() && span.step > STORED).map(|&span| (span.value, span)).collect();
         let operands: FxHashMap<(V, i32), Span> = func.spans.iter().filter(|span| span.step <= STORED).map(|&span| ((span.value, span.step), span)).collect();
-        let first_chain = chains_by_module[module].len();
+        let joins: rustc_hash::FxHashSet<(u32, u32)> = (func.blocks.iter().skip(1).flat_map(|block| &block.params)).filter_map(|joined| spans.get(joined)).map(|whole| (whole.start, whole.end)).collect();
+        let first_chain = chains_of_module.len();
         let mut chain_of: FxHashMap<V, usize> = FxHashMap::default();
         let mut lacking: Vec<String> = Vec::new();
         for block in &func.blocks {
@@ -1153,13 +1373,43 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                 if pos == 0 {
                     continue;
                 }
-                for (row, at, passing) in rules(program, func, v, &spans, &operands, linked.map(|linked| &linked.keys[..])) {
+                for (row, at, passing) in rules(program, func, v, &spans, &operands, linked) {
                     let line = step(pos, row.kind, row.what, &[&row.rest[..], if is_linked { "" } else { ",\"unsure\":2" }].concat(), None);
                     if let Some(at) = at {
-                        chains_by_module[module].push(Chain { start: at.start, end: at.end, step: 0, passes: passing, whole_numbers: None, steps: vec![(v, line)] });
+                        chains_of_module.push(Chain { start: at.start, end: at.end, step: 0, passes: passing, whole_numbers: None, steps: vec![(v, line)] });
                     }
                 }
-                let Some(held) = held(program, func, v, is_linked) else { continue };
+                if is_linked
+                    && let Some(&(Op::PropSet { obj, .. } | Op::ElemSet { obj, .. })) = func.op(v)
+                    && let Some(at) = operands.get(&(v, RECEIVER))
+                    && (program.tys.get(func.ty(obj)).any_object || program.tys.get(func.ty(obj)).parts.is_empty())
+                {
+                    chains_of_module.push(Chain { start: at.start, end: at.end, step: 0, passes: class::ALL | class::TAGGED | class::ARRAY | class::STORES_THROUGH_UNTYPED, whole_numbers: Some(EVERY_INT32), steps: Vec::new() });
+                }
+                if is_linked
+                    && let Some(&Op::ElemGet { obj, key }) = func.op(v)
+                    && let Some(at) = spans.get(&v)
+                    && at.step == 0
+                {
+                    let (read_of, by) = (program.tys.get(func.ty(obj)), program.tys.get(func.ty(key)));
+                    let is_of_an_array = !read_of.parts.is_empty() && !read_of.any_object && !read_of.any_function && read_of.prims & !prim::NULLISH == 0 && read_of.ints.is_none() && read_of.parts.iter().all(|part| matches!(part, Part::Array(_)));
+                    let is_by_a_number = !by.has_objects() && by.prims & !(prim::NUMBER | prim::NULLISH) == 0 && (by.prims & prim::NUMBER != 0 || by.ints.is_some());
+                    if is_of_an_array && is_by_a_number {
+                        chains_of_module.push(Chain { start: at.start, end: at.end, step: 0, passes: class::ALL | class::TAGGED | class::ARRAY | class::READS_ELEMENT_OF_ARRAY, whole_numbers: Some(EVERY_INT32), steps: Vec::new() });
+                    }
+                }
+                let Some(mut held) = held(program, func, v, is_linked, linked) else { continue };
+                if is_linked
+                    && let Some(span) = spans.get(&v)
+                    && let Some(joined) = handed_to(func, v, &block.term)
+                {
+                    if func.ty(joined) != held.to && spans.get(&joined).is_some_and(|whole| (whole.start, whole.end) == (span.start, span.end)) {
+                        if held.result != held.to || func.ty(joined).is_none() {
+                            continue;
+                        }
+                        (held.to, held.result) = (func.ty(joined), func.ty(joined));
+                    }
+                }
                 let linked = linked.filter(|_| {
                     held.from.is_none() || func.ty(held.from).is_none() || may_be_a_stranger(program, program.tys.get(func.ty(held.from))) || narrows_records(program, program.tys.get(func.ty(held.from)), program.tys.get(held.to))
                 });
@@ -1212,10 +1462,12 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                     "Coerce" => passes(program, program.tys.get(held.to), linked) | passes(program, program.tys.get(held.result), linked),
                     _ => passes(program, program.tys.get(held.to), linked),
                 };
-                let chains = &mut chains_by_module[module];
-                let earlier = chain_of.get(&held.from).copied().filter(|&chain| span.start <= chains[chain].start && chains[chain].end <= span.end && chains[chain].step == span.step);
+                let chains = &mut *chains_of_module;
+                let earlier = (chain_of.get(&held.from).copied())
+                    .filter(|&chain| span.start <= chains[chain].start && chains[chain].end <= span.end && chains[chain].step == span.step)
+                    .filter(|&chain| (chains[chain].start, chains[chain].end) == (span.start, span.end) || !joins.contains(&(span.start, span.end)));
                 let chain = earlier.unwrap_or_else(|| {
-                    chains.push(Chain { start: span.start, end: span.end, step: span.step, passes: class::ALL | class::TAGGED, whole_numbers: Some(EVERY_INT32).filter(|_| span.step == 0), steps: Vec::new() });
+                    chains.push(Chain { start: span.start, end: span.end, step: span.step, passes: class::ALL | class::TAGGED | class::ARRAY, whole_numbers: Some(EVERY_INT32).filter(|_| span.step == 0), steps: Vec::new() });
                     chains.len() - 1
                 });
                 (chains[chain].start, chains[chain].end) = (span.start, span.end);
@@ -1225,12 +1477,13 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                 chain_of.insert(v, chain);
             }
         }
-        for chain in &mut chains_by_module[module][first_chain..] {
+        for chain in &mut chains_of_module[first_chain..] {
             chain.steps.sort_by_key(|step| step.0);
         }
         let mut parameters: Vec<Parameter> = Vec::new();
         let is_entered_by_a_second_body = func.kind == crate::ir::FuncKind::Method && entered_by_a_second_body.contains(&(module, func.pos));
-        if !is_entered_by_a_second_body && (!is_linked || func.has(func_flags::IS_VALUE) || func.kind == crate::ir::FuncKind::Method) {
+        let has_second_body = is_linked && (is_entered_by_a_second_body || matches!(bodies_at.get(&(module, func.pos)), Some(&(true, bodies)) if bodies >= 2));
+        if has_second_body || !is_entered_by_a_second_body && (!is_linked || func.has(func_flags::IS_VALUE) || func.kind == crate::ir::FuncKind::Method) {
             let body = func.spans.iter().find(|span| span.value.is_none() && span.step > STORED);
             let first = func.captures.len() + usize::from(func.has(func_flags::HAS_THIS));
             let entry = func.blocks.first().map_or(&[][..], |block| &block.params[..]);
@@ -1244,9 +1497,15 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                 let mut rest = format!(",\"index\":{index},\"to\":");
                 write_type(program, &mut rest, param, 0, None);
                 let takes = program.tys.get(param);
-                let holds = is_linked && !takes.any_object && !takes.any_function && !takes.parts.is_empty() && takes.parts.iter().all(|part| matches!(part, Part::Global(..)));
+                let holds = is_linked && !takes.any_object && (takes.any_function || !takes.parts.is_empty()) && takes.parts.iter().all(|part| matches!(part, Part::Global(..) | Part::Array(_)));
                 if holds {
                     rest.push_str(",\"holds\":true");
+                }
+                if has_second_body {
+                    if !func.annotated.get(place).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    rest.push_str(",\"second\":1");
                 }
                 if !is_linked {
                     rest.push_str(if func.has(func_flags::IS_VALUE) || func.kind == crate::ir::FuncKind::Method { ",\"unsure\":1" } else { ",\"unsure\":2" });
@@ -1254,48 +1513,53 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                 let step = step(func.pos, Kind::EnterFunction, "As", &rest, Some(index as u32));
                 let (Some(body), Some(span)) = (body, spans.get(&v)) else { continue };
                 let declared = program.tys.get(param);
-                let objects = if declared.has_objects() && !holds { class::OBJECT | class::FUNCTION } else { 0 };
-                parameters.push(Parameter { function: body.step as u32, index: index as u32, start: span.start, end: span.end, body: (body.start, body.end), passes: passes(program, declared, None) | objects, least: as_int32s(whole_numbers_within(Some(EVERY_INT32), declared)).0, most: as_int32s(whole_numbers_within(Some(EVERY_INT32), declared)).1, step });
+                let objects = if has_second_body {
+                    class::HAS_SECOND_BODY
+                } else if declared.has_objects() && !holds {
+                    class::OBJECT | class::FUNCTION
+                } else {
+                    0
+                };
+                parameters.push(Parameter { function: body.step as u32, index: index as u32, start: span.start, end: span.end, body: (body.start, body.end), passes: (passes(program, declared, None) & !(if holds && !declared.any_function { class::FUNCTION } else { 0 })) | objects, least: as_int32s(whole_numbers_within(Some(EVERY_INT32), declared)).0, most: as_int32s(whole_numbers_within(Some(EVERY_INT32), declared)).1, step });
             }
         }
-        modules[module].without_span.append(&mut lacking);
-        modules[module].parameters.append(&mut parameters);
+        found.without_span.append(&mut lacking);
+        found.parameters.append(&mut parameters);
     }
-    for (module, mut chains) in modules.iter_mut().zip(chains_by_module) {
-        chains.sort_by_key(|chain| (chain.start, std::cmp::Reverse(chain.end), chain.step));
-        let mut seen: Vec<String> = Vec::new();
-        let mut key = None;
-        for chain in chains {
-            if key != Some((chain.start, chain.end, chain.step)) {
-                key = Some((chain.start, chain.end, chain.step));
-                seen.clear();
-                module.groups.push(Group { start: chain.start, end: chain.end, step: chain.step, passes: class::ALL | class::TAGGED, least: i32::MIN, most: i32::MAX, steps: String::new() });
-            }
-            let group = module.groups.last_mut().expect("one was pushed");
-            group.passes &= chain.passes;
-            let (least, most) = as_int32s(chain.whole_numbers);
-            (group.least, group.most) = (group.least.max(least), group.most.min(most));
-            for (_, step) in chain.steps {
-                if seen.contains(&step) {
-                    continue;
-                }
-                if !group.steps.is_empty() {
-                    group.steps.push(',');
-                }
-                group.steps.push_str(&step);
-                seen.push(step);
-            }
+    let mut chains = std::mem::take(chains_of_module);
+    chains.sort_by_key(|chain| (chain.start, std::cmp::Reverse(chain.end), chain.step));
+    let mut seen: Vec<String> = Vec::new();
+    let mut key = None;
+    for chain in chains {
+        if key != Some((chain.start, chain.end, chain.step)) {
+            key = Some((chain.start, chain.end, chain.step));
+            seen.clear();
+            found.groups.push(Group { start: chain.start, end: chain.end, step: chain.step, passes: class::ALL | class::TAGGED | class::ARRAY, least: i32::MIN, most: i32::MAX, steps: String::new() });
         }
-        module.parameters.sort_by_key(|parameter| (parameter.function, parameter.index));
-        module.parameters.dedup_by_key(|parameter| (parameter.function, parameter.index));
+        let group = found.groups.last_mut().expect("one was pushed");
+        group.passes = (group.passes & chain.passes) | ((group.passes | chain.passes) & (class::READS_ELEMENT_OF_ARRAY | class::STORES_THROUGH_UNTYPED));
+        let (least, most) = as_int32s(chain.whole_numbers);
+        (group.least, group.most) = (group.least.max(least), group.most.min(most));
+        for (_, step) in chain.steps {
+            if seen.contains(&step) {
+                continue;
+            }
+            if !group.steps.is_empty() {
+                group.steps.push(',');
+            }
+            group.steps.push_str(&step);
+            seen.push(step);
+        }
     }
-    (modules, numbers.sites)
+    found.parameters.sort_by_key(|parameter| (parameter.function, parameter.index));
+    found.parameters.dedup_by_key(|parameter| (parameter.function, parameter.index));
 }
 
 pub fn program_of_fragment(fragment: crate::fragment::Fragment, shown_from: &[u8], is_case_sensitive: bool, line_table_of: &dyn Fn(&[u8]) -> Vec<u8>) -> Program {
     use crate::id::{FuncId, LayoutId, StrId};
     let crate::fragment::Fragment { path, strs, tys, modules, layouts, funcs, .. } = fragment;
     let mut program = Program { strs, tys, ..Program::default() };
+    let_any_object_pass_for_classes_without_a_layout(&mut program);
     let line_table = line_table_of(program.strs.get(path));
     let shown = bun_sema::resolve::get_relative_path_from_directory(shown_from, program.strs.get(path), is_case_sensitive);
     let path = program.strs.intern(&shown);

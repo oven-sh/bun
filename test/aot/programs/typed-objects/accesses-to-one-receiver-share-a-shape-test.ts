@@ -1,4 +1,12 @@
-// Point also admits objects from elsewhere, so an access through it tests the shape of the receiver.
+// Point also admits objects from elsewhere, so an access through it tests the shape of the receiver. An object that was created as a Point stays one, so the accesses to one receiver share one test, calls between them included.
+// IRT= 1 fourReads HasShapeOf
+// IRT= 1 fourStores HasShapeOf
+// IRT= 2 twoReceivers HasShapeOf
+// IRT= 1 inBranches HasShapeOf
+// IRT= 1 inLoop HasShapeOf
+// IRT= 1 aroundCall HasShapeOf
+// IRT= 2 nested HasShapeOf
+// MESSAGE-DATA< 3
 interface Inner { v: number; w: number }
 interface Point { x: number; y: number; z: number; w: number; inner: Inner }
 function make(i: number): Point { return { x: i + 0.5, y: i + 1.5, z: i + 2.5, w: i + 3.5, inner: { v: i, w: i + 1 } } }

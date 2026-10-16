@@ -522,6 +522,12 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone> ShardedMap<K, V, A> {
         self.shards.iter().map(|s| s.entries.len() as usize).sum()
     }
 
+    pub fn into_each(mut self, mut take: impl FnMut(K, V)) {
+        for shard in self.shards.iter_mut() {
+            shard.entries.drain(|_, (key, value)| take(key, value));
+        }
+    }
+
     /// Stored values never move.
     #[inline]
     pub fn get_ref<Q>(&self, key: &Q) -> Option<&V>

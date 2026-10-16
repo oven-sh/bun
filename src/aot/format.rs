@@ -9,7 +9,7 @@ use bun_sema::util::{InParallel, for_each_mut};
 use std::mem::MaybeUninit;
 
 pub const MAGIC: u32 = 0x5249_5442;
-pub const VERSION: u32 = 35;
+pub const VERSION: u32 = 37;
 pub const PROGRAM_LOGS_TYPE_ERRORS: u32 = 1;
 pub const NONE: u32 = u32::MAX;
 /// In the prediction of a value: the other bits number a function, which the value is expected to be a closure of, and not a type.
@@ -247,7 +247,7 @@ pub fn record(def: &Def) -> Record<'_> {
         Op::Caught => r.opcode = Opcode::CatchValue,
         Op::CaughtException => (r.opcode, r.immediates[0]) = (Opcode::CatchValue, 1),
         Op::Poll => r.opcode = Opcode::LoopHint,
-        Op::Operation { name, args } => (r.opcode, r.immediates[0], r.args) = (Opcode::Operation, name.0, args),
+        Op::Operation { which, args } => (r.opcode, r.immediates[0], r.args) = (Opcode::Operation, *which as u32, args),
         Op::ExternalModule(specifier) => (r.opcode, r.immediates[0]) = (Opcode::GetExternalModule, specifier.0),
         Op::Yield(value) => (r.opcode, r.children[0]) = (Opcode::Yield, *value),
         Op::ResumeMode => r.opcode = Opcode::GetResumeMode,
@@ -347,6 +347,7 @@ struct Writer {
     methods: Vec<u32>,
     variables: Vec<u32>,
     modules: Vec<u32>,
+    webassembly_modules: Vec<u32>,
 }
 
 struct Room<'a>(&'a mut [MaybeUninit<u8>]);
@@ -550,7 +551,7 @@ impl FunctionWriter<'_> {
 /// How many functions are written at a time. The number does not show in what is written.
 const FUNCTIONS_OF_A_SLICE: usize = 256;
 
-fn site_table(p: &Program) -> Vec<u32> {
+fn site_table(p: &Program, in_parallel: InParallel<'_>) -> Vec<u32> {
     const REASONS: [&str; 7] = ["As", "Store", "Claim", "Flow", "NonNull", "Coerce", "IteratorOpen"];
     fn text(table: &mut Vec<u32>, bytes: &[u8]) {
         table.push(bytes.len() as u32);
@@ -571,7 +572,7 @@ fn site_table(p: &Program) -> Vec<u32> {
     for reason in REASONS {
         text(&mut table, reason.as_bytes());
     }
-    let mut sites = crate::audit::sites(p);
+    let mut sites = crate::audit::sites(p, in_parallel);
     sites.retain(|site| site.column < 1 << 20);
     sites.sort_by_key(|site| (site.module, site.line, site.column, number_of(site.kind), site.ordinal));
     table.push(sites.chunk_by(|a, b| a.module == b.module).count() as u32);
@@ -627,12 +628,12 @@ fn copy_words<'a, 'f>(room: &mut Room<'a>, words: &'a [u32], pieces: &mut Vec<Pi
 }
 
 pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
-    let table_of_sites = if p.logs_type_errors { site_table(p) } else { Vec::new() };
+    let table_of_sites = if p.logs_type_errors { site_table(p, in_parallel) } else { Vec::new() };
     write_slices(p, p.funcs.len(), p.funcs.chunks(FUNCTIONS_OF_A_SLICE).map(Slice::Lent).collect(), table_of_sites, in_parallel)
 }
 
 pub fn write_releasing(p: &mut Program, in_parallel: InParallel<'_>) -> Vec<u8> {
-    let table_of_sites = if p.logs_type_errors { site_table(p) } else { Vec::new() };
+    let table_of_sites = if p.logs_type_errors { site_table(p, in_parallel) } else { Vec::new() };
     let mut funcs = std::mem::take(&mut p.funcs);
     let number = funcs.len();
     let slices = funcs.chunks_mut(FUNCTIONS_OF_A_SLICE).map(Slice::Released).collect();
@@ -646,6 +647,10 @@ fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, tabl
         let bytes = p.strs.get(crate::id::StrId::new(i));
         w.strings.extend([w.bytes.len() as u32, bytes.len() as u32]);
         w.bytes.extend_from_slice(bytes);
+    }
+    for module in &p.webassembly_modules {
+        w.webassembly_modules.extend([w.bytes.len() as u32, module.len() as u32]);
+        w.bytes.extend_from_slice(module);
     }
     for declared in &p.tys.list {
         let flags = u32::from(declared.any_object) | u32::from(declared.any_function) << 1 | u32::from(declared.ints.is_some()) << 2;
@@ -730,6 +735,7 @@ fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, tabl
         .collect();
 
     let head = std::mem::take(&mut w.words);
+    let webassembly_modules = std::mem::take(&mut w.webassembly_modules);
     let mut list = |words: &mut dyn Iterator<Item = u32>| {
         let [start, length] = w.list(words);
         [before[0] + start, length]
@@ -742,11 +748,12 @@ fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, tabl
     let entries = list(&mut p.entries.iter().map(|func| func.0));
     let regexp_literals = list(&mut p.regexp_literals.iter().flat_map(|&(pattern, flags)| [pattern.0, flags.0]));
     let sites = list(&mut table_of_sites.into_iter());
+    let webassembly_modules = list(&mut webassembly_modules.into_iter());
 
     let bytes_of = |modules: &[crate::ir::Module]| modules.iter().map(|module| module.line_table.len() + module.printed.len()).sum::<usize>();
     let number_of_bytes = (w.bytes.len() + bytes_of(&p.modules)) as u32;
     let padding = &[0u8; 3][..number_of_bytes.wrapping_neg() as usize % 4];
-    const HEADER_WORDS: usize = 6 + 14 * 2 + 16 + 12;
+    const HEADER_WORDS: usize = 6 + 14 * 2 + 18 + 12;
     let small_tables: [&[u32]; 8] = [&w.strings, &w.declared, &w.parts, &w.shapes, &w.fields, &w.methods, &w.variables, &w.modules];
     let lengths: [usize; 13] = [
         before[0] as usize + w.words.len(),
@@ -779,6 +786,7 @@ fn write_slices(p: &Program, number_of_funcs: usize, funcs: Vec<Slice<'_>>, tabl
     header.extend(entries);
     header.extend(regexp_literals);
     header.extend(sites);
+    header.extend(webassembly_modules);
     header.extend(SIZES.iter().map(|words| words * 4));
     header[2] = offset as u32;
     debug_assert_eq!(header.len(), HEADER_WORDS);

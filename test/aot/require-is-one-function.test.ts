@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // `require` is one function per module: every mention of it is the same object, and so are `module.require` and `arguments[1]`.
@@ -39,6 +40,6 @@ test("bun run --aot prints what bun run prints", async () => {
   const plain = await spawned([bunExe(), "run", "main.cjs"], String(dir));
   expect(plain.exitCode).toBe(0);
   expect(plain.stdout).toContain("inner.cjs the same twice true");
-  const aot = await spawned([bunExe(), "run", "--aot", "main.cjs"], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+  const aot = await spawned([bunExe(), "run", "--debug-aot", "main.cjs"], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
   expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
 });

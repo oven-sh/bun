@@ -666,7 +666,7 @@ pub const ERASE_LINE: &[u8] = "\r\u{1b}[2K".as_bytes();
 
 /// Whether any diagnostic is about a global or module that `@types/bun` declares.
 fn is_missing_bun_types(report: &Report) -> bool {
-    report.diagnostics.iter().any(is_about_bun_types)
+    report.lacks_members_of_bun || report.diagnostics.iter().any(is_about_bun_types)
 }
 
 pub fn note_on_bun_types(report: &Report) -> Option<(usize, &'static [u8])> {
@@ -674,7 +674,7 @@ pub fn note_on_bun_types(report: &Report) -> Option<(usize, &'static [u8])> {
     if names.any(|name| name == b"@types/bun") {
         return None;
     }
-    let last = report.diagnostics.iter().rposition(is_about_bun_types)?;
+    let last = report.diagnostics.iter().rposition(is_about_bun_types).or_else(|| report.diagnostics.len().checked_sub(1).filter(|_| report.lacks_members_of_bun))?;
     let note: &'static [u8] = if report.has_bun_types_installed {
         b"Bun's type definitions (console, fetch, Bun, bun:test) are installed, but tsconfig.json does not include them. Add to compilerOptions: \"types\": [\"bun\"]"
     } else {
@@ -811,12 +811,24 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         return;
     }
     if errors == 0 {
+        let untyped = match report.files_compiled_untyped {
+            0 => BString::default(),
+            n => {
+                let first = report.diagnostics.iter().find(|it| matches!(it.code, 100009..=100011));
+                let why = first.map_or(BString::default(), |first| match first.related.first() {
+                    Some(error) => alloc_print!(": {} TS{}: {}", first.text.as_bstr(), error.code, error.text.as_bstr()),
+                    None => alloc_print!(": {}", first.text.as_bstr()),
+                });
+                alloc_print!(", {} compiled untyped{}", plural(n, b"file", b"files"), why)
+            }
+        };
         pretty!(
             out,
             style.color,
-            "<green>\u{2713}<r> No type errors<d> in {}{}{}<r>\n",
+            "<green>\u{2713}<r> No type errors<d> in {}{}{}{}<r>\n",
             checked,
             projects,
+            untyped,
             took
         );
         return;

@@ -227,6 +227,8 @@ fn file_read_as(
         reads_jsdoc: how.jsdoc == JsDoc::Read,
         dialect,
         bigint_names_are_digits: how.bigint_names_are_digits,
+        constant_keys_are_names: how.bigint_names_are_digits,
+        is_compiled: how.bigint_names_are_digits,
         part: None,
         attach_comments: how.attach_comments,
     };

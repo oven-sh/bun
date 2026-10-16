@@ -12,7 +12,7 @@ declare namespace SV {
   // -------------------------------------------------------------------------------------------------------------------
   // 1. Numbers. int32: four bytes and integer arithmetic; a value that is no int32 stored there is a TypeError at run time.
   // -------------------------------------------------------------------------------------------------------------------
-  type int32 = number;
+  type int32 = import("bun").int32;
   type NodeType = int32; // SerovalNode.t: 0 Number 1 String 2 Constant 3 BigInt 4 IndexedValue 5 Date 6 RegExp 7 Set 8 Map 9 Array 10 Object 11 NullConstructor 12 Promise 13 Error 14 AggregateError 15 TypedArray 16 BigIntTypedArray 17 WKSymbol 18 Reference 19 ArrayBuffer 20 DataView 21 Boxed 22 PromiseConstructor 23 PromiseSuccess 24 PromiseFailure 25 Plugin 26 SpecialReference 27 IteratorFactory 28 IteratorFactoryInstance 29 AsyncIteratorFactory 30 AsyncIteratorFactoryInstance 31 StreamConstructor 32 StreamNext 33 StreamThrow 34 StreamReturn 35 Sequence 36 Temporal
   type RefId = int32; // SerovalNode.i, every `id` of the parser and the serializer: refs.size at the moment the value is first met (921)
   type Mode = int32; // 1 Vanilla 2 Cross
@@ -60,6 +60,8 @@ declare namespace SV {
   type GivenRecord = any; // a given node's p | e: { k, v }
   type GivenId = any; // a given node's i (| s at t 22): guardIndexedValue (1368) lets every integer >= 0 through, also beyond int32
   type GivenJSON = any; // compileJSON's and fromJSON's source: { t, f, m }: a SerovalJSON born here or what JSON.parse made of one; f may be missing (3086)
+  type ExportedNode = any; // toCrossJSON's | toCrossJSONAsync's result: a SerovalNode born here. NOT WRITTEN AS SerovalNode: a record type in the result of a function that JavaScript imports, or that a JavaScript entry exports again, counts as data from outside: the type loses its layout in the WHOLE program: nodes are made as plain objects and every node.t is read by name
+  type ExportedJSON = any; // toJSON's | toJSONAsync's result: a SerovalJSON born here: as ExportedNode
 
   // -------------------------------------------------------------------------------------------------------------------
   // 3. Dictionaries, tables, tuples, functions, what is only carried

@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./supported";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";

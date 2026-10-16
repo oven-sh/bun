@@ -1,0 +1,36 @@
+# Programs that end with a realm that is having a bad time, which bad-time.py does not count, and why.
+arrays/frozen-arrays-when-a-prototype-comes-to-inherit-from-a-proxy    has one in the plain engine too
+arrays/heirs-of-array-whose-prototype-answers-for-an-element    has one in the plain engine too
+arrays/map-while-callback-0-installs-an-index-accessor    has one in the plain engine too
+arrays/map-while-callback-1-installs-an-index-accessor    has one in the plain engine too
+arrays/map-while-callback-2-installs-an-index-accessor    has one in the plain engine too
+arrays/map-while-callback-2-installs-an-index-accessor-readonly    has one in the plain engine too
+arrays/map-while-callback-3-installs-an-index-accessor    has one in the plain engine too
+arrays/sort-while-callback-0-installs-an-index-accessor    has one in the plain engine too
+arrays/sort-while-callback-1-installs-an-index-accessor    has one in the plain engine too
+arrays/sort-while-callback-2-installs-an-index-accessor    has one in the plain engine too
+arrays/sort-while-callback-2-installs-an-index-accessor-readonly    has one in the plain engine too
+arrays/sort-while-callback-3-installs-an-index-accessor    has one in the plain engine too
+calls-fast-paths/members-named-by-an-index    has one in the plain engine too
+classes-and-closures/an-index-of-a-function-that-arrays-inherit-from    has one in the plain engine too
+counterexamples/a-long-array-literal-after-an-indexed-accessor-was-defined    has one in the plain engine too
+counterexamples/a-long-array-literal-whose-element-defines-an-indexed-accessor    has one in the plain engine too
+counterexamples/array-from-whose-callback-defines-an-indexed-accessor    has one in the plain engine too
+counterexamples/filter-whose-callback-defines-an-indexed-accessor    has one in the plain engine too
+counterexamples/map-whose-callback-defines-an-indexed-accessor    has one in the plain engine too
+counterexamples/sort-of-nine-numbers-whose-comparator-defines-an-indexed-property    has one in the plain engine too
+counterexamples/sort-of-numbers-whose-comparator-defines-an-indexed-property    has one in the plain engine too
+counterexamples/sort-of-strings-whose-comparator-defines-an-indexed-property    has one in the plain engine too
+language/heirs-of-array-are-iterated-as-the-language-has-it    TODO: has none in the plain engine: a getter at an index of the prototype of a class that extends Array and has no instance yet
+type-rules/out-of-bounds-array-reads    has one in the plain engine too
+typed-objects/an-index-on-an-object-that-arrays-inherit-from    has one in the plain engine too
+untyped-code/array-literals-of-constants    means it: "A BAD TIME" in program.js
+untyped-code/array-species-subclasses-and-large-arrays    has one in the plain engine too
+untyped-code/constructors-copied-into-new-that-meet-setters    has one in the plain engine too
+untyped-code/define-properties-from-own-descriptors    has one in the plain engine too
+untyped-code/empty-literals-of-numbers-pushed-to    has one in the plain engine too
+untyped-code/index-accessor-on-builtin-prototypes-2    has one in the plain engine too
+untyped-code/properties-added-under-prototype-chains-that-change    has one in the plain engine too
+untyped-code/spread-of-number-arrays    means it: "A BAD TIME" in program.js
+untyped-code/stores-that-add-properties-below-prototypes-with-accessors    has one in the plain engine too
+untyped-code/user-code-running-while-an-array-method-builds-its-result    has one in the plain engine too

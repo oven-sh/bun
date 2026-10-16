@@ -99,10 +99,11 @@ fn keep_lists<'s, T: Clone + Send + Sync + 'static>(
 ) {
     let mut owned: Vec<(usize, Vec<T>)> = Vec::new();
     for (i, module) in modules.iter_mut().enumerate() {
-        if let Cow::Owned(list) = field(&mut module.hir)
-            && !list.is_empty()
-        {
-            owned.push((i, std::mem::take(list)));
+        if let Cow::Owned(list) = field(&mut module.hir) {
+            let list = std::mem::take(list);
+            if !list.is_empty() {
+                owned.push((i, list));
+            }
         }
     }
     if owned.is_empty() {
@@ -123,6 +124,8 @@ pub enum LoadedBy {
     RuntimeModulesOnly,
     NativeCodeOrWrittenName,
     ComputedName,
+    RuntimeModulesOrComputedName,
+    RuntimeModulesBehindADoor,
 }
 
 /// What a source of the runtime is.
@@ -170,6 +173,7 @@ pub struct Module<'s> {
     /// `GetNearestAncestorDirectoryWithPackageJson`: the directory of the `package.json` nearest to
     /// the file. None: there is none.
     pub package_json_directory: Atom,
+    pub package_directory: Atom,
     /// The specifiers that resolve to JavaScript without type declarations, with the resolution
     /// mode in which they do.
     pub untyped_imports: ArenaFew<'s, (Atom, ResolutionMode)>,
@@ -227,9 +231,13 @@ pub struct Module<'s> {
     /// adds no global declaration, no ambient module and no augmentation. It is not checked. It is a module whatever
     /// `moduleDetection` says, and imports JavaScript whatever `allowJs` says, as in the bundle.
     pub is_only_code: bool,
+    pub is_of_a_dependency: bool,
     pub is_held_untyped: std::sync::atomic::AtomicBool,
     /// It is a source of the runtime that is compiled with the program (`Host::builtin_files`).
     pub builtin: Option<Builtin>,
+    pub is_commonjs_to_the_runtime: Option<bool>,
+    pub doors_to_the_loader: &'s [hir::ExprId],
+    pub doors_to_files: &'s [hir::ExprId],
     /// No file refers to it, and it adds no globally visible declarations. So only the task that
     /// checks it reads its HIR, which is freed at the end of that task (`Files::free_tree`), and
     /// nothing that mentions one of its nodes is published.
@@ -300,7 +308,7 @@ impl Module<'_> {
     }
 
     pub fn is_restricted_to_fixed_set(&self) -> bool {
-        self.is_only_code && !self.hir.is_js && matches!(self.hir.kind, FileKind::Ts | FileKind::Tsx) && self.builtin.is_none() && strings::contains(self.path.text, b"/node_modules/")
+        !self.hir.is_js && matches!(self.hir.kind, FileKind::Ts | FileKind::Tsx) && self.builtin.is_none() && self.is_of_a_dependency
     }
 
     /// Whether it is host code to whatever is found out about the types of the program: an untyped builtin file. What it does to an object of
@@ -592,6 +600,8 @@ pub struct Files<'s> {
     /// What `Included` has of `load`, for `explain_files`.
     starts: &'s [FileId],
     libs_end: usize,
+    pub intrinsics_of_bun: Option<FileId>,
+    pub global_of_bun: Option<FileId>,
     roots_end: usize,
     root_of_start: &'s [u32],
     /// Where `Options::roots_for_code` begin in `starts`. They are the last of the root files.
@@ -943,6 +953,9 @@ impl<'u> Run<'u> {
         let mut of_path = self.parsed.get_ref(path)?.lock();
         let text_key = Self::length_and_hash(text);
         let at = of_path.iter().position(|it| it.0 == key && it.1 == text_key && (it.2.hir.text.is_empty() || *it.2.hir.text == *text))?;
+        if host.is_commonjs_to_the_runtime(path).is_some_and(|is_commonjs| is_commonjs != of_path[at].2.bound.commonjs_indicator.is_some()) {
+            return None;
+        }
         let parse: &'u Parse<'u> = of_path.swap_remove(at).2;
         // SAFETY: the pass that filled an early `Run` has ended before a program takes from it, so
         // the list held the only reference. The entry leaves the list under its lock and the arena
@@ -954,17 +967,18 @@ impl<'u> Run<'u> {
 
 /// `keep_lists` for one list.
 fn keep_list<'s, T: Clone + Send + Sync + 'static>(session: &'s Session, list: &mut Cow<'s, [T]>) {
-    if let Cow::Owned(owned) = list
-        && !owned.is_empty()
-    {
-        *list = Cow::Borrowed(session.keep(std::mem::take(owned)));
+    if let Cow::Owned(owned) = list {
+        let owned = std::mem::take(owned);
+        if !owned.is_empty() {
+            *list = Cow::Borrowed(session.keep(owned));
+        }
     }
 }
 
 /// `'r`: the paths belong to the `Resolver`.
 struct Loaded<'s, 'r> {
     /// Without `hir` and `bound` if `parse` has them.
-    module: Module<'s>,
+    module: Box<Module<'s>>,
     /// The `Parse` that `load_ahead` returns for it and for the other copies of the file.
     parse: Option<u32>,
     imports: Vec<Resolution<'r>>,
@@ -2368,6 +2382,7 @@ struct AliasResolver<'a, 's> {
     /// `None`: results are written to the tables immediately. For the merge, which is
     /// single-threaded.
     buffer: Option<std::cell::RefCell<Resolved<'s>>>,
+    pieces: Option<&'a ResolvedInPieces<'s>>,
     /// `Resolve::arena`, once it has been asked for.
     arena: std::cell::OnceCell<&'s Arena>,
     /// The symbols whose type has `ObjectFlagsMembersResolved`.
@@ -2386,6 +2401,14 @@ struct Resolved<'s> {
     module_links: FxHashMap<Sym, ModuleSymbolLinks<'s>>,
     decls: Vec<(Sym, &'s [(FileId, Decl)])>,
     failed_lookups: Vec<FailedLookup<'s>>,
+}
+
+#[derive(Default)]
+struct ResolvedInPieces<'s> {
+    alias_links: ShardedMap<Sym, AliasSymbolLinks>,
+    symbol_flags: ShardedMap<Sym, SymFlags>,
+    module_links: ShardedMap<Sym, ModuleSymbolLinks<'s>>,
+    depends_on_order: std::sync::atomic::AtomicBool,
 }
 
 impl<'s> std::ops::Deref for AliasResolver<'_, 's> {
@@ -2714,6 +2737,7 @@ fn lib_tasks(
         let error = unsupported_extension_of_lib(host, options, &path);
         (reason, path, error)
     })
+    .chain(options.global_of_bun.iter().chain(&options.intrinsics_of_bun).map(|path| (IncludeReason::LibFile(None), path.clone(), None)))
 }
 
 /// `unsupported_extension_error` for `path`, a result of `lib_path`.
@@ -4492,7 +4516,7 @@ impl<'s> Files<'s> {
         // `parseTaskData.tasks`: the tasks by file name, where a file can have several.
         let mut by_name: FxHashMap<&'s [u8], FileId> = FxHashMap::default();
         let mut all_found = Found::default();
-        let mut modules: Vec<Option<Module>> = Vec::new();
+        let mut modules: Vec<Option<Box<Module>>> = Vec::new();
         // `parseTaskData.lowestDepth`, indexed by `FoundFile::first`: the lowest number of steps
         // into packages (`increaseDepth`) that a task for the file has run at.
         let mut depths: Vec<u32> = Vec::new();
@@ -4513,7 +4537,7 @@ impl<'s> Files<'s> {
         // `taskDataByPath.LoadOrStore`
         let mut add = |path: &[u8],
                        is_lib: bool,
-                       modules: &mut Vec<Option<Module>>,
+                       modules: &mut Vec<Option<Box<Module>>>,
                        depths: &mut Vec<u32>,
                        found: &mut Found<'s>|
          -> FileId {
@@ -4570,12 +4594,16 @@ impl<'s> Files<'s> {
             }
         }
         let libs_end = starts.len();
+        let intrinsics_of_bun = options.intrinsics_of_bun.as_ref().and_then(|_| starts.last().copied());
+        let global_of_bun = options.global_of_bun.as_ref().and(intrinsics_of_bun).and_then(|_| starts.iter().nth_back(1).copied());
         let mut program_errors = Vec::new();
         let mut root_of_start: Vec<u32> = Vec::new();
         // They have a task as well.
         let mut missing_roots: Vec<&[u8]> = Vec::new();
-        for (index, root) in roots.iter().enumerate().take(roots_of_program) {
-            match root_file_name(host, options, root) {
+        let mut named_roots: Vec<(&Vec<u8>, Result<Option<Vec<u8>>, u32>)> = roots.iter().take(roots_of_program).map(|root| (root, Ok(None))).collect();
+        crate::util::for_each_mut(&mut named_roots, &|count, work| host.parallel(count, work), &|(root, named)| *named = root_file_name(host, options, root));
+        for (index, (root, named)) in named_roots.into_iter().enumerate() {
+            match named {
                 // Nothing is read.
                 Ok(None) => {}
                 Ok(Some(found)) => {
@@ -4755,6 +4783,8 @@ impl<'s> Files<'s> {
         // `Host::builtin_files`, once it has been asked: the paths, which count as further root files, and the files.
         let mut builtin_roots: Option<Vec<Vec<u8>>> = None;
         let mut builtin_files: Vec<(FileId, Builtin)> = Vec::new();
+        let mut doors_to_the_loader: Vec<(u32, hir::ExprId)> = Vec::new();
+        let mut doors_to_files: Vec<(u32, hir::ExprId)> = Vec::new();
         // (file, how many of its edges have been followed)
         let mut stack: Vec<(FileId, usize)> = Vec::new();
         let mut seen: Vec<bool> = Vec::new();
@@ -4976,6 +5006,8 @@ impl<'s> Files<'s> {
                             }
                             if is_loading_code.replace(true) {
                                 let found = host.builtin_files(&modules, &atoms);
+                                doors_to_the_loader = host.doors_to_the_loader();
+                                doors_to_files = host.doors_to_files();
                                 for (index, (path, builtin)) in found.iter().enumerate() {
                                     let file = add(path, false, &mut modules, &mut depths, &mut all_found);
                                     root_of_start.push((roots.len() + index) as u32);
@@ -5136,6 +5168,20 @@ impl<'s> Files<'s> {
                 module.builtin = Some(builtin);
             }
         }
+        doors_to_the_loader.sort_by_key(|door| door.0);
+        for doors in doors_to_the_loader.chunk_by(|one, next| one.0 == next.0) {
+            if let Some(module) = &mut modules[doors[0].0 as usize] {
+                let places: Vec<hir::ExprId> = doors.iter().map(|door| door.1).collect();
+                module.doors_to_the_loader = slice_in(&places, arena);
+            }
+        }
+        doors_to_files.sort_by_key(|door| door.0);
+        for doors in doors_to_files.chunk_by(|one, next| one.0 == next.0) {
+            if let Some(module) = &mut modules[doors[0].0 as usize] {
+                let places: Vec<hir::ExprId> = doors.iter().map(|door| door.1).collect();
+                module.doors_to_files = slice_in(&places, arena);
+            }
+        }
         let with_builtin_roots: Vec<Vec<u8>>;
         let roots = match builtin_roots {
             Some(more) if !more.is_empty() => {
@@ -5253,6 +5299,18 @@ impl<'s> Files<'s> {
         for (module, &depth) in modules.iter_mut().flatten().zip(&depths) {
             module.is_from_external_library = depth > 0;
         }
+        let own_package = starts[libs_end..roots_end].first().and_then(|first| modules[first.idx()].as_ref()).map(|first| first.package_directory);
+        let mut is_root = vec![false; modules.len()];
+        for root in &starts[libs_end..roots_end] {
+            is_root[root.idx()] = true;
+        }
+        for (module, is_root) in modules.iter_mut().zip(is_root).filter_map(|(module, is_root)| Some((module.as_mut()?, is_root))) {
+            let is_elsewhere = own_package.is_some_and(|own| module.package_directory != own);
+            module.is_of_a_dependency = options.one_name_is_one_binding && (module.is_from_external_library || (is_root || module.is_only_code || module.hir.kind == FileKind::Declaration) && is_elsewhere);
+            if !is_elsewhere {
+                module.package_directory = Atom::NONE;
+            }
+        }
         program_errors.extend(resolver.resolution_problems());
         for (id, spec, mode, path) in only_found {
             if let Some(target) = by_path.get(path)
@@ -5262,7 +5320,7 @@ impl<'s> Files<'s> {
             }
         }
         if without_code.is_some() {
-            let is_only_code = |module: &Option<Module>| module.as_ref().is_some_and(|it| it.is_only_code);
+            let is_only_code = |module: &Option<Box<Module>>| module.as_ref().is_some_and(|it| it.is_only_code);
             let is_only_code: Vec<bool> = modules.iter().map(is_only_code).collect();
             for module in modules.iter_mut().flatten() {
                 if module.is_only_code {
@@ -5405,10 +5463,18 @@ impl<'s> Files<'s> {
         drop(ahead);
         drop(resolver);
         drop(resolving);
-        let mut modules: ArenaVec<'s, ModuleCell<'s>> = vec_from_iter_in(
-            (modules.into_iter()).map(|module| ModuleCell(module.unwrap().into())),
-            arena,
-        );
+        let count = modules.len();
+        let mut laid: ArenaVec<'s, ModuleCell<'s>> = ArenaVec::with_capacity_in(count, arena);
+        // SAFETY: the list has room for `count` cells, and a `MaybeUninit` need not be initialized.
+        let room = unsafe { std::slice::from_raw_parts_mut(laid.as_mut_ptr().cast::<std::mem::MaybeUninit<ModuleCell<'s>>>(), count) };
+        let mut moves: Vec<(&mut std::mem::MaybeUninit<ModuleCell<'s>>, Option<Box<Module<'s>>>)> = room.iter_mut().zip(modules).collect();
+        crate::util::for_each_mut(&mut moves, &|count, work| host.parallel(count, work), &|(place, module)| {
+            place.write(ModuleCell((*module.take().unwrap()).into()));
+        });
+        drop(moves);
+        // SAFETY: each of the `count` cells has been written.
+        unsafe { laid.set_len(count) };
+        let mut modules = laid;
         keep_lists(session, &mut modules, |hir| &mut hir.text);
         keep_lists(session, &mut modules, |hir| &mut hir.diagnostics);
         keep_lists(session, &mut modules, |hir| &mut hir.jsdoc_member_comments);
@@ -5632,6 +5698,8 @@ impl<'s> Files<'s> {
             resolution_trace: &[],
             starts: slice_in(&starts, arena),
             libs_end,
+            intrinsics_of_bun,
+            global_of_bun,
             roots_end,
             root_of_start: slice_in(&root_of_start, arena),
             roots_for_code_at,
@@ -5658,8 +5726,8 @@ impl<'s> Files<'s> {
             let module = &files.modules[file.idx()];
             (module.edges.iter().chain(module.imports.values()).copied()).collect()
         };
-        files.components = Components::new(files.order, &imports, arena);
-        files.merge();
+        files.components = Components::new(files.order, &imports, &|count, work| host.parallel(count, work), arena);
+        files.merge(&|count, work| host.parallel(count, work));
         drop(merging);
         let linking = Spent::on(host, Phase::Aliases);
         files.link(host);
@@ -6070,7 +6138,14 @@ impl<'s> Files<'s> {
             hir.has_module_syntax = is_shown || is_decreed;
             hir.is_module_by_decree = !is_shown && is_decreed || options.bind.names_make_commonjs && has_import_meta && !has_jsx;
         }
+        let exports = |stmt: hir::StmtId| {
+            matches!(hir[stmt].kind, hir::StmtKind::ExportAssign(_) | hir::StmtKind::ExportDefault(_) | hir::StmtKind::ExportNamed(_) | hir::StmtKind::ExportStar { .. } | hir::StmtKind::ExportAsNamespace(_))
+        };
+        if host.is_commonjs_to_the_runtime(path) == Some(true) && hir.has_module_syntax && !hir.ids(hir.body).any(exports) {
+            hir.is_module_by_decree = true;
+        }
         let _binding = Spent::on(host, Phase::Bind);
+        let options = ParseOptions { bind: bind::BindOptions { is_commonjs_by_decree: host.is_commonjs_to_the_runtime(path), ..options.bind }, ..options };
         let mut bound = bind::bind(&hir, options.bind, atoms, arena);
         // The same result as when the parser runs out of stack: an empty HIR, which `check_file`
         // reports as not fully checked.
@@ -6101,11 +6176,15 @@ impl<'s> Files<'s> {
         }
         if options.gives_direct_evals_their_scopes
             && !is_lib
-            && let Some(rewritten) = crate::direct_eval::give_direct_evals_their_scopes(&hir, &bound, atoms)
+            && let Some((rewritten, inserted)) = crate::direct_eval::give_direct_evals_their_scopes(&hir, &bound, atoms)
         {
             let as_it_is = ParseOptions { gives_direct_evals_their_scopes: false, ..options };
-            return Self::parse_and_bind(arena, host, as_it_is, atoms, path, is_lib, specifies_esm, Cow::Owned(rewritten));
+            let (hir, mut bound) = Self::parse_and_bind(arena, host, as_it_is, atoms, path, is_lib, specifies_esm, Cow::Owned(rewritten));
+            bound.inserted = few(inserted, arena);
+            return (hir, bound);
         }
+        bound.is_non_utf8 = host.is_non_utf8(path);
+        bound.class_options = host.class_options(path);
         (hir, bound)
     }
 
@@ -6575,6 +6654,7 @@ impl<'s> Files<'s> {
             package_json_directory: resolver
                 .package_json_directory(path)
                 .map_or(Atom::NONE, |directory| atoms.intern(directory)),
+            package_directory: resolver.package_directory(path).map_or(Atom::NONE, |directory| atoms.intern(directory)),
             edges: &[],
             redirected_imports: few(redirected_imports, arena),
             project_reference_imports: few(project_reference_imports, arena),
@@ -6583,8 +6663,12 @@ impl<'s> Files<'s> {
             redirect_for_resolution,
             is_from_external_library: false,
             is_only_code: false,
+            is_of_a_dependency: false,
             is_held_untyped: std::sync::atomic::AtomicBool::new(false),
             builtin: None,
+            is_commonjs_to_the_runtime: host.is_commonjs_to_the_runtime(path),
+            doors_to_the_loader: &[],
+            doors_to_files: &[],
             is_leaf: false,
             adds_nothing: false,
             has_conditional_or_mapped_type: false,
@@ -6608,7 +6692,7 @@ impl<'s> Files<'s> {
             // `make_module_clones`: it adds a symbol to the file of what it imports.
             && !(hir.imports.iter()).any(|import| import.namespace.is_some());
         Loaded {
-            module,
+            module: Box::new(module),
             parse: None,
             imports,
             references,
@@ -6727,7 +6811,7 @@ impl<'s> Files<'s> {
         merges_module_augmentation(&module.bound, &collected, symbol)
     }
 
-    fn merge(&mut self) {
+    fn merge(&mut self, in_parallel: crate::util::InParallel<'_>) {
         self.keeps_module_links = true;
         self.make_global_this_symbol();
         // `initializeChecker`: file by file, the declarations of scripts and the names under which
@@ -6931,7 +7015,7 @@ impl<'s> Files<'s> {
         if !self.modules.is_empty() && !self.globals.contains_key(known::undefined) {
             self.globals.insert(known::undefined, self.undefined_symbol);
         }
-        self.make_transient_symbols();
+        self.make_transient_symbols(in_parallel);
         // The target an alias resolved to during the symbol merge may have become a part of a
         // merged symbol by now.
         let session = self.session;
@@ -7164,23 +7248,20 @@ impl<'s> Files<'s> {
         is_type.then_some(type_symbol)
     }
 
-    /// The transient symbols to create for the aliases of `file`: one for each `import * as ns`,
-    /// and one for each name for which `type_symbol_to_combine` returns a symbol.
-    fn transient_symbols_of(
+    fn may_have_transient_symbols(
         &self,
         file: FileId,
         with_patterns: bool,
         has_export_equals_by_pattern: &mut FxHashMap<Atom, bool>,
-    ) -> Vec<(TransientSymbol, Symbol<'s>)> {
+    ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut created = Vec::new();
         let modes = [
             ResolutionMode::Import,
             ResolutionMode::Require,
             ResolutionMode::None,
         ];
-        if !hir.imports.iter().any(|import| import.namespace.is_some())
-            && !bound.specifiers.iter().any(|&specifier| {
+        hir.imports.iter().any(|import| import.namespace.is_some())
+            || bound.specifiers.iter().any(|&specifier| {
                 let has_export_equals = |module: Option<Sym>| {
                     module.is_some_and(|m| self.export(m, known::export_equals).is_some())
                 };
@@ -7199,19 +7280,36 @@ impl<'s> Files<'s> {
                         .entry(specifier)
                         .or_insert_with(|| has_export_equals(self.module_by_pattern(specifier)))
             })
-        {
-            return created;
-        }
-        for (id, symbol) in bound.symbols.iter().enumerate() {
-            let id = SymbolId(id as u32);
-            let alias = Sym { file, id };
+    }
+
+    fn aliases_that_may_have_transient_symbols(&self, file: FileId) -> Vec<SymbolId> {
+        let bound = self.bound(file);
+        let is_imported_from_a_module_with_export_equals = |alias: Sym| {
+            let module = self.declaration_of_alias_symbol(alias).and_then(|(file, decl)| {
+                let (spec, mode, _) = self.external_module_member_of(file, decl)?;
+                self.module_of_specifier_as(file, spec, mode)
+            });
+            module.is_some_and(|module| self.export(module, known::export_equals).is_some())
+        };
+        let ids = (0..bound.symbols.len() as u32).map(SymbolId);
+        ids.filter(|&id| {
+            let (symbol, alias) = (&bound.symbols[id.idx()], Sym { file, id });
             // One already exists if it was merged into during the symbol merge.
-            if !symbol.flags.contains(SymFlags::ALIAS)
-                || self.canonical(alias) != alias
-                || (self.module(file).transient_symbols.iter()).any(|created| created.alias == id)
-            {
-                continue;
-            }
+            symbol.flags.contains(SymFlags::ALIAS)
+                && self.canonical(alias) == alias
+                && !(self.module(file).transient_symbols.iter()).any(|created| created.alias == id)
+                && (symbol.decls.iter().any(|decl| matches!(decl, Decl::ImportNamespace(_))) || is_imported_from_a_module_with_export_equals(alias))
+        })
+        .collect()
+    }
+
+    /// The transient symbols to create for the aliases of `file`: one for each `import * as ns`,
+    /// and one for each name for which `type_symbol_to_combine` returns a symbol.
+    fn transient_symbols_of(&self, file: FileId, aliases: &[SymbolId]) -> Vec<(TransientSymbol, Symbol<'s>)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut created = Vec::new();
+        for &id in aliases {
+            let (symbol, alias) = (&bound.symbols[id.idx()], Sym { file, id });
             let import = symbol.decls.iter().find_map(|&decl| match decl {
                 Decl::ImportNamespace(import) => Some(&hir[import]),
                 _ => None,
@@ -7232,7 +7330,7 @@ impl<'s> Files<'s> {
     }
 
     /// Nothing can be added to the shared state once the merge has ended.
-    fn make_transient_symbols(&mut self) {
+    fn make_transient_symbols(&mut self, in_parallel: crate::util::InParallel<'_>) {
         let patterns = self.ambient_patterns.iter().map(|pattern| pattern.2);
         let with_patterns = patterns
             .chain(self.pattern_augmentations.values().copied())
@@ -7240,10 +7338,20 @@ impl<'s> Files<'s> {
                 self.export(self.canonical(module), known::export_equals)
                     .is_some()
             });
-        let mut has_export_equals_by_pattern = FxHashMap::default();
-        for &file in self.order {
-            let created =
-                self.transient_symbols_of(file, with_patterns, &mut has_export_equals_by_pattern);
+        const FILES_OF_A_TASK: usize = 256;
+        let mut asked: Vec<(FileId, Vec<SymbolId>)> = self.order.iter().map(|&file| (file, Vec::new())).collect();
+        let mut tasks: Vec<&mut [(FileId, Vec<SymbolId>)]> = asked.chunks_mut(FILES_OF_A_TASK).collect();
+        let files = &*self;
+        crate::util::for_each_mut(&mut tasks, in_parallel, &|task| {
+            let mut has_export_equals_by_pattern = FxHashMap::default();
+            for (file, aliases) in task.iter_mut() {
+                if files.may_have_transient_symbols(*file, with_patterns, &mut has_export_equals_by_pattern) {
+                    *aliases = files.aliases_that_may_have_transient_symbols(*file);
+                }
+            }
+        });
+        for (file, aliases) in asked.into_iter().filter(|it| !it.1.is_empty()) {
+            let created = self.transient_symbols_of(file, &aliases);
             self.has_symbols_to_combine |= created.iter().any(|it| it.0.is_combined);
             add_transient_symbols(&mut self.modules[file.idx()], created);
         }
@@ -7383,7 +7491,10 @@ impl<'s> Files<'s> {
         };
         // `reportMergeSymbolError`
         if is_excluded(target_flags) {
-            self.refuse_merge(target, source);
+            let is_embedded = |file: FileId| self.intrinsics_of_bun == Some(file) || self.global_of_bun == Some(file);
+            if !is_embedded(target.file) && !is_embedded(source.file) {
+                self.refuse_merge(target, source);
+            }
             // A symbol that cannot merge with the existing symbol of the name contributes nothing
             // to it: two classes, a class and a variable. It remains the symbol of its own
             // declarations, and the name continues to resolve to the first symbol wherever it is
@@ -8268,6 +8379,11 @@ impl<'s> Files<'s> {
         }
     }
 
+    pub fn is_module_bun_declared_by_the_host_alone(&self) -> bool {
+        let modules = self.ambient_modules.iter().filter(|&(&spec, _)| self.atoms.bytes(spec) == b"bun");
+        self.intrinsics_of_bun.is_some_and(|ours| modules.flat_map(|(_, &module)| self.decls(self.canonical(module))).all(|declaration| declaration.0 == ours))
+    }
+
     /// `tryFindAmbientModule(moduleName, true /*withAugmentations*/)`: a relative name never
     /// matches.
     pub fn try_find_ambient_module(&self, spec: Atom) -> Option<Sym> {
@@ -8430,7 +8546,7 @@ impl<'s> Files<'s> {
                     .atoms
                     .lookup(b"__esModule")
                     .is_none_or(|name| resolve_export_by_name(name).is_none())
-        } else if self.hir(module.file).is_js {
+        } else if self.hir(module.file).is_js || self.module(module.file).is_commonjs_to_the_runtime == Some(true) && self.hir(module.file).is_module_by_decree {
             // A JavaScript file has one if it has no ECMAScript module syntax and does not declare
             // that it is an ECMAScript module.
             let of = self.hir(module.file);
@@ -8538,6 +8654,8 @@ impl<'s> Files<'s> {
     fn link(&mut self, host: &dyn Host) {
         /// Not a function of the number of threads: which components share a buffer is part of the plan.
         const COMPONENTS_OF_A_TASK: usize = 64;
+        const LEAST_FILES_IN_PIECES: usize = 1024;
+        const FILES_OF_A_PIECE: usize = 128;
         let files_of = |components: &[u32]| -> Vec<FileId> {
             let components = components
                 .iter()
@@ -8568,20 +8686,67 @@ impl<'s> Files<'s> {
         });
         let mut nested: Vec<Sym> = at_merge.filter(is_nested).map(|it| *it.0).collect();
         let mut failed_lookups: Vec<FailedLookup> = Vec::new();
-        for tasks in &steps {
-            let resolved: Vec<Guarded<Resolved>> = tasks
-                .iter()
-                .map(|_| Guarded::new(Resolved::default()))
-                .collect();
-            host.parallel(tasks.len(), &|at| {
-                *resolved[at].lock() = self.resolve_files(&tasks[at]);
+        let whole: Vec<FileId> = steps.iter().flatten().flatten().copied().collect();
+        let at_once = (whole.len() >= LEAST_FILES_IN_PIECES).then(ResolvedInPieces::default);
+        let runs: Vec<&[FileId]> = at_once.iter().flat_map(|_| whole.chunks(FILES_OF_A_PIECE)).collect();
+        let resolved: Vec<Guarded<Resolved>> = runs.iter().map(|_| Guarded::new(Resolved::default())).collect();
+        host.parallel(runs.len(), &|at| {
+            *resolved[at].lock() = self.resolve_files(runs[at], at_once.as_ref());
+        });
+        if let Some(pieces) = at_once.filter(|pieces| !pieces.depends_on_order.load(Ordering::Relaxed)) {
+            steps.clear();
+            self.publish_pieces(pieces, |module, links| {
+                if is_nested(&(module, links)) {
+                    nested.push(*module);
+                }
             });
             for resolved in &resolved {
-                let mut resolved = std::mem::take(&mut *resolved.lock());
-                let links = resolved.module_links.iter();
-                nested.extend(links.filter(is_nested).map(|it| *it.0));
-                failed_lookups.append(&mut resolved.failed_lookups);
-                self.publish(resolved);
+                self.publish(std::mem::take(&mut *resolved.lock()));
+            }
+        }
+        for tasks in &steps {
+            let mut in_pieces: Vec<Option<ResolvedInPieces>> = (tasks.iter())
+                .map(|files| (files.len() >= LEAST_FILES_IN_PIECES).then(ResolvedInPieces::default))
+                .collect();
+            let runs: Vec<(usize, &[FileId])> = (tasks.iter().enumerate())
+                .flat_map(|(task, files)| {
+                    let files_of_a_run = if in_pieces[task].is_some() { FILES_OF_A_PIECE } else { files.len().max(1) };
+                    files.chunks(files_of_a_run).map(move |files| (task, files))
+                })
+                .collect();
+            let resolved: Vec<Guarded<Resolved>> = runs.iter().map(|_| Guarded::new(Resolved::default())).collect();
+            host.parallel(runs.len(), &|at| {
+                let (task, files) = runs[at];
+                *resolved[at].lock() = self.resolve_files(files, in_pieces[task].as_ref());
+            });
+            let in_order: Vec<usize> = (0..tasks.len())
+                .filter(|&task| in_pieces[task].as_ref().is_some_and(|pieces| pieces.depends_on_order.load(Ordering::Relaxed)))
+                .collect();
+            let resolved_in_order: Vec<Guarded<Resolved>> = in_order.iter().map(|_| Guarded::new(Resolved::default())).collect();
+            host.parallel(in_order.len(), &|at| {
+                *resolved_in_order[at].lock() = self.resolve_files(&tasks[in_order[at]], None);
+            });
+            let mut resolved = runs.iter().zip(&resolved).peekable();
+            for task in 0..tasks.len() {
+                let mut of_task: Vec<Resolved> = Vec::new();
+                while let Some((_, resolved)) = resolved.next_if(|(run, _)| run.0 == task) {
+                    of_task.push(std::mem::take(&mut *resolved.lock()));
+                }
+                match (in_pieces[task].take(), in_order.iter().position(|&it| it == task)) {
+                    (_, Some(at)) => of_task = vec![std::mem::take(&mut *resolved_in_order[at].lock())],
+                    (Some(pieces), None) => self.publish_pieces(pieces, |module, links| {
+                        if is_nested(&(module, links)) {
+                            nested.push(*module);
+                        }
+                    }),
+                    (None, None) => {}
+                }
+                for mut resolved in of_task {
+                    let links = resolved.module_links.iter();
+                    nested.extend(links.filter(is_nested).map(|it| *it.0));
+                    failed_lookups.append(&mut resolved.failed_lookups);
+                    self.publish(resolved);
+                }
             }
         }
         failed_lookups.shared_sort_by_key(|it| (it.file, it.identifier));
@@ -8600,8 +8765,8 @@ impl<'s> Files<'s> {
     /// A task of the link step. First the links of every alias of `files`, in that order, by
     /// symbol: the order determines where a cycle is entered. Then, with nothing in progress,
     /// everything else.
-    fn resolve_files(&self, files: &[FileId]) -> Resolved<'s> {
-        let resolver = AliasResolver::new(self, Some(Resolved::default()));
+    fn resolve_files(&self, files: &[FileId], pieces: Option<&ResolvedInPieces<'s>>) -> Resolved<'s> {
+        let resolver = AliasResolver { pieces, ..AliasResolver::new(self, Some(Resolved::default())) };
         let arena = resolver.arena();
         let files = files.iter();
         let symbols = |&file: &FileId| {
@@ -8649,6 +8814,19 @@ impl<'s> Files<'s> {
             .unwrap_or_default();
         resolved.decls = decls;
         resolved
+    }
+
+    fn publish_pieces(&self, pieces: ResolvedInPieces<'s>, mut each_module: impl FnMut(&Sym, &ModuleSymbolLinks<'s>)) {
+        pieces.alias_links.into_each(|sym, links| {
+            self.alias_symbol_links.insert(sym, links);
+        });
+        pieces.symbol_flags.into_each(|sym, flags| {
+            self.memo.symbol_flags.insert(sym, RawWord(flags.bits() | FLAGS_KNOWN));
+        });
+        pieces.module_links.into_each(|module, links| {
+            each_module(&module, &links);
+            self.memo.module_links.insert_ref(module, links);
+        });
     }
 
     /// At a barrier, on one thread.
@@ -9052,9 +9230,16 @@ impl<'a, 's> AliasResolver<'a, 's> {
             out_of_stack: Default::default(),
             cycles: Default::default(),
             buffer: buffer.map(std::cell::RefCell::new),
+            pieces: None,
             arena: Default::default(),
             members_resolved: Default::default(),
             resolved_symbols: Default::default(),
+        }
+    }
+
+    fn note_dependence_on_order(&self) {
+        if let Some(pieces) = self.pieces {
+            pieces.depends_on_order.store(true, Ordering::Relaxed);
         }
     }
 }
@@ -9066,6 +9251,11 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
 
     fn alias_links(&self, sym: Sym) -> AliasSymbolLinks {
         if let Some(known) = self.alias_symbol_links.get(&sym) {
+            return known;
+        }
+        if let Some(pieces) = self.pieces
+            && let Some(&known) = pieces.alias_links.get_ref(&sym)
+        {
             return known;
         }
         if let Some(buffer) = &self.buffer
@@ -9093,6 +9283,7 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
         };
         if !is_pushed {
             self.cycles.set(self.cycles.get() + 1);
+            self.note_dependence_on_order();
             return AliasSymbolLinks::default();
         }
         let mut links = AliasSymbolLinks::default();
@@ -9129,13 +9320,19 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
             links.alias_target = None;
             links.is_circular = true;
         }
-        match &self.buffer {
-            Some(buffer) => *buffer.borrow_mut().alias_links.entry(sym).or_insert(links),
-            None => self.alias_symbol_links.insert(sym, links),
+        match (self.pieces, &self.buffer) {
+            (Some(pieces), _) => *pieces.alias_links.insert_ref(sym, links),
+            (None, Some(buffer)) => *buffer.borrow_mut().alias_links.entry(sym).or_insert(links),
+            (None, None) => self.alias_symbol_links.insert(sym, links),
         }
     }
 
     fn symbol_flags_of_alias(&self, sym: Sym) -> SymFlags {
+        if let Some(pieces) = self.pieces
+            && let Some(&known) = pieces.symbol_flags.get_ref(&sym)
+        {
+            return known;
+        }
         if let Some(buffer) = &self.buffer
             && let Some(&known) = buffer.borrow().symbol_flags.get(&sym)
         {
@@ -9145,11 +9342,14 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
         let flags = self.symbol_flags_ex(sym, false, false);
         // The flags of an alias in progress are not its final flags.
         if self.cycles.get() == cycles {
-            match &self.buffer {
-                Some(buffer) => {
+            match (self.pieces, &self.buffer) {
+                (Some(pieces), _) => {
+                    pieces.symbol_flags.insert_ref(sym, flags);
+                }
+                (None, Some(buffer)) => {
                     buffer.borrow_mut().symbol_flags.insert(sym, flags);
                 }
-                None => {
+                (None, None) => {
                     let known = RawWord(flags.bits() | FLAGS_KNOWN);
                     self.memo.symbol_flags.insert(sym, known);
                 }
@@ -9165,6 +9365,12 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
     ) -> R {
         if let Some(published) = self.memo.module_links.get_ref(&module) {
             return read(published);
+        }
+        if let Some(pieces) = self.pieces {
+            return match pieces.module_links.get_ref(&module) {
+                Some(known) => read(known),
+                None => read(pieces.module_links.insert_ref(module, self.exports_of_module_worker(module))),
+            };
         }
         if let Some(buffer) = &self.buffer
             && let Some(own) = buffer.borrow().module_links.get(&module)
@@ -9191,7 +9397,11 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
     }
 
     fn is_alias_in_progress(&self, sym: Sym) -> bool {
-        self.in_flight.borrow().iter().any(|begun| begun.0 == sym)
+        let is_in_progress = self.in_flight.borrow().iter().any(|begun| begun.0 == sym);
+        if is_in_progress {
+            self.note_dependence_on_order();
+        }
+        is_in_progress
     }
 
     fn has_resolved_symbol(&self, file: FileId, e: ExprId) -> bool {
@@ -9204,6 +9414,7 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
 
     /// Only the link step keeps them.
     fn note_failed_lookup(&self, file: FileId, e: ExprId) {
+        self.note_dependence_on_order();
         if let Some(buffer) = &self.buffer {
             let in_flight = self.in_flight.borrow();
             let in_progress: SmallVec<[Sym; 4]> = in_flight.iter().map(|begun| begun.0).collect();

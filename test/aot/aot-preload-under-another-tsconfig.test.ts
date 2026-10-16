@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -26,7 +27,7 @@ test.concurrent(
   "a JavaScript preload under no tsconfig.json is compiled",
   async () => {
     const files = { "preload.cjs": `globalThis.preloaded = "by JavaScript";` };
-    expect(await run(files, ["run", "--aot", "--preload", "../preload.cjs", "./main.ts"])).toEqual({ stdout: "preloaded: by JavaScript\n", stderr: "", exitCode: 0 });
+    expect(await run(files, ["run", "--debug-aot", "--preload", "../preload.cjs", "./main.ts"])).toEqual({ stdout: "preloaded: by JavaScript\n", stderr: "", exitCode: 0 });
   },
   120_000,
 );
@@ -38,7 +39,7 @@ test.concurrent(
       "tsconfig.json": `{ "compilerOptions": { ${options}, "strict": false } }`,
       "preload.ts": `import { helper } from "./util/helper";\n(globalThis as any).preloaded = helper("pre");`,
     };
-    expect(await run(files, ["run", "--aot", "--preload", "../preload.ts", "./main.ts"])).toEqual({ stdout: "preloaded: preloaded\n", stderr: "", exitCode: 0 });
+    expect(await run(files, ["run", "--debug-aot", "--preload", "../preload.ts", "./main.ts"])).toEqual({ stdout: "preloaded: preloaded\n", stderr: "", exitCode: 0 });
   },
   120_000,
 );
@@ -51,7 +52,7 @@ const rightUnderItsOwnAlone = {
 test.concurrent(
   "a preload that type checks only under its own tsconfig.json is compiled untyped, with a warning",
   async () => {
-    const { stdout, stderr, exitCode } = await run(rightUnderItsOwnAlone, ["run", "--aot", "--preload", "../preload.ts", "./main.ts"]);
+    const { stdout, stderr, exitCode } = await run(rightUnderItsOwnAlone, ["run", "--debug-aot", "--preload", "../preload.ts", "./main.ts"]);
     expect(stderr).toMatch(/^warn: TS100010: '[^']*preload\.ts' has \d+ type errors?, the first at [^\n]*preload\.ts:\d+:\d+: it is compiled untyped/m);
     expect(stderr).not.toContain("error:");
     expect({ stdout, exitCode }).toEqual({ stdout: "preloaded: preloaded\n", exitCode: 0 });
@@ -63,7 +64,7 @@ test.concurrent(
   "a type error in a preload under the entry point's own tsconfig.json still stops the build",
   async () => {
     const files = { "sub/preload.ts": `function loose(chunk) { return chunk; }\n(globalThis as any).preloaded = loose("own");` };
-    const { stdout, stderr, exitCode } = await run(files, ["run", "--aot", "--preload", "./preload.ts", "./main.ts"]);
+    const { stdout, stderr, exitCode } = await run(files, ["run", "--debug-aot", "--preload", "./preload.ts", "./main.ts"]);
     expect(stderr).toContain("error: TS7006: Parameter 'chunk' implicitly has an 'any' type.");
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
   },

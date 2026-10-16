@@ -650,7 +650,7 @@ pub mod stdio {
 
     pub fn init() {
         #[cfg(target_os = "linux")]
-        if super::argv().any(|arg| arg.starts_with(b"--aot")) {
+        if super::argv().any(|arg| arg.starts_with(b"--aot") || arg == b"--debug-aot") {
             bun_remember_inherited_file_descriptors();
         }
         bun_initialize_process();

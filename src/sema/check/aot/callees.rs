@@ -461,7 +461,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let sym = self.symbol_of_identifier(file, hir[call].callee, name)?;
         let sym = if self.files().flags(sym).contains(SymFlags::ALIAS) { self.files().resolve_alias(sym)? } else { sym };
-        if self.is_stored_to_through_cast(sym) || self.may_be_overridden(sym) {
+        if self.is_stored_to_through_cast(sym) {
             return None;
         }
         let (of, func) = match self.function_declared_as(sym) {
@@ -572,7 +572,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Ident(name) => {
                 let Some(sym) = self.symbol_of_identifier(file, e, name) else { return unknown };
                 let sym = if self.files().flags(sym).contains(SymFlags::ALIAS) && !self.is_value_beside_imported_type(sym) { self.files().resolve_alias(sym) } else { Some(sym) };
-                match sym.filter(|&sym| !self.may_be_overridden_at(sym, file, e)).and_then(|sym| self.only_function_of_variable(sym)) {
+                match sym.and_then(|sym| self.only_function_of_variable(sym)) {
                     Some(only) => {
                         if let Some(came_by) = &mut self.aot.callees.came_by {
                             came_by.push(only.outermost);
@@ -653,9 +653,6 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Ident(variable) => {
                 let sym = self.symbol_of_identifier(file, e, variable)?;
                 let sym = if self.files().flags(sym).contains(SymFlags::ALIAS) { self.files().resolve_alias(sym)? } else { sym };
-                if self.may_be_overridden(sym) {
-                    return None;
-                }
                 if let Some((of, exported)) = self.expression_exported_as(sym) {
                     return if self.only_declares(of) { None } else { self.literal_produced_by(of, exported, depth + 1) };
                 }

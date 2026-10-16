@@ -103,9 +103,41 @@ test("react's compiler-runtime is typed at the installed file's own path", () =>
   }
 });
 
-test.each(["19.3.0", "19.3.1"])("react-dom %s constructs a request without a cast through unknown", version => {
+test("react-dom's server bundles are typed at the installed files' own paths", () => {
+  const versions = folders.filter(folder => json(join(folder, "sound.json")).name === "react-dom");
+  expect(versions.length).toBeGreaterThan(10);
+  for (const folder of versions) {
+    const manifest = json(join(folder, "sound.json"));
+    expect(manifest.sound).toBe(2);
+    expect(manifest.when).toEqual({});
+    expect(Object.keys(manifest.lay)).toEqual([
+      "cjs/react-dom-server-legacy.browser.production.js",
+      "cjs/react-dom-server.bun.production.js",
+    ]);
+    for (const [path, bytes] of Object.entries(layOf(folder, "react-dom", manifest.version))) {
+      const text = bytes.toString();
+      expect([path, /^exports\.renderToString = function \(/m.test(text)]).toEqual([path, path.includes("legacy")]);
+      expect([path, /^exports\.version = "/m.test(text)]).toEqual([path, true]);
+      expect([path, /^(import|export) /m.test(text)]).toEqual([path, false]);
+      expect([path, /^namespace FZ \{$/m.test(text)]).toEqual([path, true]);
+    }
+  }
+});
+
+test("an int32 of a typed text is Bun's", () => {
+  const texts = folders.flatMap(folder => {
+    const { name, version } = json(join(folder, "sound.json"));
+    return Object.entries(layOf(folder, name, version)).map(([path, bytes]) => [`${name}/${version}/${path}`, bytes.toString()]);
+  });
+  const declaring = texts.filter(([, text]) => /\btype int32 = /.test(text));
+  expect(declaring.length).toBeGreaterThan(20);
+  for (const [path, text] of declaring)
+    expect([path, /\btype int32 = (.*);/.exec(text)![1]]).toEqual([path, 'import("bun").int32']);
+});
+
+test.each(["19.0.0", "19.1.0", "19.2.8", "19.3.0", "19.3.1"])("react-dom %s constructs a request without a cast through unknown", version => {
   const lay = join(home, "react-dom", version, "lay");
-  const texts = filesUnder(lay).filter(path => path.endsWith(".ts"));
+  const texts = filesUnder(lay);
   expect(texts.length).toBe(2);
   for (const path of texts) {
     const text = readFileSync(join(lay, path), "utf8");
@@ -122,6 +154,16 @@ test.skipIf(!existsSync(join(home, "..", "..", ".gitattributes")))(
     expect(lines(".prettierignore")).toContain("packages/bun-sound");
   },
 );
+
+test("what seroval exports does not name the type of its nodes in a result", () => {
+  const text = readFileSync(join(home, "seroval", "1.6.9", "lay", "dist", "index.sound.ts"), "utf8");
+  const exported = /^export \{ (.*) \};$/m.exec(text)![1].split(", ");
+  expect(exported).toContain("toCrossJSONAsync");
+  for (const name of exported) {
+    const head = new RegExp(`^(?:async )?function ${name.replace("$", "\\$")}\\(.*\\): (.*) \\{$`, "m").exec(text);
+    if (head) expect({ name, result: head[1] }).toEqual({ name, result: expect.not.stringMatching(/SerovalNode|SerovalJSON|ObjectRecord|MapRecord/) });
+  }
+});
 
 test("no typed text freezes a value of which its type says nothing", () => {
   const text = readFileSync(join(home, "seroval", "1.6.9", "lay", "dist", "index.sound.ts"), "utf8");
@@ -172,6 +214,11 @@ describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"
     expect(Object.keys(sums).sort()).toEqual(Object.keys(manifest.lay).sort());
     expect(Object.keys(lay).sort()).toEqual(Object.keys(sums).sort());
     expect(Object.fromEntries(Object.entries(lay).map(([path, bytes]) => [path, sha256(bytes)]))).toEqual(sums);
+  });
+
+  test("of the module \"bun\" a laid text names only the type that the compiler declares itself", () => {
+    for (const [path, bytes] of Object.entries(layOf(folder, name, version)))
+      expect([path, /import\("bun"\)(?!\.int32;)|from "bun"/.test(bytes.toString())]).toEqual([path, false]);
   });
 
   test("a typed file does not hide a declaration file's place", () => {

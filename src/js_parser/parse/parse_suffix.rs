@@ -1498,6 +1498,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    #[cold]
+    #[inline(never)]
+    fn hand_plan_to_validation(p: &mut Self, audited: &'static bun_ast::audited::AuditedFile, left: &mut Expr) {
+        let ExprData::ECall(call) = left.data else { return };
+        if left.loc.start < 0 || matches!(call.target.data, ExprData::EMissing(..)) {
+            return;
+        }
+        let Some(site) = audited.validation_at(left.loc.start as u32, p.lexer.loc().start as u32) else { return };
+        let is_schema = site.which == 2;
+        if call.args.len() != usize::from(!is_schema) {
+            return;
+        }
+        let loc = left.loc;
+        let plan = p.new_expr(E::String::init(&site.plan), loc);
+        let listed = <bun_ast::ExprNodeList as bun_collections::VecExt<Expr>>::from_arena_slice;
+        let args = if is_schema { listed(&[plan]) } else { listed(&[call.args[0], plan]) };
+        *left = p.new_expr(
+            E::Call {
+                target: call.target,
+                args,
+                close_paren_loc: call.close_paren_loc,
+                ..Default::default()
+            },
+            loc,
+        );
+    }
+
     pub(crate) fn parse_suffix(
         &mut self,
         left: &mut Expr,
@@ -1510,6 +1537,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut optional_chain: Option<OptionalChain> = None;
         loop {
             if let Some(audited) = p.options.features.audited {
+                if !audited.validations.is_empty() {
+                    Self::hand_plan_to_validation(p, audited, left);
+                }
                 Self::mark_audited(p, audited, left, optional_chain.is_some());
             }
             if p.lexer.loc().start == p.after_arrow_body_loc.start {

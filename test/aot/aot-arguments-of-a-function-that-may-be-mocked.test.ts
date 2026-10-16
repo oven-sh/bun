@@ -3,8 +3,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 
 const files = {
   "budget/grace.ts": `
-    export interface HookBudget { catchMs: number }
-    export const GRACE_MS: HookBudget["catchMs"] = 1_000;
+    export interface Limits { waitMs: number }
+    export const DEFAULT_WAIT_MS: Limits["waitMs"] = 1_000;
   `,
   "budget/create.ts": `export function create(ms: number): { ms: number } { return { ms }; }`,
   "budget/index.ts": `
@@ -23,7 +23,7 @@ const files = {
     import { hookNext } from "./next";
     import type { Caught } from "./next";
     export async function run<E extends string>(event: E, kind: string, message: string | undefined, called: boolean): Promise<string> {
-      const grace = Budget.create(Budget.GRACE_MS);
+      const grace = Budget.create(Budget.DEFAULT_WAIT_MS);
       const next = hookNext({
         event,
         budget: grace,
@@ -31,7 +31,7 @@ const files = {
           error: Object.freeze({
             kind,
             ...(message === undefined ? {} : { message }),
-            budget: Budget.GRACE_MS,
+            budget: Budget.DEFAULT_WAIT_MS,
           }),
           called,
         },

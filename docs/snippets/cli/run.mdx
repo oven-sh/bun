@@ -74,7 +74,8 @@ bun run <file or script>
 </ParamField>
 
 <ParamField path="--aot" type="boolean">
-  Compile the program to machine code ahead of time, as <code>bun build --compile --aot</code> does, then run it
+  Run under the rules of <code>bun build --compile --aot</code>: type check first, hold values to their types, and make built-in
+  objects immutable. Nothing is compiled ahead of time
 </ParamField>
 
 <ParamField path="--aot-type-errors" type="string" default="throw">

@@ -37,6 +37,7 @@ type Store = (TypeId, TypeId, Atom);
 pub(super) struct Shared {
     /// The functions with a store to `(this as ..).name`, of all the files, in their order, and in the order of the text. Syntax only.
     storing_through_assertions: OnceLock<Vec<(FileId, FnId)>>,
+    typed_files: OnceLock<Vec<FileId>>,
 }
 
 #[derive(Default)]
@@ -144,9 +145,9 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = &self.aot.undeclared_fields.stores {
             return known.clone();
         }
-        let files: Vec<FileId> = self.files_declaring_classes().into_iter().filter(|&file| self.is_compiled(file) && !self.hir(file).is_js).collect();
+        let files: &'p [FileId] = self.p.aot.undeclared_fields.typed_files.get_or_init(|| self.files_declaring_classes().into_iter().filter(|&file| self.is_compiled(file) && !self.hir(file).is_js).collect());
         let mut stores: Vec<Store> = Vec::new();
-        for &(file, func) in self.functions_storing_through_assertions(&files) {
+        for &(file, func) in self.functions_storing_through_assertions(files) {
             let Some(constructed) = self.type_constructed_by(file, func) else { continue };
             let hir = self.hir(file);
             for store in self.first_stores_written_in(file, func) {
@@ -154,7 +155,7 @@ impl<'p, 's> Checker<'p, 's> {
                     continue;
                 }
                 // What comes after a store that is none of the first is none either.
-                let Some(declaring) = self.interface_declaring(&files, constructed, store.name) else { break };
+                let Some(declaring) = self.interface_declaring(files, constructed, store.name) else { break };
                 stores.push((constructed, declaring, store.name));
             }
         }

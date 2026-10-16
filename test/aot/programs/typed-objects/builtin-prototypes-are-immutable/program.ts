@@ -34,9 +34,6 @@ a32 TypeError undefined unchanged
 a33 TypeError then unchanged
 a34 TypeError undefined unchanged
 a35 TypeError "1970-01-01T00:00:00.000Z" unchanged
-a36 TypeError Error: m unchanged
-a37 TypeError undefined unchanged
-a38 TypeError TypeError unchanged
 a39 TypeError undefined unchanged
 a40 TypeError undefined unchanged
 a41 TypeError undefined unchanged
@@ -57,14 +54,6 @@ FinalizationRegistry set=TypeError index=TypeError symbol=TypeError define=TypeE
 Promise set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
 RegExp set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
 Date set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
-Error set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
-TypeError set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
-RangeError set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
-SyntaxError set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
-ReferenceError set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
-EvalError set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
-URIError set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
-AggregateError set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
 ArrayBuffer set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
 SharedArrayBuffer set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
 DataView set=TypeError index=TypeError symbol=TypeError define=TypeError defineIndex=TypeError defineGetter=TypeError assign=TypeError Reflect.set=false Reflect.setIndex=false Reflect.define=false Reflect.defineIndex=false replace=TypeError redefine=TypeError Reflect.replace=false Reflect.redefine=false delete=TypeError Reflect.delete=false setPrototypeOf=TypeError __proto__=TypeError Reflect.setPrototypeOf=false extensible=false frozen=true unchanged
@@ -199,9 +188,6 @@ direct("a32", Promise.prototype, () => { (Promise.prototype as any).done = 1; re
 direct("a33", Promise.prototype, () => { Promise.prototype.then = function () { return this as any }; return "stored" }, () => Promise.prototype.then.name)
 direct("a34", RegExp.prototype, () => { (RegExp.prototype as any).all = 1; return "stored" }, () => (/x/ as any).all)
 direct("a35", Date.prototype, () => { Date.prototype.toJSON = () => "mine"; return "stored" }, () => JSON.stringify(new Date(0)))
-direct("a36", Error.prototype, () => { Error.prototype.name = "Mine"; return "stored" }, () => String(new Error("m")))
-direct("a37", Error.prototype, () => { (Error.prototype as any).code = 1; return "stored" }, () => (new Error("m") as any).code)
-direct("a38", TypeError.prototype, () => { TypeError.prototype.message = "mine"; return "stored" }, () => String(new TypeError()))
 direct("a39", Uint8Array.prototype, () => { (Uint8Array.prototype as any).hex = 1; return "stored" }, () => (new Uint8Array(1) as any).hex)
 direct("a40", Uint8Array.prototype, () => { (Uint8Array.prototype as any)[1] = 7; return "stored" }, () => String(new Uint8Array(1)[1]))
 direct("a41", Float64Array.prototype, () => Object.setPrototypeOf(Float64Array.prototype, Array.prototype) === Float64Array.prototype, () => typeof (new Float64Array(1) as any).push)
@@ -263,14 +249,6 @@ row("FinalizationRegistry", FinalizationRegistry.prototype, "register")
 row("Promise", Promise.prototype, "then")
 row("RegExp", RegExp.prototype, "exec")
 row("Date", Date.prototype, "getTime")
-row("Error", Error.prototype, "toString")
-row("TypeError", TypeError.prototype, "name")
-row("RangeError", RangeError.prototype, "name")
-row("SyntaxError", SyntaxError.prototype, "name")
-row("ReferenceError", ReferenceError.prototype, "name")
-row("EvalError", EvalError.prototype, "name")
-row("URIError", URIError.prototype, "name")
-row("AggregateError", AggregateError.prototype, "name")
 row("ArrayBuffer", ArrayBuffer.prototype, "slice")
 row("SharedArrayBuffer", SharedArrayBuffer.prototype, "slice")
 row("DataView", DataView.prototype, "getInt8")

@@ -303,7 +303,7 @@ mod _impl {
 
             if arg.len() >= 1 && arg[0] == b'-' {
                 args.push(if arg.starts_with(b"--aot-graph-fd=") {
-                    BunString::static_("--aot")
+                    BunString::static_("--debug-aot")
                 } else {
                     BunString::clone_utf8(arg)
                 });

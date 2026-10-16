@@ -262,6 +262,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_top_level_return: bool,
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
+    pub(crate) is_es_module_by_its_own_syntax: bool,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -302,10 +303,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// When visiting e_call, if the target ref matches this, we replace the call with
     /// a boolean based on whether the feature flag is enabled.
     pub(crate) bundler_feature_flag_ref: Ref,
-    pub(crate) create_require_names: Vec<&'a [u8]>,
-    pub(crate) own_require_names: Vec<&'a [u8]>,
-    pub(crate) paths_from_own_folder: Vec<(&'a [u8], &'a [u8])>,
-    pub(crate) written_names: Vec<(&'a [u8], &'a [u8])>,
+    pub(crate) create_require_refs: Vec<Ref>,
+    pub(crate) node_module_refs: Vec<Ref>,
+    pub(crate) own_require_refs: Vec<Ref>,
+    pub(crate) calls_of_identifiers_with_one_argument: Vec<(Ref, Expr)>,
     /// Set to true when visiting an if/ternary condition. feature() calls are only valid in this context.
     pub(crate) in_branch_condition: bool,
 
@@ -558,6 +559,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
     pub(crate) module_scope_directive_loc: bun_ast::Loc,
     pub(crate) is_control_flow_dead: bool,
+    pub(crate) is_after_jump: bool,
     /// Fill `scope_uses` (bundling with the number renamer).
     pub(crate) track_scope_uses: bool,
     /// Next `Scope::visit_span` pre-order index. The module scope is 0.
@@ -1471,13 +1473,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Some(ns)
     }
 
+    #[inline]
+    pub(crate) fn is_unreachable(&self) -> bool {
+        self.is_control_flow_dead || self.is_after_jump
+    }
+
     pub(crate) fn transpose_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
         // The argument must be a string
         if let Some(mut str_) = arg.data.as_e_string() {
             // Ignore calls to import() if the control flow is provably dead here.
             // We don't want to spend time scanning the required files if they will
             // never be used.
-            if self.is_control_flow_dead {
+            if self.is_unreachable() {
                 return self.new_expr(E::Null {}, arg.loc);
             }
 
@@ -1611,7 +1618,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Ignore calls to import() if the control flow is provably dead here.
         // We don't want to spend time scanning the required files if they will
         // never be used.
-        if self.is_control_flow_dead {
+        if self.is_unreachable() {
             return self.new_expr(E::Null {}, arg.loc);
         }
 
@@ -1659,7 +1666,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Ignore calls to require() if the control flow is provably dead here.
                 // We don't want to spend time scanning the required files if they will
                 // never be used.
-                if self.is_control_flow_dead {
+                if self.is_unreachable() {
                     return Expr {
                         data: null_expr_data(),
                         loc: arg.loc,
@@ -4505,6 +4512,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `default_name` separately
             }
         }
+        if self.options.compiles_ahead_of_time && matches!(path.text, b"module" | b"node:module") {
+            if stmt.star_name_loc.to_nullable().is_some() {
+                self.node_module_refs.push(stmt.namespace_ref);
+            }
+            if let Some(default_name) = &stmt.default_name {
+                self.node_module_refs.push(default_name.ref_);
+            }
+        }
         let mut end: usize = 0;
 
         let items_slice: &mut [js_ast::ClauseItem] = stmt.items.slice_mut();
@@ -4522,8 +4537,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
-            if alias == b"createRequire" && self.options.compiles_requires_made_by_create_require {
-                self.create_require_names.push(name);
+            if alias == b"createRequire" && matches!(path.text, b"module" | b"node:module") && self.options.compiles_ahead_of_time {
+                self.create_require_refs.push(r#ref);
             }
 
             // ensure every e_import_identifier holds the namespace
@@ -5660,7 +5675,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut opts = PrependTempRefsOpts::default();
         let mut part_stmts = bun_alloc::vec_from_iter_in(stmts.iter().copied(), arena);
 
+        let was_after_jump = self.is_after_jump;
+        let declares_functions_alone = stmts.iter().all(|stmt| match stmt.data {
+            js_ast::StmtData::SFunction(_) => true,
+            js_ast::StmtData::SExportDefault(default) => {
+                matches!(&default.value, js_ast::StmtOrExpr::Stmt(value) if matches!(value.data, js_ast::StmtData::SFunction(_)))
+            }
+            _ => false,
+        });
+        if declares_functions_alone {
+            self.is_after_jump = false;
+        }
         self.visit_stmts_and_prepend_temp_refs(&mut part_stmts, &mut opts)?;
+        self.is_after_jump = was_after_jump
+            || (self.options.compiles_ahead_of_time
+                && part_stmts.iter().any(|stmt| {
+                    crate::scan::scan_side_effects::SideEffects::always_throws_or_returns(self, *stmt)
+                }));
 
         // Insert any relocated variable statements now
         if !self.relocated_top_level_vars.is_empty() {
@@ -9541,6 +9572,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
+            is_es_module_by_its_own_syntax: self.is_es_module_by_its_own_syntax,
 
             hashbang: hashbang.into(),
             export_default_alias_of_import: self.export_default_alias_of_import,
@@ -9860,6 +9892,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_return: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,
+            is_es_module_by_its_own_syntax: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
@@ -9881,10 +9914,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             response_ref: Ref::NONE,
             bun_app_namespace_ref: Ref::NONE,
             bundler_feature_flag_ref: Ref::NONE,
-            create_require_names: Vec::new(),
-            own_require_names: Vec::new(),
-            paths_from_own_folder: Vec::new(),
-            written_names: Vec::new(),
+            create_require_refs: Vec::new(),
+            node_module_refs: Vec::new(),
+            own_require_refs: Vec::new(),
+            calls_of_identifiers_with_one_argument: Vec::new(),
             in_branch_condition: false,
             has_classic_runtime_warned: false,
             macro_call_count: 0,
@@ -9945,6 +9978,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
+            is_after_jump: false,
             track_scope_uses,
             visit_scope_count: 0,
             field_init_class_bodies: Vec::new(),

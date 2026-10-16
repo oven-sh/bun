@@ -520,7 +520,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
     [[maybe_unused]] bool fromEmbedded = false;
-    if (filename.startsWith(StandaloneModuleGraph__base_path)) {
+    {
         BunString bunStr = Bun::toString(filename);
         BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
         if (!resolved.isDead()) {

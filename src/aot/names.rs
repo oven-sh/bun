@@ -1,7 +1,7 @@
 use crate::declared::{DeclaredTable, Part};
 use crate::fragment::{Ids, Used, for_each_id_of_func, for_each_id_of_global, for_each_id_of_layout};
 use crate::id::{FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
-use crate::ir::{Def, FuncKind, LayoutKind, Op, Prediction, Program, Strs, Why, field_flags, func_flags};
+use crate::ir::{Def, FuncKind, LayoutKind, Op, Operation, Prediction, Program, Strs, Why, field_flags, func_flags};
 use bun_sema::atom::PRIVATE_NAME_PREFIX;
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::FxHashMap;
@@ -158,6 +158,7 @@ fn for_each_string_outside_functions(program: &mut Program, changes_names: bool,
         extended_globals,
         prototype_property_names,
         regexp_literals,
+        webassembly_modules: _,
         logs_type_errors: _,
         marked_values: _,
         builtin_modules: _,
@@ -299,7 +300,6 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
                 | Op::PropHas { name, .. }
                 | Op::PropDelete { name, .. }
                 | Op::CallMethod { name, .. }
-                | Op::Operation { name, .. }
                 | Op::NewWith { name, .. } => spell(name),
                 Op::FieldGet { layout, field, .. } | Op::FieldSet { layout, field, .. } if program.layouts[layout.idx()].kind != LayoutKind::Environment => spell(program.layouts[layout.idx()].fields[field as usize].name),
                 Op::Coerce { why: Why::NonNull(text), .. } => {
@@ -402,7 +402,6 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
     }
     let strs = std::mem::take(&mut program.strs);
     let mut funcs = std::mem::take(&mut program.funcs);
-    let new_private_name = strs.find(b"NewPrivateName");
     let is_mentioned: Vec<AtomicBool> = (0..strs.len()).map(|_| AtomicBool::new(false)).collect();
     let mention = |id: &mut StrId| {
         if !is_mentioned[id.idx()].load(Ordering::Relaxed) {
@@ -482,7 +481,7 @@ pub(crate) fn shorten(program: &mut Program, in_parallel: InParallel<'_>) -> Sai
                     }
                     let texts: Vec<V> = (func.values.iter())
                         .filter_map(|value| match &value.def {
-                            Def::Op(Op::Operation { name, args }) if Some(*name) == new_private_name => args.first().copied(),
+                            Def::Op(Op::Operation { which: Operation::NewPrivateName, args }) => args.first().copied(),
                             _ => None,
                         })
                         .collect();

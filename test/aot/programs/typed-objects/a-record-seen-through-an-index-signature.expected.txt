@@ -1,5 +1,5 @@
-store TypeError
-looked at 1
-typeof number
-arithmetic 2
-held 2
+store taken
+looked at text
+typeof string
+arithmetic TypeError
+held TypeError

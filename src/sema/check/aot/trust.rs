@@ -10,7 +10,7 @@
 //!
 //! The predicate is on the declaration that PRODUCED the value, not on its type: `const o: FromADts = { .. }` is the program's own claim.
 //!
-//! What the engine implements itself stays trusted: `BUILTINS`. So do the libraries that the toolchain vouches for: `libraries.rs`.
+//! What the engine implements itself stays trusted: `BUILTINS`.
 
 use crate::atom::{Atom, SYMBOL_NAME_PREFIX, known};
 use crate::bind::{Decl, MemberOwner, Parent, PatParent, SymFlags};
@@ -197,17 +197,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn find_unvouched_claim(&mut self, file: FileId, e: ExprId) -> Option<Claim> {
         let hir = self.hir(file);
-        // An export of a library that the toolchain vouches for is trusted like a built-in.
-        if self.vouched_export(file, e).is_some() {
-            return None;
-        }
         match hir[e].kind {
             ExprKind::Ident(name) => {
                 let sym = self.symbol_of_identifier(file, e, name)?;
                 let sym = if self.files.flags(sym).contains(SymFlags::ALIAS) { self.files.resolve_alias(sym)? } else { sym };
-                if self.may_be_overridden_at(sym, file, e) {
-                    return Some(Claim::Binding);
-                }
                 match self.claim_of_symbol(sym) {
                     ClaimOfSymbol::IsAmbient => Some(Claim::Binding),
                     ClaimOfSymbol::SaysNothingOfFields => self.is_narrowed_from_untyped(file, e, sym).then_some(Claim::Binding),
@@ -219,14 +212,14 @@ impl<'p, 's> Checker<'p, 's> {
                     return None;
                 }
                 let receiver = self.type_of_expr(file, obj);
-                (self.is_predicted(file, obj) || self.is_property_claimed(receiver, name)).then_some(Claim::Property)
+                (self.is_predicted(file, obj) || self.is_property_claimed(receiver, name) || self.is_prototype_object_of_class(file, e, name) || self.is_indexed_by_a_declaration_file(receiver) || self.is_primitive_read_behind_cast(file, e)).then_some(Claim::Property)
             }
             ExprKind::Index { obj, index, .. } => {
                 if self.is_predicted(file, obj) {
                     return Some(Claim::Property);
                 }
                 let receiver = self.type_of_expr(file, obj);
-                let is_named_there = matches!(hir[index].kind, ExprKind::String(name) if self.has_member_of_class_without_body(receiver, name));
+                let is_named_there = matches!(hir[index].kind, ExprKind::String(name) if self.has_member_of_class_without_body(receiver, name) || self.is_prototype_object_of_class(file, e, name));
                 (is_named_there || self.is_indexed_by_a_declaration_file(receiver)).then_some(Claim::Property)
             }
             ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => {
@@ -250,6 +243,13 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 if is_generic && self.resolves_to_type_with_return_only_type_parameter(file, e) {
                     return Some(if hir[call].type_args.is_empty() { Claim::GenericCall } else { Claim::GenericCallWithTypeArguments });
+                }
+                if let ExprKind::Dot { obj, name, .. } = hir[callee].kind
+                    && self.atoms().bytes(name) == b"resolve"
+                    && self.names_global_object(file, obj, b"Promise")
+                    && hir.ids(hir[call].args).next().is_some_and(|resolved| self.may_turn_out_thenable(file, resolved))
+                {
+                    return Some(Claim::GenericCall);
                 }
                 if self.returns_unchecked_promise(file, e, callee) {
                     return Some(if is_generic { Claim::GenericCall } else { Claim::Call });
@@ -279,7 +279,7 @@ impl<'p, 's> Checker<'p, 's> {
                 })
             }
             ExprKind::New(call) => self.is_predicted(file, hir[call].callee).then_some(Claim::New),
-            ExprKind::Await(operand) => (self.is_predicted(file, operand) || self.is_promise_of_a_prediction(file, operand)).then_some(Claim::Await),
+            ExprKind::Await(operand) => (self.is_predicted(file, operand) || self.is_promise_of_a_prediction(file, operand) || self.may_turn_out_thenable(file, operand)).then_some(Claim::Await),
             ExprKind::ImportCall { args } => {
                 let ExprKind::String(specifier) = hir[hir.id_at(args, 0)].kind else { return None };
                 let module = self.files.module_of_specifier_as(file, specifier, self.files.mode_of_import_call(file))?;
@@ -289,17 +289,25 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    pub(super) fn is_primitive_read_behind_cast(&mut self, file: FileId, e: ExprId) -> bool {
+        let ExprKind::Dot { obj, .. } = self.hir(file)[e].kind else { return false };
+        if !self.has_no_objects_by_its_type(file, e) {
+            return false;
+        }
+        let known = self.type_yielded_by(file, obj);
+        known != self.type_of_expr(file, obj) && !self.says_nothing(known) && !self.has_no_objects_by_its_type(file, obj)
+    }
+
+    fn is_prototype_object_of_class(&mut self, file: FileId, e: ExprId, name: Atom) -> bool {
+        name == known::prototype && {
+            let declared = self.type_of_expr(file, e);
+            self.is_type_of_instances(declared)
+        }
+    }
+
     fn lists_values_of_properties(&mut self, file: FileId, callee: ExprId) -> bool {
         let ExprKind::Dot { obj, name, .. } = self.hir(file)[callee].kind else { return false };
         matches!(self.atoms().bytes(name), b"values" | b"entries") && self.names_global_object(file, obj, b"Object")
-    }
-
-    fn is_export_that_may_be_overridden(&mut self, receiver: TypeId, name: Atom) -> bool {
-        let Some(members) = self.members(receiver) else { return false };
-        let Some(prop) = members.resolved.prop(name) else { return false };
-        let PropSource::Symbol(declared) = prop.source else { return false };
-        let declared = if self.files.flags(declared).contains(SymFlags::ALIAS) { self.files.resolve_alias(declared) } else { Some(declared) };
-        declared.is_some_and(|declared| self.may_be_overridden(declared))
     }
 
     fn is_host_global(&mut self, receiver: TypeId, name: Atom) -> bool {
@@ -363,8 +371,7 @@ impl<'p, 's> Checker<'p, 's> {
         let found = self.is_unlisted_property(receiver, name)
             || self.has_predicted_prop(receiver, name)
             || self.has_member_of_class_without_body(receiver, name)
-            || self.is_host_global(receiver, name)
-            || self.is_export_that_may_be_overridden(receiver, name);
+            || self.is_host_global(receiver, name);
         if self.rests_on_no_assumption(asked) && is_settled {
             self.aot.trust.of_properties.insert((receiver, name), found);
         }
@@ -457,6 +464,11 @@ impl<'p, 's> Checker<'p, 's> {
         (declared.kind == VarKind::Const && declared.pat == pat && declared.init.is_some() && matches!(self.hir(of)[declared.init].kind, ExprKind::Array(_))).then_some((of, declared.init))
     }
 
+    fn may_turn_out_thenable(&mut self, file: FileId, e: ExprId) -> bool {
+        let written = self.type_of_expr(file, e);
+        self.parts(written).iter().any(|&part| self.is_object_type(part) && !self.is_thenable(part))
+    }
+
     fn is_promise_of_a_prediction(&mut self, file: FileId, e: ExprId) -> bool {
         let yielded = self.type_yielded_by(file, e);
         if yielded == self.type_of_expr(file, e) {
@@ -509,7 +521,7 @@ impl<'p, 's> Checker<'p, 's> {
         if name.is_none() || self.files.parent_of_symbol(sym).is_some() {
             return false;
         }
-        is_global_of_the_engine(self.atoms().bytes(name)) && self.global_that_may_be_overridden(self.atoms().bytes(name)).is_none()
+        is_global_of_the_engine(self.atoms().bytes(name))
     }
 
     /// Whether `obj.name` reads a property that `lib.*.d.ts` declares for an object of the engine and the table has no entry for:

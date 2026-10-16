@@ -1,6 +1,7 @@
-// The inliner takes the kind of caller into account: plain functions inline small callees, module top-level code and resumed async functions do not.
+// The inliner takes the kind of caller into account: plain functions inline small callees, and so do async functions, which stay one function across an `await`; module top-level code does not.
 // IR= 0 plain CallDirect
-// IR= 1 waits CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+\)$
+// IR= 0 waits CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+\)$
+// IR= 2 waits frame [0-9]+ = Mul
 // IRM= 1 CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+\)$
 // IRM= 3 CallDirect f[0-9]+ \(v[0-9]+\)$
 declare const console: any;

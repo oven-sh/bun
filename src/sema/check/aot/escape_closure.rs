@@ -5,7 +5,7 @@ use super::trust::{ALIASES, TYPED_ARRAYS};
 use crate::atom::Atom;
 use crate::bind::{Decl, Parent};
 use crate::check::{Checker, ContextFlags};
-use crate::hir::{BinOp, CallId, ExprId, ExprKind, FileKind, PropKind, StmtKind, TypeParamId, UnOp};
+use crate::hir::{BinOp, CallId, ExprId, ExprKind, ExprTag, FileKind, PropKind, StmtKind, TypeParamId, UnOp};
 use crate::program::{FileId, Sym};
 use crate::types::{MapperId, Origin, PropSource, SigId, TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
@@ -88,6 +88,7 @@ pub(super) struct State {
     uses: FxHashMap<CallId, Option<(u16, Rc<[u16]>)>>,
     untyped_callbacks: FxHashMap<CallId, bool>,
     entered_by_literals: FxHashMap<ExprId, Entered>,
+    operands_of_built_ins: FxHashSet<ExprId>,
 }
 
 /// The entries of `BUILTIN_ENTRIES` for the holder and the name, of whatever kind: those of one built-in are adjacent.
@@ -335,6 +336,11 @@ impl<'p, 's> Checker<'p, 's> {
         self.aot.escape_closure = State::default();
         if self.is_untyped_file(file) {
             self.note_alterations_by_javascript(file);
+            self.note_what_javascript_hands_to_what_it_imports(file);
+            let calls: Vec<ExprId> = self.exprs_by_kind_of(file).of(ExprTag::Call).to_vec();
+            for e in calls {
+                self.note_construction_for_another_new_target(file, e);
+            }
         }
     }
 
@@ -412,14 +418,64 @@ impl<'p, 's> Checker<'p, 's> {
         if parent == Parent::None || bound.is_in_type_query(e) {
             return;
         }
+        let stored_to = match self.hir(file)[e].kind {
+            ExprKind::Assign { target, .. } => Some(target),
+            ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, operand } => Some(operand),
+            _ => None,
+        };
+        if let Some(target) = stored_to
+            && let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = self.hir(file)[target].kind
+        {
+            self.note_dictionaries_stored_through(file, obj);
+        }
         self.note_alteration_by(file, e);
         self.note_method_as_value(file, e, parent);
         self.note_instanceof_operands(file, e);
+        self.note_construction_for_another_new_target(file, e);
         if self.leaks_its_prototype(file, e, parent) {
             let shown = self.type_shown_by(file, e, 0);
             self.note_what_is_let_out(shown, None);
         }
         let entered = if matches!(self.hir(file)[e].kind, ExprKind::Object(_)) { self.place_entered_by_literal(file, e, parent) } else { self.place_entered_by(file, e, parent) };
+        if let ExprKind::Spread(operand) = self.hir(file)[e].kind
+            && let Parent::Expr(around) = parent
+            && let ExprKind::Call(call) | ExprKind::New(call) = self.hir(file)[around].kind
+        {
+            let spread = self.type_of_expr(file, operand);
+            if self.is_untyped(spread)
+                && let Some(signature) = self.resolved_signature(file, around).sig
+            {
+                let index = self.hir(file).ids(self.hir(file)[call].args).position(|argument| argument == e).unwrap_or(0);
+                let parameters: Vec<TypeId> = self.sig_params(signature).iter().map(|parameter| parameter.ty).collect();
+                let pos = self.hir(file)[e].pos;
+                self.note_place(file, pos);
+                for &parameter in parameters.iter().skip(index.min(parameters.len().saturating_sub(1))) {
+                    self.note_untyped_inflow_into_instances_in(parameter);
+                }
+            }
+        }
+        if !matches!(entered, Entered::Nowhere) {
+            let held = self.type_of_expr(file, e);
+            let pos = self.hir(file)[e].pos;
+            self.note_place(file, pos);
+            if let Entered::Typed(target) = entered
+                && self.is_untyped(held)
+            {
+                let mut source = e;
+                while let ExprKind::As { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::Satisfies { expr: inner, .. } = self.hir(file)[source].kind {
+                    source = inner;
+                }
+                let written = self.type_of_expr(file, source);
+                if self.is_untyped(written) {
+                    self.note_untyped_inflow_into_place(target);
+                }
+            }
+            if matches!(self.hir(file)[e].kind, ExprKind::Fn(_) | ExprKind::Ident(_) | ExprKind::Dot { .. })
+                && matches!(parent, Parent::Expr(around) if matches!(self.hir(file)[around].kind, ExprKind::Call(_) | ExprKind::New(_)))
+            {
+                self.note_untyped_inflow_through_guards_of(held);
+            }
+        }
         match entered {
             Entered::Nowhere => {}
             Entered::Typed(target) => self.note_built_in_as_value(file, e, Some(target)),
@@ -430,6 +486,13 @@ impl<'p, 's> Checker<'p, 's> {
                 let target = self.type_of_expr(file, around);
                 self.note_built_in_as_value(file, e, Some(target));
             }
+        }
+        if match entered {
+            Entered::Untyped => !self.aot.escape_closure.operands_of_built_ins.contains(&e) && !self.is_handed_to_built_in_that_only_looks(file, e, parent),
+            Entered::Typed(target) => self.says_nothing_of_objects(target),
+            Entered::Nowhere | Entered::WithParent => false,
+        } {
+            self.note_dictionaries_stored_through(file, e);
         }
         if let Parent::Prop(prop) = parent
             && !matches!(entered, Entered::Nowhere)
@@ -497,6 +560,32 @@ impl<'p, 's> Checker<'p, 's> {
         for signature in signatures {
             let made = self.sig_return(signature);
             self.note_type_admits_foreign_objects(made, true);
+        }
+    }
+
+    fn note_construction_for_another_new_target(&mut self, file: FileId, e: ExprId) {
+        let hir = self.hir(file);
+        let ExprKind::Call(call) = hir[e].kind else { return };
+        let ExprKind::Dot { obj, name, .. } = hir[hir[call].callee].kind else { return };
+        if self.atoms().bytes(name) != b"construct" || !self.names_global_object(file, obj, b"Reflect") {
+            return;
+        }
+        let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
+        if arguments.is_empty() || arguments.len() < 3 && !arguments.iter().any(|&argument| matches!(hir[argument].kind, ExprKind::Spread(_))) {
+            return;
+        }
+        let class = self.type_of_expr(file, arguments[0]);
+        let signatures: Vec<SigId> = self.signatures(class, true).iter().copied().collect();
+        let mut pending: Vec<TypeId> = signatures.into_iter().map(|signature| self.sig_return(signature)).collect();
+        let mut seen: FxHashSet<TypeId> = FxHashSet::default();
+        while let Some(made) = pending.pop() {
+            if !seen.insert(made) {
+                continue;
+            }
+            self.note_type_admits_foreign_objects(made, false);
+            if let TypeData::Ref { target, .. } = *self.data(made) {
+                pending.extend(self.base_types(target).iter().copied());
+            }
         }
     }
 
@@ -986,6 +1075,17 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(parameter) = self.hir(declared_in)[function].params.iter().nth(index) else { return };
         let (own, declared) = (self.type_of_expr(file, e), self.type_of_param(declared_in, parameter));
         self.note_entering_type_parameters(own, declared);
+        if matches!(self.data(declared), TypeData::TypeParam(..)) {
+            for part in self.parts(own).to_vec() {
+                if !self.says_properties(part) {
+                    continue;
+                }
+                let record = self.laid_out_as(part);
+                for dictionary in self.dictionaries_taking_more_than(declared, record) {
+                    self.note_held_read_only(record, dictionary);
+                }
+            }
+        }
         if matches!(self.data(declared), TypeData::TypeParam(..)) && self.is_predicted(file, e) {
             let bound = self.base_constraint(declared);
             let mut views: Vec<TypeId> = Vec::new();
@@ -1119,7 +1219,94 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `e`: the receiver or an argument of a call of a built-in, which may do `used` with it.
+    fn note_dictionaries_stored_through(&mut self, file: FileId, e: ExprId) {
+        let own = self.type_of_expr(file, e);
+        for dictionary in self.dictionaries_in(own) {
+            self.note_read_only_handed_on(dictionary);
+        }
+    }
+
+    fn built_in_held_by(&mut self, file: FileId, function: ExprId, signature: SigId) -> Option<(Atom, Atom)> {
+        if let CalleeKind::BuiltIn(holder, name) = self.kind_of_callee_uncached(file, function, signature) {
+            return Some((holder, name));
+        }
+        let hir = self.hir(file);
+        match hir[function].kind {
+            ExprKind::Dot { obj, name, .. } => {
+                let ExprKind::Dot { obj: constructor, name: prototype, .. } = hir[obj].kind else { return None };
+                let ExprKind::Ident(global) = hir[constructor].kind else { return None };
+                if prototype.is_none() || name.is_none() || self.atoms().bytes(prototype) != b"prototype" {
+                    return None;
+                }
+                let sym = self.resolve_identifier(file, constructor, global, true).ok().flatten()?;
+                let is_known = self.files.module(sym.file).is_lib && !entries_of(self.holder_in_table(global).0, self.atoms().bytes(name)).is_empty();
+                is_known.then_some((global, name))
+            }
+            ExprKind::Ident(name) => {
+                let sym = self.resolve_identifier(file, function, name, true).ok().flatten()?;
+                let (declared_in, initializer) = self.initializer_of_const(sym)?;
+                self.built_in_held_by(declared_in, initializer, signature)
+            }
+            _ => None,
+        }
+    }
+
+    fn only_looks(&self, holder: Atom, name: Atom) -> bool {
+        let (holder, _) = self.holder_in_table(holder);
+        let may_store = uses::WRITES_PROPERTIES | uses::HANDS_OVER | uses::KEEPS;
+        entries_of(holder, self.atoms().bytes(name)).iter().all(|entry| entry.parameters.iter().fold(entry.this, |all, parameter| all | parameter.2) & may_store == 0)
+    }
+
+    fn is_handed_to_built_in_that_only_looks(&mut self, file: FileId, e: ExprId, parent: Parent) -> bool {
+        let Parent::Expr(around) = parent else { return false };
+        let hir = self.hir(file);
+        let ExprKind::Call(call) = hir[around].kind else { return false };
+        let ExprKind::Dot { obj: function, name, .. } = hir[hir[call].callee].kind else { return false };
+        if function == e || name.is_none() || !matches!(self.atoms().bytes(name), b"call" | b"apply") {
+            return false;
+        }
+        let of_function = self.type_of_expr(file, function);
+        let signatures: Vec<SigId> = self.signatures(of_function, false).iter().copied().collect();
+        !signatures.is_empty() && signatures.into_iter().all(|signature| self.built_in_held_by(file, function, signature).is_some_and(|(holder, name)| self.only_looks(holder, name)))
+    }
+
+    fn may_store_to_operand(&mut self, file: FileId, call: CallId, used: u16) -> bool {
+        if used & uses::WRITES_PROPERTIES != 0 {
+            return true;
+        }
+        if used & uses::HANDS_OVER == 0 {
+            return false;
+        }
+        let hir = self.hir(file);
+        let mut operands: Vec<ExprId> = hir.ids(hir[call].args).collect();
+        if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[hir[call].callee].kind {
+            operands.push(obj);
+        }
+        operands.into_iter().any(|operand| {
+            let ty = self.type_of_expr(file, operand);
+            let parts: Vec<TypeId> = self.parts(ty).to_vec();
+            parts.into_iter().any(|part| {
+                if part.is_any() {
+                    return true;
+                }
+                let signatures: Vec<SigId> = self.signatures(part, false).iter().copied().collect();
+                signatures.into_iter().any(|signature| {
+                    if let Some((holder, name)) = self.built_in_held_by(file, operand, signature) {
+                        return !self.only_looks(holder, name);
+                    }
+                    let parameters = self.sig_params(signature);
+                    let this = self.sig_this_type(signature);
+                    (0..parameters.len()).filter_map(|index| self.param_type_at(&parameters, index)).chain(this).collect::<Vec<TypeId>>().into_iter().any(|parameter| self.says_nothing_of_objects(parameter))
+                })
+            })
+        })
+    }
+
     fn entry_of_builtin_operand(&mut self, file: FileId, call_expr: ExprId, call: CallId, e: ExprId, used: u16) -> Entered {
+        self.aot.escape_closure.operands_of_built_ins.insert(e);
+        if self.may_store_to_operand(file, call, used) {
+            self.note_dictionaries_stored_through(file, e);
+        }
         if used == uses::EVERYTHING {
             return Entered::Untyped;
         }

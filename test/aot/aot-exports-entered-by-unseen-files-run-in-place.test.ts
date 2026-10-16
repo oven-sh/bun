@@ -1,7 +1,8 @@
 // Run from its sources, a compiled module can be imported by a file that the build never saw: here one whose name is computed when the program runs.
 // What that file hands to an exported typed function is an ordinary object. Where the function takes its parameter apart, `function f({ a, b, c = "c" }: T)`, the object cannot be
 // named in the body, so all that may happen to it is what plain Bun does: the names of the pattern are read, by name, in the order written, once.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 const part = `type Props = { a: string | readonly string[]; b: string; c?: string; d?: string; e?: boolean; n1?: number; n2?: number; k?: number };
@@ -72,7 +73,7 @@ test.concurrent.each(Object.keys(asPlainBun))(
     using dir = tempDir("aot-unseen-callers", files);
     const plain = await run(String(dir), ["run", "main.ts", row]);
     expect(plain.exitCode).toBe(0);
-    expect(await run(String(dir), ["run", "--aot", "main.ts", row])).toEqual(plain);
+    expect(await run(String(dir), ["run", "--debug-aot", "main.ts", row])).toEqual(plain);
   },
   120_000,
 );
@@ -81,7 +82,7 @@ test.concurrent.each(Object.keys(stillRefused))(
   "bun run --aot: a file that the build never saw is still refused, with a TypeError: %s",
   async row => {
     using dir = tempDir("aot-unseen-callers", files);
-    const { stdout, exitCode } = await run(String(dir), ["run", "--aot", "main.ts", row]);
+    const { stdout, exitCode } = await run(String(dir), ["run", "--debug-aot", "main.ts", row]);
     expect(stdout.trim().split("\n").at(-1)).toStartWith("TypeError: expected ");
     expect(exitCode).toBe(0);
   },
@@ -90,7 +91,7 @@ test.concurrent.each(Object.keys(stillRefused))(
 
 test("bun run --aot: a member that is not of its type is a TypeError that says so", async () => {
   using dir = tempDir("aot-unseen-callers", files);
-  const { stdout, exitCode } = await run(String(dir), ["run", "--aot", "main.ts", "ill-typed"]);
+  const { stdout, exitCode } = await run(String(dir), ["run", "--debug-aot", "main.ts", "ill-typed"]);
   expect(stdout.trim().split("\n").at(-1)).toStartWith("TypeError: expected string[] | string, got number 5");
   expect(exitCode).toBe(0);
 }, 120_000);

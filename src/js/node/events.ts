@@ -68,18 +68,38 @@ interface MaxListenersExceededWarning extends Error {
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(opts) {
-  if (this._events === undefined || this._events === Object.getPrototypeOf(this)._events) {
+  const events = this._events;
+  const hasNoEvents = events === undefined || events === Object.getPrototypeOf(this)._events;
+  const hasNoMaxListeners = this._maxListeners == null;
+  const capturesRejections = opts?.captureRejections;
+  if (hasNoMaxListeners && !capturesRejections) {
+    const capture = EventEmitterPrototype[kCapture];
+    if (hasNoEvents) {
+      this._events = Object.create(null);
+      this._eventsCount = 0;
+      this[kShapeMode] = false;
+      this._maxListeners = undefined;
+      this[kCapture] = capture;
+    } else {
+      // Preallocated `_events` (streams). The count comes from the prototype
+      // default `EventEmitterPrototype._eventsCount = 0`, as in node.
+      this[kShapeMode] = true;
+      this._maxListeners = undefined;
+      this[kCapture] = capture;
+    }
+    return;
+  }
+
+  if (hasNoEvents) {
     this._events = Object.create(null);
     this._eventsCount = 0;
     this[kShapeMode] = false;
   } else {
-    // Preallocated `_events` (streams). The count comes from the prototype
-    // default `EventEmitterPrototype._eventsCount = 0`, as in node.
     this[kShapeMode] = true;
   }
 
-  this._maxListeners ??= undefined;
-  if (opts?.captureRejections) {
+  if (hasNoMaxListeners) this._maxListeners = undefined;
+  if (capturesRejections) {
     // TODO: make validator functions return the validated value instead of validating and then coercing an extra time
     validateBoolean(opts.captureRejections, "options.captureRejections");
     this[kCapture] = !!opts.captureRejections;

@@ -1,0 +1,4 @@
+getters-of-host-classes-that-are-replaced-on-their-prototypes: 0 layouts, 0 given, 1 open, places 23 of 61, reads 1 of 35
+getters-of-native-classes-on-receivers-of-every-kind: 2 layouts, 16 given, 2 open, places 70 of 178, reads 11 of 113
+getters-of-native-classes-that-yield-what-their-declarations-do-not-say: 1 layouts, 0 given, 2 open, places 12 of 39, reads 7 of 16
+getters-of-the-request-a-server-hands-to-its-handler: 1 layouts, 0 given, 2 open, places 12 of 53, reads 3 of 36

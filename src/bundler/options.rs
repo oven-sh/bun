@@ -978,6 +978,7 @@ pub(crate) fn defines_from_transform_options(
                 }
                 _ => None,
             }))
+            .chain(drop.iter().filter(|dropped| !dropped.is_empty() && **dropped != b"debugger").map(|dropped| (Box::from(*dropped), Box::default())))
             .collect()
     } else {
         Vec::new()
@@ -1241,7 +1242,7 @@ pub struct TypeChecked<'a, 'i> {
     pub dropped_imports: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
     pub without_side_effects: &'i mut dyn Iterator<Item = &'a [u8]>,
     pub lifted_commonjs: &'i mut dyn Iterator<Item = &'a [u8]>,
-    pub commonjs: &'i mut dyn Iterator<Item = &'a [u8]>,
+    pub kinds: &'i mut dyn Iterator<Item = (&'a [u8], bool)>,
     /// The statements at the top level of those files, as the parser has left them: the path of the file, where the statement starts in
     /// the text that the bundler has parsed (`stmt.loc.start`), which is the text in `sources`, and `Part::can_be_removed_if_unused` of its part.
     pub statements: &'i mut dyn Iterator<Item = (&'a [u8], u32, bool)>,
@@ -1268,7 +1269,9 @@ pub struct TypeChecked<'a, 'i> {
     pub react_compiler_outputs: ReactCompilerOutputsLater<'a>,
     /// The path of each of `sources` whose JSX the tsconfig.json around it has lowered in another way than the one around the first entry point would, and how.
     pub jsx: &'i mut dyn Iterator<Item = (&'a [u8], JsxOfFile<'a>)>,
+    pub classes: &'i mut dyn Iterator<Item = (&'a [u8], ClassesOfFile)>,
     pub function_texts: Option<FunctionTextsLater>,
+    pub printing_of_function_texts: std::sync::Arc<bun_threading::thread_pool::DeferredStart>,
     pub explain: &'a [Box<[u8]>],
     pub explains_into_log: bool,
     pub logs_type_errors: bool,
@@ -1312,6 +1315,13 @@ pub struct JsxOfFile<'a> {
     pub factory: &'a [u8],
     pub fragment: &'a [u8],
     pub import_source: &'a [u8],
+}
+
+#[derive(Clone, Copy)]
+pub struct ClassesOfFile {
+    pub use_define_for_class_fields: bool,
+    pub experimental_decorators: bool,
+    pub emit_decorator_metadata: bool,
 }
 
 /// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns

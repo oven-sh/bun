@@ -1,5 +1,8 @@
 // The array for `...xs: number[]` and a literal that goes to a number[] hold whatever the call passes: numbers of every kind, and what an element read past the end yields.
-// IR= 1 restOfThree ~undefined\|null\|Array<number> = NewArray
+// An array that leaves the function is made as an array of numbers; one that is only read is never made: a read at an index that is not known chooses among the arguments.
+// IR= 1 keptOfThree ~undefined\|null\|Array<number> = NewArray
+// IR= 0 restOfThree NewArray
+// IR= 1 restOfThree Switch v[0-9]+ \[0: b[0-9]+\(v[0-9]+\), 1: b[0-9]+\(v[0-9]+\), 2: b[0-9]+\(v[0-9]+\)\]
 const lines: string[] = [];
 function show(value: unknown): string {
     if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
@@ -68,6 +71,9 @@ let total = 0;
 for (let round = 0; round < 2000; round++) for (let i = 0; i < source.length + 1; i++) { const v = source[i]; const s = sum(v, 1, 2); if (s === s && s !== Infinity) total += s; }
 lines.push("total: " + total);
 function restOfThree(v: number): number { return sum(v, v + 1, v + 2); }
+function keptOfThree(v: number): number[] { return keep(v, v + 1, v + 2); }
 const asValues = [restOfThree];
 lines.push("called as a value: " + show(asValues[source.length & 0](1.5)));
+const alsoAsValues = [keptOfThree];
+lines.push("kept, called as a value: " + show(alsoAsValues[source.length & 0](1.5)));
 console.log(lines.join("\n"));

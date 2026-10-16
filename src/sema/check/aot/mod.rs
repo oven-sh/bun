@@ -19,18 +19,18 @@ mod int32_fields;
 mod integers;
 mod javascript;
 mod kinds;
-mod libraries;
 pub mod locked_builtins;
 mod locked_builtins_generated;
 mod mapped_arguments;
-mod overrides;
 mod reported_by_lint;
 mod rows;
 mod sloppy;
 mod storage;
 mod subtypes;
 mod trust;
+mod types_of_bun;
 mod undeclared_fields;
+mod validation;
 
 pub use callees::{Callee, OnlyFunction};
 pub use captures::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopied, Receiver};
@@ -44,9 +44,10 @@ pub use javascript::CodeOfImport;
 pub use kinds::kind;
 pub use flows::{Answer, BuiltIn, Candidate, GaveUp, KindsDeclared, Literal, Meeting, Membership, Noted, OriginOfData, Place, Question, Reach, Share, WhyForeign};
 pub use subtypes::{Cause, FieldTypes, OpensForTheLog, Sizes, Subtypes};
-pub use storage::{Evaluates, Primitive, Recovery, ReferenceRead, Storage};
+pub use storage::{Evaluates, Primitive, ReferenceRead, Storage};
 pub use reported_by_lint::{AotCheck, AotCheckKind};
 pub use trust::{Claim, is_global_of_the_engine};
+pub use validation::{Constant, OtherKeys, PlanNode, Planned, PlannedMember, PlannedPrimitive, Rule, ValidationCall, ValidationPlan};
 
 use super::{Checker, Program};
 use super::relate::Relation;
@@ -395,7 +396,6 @@ pub(super) struct Shared {
     integers: integers::Shared,
     javascript: javascript::Shared,
     kinds: kinds::Shared,
-    overrides: overrides::Shared,
     storage: storage::Shared,
     undeclared_fields: undeclared_fields::Shared,
     is_given_up: std::sync::atomic::AtomicBool,
@@ -494,12 +494,12 @@ impl<'p, 's> Checker<'p, 's> {
         if !matches!(self.data(ty), TypeData::Ref { .. } | TypeData::Intersection(_)) {
             return None;
         }
-        let known = if self.answers_are_provisional() { None } else { self.aot.flows.array_subtypes.get(&ty).copied() };
+        let known = if self.answers_are_provisional() { None } else { self.shared_answer(ty, rows::KNOWS_WHETHER_ARRAY_SUBTYPE, rows::IS_ARRAY_SUBTYPE).or_else(|| self.aot.flows.array_subtypes.get(&ty).copied()) };
         let is_array = match known {
             Some(known) => known,
             None => {
                 let (found, is_cacheable) = self.compute_cacheable(|c| c.is_array_subtype(ty));
-                if is_cacheable {
+                if is_cacheable && !self.share_answer(ty, rows::KNOWS_WHETHER_ARRAY_SUBTYPE, rows::IS_ARRAY_SUBTYPE, found) {
                     self.aot.flows.array_subtypes.insert(ty, found);
                 }
                 found
@@ -529,11 +529,13 @@ impl<'p, 's> Checker<'p, 's> {
         if ty == TypeId::OBJECT || matches!(self.data(ty), TypeData::Union(_)) {
             return false;
         }
-        let by_itself = match self.aot.flows.accepts_primitives_itself.get(&ty) {
-            Some(&known) => known,
+        let by_itself = match self.shared_answer(ty, rows::KNOWS_WHETHER_IT_ACCEPTS_PRIMITIVES, rows::ACCEPTS_PRIMITIVES).or_else(|| self.aot.flows.accepts_primitives_itself.get(&ty).copied()) {
+            Some(known) => known,
             None => {
-                let found = self.is_empty_object_type(ty) || ty == self.global_ref(known::Object, &[]);
-                self.aot.flows.accepts_primitives_itself.insert(ty, found);
+                let (found, is_cacheable) = self.compute_cacheable(|c| c.is_empty_object_type(ty) || ty == c.global_ref(known::Object, &[]));
+                if !is_cacheable || !self.share_answer(ty, rows::KNOWS_WHETHER_IT_ACCEPTS_PRIMITIVES, rows::ACCEPTS_PRIMITIVES, found) {
+                    self.aot.flows.accepts_primitives_itself.insert(ty, found);
+                }
                 found
             }
         };

@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // A `.js` file that has neither `import` | `export` nor `require` | `module` | `exports` is CommonJS to `require` if its package
@@ -57,14 +58,14 @@ test.concurrent.each(["twice.cjs", "after-the-cache-is-read.cjs", "import-first.
   using dir = tempDir("unmarked-script-that-throws", files);
   const plain = await spawned([bunExe(), "run", entry], String(dir));
   expect(plain.exitCode).toBe(0);
-  const aot = await spawned([bunExe(), "run", "--aot", entry], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+  const aot = await spawned([bunExe(), "run", "--debug-aot", entry], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
   expect(aot.stderr).not.toContain("crashIfInterpreterIsUsed");
   expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
 });
 
 test("an unmarked .js file that says use strict is loaded again, one in a module package is not", async () => {
   using dir = tempDir("unmarked-script-that-throws", files);
-  const { stdout } = await spawned([bunExe(), "run", "--aot", "twice.cjs"], String(dir));
+  const { stdout } = await spawned([bunExe(), "run", "--debug-aot", "twice.cjs"], String(dir));
   expect(stdout).toContain("\nstrict.js begins, time 2");
   expect(stdout).toContain("in-commonjs-package/unmarked.js begins, time 2");
   expect(stdout).not.toContain("in-module-package/strict.js begins, time 2");

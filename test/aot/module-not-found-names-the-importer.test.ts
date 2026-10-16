@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -49,7 +50,7 @@ async function spawned(cmd: string[], cwd: string) {
 test("bun run --aot names the same file as bun run", async () => {
   using dir = tempDir("module-not-found", files);
   const plain = await spawned([bunExe(), "run", "main.mjs"], String(dir));
-  const aot = await spawned([bunExe(), "run", "--aot", "main.mjs"], String(dir));
+  const aot = await spawned([bunExe(), "run", "--debug-aot", "main.mjs"], String(dir));
   expect(plain.stdout).toContain("require(literal package): ResolveMessage | MODULE_NOT_FOUND | Cannot find module 'no-such-package' ~ Require stack: ~ - <cwd>/lib/deep/asks.cjs");
   expect(aot.stdout).toBe(plain.stdout);
   expect(aot.exitCode).toBe(0);
@@ -87,6 +88,6 @@ console.log(cjs.nearby());
   const plain = await spawned([bunExe(), "run", "late.mjs"], String(dir));
   expect(plain.stdout).toBe("beside the file that requires it\n");
   using again = tempDir("module-not-found", { ...files, "late.mjs": await Bun.file(join(String(dir), "late.mjs")).text() });
-  const aot = await spawned([bunExe(), "run", "--aot", "late.mjs"], String(again));
+  const aot = await spawned([bunExe(), "run", "--debug-aot", "late.mjs"], String(again));
   expect(aot.stdout).toBe(plain.stdout);
 });

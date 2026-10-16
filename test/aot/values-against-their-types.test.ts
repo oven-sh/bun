@@ -2,7 +2,8 @@
 // checker accepts: a covariant array, JSON.parse, a definite assignment assertion, a stale narrowing. The first argument says
 // whether it does so ("0": it does not). An executable built with --aot either does what plain Bun does or stops at the value
 // with a TypeError: `departures` lists every run that differs, with what the executable prints and its exit code.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./supported";
 import { readdirSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";

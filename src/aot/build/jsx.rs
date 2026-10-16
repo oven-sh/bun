@@ -6,7 +6,7 @@
 
 use super::{FileBuild, Fx};
 use crate::id::{LayoutId, StrId, V};
-use crate::ir::{Op, Prediction};
+use crate::ir::{Op, Operation, Prediction};
 use bun_sema::atom::Atom;
 use bun_sema::hir::{self, ExprId, ExprKind, JsxId, PropKey, PropKind};
 use bun_sema::types::TypeId;
@@ -32,7 +32,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     filled = self.emit(fx, Op::NewObject);
                 }
                 let source = self.expr(fx, value);
-                self.operation(fx, "CopyDataProperties", &[filled, source]);
+                self.operation(fx, Operation::CopyDataProperties, &[filled, source]);
             } else if is_automatic && is_key(p) {
                 key = value;
             } else if has_effect(value) {
@@ -106,7 +106,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 if let Some(layout) = cloned_as {
                     copied = self.c.type_of_expr(fx.file, attr.value);
                     if self.record_layout(copied) == Some(layout) {
-                        filled = self.operation(fx, "CloneObject", &[source]);
+                        filled = self.operation(fx, Operation::CloneObject, &[source]);
                     } else {
                         copied = self.layout_types.get(&layout).copied().unwrap_or(copied);
                         let mut operands = vec![source];
@@ -121,12 +121,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                             operands.push(self.emit(fx, Op::Str(name)));
                         }
                         self.note_allocation(layout);
-                        filled = self.operation(fx, "CloneObjectWith", &operands);
+                        filled = self.operation(fx, Operation::CloneObjectWith, &operands);
                     }
                     fx.checked.insert(filled, copied);
                     fx.b.func.values[filled.idx()].set_prediction(Prediction::Ty(self.ty_of(copied)));
                 } else {
-                    self.operation(fx, "CopyDataProperties", &[filled, source]);
+                    self.operation(fx, Operation::CopyDataProperties, &[filled, source]);
                 }
                 continue;
             }
@@ -137,7 +137,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.emit_throwing(fx, Op::PropSet { obj: filled, name, value });
             } else if has_spread {
                 let name = self.emit(fx, Op::Str(name));
-                self.operation(fx, "DefineField", &[filled, name, value]);
+                self.operation(fx, Operation::DefineField, &[filled, name, value]);
             } else {
                 names.push(name);
                 values.push(value);
@@ -187,7 +187,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.emit_throwing(fx, Op::PropSet { obj: filled, name, value });
             } else if has_spread {
                 let name = self.emit(fx, Op::Str(name));
-                self.operation(fx, "DefineField", &[filled, name, value]);
+                self.operation(fx, Operation::DefineField, &[filled, name, value]);
             } else {
                 names.push(name);
                 values.push(value);
@@ -222,7 +222,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// `<a b />` is `<a b={true} />`.
     fn jsx_attribute_value(&mut self, fx: &mut Fx, value: ExprId) -> V {
-        if value.is_none() || matches!(self.hir(fx.file)[value].kind, ExprKind::Missing) { self.emit(fx, Op::Bool(true)) } else { self.expr(fx, value) }
+        if value.is_none() || matches!(self.hir(fx.file)[value].kind, ExprKind::Missing) {
+            return self.emit(fx, Op::Bool(true));
+        }
+        let hir = self.hir(fx.file);
+        if let ExprKind::String(text) = hir[value].kind
+            && hir::jsx_expression_around(hir, value).is_none()
+        {
+            let decoded = decode_entities(self.c.atoms().bytes(text));
+            let s = self.out.strs.intern(&decoded);
+            return self.emit(fx, Op::Str(s));
+        }
+        self.expr(fx, value)
     }
 
     /// The layout of the type a component declares its properties with: of the first parameter of what the checker has the element
@@ -284,7 +295,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let props = self.emit(fx, Op::NewObject);
         for (&name, &value) in names.iter().zip(values) {
             let name = self.emit(fx, Op::Str(name));
-            self.operation(fx, "DefineField", &[props, name, value]);
+            self.operation(fx, Operation::DefineField, &[props, name, value]);
         }
         props
     }
@@ -365,7 +376,7 @@ pub(super) fn jsx_text(raw: &[u8]) -> Vec<u8> {
     decode_entities(&joined)
 }
 
-fn decode_entities(text: &[u8]) -> Vec<u8> {
+pub(super) fn decode_entities(text: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     let mut i = 0;
     while i < text.len() {

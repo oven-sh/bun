@@ -2085,7 +2085,9 @@ extern "C" napi_status napi_get_all_property_names(
         JSArray* filteredKeys = JSArray::create(JSC::getVM(globalObject), globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 0);
         for (unsigned i = 0; i < exportKeys->getArrayLength(); i++) {
             JSValue key = exportKeys->get(globalObject, i);
+            NAPI_RETURN_IF_EXCEPTION(env);
             auto propKey = key.toPropertyKey(globalObject);
+            NAPI_RETURN_IF_EXCEPTION(env);
             PropertyDescriptor desc;
 
             JSObject* owner = object;
@@ -2101,6 +2103,7 @@ extern "C" napi_status napi_get_all_property_names(
                     }
                     owner = proto;
                 }
+                NAPI_RETURN_IF_EXCEPTION(env);
             } else {
                 owner->getOwnPropertyDescriptor(globalObject, propKey, desc);
                 NAPI_RETURN_IF_EXCEPTION(env);
@@ -2134,6 +2137,7 @@ extern "C" napi_status napi_get_all_property_names(
 
             if (include) {
                 filteredKeys->push(globalObject, key);
+                NAPI_RETURN_IF_EXCEPTION(env);
             }
         }
         exportKeys = filteredKeys;

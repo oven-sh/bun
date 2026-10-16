@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { unsupported } from "../aot/run-programs";
 
 test("BUN_JSC_crashIfInterpreterIsUsed names the code and crashes", async () => {
   await using proc = Bun.spawn({
@@ -14,7 +15,7 @@ test("BUN_JSC_crashIfInterpreterIsUsed names the code and crashes", async () => 
   expect(exitCode).not.toBe(0);
 });
 
-test.skipIf(isWindows)("it spares Bun's debugger module in a compiled program that is started with BUN_INSPECT", async () => {
+test.skipIf(isWindows || !!unsupported)("it spares Bun's debugger module in a compiled program that is started with BUN_INSPECT", async () => {
   using folder = tempDir("crash-if-interpreter", { "program.mjs": `await new Promise(resolve => setTimeout(resolve, 100)); console.log("done");` });
   await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "program.mjs", "--outfile", "program"], cwd: String(folder), env: bunEnv, stdout: "ignore", stderr: "pipe" });
   expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
@@ -29,7 +30,7 @@ test.skipIf(isWindows)("it spares Bun's debugger module in a compiled program th
   expect({ stdout, signal: proc.signalCode, exitCode }).toEqual({ stdout: "done\n", signal: null, exitCode: 0 });
 }, 120_000);
 
-test.skipIf(isWindows)("BUN_INSPECT spares nothing but the debugger module", async () => {
+test.skipIf(isWindows || !!unsupported)("BUN_INSPECT spares nothing but the debugger module", async () => {
   using folder = tempDir("crash-if-interpreter", {
     "program.mjs": `import { writeFileSync } from "node:fs"; writeFileSync(process.cwd() + "/late.cjs", "module.exports = 1;"); console.log(require(process.cwd() + "/late.cjs"));`,
   });
@@ -55,7 +56,7 @@ async function runCompiled(files: Record<string, string>, isExecutable: boolean)
     expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
   }
   await using proc = Bun.spawn({
-    cmd: isExecutable ? [join(String(folder), "program")] : [bunExe(), "run", "--aot", "program.mjs"],
+    cmd: isExecutable ? [join(String(folder), "program")] : [bunExe(), "run", "--debug-aot", "program.mjs"],
     cwd: String(folder),
     env: { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" },
     stdout: "pipe",
@@ -66,7 +67,7 @@ async function runCompiled(files: Record<string, string>, isExecutable: boolean)
 }
 
 const text = "export default 6; export function f() { return 7 }";
-test.skipIf(isWindows).each([
+test.skipIf(isWindows || !!unsupported).each([
   ["a data: URL", "bun run --aot", `"data:text/javascript,${text}"`, false],
   ["a data: URL", "an executable", `"data:text/javascript,${text}"`, true],
   ["a blob: URL", "bun run --aot", `URL.createObjectURL(new Blob(["${text}"], { type: "text/javascript" }))`, false],
@@ -81,7 +82,7 @@ test.skipIf(isWindows).each([
   120_000,
 );
 
-test.skipIf(isWindows)("it does not spare a file that is loaded by a name made at run time", async () => {
+test.skipIf(isWindows || !!unsupported)("it does not spare a file that is loaded by a name made at run time", async () => {
   const { stderr, exitCode } = await runCompiled({ "on-disk.mjs": "export default 1;", "program.mjs": `const made = await import("./on-" + ["disk"][0] + ".mjs"); console.log(made.default);` }, false);
   expect(stderr).toMatch(/^crashIfInterpreterIsUsed: .*on-disk\.mjs/m);
   expect(exitCode).not.toBe(0);

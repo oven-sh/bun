@@ -21,52 +21,65 @@ export default [
       textStream: { fn: "getTextStream" },
       json: { fn: "getJSON", async: true },
       bytes: { fn: "getBytes", async: true },
-      body: { getter: "getBody", cache: true },
+      body: { getter: "getBody", cache: true, type: "ReadableStream | null" },
       arrayBuffer: { fn: "getArrayBuffer", async: true },
       formData: { fn: "getFormData", async: true },
       blob: { fn: "getBlob", async: true },
       clone: { fn: "doClone", length: 1 },
       cache: {
         getter: "getCache",
+        type: "string",
       },
       credentials: {
         getter: "getCredentials",
+        type: "string",
       },
       destination: {
         getter: "getDestination",
+        type: "string",
       },
       headers: {
         getter: "getHeaders",
         cache: true,
+        type: "Headers",
       },
       integrity: {
         getter: "getIntegrity",
+        type: "string",
       },
       method: {
         getter: "getMethod",
+        type: "string",
       },
       mode: {
         getter: "getMode",
+        type: "string",
       },
       redirect: {
         getter: "getRedirect",
+        type: "string",
       },
       referrer: {
         getter: "getReferrer",
+        type: "string",
       },
       referrerPolicy: {
         getter: "getReferrerPolicy",
+        type: "string",
       },
       url: {
         getter: "getUrl",
         cache: true,
+        type: "string",
       },
       bodyUsed: {
         getter: "getBodyUsed",
+        type: "boolean",
       },
       signal: {
         getter: "getSignal",
         cache: true,
+        type: "AbortSignal",
       },
     },
   }),
@@ -98,8 +111,9 @@ export default [
       url: {
         getter: "getURL",
         cache: true,
+        type: "string",
       },
-      body: { getter: "getBody", cache: true },
+      body: { getter: "getBody", cache: true, type: "ReadableStream | null" },
 
       text: { fn: "getText", async: true },
       textStream: { fn: "getTextStream" },
@@ -113,26 +127,33 @@ export default [
 
       type: {
         getter: "getResponseType",
+        type: "string",
       },
       headers: {
         getter: "getHeaders",
         cache: true,
+        type: "Headers",
       },
       redirected: {
         getter: "getRedirected",
+        type: "boolean",
       },
       statusText: {
         getter: "getStatusText",
         cache: true,
+        type: "string",
       },
       status: {
         getter: "getStatus",
+        type: "number",
       },
       ok: {
         getter: "getOK",
+        type: "boolean",
       },
       bodyUsed: {
         getter: "getBodyUsed",
+        type: "boolean",
       },
     },
   }),

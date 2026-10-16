@@ -42,6 +42,7 @@ const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 // Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
 const kHandoffResponse = Symbol("kHandoffResponse");
+const kResumeUnlessFlowing = Symbol("kResumeUnlessFlowing");
 const kCloseCallback = Symbol("closeCallback");
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -108,8 +109,9 @@ function emitErrorNextTickIfErrorListener(self, err, cb) {
 }
 
 function callCloseCallback(self) {
-  if (self[kCloseCallback]) {
-    self[kCloseCallback]();
+  const callback = self[kCloseCallback];
+  if (callback) {
+    callback.$call(self);
     self[kCloseCallback] = undefined;
   }
 }
@@ -132,7 +134,7 @@ function emitEOFIncomingMessageOuter(self) {
   // Trailers can only follow a chunked request body: a no-body request has
   // none, so skip the native call (and the socket/server option walk) for the
   // common GET/HEAD case.
-  if (self[kHandle] !== undefined && !self[noBodySymbol]) {
+  if (!self[noBodySymbol] && self[kHandle] !== undefined) {
     // The lenient (insecureHTTPParser) value bytes must match what the parser
     // accepted on the wire, or a CTL byte in a trailer value would vanish here.
     const rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
@@ -204,7 +206,10 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
     emitEOFIncomingMessage(this);
     // Like Node's parserOnMessageComplete: any readStop above left the shared
     // socket's flowing=false, which would swallow the next request's 'pause'.
-    if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
+    if (!this.upgrade && socket && !socket._paused && socket.readable) {
+      if (socket[kResumeUnlessFlowing] !== undefined) socket[kResumeUnlessFlowing]();
+      else socket.resume();
+    }
   }
 }
 
@@ -541,6 +546,8 @@ export {
   drainMicrotasks,
   emitCloseNT,
   emitEOFIncomingMessage,
+  emitEOFIncomingMessageOuter,
+  clearServerParserIncoming,
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
@@ -554,6 +561,7 @@ export {
   kErrored,
   kHandle,
   kHandoffResponse,
+  kResumeUnlessFlowing,
   kHighWaterMark,
   kIncomingMessage,
   kInternalSocketData,

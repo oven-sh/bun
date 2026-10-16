@@ -669,7 +669,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             // text. After `*` it is the name of a method.
             let is_constructor = kind == MemberKind::Property
                 && !is_generator
-                && !(self.f.is_js && flags.contains(Flags::STATIC))
+                && !(self.f.is_js && self.options.is_compiled && flags.contains(Flags::STATIC))
                 && key == PropKey::Name(known::constructor)
                 && (name_token == T::Constructor
                     || name_token == T::String

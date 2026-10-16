@@ -1,7 +1,7 @@
 //! The built-in objects that `--aot` makes immutable. `bun build --aot` and `bun lint` both use this table.
 //!
 //! In a program that is compiled ahead of time, what the JavaScript engine gives a realm stays what it is:
-//! - a prototype keeps its properties and gets no others;
+//! - a prototype keeps its properties and gets no others; but `Error.prototype` and the prototypes that inherit from it are a program's to change;
 //! - any other object (a constructor, a namespace such as `Math`) keeps its properties, and can be given others, except one that
 //!   would shadow a property it inherits from another built-in object;
 //! - the properties of the global object that name them cannot be replaced.

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { unsupported } from "../aot/run-programs";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, tempDir } from "harness";
 import { join } from "path";
@@ -13,7 +14,7 @@ import { join } from "path";
 // A case that is silent and named all the same fails too: the comment is then out of date.
 // Data that fits and is refused for its identity ("the object matches T, but it cannot be converted in place") is not the audit's to
 // foretell: that goes by sizes which only the compiler's placement knows.
-const compiles = (isMacOS && isArm64) || (isLinux && !isArm64);
+const compiles = !unsupported;
 const tsconfig = JSON.stringify({
   compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext", "dom"] },
 });
@@ -38,7 +39,7 @@ describe.concurrent.skipIf(!compiles)("the audit and the executable hold an outs
     ["shapes", 65, 3],
     ["open", 109, 10],
     ["objects", 76, 29],
-    ["members", 70, 30],
+    ["members", 70, 27],
     ["kinds", 34, 34],
     ["roads", 128, 20],
     ["reads", 60, 18],

@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "path";
 
-test.skipIf(!isLinux)("no memory is writable and executable until an expression built at run time is hot", async () => {
+test.skipIf(!isLinux)("no memory is writable and executable, however hot an expression built at run time is", async () => {
   using dir = tempDir("aot-regexp-jit-memory", {
     "main.js": `
 import { readFileSync } from "fs";
@@ -49,7 +50,7 @@ console.log("a second one", countMatches(second, 20000), writableAndExecutableMa
     outputs[useRegExpJIT] = stdout;
   }
   expect(outputs).toEqual({
-    "1": "at start 0\na literal 10000 0\nplain text in a long subject 9000 0\nbuilt, a few matches 4 0\nbuilt, many matches 10000 1\na second one 2000 1\n",
+    "1": "at start 0\na literal 10000 0\nplain text in a long subject 9000 0\nbuilt, a few matches 4 0\nbuilt, many matches 10000 0\na second one 2000 0\n",
     "0": "at start 0\na literal 10000 0\nplain text in a long subject 9000 0\nbuilt, a few matches 4 0\nbuilt, many matches 10000 0\na second one 2000 0\n",
   });
 });

@@ -2527,7 +2527,7 @@ pub mod parse_worker {
         opts.inline_import_meta_paths = topts.preserve_source_paths;
         opts.keeps_reexport_only_modules = topts.preserve_source_paths;
         opts.leaves_assignments_to_imports_to_run_time = topts.preserve_source_paths && topts.compiles_ahead_of_time();
-        opts.compiles_requires_made_by_create_require = topts.compiles_ahead_of_time();
+        opts.compiles_ahead_of_time = topts.compiles_ahead_of_time();
         opts.features.inject_jest_globals = topts.rewrite_jest_for_tests;
         opts.features.minify_syntax = topts.minify_syntax;
         opts.features.minify_identifiers = topts.minify_identifiers;

@@ -7,7 +7,7 @@ declare namespace FZ {
   // -------------------------------------------------------------------------------------------------------------------
   // 1. Numbers. int32: four bytes and integer arithmetic; a value that is no int32 stored there is a TypeError at run time.
   // -------------------------------------------------------------------------------------------------------------------
-  type int32 = number;
+  type int32 = import("bun").int32;
   type RequestStatus = int32; // Request.status: 10 OPENING 11 OPEN 12 CLOSING 13 CLOSED (aborting is the flag Request.aborted)
   type SegmentStatus = int32; // Segment.status: 0 PENDING 1 COMPLETED 2 FLUSHED 3 ABORTED 4 ERRORED 5 POSTPONED
   type BoundaryStatus = int32; // SuspenseBoundary.status: 0 PENDING 1 COMPLETED 4 CLIENT_RENDERED 5 POSTPONED

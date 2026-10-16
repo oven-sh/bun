@@ -21,15 +21,19 @@
 #include <JavaScriptCore/InitializeThreading.h>
 #include <JavaScriptCore/AOTProgramData.h>
 #include <JavaScriptCore/AOTFunction.h>
+#include <JavaScriptCore/FunctionRareData.h>
 #if ENABLE(AOT)
 namespace JSC::AOT {
 JS_EXPORT_PRIVATE uint64_t imageStamp();
 }
 #endif
 #include <JavaScriptCore/AuditSites.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/InlineCallFrame.h>
 #include <JavaScriptCore/PrivateName.h>
 #include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/StrongInlines.h>
+#include <JavaScriptCore/StructureCreateInlines.h>
 #include <zstd.h>
 #include "BunBuiltinNames.h"
 
@@ -710,9 +714,6 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
 #if OS(DARWIN)
     if (isInExecutable && keepsOnlyCodeExecutable(bytes, length))
         use = JSC::useAOTFileInLoadedSection({ bytes, length });
-#else
-    if (isInExecutable)
-        use = JSC::useAOTFileInLoadedSection({ bytes, length });
 #endif
     bool isUsedWhereItLies = !!use.code;
     if (isInExecutable && !isUsedWhereItLies) {
@@ -725,6 +726,10 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
         use = fileDescriptor >= 0 ? JSC::useAOTFile({ bytes, length }, fileDescriptor, offsetInFile) : JSC::AOTFileUse { cannotOpen, cannotOpen };
     if (isInExecutable && fileDescriptor >= 0)
         close(fileDescriptor);
+#if !OS(DARWIN)
+    if (isInExecutable && !use.code)
+        use = JSC::useAOTFileInLoadedSection({ bytes, length });
+#endif
 #endif
     if (const char* reason = use.imageRejectionReason ? use.imageRejectionReason : use.programDataRejectionReason) {
         fprintf(stderr, "error: this program's compiled code cannot be used: %s\n", reason);
@@ -917,6 +922,153 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditIsProxy, (JSC::JSGlobalObject*, JSC::CallFram
     return JSC::JSValue::encode(JSC::jsBoolean(!!dynamicDowncast<JSC::ProxyObject>(callFrame->argument(0))));
 }
 
+static ASCIILiteral nameOfClassToldByCell(JSC::JSType type)
+{
+    switch (type) {
+    case JSC::ArrayBufferType: return "ArrayBuffer"_s;
+    case JSC::DataViewType: return "DataView"_s;
+    case JSC::JSDateType: return "Date"_s;
+    case JSC::ErrorInstanceType: return "Error"_s;
+    case JSC::JSMapType: return "Map"_s;
+    case JSC::JSSetType: return "Set"_s;
+    case JSC::JSWeakMapType: return "WeakMap"_s;
+    case JSC::JSWeakSetType: return "WeakSet"_s;
+    case JSC::JSPromiseType: return "Promise"_s;
+    case JSC::RegExpObjectType: return "RegExp"_s;
+    case JSC::Int8ArrayType: return "Int8Array"_s;
+    case JSC::Uint8ArrayType: return "Uint8Array"_s;
+    case JSC::Uint8ClampedArrayType: return "Uint8ClampedArray"_s;
+    case JSC::Int16ArrayType: return "Int16Array"_s;
+    case JSC::Uint16ArrayType: return "Uint16Array"_s;
+    case JSC::Int32ArrayType: return "Int32Array"_s;
+    case JSC::Uint32ArrayType: return "Uint32Array"_s;
+    case JSC::Float16ArrayType: return "Float16Array"_s;
+    case JSC::Float32ArrayType: return "Float32Array"_s;
+    case JSC::Float64ArrayType: return "Float64Array"_s;
+    case JSC::BigInt64ArrayType: return "BigInt64Array"_s;
+    case JSC::BigUint64ArrayType: return "BigUint64Array"_s;
+    default: return { };
+    }
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditKindOfCell, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::JSValue name = callFrame->argument(0);
+    JSC::JSValue value = callFrame->argument(1);
+    if (!name.isString() || !value.isCell())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    WTF::String asked = JSC::asString(name)->value(globalObject);
+    bool isTold = false;
+    for (unsigned type = 0; type <= JSC::LastJSCObjectType && !isTold; ++type)
+        isTold = asked == nameOfClassToldByCell(static_cast<JSC::JSType>(type));
+    if (!isTold)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(JSC::jsBoolean(asked == nameOfClassToldByCell(value.asCell()->type())));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditIsPlainArray, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::JSValue value = callFrame->argument(0);
+    return JSC::JSValue::encode(JSC::jsBoolean(globalObject->vm().useImmutableIntrinsics && value.isCell() && value.asCell()->type() == JSC::ArrayType));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditDescribeValue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (auto* function = dynamicDowncast<JSC::JSFunction>(callFrame->argument(0)); function && !function->isHostOrBuiltinFunction()) {
+        WTF::String name = function->jsExecutable()->ecmaName().string();
+        return JSC::JSValue::encode(JSC::jsString(vm, name.isEmpty() ? WTF::String("function"_s) : makeString("function "_s, name)));
+    }
+    return JSC::JSValue::encode(JSC::jsString(vm, JSC::describeValueForAOTError(callFrame->argument(0))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditGuardInstancesOf, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    if (auto* constructor = dynamicDowncast<JSC::JSFunction>(callFrame->argument(0)); constructor && !constructor->isHostOrBuiltinFunction())
+        constructor->ensureRareData(JSC::getVM(globalObject))->setAllocatesGuardedObjects();
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+static thread_local UncheckedKeyHashMap<JSC::JSGlobalObject*, JSC::Strong<JSC::JSObject>>* s_auditGuards = nullptr;
+
+static WTF::String refusalOfChangeToDeclaredObject(JSC::JSGlobalObject*, JSC::JSObject* object, unsigned change, WTF::UniquedStringImpl* name, unsigned given, JSC::JSValue value)
+{
+    JSC::JSGlobalObject* globalObject = object->globalObject();
+    if (!s_auditGuards)
+        return {};
+    auto found = s_auditGuards->find(globalObject);
+    if (found == s_auditGuards->end())
+        return {};
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(object);
+    arguments.append(JSC::jsNumber(change));
+    arguments.append(name ? JSC::JSValue(JSC::jsString(vm, WTF::String(name))) : JSC::jsUndefined());
+    arguments.append(JSC::jsNumber(given));
+    arguments.append(value ? value : JSC::jsUndefined());
+    JSC::JSValue answer = JSC::call(globalObject, found->value.get(), arguments, "bun:aot-audit"_s);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return {};
+    }
+    if (!answer.isString())
+        return {};
+    WTF::String refusal = JSC::asString(answer)->value(globalObject);
+    return refusal;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditSetGuard, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (JSC::JSObject* guard = callFrame->argument(0).getObject()) {
+        if (!s_auditGuards)
+            s_auditGuards = new UncheckedKeyHashMap<JSC::JSGlobalObject*, JSC::Strong<JSC::JSObject>>();
+        s_auditGuards->set(globalObject, JSC::Strong<JSC::JSObject>(vm, guard));
+        vm.guardOfDeclaredObjects = refusalOfChangeToDeclaredObject;
+    }
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditFixPrototypeOfClass, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* constructor = callFrame->argument(0).getObject();
+    JSC::JSValue prototype = constructor ? constructor->getDirect(vm, vm.propertyNames->prototype) : JSC::JSValue();
+    if (!prototype || !prototype.isCell() || prototype.asCell()->type() != JSC::FinalObjectType)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    Vector<JSC::Identifier, 4> replaceable;
+    if (auto* names = dynamicDowncast<JSC::JSArray>(callFrame->argument(1))) {
+        for (unsigned i = 0; i < names->length(); ++i) {
+            JSC::JSValue name = names->getIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, {});
+            WTF::String text = name.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            replaceable.append(JSC::Identifier::fromString(vm, text));
+        }
+    }
+    JSC::asObject(prototype)->fixAsPrototypeOfClass(globalObject, replaceable.span(), callFrame->argument(2).isTrue());
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+extern "C" uint32_t Bun__AOTAudit__waitForTheWhole();
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditWaitForTheWhole, (JSC::JSGlobalObject*, JSC::CallFrame*))
+{
+    uint32_t generation = Bun__AOTAudit__waitForTheWhole();
+    return JSC::JSValue::encode(generation ? JSC::jsNumber(generation) : JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditIsAnyMockLaid, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    if (!globalObject)
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
+    auto* mockedModules = globalObject->onLoadPlugins.virtualModules;
+    return JSC::JSValue::encode(JSC::jsBoolean((mockedModules && !mockedModules->isEmpty()) || globalObject->mockModule.activeSpies || globalObject->mockModule.activeMocks));
+}
+
 struct AOTAuditShortcut {
     int32_t least { 1 };
     int32_t most { 0 };
@@ -924,6 +1076,17 @@ struct AOTAuditShortcut {
     uint32_t asleepIn { 0 };
     uint32_t madeIn { 0 };
     bool tags { false };
+    bool guards { false };
+    JSC::Strong<JSC::Structure> tagged;
+    JSC::Strong<JSC::Structure> guarded;
+    bool hasKeyOfResult { false };
+    uint64_t keyOfResult { 0 };
+};
+
+struct AOTAuditHeldResult {
+    JSC::CallFrame* frame;
+    unsigned askedAt;
+    uint64_t key;
 };
 
 static std::atomic<uint32_t> s_auditGeneration { 1 };
@@ -959,12 +1122,108 @@ static JSC::PrivateName& auditTag()
     return *s_auditTag;
 }
 
-static void tagForAudit(JSC::VM& vm, JSC::JSValue value, uint32_t id)
+static void tagForAudit(JSC::VM& vm, JSC::JSValue value, uint32_t id, bool guards = false, AOTAuditShortcut* known = nullptr)
 {
     if (!value.isCell() || value.asCell()->type() != JSC::FinalObjectType)
         return;
     auditTag();
     JSC::asObject(value)->putDirect(vm, JSC::PropertyName(*s_auditTag), JSC::jsNumber(id), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    if (!guards)
+        return;
+    JSC::JSObject* object = JSC::asObject(value);
+    JSC::Structure* tagged = object->structure();
+    if (known && known->tagged.get() == tagged) {
+        object->setStructure(vm, known->guarded.get());
+        return;
+    }
+    if (object->becomeGuarded(vm) && known) {
+        known->tagged.set(vm, tagged);
+        known->guarded.set(vm, object->structure());
+    }
+}
+
+static thread_local Vector<AOTAuditHeldResult, 16>* s_auditHeldResults = nullptr;
+
+static uint64_t keyOfAuditedResult(JSC::JSGlobalObject* globalObject, uint32_t id)
+{
+    auto& shortcut = auditShortcut(id);
+    if (shortcut.hasKeyOfResult)
+        return shortcut.keyOfResult;
+    if (!s_auditHelpers)
+        return 0;
+    auto found = s_auditHelpers->find(globalObject);
+    if (found == s_auditHelpers->end())
+        return 0;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(JSC::jsUndefined());
+    arguments.append(JSC::jsNumber(id));
+    arguments.append(JSC::jsNumber(s_auditGeneration.load(std::memory_order_acquire)));
+    arguments.append(JSC::jsBoolean(true));
+    JSC::JSValue answer = JSC::call(globalObject, found->value.get(), arguments, "bun:aot-audit"_s);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return 0;
+    }
+    uint64_t key = 0;
+    if (answer.isString()) {
+        WTF::String text = JSC::asString(answer)->value(globalObject);
+        key = 0xcbf29ce484222325ull;
+        for (unsigned i = 0; i < text.length(); ++i)
+            key = (key ^ text[i]) * 0x100000001b3ull;
+        key |= 1;
+    }
+    auto& described = auditShortcut(id);
+    described.hasKeyOfResult = true;
+    described.keyOfResult = key;
+    return key;
+}
+
+static bool resultOfPendingCallIsHeld(JSC::CallFrame* frame, unsigned askedAt)
+{
+    JSC::CodeOrigin origin = frame->codeOrigin();
+    while (auto* inlined = origin.inlineCallFrame()) {
+        auto opcode = inlined->baselineCodeBlock->instructions().at(origin.bytecodeIndex())->opcodeID();
+        if (opcode != JSC::op_tail_call && opcode != JSC::op_tail_call_varargs)
+            return false;
+        origin = inlined->directCaller;
+    }
+    unsigned offset = origin.bytecodeIndex().offset();
+    return offset > askedAt && offset <= askedAt + 96;
+}
+
+static bool callerHoldsAuditedResult(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, uint32_t id)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (!s_auditHeldResults)
+        s_auditHeldResults = new Vector<AOTAuditHeldResult, 16>();
+    auto& held = *s_auditHeldResults;
+    JSC::CallFrame* asking = callFrame->callerFrame();
+    while (!held.isEmpty() && held.last().frame <= asking)
+        held.removeLast();
+    uint64_t key = keyOfAuditedResult(globalObject, id);
+    JSC::CodeOrigin origin = asking->codeOrigin();
+    if (auto* inlined = origin.inlineCallFrame()) {
+        inlined->baselineCodeBlock->ownerExecutable()->setNeverInline(true);
+        return false;
+    }
+    asking->codeBlock()->ownerExecutable()->setNeverInline(true);
+    if (!key)
+        return false;
+    void* returnsTo = asking->callerFrameOrEntryFrame();
+    for (size_t i = held.size(); i--;) {
+        JSC::CallFrame* frame = held[i].frame;
+        if (frame != returnsTo || returnsTo == vm.topEntryFrame || frame->isNativeCalleeFrame())
+            break;
+        if (!resultOfPendingCallIsHeld(frame, held[i].askedAt))
+            break;
+        if (held[i].key == key)
+            return true;
+        returnsTo = frame->callerFrameOrEntryFrame();
+    }
+    held.append(AOTAuditHeldResult { asking, origin.bytecodeIndex().offset(), key });
+    return false;
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAOTAuditCheck, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -972,8 +1231,25 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditCheck, (JSC::JSGlobalObject * globalObject, J
     JSC::JSValue value = callFrame->argument(0);
     JSC::JSValue number = callFrame->argument(1);
     if (!number.isUInt32()) [[unlikely]]
-        return JSC::JSValue::encode(JSC::jsUndefined());
+        return JSC::JSValue::encode(value);
     uint32_t id = number.asUInt32();
+    if (callFrame->argumentCount() > 3) {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::JSValue subscript = callFrame->argument(2);
+        auto* array = dynamicDowncast<JSC::JSArray>(value);
+        if (!array || !subscript.isNumber())
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        std::optional<uint32_t> index = subscript.tryGetAsUint32Index();
+        JSC::PropertySlot slot(array, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool isFound = index ? array->getPropertySlot(globalObject, *index, slot) : array->getPropertySlot(globalObject, JSC::Identifier::from(vm, subscript.asNumber()), slot);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (slot.isTaintedByOpaqueObject() || (isFound && !slot.isValue()))
+            return JSC::throwVMTypeError(globalObject, scope, JSC::withAOTErrorNote("Cannot read array element: the array or its prototype chain has accessors or a Proxy, which are not run for an array of a declared element type"_s));
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    if (callFrame->argumentCount() > 2)
+        return JSC::JSValue::encode(JSC::jsBoolean(callerHoldsAuditedResult(globalObject, callFrame, id)));
     auto& vm = JSC::getVM(globalObject);
     uint32_t generation = s_auditGeneration.load(std::memory_order_acquire);
     if (s_auditShortcuts && id < s_auditShortcuts->size()) [[likely]] {
@@ -983,36 +1259,55 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditCheck, (JSC::JSGlobalObject * globalObject, J
             shortcut.madeIn = generation;
         }
         if (shortcut.asleepIn == generation)
-            return JSC::JSValue::encode(JSC::jsUndefined());
+            return JSC::JSValue::encode(value);
         if (value.isInt32()) {
             if (value.asInt32() >= shortcut.least && value.asInt32() <= shortcut.most)
-                return JSC::JSValue::encode(JSC::jsUndefined());
+                return JSC::JSValue::encode(value);
         } else if (value.isCell()) {
             JSC::StructureID structure = value.asCell()->structureID();
             if (structure == shortcut.passing[0] || structure == shortcut.passing[1] || structure == shortcut.passing[2] || structure == shortcut.passing[3])
-                return JSC::JSValue::encode(JSC::jsUndefined());
+                return JSC::JSValue::encode(value);
             if (shortcut.tags) {
-                tagForAudit(vm, value, id);
-                return JSC::JSValue::encode(JSC::jsUndefined());
+                tagForAudit(vm, value, id, shortcut.guards, &shortcut);
+                return JSC::JSValue::encode(value);
             }
         }
     }
     if (!s_auditHelpers) [[unlikely]]
-        return JSC::JSValue::encode(JSC::jsUndefined());
+        return JSC::JSValue::encode(value);
     auto found = s_auditHelpers->find(globalObject);
     if (found == s_auditHelpers->end()) [[unlikely]]
-        return JSC::JSValue::encode(JSC::jsUndefined());
+        return JSC::JSValue::encode(value);
     JSC::JSObject* helper = found->value.get();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSC::MarkedArgumentBuffer arguments;
-    arguments.append(value);
-    arguments.append(number);
-    arguments.append(JSC::jsNumber(generation));
-    JSC::JSValue answer = JSC::call(globalObject, helper, arguments, "bun:aot-audit"_s);
-    if (scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        return JSC::JSValue::encode(JSC::jsUndefined());
+    JSC::JSValue answer;
+    {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(value);
+        arguments.append(number);
+        arguments.append(JSC::jsNumber(generation));
+        answer = JSC::call(globalObject, helper, arguments, "bun:aot-audit"_s);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return JSC::JSValue::encode(value);
+        }
+        if (answer.isObject()) [[unlikely]] {
+            JSC::JSValue handedBack = JSC::asObject(answer)->getIndex(globalObject, 0);
+            if (scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                return JSC::JSValue::encode(value);
+            }
+            return JSC::JSValue::encode(handedBack);
+        }
     }
+    if (answer.isString()) [[unlikely]] {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        WTF::String message = JSC::asString(answer)->value(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        return JSC::throwVMTypeError(globalObject, throwScope, message);
+    }
+    if (answer.isInt32() && answer.asInt32() == 5)
+        return JSC::JSValue::encode(callFrame->jsCallee());
     if (answer.isInt32() && answer.asInt32() == 4)
         auditShortcut(id).asleepIn = generation;
     else if (answer.isInt32() && value.isCell()) {
@@ -1022,12 +1317,13 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditCheck, (JSC::JSGlobalObject * globalObject, J
             shortcut.passing[2] = shortcut.passing[1];
             shortcut.passing[1] = shortcut.passing[0];
             shortcut.passing[0] = value.asCell()->structureID();
-        } else if (answer.asInt32() == 3) {
+        } else if (answer.asInt32() == 3 || answer.asInt32() == 6) {
             shortcut.tags = true;
-            tagForAudit(vm, value, id);
+            shortcut.guards = answer.asInt32() == 6;
+            tagForAudit(vm, value, id, shortcut.guards, &shortcut);
         }
     }
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(value);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsAOTAuditRemember, (JSC::JSGlobalObject*, JSC::CallFrame* callFrame))
@@ -1043,7 +1339,7 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditRemember, (JSC::JSGlobalObject*, JSC::CallFra
 JSC_DEFINE_HOST_FUNCTION(jsAOTAuditTag, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     if (callFrame->argument(1).isUInt32())
-        tagForAudit(JSC::getVM(globalObject), callFrame->argument(0), callFrame->argument(1).asUInt32());
+        tagForAudit(JSC::getVM(globalObject), callFrame->argument(0), callFrame->argument(1).asUInt32(), callFrame->argument(2).isTrue());
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -1076,6 +1372,14 @@ extern "C" void Bun__AOTAudit__install(Zig::GlobalObject* globalObject, const ui
     arguments.append(JSC::JSFunction::create(vm, globalObject, 3, "remember"_s, jsAOTAuditRemember, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 2, "tag"_s, jsAOTAuditTag, JSC::ImplementationVisibility::Private));
     arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "tagOf"_s, jsAOTAuditTagOf, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 2, "kindOfCell"_s, jsAOTAuditKindOfCell, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 0, "isAnyMockLaid"_s, jsAOTAuditIsAnyMockLaid, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "isPlainArray"_s, jsAOTAuditIsPlainArray, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 3, "fixPrototypeOfClass"_s, jsAOTAuditFixPrototypeOfClass, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "guardInstancesOf"_s, jsAOTAuditGuardInstancesOf, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "setGuard"_s, jsAOTAuditSetGuard, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "describeValue"_s, jsAOTAuditDescribeValue, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 0, "waitForTheWhole"_s, jsAOTAuditWaitForTheWhole, JSC::ImplementationVisibility::Private));
     JSC::JSValue check = JSC::call(globalObject, makeCheck, arguments, "bun:aot-audit"_s);
     if (scope.exception() || !check.isCallable()) [[unlikely]] {
         (void)scope.tryClearException();

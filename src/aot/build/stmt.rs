@@ -6,7 +6,7 @@ use crate::builder::Var;
 use crate::declared::{Declared, Part, prim};
 use crate::fragment::LayoutKey;
 use crate::id::{BlockId, LayoutId, TyId, V};
-use crate::ir::{self, Op, Target, Term, Why, func_flags};
+use crate::ir::{self, Op, Operation, Target, Term, Why, func_flags};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Decl, Parent};
 use bun_sema::check::{Activation, DeclaredClosure};
@@ -87,6 +87,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             },
             None => fx.this_type,
         };
+        if declared.id.is_none() {
+            return;
+        }
         self.c.note_place(fx.file, self.out.funcs[fx.id.idx()].pos);
         let described = self.ty_of(narrowed);
         self.note_cast(declared, described, Why::Flow);
@@ -196,7 +199,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// OrdinaryCallBindThis for a function that is not strict: the global object for `undefined` and `null`, an object for a primitive. One operation: an object passes a test in line.
     fn this_of_sloppy_code(&mut self, fx: &mut Fx, given: V) -> V {
-        self.operation(fx, "SloppyThis", &[given])
+        self.operation(fx, Operation::SloppyThis, &[given])
     }
 
     fn makes_tail_calls(&self, fx: &Fx) -> bool {
@@ -318,12 +321,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.c.keeps_parameters_in_arguments(fx.file, fx.func) {
             let callee = self.closure_that_runs(fx);
             let count = self.emit(fx, Op::Int(f.params.iter().count() as i64));
-            fx.arguments = self.operation(fx, "CreateMappedArguments", &[all, callee, count]);
+            fx.arguments = self.operation(fx, Operation::CreateMappedArguments, &[all, callee, count]);
             let undefined = self.emit(fx, Op::Undefined);
             return f.params.iter().map(|_| undefined).collect();
         }
         if self.using_arguments(fx.file).objects.contains(&fx.func) {
-            fx.arguments = self.operation(fx, "CreateArguments", &[all]);
+            fx.arguments = self.operation(fx, Operation::CreateArguments, &[all]);
         }
         (f.params.iter().enumerate())
             .map(|(i, p)| {
@@ -347,7 +350,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return;
         }
         if func.has(func_flags::HAS_NEW_TARGET) {
-            fx.new_target = self.operation(fx, "GetNewTarget", &[]);
+            fx.new_target = self.operation(fx, Operation::GetNewTarget, &[]);
         } else if self.c.mentions_new_target(fx.file, fx.func) {
             fx.new_target = self.emit(fx, Op::Undefined);
         }
@@ -428,25 +431,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let hir = self.hir(fx.file);
         let mut names = Vec::new();
         self.lexical_names(fx.file, stmts, &mut names);
-        // A function declaration is a binding of the block, initialized on entry. It is given a place only where that can be told
-        // from the function itself: where it is assigned to, or where the code of the block uses its closure in several places that
-        // can tell which object it is. See `closure_of_declaration` for the others.
-        let function_values = self.function_values(fx.file);
-        let mut function_bindings: Vec<(bun_sema::hir::FnId, Sym)> = Vec::new();
-        for stmt in hir.ids(stmts) {
-            let StmtKind::Fn(func) = hir[stmt].kind else { continue };
-            if matches!(hir[func].body, FnBody::None) {
-                continue;
-            }
-            let sym = self.function_symbol(fx.file, func);
-            let is_variable = self.files.decls(sym).iter().any(|declared| matches!(declared.1, bun_sema::bind::Decl::Var(_) | bun_sema::bind::Decl::Param(_)));
-            if is_variable {
-                function_bindings.push((func, sym));
-            } else if function_values.contains(&sym) && (self.is_assigned(sym) || self.c.declared_closure(fx.file, func) == Some(DeclaredClosure::CreatedAtEntry)) {
-                function_bindings.push((func, sym));
-                names.push(sym);
-            }
-        }
+        let mut function_bindings = self.function_bindings(fx, hir.ids(stmts), &mut names);
         if fx.func.is_none() && fx.class.is_none() {
             for stmt in hir.ids(stmts) {
                 self.var_names(fx.file, stmt, &mut names);
@@ -486,27 +471,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
             }
         }
-        for (func, sym) in function_bindings {
-            if self.try_bind_hoisted_function(fx, sym, func) {
-                continue;
-            }
-            let id = self.declare_function(fx.file, func, None);
-            // Its `arguments` object shows it: it finds its closure in a scope of its own, as a function expression does.
-            if let Some((activation, field)) = self.scope_of_function_expression(fx.file, func)
-                && self.open_activation(fx, activation)
-            {
-                let layout = self.layout_of_activation(activation);
-                let env = self.env_of(fx, layout);
-                let captures = self.capture_values(fx, id, hir[func].start);
-                let closure = self.emit(fx, Op::ClosureOnce { func: id, captures, env, field });
-                self.close_env(fx);
-                self.write_sym(fx, sym, closure, hir[func].start);
-                continue;
-            }
-            let captures = self.capture_values(fx, id, hir[func].start);
-            let closure = self.emit(fx, Op::Closure { func: id, captures });
-            self.write_sym(fx, sym, closure, hir[func].start);
-        }
+        self.bind_function_declarations(fx, function_bindings);
         let kinds = |stmt: StmtId| match hir[stmt].kind {
             StmtKind::Var(decls) => decls.iter().map(|d| hir[d].kind).collect(),
             _ => Vec::new(),
@@ -531,6 +496,58 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.stmt(fx, stmt);
                 self.end_part(fx, mark);
             }
+        }
+    }
+
+    /// The function declarations among the statements of a scope that are given a place. The places that the scope declares are added to `names`.
+    ///
+    /// A function declaration is a binding of its scope, initialized on entry. It is given a place only where that can be told
+    /// from the function itself: where it is assigned to, or where the code of the scope uses its closure in several places that
+    /// can tell which object it is. See `closure_of_declaration` for the others.
+    fn function_bindings(&mut self, fx: &Fx, stmts: impl Iterator<Item = StmtId>, names: &mut Vec<Sym>) -> Vec<(bun_sema::hir::FnId, Sym)> {
+        let hir = self.hir(fx.file);
+        let function_values = self.function_values(fx.file);
+        let mut function_bindings = Vec::new();
+        for stmt in stmts {
+            let StmtKind::Fn(func) = hir[stmt].kind else { continue };
+            if matches!(hir[func].body, FnBody::None) {
+                continue;
+            }
+            let sym = self.function_symbol(fx.file, func);
+            let is_variable = self.files.decls(sym).iter().any(|declared| matches!(declared.1, bun_sema::bind::Decl::Var(_) | bun_sema::bind::Decl::Param(_)));
+            if is_variable {
+                function_bindings.push((func, sym));
+            } else if function_values.contains(&sym) && (self.is_assigned(sym) || self.c.declared_closure(fx.file, func) == Some(DeclaredClosure::CreatedAtEntry)) {
+                function_bindings.push((func, sym));
+                names.push(sym);
+            }
+        }
+        function_bindings
+    }
+
+    /// Fills the places of `function_bindings`, where their scope is entered.
+    fn bind_function_declarations(&mut self, fx: &mut Fx, function_bindings: Vec<(bun_sema::hir::FnId, Sym)>) {
+        let hir = self.hir(fx.file);
+        for (func, sym) in function_bindings {
+            if self.try_bind_hoisted_function(fx, sym, func) {
+                continue;
+            }
+            let id = self.declare_function(fx.file, func, None);
+            // Its `arguments` object shows it: it finds its closure in a scope of its own, as a function expression does.
+            if let Some((activation, field)) = self.scope_of_function_expression(fx.file, func)
+                && self.open_activation(fx, activation)
+            {
+                let layout = self.layout_of_activation(activation);
+                let env = self.env_of(fx, layout);
+                let captures = self.capture_values(fx, id, hir[func].start);
+                let closure = self.emit(fx, Op::ClosureOnce { func: id, captures, env, field });
+                self.close_env(fx);
+                self.write_sym(fx, sym, closure, hir[func].start);
+                continue;
+            }
+            let captures = self.capture_values(fx, id, hir[func].start);
+            let closure = self.emit(fx, Op::Closure { func: id, captures });
+            self.write_sym(fx, sym, closure, hir[func].start);
         }
     }
 
@@ -664,7 +681,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                             self.declare_lazy_variable(fx, sym);
                             continue;
                         }
-                        if self.bind_export_variables(fx, decl.pat, decl.init) {
+                        if self.bind_export_variables(fx, decl.pat, decl.init) || decl.ty.is_none() && self.bind_exports_of_required_module(fx, decl.pat, decl.init) || self.hold_required_module(fx, decl.pat, decl.init) {
                             continue;
                         }
                         let value = self.initial_value(fx, decl);
@@ -698,26 +715,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let sym = self.files.export_symbol_of_value_symbol_if_exported(self.files.sym(fx.file, id));
                     let global = self.enum_global(sym);
                     let declarations = self.declarations_of_enum(sym);
-                    if declarations.len() == 1 {
+                    if !self.is_enum_made_where_it_is_declared(sym, &declarations) {
                         let null = self.emit(fx, Op::Null);
                         self.emit(fx, Op::GlobalSet(global, null));
                     } else {
-                        if declarations.first() == Some(&(fx.file, e)) {
+                        if declarations.first() == Some(&(fx.file, e)) && !self.files.flags(sym).contains(bun_sema::bind::SymFlags::VALUE_MODULE) {
                             let fresh = self.emit(fx, Op::NewObject);
                             self.emit(fx, Op::GlobalSet(global, fresh));
                         } else {
-                            let known = self.emit(fx, Op::GlobalGet(global));
-                            let undefined = self.emit(fx, Op::Undefined);
-                            let is_missing = self.emit(fx, Op::StrictEq { a: known, b: undefined });
-                            let (make, made) = (fx.b.new_block(), fx.b.new_block());
-                            self.branch(fx, is_missing, make, made);
-                            fx.b.seal(make);
-                            fx.b.switch_to(make);
-                            let fresh = self.emit(fx, Op::NewObject);
-                            self.emit(fx, Op::GlobalSet(global, fresh));
-                            fx.b.jump(made);
-                            fx.b.seal(made);
-                            fx.b.switch_to(made);
+                            self.make_enum_object_unless_made(fx, sym);
                         }
                         let obj = self.emit(fx, Op::GlobalGet(global));
                         self.emit_enum_members(fx, obj, fx.file, e);
@@ -730,6 +736,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     // What it exports is referred to as `N.name`, which names the variable: there is no object unless one is asked for.
                     let id = self.c.bound(fx.file).module_symbol[m.idx()];
                     let namespace = self.files.export_symbol_of_value_symbol_if_exported(self.files.sym(fx.file, id));
+                    if self.files.flags(namespace).intersects(bun_sema::bind::SymFlags::ENUM) && !self.declarations_of_enum(namespace).is_empty() {
+                        self.make_enum_object_unless_made(fx, namespace);
+                    }
                     if self.c.is_reified_namespace(namespace) {
                         self.enter_block_of_namespace(fx, namespace);
                         return self.block_body(fx, hir[m].body);
@@ -994,9 +1003,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             StmtKind::ForIn { left, expr, body } => {
                 let label = self.take_label(fx);
+                if let StmtKind::Var(decls) = hir[left].kind
+                    && !decls.is_empty()
+                    && hir[decls.at(0)].kind == VarKind::Var
+                    && hir[decls.at(0)].init.is_some()
+                {
+                    self.stmt(fx, left);
+                }
                 let object = self.iterated(fx, stmt, expr);
                 // An array the engine has just made.
-                let keys = self.operation(fx, "ForInKeys", &[object]);
+                let keys = self.operation(fx, Operation::ForInKeys, &[object]);
                 fx.b.func.values[keys.idx()].ty = self.known.array;
                 let length_name = self.out.strs.intern(b"length");
                 let length = self.emit_throwing(fx, Op::PropGet { obj: keys, name: length_name });
@@ -1015,7 +1031,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let string = self.out.tys.intern(Declared::prims(prim::STRING));
                 let key = self.fit(fx, key, Ty::of(string), Why::Claim);
                 // What has been deleted in the meantime is passed over, and what a property that does not show hides. The value may be a string.
-                let is_there = self.operation(fx, "HasEnumerableProperty", &[object, key]);
+                let is_there = self.operation(fx, Operation::HasEnumerableProperty, &[object, key]);
                 self.branch(fx, is_there, there, next);
                 fx.b.seal(there);
                 fx.b.switch_to(there);
@@ -1083,8 +1099,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 for case in cases.iter() {
                     self.lexical_names(fx.file, hir[case].body, &mut names);
                 }
+                let function_bindings = self.function_bindings(fx, cases.iter().flat_map(|case| hir.ids(hir[case].body)), &mut names);
                 let opened = self.open_activation(fx, Activation::Block(stmt));
                 self.declare(fx, &names);
+                for inner in cases.iter().flat_map(|case| hir.ids(hir[case].body)) {
+                    if let StmtKind::Fn(func) = hir[inner].kind
+                        && !matches!(hir[func].body, FnBody::None)
+                    {
+                        self.declare_function(fx.file, func, None);
+                    }
+                }
+                self.bind_function_declarations(fx, function_bindings);
                 let bodies: Vec<BlockId> = cases.iter().map(|_| fx.b.new_block()).collect();
                 let mut default = exit;
                 if let Some(entered) = entered {
@@ -1273,7 +1298,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             None => Yields::Values,
         };
         let collection = self.as_collection_expected(fx, collection);
-        let is_as_made = self.operation(fx, "HasOriginalStructure", &[collection]);
+        let is_as_made = self.operation(fx, Operation::HasOriginalStructure, &[collection]);
         fx.b.func.values[is_as_made.idx()].ty = self.known.boolean;
         let (iter, table, value, second) = (self.new_temporary(fx), self.new_temporary(fx), self.new_temporary(fx), self.new_temporary(fx));
         let found = fx.b.new_var(self.out.tys.intern(Declared::ints(-1, 1 << 52)));
@@ -1287,7 +1312,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(there);
         fx.b.seal(generally);
         fx.b.switch_to(there);
-        let first = self.operation(fx, "CollectionTable", &[collection]);
+        let first = self.operation(fx, Operation::CollectionTable, &[collection]);
         self.write(fx, table, first);
         self.write(fx, iter, undefined);
         fx.b.jump(opened);
@@ -1330,7 +1355,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(generally);
         fx.b.switch_to(there);
         let from = self.read(fx, table.table);
-        let entry = self.operation(fx, if table.is_map { "MapNext" } else { "SetNext" }, &[table.collection, from, at]);
+        let entry = self.operation(fx, if table.is_map { Operation::MapNext } else { Operation::SetNext }, &[table.collection, from, at]);
         fx.b.func.values[entry.idx()].ty = self.out.tys.intern(Declared::ints(-1, i32::MAX as i64));
         fx.b.write(table.found, entry);
         let zero = self.emit(fx, Op::Int(0));
@@ -1349,9 +1374,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         } else {
             let part = match (table.is_map, table.yields) {
-                (true, Yields::Values) => "MapValueAt",
-                (true, _) => "MapKeyAt",
-                (false, _) => "SetKeyAt",
+                (true, Yields::Values) => Operation::MapValueAt,
+                (true, _) => Operation::MapKeyAt,
+                (false, _) => Operation::SetKeyAt,
             };
             let part = self.operation(fx, part, &[table.collection, entry]);
             self.stay_at_table(fx, table);
@@ -1372,15 +1397,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// The key and the value of the entry. Of a Set: the value twice.
     fn parts_of_entry_in_table(&mut self, fx: &mut Fx, table: &LoopOverTable) -> [V; 2] {
         let entry = self.read(fx, table.found);
-        let first = self.operation(fx, if table.is_map { "MapKeyAt" } else { "SetKeyAt" }, &[table.collection, entry]);
-        let second = if table.is_map { self.operation(fx, "MapValueAt", &[table.collection, entry]) } else { first };
+        let first = self.operation(fx, if table.is_map { Operation::MapKeyAt } else { Operation::SetKeyAt }, &[table.collection, entry]);
+        let second = if table.is_map { self.operation(fx, Operation::MapValueAt, &[table.collection, entry]) } else { first };
         self.stay_at_table(fx, table);
         [first, second]
     }
 
     /// The table the collection has by now is the one the entry is in. Behind the reads, which find again what the step has read: this writes.
     fn stay_at_table(&mut self, fx: &mut Fx, table: &LoopOverTable) {
-        let now = self.operation(fx, "CollectionTable", &[table.collection]);
+        let now = self.operation(fx, Operation::CollectionTable, &[table.collection]);
         self.write(fx, table.table, now);
     }
 
@@ -1601,8 +1626,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let source = iterable;
         fx.b.pos = self.pos_of_loop_binding(fx, left, source);
         let iterable = self.iterated(fx, stmt, iterable);
-        let iterator = self.operation(fx, if is_await { "GetAsyncIterator" } else { "GetIterator" }, &[iterable]);
-        let next_method = if is_await { self.operation(fx, "GetAsyncIteratorNext", &[iterator]) } else { self.emit_throwing(fx, Op::PropGet { obj: iterator, name: next_name }) };
+        let iterator = self.operation(fx, if is_await { Operation::GetAsyncIterator } else { Operation::GetIterator }, &[iterable]);
+        let next_method = if is_await { self.operation(fx, Operation::GetAsyncIteratorNext, &[iterator]) } else { self.emit_throwing(fx, Op::PropGet { obj: iterator, name: next_name }) };
         let expected = sync.map(|(ty, layout)| {
             let seen = fx.b.new_var(self.or_undefined(ty.id));
             let is_expected = self.emit_throwing(fx, Op::IsInstance { value: iterator, layout });
@@ -1646,7 +1671,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     fx.b.seal(generally);
                     fx.b.switch_to(as_expected);
                     let step = this.emit_throwing(fx, Op::CallMethod { obj: seen, name: next_name, args: ir::Args::new() });
-                    this.operation(fx, "RequireIteratorResultObject", &[step]);
+                    this.operation(fx, Operation::RequireIteratorResultObject, &[step]);
                     let done = this.emit_throwing(fx, Op::PropGet { obj: step, name: done_name });
                     let done = this.emit(fx, Op::Truthy(done));
                     this.branch(fx, done, exit, there);
@@ -1662,7 +1687,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 let step = if is_await { this.async_iterator_next(fx, iterator, next_method, None) } else { this.emit_throwing(fx, Op::Call { callee: next_method, this: iterator, args: ir::Args::new() }) };
                 let step = if is_await { this.emit_throwing(fx, Op::Await(step)) } else { step };
-                this.operation(fx, "RequireIteratorResultObject", &[step]);
+                this.operation(fx, Operation::RequireIteratorResultObject, &[step]);
                 let done = this.emit_throwing(fx, Op::PropGet { obj: step, name: done_name });
                 let done = this.emit(fx, Op::Truthy(done));
                 let there = if stepped.is_some() { fx.b.new_block() } else { inside };
@@ -1757,7 +1782,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.switch_to(call);
                 let result = this.emit_throwing(fx, Op::Call { callee: method, this: iterator, args: ir::Args::new() });
                 let result = if is_await { this.emit_throwing(fx, Op::Await(result)) } else { result };
-                this.operation(fx, "RequireIteratorResultObject", &[result]);
+                this.operation(fx, Operation::RequireIteratorResultObject, &[result]);
                 fx.b.jump(done);
                 fx.b.seal(done);
                 fx.b.switch_to(done);
@@ -1776,7 +1801,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn with_disposable_stack(&mut self, fx: &mut Fx, has_await: bool, body: impl FnOnce(&mut Self, &mut Fx)) {
-        let stack = self.operation(fx, "NewDisposableStack", &[]);
+        let stack = self.operation(fx, Operation::NewDisposableStack, &[]);
         let outer = std::mem::replace(&mut fx.disposable_stack, stack);
         self.try_finally(fx, true, body, |this, fx, is_throw, value| this.dispose_resources(fx, stack, has_await, is_throw, value));
         fx.disposable_stack = outer;
@@ -1785,7 +1810,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn add_disposable_resource(&mut self, fx: &mut Fx, value: V, is_await: bool) {
         let is_await = self.emit(fx, Op::Bool(is_await));
         let stack = fx.disposable_stack;
-        self.operation(fx, "AddDisposableResource", &[stack, value, is_await]);
+        self.operation(fx, Operation::AddDisposableResource, &[stack, value, is_await]);
     }
 
     /// DisposeResources at the end of a block with `using` declarations.
@@ -1796,14 +1821,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.branch(fx, is_throw, record, header);
             fx.b.seal(record);
             fx.b.switch_to(record);
-            self.operation(fx, "RecordDisposeError", &[stack, value]);
+            self.operation(fx, Operation::RecordDisposeError, &[stack, value]);
             // Each `await using` resource is disposed of and awaited in turn. An error is recorded in the stack.
             let (step, awaits, exit) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
             fx.b.jump(header);
             fx.b.switch_to(header);
             self.emit(fx, Op::Poll);
             // The stack itself: it is empty. `null`: the resource needs no await.
-            let result = self.operation(fx, "DisposeNextResource", &[stack]);
+            let result = self.operation(fx, Operation::DisposeNextResource, &[stack]);
             let is_empty = self.emit(fx, Op::StrictEq { a: result, b: stack });
             self.branch(fx, is_empty, exit, step);
             fx.b.seal(step);
@@ -1821,7 +1846,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.seal(failed);
             fx.b.switch_to(failed);
             let error = self.emit(fx, Op::Caught);
-            self.operation(fx, "RecordDisposeError", &[stack, error]);
+            self.operation(fx, Operation::RecordDisposeError, &[stack, error]);
             fx.b.jump(next);
             fx.b.seal(next);
             fx.b.switch_to(next);
@@ -1830,7 +1855,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.seal(exit);
             fx.b.switch_to(exit);
         }
-        self.operation(fx, "DisposeResources", &[stack, is_throw, value]);
+        self.operation(fx, Operation::DisposeResources, &[stack, is_throw, value]);
     }
 
     /// `try` and `catch`.
@@ -1869,6 +1894,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// of its own, which is left as it is born: in the dead zone.
     fn iterated(&mut self, fx: &mut Fx, stmt: StmtId, expr: ExprId) -> V {
         let opened = self.c.is_captured_before_iterations(fx.file, stmt) && self.open_activation(fx, Activation::Iteration(stmt));
+        let hir = self.hir(fx.file);
+        if let StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } = hir[stmt].kind
+            && let StmtKind::Var(declarations) = hir[left].kind
+            && !declarations.is_empty()
+            && hir[declarations.at(0)].kind != VarKind::Var
+        {
+            let mut names = Vec::new();
+            self.names_of_pat(fx.file, hir[declarations.at(0)].pat, &mut names);
+            names.retain(|&name| self.c.is_referred_to_in_dead_zone(name));
+            self.declare(fx, &names);
+        }
         let value = self.expr(fx, expr);
         if opened {
             self.close_env(fx);
@@ -1958,7 +1994,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 for p in props.iter() {
                     let prop = &hir[p];
                     if prop.is_rest {
-                        let rest = self.operation(fx, "CopyDataPropertiesExcluding", &taken);
+                        let rest = self.operation(fx, Operation::CopyDataPropertiesExcluding, &taken);
                         let checked = self.c.type_of_pat(fx.file, prop.value);
                         let rest = self.fit_fresh(fx, rest, checked);
                         self.bind_pat(fx, prop.value, rest);
@@ -1970,16 +2006,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                                 (PropKey::Name(name), _) | (_, PatKind::Ident(name)) => name,
                                 _ => continue,
                             };
-                            let holders = self.c.holders_of_member_that_may_be_overridden(name);
-                            let written = name;
                             let name = self.str(name);
                             if has_rest {
                                 taken.push(self.emit(fx, Op::Str(name)));
                             }
-                            let mut member = self.emit_throwing(fx, Op::PropGet { obj: value, name });
-                            if !holders.is_empty() {
-                                member = self.spy_in_the_place_of_member(fx, member, &holders, written);
-                            }
+                            let member = self.emit_throwing(fx, Op::PropGet { obj: value, name });
                             let claim = if is_declared { self.ty_for_pat(fx, prop.value, prop.default.is_some()) } else { TyId::NONE };
                             self.fit(fx, member, Ty::of(claim), Why::Claim)
                         }

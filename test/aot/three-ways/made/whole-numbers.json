@@ -1,0 +1,9 @@
+{
+ "arrays": "alone: strings sum => THROWS TypeError\nstrings max => THROWS TypeError\nstrings ofLoop => THROWS TypeError\nstrings scale => THROWS TypeError\nand 9 lines more",
+ "digits": "all agree",
+ "keys": "all agree",
+ "math": "all agree",
+ "places": "all agree",
+ "remainders": "all agree",
+ "words": "all agree"
+}

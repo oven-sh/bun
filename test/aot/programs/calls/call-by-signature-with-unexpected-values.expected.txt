@@ -23,7 +23,7 @@
 23 async, a generator TypeError TypeError
 24 one that reads this 4
 25 a method taken off 2 TypeError
-26 the argument is not of the type TypeError undefined TypeError TypeError
+26 the argument is not of the type 51 undefined TypeError TypeError
 27 a subclass for the argument undefined true
 28 it throws RangeError TypeError
 29 caught at the site caught e15 yielded 6

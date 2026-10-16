@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 const uses = `
@@ -45,7 +46,7 @@ test.concurrent.each(["unread.cjs", "read.cjs", "deleted.cjs"])(
     const plain = await run(String(dir), ["run", `./${entry}`], bunEnv);
     expect({ stderr: plain.stderr, exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(plain.stdout).toContain("in the cycle range.js saw a function\nholds: true true\n");
-    expect(await run(String(dir), ["run", "--aot", `./${entry}`], compiledOnly)).toEqual(plain);
+    expect(await run(String(dir), ["run", "--debug-aot", `./${entry}`], compiledOnly)).toEqual(plain);
   },
   120_000,
 );
@@ -54,7 +55,7 @@ test.concurrent(
   "bun test --aot: a cycle that is loaded behind a module that deletes itself from require.cache",
   async () => {
     using dir = tempDir("aot-commonjs-cycle", files);
-    const { stderr, exitCode } = await run(String(dir), ["test", "--aot", "./cycle.test.js"], compiledOnly);
+    const { stderr, exitCode } = await run(String(dir), ["test", "--debug-aot", "./cycle.test.js"], compiledOnly);
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   },

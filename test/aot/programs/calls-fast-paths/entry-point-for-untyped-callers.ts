@@ -2,7 +2,7 @@
 // IR= 1 yieldsObject CallDirect
 // IR= 1 yieldsNumber CallDirect
 // IR= 1 yieldsNothing CallDirect
-// IR= 1 awaits NewObjectWithShape
+// IR= 3 awaits AwaitBySavingFrame
 declare const console: any;
 interface P { a: number; next: P | undefined }
 let count = 0;

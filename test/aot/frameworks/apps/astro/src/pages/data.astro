@@ -1,0 +1,9 @@
+---
+import Layout from "../layouts/Layout.astro";
+await new Promise(resolve => setTimeout(resolve, 5));
+const people = [{ id: 1, name: "ada" }, { id: 2, name: "grace" }];
+const askedBy = Astro.request.headers.get("x-asked-by") ?? "nobody";
+---
+<Layout title="data">
+  <main><h1>a page that awaits data</h1><p>asked by {askedBy}, seen by the middleware: {Astro.locals.seen}</p><ol>{people.map(person => <li>{person.name.toUpperCase()}</li>)}</ol></main>
+</Layout>

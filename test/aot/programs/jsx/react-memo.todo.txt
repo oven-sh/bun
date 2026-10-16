@@ -1,1 +1,0 @@
-Expected: "a#1,b#2,c#3 7 a3 function 5". --aot prints: "a#1,b#2,c#3 7 undefinedundefined function 5". (It needs Bun as its host, so it was never run before.)

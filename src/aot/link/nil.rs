@@ -8,13 +8,13 @@
 
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{FuncId, LayoutId, StrId, TyId, V};
-use crate::ir::{Def, Func, Layout, LayoutKind, MethodKind, Op, Prediction, Program, Strs, Target, Term, Why, class_flags, func_flags, method_flags, only_function_flags};
+use crate::ir::{Def, Func, Layout, LayoutKind, MethodKind, Op, Operation, Prediction, Program, Strs, Target, Term, Why, class_flags, func_flags, method_flags, only_function_flags};
 use bun_sema::check::given::{Jump, NO_JUMP, parameters_handed_elements, NULL, EdgesByNode, NilEdges, STRANGER, NilFlowsInFunction, Origin, PlaceEvent, RoomForFlows, UNDEFINED, Use, add_nil_flows_in, edges_by_node, nil_reaching, reach_backward, stored_values_read};
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use bun_threading::Guarded;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 const NIL: u8 = UNDEFINED | NULL;
 
@@ -144,7 +144,7 @@ fn functions_at<'a>(state: &[u32], more_reached: &'a FxHashMap<u32, SmallVec<[Fu
     first.into_iter().chain(more.into_iter().flatten().copied())
 }
 
-fn enter_where_functions_get(program: &Program, nodes: &Nodes, leaving: &EdgesByNode, found: Vec<FunctionsAsValues>, mut state: Vec<u32>) -> NilEdges {
+fn enter_where_functions_get<'a>(program: &Program, nodes: &Nodes, leaving: impl FnOnce() -> &'a EdgesByNode, found: Vec<FunctionsAsValues>, mut state: Vec<u32>) -> NilEdges {
     use node_state::{FLAG_BITS, HAS_ADDED_EDGES, HAS_MORE_FUNCTIONS, HAS_SITES, LEAKS};
     let mut more = NilEdges::default();
     let mut sites: Vec<&Site> = Vec::with_capacity(found.iter().map(|part| part.sites.len()).sum());
@@ -175,6 +175,7 @@ fn enter_where_functions_get(program: &Program, nodes: &Nodes, leaving: &EdgesBy
         let has_numbers = |it: &Declared| it.prims & prim::NUMBER != 0 || it.ints.is_some();
         given.prims & !prim::NULLISH == 0 && given.ints.is_none() && !given.has_objects() || has_numbers(given) && has_numbers(taken) || given.prims & taken.prims & prim::BOOLEAN != 0
     };
+    let leaving = leaving();
     loop {
         while let Some((function, node)) = pending.pop() {
             let known = state[node as usize];
@@ -593,6 +594,24 @@ fn place_events(program: &Program, func: &Func, fields_for_sure: &mut FxHashMap<
             break;
         }
         stands_for.extend(handed);
+        let parameters: Vec<V> = stands_for.keys().copied().collect();
+        let mut passed: Vec<V> = Vec::new();
+        for parameter in parameters {
+            let mut v = parameter;
+            loop {
+                v = before_casts(func, v);
+                match stands_for.get(&v) {
+                    Some(&same) => {
+                        passed.push(v);
+                        v = same;
+                    }
+                    None => break,
+                }
+            }
+            for link in passed.drain(..) {
+                stands_for.insert(link, v);
+            }
+        }
     }
     let object = |mut v: V| {
         loop {
@@ -658,8 +677,6 @@ fn place_events(program: &Program, func: &Func, fields_for_sure: &mut FxHashMap<
 struct Report<'a> {
     program: &'a Program,
     nodes: &'a Nodes,
-    /// The name of the operation.
-    initialize: StrId,
     edges: Vec<(u32, u32)>,
     origins: Vec<(u32, u8)>,
     /// The fields that are connected with those that share their place.
@@ -983,7 +1000,7 @@ impl Report<'_> {
                         }
                     }
                     // `Initialize this, "a", x, "b", 0, ..`: the first stores of a constructor function.
-                    Some(Op::Operation { name, args }) if *name == self.initialize => {
+                    Some(Op::Operation { which: Operation::Initialize, args }) => {
                         for store in args[1..].chunks_exact(2) {
                             let Some(&Op::Str(name)) = func.op(store[0]) else {
                                 self.as_values.leaks.extend(seen(store[1]));
@@ -1069,13 +1086,13 @@ impl Report<'_> {
                             }
                         }
                     }
-                    Some(Op::Operation { name, args }) if program.strs.get(*name) == b"ConstructWith" && args.len() >= 2 => {
+                    Some(Op::Operation { which: Operation::ConstructWith, args }) if args.len() >= 2 => {
                         self.as_values.sites.push(Site { callees: SmallVec::from_iter([node(args[0])]), args: args[2..].iter().map(|&argument| typed(argument)).collect(), result: None, is_of_the_engine: false });
                     }
-                    Some(Op::Operation { name, args }) if program.strs.get(*name) == b"SuperConstruct" => {
+                    Some(Op::Operation { which: Operation::SuperConstruct, args }) => {
                         self.as_values.leaks.extend(args.get(3).and_then(|&parent| seen(parent)));
                     }
-                    Some(Op::Operation { name, .. }) if matches!(program.strs.get(*name), b"MakeClass" | b"SetFunctionName" | b"IsCallable" | b"IsConstructor") => {}
+                    Some(Op::Operation { which: Operation::MakeClass | Operation::SetFunctionName | Operation::IsCallable | Operation::IsConstructor, .. }) => {}
                     Some(Op::Construct { callee, args }) => {
                         self.as_values.sites.push(Site { callees: SmallVec::from_iter([node(*callee)]), args: args.iter().map(|&argument| typed(argument)).collect(), result: None, is_of_the_engine: matches!(func.op(before_casts(func, *callee)), Some(Op::FreeGet { .. })) });
                     }
@@ -1274,7 +1291,6 @@ const NODES_OF_A_RUN: usize = 1 << 14;
 
 pub(super) fn make_room_for_nil(program: &mut Program, contents: &[u8], fields_by_name: &FieldsByName, in_parallel: InParallel<'_>, while_waiting: &mut dyn FnMut(&Program)) {
     let nodes = Nodes::of(program);
-    let initialize = program.strs.intern(b"Initialize");
     let reaching = {
         let program: &Program = program;
         let mut methods_by_name: FxHashMap<StrId, Vec<FuncId>> = FxHashMap::default();
@@ -1291,7 +1307,7 @@ pub(super) fn make_room_for_nil(program: &mut Program, contents: &[u8], fields_b
             }
         }
         let static_methods_by_constructor = &static_methods_by_constructor;
-        let report = || Report { program, nodes: &nodes, initialize, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default(), as_values: FunctionsAsValues::default(), methods_by_name, static_methods_by_constructor, fields_by_name, fields_for_sure: FxHashMap::default(), functions_found: FxHashMap::default() };
+        let report = || Report { program, nodes: &nodes, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default(), as_values: FunctionsAsValues::default(), methods_by_name, static_methods_by_constructor, fields_by_name, fields_for_sure: FxHashMap::default(), functions_found: FxHashMap::default() };
         let mut slices: Vec<(usize, Report<'_>, NilEdges)> = (0..program.funcs.len()).step_by(FUNCTIONS_OF_A_TASK).map(|first| (first, report(), NilEdges::default())).collect();
         let mut state = vec![0u32; nodes.count as usize];
         let mut state_left = &mut state[..nodes.results as usize];
@@ -1324,20 +1340,37 @@ pub(super) fn make_room_for_nil(program: &mut Program, contents: &[u8], fields_b
         }
         let between_fields = NilEdges { edges: connecting.edges.into_iter().map(|(from, to)| (from, to, NIL | STRANGER)).collect(), origins: connecting.origins };
         let mut found: Vec<FunctionsAsValues> = slices.iter_mut().map(|slice| std::mem::take(&mut slice.1.as_values)).collect();
-        let mut is_left_out = vec![false; nodes.count as usize];
-        for node in found.iter_mut().flat_map(|part| std::mem::take(&mut part.left_out)) {
-            is_left_out[node as usize] = true;
+        let (mut left_out, mut read_out_of, mut stand_ins, mut handed): (Vec<Vec<u32>>, Vec<Vec<(u32, u32)>>, Vec<Vec<u32>>, Vec<Vec<u32>>) = Default::default();
+        for part in &mut found {
+            left_out.push(std::mem::take(&mut part.left_out));
+            read_out_of.push(std::mem::take(&mut part.read_out_of));
+            stand_ins.push(std::mem::take(&mut part.stand_ins));
+            handed.push(std::mem::take(&mut part.handed));
         }
-        let read_out_of: Vec<(u32, u32, u8)> = found.iter_mut().flat_map(|part| std::mem::take(&mut part.read_out_of)).map(|(from, to)| (from, to, STRANGER)).collect();
-        let stand_ins: Vec<(u32, u8)> = found.iter_mut().flat_map(|part| std::mem::take(&mut part.stand_ins)).map(|node| (node, STRANGER)).collect();
-        let handed: Vec<u32> = found.iter_mut().flat_map(|part| std::mem::take(&mut part.handed)).collect();
-        let from_containers = NilEdges { edges: Vec::new(), origins: slices.iter().flat_map(|slice| &slice.2.origins).filter(|origin| is_left_out[origin.0 as usize]).map(|origin| (origin.0, origin.1 & UNDEFINED)).collect() };
         let runs: Vec<u32> = slices.iter().map(|slice| nodes.values[slice.0]).chain((nodes.results..nodes.count).step_by(NODES_OF_A_RUN)).collect();
         let parts: Vec<&[(u32, u32, u8)]> = slices.iter().map(|slice| &slice.2).chain([&between_fields]).map(|part| &part.edges[..]).collect();
-        let leaving = edges_by_node(nodes.count, &runs, &parts, |edge| Some((edge.0, edge.1)), in_parallel);
-        let (mut entered, mut reaching, leads_into_a_field) = std::thread::scope(|scope| {
-        let entered = scope.spawn(|| enter_where_functions_get(program, &nodes, &leaving, found, state));
-        let reaching = nil_reaching(&leaving, &[], slices.iter().map(|slice| &slice.2).chain([&between_fields]).flat_map(|part| part.origins.iter().copied()), |_, _| false, in_parallel);
+        let leaving: OnceLock<EdgesByNode> = OnceLock::new();
+        let (are_made, awaited) = std::sync::mpsc::channel::<()>();
+        let (mut entered, mut reaching, leads_into_a_field, read_out_of, stand_ins, handed, from_containers) = std::thread::scope(|scope| {
+        let (program, of_nodes, made) = (&*program, &nodes, &leaving);
+        let entered = scope.spawn(move || {
+            let leaving = || {
+                awaited.recv().expect("the thread that makes the edges panicked");
+                made.get().expect("the edges are made before that is said")
+            };
+            enter_where_functions_get(program, of_nodes, leaving, found, state)
+        });
+        let leaving = leaving.get_or_init(|| edges_by_node(nodes.count, &runs, &parts, |edge| Some((edge.0, edge.1)), in_parallel));
+        are_made.send(()).expect("the thread that follows the functions is there");
+        let mut is_left_out = vec![false; nodes.count as usize];
+        for node in left_out.into_iter().flatten() {
+            is_left_out[node as usize] = true;
+        }
+        let read_out_of: Vec<(u32, u32, u8)> = read_out_of.into_iter().flatten().map(|(from, to)| (from, to, STRANGER)).collect();
+        let stand_ins: Vec<(u32, u8)> = stand_ins.into_iter().flatten().map(|node| (node, STRANGER)).collect();
+        let handed: Vec<u32> = handed.into_iter().flatten().collect();
+        let from_containers = NilEdges { edges: Vec::new(), origins: slices.iter().flat_map(|slice| &slice.2.origins).filter(|origin| is_left_out[origin.0 as usize]).map(|origin| (origin.0, origin.1 & UNDEFINED)).collect() };
+        let reaching = nil_reaching(leaving, &[], slices.iter().map(|slice| &slice.2).chain([&between_fields]).flat_map(|part| part.origins.iter().copied()), |_, _| false, in_parallel);
         let mut leads_into_a_field = vec![false; nodes.count as usize];
         {
             let entering = edges_by_node(nodes.count, &runs, &parts, |edge| (edge.2 & UNDEFINED != 0 && edge.0 < nodes.yielded).then_some((edge.1, edge.0)), in_parallel);
@@ -1354,15 +1387,16 @@ pub(super) fn make_room_for_nil(program: &mut Program, contents: &[u8], fields_b
             leads_into_a_field = reach_backward(&entering, leads_into_a_field, pending, in_parallel);
         }
         while_waiting(program);
-        (entered.join().expect("the thread that follows the functions panicked"), reaching, leads_into_a_field)
+        (entered.join().expect("the thread that follows the functions panicked"), reaching, leads_into_a_field, read_out_of, stand_ins, handed, from_containers)
         });
+        let leaving = leaving.get().expect("the edges were made above");
         entered.origins.extend(handed.into_iter().map(|node| (node, UNDEFINED)));
         entered.edges.retain(|edge| !leads_into_a_field[edge.1 as usize]);
         entered.origins.retain(|origin| !leads_into_a_field[origin.0 as usize]);
         if !stand_ins.is_empty() {
             entered.edges.extend(read_out_of);
         }
-        let further = nil_reaching(&leaving, &entered.edges, entered.origins.iter().chain(&from_containers.origins).chain(&stand_ins).copied(), |from, to| from >= nodes.yielded && leads_into_a_field[to as usize], in_parallel);
+        let further = nil_reaching(leaving, &entered.edges, entered.origins.iter().chain(&from_containers.origins).chain(&stand_ins).copied(), |from, to| from >= nodes.yielded && leads_into_a_field[to as usize], in_parallel);
         for (all, more) in reaching.iter_mut().zip(further) {
             *all |= more;
         }
@@ -1520,7 +1554,7 @@ pub(super) fn make_room_for_nil(program: &mut Program, contents: &[u8], fields_b
                         }
                     }
                     Op::GlobalSet(global, value) => wanted.push((value, globals[global.idx()].declared)),
-                    Op::Operation { name, args } if *name == initialize => {
+                    Op::Operation { which: Operation::Initialize, args } => {
                         let receiver = func.ty(args[0]);
                         let view = if receiver.is_some() { tys.get(receiver).only_layout() } else { None };
                         let names: SmallVec<[V; 8]> = args.iter().copied().collect();

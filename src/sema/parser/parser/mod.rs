@@ -777,7 +777,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     /// and the bodies of functions leave that context. TypeScript's parser stays in it.
     #[inline(always)]
     pub(crate) fn disallow_in_if_brackets_end_it(&self) -> u32 {
-        match self.is_ecmascript {
+        match self.is_ecmascript || self.options.is_javascript && self.options.is_compiled {
             true => ctx::DISALLOW_IN,
             false => 0,
         }

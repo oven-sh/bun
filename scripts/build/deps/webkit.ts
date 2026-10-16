@@ -116,6 +116,12 @@ export function webkitTestFFIPath(cfg: Config): string {
     : resolve(cfg.buildDir, `testFFI${cfg.exeSuffix}`);
 }
 
+export function webkitJSCPath(cfg: Config): string {
+  return cfg.webkit === "prebuilt"
+    ? resolve(prebuiltDestDir(cfg), "bin", `jsc${cfg.exeSuffix}`)
+    : resolve(cfg.buildDir, `jsc${cfg.exeSuffix}`);
+}
+
 /** Build a lib path under the WebKit install's lib/ dir. */
 function wkLib(cfg: Config, name: string): string {
   return `lib/${cfg.libPrefix}${name}${cfg.libSuffix}`;

@@ -317,6 +317,47 @@ fn standalone_module_graph() -> Option<&'static bun_standalone_graph::Graph> {
     bun_standalone_graph::Graph::get_ref()
 }
 
+/// For a path that the disk does not have: `Graph::of_compiled_program`.
+fn is_of_compiled_program(path: &[u8]) -> bool {
+    standalone_module_graph().is_some_and(|graph| graph.of_compiled_program(path).is_some())
+}
+
+fn stats_of_compiled_program(path: &[u8], big_int: bool) -> Option<StatOrNotFound> {
+    let result = standalone_module_graph()?.stat_of_compiled_program(path)?;
+    Some(StatOrNotFound::Stats(Box::new(Stats::init(&PosixStat::init(&result), big_int))))
+}
+
+/// A file that the executable holds has no descriptor: its bytes are handed over in a file that has no name.
+#[cfg(unix)]
+fn open_file_of_the_executable(contents: &[u8], flags: i32, path: &[u8]) -> Maybe<FD> {
+    if flags & (sys::O::WRONLY | sys::O::RDWR | sys::O::TRUNC | sys::O::APPEND) != 0 {
+        return Err(sys::Error::from_code(E::EROFS, sys::Tag::open).with_path(path));
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let fd = sys::memfd_create(c"file-of-the-executable", sys::MemfdFlags::NonExecutable).map_err(|err| err.with_path(path))?;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let fd = {
+        let mut name = *b"/tmp/.file-of-the-executable-XXXXXX\0";
+        // SAFETY: `name` is a writable NUL-terminated template, and stays alive for both calls.
+        let made = unsafe { libc::mkstemp(name.as_mut_ptr().cast()) };
+        if made < 0 {
+            return Err(sys::Error::from_code(E::EIO, sys::Tag::open).with_path(path));
+        }
+        // SAFETY: as above; `made` is open.
+        unsafe {
+            libc::unlink(name.as_ptr().cast());
+            libc::fcntl(made, libc::F_SETFD, libc::FD_CLOEXEC);
+        }
+        FD::from_native(made)
+    };
+    let filled = sys::File::borrow(&fd).write_all(contents).and_then(|()| sys::lseek(fd, 0, libc::SEEK_SET));
+    if let Err(err) = filled {
+        fd.close();
+        return Err(err.with_path(path));
+    }
+    Ok(fd)
+}
+
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
 /// `core::result::Result`, which has no `aborted()` constructor; inline the
 /// sentinel error directly.
@@ -4673,7 +4714,7 @@ impl NodeFS {
     pub(crate) fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
         if let Some(graph) = standalone_module_graph() {
             let p = args.path.slice();
-            let is_dir = graph.find_dir(p);
+            let is_dir = graph.find_dir(p) && graph.lists(p);
             if is_dir || graph.contains_file(p) {
                 let mode = args.mode.as_int();
                 if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
@@ -4692,6 +4733,7 @@ impl NodeFS {
             args.path.slice_z(&mut self.sync_error_buf)
         };
         match Syscall::access(path, args.mode.as_int()) {
+            Err(err) if err.get_errno() == E::ENOENT && (args.mode.as_int() & sys::posix::W_OK) == 0 && is_of_compiled_program(args.path.slice()) => Ok(Null),
             Err(err) => Err(err.with_path(args.path.slice())),
             Ok(_) => Ok(Null),
         }
@@ -5387,7 +5429,7 @@ impl NodeFS {
             }
         };
 
-        Ok(sys::exists_os_path(slice, false))
+        Ok(sys::exists_os_path(slice, false) || is_of_compiled_program(path.slice()))
     }
 
     pub(crate) fn chown(&mut self, args: &args::Chown, _: Flavor) -> Maybe<ret::Chown> {
@@ -5603,6 +5645,11 @@ impl NodeFS {
                     args.big_int,
                 )))),
                 Err(err) => {
+                    if err.get_errno() == E::ENOENT
+                        && let Some(stats) = stats_of_compiled_program(args.path.slice(), args.big_int)
+                    {
+                        return Ok(stats);
+                    }
                     if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
                         return Ok(StatOrNotFound::NotFound);
                     }
@@ -5616,6 +5663,11 @@ impl NodeFS {
                 args.big_int,
             )))),
             Err(err) => {
+                if err.get_errno() == E::ENOENT
+                    && let Some(stats) = stats_of_compiled_program(args.path.slice(), args.big_int)
+                {
+                    return Ok(stats);
+                }
                 if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
                     return Ok(StatOrNotFound::NotFound);
                 }
@@ -5997,6 +6049,12 @@ impl NodeFS {
         } else {
             args.path.slice_z(&mut self.sync_error_buf)
         };
+        #[cfg(unix)]
+        if let Some(graph) = standalone_module_graph()
+            && let Some(file) = graph.find_ref(path.as_bytes())
+        {
+            return open_file_of_the_executable(file.utf8_contents(), args.flags.as_int(), args.path.slice());
+        }
         match Syscall::open(path, args.flags.as_int(), args.mode) {
             Err(err) => Err(err.with_path(args.path.slice())),
             Ok(fd) => Ok(fd),
@@ -6304,8 +6362,7 @@ impl NodeFS {
     pub(crate) fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {
         if flavor != Flavor::Sync && args.recursive {
             debug_assert!(
-                standalone_module_graph().is_some()
-                    && bun_standalone_graph::is_bun_standalone_file_path(args.path.slice()),
+                standalone_module_graph().is_some_and(|graph| graph.lists(args.path.slice())),
                 "async recursive readdir must go through AsyncReaddirRecursiveTask"
             );
         }
@@ -6830,7 +6887,7 @@ impl NodeFS {
         let path = args.path.slice_z(buf);
 
         if let Some(graph) = standalone_module_graph() {
-            if bun_standalone_graph::is_bun_standalone_file_path(path.as_bytes()) {
+            if graph.lists(path.as_bytes()) {
                 return Self::readdir_standalone::<T>(
                     graph,
                     path.as_bytes(),
@@ -7618,6 +7675,11 @@ impl NodeFS {
 
         #[cfg(not(windows))]
         {
+            if let Some(graph) = standalone_module_graph()
+                && (graph.contains_file(args.path.slice()) || graph.find_dir(args.path.slice()))
+            {
+                return Ok(encode_path_result(args.path.slice(), args.encoding));
+            }
             let mut outbuf = bun_paths::path_buffer_pool::get();
             let inbuf = &mut self.sync_error_buf;
             // SAFETY: single-threaded init flag (resolver/fs.rs).
@@ -7648,6 +7710,9 @@ impl NodeFS {
             let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
             let fd = match sys::open(path, flags, 0) {
+                Err(err) if err.get_errno() == E::ENOENT && is_of_compiled_program(path.as_bytes()) => {
+                    return Ok(encode_path_result(path.as_bytes(), args.encoding));
+                }
                 Err(err) => return Err(err.with_path(path)),
                 Ok(fd_) => fd_,
             };
@@ -7796,6 +7861,11 @@ impl NodeFS {
                     args.big_int,
                 )))),
                 Err(err) => {
+                    if err.get_errno() == E::ENOENT
+                        && let Some(stats) = stats_of_compiled_program(args.path.slice(), args.big_int)
+                    {
+                        return Ok(stats);
+                    }
                     if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
                         return Ok(StatOrNotFound::NotFound);
                     }
@@ -7809,6 +7879,11 @@ impl NodeFS {
                 args.big_int,
             )))),
             Err(err) => {
+                if err.get_errno() == E::ENOENT
+                    && let Some(stats) = stats_of_compiled_program(args.path.slice(), args.big_int)
+                {
+                    return Ok(stats);
+                }
                 if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
                     return Ok(StatOrNotFound::NotFound);
                 }

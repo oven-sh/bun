@@ -1,7 +1,1 @@
-{
-  "throws-twice.import_only.ts": "compiled",
-  "throws-twice.import_then_require.ts": "compiled",
-  "throws-twice.require_only.cjs": "compiled",
-  "throws-twice.require_only.ts": "compiled",
-  "throws-twice.require_then_import.ts": "compiled"
-}
+{}

@@ -158,20 +158,25 @@ is to its importers: `require()`, `import d`, `import * as ns`, named imports in
 is for: the compiler may decide that the package's records could come from outside and give them no layout. That has happened:
 one change in the compiler, together with an ES-module entry, made the typed reconciler slower than the untyped one with every
 other gate green; another made every `Fiber` admit foreign objects, through the small records that hold one, for 16% more
-instructions. Both were found by an application's benchmark. So `run.py build` takes four measures of each tree's typed program,
+instructions. Both were found by an application's benchmark. So `run.py build` takes three measures of each tree's typed program,
 all of them the compiler's own, and `FACTS` in `run.py` pins them:
 
 | measure | from | fails when |
 |---|---|---|
-| receiver | `--aot-explain=given`: at how many property reads the receiver's layout is known | two points down |
-| read | the same: at how many the type of what is read is known | two points down |
+| offset | `tools/facts.py` on the compiler's intermediate form: of the reads and stores of a property in the package's own functions, how many go by offset | two points down |
 | bytes | the image's map: the package's compiled bodies, typed over untyped | a tenth up |
 | strangers | `--aot-explain=foreign`: the named records whose layout admits foreign objects | a new name |
 
 ```
-ok   client: facts: react-reconciler: the receiver is known at 61.4% of the program's property reads (due 61.4) · what is read at 44.3% (due 44.3) · its compiled bodies: typed / untyped bytes 0.725 (due 0.725)
-FAIL client: facts: react-reconciler: the receiver is known at 59.9% ... (due 61.4) · what is read at 40.1% (due 44.3) · ... bytes 0.982 (due 0.725) · WORSE: read bytes: THE TYPED VERSION HAS LOST FACTS ON THIS COMPILER
+ok   server: facts: react-dom: 64.0% of the reads and stores of a property in its own functions go by offset (due 64.0) · its compiled bodies: typed / untyped bytes 0.965 (due 0.965)
+FAIL server: facts: react-dom: 51.2% ... (due 64.0) · ... bytes 1.13 (due 0.965) · WORSE: offset bytes: THE TYPED VERSION HAS LOST FACTS ON THIS COMPILER
 ```
+
+The percent counts the package's own functions and not the whole program, which holds Bun's built-in modules too.
+
+A loss that is known and not yet mended stands in `opened`, by tree: the records that were closed when the package was typed and
+admit foreign objects on today's compiler. `run.py` names them at every run, fails on one name more, and says so when one is closed
+again.
 
 A tree must give the compiler the chance to go wrong: scenario 29 of the client tree reads JSON into small records under the names
 that the reconciler's own small records have (`{ current }`, `{ pending }`, `{ then }`). Without it the second loss does not show.
@@ -227,7 +232,7 @@ tree was refused; with eleven of them optional it is accepted, at no measurable 
 **One shape per layout.** If fifty "kinds" of node are created by one literal, that is one interface, not
 a union of fifty. Never write a union of two created shapes on a variable.
 
-**Small integers** (`type int32 = number; type Flags = int32`) are kept in four bytes. Storing anything else
+**Small integers** (`type int32 = import("bun").int32; type Flags = int32`) are kept in four bytes. The compiler declares that type itself, whatever `bun-types` is installed; an alias of your own that is only called `int32` is a number. Storing anything else
 there throws, so a number that comes from outside is not an `int32`.
 
 **A literal with no declared type is a trap.** `{ next: null }` gets a field that can only hold `null`.
@@ -263,6 +268,12 @@ function RequestInstance(this: Request, state: State) { this.state = state; }
 var request = new (RequestInstance as RequestConstructor)(state);
 ```
 
+**Hand records out as `any`.** A record type in the result of a function that a JavaScript file imports, or that a JavaScript entry exports
+again, counts as data from outside: JavaScript may store anything to an object it is handed. The compiler then gives the type up in the whole
+program: its objects are made as plain objects, and the typed code reads them by name too. seroval's `toJSON` and `toCrossJSON` said that they
+return a `SerovalNode`, and in a TanStack Start server no node had a layout. Written as `any`, the same object is merely let out and keeps its
+layout. `--aot-explain=alterations` counts such types under "given".
+
 **Say what is frozen.** Of `Object.freeze(x)`, `Object.seal(x)` or `Object.preventExtensions(x)` with an `x` of type `any` the compiler has to
 assume that `x` may be any laid-out object of the whole program. Every layout then counts as one that may be frozen, and every store to a
 field tests for it: 807 of the 3,520 stores in a TanStack Start server, react-dom's among them, for one line of seroval. Give the operand the
@@ -283,6 +294,12 @@ its `exports.name = ..`. The entry, and how an importer finds `name`, stay npm's
 resolved when the program is built. Through an entry that hands on the `default` of a typed ES module the importer holds an object and looks
 `c` up by name at every call, some 25 instructions more. `PLACED` in `check.py` lists these files. They are kept as `.cts` under `src/`, and
 `check.py` writes them to `<out>/sound/<name>/`, not into `<out>/node_modules`, where a `.js` file would be read as JavaScript.
+
+**So is a CommonJS bundle of which a program uses a part.** The compiler drops an export of a CommonJS module that nobody reads, and all that
+only it reaches. An entry that hands on the `default` of a typed ES module holds every export alive. `react-dom/server` loads two bundles
+and takes two functions of the legacy one: as ES modules the typed bundles were 221 KB (5%) more compiled code in a TanStack Start server
+than they are at npm's own paths, and more than the untyped package. A door in a dead export goes with it: `FormatContext` was open for
+`resumeRequest` alone. These rows have `form='placed'` in `check.py`: the typed text, with the shapes of the ES form behind it.
 
 **Never lay `x.ts` beside `x.js` when there is an `x.d.ts`.** The checker prefers `x.ts`, and the package's
 public types vanish for its users. Name it `x.sound.ts` (seroval: `dist/index.sound.ts`, and `dist/index.js`

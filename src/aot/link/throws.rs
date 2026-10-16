@@ -1,7 +1,7 @@
 use super::nil::{before_casts, functions_called, targets_of};
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{FuncId, LayoutId, StrId, TyId, V};
-use crate::ir::{BinOp, Def, Func, FuncKind, Initialization, LayoutKind, MethodKind, NO_VARIABLE, Op, Prediction, Program, Target, Term, UnOp, Why, class_flags, field_flags, func_flags, method_flags};
+use crate::ir::{BinOp, Def, Func, FuncKind, Initialization, LayoutKind, MethodKind, NO_VARIABLE, Op, Operation, Prediction, Program, Target, Term, UnOp, Why, class_flags, field_flags, func_flags, method_flags};
 use bun_sema::check::is_global_of_the_engine;
 use bun_sema::check::locked_builtins::{self, Builtin, Change, global_object};
 use bun_sema::util::{InParallel, for_each_mut};
@@ -48,12 +48,11 @@ pub(super) enum Kind {
     BuiltinWrite,
     PrototypeWrite,
     Mutation,
-    Caller,
     Copy,
 }
 
 impl Kind {
-    const ALL: [Kind; 19] = [
+    const ALL: [Kind; 18] = [
         Kind::As,
         Kind::NonNull,
         Kind::Argument,
@@ -71,7 +70,6 @@ impl Kind {
         Kind::BuiltinWrite,
         Kind::PrototypeWrite,
         Kind::Mutation,
-        Kind::Caller,
         Kind::Copy,
     ];
 
@@ -94,7 +92,6 @@ impl Kind {
             Kind::BuiltinWrite => "builtin-write",
             Kind::PrototypeWrite => "prototype-write",
             Kind::Mutation => "typed-object-mutation",
-            Kind::Caller => "function-caller",
             Kind::Copy => "copy",
         }
     }
@@ -118,7 +115,6 @@ impl Kind {
             Kind::BuiltinWrite => "builtin-member-replace",
             Kind::PrototypeWrite => "class-prototype-write",
             Kind::Mutation => "field-store-untyped",
-            Kind::Caller => "function-caller-arguments",
             Kind::Copy => "copy-on-enter",
         }
     }
@@ -151,7 +147,6 @@ impl Kind {
             (Kind::BuiltinWrite, _) => "built-ins are locked under --aot: use your own function or subclass",
             (Kind::PrototypeWrite, _) => "declare the member in the class, or keep the function in your own table",
             (Kind::Copy, _) => "build the typed object from the external one yourself and use only the typed object: code that keeps the external object does not see later writes",
-            (Kind::Caller, _) => "pass the value as an argument: reading `caller` or `arguments` of a function throws under --aot",
             (Kind::Mutation, _) => "a typed object keeps its declared properties and their types: declare the property optional or wider, or build another object",
         }
     }
@@ -316,7 +311,6 @@ impl Site {
             Kind::NonNull => (100012, vec![bytes(self.shown())]),
             Kind::BuiltinWrite => (100014, vec![bytes(&self.detail)]),
             Kind::PrototypeWrite | Kind::Mutation => (100015, vec![bytes(&self.detail)]),
-            Kind::Caller => (100016, vec![bytes(&self.detail)]),
             kind => (100013, vec![bytes(self.shown()), bytes(&self.expected), bytes(if self.detail.is_empty() { kind.place() } else { &self.detail })]),
         }
     }
@@ -1523,18 +1517,22 @@ impl<'a> Flow<'a> {
         }
         has_changed |= self.has_changed;
         reached[0] = Some(Vec::new());
-        let mut walked = 0;
+        let mut line = StraightLine::new(func);
         while !self.is_whole {
-            let line = straight_from_the_entry(self.never_return, func, Some(&reached));
-            if line.len() <= walked {
+            let walked = line.order.len();
+            line.grow(self.never_return, func, Some(&reached));
+            if line.order.len() <= walked {
                 break;
             }
-            for &at in &line[walked..] {
+            for &at in &line.order[walked..] {
                 if let Some(facts) = reached[at].clone() {
                     self.step(index, func, &mut keys, &mut reached, at, &facts);
                 }
             }
-            walked = line.len();
+            let mut entered = line.order[walked..].iter().flat_map(|&at| targets_of(func.blocks[at].term.as_ref()));
+            if entered.any(|target| line.is_left_aside[target.block.idx()] && reached[target.block.idx()].is_some()) {
+                break;
+            }
         }
         has_changed |= self.has_changed;
         for sweep in 0.. {
@@ -1679,27 +1677,58 @@ fn functions_that_never_return(program: &Program, is_whole: bool, in_parallel: I
     (never_return, stored, storing)
 }
 
-fn straight_from_the_entry(never_return: &[bool], func: &Func, reached: Option<&[Option<Facts>]>) -> Vec<usize> {
-    let mut ways_in = vec![0u32; func.blocks.len()];
-    for target in func.blocks.iter().flat_map(|block| targets_of(block.term.as_ref())) {
-        ways_in[target.block.idx()] += 1;
-    }
-    let mut order = Vec::new();
-    let mut next = (!func.blocks.is_empty()).then_some(0);
-    while let Some(at) = next.filter(|at| !order.contains(at)) {
-        order.push(at);
-        next = match func.blocks[at].term.as_ref() {
-            Some(Term::Jump(target) | Term::Invoke { normal: target, .. }) => Some(target.block.idx()),
-            Some(Term::Branch { then, otherwise, .. }) => match reached.map(|reached| (reached[then.block.idx()].is_some(), reached[otherwise.block.idx()].is_some())) {
-                Some((true, false)) => Some(then.block.idx()),
-                Some((false, true)) => Some(otherwise.block.idx()),
-                _ => None,
-            },
-            _ => None,
+struct StraightLine {
+    ways_in: Vec<u32>,
+    is_on_it: Vec<bool>,
+    is_left_aside: Vec<bool>,
+    order: Vec<usize>,
+}
+
+impl StraightLine {
+    fn new(func: &Func) -> StraightLine {
+        let mut ways_in = vec![0u32; func.blocks.len()];
+        for target in func.blocks.iter().flat_map(|block| targets_of(block.term.as_ref())) {
+            ways_in[target.block.idx()] += 1;
         }
-        .filter(|&to| (ways_in[to] == 1 || func.blocks[to].params.is_empty()) && func.blocks[at].ops.iter().all(|&v| comes_back(never_return, func, v)));
+        StraightLine { ways_in, is_on_it: vec![false; func.blocks.len()], is_left_aside: vec![false; func.blocks.len()], order: Vec::new() }
     }
-    order
+
+    fn grow(&mut self, never_return: &[bool], func: &Func, reached: Option<&[Option<Facts>]>) {
+        let mut next = match self.order.last() {
+            Some(&last) => self.behind(never_return, func, reached, last),
+            None => (!func.blocks.is_empty()).then_some(0),
+        };
+        while let Some(at) = next.filter(|&at| !self.is_on_it[at]) {
+            self.is_on_it[at] = true;
+            self.order.push(at);
+            next = self.behind(never_return, func, reached, at);
+        }
+    }
+
+    fn behind(&mut self, never_return: &[bool], func: &Func, reached: Option<&[Option<Facts>]>, at: usize) -> Option<usize> {
+        let (to, aside) = match func.blocks[at].term.as_ref() {
+            Some(Term::Jump(target) | Term::Invoke { normal: target, .. }) => (target.block.idx(), None),
+            Some(Term::Branch { then, otherwise, .. }) => match reached.map(|reached| (reached[then.block.idx()].is_some(), reached[otherwise.block.idx()].is_some())) {
+                Some((true, false)) => (then.block.idx(), Some(otherwise.block.idx())),
+                Some((false, true)) => (otherwise.block.idx(), Some(then.block.idx())),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        if !((self.ways_in[to] == 1 || func.blocks[to].params.is_empty()) && func.blocks[at].ops.iter().all(|&v| comes_back(never_return, func, v))) {
+            return None;
+        }
+        if let Some(aside) = aside {
+            self.is_left_aside[aside] = true;
+        }
+        Some(to)
+    }
+}
+
+fn straight_from_the_entry(never_return: &[bool], func: &Func, reached: Option<&[Option<Facts>]>) -> Vec<usize> {
+    let mut line = StraightLine::new(func);
+    line.grow(never_return, func, reached);
+    line.order
 }
 
 fn surely_run(program: &Program, never_return: &[bool]) -> Vec<bool> {
@@ -1918,7 +1947,7 @@ impl<'a> Report<'a, '_> {
             Def::Op(Op::Await(_)) => "an awaited value".to_owned(),
             Def::Op(Op::Yield(_)) => "the value that the generator is resumed with".to_owned(),
             Def::Op(Op::ExternalModule(specifier)) => format!("the module {}, which is not compiled with the program", quoted(strs.get(*specifier))),
-            Def::Op(Op::Operation { name, .. }) => format!("the operation {}", text(*name)),
+            Def::Op(Op::Operation { which, .. }) => format!("the operation {}", which.name()),
             _ => "a value of unknown origin".to_owned(),
         };
         let pos = match func.values[v.idx()].def {
@@ -1980,7 +2009,7 @@ impl<'a> Report<'a, '_> {
     }
 
     fn tier_of(&self, kind: Kind, origin: u32) -> Tier {
-        if matches!(kind, Kind::BuiltinWrite | Kind::PrototypeWrite | Kind::Mutation | Kind::Caller | Kind::Parameter) {
+        if matches!(kind, Kind::BuiltinWrite | Kind::PrototypeWrite | Kind::Mutation | Kind::Parameter) {
             return Tier::Rule;
         }
         let asserted = if matches!(kind, Kind::As | Kind::NonNull) { Tier::Assertion } else { Tier::Typed };
@@ -2161,7 +2190,7 @@ impl<'a> Report<'a, '_> {
                     Some(&Op::ElemSet { value, .. }) => {
                         uses.entry(value).or_insert((Kind::Field, Use::Element));
                     }
-                    Some(Op::Operation { name, args }) if program.strs.get(*name) == b"Initialize" => {
+                    Some(Op::Operation { which: Operation::Initialize, args }) => {
                         for &argument in args {
                             uses.entry(argument).or_insert((Kind::Field, Use::SomeProperty));
                         }
@@ -2221,7 +2250,7 @@ impl<'a> Report<'a, '_> {
 
     fn add(&mut self, func: &Func, pos: u32, kind: Kind, verdict: Verdict, expected: String, found: String, detail: String, origin: u32) {
         let judged = verdict;
-        let verdict = if origin & CONTEXTUAL != 0 || self.flow.has_used_a_test || self.is_behind_a_test || !self.is_surely_run && matches!(kind, Kind::BuiltinWrite | Kind::PrototypeWrite | Kind::Mutation | Kind::Caller) { verdict.min(Verdict::Unknown) } else { verdict };
+        let verdict = if origin & CONTEXTUAL != 0 || self.flow.has_used_a_test || self.is_behind_a_test || !self.is_surely_run && matches!(kind, Kind::BuiltinWrite | Kind::PrototypeWrite | Kind::Mutation) { verdict.min(Verdict::Unknown) } else { verdict };
         let origin = self.origin_behind_call(origin & !CONTEXTUAL);
         if verdict != Verdict::Wrong {
             self.passes_somewhere.insert((func.module.0, pos, kind));
@@ -2525,15 +2554,6 @@ impl<'a> Report<'a, '_> {
                             self.add(func, pos, Kind::Mutation, Verdict::Unknown, String::new(), String::new(), "an array gets its own iterator: a loop over it as `T[]` throws".to_owned(), 0);
                         }
                     }
-                    &Op::PropGet { obj, name } if matches!(program.strs.get(name), b"caller" | b"arguments") => {
-                        if let Some(Identity::Function(read_of)) = self.flow.identity_of(index, obj)
-                            && program.funcs[read_of.idx()].has(func_flags::IS_SLOPPY)
-                            && program.funcs[read_of.idx()].kind == FuncKind::Plain
-                        {
-                            let shown = bstr::BStr::new(program.strs.get(name)).to_string();
-                            self.add(func, pos, Kind::Caller, Verdict::Wrong, String::new(), String::new(), format!("`.{shown}` of a function is read"), 0);
-                        }
-                    }
                     _ => {}
                 }
             }
@@ -2603,7 +2623,7 @@ impl<'a> Report<'a, '_> {
             return None;
         }
         Some(func.values.iter().filter_map(|value| match &value.def {
-            Def::Op(Op::Operation { name, args }) if program.strs.get(*name) == b"DefineField" && args.first() == Some(&literal) => match func.op(before_casts(func, *args.get(1)?)) {
+            Def::Op(Op::Operation { which: Operation::DefineField, args }) if args.first() == Some(&literal) => match func.op(before_casts(func, *args.get(1)?)) {
                 Some(&Op::Str(key)) => Some(program.strs.get(key).to_vec()),
                 _ => None,
             },
@@ -2957,11 +2977,15 @@ impl<'a> Report<'a, '_> {
                 }
                 let given = self.flow.val(index, func, facts, keys, argument, false);
                 let (given, wanted) = (self.flow.get(given).clone(), self.flow.get(parameter).clone());
+                let may_be_the_undefined_that_is_wanted = given.prims & wanted.prims & prim::UNDEFINED != 0;
                 let given = Declared { prims: given.prims & !prim::UNDEFINED, ..given };
                 if given.has_objects() && wanted.has_objects() || given.is_never() {
                     continue;
                 }
-                let verdict = self.judge(None, &given, &given, &wanted);
+                let verdict = match self.judge(None, &given, &given, &wanted) {
+                    Verdict::Wrong if may_be_the_undefined_that_is_wanted => Verdict::Unknown,
+                    verdict => verdict,
+                };
                 self.value = self.constant(func, argument).unwrap_or_default();
                 let found = text_of(program, &given, 0);
                 let origin = self.flow.origin_of(index, argument);

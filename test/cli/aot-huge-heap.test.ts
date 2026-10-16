@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "../aot/supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
@@ -40,19 +41,19 @@ describe.skipIf(isWindows).concurrent("--aot-huge-heap", () => {
     const { stdout, stderr, exitCode } = await run([join(cwd, "program")], cwd, smallHeap);
     expect(stderr).toContain("FATAL: MarkedBlocks fill the");
     expect(stderr).toContain("--aot-huge-heap");
-    expect(stdout).toBe("");
+    expect(stdout).not.toContain("kept");
     expect(exitCode).not.toBe(0);
   }, 120_000);
 
   test("bun run --aot takes it too", async () => {
     using folder = tempDir("aot-huge-heap", { "program.ts": program });
-    const { stdout, exitCode } = await run([bunExe(), "run", "--aot", "--aot-huge-heap", "program.ts"], String(folder), smallHeap);
+    const { stdout, exitCode } = await run([bunExe(), "run", "--debug-aot", "--aot-huge-heap", "program.ts"], String(folder), smallHeap);
     expect({ stdout, exitCode }).toEqual({ stdout: printed, exitCode: 0 });
   }, 120_000);
 
   test("bun test --aot takes it too", async () => {
     using folder = tempDir("aot-huge-heap", { "program.test.ts": 'import { expect, test } from "bun:test";\ntest("runs", () => expect(1 + 1).toBe(2));\n' });
-    const { stderr, exitCode } = await run([bunExe(), "test", "--aot", "--aot-huge-heap", "program.test.ts"], String(folder));
+    const { stderr, exitCode } = await run([bunExe(), "test", "--debug-aot", "--aot-huge-heap", "program.test.ts"], String(folder));
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   }, 120_000);

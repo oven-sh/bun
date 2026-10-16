@@ -149,6 +149,8 @@ pub struct Options {
     pub reads_jsdoc: bool,
     pub dialect: bun_sema::resolve::Dialect,
     pub bigint_names_are_digits: bool,
+    pub constant_keys_are_names: bool,
+    pub is_compiled: bool,
     /// Not the whole text is parsed.
     pub part: Option<Part>,
     /// Records what a formatter needs to attach comments to nodes: `enclosing_node`, `preceding_node` and `following_node` of

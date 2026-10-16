@@ -30,7 +30,7 @@ S1. \`declare namespace ${SPACE} { .. }\`, nothing else at top level except \`de
 S2. One interface for every object the file creates and keeps. Members in the order the literal (or constructor) writes them; all of them and no others; a comment \`// birth <line>\`.
 S3. Each member's type covers everything the file ever stores to it: created null and filled later is \`T | null\`.
 S4. If many "kinds" of object come out of one literal they are ONE interface, however the authors' own .d.ts slices them.
-S5. Start with \`type int32 = number;\`. Flags, ids, modes, indexes, counts are aliases of int32. A value that is not an int32 stored there throws at run time, so anything that can be fractional, huge, or supplied from outside stays \`number\` or given.
+S5. Start with \`type int32 = import("bun").int32;\`. Flags, ids, modes, indexes, counts are aliases of int32. A value that is not an int32 stored there throws at run time, so anything that can be fractional, huge, or supplied from outside stays \`number\` or given.
 S6. What other code creates is GIVEN: \`any\` through a named alias, in a section headed \`// GIVEN\`: user values, options bags, callbacks, plugins, props, anything out of JSON.parse. If a shape is created here AND can be handed in from outside, its type must accept what comes in (members that may be missing are optional), or the functions that take it from outside take the given alias.
 S7. No union of two created shapes, except where the data model really has one in a field. Objects used as dictionaries are \`{ [key: string]: T }\`, Map or Set.`
 

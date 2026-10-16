@@ -908,6 +908,7 @@ impl<'p, 's> Checker<'p, 's> {
         match access_node {
             AccessNode::ElementAccess(file, e) => match self.hir(file)[e].kind {
                 ExprKind::Index { index, .. } => Some(self.span_of_parenthesized_expr(file, index)),
+                ExprKind::Dot { name_pos, .. } => Some((file, name_pos, self.hir(file)[e].end - 1)),
                 _ => None,
             },
             AccessNode::IndexedAccessType(file, node) => match self.hir(file)[node].kind {
@@ -995,7 +996,7 @@ impl<'p, 's> Checker<'p, 's> {
                     });
                 }
                 if let Some((file, e)) = access_expression
-                    && let ExprKind::Index { obj, .. } = self.hir(file)[e].kind
+                    && let ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } = self.hir(file)[e].kind
                     && self.is_assignment_to_readonly_entity(file, e, obj, prop)
                     && let Some(index_node) = self.place_of_index_node(access_node)
                 {
@@ -1098,7 +1099,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && info.key != TypeId::NUMBER
                 {
                     if let Some((file, e)) = access_expression
-                        && let ExprKind::Index { obj, .. } = self.hir(file)[e].kind
+                        && let ExprKind::Index { obj, .. } | ExprKind::Dot { obj, .. } = self.hir(file)[e].kind
                     {
                         let at = self.place_inside_parentheses(file, e);
                         // `originalObjectType`
@@ -2595,8 +2596,8 @@ impl<'p, 's> Checker<'p, 's> {
         // `getIndexInfosOfType`: what `resolveUnionTypeMembers` has set, once it has run. This
         // object is also made for the properties alone, which resolve no members of the union.
         let index = match self.resolved_union_type_members(ty) {
-            Some(resolved) => SmallVec::from_slice(resolved.index_infos()),
-            None => self.union_index_infos(parts),
+            Some(resolved) if resolved.shape().properties_of.is_none() => SmallVec::from_slice(resolved.index_infos()),
+            _ => self.union_index_infos(parts),
         };
         shape.index.extend(index);
         let object = self.synth(shape);

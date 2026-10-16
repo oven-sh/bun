@@ -1357,6 +1357,43 @@ impl<'a> Resolver<'a> {
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
+                // What the executable holds is not looked for on the disk.
+                let is_require = matches!(kind, ast::ImportKind::Require | ast::ImportKind::RequireResolve);
+                let preserves_source_paths = graph.preserves_source_paths();
+                if preserves_source_paths
+                    && let Some(path) = match self.custom_dir_paths {
+                        Some(folders) => folders.iter().find_map(|folder| graph.resolution(folder.to_utf8().slice(), import_path, is_require)),
+                        None => graph.resolution(source_dir, import_path, is_require),
+                    }
+                {
+                    self.extension_order = original_order;
+                    return ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(path),
+                            secondary: None,
+                        },
+                        ..Default::default()
+                    });
+                }
+                if !preserves_source_paths
+                    && let Some(file_name) = match self.custom_dir_paths {
+                        Some(folders) => folders.iter().find_map(|folder| graph.entry_point_at(folder.to_utf8().slice(), import_path, is_require)),
+                        None => graph.entry_point_at(source_dir, import_path, is_require),
+                    }
+                {
+                    self.extension_order = original_order;
+                    return ResultUnion::Success(Result {
+                        import_kind: kind,
+                        path_pair: PathPair {
+                            primary: Path::init(file_name),
+                            secondary: None,
+                        },
+                        module_type: options::ModuleType::Esm,
+                        flags: ResultFlags::IS_STANDALONE_MODULE,
+                        ..Default::default()
+                    });
+                }
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
                 if specifier_is_embedded_path
@@ -4568,7 +4605,7 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
-                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                            if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) && err != crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
                                     let _ = self.log_mut().add_error_fmt(
@@ -5860,7 +5897,8 @@ impl<'a> Resolver<'a> {
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
+                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
+                | crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG) => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,

@@ -2,7 +2,7 @@
 // through a wider type, so it holds more than the narrower type declares. Every call answers alike, inlined or not.
 // IR+ HasShapeOf
 declare const console: { log(...values: unknown[]): void };
-declare const JSON: { parse(text: string): any };
+const JSON = { parse(text: string): any { const parsed = globalThis.JSON.parse(text); for (let o = parsed; o; o = o.cached) if (!("cached" in o)) o.cached = undefined; return parsed; } };
 const log: string[] = [];
 function pad(x: number): number { let s = 0; for (let i = 0; i < 3; i++) { s += x + i; s ^= i; s += x * 2; s -= i; s |= 0; s += 7; s ^= x; s += 11; s -= 3; s += x & 5; s ^= 9; s += 13; s -= x >> 1; s |= 0 } return s }
 interface Kind { flags: number; cached: Kind | undefined; id: number }

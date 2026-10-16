@@ -25,7 +25,7 @@ use crate::bind::{Decl, Flow, FlowId, FlowTarget, FnOwner, MemberOwner, Parent, 
 use crate::check::Checker;
 use crate::check::errors::Container;
 use crate::hir::{
-    BinOp, CallId, Chain, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, Keyword, MemberId, MemberKind, PatId, PropKey, StmtId, StmtKind,
+    BinOp, CallId, Chain, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, MemberId, MemberKind, PatId, PropKey, StmtId, StmtKind,
     TypeNodeId, TypeNodeKind, UnOp, VarKind,
 };
 use crate::program::{FileId, Sym};
@@ -474,12 +474,21 @@ impl<'p, 's> Checker<'p, 's> {
         if node.is_none() || depth == 8 || depth == 0 && self.is_untyped_file(file) {
             return false;
         }
-        let TypeNodeKind::Ref { name, args } = self.hir(file)[node].kind else { return false };
-        if !args.is_empty() {
-            return false;
+        let found = match self.hir(file)[node].kind {
+            TypeNodeKind::Ref { name, args } if args.is_empty() => {
+                let scope = self.bound(file).type_scope[node.idx()];
+                self.resolve_type_reference_name(file, scope, name, true)
+            }
+            TypeNodeKind::Import { args, is_typeof: false, .. } if args.is_empty() => {
+                let found = self.resolve_import_type(file, node, false);
+                found.and_then(|found| self.resolve_symbol(found).symbol())
+            }
+            _ => None,
+        };
+        let Some(sym) = found else { return false };
+        if self.intrinsic_of_bun(sym).is_some_and(|name| self.atoms().bytes(name) == b"int32") {
+            return true;
         }
-        let scope = self.bound(file).type_scope[node.idx()];
-        let Some(sym) = self.resolve_type_reference_name(file, scope, name, true) else { return false };
         let declared = self.files().decls(sym).into_iter().find_map(|(file, decl)| match decl {
             Decl::Alias(alias) => Some((file, alias)),
             _ => None,
@@ -488,9 +497,6 @@ impl<'p, 's> Checker<'p, 's> {
         let alias = self.hir(file)[alias];
         if !alias.type_params.is_empty() {
             return false;
-        }
-        if self.atoms().bytes(alias.name) == b"int32" && matches!(self.hir(file)[alias.ty].kind, TypeNodeKind::Keyword(Keyword::Number)) {
-            return true;
         }
         self.writes_int32(file, alias.ty, depth + 1)
     }
@@ -650,12 +656,21 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn element_read_of_no_known_integers(&mut self, file: FileId, e: ExprId) -> Option<ExprId> {
         let hir = self.hir(file);
         let ExprKind::NonNull(read) = hir[e].kind else { return None };
-        let ExprKind::Index { obj, index, chain: Chain::No } = hir[read].kind else { return None };
-        if matches!(hir[obj].kind, ExprKind::Super) || self.is_untyped_file(file) {
+        let (obj, index) = self.element_read(file, read)?;
+        if self.is_untyped_file(file) {
             return None;
         }
         let ty = self.type_relied_on(file, read).0;
-        (self.numbers_by_type(ty).is_none() && self.numbers_of_element(file, obj, index).is_none()).then_some(read)
+        (self.numbers_by_type(ty).is_none() && (index.is_none() || self.numbers_of_element(file, obj, index).is_none())).then_some(read)
+    }
+
+    fn element_read(&mut self, file: FileId, read: ExprId) -> Option<(ExprId, ExprId)> {
+        let hir = self.hir(file);
+        match hir[read].kind {
+            ExprKind::Index { obj, index, chain: Chain::No } if !matches!(hir[obj].kind, ExprKind::Super) => Some((obj, index)),
+            ExprKind::Dot { obj, name, chain: Chain::No, .. } if !matches!(hir[obj].kind, ExprKind::Super) && self.is_found_by_an_index_signature(file, obj, name) => Some((obj, ExprId::NONE)),
+            _ => None,
+        }
     }
 
     fn is_only_tested(&self, file: FileId, e: ExprId) -> bool {
@@ -750,7 +765,6 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn element_read_left_unasserted(&mut self, file: FileId, e: ExprId) -> Option<ExprId> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let ExprKind::NonNull(read) = hir[e].kind else { return None };
-        let ExprKind::Index { obj, index, chain: Chain::No } = hir[read].kind else { return None };
         let Parent::Expr(around) = bound.expr_parent[e.idx()] else { return None };
         let is_arithmetic = match hir[around].kind {
             ExprKind::Binary { op: BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, .. } => false,
@@ -759,9 +773,10 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Unary { op: UnOp::Minus | UnOp::Plus | UnOp::BitNot, .. } => true,
             _ => return None,
         };
-        if matches!(hir[obj].kind, ExprKind::Super) || self.is_untyped_file(file) {
+        if self.is_untyped_file(file) {
             return None;
         }
+        let (obj, index) = self.element_read(file, read)?;
         if is_arithmetic {
             let (operand, whole) = (self.type_of_expr(file, e), self.type_of_expr(file, around));
             if !self.is_type_of_numbers(operand) || !self.is_type_of_numbers(whole) {
@@ -769,7 +784,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let ty = self.type_relied_on(file, read).0;
-        (self.numbers_by_type(ty).is_none() && self.numbers_of_element(file, obj, index).is_none()).then_some(read)
+        (self.numbers_by_type(ty).is_none() && (index.is_none() || self.numbers_of_element(file, obj, index).is_none())).then_some(read)
     }
 
     // ───────────────────────────── expressions ─────────────────────────────
@@ -969,9 +984,6 @@ impl<'p, 's> Checker<'p, 's> {
                 return None;
             }
         }
-        if self.may_be_overridden(at) {
-            return None;
-        }
         let place = self.place_of_integers(at);
         if !place.is_followed {
             return None;
@@ -1039,7 +1051,6 @@ impl<'p, 's> Checker<'p, 's> {
         let ExprKind::Ident(written) = self.hir(file)[e].kind else { return false };
         self.bound(file).expr_symbol[e.idx()].is_none()
             && self.atoms().bytes(written) == name
-            && self.global_that_may_be_overridden(name).is_none()
             && self.symbol_of_identifier(file, e, written).is_some_and(|found| self.hir(found.file).kind == FileKind::Declaration)
     }
 
@@ -1334,9 +1345,6 @@ impl<'p, 's> Checker<'p, 's> {
         let symbol = bound.symbols.get(at.id.idx())?;
         let uses = self.uses_of_integers_in(file);
         if symbol.flags.contains(SymFlags::MERGED) || uses.stored_through_assertions.contains(&at.id) || uses.has_direct_eval {
-            return None;
-        }
-        if self.may_be_overridden(at) {
             return None;
         }
         if self.commonjs_variable_declared_again(file, symbol.name) == Some(at) {

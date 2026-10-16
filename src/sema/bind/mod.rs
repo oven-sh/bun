@@ -959,6 +959,9 @@ pub struct BoundIn<S: Storage> {
     /// resolve to variables of its body.
     pub requires_scope_change: S::List<bool>,
     pub one_name_is_one_binding: bool,
+    pub inserted: S::Few<(u32, u32)>,
+    pub is_non_utf8: bool,
+    pub class_options: Option<crate::resolve::ClassOptions>,
     /// `node.Symbol`. For an unnamed function expression and for an arrow function `NONE` means
     /// that it has not been created: see `symbol_of_expando_initializer`.
     pub fn_symbol: S::List<SymbolId>,
@@ -1889,6 +1892,9 @@ impl BoundBuilder {
             fns,
             requires_scope_change,
             one_name_is_one_binding,
+            inserted,
+            is_non_utf8,
+            class_options,
             fn_symbol,
             class_symbol,
             class_owner,
@@ -1982,6 +1988,9 @@ impl BoundBuilder {
         fns.clear();
         requires_scope_change.clear();
         *one_name_is_one_binding = Default::default();
+        inserted.clear();
+        *is_non_utf8 = Default::default();
+        *class_options = Default::default();
         fn_symbol.clear();
         class_symbol.clear();
         class_owner.clear();
@@ -2100,6 +2109,9 @@ impl BoundBuilder {
             fns: copy_to_arena(&mut self.fns, arena),
             requires_scope_change: copy_to_arena(&mut self.requires_scope_change, arena),
             one_name_is_one_binding: self.one_name_is_one_binding,
+            inserted: few_to_arena(std::mem::take(&mut self.inserted), arena),
+            is_non_utf8: self.is_non_utf8,
+            class_options: self.class_options,
             fn_symbol: copy_to_arena(&mut self.fn_symbol, arena),
             class_symbol: copy_to_arena(&mut self.class_symbol, arena),
             class_owner: copy_to_arena(&mut self.class_owner, arena),
@@ -2183,6 +2195,9 @@ impl Bound<'_> {
         Bound {
             ran_out_of_stack: self.ran_out_of_stack,
             one_name_is_one_binding: self.one_name_is_one_binding,
+            inserted: ArenaFew::from_iter_in(self.inserted.iter().cloned(), arena),
+            is_non_utf8: self.is_non_utf8,
+            class_options: self.class_options,
             symbols: {
                 let copy = |symbol: &Symbol<'_>| Symbol {
                     name: symbol.name,
@@ -2379,6 +2394,7 @@ pub struct BindOptions {
     /// `Options::names_make_commonjs`
     pub names_make_commonjs: bool,
     pub one_name_is_one_binding: bool,
+    pub is_commonjs_by_decree: Option<bool>,
 }
 
 /// `bindSourceFile`

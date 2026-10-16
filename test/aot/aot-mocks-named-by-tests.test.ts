@@ -108,7 +108,17 @@ async function seen(cwd: string, args: string[]) {
   return { seen: (stdout + stderr).split("\n").filter(line => line.startsWith("see:")), exitCode };
 }
 
-test.concurrent.each(Object.keys(cases))(
+const inPart = "what a spy returns lacks members that the type requires";
+
+test("bun test --aot holds what a spy returns to the type: " + inPart, async () => {
+  using dir = tempDir("aot-mocks-named-by-tests", cases[inPart]);
+  await using ran = Bun.spawn({ cmd: [bunExe(), "test", "--aot", "./main.test.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([ran.stderr.text(), ran.exited]);
+  expect(stderr).toContain("TypeError: expected ");
+  expect(exitCode).toBe(1);
+}, 120_000);
+
+test.concurrent.each(Object.keys(cases).filter(name => name !== inPart))(
   "bun test --aot prints what bun test prints: %s",
   async name => {
     using dir = tempDir("aot-mocks-named-by-tests", cases[name]);

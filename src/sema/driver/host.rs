@@ -16,7 +16,7 @@ use bun_sema::atom::Interner;
 use bun_sema::hir::{self, FileKind};
 use bun_sema::json::Json;
 use bun_sema::portable::SharedFile;
-use bun_sema::program::{Builtin, LoadedBy, Module};
+use bun_sema::program::{Builtin, Module};
 use bun_sema::resolve::{
     Host, Kept, ModuleDetection, ParseOptions, Paths, Phase, ScriptKind, Spent, ancestors, inside,
     is_declaration_file_name, is_same_path, join, root_length, to_file_name_lower_case, to_path,
@@ -25,6 +25,7 @@ use bun_sema::resolve::{
 use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
+use crate::asked;
 use bun_sys::{EntryKind, ExistsAtType, Fd};
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -189,9 +190,12 @@ pub struct Disk {
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
     /// See `Host::take_unreadable`.
     unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
+    non_utf8: bun_threading::Guarded<FxHashSet<Vec<u8>>>,
     shared: bun_threading::Guarded<Sharing>,
     /// See `AlreadyRead`. By `tspath.Path`: such a file is found however its name is spelled, like one on the disk.
     already_read: AlreadyRead,
+    pub(crate) read_later: bun_threading::Guarded<Option<ReadLater>>,
+    texts_read_later: OnceLock<AlreadyRead>,
     /// What `already_read` adds to the listing of a directory, by the `tspath.Path` of the directory.
     in_memory: FxHashMap<Vec<u8>, InMemory>,
     /// `Provided::keeps_byte_order_marks`
@@ -212,6 +216,7 @@ pub struct Disk {
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
     /// `Provided::jsx_of_files`, by `tspath.Path`.
     pub(crate) jsx_of_files: Vec<(Vec<u8>, JsxOfFile)>,
+    pub(crate) classes_of_files: Vec<(Vec<u8>, ClassOptions)>,
     pub(crate) constants_of_imports: FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>,
     pub(crate) build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
     pub(crate) early_paths: Option<bun_threading::Guarded<std::sync::mpsc::Receiver<Vec<u8>>>>,
@@ -227,6 +232,8 @@ pub(crate) struct Compiled {
     pub(crate) entry_points: Vec<Vec<u8>>,
     pub(crate) code: FxHashSet<Vec<u8>>,
     pub(crate) builtin_modules: bun_threading::Guarded<Option<crate::builtins::Found>>,
+    pub(crate) is_run_from_its_sources: bool,
+    pub(crate) is_commonjs_code: FxHashMap<Vec<u8>, bool>,
 }
 
 /// `Host::share_declaration_files`
@@ -257,6 +264,8 @@ struct Shared {
 /// `bun build --check` passes what the bundler has read. A text that is borrowed is read without a copy.
 pub type AlreadyRead = FxHashMap<Vec<u8>, Cow<'static, [u8]>>;
 
+pub type ReadLater = Box<dyn FnOnce() -> AlreadyRead + Send>;
+
 /// Called with the path of a file, in the checker's format, right before the file is read, on the
 /// thread that reads it. A caller that starts to watch the file there sees every change to what is
 /// checked.
@@ -267,6 +276,8 @@ pub type ScriptsOfPage = Box<dyn Fn(&[u8]) -> Vec<Vec<u8>> + Send + Sync>;
 
 /// How the JSX of a file is lowered, where that is not as the options of the project say: as if the file said so itself, by `@jsxRuntime`, `@jsx`, `@jsxFrag` and
 /// `@jsxImportSource`. What the file does say itself goes before this.
+pub use bun_sema::resolve::ClassOptions;
+
 #[derive(Clone)]
 pub struct JsxOfFile {
     pub is_classic: bool,
@@ -279,16 +290,20 @@ pub struct JsxOfFile {
 #[derive(Default)]
 pub struct Provided {
     pub already_read: AlreadyRead,
+    pub read_later: Option<ReadLater>,
     pub before_read: Option<BeforeRead>,
     pub scripts_of_page: Option<ScriptsOfPage>,
     /// By path, as the caller has it.
     pub jsx_of_files: Vec<(Vec<u8>, JsxOfFile)>,
+    pub classes_of_files: Vec<(Vec<u8>, ClassOptions)>,
     pub constants_of_imports: Vec<((Vec<u8>, Vec<u8>), Vec<u8>)>,
     pub build_constants: Option<Arc<bun_sema::fold::BuildConstants>>,
     pub early_paths: Option<std::sync::mpsc::Receiver<Vec<u8>>>,
     pub early_parse_cancelled: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// With `Request::is_one_program`: none of the runtime's own modules is compiled with the program (`Host::builtin_files`).
     pub without_builtin_modules: bool,
+    pub is_run_from_its_sources: bool,
+    pub kinds_of_code: FxHashMap<Vec<u8>, bool>,
     /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
     /// takes it for a blank. `bun lint` has a rule about it, and writes the text back.
     pub keeps_byte_order_marks: bool,
@@ -453,8 +468,45 @@ fn as_the_runtime_reads(bytes: &[u8]) -> Vec<u8> {
 
 /// `vfs.FS.ReadFile` of the file at `path`, by that path alone.
 pub(crate) fn read_at(path: &[u8], keeps_mark: bool) -> Option<Cow<'static, [u8]>> {
-    let bytes = bun_sys::File::read_from(Fd::cwd(), for_the_system(path)?);
-    bytes.ok().map(|bytes| decoded(bytes, keeps_mark))
+    let bytes = bun_sys::File::read_from(Fd::cwd(), for_the_system(path)?).ok();
+    asked::note(asked::Kind::Text, path, |hash| asked::of_text(hash, bytes.as_deref()));
+    bytes.map(|bytes| decoded(bytes, keeps_mark))
+}
+
+fn answer_of_directory(hash: asked::Hash, directory: &Directory) -> u64 {
+    match directory {
+        Directory::Missing => 0,
+        Directory::Unreadable => 2,
+        Directory::Listed(listing) => {
+            let mut names = Vec::new();
+            for kind in [&listing.files, &listing.directories, &listing.links] {
+                for name in kind {
+                    names.extend_from_slice(name);
+                    names.push(0);
+                }
+                names.push(1);
+            }
+            hash(&names) | 1
+        }
+    }
+}
+
+fn answer_of_kind(is_directory: Option<bool>) -> u64 {
+    is_directory.map_or(0, |is_directory| 1 + u64::from(is_directory))
+}
+
+/// What the disk answers now to a question that `asked` has noted.
+pub(crate) fn answer_now(kind: asked::Kind, path: &[u8], hash: asked::Hash) -> u64 {
+    match kind {
+        asked::Kind::Text => asked::of_text(hash, for_the_system(path).and_then(|path| bun_sys::File::read_from(Fd::cwd(), path).ok()).as_deref()),
+        asked::Kind::Listing => answer_of_directory(hash, &only_what_can_be_code(list_unnoted(path))),
+        asked::Kind::IsDirectory => answer_of_kind(for_the_system(&with_root(path)).and_then(|path| is_directory(Fd::cwd(), path))),
+        asked::Kind::RealPath => hash(&Disk::ask_for_real_path(path)) | 1,
+        asked::Kind::IsCaseSensitive => u64::from(is_file_system_case_sensitive(path)),
+        asked::Kind::NativeText => asked::of_text(hash, bun_sys::File::read_from(Fd::cwd(), path).ok().as_deref()),
+        asked::Kind::Exists => u64::from(bun_sys::exists(path)),
+        asked::Kind::Scanned => crate::found_by_the_scan(path, read_at(path, false).as_deref(), &|_| {}).1.map_or(0, |found| hash(&found) | 1),
+    }
 }
 
 /// The two parts of a path.
@@ -539,6 +591,8 @@ impl Disk {
                     .map(|(path, text)| (to_file_name_lower_case(&path), text))
                     .collect(),
             },
+            read_later: bun_threading::Guarded::new(None),
+            texts_read_later: OnceLock::new(),
             keeps_byte_order_marks: false,
             extended_configs: Default::default(),
             paths: Default::default(),
@@ -560,6 +614,7 @@ impl Disk {
                 .then(|| bun_threading::io_thread_pool::acquire().into()),
             idle_readers: bun_threading::Guarded::new(Vec::new()),
             unreadable: bun_threading::Guarded::new(Vec::new()),
+            non_utf8: bun_threading::Guarded::new(FxHashSet::default()),
             times: Default::default(),
             bundled_libs: None,
             script_kinds: Vec::new(),
@@ -567,6 +622,7 @@ impl Disk {
             before_read: None,
             scripts_of_page: None,
             jsx_of_files: Vec::new(),
+            classes_of_files: Vec::new(),
             constants_of_imports: FxHashMap::default(),
             build_constants: None,
             early_paths: None,
@@ -693,8 +749,7 @@ impl Disk {
 
     /// Asks the system, which does not know what is only in memory.
     fn ask_whether_directory(&self, path: &[u8]) -> Option<bool> {
-        self.find_in_memory(path)
-            .or_else(|| is_directory(Fd::cwd(), for_the_system(&with_root(path))?))
+        self.find_in_memory(path).or_else(|| Asking::is_directory(path))
     }
 
     /// `None`: the system has to be queried.
@@ -718,6 +773,7 @@ impl Disk {
     fn find_in<'a>(&self, listing: &'a Listing, name: &[u8]) -> Option<Option<(&'a [u8], bool)>> {
         match listing.find(name, self.case_sensitive) {
             None if !name.is_ascii() || is_like_a_short_name(name) => None,
+            None if asked::is_noting() && !can_be_code(name) => None,
             None if self.case_sensitive && listing.find(name, false).is_some() => None,
             found => Some(found),
         }
@@ -729,8 +785,10 @@ impl Disk {
             return path.to_vec();
         };
         let (mut name, mut real) = (path_buffer_pool::get(), path_buffer_pool::get());
-        bun_sys::realpath(z(native, &mut name), &mut real)
-            .map_or_else(|_| path.to_vec(), from_native)
+        let found = bun_sys::realpath(z(native, &mut name), &mut real)
+            .map_or_else(|_| path.to_vec(), from_native);
+        asked::note(asked::Kind::RealPath, path, |hash| hash(&found) | 1);
+        found
     }
 
     /// `path`, with every name in it spelled as its directory has it. Links are not followed.
@@ -835,6 +893,30 @@ fn is_like_a_short_name(name: &[u8]) -> bool {
 
 /// Reads the entries of the directory at `path` from the system.
 fn list(path: &[u8]) -> Directory {
+    let found = list_unnoted(path);
+    let found = if asked::is_noting() { only_what_can_be_code(found) } else { found };
+    asked::note(asked::Kind::Listing, path, |hash| answer_of_directory(hash, &found));
+    found
+}
+
+/// By its name. A file that cannot comes and goes without a question that `asked` has noted being answered otherwise.
+fn can_be_code(name: &[u8]) -> bool {
+    match name.iter().rposition(|&byte| byte == b'.') {
+        None => true,
+        Some(dot) => matches!(&name[dot + 1..], b"ts" | b"tsx" | b"mts" | b"cts" | b"js" | b"jsx" | b"mjs" | b"cjs" | b"json"),
+    }
+}
+
+fn only_what_can_be_code(mut directory: Directory) -> Directory {
+    if let Directory::Listed(listing) = &mut directory {
+        listing.files.retain(|name| can_be_code(name));
+        let Listing { files, directories, links, .. } = listing;
+        links.retain(|name| files.binary_search(name).is_ok() || directories.binary_search(name).is_ok());
+    }
+    directory
+}
+
+fn list_unnoted(path: &[u8]) -> Directory {
     let rooted = with_root(path);
     let Some(native) = for_the_system(&rooted) else {
         return Directory::Missing;
@@ -894,6 +976,12 @@ fn list(path: &[u8]) -> Directory {
 /// longer found when the case of its name is swapped. TypeScript asks about itself, which is in the
 /// project.
 fn is_file_system_case_sensitive(path: &[u8]) -> bool {
+    let found = is_file_system_case_sensitive_unnoted(path);
+    asked::note(asked::Kind::IsCaseSensitive, path, |_| u64::from(found));
+    found
+}
+
+fn is_file_system_case_sensitive_unnoted(path: &[u8]) -> bool {
     if cfg!(windows) {
         return false;
     }
@@ -1290,12 +1378,25 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
 }
 
 impl Disk {
+    fn texts_read_later(&self) -> &AlreadyRead {
+        self.texts_read_later.get_or_init(|| {
+            let wait = self.read_later.lock().take();
+            let texts = wait.map_or_else(AlreadyRead::default, |wait| wait());
+            match self.case_sensitive {
+                true => texts,
+                false => texts.into_iter().map(|(path, text)| (to_file_name_lower_case(&path), text)).collect(),
+            }
+        })
+    }
+
     /// `Host::read`
     fn read_for_one_program(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         if !self.already_read.is_empty()
-            && let Some(text) = (self.already_read).get(&*to_path(path, self.case_sensitive))
+            && let key = to_path(path, self.case_sensitive)
+            && let Some(text) = self.already_read.get(&*key)
         {
-            return Some(text.clone());
+            let later = if text.is_empty() { self.texts_read_later().get(&*key) } else { None };
+            return Some(later.unwrap_or(text).clone());
         }
         let _reading = Spent::on(self, Phase::Read);
         if is_bundled(path) {
@@ -1338,6 +1439,7 @@ impl Disk {
             read_file(Fd::cwd(), path, &mut reader.buffer)
         });
         self.return_reader(reader);
+        asked::note(asked::Kind::Text, path, |hash| asked::of_text(hash, read.as_deref()));
         read.map(|bytes| decoded(bytes, keeps_mark))
     }
 }
@@ -1364,7 +1466,9 @@ impl Asking<'_> {
     }
 
     fn is_directory(path: &[u8]) -> Option<bool> {
-        is_directory(Fd::cwd(), for_the_system(&with_root(path))?)
+        let found = for_the_system(&with_root(path)).and_then(|path| is_directory(Fd::cwd(), path));
+        asked::note(asked::Kind::IsDirectory, path, |_| answer_of_kind(found));
+        found
     }
 }
 
@@ -1539,12 +1643,14 @@ impl Host for Disk {
         if path.ends_with(b".json") {
             return Cow::Owned(bstr::BStr::new(&text).to_string().into_bytes());
         }
-        let mut text = as_the_runtime_reads(&text);
-        text.extend_from_slice(b"\n// bun --aot: this file is not UTF-8: read as the runtime reads it");
-        Cow::Owned(text)
+        self.non_utf8.lock().insert(path.to_vec());
+        Cow::Owned(as_the_runtime_reads(&text))
     }
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.unreadable.lock())
+    }
+    fn is_non_utf8(&self, path: &[u8]) -> bool {
+        self.non_utf8.lock().contains(path)
     }
     fn is_file(&self, path: &[u8]) -> bool {
         if is_bundled(path) {
@@ -1608,33 +1714,43 @@ impl Host for Disk {
         paths.extend(receiver.try_iter());
         Some(paths.iter().map(|path| from_native(path)).collect())
     }
-    fn builtin_files(&self, loaded: &[Option<Module<'_>>], atoms: &Interner<'_>) -> Vec<(Vec<u8>, Builtin)> {
+    fn builtin_files(&self, loaded: &[Option<Box<Module<'_>>>], atoms: &Interner<'_>) -> Vec<(Vec<u8>, Builtin)> {
         let Some(compiled) = &self.compiled else { return Vec::new() };
         let is_code = |module: &Module<'_>| compiled.code.contains(module.path.text);
         let entry_points: FxHashSet<&[u8]> = compiled.entry_points.iter().map(Vec::as_slice).collect();
         let is_entry_point = |module: &Module<'_>| entry_points.contains(module.path.text);
-        let has = |is_so: &dyn Fn(&Module<'_>) -> bool| -> Vec<bool> { loaded.iter().map(|module| module.as_ref().is_some_and(is_so)).collect() };
+        let has = |is_so: &dyn Fn(&Module<'_>) -> bool| -> Vec<bool> { loaded.iter().map(|module| module.as_deref().is_some_and(is_so)).collect() };
         let mut is_compiled = has(&is_code);
         // A bundle has its entry points. Without a bundler, the program is what they lead to.
-        let mut pending: Vec<usize> = (0..loaded.len()).filter(|&file| !is_compiled[file] && loaded[file].as_ref().is_some_and(is_entry_point)).collect();
+        let mut pending: Vec<usize> = (0..loaded.len()).filter(|&file| !is_compiled[file] && loaded[file].as_deref().is_some_and(is_entry_point)).collect();
         while let Some(file) = pending.pop() {
-            let Some(module) = loaded[file].as_ref().filter(|module| module.hir.kind != FileKind::Declaration) else { continue };
+            let Some(module) = loaded[file].as_deref().filter(|module| module.hir.kind != FileKind::Declaration) else { continue };
             if !std::mem::replace(&mut is_compiled[file], true) {
                 pending.extend(module.edges.iter().map(|edge| edge.idx()));
             }
         }
-        let found = crate::builtins::find(loaded, atoms, &is_compiled, &|count, work| self.parallel(count, work));
+        let found = crate::builtins::find(loaded, atoms, &is_compiled, compiled.is_run_from_its_sources, &|count, work| self.parallel(count, work));
         let archive = bun_builtin_syntax::Archive::embedded();
-        let loaded_by = |why: &crate::builtins::Why| match why {
-            crate::builtins::Why::RequiredBy(_) => LoadedBy::RuntimeModulesOnly,
-            crate::builtins::Why::AnyName(_) => LoadedBy::ComputedName,
-            _ => LoadedBy::NativeCodeOrWrittenName,
-        };
-        let modules = found.included.iter().map(|module| (archive.path(module.id).to_vec(), Builtin::Module(module.id, loaded_by(&module.why))));
+        let modules = found.included.iter().map(|module| (archive.path(module.id).to_vec(), Builtin::Module(module.id, module.loaded_by)));
         let functions = archive.manifest().function_files().iter().map(|file| ([bun_builtin_syntax::VIRTUAL_ROOT, file].concat(), Builtin::Functions));
         let files = modules.chain(functions).collect();
         *compiled.builtin_modules.lock() = Some(found);
         files
+    }
+    fn doors_to_the_loader(&self) -> Vec<(u32, bun_sema::hir::ExprId)> {
+        let Some(compiled) = &self.compiled else { return Vec::new() };
+        compiled.builtin_modules.lock().as_ref().map_or_else(Vec::new, |found| found.door_sites.clone())
+    }
+    fn doors_to_files(&self) -> Vec<(u32, bun_sema::hir::ExprId)> {
+        let Some(compiled) = &self.compiled else { return Vec::new() };
+        compiled.builtin_modules.lock().as_ref().map_or_else(Vec::new, |found| found.door_sites_to_files.clone())
+    }
+    fn is_commonjs_to_the_runtime(&self, path: &[u8]) -> Option<bool> {
+        let known = &self.compiled.as_ref()?.is_commonjs_code;
+        if known.is_empty() {
+            return None;
+        }
+        known.get(&to_path(path, self.case_sensitive)[..]).copied()
     }
     fn builtin_import(&self, importer: &[u8], specifier: &[u8]) -> Option<Option<Vec<u8>>> {
         if !self.constants_of_imports.is_empty()
@@ -1683,7 +1799,7 @@ impl Host for Disk {
             self.script_kind(path),
             text,
             atoms,
-            options.experimental_decorators,
+            self.class_options(path).map_or(options.experimental_decorators, |own| own.experimental_decorators),
             options.module_detection == ModuleDetection::Force,
             options.bind.one_name_is_one_binding,
         );
@@ -1706,7 +1822,14 @@ impl Host for Disk {
         self.early_parse_cancelled.as_ref().is_some_and(|cancelled| cancelled.load(Ordering::Relaxed))
     }
     fn uses_default_parse_settings(&self, path: &[u8]) -> bool {
-        self.jsx_of_files.is_empty() || !self.jsx_of_files.iter().any(|it| it.0 == *to_path(path, self.case_sensitive))
+        (self.jsx_of_files.is_empty() || !self.jsx_of_files.iter().any(|it| it.0 == *to_path(path, self.case_sensitive))) && self.class_options(path).is_none()
+    }
+    fn class_options(&self, path: &[u8]) -> Option<ClassOptions> {
+        if self.classes_of_files.is_empty() {
+            return None;
+        }
+        let key = to_path(path, self.case_sensitive);
+        self.classes_of_files.iter().find(|it| it.0 == *key).map(|it| it.1)
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
         parse_package_json(arena, text)

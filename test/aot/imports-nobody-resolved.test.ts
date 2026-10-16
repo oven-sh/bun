@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // A static import that cannot be resolved fails the load of every module that reaches it, before any of them is evaluated, and the error
@@ -72,7 +73,7 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, errors: stderr.split("\n").filter(line => line.startsWith("error")), exitCode };
     };
-    const [plain, aot] = [await run([]), await run(["--aot"])];
+    const [plain, aot] = [await run([]), await run(["--debug-aot"])];
     expect(aot).toEqual(plain);
   });
 });

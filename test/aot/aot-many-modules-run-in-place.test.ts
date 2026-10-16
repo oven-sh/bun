@@ -1,0 +1,48 @@
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+
+const modules = 3000;
+const exportsOfEach = 10;
+
+function files(): Record<string, string> {
+  const made: Record<string, string> = {};
+  for (let i = 0; i < modules; i++) {
+    const lines: string[] = [];
+    if (i) lines.push(`import * as before from "./m${i - 1}";`, `import { f${i - 1}_0 } from "./m${i - 1}";`);
+    for (let j = 0; j < exportsOfEach; j++) {
+      const more = i && j === 0 ? ` + f${i - 1}_0(x) + before.f${i - 1}_1(x)` : "";
+      lines.push(`export function f${i}_${j}(x: number): number { return (x + ${j}${more}) % 1000; }`);
+    }
+    made[`m${i}.ts`] = lines.join("\n") + "\n";
+  }
+  made["main.test.ts"] = `
+    import { test, mock, spyOn } from "bun:test";
+    import * as last from "./m${modules - 1}";
+    import * as first from "./m0";
+    const handedOn = [mock];
+    test("case", () => {
+      console.log("see:", last.f${modules - 1}_0(1), handedOn.length);
+      spyOn(first, "f0_0").mockReturnValue(5);
+      console.log("see:", last.f${modules - 1}_0(1));
+      mock.restore();
+    });
+  `;
+  return made;
+}
+
+async function seen(cwd: string, args: string[]) {
+  await using ran = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+  return { seen: (stdout + stderr).split("\n").filter(line => line.startsWith("see:")), exitCode };
+}
+
+test.skipIf(isDebug || isASAN)(
+  "the work of a test build grows with the number of its modules, not with the square of it",
+  async () => {
+    using dir = tempDir("aot-many-modules-run-in-place", files());
+    const plain = await seen(String(dir), ["test", "./main.test.ts"]);
+    expect(plain.seen.length).toBe(2);
+    expect(await seen(String(dir), ["test", "--aot", "./main.test.ts"])).toEqual(plain);
+  },
+  40_000,
+);

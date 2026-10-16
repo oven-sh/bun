@@ -7,8 +7,8 @@ THE GATES, FOR EACH PACKAGE THAT <node_modules> HOLDS AT THAT VERSION:
   2. errors  the type checker finds nothing in typed.cts
   3. verify  markers' contents, `$given` and `$as<Role>` stripped and both texts printed by Bun: THE TYPED TEXT IS npm's PROGRAM, line for line
   4. splits  tools/splits1.py: every split of a reused variable into roles is the bundle's own program (verify cannot see a wrong split)
-  5. form    the CommonJS text becomes an ES module with its shapes appended (tools/module_form8.py); for the reconciler: what other code makes becomes `any` (tools/given2.py) and an element is the jsx-runtime's own, or given (--elements=plain)
-  6. laid    a copy of the packages is made in <out>/node_modules, the formed texts are laid in it, and EACH LAID FILE IS CHECKED WHERE IT LIES, --strict: 0 errors (an error on one of the form's appended `import * as x$module` lines is passed over and said)
+  5. form    the CommonJS text becomes an ES module with its shapes appended (tools/module_form8.py); for the reconciler: what other code makes becomes `any` (tools/given2.py) and an element is the jsx-runtime's own, or given (--elements=plain); react-dom's bundles STAY CommonJS AT npm's OWN PATH, behind npm's own entry (sound.json's format 2; <out>/sound/react-dom): the typed text with the form's shapes behind it: what the compiler proves of a CommonJS module (an export that nobody reads is dropped) goes for them
+  6. laid    a copy of the packages is made in <out>/node_modules, the formed texts are laid in it, and EACH LAID FILE IS CHECKED WHERE IT LIES, --strict, AS A BUILD CHECKS IT (--aot: one program: there the compiler itself declares `import("bun").int32`, whatever bun-types is installed): 0 errors (an error on one of the form's appended `import * as x$module` lines is passed over and said)
   7. counts  variants, written unions of two or more shapes, `any`, casts, `!`: against the numbers below: a text that drifts says so
  10. lax     every laid file has 0 errors under `noImplicitAny: false`, `strictNullChecks: false` and `strict: false` too: a host's two options reach a package
   9. same    (in the repository's form only) lay/ is byte for byte what src/ gives today; sound.json's sha256 are the installed files'
@@ -25,18 +25,18 @@ SERVER = 'export { version, renderToReadableStream, renderToPipeableStream, resu
 P = [  # folder · npm's file · its md5 · where the formed text is laid · the entries that are rewritten · what is due (variants, unions of two shapes written on a variable)
     dict(name='react-reconciler@0.33.0', npm='react-reconciler/cjs/react-reconciler.production.js', md5='1ce09a736d5c21646595d20964d9b01d', lay='react-reconciler/cjs/react-reconciler.production.ts', space='RR',
          entries={'react-reconciler/index.js': 'export { default } from "./cjs/react-reconciler.production.ts";'}, form='reconciler', due=dict(variants=539)),
-    dict(name='react-dom@19.3.1.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='18d04fee389023d0b4c6844de16c5317', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='plain', due=dict(variants=196)),
-    dict(name='react-dom@19.3.1.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='4896a582e13f60a195b4a97bfed10db7', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='plain', due=dict(variants=181)),
-    dict(name='react-dom@19.3.0.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='e6c2b1151664227396c16e5217ae9e4b', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='plain', due=dict(variants=196)),
-    dict(name='react-dom@19.3.0.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='2b8f4172ffbe52177acfc592892704c5', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='plain', due=dict(variants=181)),
+    dict(name='react-dom@19.3.1.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='18d04fee389023d0b4c6844de16c5317', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=196)),
+    dict(name='react-dom@19.3.1.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='4896a582e13f60a195b4a97bfed10db7', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=181)),
+    dict(name='react-dom@19.3.0.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='e6c2b1151664227396c16e5217ae9e4b', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=196)),
+    dict(name='react-dom@19.3.0.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='2b8f4172ffbe52177acfc592892704c5', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=181)),
     dict(name='react@19.2.0', npm='react/cjs/react.production.js', md5='e255db46a1de0ffd84470b0ae50bdc7b', lay='react/cjs/react.production.ts', space='RE', entries={'react/index.js': 'export * from "./cjs/react.production.ts"; export { default } from "./cjs/react.production.ts";'}, form='plain', due=dict(variants=7), held='HELD: typed react bears laid-out elements and refs that cross into untyped components: it is checked here and NOT laid unless --only=react@ names it'),
     # ONE TEXT FOR A FAMILY OF VERSIONS: react-dom 19.2.1 .. 19.2.8 differ in nothing but their own version's string (three lines of the Bun bundle, one of the legacy): the text is kept for 19.2.8 and `token` is replaced by the installed version
-    dict(name='react-dom@19.2.8.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='', versions={'19.2.1': '899478566fc3da3aa4febc9e8cd470ff', '19.2.3': '26778be71aa576db8858056167bfeefb', '19.2.4': '6aea6e2987ad1079f7f023976b45553f', '19.2.5': 'bbde81e7a3208802f5ba1207c39912bf', '19.2.6': '9a61014a48420a727dae50f458681d23', '19.2.7': '1430fcfed07c0463f48ec5f11164b895', '19.2.8': '5ab8078026a6d607cd47bd188d978a41'}, token='19.2.8', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='plain', due=dict(variants=None)),
-    dict(name='react-dom@19.2.8.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='', versions={'19.2.1': '5b1afbdf24b5347d741fc55060471ac6', '19.2.3': '3abd283ea5ff4290fa6bf34f7d352523', '19.2.4': 'b18b197d5388d62ce3622a8b28ca9257', '19.2.5': '2dfa68fa80b2c2ce0b9b71ab7152fceb', '19.2.6': '5f5c98f1a88893281b720d66f2ebbd5b', '19.2.7': '175b25156ea2b9e44bcae7699d3fa877', '19.2.8': 'fd192878320c40558820151cdad247f1'}, token='19.2.8', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='plain', due=dict(variants=None)),
-    dict(name='react-dom@19.1.0.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='', versions={'19.1.0': 'd1621ecc41503b9f1f50bd0f6adbfcc5'}, token='19.1.0', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='plain', due=dict(variants=None)),
-    dict(name='react-dom@19.1.0.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='', versions={'19.1.0': 'b7f2174298ea478f8839c7f0a0fddf7c'}, token='19.1.0', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='plain', due=dict(variants=None)),
-    dict(name='react-dom@19.0.0.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='', versions={'19.0.0': '77386dba2c969d674d387beed1e5cb91'}, token='19.0.0', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='plain', due=dict(variants=None)),
-    dict(name='react-dom@19.0.0.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='', versions={'19.0.0': 'ec9baf4e855b4f79f82865ba0e0767c2'}, token='19.0.0', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='plain', due=dict(variants=None)),
+    dict(name='react-dom@19.2.8.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='', versions={'19.2.1': '899478566fc3da3aa4febc9e8cd470ff', '19.2.3': '26778be71aa576db8858056167bfeefb', '19.2.4': '6aea6e2987ad1079f7f023976b45553f', '19.2.5': 'bbde81e7a3208802f5ba1207c39912bf', '19.2.6': '9a61014a48420a727dae50f458681d23', '19.2.7': '1430fcfed07c0463f48ec5f11164b895', '19.2.8': '5ab8078026a6d607cd47bd188d978a41'}, token='19.2.8', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=None)),
+    dict(name='react-dom@19.2.8.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='', versions={'19.2.1': '5b1afbdf24b5347d741fc55060471ac6', '19.2.3': '3abd283ea5ff4290fa6bf34f7d352523', '19.2.4': 'b18b197d5388d62ce3622a8b28ca9257', '19.2.5': '2dfa68fa80b2c2ce0b9b71ab7152fceb', '19.2.6': '5f5c98f1a88893281b720d66f2ebbd5b', '19.2.7': '175b25156ea2b9e44bcae7699d3fa877', '19.2.8': 'fd192878320c40558820151cdad247f1'}, token='19.2.8', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=None)),
+    dict(name='react-dom@19.1.0.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='', versions={'19.1.0': 'd1621ecc41503b9f1f50bd0f6adbfcc5'}, token='19.1.0', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=None)),
+    dict(name='react-dom@19.1.0.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='', versions={'19.1.0': 'b7f2174298ea478f8839c7f0a0fddf7c'}, token='19.1.0', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=None)),
+    dict(name='react-dom@19.0.0.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='', versions={'19.0.0': '77386dba2c969d674d387beed1e5cb91'}, token='19.0.0', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=None)),
+    dict(name='react-dom@19.0.0.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='', versions={'19.0.0': 'ec9baf4e855b4f79f82865ba0e0767c2'}, token='19.0.0', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=None)),
     dict(name='fuse.js@7.0.0', npm='fuse.js/dist/fuse.mjs', md5='8acfaae5c1dd70a090f5b75a3f8ad467', lay='fuse.js/dist/fuse.sound.ts', space='FU', entries={'fuse.js/dist/fuse.mjs': 'export { default } from "./fuse.sound.ts";'}, form='esm', text='typed.mts', due=dict(variants=0), changed='// CHANGED: this is dist/fuse.mjs of fuse.js 7.0.0 with TypeScript types added. No code was changed. See NOTICE.'),
     dict(name='seroval@1.6.9', npm='seroval/dist/index.js', md5='ccbd09502b548d78881f2353cf209c2b', lay='seroval/dist/index.sound.ts', space='SV', entries={'seroval/dist/index.js': 'export * from "./index.sound.ts";'}, form='esm', text='typed.mts', due=dict(variants=0)),
 ]
@@ -54,7 +54,7 @@ plain = lambda s: re.sub(r'\x1b\[[0-9;]*m', '', s)
 def run(cmd, cwd=None): r = subprocess.run(cmd, cwd=cwd, env=ENV, capture_output=True, text=True); return r.returncode, plain(r.stdout + r.stderr)
 def strip(t): t = re.sub(r'/\*\$\*/.*?/\*\$\*/', '', t, flags=re.S); t = re.sub(r'\b([A-Za-z_$][\w$]*?)\$given\b', r'\1', t); return re.sub(r'\b([A-Za-z_$][\w$]*?)\$as[A-Z]\w*\b', r'\1', t)
 def printed(path, cwd): r = subprocess.run([BUN, 'build', '--no-bundle', '--target=bun', path], cwd=cwd, capture_output=True, text=True); return [l for l in r.stdout.split('\n') if l.strip()]
-bad = 0; laid = []
+bad = 0; laid = []; bundles = {}
 def say(ok, package, gate, text):
     global bad
     if not ok: bad += 1
@@ -94,6 +94,10 @@ for p in P:
         c1, t1 = run([sys.executable, '-I', T + '/module_form8.py', W + '/typed.cts', formed]); say(not c1 and 'yes' in t1, n, 'form', t1.strip()[-110:])
     shutil.move(formed, W + '/formed.with.notes.ts'); c4, t4 = run([sys.executable, '-I', T + '/clean_lay.py', W + '/formed.with.notes.ts', formed]); say(not c4, n, 'clean', t4.strip()[-90:])
     if p.get('held') and not (opts.get('only') and opts['only'] in n): print('--   %-42s laid    %s' % (n, p['held'])); continue
+    if p['form'] == 'placed':
+        x = re.sub(r'^/// <reference[^\n]*\n', '', open(W + '/' + TX).read().replace('/*$*/', ''), flags=re.M).rstrip('\n') + '\n'; y = open(formed).read(); y = y[y.index('\nnamespace ' + p['space'] + ' {') + 1:]
+        pkg, rel = p['npm'].split('/', 1); os.makedirs(os.path.dirname(OUT + '/sound/' + pkg + '/lay/' + rel), exist_ok=True); open(W + '/placed.cts', 'w').write(x + y)
+        open(OUT + '/sound/' + pkg + '/lay/' + rel, 'w').write(x + re.sub(r'^declare var (require|exports)\b[^\n]*\n', '', y, flags=re.M)); bundles.setdefault(pkg, {})[rel] = hashlib.sha256(open(npm, 'rb').read()).hexdigest(); laid.append((n, W + '/placed.cts')); continue
     if p.get('changed'):  # Apache-2.0 4(b): "You must cause any modified files to carry prominent notices stating that You changed the files": on the first line, which is blank (a reference stood there): no line moves
         x = open(formed).read(); say(x.startswith('\n'), n, 'changed', 'the file says on its first line that it was changed'); open(formed, 'w').write(p['changed'] + x)
     shutil.copy(formed, OUT + '/node_modules/' + p['lay']); laid.append((n, p['lay']))
@@ -125,6 +129,12 @@ for p in MANY:
             turned += y.count('from "%s.mjs"' % rel); y = y.replace('from "%s.mjs"' % rel, 'from "%s.sound.mts"' % rel)
         open(Z + '/' + f + '.sound.mts', 'w').write(y); open(Z + '/' + f + '.mjs', 'w').write('export * from "./%s.sound.mts";\n' % os.path.basename(f)); say(True, n, 'form', '%s: %d imports turned to typed neighbours' % (f, turned)); laid.append((n, p['name'] + '/' + f + '.sound.mts'))
 import json
+def seal(pkg, version, lay):
+    Z = OUT + '/sound/' + pkg; D = H + '/' + pkg + '/' + version; json.dump({'sound': 2, 'name': pkg, 'version': version, 'when': {}, 'basis': {}, 'lay': lay, 'needs': []}, open(Z + '/sound.json', 'w'), indent=2); open(Z + '/sound.json', 'a').write('\n')
+    if not os.path.exists(D + '/sound.json'): return
+    kept = sorted(os.path.relpath(os.path.join(d, f), D + '/lay') for d, _, fs in os.walk(D + '/lay') for f in fs)
+    wrong = [f for f in kept if f not in lay or open(D + '/lay/' + f, 'rb').read() != open(Z + '/lay/' + f, 'rb').read()] + [f for f in lay if kept and f not in kept] + (['sound.json'] if open(D + '/sound.json').read() != open(Z + '/sound.json').read() else []) + (['lay.sums'] if open(D + '/lay.sums').read() != ''.join('%s  %s\n' % (hashlib.sha256(open(Z + '/lay/' + f, 'rb').read()).hexdigest(), f) for f in sorted(lay)) else [])
+    say(not wrong, pkg + '@' + version, 'same', '%s, lay.sums and sound.json are what the text gives (%d files)' % ('lay/' if kept else 'no lay/ is kept for a version of a family', len(lay)) if not wrong else 'DIFFERS: ' + ' '.join(wrong))
 for pkg, rows in PLACED.items():
     if (opts.get('only') and opts['only'] not in pkg) or not os.path.isdir(N + '/' + pkg): continue
     version = json.load(open(N + '/' + pkg + '/package.json'))['version']; n = pkg + '@' + version; W = OUT + '/work/' + pkg + '.placed'; Z = OUT + '/sound/' + pkg; os.makedirs(W + '/verify'); lay = {}
@@ -137,29 +147,23 @@ for pkg, rows in PLACED.items():
         shutil.copy(npm, W + '/verify/a%d.cjs' % k); open(W + '/verify/b%d.cts' % k, 'w').write(strip(x)); a, b = printed('a%d.cjs' % k, W + '/verify'), printed('b%d.cts' % k, W + '/verify')
         say(bool(b) and a == b, n, 'verify', '%s: %s' % (f, 'the typed text is npm\'s program (%d printed lines)' % len(a) if b and a == b else 'DIFFERS'))
         os.makedirs(os.path.dirname(Z + '/lay/' + row['npm']), exist_ok=True); open(Z + '/lay/' + row['npm'], 'w').write(x.replace('/*$*/', '')); lay[row['npm']] = hashlib.sha256(open(npm, 'rb').read()).hexdigest()
-    if not lay: continue
-    json.dump({'sound': 2, 'name': pkg, 'version': version, 'when': {}, 'basis': {}, 'lay': lay, 'needs': []}, open(Z + '/sound.json', 'w'), indent=2); open(Z + '/sound.json', 'a').write('\n'); D = H + '/' + pkg + '/' + version
-    if os.path.exists(D + '/sound.json'):
-        wrong = [f for f in lay if not os.path.exists(D + '/lay/' + f) or open(D + '/lay/' + f, 'rb').read() != open(Z + '/lay/' + f, 'rb').read()] + (['sound.json'] if open(D + '/sound.json').read() != open(Z + '/sound.json').read() else []) + (['lay.sums'] if open(D + '/lay.sums').read() != ''.join('%s  %s\n' % (hashlib.sha256(open(Z + '/lay/' + f, 'rb').read()).hexdigest(), f) for f in sorted(lay)) else [])
-        say(not wrong, n, 'same', 'lay/, lay.sums and sound.json are what the text gives (%d files)' % len(lay) if not wrong else 'DIFFERS: ' + ' '.join(wrong))
-LIB = {p['name'] + '@' + p['version']: p['lib'] for p in MANY}
-have = {l for _, l in laid}
-if any('react-dom-server' in l for l in have):
-    c5, t5 = run([sys.executable, '-I', T + '/cjs_entry.py', N + '/react-dom/server.bun.js', OUT + '/node_modules/react-dom/server.bun.js'] + [os.path.basename(l)[:-3] for l in sorted(have) if 'react-dom-server' in l]); say(not c5, 'react-dom', 'entry', 'react-dom/server.bun.js: ' + t5.strip()[-150:])
+    if lay: seal(pkg, version, lay)
+for pkg, lay in bundles.items(): seal(pkg, json.load(open(N + '/' + pkg + '/package.json'))['version'], dict(sorted(lay.items())))
+LIB = {p['name'] + '@' + p['version']: p['lib'] for p in MANY}; ONE = ['--aot', '--aot-out=' + os.devnull]
 for n, f in laid:
-    path = OUT + '/node_modules/' + f; c, t = run([SEMA, 'cli', os.path.basename(f), '--noEmit', '--all', '--strict'] + (['--lib', LIB[n]] if n in LIB else []), os.path.dirname(path)); X = open(path, errors='replace').read().split('\n')
+    path = os.path.join(OUT + '/node_modules', f); c, t = run([SEMA, 'cli', os.path.basename(f), '--noEmit', '--all', '--strict'] + ONE + (['--lib', LIB[n]] if n in LIB else []), os.path.dirname(path)); X = open(path, errors='replace').read().split('\n')
     if not re.search(r'No type errors|Found [\d,]+ error', t): say(False, n, 'laid', f + ': NO VERDICT'); continue
     E = [(m.group(1), m.group(2), int(m.group(3))) for m in re.finditer(r'^error: (TS\d+):.*?\n\s+at (\S+?):(\d+)', t, re.S | re.M)]; total = len(re.findall(r'^error: ', t, re.M))
     over = [e for e in E if e[0] == 'TS7016' and n in LIB or e[1].endswith(os.path.basename(f)) and re.fullmatch(r'import \* as [\w$]+\$module from "[^"]+";', X[e[2] - 1].strip())]  # a module of the package that ships no declarations (tslib.mjs) is `any`
     say(total == len(over), n, 'laid', '%s: %d errors%s' % (f, total - len(over), ' (+ %d on appended imports, passed over: %s)' % (len(over), ' '.join(sorted({e[0] for e in over}))) if over else ''))
 # 10. lax: A HOST THAT IS NOT STRICT: noImplicitAny and strictNullChecks reach a package: one error and it is compiled untyped: every laid file is clean under the three lax sets too
 for n, f in laid:
-    path = OUT + '/node_modules/' + f; counts = []
+    path = os.path.join(OUT + '/node_modules', f); counts = []
     for name, fl in (('noImplicitAny false', ['--strict', '--noImplicitAny=false']), ('strictNullChecks false', ['--strict', '--strictNullChecks=false']), ('strict false', ['--strict=false'])):
-        c, t = run([SEMA, 'cli', os.path.basename(f), '--noEmit', '--all'] + fl + (['--lib', LIB[n]] if n in LIB else []), os.path.dirname(path)); counts.append((name, len([m for m in re.findall(r'^error: (TS\d+)', t, re.M) if m not in ('TS7016', 'TS2591', 'TS2307')]) if re.search(r'No type errors|Found [\d,]+ error', t) else -1))
+        c, t = run([SEMA, 'cli', os.path.basename(f), '--noEmit', '--all'] + fl + ONE + (['--lib', LIB[n]] if n in LIB else []), os.path.dirname(path)); counts.append((name, len([m for m in re.findall(r'^error: (TS\d+)', t, re.M) if m not in ('TS7016', 'TS2591', 'TS2307')]) if re.search(r'No type errors|Found [\d,]+ error', t) else -1))
     say(not any(k for _, k in counts), n, 'lax', '%s: %s' % (os.path.basename(f), ' · '.join('%s %d' % x for x in counts)))
 # 9. same: IN THE REPOSITORY's FORM: what src/ gives today IS what lay/ holds, byte for byte, and sound.json's sums are the installed files'
-for pkg in sorted({'/'.join(f.split('/')[:2 if f.startswith('@') else 1]) for _, f in laid}):
+for pkg in sorted({'/'.join(f.split('/')[:2 if f.startswith('@') else 1]) for _, f in laid if not f.startswith('/')}):
     for v in sorted(os.listdir(H + '/' + pkg)) if os.path.isdir(H + '/' + pkg) else []:
         D = H + '/' + pkg + '/' + v
         if not os.path.exists(D + '/sound.json') or json.load(open(N + '/' + pkg + '/package.json'))['version'] != v: continue

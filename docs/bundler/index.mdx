@@ -1336,7 +1336,7 @@ dist
 
 `index.js` is byte for byte what the build writes without `dts`. `index.d.ts` is what editors, `tsc` and every other tool read, as always. Point `"types"` in `package.json` at it and publish the folder.
 
-With [`root`](#root), or with `--no-bundle`, there is one declaration file for each source file instead, as `tsc --declaration --emitDeclarationOnly` writes them, each where its source file is relative to `root`. The same holds for minified output, code splitting, and formats other than `esm`. Files in `node_modules` get none. In `Bun.build()` the files are in `outputs` with `kind: "declaration"` and `kind: "sound"`.
+With [`root`](#root), or with `--no-bundle`, there is one declaration file for each source file instead, as `tsc --declaration --emitDeclarationOnly` writes them, each where its source file is relative to `root`. The same holds for minified output, code splitting, formats other than `esm`, and a bundle that holds a `namespace` with code in it. Files in `node_modules` get none. In `Bun.build()` the files are in `outputs` with `kind: "declaration"` and `kind: "sound"`.
 
 #### Sound types
 

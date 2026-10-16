@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { unsupported } from "../../../aot/run-programs";
 
 const settle = `await new Promise(resolve => setTimeout(resolve, 20));`;
 const hint = "(Use `EXE --trace-warnings ...` to show where the warning was created)\n";
@@ -154,7 +155,7 @@ describe.skipIf(isWindows).concurrent("the default warning printer", () => {
       using folder = tempDir("warning-printer", { "program.mjs": it.source });
       await run([bunExe(), "program.mjs"], String(folder), it, {});
     });
-    test(`--aot: ${name}`, async () => {
+    test.skipIf(!!unsupported)(`--aot: ${name}`, async () => {
       using folder = tempDir("warning-printer-aot", { "program.mjs": it.source });
       await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "program.mjs", "--outfile", "program"], cwd: String(folder), env: bunEnv, stdout: "ignore", stderr: "pipe" });
       expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
@@ -169,7 +170,7 @@ describe.skipIf(isWindows).concurrent("the default warning printer", () => {
     { name: "a pipe whose reader is gone raises SIGPIPE as often as before", source: `process.on("SIGPIPE", () => console.log("SIGPIPE")); process.emitWarning("nobody listens"); ${settle} console.log("done");`, isReaderGone: true, stdout: "SIGPIPE\nSIGPIPE\nSIGPIPE\ndone\n", exitCode: 1 },
   ];
   for (const { name, source, isFull, isReaderGone, stdout, exitCode } of pipes) {
-    for (const mode of ["plain", "--aot"]) {
+    for (const mode of unsupported ? ["plain"] : ["plain", "--aot"]) {
       test(`${mode}: ${name}`, async () => {
         using folder = tempDir("warning-printer-pipe", { "program.mjs": source });
         const cwd = String(folder);
@@ -196,7 +197,7 @@ describe.skipIf(isWindows).concurrent("the default warning printer", () => {
     }
   }
 
-  for (const mode of ["plain", "--aot"]) {
+  for (const mode of unsupported ? ["plain"] : ["plain", "--aot"]) {
     test(`${mode}: descriptor 2 is a terminal`, async () => {
       using folder = tempDir("warning-printer-terminal", { "program.mjs": `process.emitWarning("on a terminal"); ${settle} console.log("done");` });
       const cwd = String(folder);

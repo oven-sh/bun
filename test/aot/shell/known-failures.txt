@@ -1,10 +1,9 @@
 # <program> TAB <expectation line>: expectations that are known to fail today. See expectations.py.
-# By design: outside a loop, code size matters more than speed. `repeat`, `padStart` and `padEnd` call the engine's own function there, and `s[i]` goes through a body that all such sites share, which returns a string. The same programs check the fast forms inside a loop (`indented`, `keptInLoop`).
-strings/repeat-and-pad	// CALLS+ filledAtEnd operationAOTTypedStringPad
-strings/repeat-and-pad	// CALLS+ filledAtStart operationAOTTypedStringPad
-strings/repeat-and-pad	// CALLS+ paddedAtEnd operationAOTTypedStringPad
-strings/repeat-and-pad	// CALLS+ paddedAtStart operationAOTTypedStringPad
-strings/repeat-and-pad	// CALLS+ repeated operationAOTTypedStringRepeat
+# Open: in these programs the index or the place may be `undefined` as far as the compiler knows (the parameter is `undefined|number`), and then `s[i]` is a general keyed read, which yields a string, and `slice`, `substring` and `substr` keep the engine's own function as the way for what is no number. Where it is known to be a number they are expanded without it, inside a loop (`keptInLoop`) and outside.
 strings/single-characters	// CALLS- kept StringHasAt|StringIsText
+strings/slice-substring-substr	// CALLS- slice1 CallHostFunction|CallValue
+strings/slice-substring-substr	// CALLS- slice2 CallHostFunction|CallValue
+strings/slice-substring-substr	// CALLS- substr2 CallHostFunction|CallValue
+strings/slice-substring-substr	// CALLS- substring2 CallHostFunction|CallValue
 # Open: a key that is built from a string and integers is not yet built in one piece.
 strings/strings-built-and-consumed-in-one-function	// CALLS+ lookUp ConcatenateWithIntegers|StringBuilderFinish

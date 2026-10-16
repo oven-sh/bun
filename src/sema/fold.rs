@@ -175,12 +175,18 @@ impl Constant {
 pub struct Defines {
     pub values: FxHashMap<Vec<u8>, Constant>,
     pub last_names: FxHashSet<Vec<u8>>,
+    pub dropped: FxHashSet<Vec<u8>>,
 }
 
 impl Defines {
     pub fn new<'t>(defines: impl Iterator<Item = (&'t [u8], &'t [u8])>) -> Defines {
-        let values: FxHashMap<Vec<u8>, Constant> = defines.filter_map(|(name, value)| Some((name.to_vec(), Constant::parse(value)?))).collect();
-        Defines { last_names: values.keys().map(|name| name.rsplit(|&byte| byte == b'.').next().unwrap_or_default().to_vec()).collect(), values }
+        let (dropped, replaced): (Vec<_>, Vec<_>) = defines.partition(|(_, value)| value.is_empty());
+        let values: FxHashMap<Vec<u8>, Constant> = replaced.into_iter().filter_map(|(name, value)| Some((name.to_vec(), Constant::parse(value)?))).collect();
+        Defines {
+            last_names: values.keys().map(|name| name.rsplit(|&byte| byte == b'.').next().unwrap_or_default().to_vec()).collect(),
+            values,
+            dropped: dropped.into_iter().map(|(name, _)| name.to_vec()).collect(),
+        }
     }
 }
 
@@ -189,7 +195,6 @@ pub struct BuildConstants {
     pub defines: Defines,
     pub features: FxHashSet<Vec<u8>>,
     pub locks_builtins: bool,
-    pub exports_may_be_overridden: bool,
     pub bundled_files: Option<FxHashSet<Vec<u8>>>,
 }
 
@@ -438,9 +443,6 @@ impl<'a, 's> Folder<'a, 's> {
         if !self.files.flags(sym).contains(SymFlags::ALIAS) {
             return self.files.value_declaration(sym);
         }
-        if self.constants.exports_may_be_overridden {
-            return None;
-        }
         let declared = self.files.value_declaration(self.files.resolve_alias(sym)?)?;
         self.is_bundled.is_none_or(|is_bundled| is_bundled[declared.0.idx()]).then_some(declared)
     }
@@ -451,26 +453,12 @@ impl<'a, 's> Folder<'a, 's> {
         }
         self.variables.borrow_mut().insert(sym, None);
         let folded = match self.declaration_in_code(sym) {
-            Some((file, Decl::Var(pat))) => self.initializer_of_const(file, pat).filter(|&init| !self.may_be_overridden(sym, file, pat, init)).and_then(|init| self.fold(file, init)),
+            Some((file, Decl::Var(pat))) => self.initializer_of_const(file, pat).and_then(|init| self.fold(file, init)),
             Some((file, Decl::EnumMember(member))) => self.fold_enum_member(file, member).map(Folded::Value),
             _ => None,
         };
         self.variables.borrow_mut().insert(sym, folded.clone());
         folded
-    }
-
-    fn may_be_overridden(&self, sym: Sym, file: FileId, pat: PatId, init: ExprId) -> bool {
-        if !self.constants.exports_may_be_overridden {
-            return false;
-        }
-        let (hir, name) = (self.files.hir(file), self.files.symbol(sym).name);
-        let is_exported = self.files.bound(file).modifier_flags(hir, Decl::Var(pat)).contains(Flags::EXPORT)
-            || self.files.export_symbol_of_value_symbol_if_exported(sym) != sym
-            || hir.ids(hir.body).any(|statement| match hir[statement].kind {
-                StmtKind::ExportNamed(export) => !hir[export].has_module_specifier && hir[export].items.iter().any(|item| hir[item].local == name),
-                _ => false,
-            });
-        is_exported && !is_among_leading_constants(hir, init)
     }
 
     fn initializer_of_const(&self, file: FileId, pat: PatId) -> Option<ExprId> {
@@ -515,9 +503,6 @@ impl<'a, 's> Folder<'a, 's> {
         }
         let mut holder = self.files.sym(file, local);
         if self.files.flags(holder).contains(SymFlags::ALIAS) {
-            if self.constants.exports_may_be_overridden {
-                return None;
-            }
             holder = self.files.resolve_alias(holder)?;
         }
         if !self.files.flags(holder).intersects(SymFlags::ENUM | SymFlags::VALUE_MODULE) {
@@ -531,7 +516,7 @@ impl<'a, 's> Folder<'a, 's> {
         let ExprKind::Call(call) = hir[e].kind else { return None };
         let callee = hir[call].callee;
         let local = match hir[callee].kind {
-            ExprKind::Ident(_) if hir[call].chain == Chain::No && !self.constants.exports_may_be_overridden => self.files.bound(file).expr_symbol[callee.idx()],
+            ExprKind::Ident(_) if hir[call].chain == Chain::No => self.files.bound(file).expr_symbol[callee.idx()],
             _ => return None,
         };
         if local.is_none() {
@@ -631,6 +616,19 @@ impl<'a, 's> Folder<'a, 's> {
         }
     }
 
+    fn is_dropped_call(&self, file: FileId, callee: ExprId) -> bool {
+        let (hir, dropped) = (self.files.hir(file), &self.constants.defines.dropped);
+        let mut named = callee;
+        while !dropped.is_empty() {
+            if self.global_path(file, named).is_some_and(|path| dropped.contains(&path)) {
+                return true;
+            }
+            let ExprKind::Dot { obj, .. } = hir[named].kind else { break };
+            named = obj;
+        }
+        false
+    }
+
     pub fn replacement(&self, file: FileId, e: ExprId) -> Option<Constant> {
         let hir = self.files.hir(file);
         let atoms = &self.files.atoms;
@@ -658,6 +656,9 @@ impl<'a, 's> Folder<'a, 's> {
                 members.into_iter().rev().find(|member| member.0 == name).map(|member| member.1)
             }
             ExprKind::Call(call) => {
+                if self.is_dropped_call(file, hir[call].callee) {
+                    return Some(Constant::Undefined);
+                }
                 let ExprKind::Ident(name) = hir[hir[call].callee].kind else { return None };
                 if atoms.bytes(name) != b"feature" || hir[call].args.len() != 1 {
                     return None;
@@ -692,22 +693,6 @@ impl<'a, 's> Folder<'a, 's> {
         }
         Some(cases.iter().position(|case| hir[case].test.is_none()).unwrap_or(cases.len()))
     }
-}
-
-pub fn is_among_leading_constants(hir: &File, initializer: ExprId) -> bool {
-    for statement in hir.ids(hir.body) {
-        match hir[statement].kind {
-            StmtKind::Var(declarations) if declarations.iter().all(|declaration| hir[declaration].kind == VarKind::Const) => {
-                if declarations.iter().any(|declaration| hir[declaration].init == initializer) {
-                    return true;
-                }
-            }
-            StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Enum(_) => {}
-            StmtKind::Expr(directive) if matches!(hir[directive].kind, ExprKind::String(_)) => {}
-            _ => return false,
-        }
-    }
-    false
 }
 
 fn compare(op: BinOp, a: &Constant, b: &Constant) -> Option<bool> {

@@ -1438,7 +1438,8 @@ impl<'f, 's> Binder<'f, 's> {
     fn file(&mut self) {
         // `setCommonJSModuleIndicator`: not in a file that imports or exports. To the runtime TypeScript is CommonJS by the same signs.
         let is_asked = self.f.is_js || self.f.is_annotated_javascript() || self.options.names_make_commonjs && self.f.kind != crate::hir::FileKind::Declaration;
-        if is_asked && (!self.f.has_module_syntax || self.f.is_module_by_decree) {
+        let decreed = self.options.is_commonjs_by_decree;
+        if is_asked && decreed != Some(false) && (!self.f.has_module_syntax || self.f.is_module_by_decree) {
             self.b.commonjs_indicator = (0..self.f.exprs.len() as u32).map(ExprId).find(|&e| {
                 require_argument(self.f, e).is_some()
                     || matches!(
@@ -1455,6 +1456,9 @@ impl<'f, 's> Binder<'f, 's> {
                             _ => false,
                         }
             });
+            if decreed == Some(true) && self.b.commonjs_indicator.is_none() && !self.f.exprs.is_empty() {
+                self.b.commonjs_indicator = Some(ExprId(0));
+            }
         }
         let is_module = self.f.has_module_syntax || self.b.commonjs_indicator.is_some();
         // `bindSourceFileAsExternalModule`

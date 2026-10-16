@@ -1,6 +1,7 @@
 // Types of string and number literals, and chains of classes, are described to the run time in a compact form: what is held to such a type,
 // which part of a union plain data becomes, and what a class inherits stay as they are.
-// DATA< 76000
+// A string literal that nothing but types mentions is kept as a hash of 24 bytes, so that its text stays out of the executable: nearly all of the 961 here.
+// DATA< 95000
 const hide = (v: unknown): any => v
 function attempt(label: string, f: () => unknown) { try { console.log(label, JSON.stringify(f())) } catch (e) { console.log(label, e instanceof TypeError ? "TypeError" : "other") } }
 interface T0 { kind: "k0_0" | "k0_1" | "k0_2" | "k0_3" | "k0_4" | "k0_5" | "k0_6" | "k0_7"; code: 1 | 2 | -3 | 0.5; n0: number }

@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
+import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -90,7 +91,7 @@ describe.concurrent.each(Object.keys(all))("%s", entry => {
   test("bun run --aot prints what bun run prints", async () => {
     using dir = tempDir("json-module-members", tree);
     const plain = await spawned([bunExe(), "run", entry], String(dir));
-    const aot = await spawned([bunExe(), "run", "--aot", entry], String(dir));
+    const aot = await spawned([bunExe(), "run", "--debug-aot", entry], String(dir));
     expect(plain.exitCode).toBe(0);
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });

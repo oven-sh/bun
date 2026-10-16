@@ -9,6 +9,7 @@ all programs take about five minutes, one takes a second. The real test is `bun 
 
     jsc         BUN_WEBKIT_PATH=<WebKit> bun scripts/build.ts --profile=release-local --target=jsc   (build/release-local/jsc)
     bun-sema    BUN_CODEGEN_DIR=$PWD/build/release-local/codegen cargo build --release -p bun_sema_standalone
+                or a canary or debug build of Bun, which is its own front end: `bun check --aot --aot-out=<file>`
     <program>   its path under ../programs without the extension, e.g. strings/replace-all
 
 Other environment variables:
@@ -71,6 +72,11 @@ def run(command, cwd, seconds, env=None):
         return None, (expired.stdout or b"").decode(errors="replace")
 
 
+def for_the_shell(env):
+    """The shell ends without taking its VM apart, which a search for leaks reports."""
+    return {**env, "ASAN_OPTIONS": env["ASAN_OPTIONS"] + ":detect_leaks=0"} if "ASAN_OPTIONS" in env else env
+
+
 def without_times(output):
     # A duration that a program measures is not part of its behavior.
     return re.sub(r" [0-9]+ms$", "", output, flags=re.M)
@@ -117,25 +123,25 @@ def one(program):
     if compiler_options.get("strict"):
         flags.append("--strict")
     flags += [flag for flag in options.get("build", []) if flag.startswith("--aot-type-errors=")]
-    _, said = run([SEMA, "cli", source, *flags, "--aot", "--aot-out=" + ir], cwd, 60)
+    _, said = run([SEMA, "cli" if os.path.basename(SEMA).startswith("bun-sema") else "check", source, *flags, "--aot", "--aot-out=" + ir], cwd, 60)
     if not os.path.isfile(ir):
         return "NO IR: " + " | ".join(said.strip().split("\n")[:2])[:200]
 
     # The host module imports the modules that are not compiled, so that they are linked and evaluated before the program runs.
-    _, dump = run([JSC, "--useDollarVM=1", HERE + "/dump.js", "--", ir, "read"], cwd, 60)
+    _, dump = run([JSC, "--useDollarVM=1", HERE + "/dump.js", "--", ir, "read"], cwd, 60, for_the_shell(os.environ))
     external = sorted(set(re.findall(r'GetExternalModule ("[^"]*")', dump)))
     if external:
         host_module = work + ".host.js"
         open(host_module, "w").write("".join(f"import {name};\n" for name in external) + "0;\n")
 
-    code, said = run([JSC, "--useDollarVM=1", "--validateGraphAtEachPhase=true", "--numberOfAOTCompilerThreads=2", HERE + "/image.js", "--", ir, image, host_module], cwd, 300)
+    code, said = run([JSC, "--useDollarVM=1", "--validateGraphAtEachPhase=true", "--numberOfAOTCompilerThreads=2", HERE + "/image.js", "--", ir, image, host_module], cwd, 300, for_the_shell(os.environ))
     if not os.path.isfile(image):
         return f"NOT COMPILED (exit code {code}): " + " ".join(said.split("\n")[:3])[:300]
 
     for name, value in options.get("env", {}).items():
         if name.startswith("BUN_JSC_"):
             env[name[len("BUN_"):]] = value
-    code, output = run([JSC, "--aotImagePath=" + image, "-e", open(HERE + "/prelude.js").read(), "-m", host_module], cwd, 120, env)
+    code, output = run([JSC, "--aotImagePath=" + image, "-e", open(HERE + "/prelude.js").read(), "-m", host_module], cwd, 120, for_the_shell(env))
     output = without_times(output)
     if code is None or code < 0:
         return f"DIFFERS: {'timed out' if code is None else f'died of signal {-code}'}: " + " | ".join(output.strip().split("\n")[-2:])[:220]

@@ -4,6 +4,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSString.h"
 #include "headers-handwritten.h"
+#include "wtf/HashSet.h"
 #include "wtf/NakedPtr.h"
 #include "BunClientData.h"
 
@@ -61,6 +62,10 @@ public:
     mutable JSC::WriteBarrier<Unknown> m_childrenValue;
     // This must be WriteBarrier<Unknown> to compile; always JSCommonJSModule
     WTF::Vector<WriteBarrier<Unknown>> m_children;
+    WTF::HashSet<JSCell*> m_childrenSet;
+    JSCommonJSModule* m_lastRequiredChild { nullptr };
+    void addChild(JSC::VM&, JSCommonJSModule*);
+    void clearChildren();
 
     // Visited by the GC. When the module is assigned a non-JSCommonJSModule
     // parent, it is assigned to this field.
@@ -115,7 +120,7 @@ public:
         JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
-    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr);
+    static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr, JSCommonJSModule* askingModule = nullptr);
     JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
     void setModuleGraph(JSC::VM&, JSModuleGraph*);
 

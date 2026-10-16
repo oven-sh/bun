@@ -751,6 +751,30 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
+  // The time was quadratic, as tsc's is: 246 s for these 40,000 lines in a release build.
+  test("a function of many statements with conditional expressions", async () => {
+    const n = isDebug || isASAN ? 6_000 : 40_000;
+    using dir = tempDir("bun-check", {
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es5"] }, "files": ["a.ts"] }`,
+      "a.ts":
+        `export function run(o: { f: number; g: number; s?: string; t?: string }, r: number[], i: number | string) {\n` +
+        `  if (typeof i === "string" || !o.t) return;\n` +
+        repeat("  r.push(o.f > i ? o.f : o.g, o.s ? o.s.length : i, (o.f > i && o.g) || i);\n", n) +
+        `  const first: never = i;\n  const second: never = o.t;\n  const third: never = o.s;\n  o.t = undefined;\n  const fourth: never = o.t;\n}\n`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      [
+        `a.ts(${n + 3},9): error TS2322: Type 'number' is not assignable to type 'never'.`,
+        `a.ts(${n + 4},9): error TS2322: Type 'string' is not assignable to type 'never'.`,
+        `a.ts(${n + 5},9): error TS2322: Type 'string | undefined' is not assignable to type 'never'.`,
+        `  Type 'undefined' is not assignable to type 'never'.`,
+        `a.ts(${n + 7},9): error TS2322: Type 'undefined' is not assignable to type 'never'.`,
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // The time was quadratic: over 60 s for these 60,000 `paths` in a release build.
   test("a configuration file with an object of many keys", async () => {
     const n = isDebug || isASAN ? 10_000 : 60_000;
@@ -769,6 +793,42 @@ describe.concurrent("bun check", () => {
     });
     const { stdout, exitCode } = await check(dir);
     expect(stdout).toBe(`a.ts(7,14): error TS2322: Type '[2, 1, 1, 2, 1, 2]' is not assignable to type 'never'.`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("files of several packages under one configuration file are all held to every rule", async () => {
+    using dir = tempDir("bun-check", {
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es5"], "module": "esnext",
+        "moduleResolution": "bundler", "noUnusedLocals": true, "noImplicitReturns": true },
+        "files": ["packages/first/index.ts", "packages/second/index.ts"] }`,
+      "packages/first/package.json": `{ "name": "first" }`,
+      "packages/first/index.ts": `export const first = 1;\n`,
+      "packages/second/package.json": `{ "name": "second" }`,
+      "packages/second/index.ts":
+        `import { untyped } from "untyped";\nconst unused = 1;\nexport function second(flag: boolean) {\n  if (flag) return 1;\n}\nexport const used = untyped;\n`,
+      "node_modules/untyped/package.json": `{ "name": "untyped", "main": "index.js" }`,
+      "node_modules/untyped/index.js": `exports.untyped = 1;\n`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout.split("\n").filter(line => line.includes("error TS")).map(line => line.slice(0, line.indexOf(":", line.indexOf("error TS"))))).toEqual([
+      "packages/second/index.ts(1,25): error TS7016",
+      "packages/second/index.ts(2,7): error TS6133",
+      "packages/second/index.ts(3,17): error TS7030",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a package in node_modules that ships its TypeScript is held to every rule, as by tsc", async () => {
+    using dir = tempDir("bun-check", {
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es5"], "module": "esnext",
+        "moduleResolution": "bundler", "noUnusedLocals": true }, "files": ["index.ts"] }`,
+      "package.json": `{ "name": "application" }`,
+      "index.ts": `import { shipped } from "shipped";\nexport const own = shipped;\n`,
+      "node_modules/shipped/package.json": `{ "name": "shipped", "main": "index.ts" }`,
+      "node_modules/shipped/index.ts": `const unused = 1;\nexport const shipped = 1;\n`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(`node_modules/shipped/index.ts(1,7): error TS6133: 'unused' is declared but its value is never read.`);
     expect(exitCode).toBe(1);
   });
 
@@ -3725,12 +3785,13 @@ export const alsoWrong = wrong.nope;
       ["typeof", "typeof ", "", 15_000],
     ])(
       "%s in each other",
-      async (_, open, close, depth) => {
+      async (kind, open, close, depth) => {
         using dir = project({
           "a.ts": `declare const f: any;\ndeclare let a: any;\nexport const r = ${repeat(open, depth)}1${repeat(close, depth)};\nexport const wrong: number = "";\n`,
         });
         const { stdout, exitCode } = await check(dir, [], {}, 10_000);
-        expect(stdout).toBe(`a.ts(4,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+        const tooLarge = "a.ts(1,1): error TS2563: The containing function or module body is too large for control flow analysis.\n";
+        expect(stdout).toBe(`${kind === "conditions" ? tooLarge : ""}a.ts(4,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
         expect(exitCode).toBe(1);
       },
       // Longer than the child may take, which does not outlive the test then.

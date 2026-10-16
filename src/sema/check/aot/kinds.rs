@@ -118,6 +118,7 @@ struct Told {
     container: Container,
     /// Nothing is stored to it once it has its first value, and no read comes before that.
     is_constant: bool,
+    begins_at: FlowId,
 }
 
 /// From the read of a variable back to the stores that reach it.
@@ -127,6 +128,7 @@ struct Walk {
     is_constant: bool,
     /// It starts from what the variable holds, so what it finds at a flow node every read of the variable finds there.
     is_of_read: bool,
+    begins_at: FlowId,
     /// By join of paths: what was found there.
     joins: FxHashMap<FlowId, u16>,
     steps: u32,
@@ -353,7 +355,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let local = bound.expr_symbol[e.idx()].some()?;
         let symbol = &bound.symbols[local.idx()];
-        if symbol.flags.intersects(SymFlags::MERGED | SymFlags::ASSIGNED | SymFlags::ALIAS) || !bound.assignments_to(local).is_empty() || self.has_direct_eval(file) || self.may_be_overridden(Sym { file, id: local }) {
+        if symbol.flags.intersects(SymFlags::MERGED | SymFlags::ASSIGNED | SymFlags::ALIAS) || !bound.assignments_to(local).is_empty() || self.has_direct_eval(file) {
             return None;
         }
         if let [Decl::Var(pat)] = symbol.decls[..] {
@@ -564,10 +566,14 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let [decl] = symbol.decls[..] else { return None };
+        let mut begins_at = FlowId::NONE;
         let (container, is_parameter) = match decl {
             Decl::Var(pat) | Decl::Require(pat) => {
                 let PatParent::Var(d) = root_declaration(bound, pat) else { return None };
                 let stmt = bound.var_stmt[d.idx()].some()?;
+                if matches!(hir[stmt].kind, StmtKind::Try { .. }) {
+                    begins_at = bound.stmt_flow[stmt.idx()];
+                }
                 (self.container_of_flow(file, bound.stmt_parent[stmt.idx()]), false)
             }
             Decl::Param(pat) => {
@@ -593,7 +599,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         let is_constant = stores.is_empty() && (is_parameter || !self.starts_undefined(self.files().sym(file, at.id)));
-        Some(Told { container, is_constant })
+        Some(Told { container, is_constant, begins_at })
     }
 
     /// Whether the name of the variable stands somewhere where `kinds_passing` and `kinds_entering` look at it. One pass over the names of a file.
@@ -645,7 +651,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_read_elsewhere && !told.is_constant || flow.is_none() || flow == UNREACHABLE || self.runs_off_the_flow(file, e) {
             return held;
         }
-        let mut walk = Walk { at, held, is_constant: told.is_constant, is_of_read: true, joins: FxHashMap::default(), steps: 0, depth: 0 };
+        let mut walk = Walk { at, held, is_constant: told.is_constant, is_of_read: true, begins_at: told.begins_at, joins: FxHashMap::default(), steps: 0, depth: 0 };
         self.kinds_at(&mut walk, flow)
     }
 
@@ -676,7 +682,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut flow = start;
         let found = loop {
             walk.steps += 1;
-            if walk.steps > MOST_STEPS || self.is_half_of_stack_in_use() {
+            if walk.steps > MOST_STEPS || flow == walk.begins_at || self.is_half_of_stack_in_use() {
                 break walk.held;
             }
             match bound.flow[flow.idx()] {
@@ -873,7 +879,7 @@ impl<'p, 's> Checker<'p, 's> {
             if exit.is_none() {
                 return kind::ANYTHING;
             }
-            let mut walk = Walk { at, held: kind::ANYTHING, is_constant: false, is_of_read: false, joins: FxHashMap::default(), steps: 0, depth: depth + 1 };
+            let mut walk = Walk { at, held: kind::ANYTHING, is_constant: false, is_of_read: false, begins_at: FlowId::NONE, joins: FxHashMap::default(), steps: 0, depth: depth + 1 };
             all |= self.kinds_at(&mut walk, exit);
         }
         all
@@ -951,7 +957,7 @@ impl<'p, 's> Checker<'p, 's> {
                     };
                 }
                 let flags = self.bound(file).symbols[local.idx()].flags;
-                if flags.intersects(SymFlags::ALIAS | SymFlags::MERGED) || self.may_be_overridden(Sym { file, id: local }) { kind::ANYTHING } else { self.kinds_read_by(file, e, local) }
+                if flags.intersects(SymFlags::ALIAS | SymFlags::MERGED) { kind::ANYTHING } else { self.kinds_read_by(file, e, local) }
             }
             ExprKind::Unary { op, operand } => match op {
                 UnOp::Not | UnOp::Delete => kind::BOOLEAN,
@@ -1010,8 +1016,6 @@ impl<'p, 's> Checker<'p, 's> {
                         None => kind::ANYTHING,
                     },
                     // A function may be added to `Math`. None of its own can be replaced.
-                    ExprKind::Dot { .. } if self.member_of_global_that_may_be_overridden(file, callee).is_some() => kind::ANYTHING,
-                    ExprKind::Dot { name, .. } if !self.holders_of_member_that_may_be_overridden(name).is_empty() => kind::ANYTHING,
                     ExprKind::Dot { obj, name, chain: Chain::No, .. } if FUNCTIONS_OF_MATH.contains(&self.atoms().bytes(name)) && self.names_global_object(file, obj, b"Math") => kind::NUMBER,
                     ExprKind::Dot { obj, name, chain: Chain::No, .. } => match self.kinds_yielded_by(file, obj) {
                         kind::NOTHING => kind::NOTHING,

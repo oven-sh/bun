@@ -67,7 +67,9 @@ pub(crate) fn ancestors(path: &[u8]) -> impl Iterator<Item = &[u8]> {
 }
 
 fn read(path: &[u8]) -> Option<Vec<u8>> {
-    bun_sys::File::read_from(Fd::cwd(), path).ok()
+    let text = bun_sys::File::read_from(Fd::cwd(), path).ok();
+    crate::asked::note(crate::asked::Kind::NativeText, path, |hash| crate::asked::of_text(hash, text.as_deref()));
+    text
 }
 
 pub(crate) fn read_json(path: &[u8]) -> Option<Json> {
@@ -124,7 +126,7 @@ fn marked_in(directory: &[u8], javascript: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> 
 fn home_in_the_package(directory: &[u8]) -> Option<Vec<u8>> {
     let package = read_json(&join(&[directory, PACKAGE_JSON]))?;
     let marked = javascript_files_named_by(&package).into_iter().find(|javascript| marked_in(directory, javascript).is_some())?;
-    Some(match marked.iter().rposition(|&byte| byte == b'/') {
+    Some(match bun_core::strings::last_index_of_char(&marked[..], b'/') {
         Some(slash) => join(&[directory, &marked[..slash]]),
         None => directory.to_vec(),
     })
@@ -137,7 +139,7 @@ fn files_shipped_in(directory: &[u8]) -> Result<(Files, Vec<u8>), String> {
     let mut files = Vec::new();
     while let Some(javascript) = waiting.pop() {
         let Some((typed, wanted)) = marked_in(directory, &javascript) else { continue };
-        let folder = javascript.iter().rposition(|&byte| byte == b'/').map_or(&b""[..], |slash| &javascript[..slash + 1]);
+        let folder = bun_core::strings::last_index_of_char(&javascript[..], b'/').map_or(&b""[..], |slash| &javascript[..slash + 1]);
         let (Some(beside), true) = (typed_path_beside(&javascript), is_a_path_inside(&typed)) else {
             return Err(format!("the declaration file beside {} names no typed file inside the package", BStr::new(&javascript)));
         };
@@ -165,7 +167,7 @@ fn files_shipped_in(directory: &[u8]) -> Result<(Files, Vec<u8>), String> {
             }
             let imported = parts.join(&b'/');
             let candidates = [imported.clone(), [&imported[..], b".js"].concat(), [&imported[..], b".mjs"].concat(), [&imported[..], b"/index.js"].concat()];
-            let imported = candidates.into_iter().find(|candidate| typed_path_beside(candidate).is_some() && bun_sys::exists(&join(&[directory, candidate])));
+            let imported = candidates.into_iter().find(|candidate| typed_path_beside(candidate).is_some() && crate::asked::exists(&join(&[directory, candidate])));
             if let Some(imported) = imported.filter(|imported| !leaves && is_a_path_inside(imported) && !seen.contains(imported)) {
                 seen.push(imported.clone());
                 waiting.push(imported);
@@ -198,7 +200,7 @@ pub(crate) fn declarations_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn home_of(root: &[u8], directory: &[u8], name: &[u8]) -> Option<(Vec<u8>, bool)> {
-    let has_a_manifest = |home: &Vec<u8>| bun_sys::exists(&join(&[home, MANIFEST]));
+    let has_a_manifest = |home: &Vec<u8>| crate::asked::exists(&join(&[home, MANIFEST]));
     let own = join(&[root, FOLDER, name]);
     if has_a_manifest(&own) {
         return Some((own, false));
@@ -276,7 +278,7 @@ fn files_of(root: &[u8], defines: &Defines, home: &[u8], directory: &[u8], name:
         let mut at = join(&[directory, path]);
         match wanted {
             b"new" if !is_a_path_inside(path) => return Err(format!("\"{}\" in its sound.json is no path inside the package", BStr::new(path))),
-            b"new" if bun_sys::exists(&at) => return Err(format!("{} is installed, and it was not when the package was typed", BStr::new(path))),
+            b"new" if crate::asked::exists(&at) => return Err(format!("{} is installed, and it was not when the package was typed", BStr::new(path))),
             b"new" => {}
             _ => is_as_typed_on(directory, path, wanted)?,
         }
@@ -294,7 +296,7 @@ fn files_of(root: &[u8], defines: &Defines, home: &[u8], directory: &[u8], name:
     }
     for needed in manifest.get(b"needs").and_then(Json::as_array).unwrap_or_default() {
         let needed = needed.as_str().filter(|needed| is_the_name_of_a_package(needed)).ok_or("\"needs\" of its sound.json is not a list of packages' names")?;
-        let there = ancestors(directory).map(|at| join(&[at, INSTALLED, needed])).find(|there| bun_sys::exists(&join(&[there, PACKAGE_JSON])));
+        let there = ancestors(directory).map(|at| join(&[at, INSTALLED, needed])).find(|there| crate::asked::exists(&join(&[there, PACKAGE_JSON])));
         let fits = |there: Vec<u8>| {
             home_of(root, &there, needed).is_some_and(|(home, is_shipped_with_the_package)| match is_shipped_with_the_package {
                 true => files_shipped_in(&there).is_ok(),

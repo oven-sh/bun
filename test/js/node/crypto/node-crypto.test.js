@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 import crypto from "node:crypto";
@@ -905,6 +905,190 @@ describe("ECDH", () => {
     expect(ecdh.getPrivateKey.name).toBe("getPrivateKey");
     expect(ecdh.setPublicKey.name).toBe("deprecated"); // wrapped by util.deprecate (DEP0031), same as Node
     expect(ecdh.setPrivateKey.name).toBe("setPrivateKey");
+  });
+});
+
+// Node returns `encode(buffer, encoding)` from each of these calls: a falsy encoding or the string "buffer"
+// returns the Buffer, every other value is `buffer.toString(encoding)`, which coerces the value with
+// `encoding += ''` and throws ERR_UNKNOWN_ENCODING for a name it does not know.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/diffiehellman.js#L265-L269
+// Expected values are from Node v26.3.0.
+describe("DiffieHellman, DiffieHellmanGroup and ECDH output encoding", () => {
+  let dh, group, ecdh, ecdhPeerKey;
+  beforeAll(() => {
+    group = crypto.getDiffieHellman("modp5");
+    dh = crypto.createDiffieHellman(group.getPrime(), group.getGenerator());
+    ecdh = crypto.createECDH("prime256v1");
+    ecdhPeerKey = crypto.createECDH("prime256v1").generateKeys();
+    group.generateKeys();
+    dh.generateKeys();
+    ecdh.generateKeys();
+  });
+
+  const cases = [
+    // [label, encoding, result]
+    ["undefined", undefined, "Buffer"],
+    ["null", null, "Buffer"],
+    ["''", "", "Buffer"],
+    ["0", 0, "Buffer"],
+    ["false", false, "Buffer"],
+    ["NaN", NaN, "Buffer"],
+    ["'buffer'", "buffer", "Buffer"],
+    ["'hex'", "hex", "hex string"],
+    ["'HEX'", "HEX", "hex string"],
+    ["'base64'", "base64", "base64 string"],
+    ["'binary'", "binary", "latin1 string"],
+    ["'ucs2'", "ucs2", "utf16le string"],
+    ["['hex']", ["hex"], "hex string"],
+    ["new String('hex')", new String("hex"), "hex string"],
+    ["{ toString: () => 'hex' }", { toString: () => "hex" }, "hex string"],
+    [
+      "{ valueOf: () => 'hex', toString: () => 'base64' }",
+      { valueOf: () => "hex", toString: () => "base64" },
+      "hex string",
+    ],
+    ["'bogus'", "bogus", "ERR_UNKNOWN_ENCODING: Unknown encoding: bogus"],
+    ["'he'", "he", "ERR_UNKNOWN_ENCODING: Unknown encoding: he"],
+    ["'Buffer'", "Buffer", "ERR_UNKNOWN_ENCODING: Unknown encoding: Buffer"],
+    ["123", 123, "ERR_UNKNOWN_ENCODING: Unknown encoding: 123"],
+    ["true", true, "ERR_UNKNOWN_ENCODING: Unknown encoding: true"],
+    ["1n", 1n, "ERR_UNKNOWN_ENCODING: Unknown encoding: 1n"],
+    ["{}", {}, "ERR_UNKNOWN_ENCODING: Unknown encoding: {}"],
+    ["[]", [], "ERR_UNKNOWN_ENCODING: Unknown encoding: []"],
+  ];
+
+  // Names the result of `call(encoding)`: "Buffer", "<name> string" for the Buffer#toString encoding that
+  // produces the returned string from `reference()`, or the error. The four candidate encodings give
+  // strings of different lengths for the same bytes, so at most one of them matches.
+  function outcome(call, reference, encoding) {
+    let value;
+    try {
+      value = call(encoding);
+    } catch (e) {
+      return `${e.code}: ${e.message}`;
+    }
+    const buffer = reference();
+    if (Buffer.isBuffer(value)) return value.equals(buffer) ? "Buffer" : "a different Buffer";
+    const name = ["hex", "base64", "latin1", "utf16le"].find(candidate => value === buffer.toString(candidate));
+    return name ? `${name} string` : `unexpected ${typeof value}`;
+  }
+
+  it.each([
+    ["dh.generateKeys(encoding)", e => dh.generateKeys(e), () => dh.getPublicKey()],
+    ["dh.getPrime(encoding)", e => dh.getPrime(e), () => dh.getPrime()],
+    ["dh.getGenerator(encoding)", e => dh.getGenerator(e), () => dh.getGenerator()],
+    ["dh.getPublicKey(encoding)", e => dh.getPublicKey(e), () => dh.getPublicKey()],
+    ["dh.getPrivateKey(encoding)", e => dh.getPrivateKey(e), () => dh.getPrivateKey()],
+    [
+      "dh.computeSecret(key, null, encoding)",
+      e => dh.computeSecret(group.getPublicKey(), null, e),
+      () => dh.computeSecret(group.getPublicKey()),
+    ],
+    ["group.generateKeys(encoding)", e => group.generateKeys(e), () => group.getPublicKey()],
+    ["group.getPrime(encoding)", e => group.getPrime(e), () => group.getPrime()],
+    ["group.getGenerator(encoding)", e => group.getGenerator(e), () => group.getGenerator()],
+    ["group.getPublicKey(encoding)", e => group.getPublicKey(e), () => group.getPublicKey()],
+    ["group.getPrivateKey(encoding)", e => group.getPrivateKey(e), () => group.getPrivateKey()],
+    [
+      "group.computeSecret(key, null, encoding)",
+      e => group.computeSecret(dh.getPublicKey(), null, e),
+      () => group.computeSecret(dh.getPublicKey()),
+    ],
+    ["ecdh.generateKeys(encoding)", e => ecdh.generateKeys(e), () => ecdh.getPublicKey()],
+    ["ecdh.getPublicKey(encoding)", e => ecdh.getPublicKey(e), () => ecdh.getPublicKey()],
+    [
+      "ecdh.getPublicKey(encoding, 'compressed')",
+      e => ecdh.getPublicKey(e, "compressed"),
+      () => ecdh.getPublicKey(null, "compressed"),
+    ],
+    ["ecdh.getPrivateKey(encoding)", e => ecdh.getPrivateKey(e), () => ecdh.getPrivateKey()],
+    [
+      "ecdh.computeSecret(key, null, encoding)",
+      e => ecdh.computeSecret(ecdhPeerKey, null, e),
+      () => ecdh.computeSecret(ecdhPeerKey),
+    ],
+    [
+      "ECDH.convertKey(key, curve, undefined, encoding)",
+      e => crypto.ECDH.convertKey(ecdhPeerKey, "prime256v1", undefined, e),
+      () => crypto.ECDH.convertKey(ecdhPeerKey, "prime256v1"),
+    ],
+  ])("%s", (_name, call, reference) => {
+    const actual = cases.map(([label, encoding]) => [label, outcome(call, reference, encoding)]);
+    const expected = cases.map(([label, , result]) => [label, result]);
+    expect(Object.fromEntries(actual)).toEqual(Object.fromEntries(expected));
+  });
+
+  it("converts the encoding to a string once", () => {
+    const toString = jest.fn(() => "hex");
+    expect(dh.getPrime({ toString })).toBe(dh.getPrime().toString("hex"));
+    expect(toString).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws the error of the string conversion", () => {
+    const failing = {
+      toString() {
+        throw new RangeError("from toString");
+      },
+    };
+    expect(() => dh.getPrime(failing)).toThrow(
+      expect.objectContaining({ name: "RangeError", message: "from toString" }),
+    );
+
+    // A symbol does not convert to a string. That is a plain TypeError, not ERR_UNKNOWN_ENCODING.
+    let error;
+    try {
+      dh.getPrime(Symbol("hex"));
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error.code).toBeUndefined();
+  });
+
+  it("returns the Buffer for the primitive string 'buffer' only", () => {
+    expect(dh.getPrime("buffer")).toBeInstanceOf(Buffer);
+    // Node compares with `encoding !== 'buffer'`, so a String object goes to Buffer#toString.
+    expect(() => dh.getPrime(new String("buffer"))).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+  });
+
+  it("validates the output encoding last", () => {
+    const error = fn => {
+      try {
+        fn();
+        return "no error";
+      } catch (e) {
+        return `${e.code}: ${e.message}`;
+      }
+    };
+    const freshDh = crypto.getDiffieHellman("modp5");
+    const freshEcdh = crypto.createECDH("prime256v1");
+    expect({
+      // A missing key, a bad format and a bad input key are reported first.
+      dhPublicKeyBeforeGenerateKeys: error(() => freshDh.getPublicKey("bogus")),
+      dhPrivateKeyBeforeGenerateKeys: error(() => freshDh.getPrivateKey("bogus")),
+      dhInputEncoding: error(() => dh.computeSecret("zz", "bogusIn", "bogusOut")),
+      ecdhFormat: error(() => ecdh.getPublicKey("bogus", "badformat")),
+      ecdhPeerKey: error(() => ecdh.computeSecret(Buffer.alloc(3), null, "bogus")),
+      convertKeyInput: error(() => crypto.ECDH.convertKey(Buffer.alloc(3), "prime256v1", undefined, "bogus")),
+      convertKeyFormat: error(() => crypto.ECDH.convertKey(ecdhPeerKey, "prime256v1", undefined, "bogus", "badformat")),
+      // generateKeys() generates the keys, then rejects the encoding.
+      dhGenerateKeys: error(() => freshDh.generateKeys("bogus")),
+      dhPublicKeyAfterGenerateKeys: error(() => freshDh.getPublicKey()),
+      ecdhGenerateKeys: error(() => freshEcdh.generateKeys("bogus")),
+      ecdhPublicKeyAfterGenerateKeys: error(() => freshEcdh.getPublicKey()),
+    }).toEqual({
+      dhPublicKeyBeforeGenerateKeys: "ERR_CRYPTO_INVALID_STATE: No public key - did you forget to generate one?",
+      dhPrivateKeyBeforeGenerateKeys: "ERR_CRYPTO_INVALID_STATE: No private key - did you forget to generate one?",
+      dhInputEncoding: "ERR_UNKNOWN_ENCODING: Unknown encoding: bogusIn",
+      ecdhFormat: "ERR_CRYPTO_ECDH_INVALID_FORMAT: Invalid ECDH format: badformat",
+      ecdhPeerKey: "ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY: Public key is not valid for specified curve",
+      convertKeyInput: "ERR_CRYPTO_OPERATION_FAILED: Failed to convert Buffer to EC_POINT",
+      convertKeyFormat: "ERR_CRYPTO_ECDH_INVALID_FORMAT: Invalid ECDH format: badformat",
+      dhGenerateKeys: "ERR_UNKNOWN_ENCODING: Unknown encoding: bogus",
+      dhPublicKeyAfterGenerateKeys: "no error",
+      ecdhGenerateKeys: "ERR_UNKNOWN_ENCODING: Unknown encoding: bogus",
+      ecdhPublicKeyAfterGenerateKeys: "no error",
+    });
   });
 });
 

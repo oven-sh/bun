@@ -2159,7 +2159,7 @@ where
         readable_ref.deinit();
     }
 
-    /// Commits the head after the current microtask drain: a body that ends in it keeps its framing.
+    /// Commits the head after the microtask drain, so a body that ends in it keeps its framing.
     fn defer_head_commit(&self) {
         debug_assert!(!self.flags.has_deferred_head_commit());
         self.flags.set_has_deferred_head_commit(true);
@@ -2211,15 +2211,15 @@ where
     #[cfg(debug_assertions)]
     pub(crate) fn assert_no_parked_open_head(&self) {
         // File bodies are exempt: `prepare_for_sendfile` ends the head without a state bit.
-        if !self.flags.has_marked_pending()
+        if MUX
+            || !self.flags.has_marked_pending()
             || !self.flags.has_written_status()
             || self.flags.has_sendfile_ctx()
             || self.flags.has_deferred_head_commit()
         {
             return;
         }
-        let Some(resp @ (uws::AnyResponse::SSL(_) | uws::AnyResponse::TCP(_))) = self.resp.get()
-        else {
+        let Some(resp) = self.resp.get() else {
             return;
         };
         if self
@@ -2377,11 +2377,14 @@ where
                             this.render_metadata();
                         }
 
-                        if this.is_async() {
-                            // No drain ran above: the body's first microtasks are still queued.
-                            this.defer_head_commit();
-                        } else if !response_stream.sink.sends_head_itself() {
-                            resp.commit_head();
+                        // HTTP/2 and HTTP/3 keep HEADERS for the first DATA: see `commit_head`.
+                        if !MUX {
+                            if this.is_async() {
+                                // No drain ran above: the body's microtasks are still queued.
+                                this.defer_head_commit();
+                            } else if !response_stream.sink.sends_head_itself() {
+                                resp.commit_head();
+                            }
                         }
 
                         // TODO: should this timeout?

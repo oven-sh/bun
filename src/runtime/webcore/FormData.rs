@@ -287,13 +287,10 @@ impl<'a> Parts<'a> {
         if rest.starts_with(b"--") {
             return Some(BoundaryLine::Close(after + 2));
         }
-        let mut padding = 0;
-        while let Some(b' ' | b'\t') = rest.get(padding) {
-            padding += 1;
-        }
-        rest[padding..]
+        let line_end = strings::trim_left(rest, b" \t");
+        line_end
             .starts_with(b"\r\n")
-            .then_some(BoundaryLine::Delimiter(after + padding))
+            .then_some(BoundaryLine::Delimiter(self.input.len() - line_end.len()))
     }
 
     /// The next boundary line from `from` on, with the index of the CRLF in front of it.
@@ -334,10 +331,7 @@ impl<'a> Parts<'a> {
             BoundaryLine::Delimiter(line_end) => Ok(Some(line_end)),
             BoundaryLine::Close(after) => {
                 // With no part above it, the close delimiter must be the whole line.
-                let mut rest = &self.input[after..];
-                while let [b' ' | b'\t', tail @ ..] = rest {
-                    rest = tail;
-                }
+                let rest = strings::trim_left(&self.input[after..], b" \t");
                 if rest.is_empty() || rest.starts_with(b"\r\n") {
                     Ok(None)
                 } else {

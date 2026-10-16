@@ -628,7 +628,7 @@ describe("FormData", () => {
       ["Go 1.24 mime/multipart", "bea75cfd52f79761397fc237c39ad48c0be469e5a3c0710163c3c6df2b31"],
       ["undici", "----formdata-undici-090416445098"],
       ["Ruby 3.3 net/http", "B7i9v6ZrXrKtQRYam3CTmwQ6DN-sVNp9x6FH1ipErSFTlk__AwMNSw"],
-      ["72 bytes", "a".repeat(72)],
+      ["72 bytes", Buffer.alloc(72, "a").toString()],
       ["one dash", "-"],
       ["a name and two dashes", "a--"],
       ["a name and a CR", "a\r"],
@@ -647,7 +647,7 @@ describe("FormData", () => {
     });
 
     it("a boundary of 73 bytes", async () => {
-      const boundary = "a".repeat(73);
+      const boundary = Buffer.alloc(73, "a").toString();
       const { body } = rowsFor(boundary)[0];
       expect(() => FormData.from(body, boundary)).toThrow("boundary is too long while parsing FormData");
       const response = new Response(body, { headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` } });

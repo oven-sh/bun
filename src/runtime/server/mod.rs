@@ -655,11 +655,9 @@ pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_val
 /// Which caller hands [`NewServer::on_reload_from_zig`] its config.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReloadKind {
-    /// `server.reload(options)`: a patch. The routes and handlers that it
-    /// does not name stay.
+    /// `server.reload(options)`: the routes and handlers it does not name stay.
     Patch,
-    /// A `Bun.serve()` that takes a live server over under `--hot`. It always
-    /// replaces the static routes and the node:http handler.
+    /// A `Bun.serve()` re-run that takes the live server over under `--hot`.
     Takeover,
 }
 

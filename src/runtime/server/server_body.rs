@@ -2099,10 +2099,15 @@ where
             );
             self.config.on_request = new_config.on_request;
         }
+        // A patch that names no request handler keeps the node:http one.
+        let keeps_node_handler = patch
+            && new_config
+                .on_node_http_request
+                .is_empty_or_undefined_or_null()
+            && new_config.on_request.is_empty_or_undefined_or_null();
         // Swap on any change, *including* clearing to ZERO when the reload
         // config omits the handler, so subsequent `on_web_socket_upgrade` /
-        // `set_routes` stop routing through the node:http path. A patch that
-        // names neither this handler nor a `fetch` to take its place keeps it.
+        // `set_routes` stop routing through the node:http path.
         //
         // Never the other direction: a server that was not created as a
         // node:http server cannot become one through reload(). listen()
@@ -2112,12 +2117,8 @@ where
         // instantiation under those already-sized allocations, so the node
         // request path would construct and index past them.
         if self.config.is_node_http_server
+            && !keeps_node_handler
             && self.config.on_node_http_request != new_config.on_node_http_request
-            && !(patch
-                && new_config
-                    .on_node_http_request
-                    .is_empty_or_undefined_or_null()
-                && new_config.on_request.is_empty_or_undefined_or_null())
         {
             super::wrap_handler_slot(
                 &mut new_config.on_node_http_request,
@@ -2155,11 +2156,10 @@ where
             dev_server.html_router.fallback = None;
         }
 
-        // A patch without a `routes` object keeps the static routes, like the
-        // callback routes below. `set_routes` registers them again.
-        if new_config.had_routes_object || !patch {
-            // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
-            // a move-assign frees the old `static_routes`.
+        let keeps_static_routes = patch && !new_config.had_routes_object;
+        // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
+        // a move-assign frees the old `static_routes`.
+        if !keeps_static_routes {
             self.config.static_routes = core::mem::take(&mut new_config.static_routes);
             self.config.negative_routes = core::mem::take(&mut new_config.negative_routes);
         }

@@ -1468,12 +1468,7 @@ impl ServerConfig {
 pub(crate) struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
     pub(crate) is_fetch_required: bool,
-    /// What the running server keeps answering with when a `reload()` config
-    /// names no handler, as `on_reload_from_zig` applies a patch: `fetch` and
-    /// the node:http handler stay unless the new config names a handler, and
-    /// routes of every kind stay as long as the new config has no `routes`
-    /// object at all (`routes: {}` replaces them). All are false for
-    /// `Bun.serve()`.
+    /// What the server keeps when a `reload()` names no handler. All false for `Bun.serve()`.
     pub(crate) previous_fetch: bool,
     pub(crate) previous_routes: bool,
     pub(crate) previous_node_http_request: bool,

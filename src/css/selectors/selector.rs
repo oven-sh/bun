@@ -587,7 +587,18 @@ pub(crate) mod serialize {
         selector: &parser::Selector,
         dest: &mut Printer,
         context: Option<&StyleContext>,
+        is_relative: bool,
+    ) -> Result<(), PrintErr> {
+        serialize_selector_at(selector, dest, context, is_relative, true)
+    }
+
+    /// `leads` is false when part of an outer selector is printed before `selector`.
+    fn serialize_selector_at(
+        selector: &parser::Selector,
+        dest: &mut Printer,
+        context: Option<&StyleContext>,
         is_relative_: bool,
+        leads: bool,
     ) -> Result<(), PrintErr> {
         let mut is_relative = is_relative_;
 
@@ -633,7 +644,7 @@ pub(crate) mod serialize {
         };
         let should_compile_nesting = dest.targets.should_compile_same(Feature::Nesting);
 
-        let mut first = true;
+        let mut first = leads;
         let mut combinators_exhausted = false;
         while let Some(compound_) = compound_selectors.next() {
             debug_assert!(!combinators_exhausted);
@@ -655,6 +666,13 @@ pub(crate) mod serialize {
 
             let has_leading_nesting = first && matches!(compound[0], Component::Nesting);
             let first_index: usize = if has_leading_nesting { 1 } else { 0 };
+            // `:local()` and `:global()` print only their argument, so it leads when they do.
+            let leading_scope = match &compound[0] {
+                Component::NonTsPseudoClass(
+                    PseudoClass::Local { selector } | PseudoClass::Global { selector },
+                ) if first => Some(selector),
+                _ => None,
+            };
             first = false;
 
             // 1. If there is only one simple selector in the compound selectors
@@ -762,6 +780,9 @@ pub(crate) mod serialize {
                     // Nesting selector may serialize differently if it is leading, due to type selectors.
                     i += 1;
                     serialize_nesting(dest, context, true)?;
+                } else if let Some(selector) = leading_scope {
+                    i += 1;
+                    serialize_selector_at(selector, dest, context, false, true)?;
                 }
 
                 if i < compound.len() {
@@ -1108,7 +1129,7 @@ pub(crate) mod serialize {
             PseudoClass::Autofill(prefix) => write_prefixed(dest, *prefix, b"autofill")?,
 
             PseudoClass::Local { selector } | PseudoClass::Global { selector } => {
-                serialize_selector(selector, dest, context, false)?
+                serialize_selector_at(selector, dest, context, false, false)?
             }
 
             // https://webkit.org/blog/363/styling-scrollbars/

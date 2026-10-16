@@ -353,6 +353,54 @@ describe("css", () => {
     },
   });
 
+  // The argument of `:global(...)` or `:local(...)` prints in place of the
+  // wrapper. A `&` that starts the argument starts the printed selector only
+  // when the wrapper does. Anywhere else a parent with a combinator needs `:is()`.
+  itBundled("css-module/AmpersandInsideGlobalUnderAComplexParent", {
+    files: {
+      "/entry.js": printsStyles,
+      "/styles.module.css": `
+        .a .b {
+          :global(&.x) { color: red }
+          .q:global(&.x) { color: orange }
+          .q :global(& .x) { color: yellow }
+          :global(.y &) { color: green }
+          .q:local(&.z) { color: blue }
+          :global(:local(&.w)) { color: pink }
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const { css, js } = readScoped(api, "a");
+      expect(css).toBe(
+        oneLine(`
+          /* styles.module.css */
+          .a_HASH .b_HASH.x { color: red; }
+          .q_HASH:is(.a_HASH .b_HASH).x { color: orange; }
+          .q_HASH :is(.a_HASH .b_HASH) .x { color: #ff0; }
+          .y :is(.a_HASH .b_HASH) { color: green; }
+          .q_HASH:is(.a_HASH .b_HASH).z_HASH { color: #00f; }
+          .a_HASH .b_HASH.w_HASH { color: pink; }
+        `),
+      );
+      expect(js).toEqualIgnoringWhitespace(`
+        // styles.module.css
+        var styles_module_default = {
+          a: "a_HASH",
+          b: "b_HASH",
+          q: "q_HASH",
+          z: "z_HASH",
+          w: "w_HASH"
+        };
+
+        // entry.js
+        console.log(JSON.stringify(styles_module_default));
+      `);
+    },
+  });
+
   itBundled("css-module/OnlyGlobalSelectorsExportsNothing", {
     files: {
       "/entry.js": printsStyles,

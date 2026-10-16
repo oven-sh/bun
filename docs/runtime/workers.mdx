@@ -233,9 +233,9 @@ Bun emits the `"close"` event when a worker has been marked as terminated. The w
 
 - `process.exit(code)` and `process.exitCode = code` set it to `code`.
 - An uncaught exception or an unhandled rejection sets it to `1`.
-- A top-level `await` that never settles sets it to `13` if it is still `0`.
+- Running out of work while a top-level `await` is still pending sets it to `13` if it is still `0`.
 
-An `"exit"` listener runs after these and can set `process.exitCode` again.
+An `"exit"` listener runs after these and can set `process.exitCode` again. `worker.terminate()` does not change the code.
 
 ```ts index.ts icon="/icons/typescript.svg"
 const worker = new Worker(new URL("worker.ts", import.meta.url).href);

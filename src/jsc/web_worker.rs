@@ -872,7 +872,10 @@ impl WebWorker {
             Ok(p) => p,
             Err(_) => {
                 // process.exit() or a fatal error may have ended the load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // terminate() may have too, and it sets no code.
+                if !self.exit_called.load(Ordering::Relaxed)
+                    && !self.terminated_by_parent.load(Ordering::Relaxed)
+                {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);

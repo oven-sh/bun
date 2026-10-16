@@ -366,6 +366,20 @@ describe("web worker", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "error\nclose 1 false\n", exitCode: 0 });
   });
 
+  test.concurrent.each([
+    ["while the entry is evaluating", `postMessage(1); for (;;) {}`],
+    ["after the entry has loaded", `setInterval(() => {}, 100000); setTimeout(() => postMessage(1));`],
+    [
+      "while a top-level await is pending",
+      `setInterval(() => {}, 100000); setTimeout(() => postMessage(1)); await new Promise(() => {});`,
+    ],
+  ])("'close' has code 0 after terminate() %s", async (_, body) => {
+    const worker = new Worker(URL.createObjectURL(new Blob([body], { type: "application/javascript" })));
+    worker.onmessage = () => worker.terminate();
+    const { code, wasClean } = await new Promise<CloseEvent>(resolve => worker.addEventListener("close", resolve));
+    expect({ code, wasClean }).toEqual({ code: 0, wasClean: true });
+  });
+
   describe("worker event", () => {
     test("is fired with the right object", () => {
       const { promise, resolve } = Promise.withResolvers();

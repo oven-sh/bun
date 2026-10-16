@@ -544,6 +544,75 @@ describe("bundler", async () => {
     }
   });
 
+  // Text and markdown files that are not valid UTF-8 are decoded the way
+  // `Bun.file().text()` decodes them (one U+FFFD per ill-formed subsequence)
+  // before becoming a string literal, so the bundle is valid UTF-8 and evaluates
+  // to the same string reading the file would give. "bun" prints the literal
+  // with ASCII escapes, "browser" writes the characters into the output as-is.
+  // https://github.com/oven-sh/bun/issues/12981
+  describe("ill-formed UTF-8 in text and md files", () => {
+    const R = 0xfffd;
+    const textCases: [name: string, bytes: number[], codePoints: number[]][] = [
+      ["bad lead byte keeps the bytes after it", [0xe2, 0x41, 0x42], [R, 0x41, 0x42]],
+      ["invalid lead bytes", [0xf5, 0x41, 0xff, 0x42], [R, 0x41, R, 0x42]],
+      ["lone continuation byte", [0x80, 0x41], [R, 0x41]],
+      ["overlong sequence", [0xc0, 0xaf, 0x41], [R, R, 0x41]],
+      ["UTF-8 encoded surrogate", [0xed, 0xa0, 0x80, 0x41], [R, R, R, 0x41]],
+      ["truncated sequence", [0xe2, 0x82, 0x41], [R, 0x41]],
+      ["truncated sequence at end of file", [0x41, 0xe2], [0x41, R]],
+      ["well-formed text is unchanged", [0x41, 0xc3, 0xa9, 0xf0, 0x9f, 0x98, 0x80], [0x41, 0xe9, 0x1f600]],
+    ];
+    // Bundles every case and prints { [name]: code points }, which must match
+    // `expectedText` exactly.
+    const textFiles: Record<string, string | Buffer> = {
+      "/entry.ts": /* js */ `
+        ${textCases.map((_, i) => `import case${i} from "./case${i}.txt";`).join("\n")}
+        const codePointsOf = (text) => [...text].map(c => c.codePointAt(0));
+        console.log(JSON.stringify({
+          ${textCases.map(([name], i) => `${JSON.stringify(name)}: codePointsOf(case${i}),`).join("\n")}
+        }));
+      `,
+    };
+    textCases.forEach(([, bytes], i) => (textFiles[`/case${i}.txt`] = Buffer.from(bytes)));
+    const expectedText = JSON.stringify(
+      Object.fromEntries(textCases.map(([name, , codePoints]) => [name, codePoints])),
+    );
+
+    // "hi " + E2 (a 3-byte lead that "AB" does not continue) + "AB " + FF + "\n"
+    const markdown = Buffer.from([0x68, 0x69, 0x20, 0xe2, 0x41, 0x42, 0x20, 0xff, 0x0a]);
+    const renderedMarkdown = "<p>hi \uFFFDAB \uFFFD</p>\n";
+
+    const expectBundleIsValidUtf8 = (outfile: string) => {
+      expect(() => new TextDecoder("utf-8", { fatal: true }).decode(fs.readFileSync(outfile))).not.toThrow();
+    };
+
+    for (const target of ["bun", "browser"] as const) {
+      itBundled(`${target}/loader-text-file-ill-formed-utf8`, {
+        target,
+        files: textFiles,
+        onAfterBundle(api) {
+          expectBundleIsValidUtf8(api.outfile);
+        },
+        run: { stdout: expectedText },
+      });
+
+      itBundled(`${target}/loader-md-file-ill-formed-utf8`, {
+        target,
+        files: {
+          "/entry.ts": /* js */ `
+            import html from "./doc.md";
+            console.log(JSON.stringify([...html].map(c => c.codePointAt(0))));
+          `,
+          "/doc.md": markdown,
+        },
+        onAfterBundle(api) {
+          expectBundleIsValidUtf8(api.outfile);
+        },
+        run: { stdout: JSON.stringify([...renderedMarkdown].map(c => c.codePointAt(0))) },
+      });
+    }
+  });
+
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the
   // printer when bundled with the dev server's module format.
   // https://github.com/oven-sh/bun/issues/31943

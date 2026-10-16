@@ -944,11 +944,14 @@ fn warn_latest_names_no_version(
     manifest: &Npm::PackageManifest,
     instead: Npm::FindResult,
 ) {
+    if !this.options.log_level.is_verbose() {
+        return;
+    }
     this.log_mut().add_warning_fmt(
         None,
         bun_ast::Loc::EMPTY,
         format_args!(
-            "the \"latest\" tag of \"{}\" names no published version, using {}",
+            "\"latest\" tag of \"{}\" points to unpublished version, using {}",
             bun_fmt::escape_control_chars(manifest.name()),
             instead.version.fmt(&manifest.string_buf),
         ),
@@ -1848,7 +1851,7 @@ pub(crate) fn bind_row(
         add_error_or_warning(
             this.log_mut(),
             dependency.behavior.is_required(),
-            format_args!("Invalid dependency name \"{name}\""),
+            format_args!("invalid dependency name \"{name}\""),
         );
         return Ok(Row::Done);
     }
@@ -2131,7 +2134,7 @@ fn bind_row_without_manifest(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
-                            "\"{}@{}\" is a git dependency, which only `bun install` loads",
+                            "\"{}@{}\" is a git dependency, run `bun install`",
                             bun_fmt::escape_control_chars(dependency.name.slice(buf)),
                             bun_fmt::for_terminal(bstr::BStr::new(version.literal.slice(buf))),
                         ),
@@ -2278,7 +2281,7 @@ fn bind_row_without_manifest(
                     this.log_mut(),
                     is_required,
                     format_args!(
-                        "Could not find directory \"{}\" for linked dependency \"{}\"",
+                        "directory \"{}\" not found for linked dependency \"{}\"",
                         bun_fmt::escape_control_chars(this.lockfile.str(version.symlink())),
                         bun_fmt::escape_control_chars(this.lockfile.str(&name)),
                     ),
@@ -2541,14 +2544,14 @@ fn report_resolve_error(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
-                    "Could not find package.json for \"file:{}\" dependency \"{name}\"",
+                    "package.json not found for \"file:{}\" dependency \"{name}\"",
                     escape(version.folder().slice(buf)),
                 ),
             ),
         E::MissingPackageJSON => log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
-            format_args!("Could not find package.json for dependency \"{name}\""),
+            format_args!("package.json not found for dependency \"{name}\""),
         ),
         _ => log.add_error_fmt(
             None,
@@ -2614,7 +2617,7 @@ fn reject_local_tarball_of_remote_package(
             None,
             bun_ast::Range::NONE,
             bun_ast::alloc_print(format_args!(
-                "add \"{name}\": \"{literal}\" to the root package.json to install that tarball for {declarer_name} as well",
+                "add \"{name}\": \"{literal}\" to the root package.json to install it for {declarer_name} too",
             )),
         )])
     };
@@ -2623,7 +2626,7 @@ fn reject_local_tarball_of_remote_package(
         bun_ast::Range::NONE,
         notes,
         format_args!(
-            "refusing to resolve \"{name}@{literal}\" declared by {declarer_name}@{}: local tarball dependencies are only allowed in the package.json files of this project",
+            "refusing to resolve \"{name}@{literal}\" declared by {declarer_name}@{}: local tarballs are only allowed in this project's package.json files",
             bun_fmt::for_terminal(
                 packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix)
             ),
@@ -3034,7 +3037,7 @@ pub(crate) struct ResolvedPackageResult {
     pub task: Option<ResolvedPackageTask>,
 }
 
-/// Once per version. What a package.json of the project names gets a line; the rest is counted.
+/// Once per version. A version that no package.json of the project names needs `--verbose`.
 #[cold]
 fn warn_deprecated(
     this: &mut PackageManager,
@@ -3044,7 +3047,6 @@ fn warn_deprecated(
 ) {
     if !this.lockfile.is_workspace_dependency(dependency_id) && !this.options.log_level.is_verbose()
     {
-        this.deprecated_transitive += 1;
         return;
     }
     this.log_mut().add_warning_fmt(
@@ -3255,6 +3257,7 @@ fn get_or_put_resolved_package_with_find_result(
     let package = Package::from_npm(
         &mut this.lockfile,
         log,
+        this.options.log_level,
         manifest,
         find_result.version,
         find_result.package,

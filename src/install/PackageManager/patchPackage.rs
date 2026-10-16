@@ -94,21 +94,23 @@ impl PatchCommitResult {
         let lockfile = &manager.lockfile;
         let real = resolve_links(&self.patchfile_path).ok();
         let own_key = string_hash(&self.patch_key);
-        let is_shared = (lockfile.patched_dependencies.iter()).any(|(key, other)| {
-            *key != own_key && resolve_links(lockfile.str(&other.path)).ok() == real
-        });
-        let outcome = if is_shared {
-            "another package uses"
+        let is_shared = real.is_some()
+            && (lockfile.patched_dependencies.iter()).any(|(key, other)| {
+                *key != own_key && resolve_links(lockfile.str(&other.path)).ok() == real
+            });
+        let (outcome, why) = if is_shared {
+            ("kept", ", used by another package")
         } else if is_file_of_the_project(&path) && sys::unlink(&path).is_ok() {
-            "deleted"
+            ("deleted", "")
         } else {
-            "did not delete"
+            ("did not delete", "")
         };
         bun_core::pretty!(
-            "\nRemoved the patch for <b>{}<r> ({} {})\n",
+            "\nRemoved the patch for <b>{}<r> ({} {}{})\n",
             bun_fmt::for_terminal(bstr::BStr::new(&self.patch_key)),
             outcome,
             bun_fmt::escape_control_chars(&self.patchfile_path),
+            why,
         );
     }
 }
@@ -263,15 +265,15 @@ fn resolve_target(
 
     if !pkg.resolution.tag.can_enqueue_install_task() {
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: cannot patch <b>{}<r>: it is {}, and bun install never applies a patch to one",
-            bstr::BStr::new(lockfile.str(&pkg.name)),
+            "<r><red>error<r>: refusing to patch {} <b>\"{}\"<r>",
             match pkg.resolution.tag {
-                ResolutionTag::Folder => "a file: folder",
-                ResolutionTag::Symlink => "a link: dependency",
-                _ => "a workspace package",
+                ResolutionTag::Folder => "file: folder",
+                ResolutionTag::Symlink => "link: dependency",
+                _ => "workspace package",
             },
+            bstr::BStr::new(lockfile.str(&pkg.name)),
         );
-        bun_core::note!("edit the folder itself instead");
+        bun_core::note!("edit the folder directly");
         Global::crash();
     }
 
@@ -292,7 +294,7 @@ fn resolve_target(
 
 fn crash_bundled(name: &[u8]) -> ! {
     bun_core::pretty_errorln!(
-        "<r><red>error<r>: cannot patch <b>{}<r>: bun does not install it, it ships inside the tarball of a package that bundles it",
+        "<r><red>error<r>: refusing to patch bundled dependency <b>\"{}\"<r>",
         bstr::BStr::new(name),
     );
     bun_core::note!(
@@ -423,7 +425,7 @@ fn folder_lookup_error(
     match err {
         FolderLookupError::NotInLockfile => {
             bun_core::pretty_errorln!(
-                "<r><red>error<r>: cannot patch <b>{}<r>: <b>{}@{}<r> is not in the lockfile",
+                "<r><red>error<r>: cannot patch <b>{}<r>: <b>{}@{}<r> not in lockfile",
                 bstr::BStr::new(folder),
                 bun_fmt::EscapeControlChars(bstr::BStr::new(name)),
                 bun_fmt::EscapeControlChars(bstr::BStr::new(version)),
@@ -435,7 +437,7 @@ fn folder_lookup_error(
             );
         }
         FolderLookupError::NeedsLabel => bun_core::pretty_errorln!(
-            "<r><red>error<r>: cannot patch <b>{}<r>: no npm package <b>{}@{}<r> is in the lockfile, and the other packages named <b>{}<r> have a git, tarball or folder label. Run <b>{} \\<dependency\\>@\\<label\\><r> with the dependency name and the label from the lockfile instead.",
+            "<r><red>error<r>: cannot patch <b>{}<r>: no npm package <b>{}@{}<r> in lockfile. Other packages named <b>{}<r> have a git, tarball or folder label: run <b>{} \\<dependency\\>@\\<label\\><r>",
             bstr::BStr::new(folder),
             bun_fmt::EscapeControlChars(bstr::BStr::new(name)),
             bun_fmt::EscapeControlChars(bstr::BStr::new(version)),
@@ -586,7 +588,7 @@ pub fn do_patch_commit(
         .peekable();
     if binary_files.peek().is_some() {
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: a patch cannot hold a change to a binary file, and git found these in <b>{}<r>:",
+            "<r><red>error<r>: patches cannot contain binary file changes. found in <b>{}<r>:",
             bstr::BStr::new(&target.folder),
         );
         for line in binary_files {
@@ -612,7 +614,7 @@ pub fn do_patch_commit(
         &bun_ast::Source::init_path_string(&patch_filename[..], &patchfile_contents[..]),
     ) {
         bun_core::note!(
-            "nothing was written: <b>{}<r>, package.json and the lockfile are as they were",
+            "no changes made to <b>{}<r>, package.json or the lockfile",
             bstr::BStr::new(&target.folder),
         );
         Global::crash();
@@ -714,7 +716,7 @@ fn patch_applies(
     let scratch = TempTree(temp_sibling(folder));
     if let Err(e) = copy_cache_entry(cache_dir, cache_dir_subpath, &scratch.0) {
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: failed to copy the package to try the patch on: {}",
+            "<r><red>error<r>: failed to copy package to test the patch: {}",
             e.name(),
         );
         return false;
@@ -886,7 +888,7 @@ impl Drop for HiddenFromDiff {
                 let _ = Fd::cwd().delete_tree(&self.stash_path);
             }
             Err(e) => bun_core::warn!(
-                "failed to move the contents of {} back into the package folder: {}",
+                "failed to move {} back into package folder: {}",
                 bstr::BStr::new(&self.stash_path),
                 e
             ),
@@ -1057,13 +1059,13 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     );
     if !is_loaded {
         bun_core::pretty!(
-            "\nThe packages that depend on <b>{}<r> load it from the global store. They see your changes after <cyan>bun patch --commit<r>.\n",
+            "\nDependents of <b>{}<r> load it from the global store and will not see changes until <cyan>bun patch --commit<r>.\n",
             bstr::BStr::new(&pkg_name),
         );
     }
     if has_trusted_scripts(manager, &pkg, &pkg_name, &folder) {
         bun_core::pretty!(
-            "\nThe install scripts of <b>{}<r> have not run on this copy. They run again at <cyan>bun patch --commit<r>.\n",
+            "\nInstall scripts of <b>{}<r> have not run on this copy. They run on <cyan>bun patch --commit<r>.\n",
             bstr::BStr::new(&pkg_name),
         );
     }
@@ -1124,7 +1126,7 @@ fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
             .log_mut()
             .print(std::ptr::from_mut(Output::error_writer()));
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: <b>{}<r> is not in the cache, and getting it again failed",
+            "<r><red>error<r>: <b>{}<r> not in cache, re-download failed",
             bstr::BStr::new(&name),
         );
         Global::crash();
@@ -1269,7 +1271,7 @@ fn real_folder(cache_path: &[u8], folder: &[u8], replaces_folder: bool) -> Vec<u
     }
 
     bun_core::pretty_errorln!(
-        "<r><red>error<r>: <b>{}<r> resolves into the global store, which other projects share; refusing to patch through it",
+        "<r><red>error<r>: refusing to patch <b>{}<r>: resolves into the shared global store",
         bstr::BStr::new(folder),
     );
     if replaces_folder {
@@ -1277,7 +1279,7 @@ fn real_folder(cache_path: &[u8], folder: &[u8], replaces_folder: bool) -> Vec<u
             "set <b>globalStore = false<r> under <b>[install]<r> in bunfig.toml, run <cyan>bun install<r> and patch the package again"
         );
     } else {
-        bun_core::note!("run <cyan>bun patch<r> on the package first, it makes the copy to edit");
+        bun_core::note!("run <cyan>bun patch<r> on the package first to create an editable copy");
     }
     Global::crash();
 }
@@ -1361,7 +1363,7 @@ fn replace_with_cache_copy(
     if let Err(e) = rename_staging_into_place(cwd, &staging_z, &folder_z) {
         if has_old && let Err(restore_err) = move_aside(&old_z, &folder_z) {
             bun_core::warn!(
-                "failed to move the previous package folder back, it is at {}: {}",
+                "failed to restore previous package folder (now at {}): {}",
                 bstr::BStr::new(&old.keep()),
                 restore_err
             );
@@ -1375,7 +1377,7 @@ fn replace_with_cache_copy(
         if is_link(&old.0) {
             if let Err(e) = link_store_siblings(&old.0, folder) {
                 bun_core::warn!(
-                    "failed to link the dependencies of the package into {}: {}",
+                    "failed to link package dependencies into {}: {}",
                     bstr::BStr::new(folder),
                     e
                 );
@@ -1383,7 +1385,7 @@ fn replace_with_cache_copy(
             let _ = crate::isolated_install::installer::remove_link(&old_z);
         } else if let Err(e) = keep_nested_packages(&old.0, folder) {
             bun_core::warn!(
-                "failed to keep the packages installed under {}, run bun install to get them back: {}",
+                "failed to keep packages under {}, run bun install to restore them: {}",
                 bstr::BStr::new(folder),
                 e
             );
@@ -1413,7 +1415,7 @@ fn move_aside(folder: &ZStr, aside: &ZStr) -> sys::Result<()> {
     };
     move_all(folder, aside).inspect_err(|_| match move_all(aside, folder) {
         Err(e) if e.get_errno() != sys::E::ENOENT => bun_core::warn!(
-            "failed to move everything back into the package folder, the rest is at {}: {}",
+            "failed to restore package folder (rest is at {}): {}",
             bstr::BStr::new(aside.as_bytes()),
             e
         ),

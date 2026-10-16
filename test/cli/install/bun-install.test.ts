@@ -512,9 +512,9 @@ describe.concurrent("bun-install", () => {
   });
 
   it.each([
-    ["an empty name", { "": "" }, 'Dependency name cannot be empty (in "dependencies")'],
-    ["an empty name with a dist-tag", { "": "latest" }, 'Dependency name cannot be empty (in "dependencies")'],
-    ["an empty name with a range", { "": "^1" }, 'Dependency name cannot be empty (in "dependencies")'],
+    ["an empty name", { "": "" }, 'empty dependency name (in "dependencies")'],
+    ["an empty name with a dist-tag", { "": "latest" }, 'empty dependency name (in "dependencies")'],
+    ["an empty name with a range", { "": "^1" }, 'empty dependency name (in "dependencies")'],
     ["an npm alias with no name", { "x": "npm:@1.0.0" }, 'invalid package name "@1.0.0" in dependency "npm:@1.0.0"'],
     [
       "an npm alias with no name and a dist-tag",
@@ -670,8 +670,8 @@ describe.concurrent("bun-install", () => {
     });
   });
 
-  // The same in somebody else's manifest is not this project's error: the edge is left out, with one
-  // warning that names the package, and the registry is not asked for `/` or `/@1.0.0`.
+  // The same in somebody else's manifest is not this project's error: the edge is left out, --verbose
+  // names the package, and the registry is not asked for `/` or `/@1.0.0`.
   describe.each(["hoisted", "isolated"])("a dependency of a package that names no package, %s linker", linker => {
     async function install(ctx: TestContext, ...args: string[]) {
       await using proc = spawn({
@@ -697,10 +697,10 @@ describe.concurrent("bun-install", () => {
           setContextHandler(ctx, heldRegistry(ctx, urls, { holder: { "1.0.0": { [group]: declared } } }));
           await writeProject(ctx, { "package.json": { name: "foo", dependencies: { holder: "1.0.0" } } }, { linker });
 
-          const fresh = await install(ctx);
+          const fresh = await install(ctx, "--verbose");
           expect(fresh.err).not.toContain("error:");
           expect(fresh.warnings).toEqual([
-            `warn: Skipped a dependency of holder@1.0.0 that names no package ("${Object.values(declared)[0]}" in "${group}")`,
+            `warn: skipping unnamed dependency of holder@1.0.0 ("${Object.values(declared)[0]}" in "${group}")`,
           ]);
           expect(urls.sort()).toEqual(["holder", "holder-1.0.0.tgz"]);
           expect(fresh.exitCode).toBe(0);
@@ -738,8 +738,8 @@ describe.concurrent("bun-install", () => {
         const { err, warnings, exitCode } = await install(ctx);
         expect(err).not.toContain("error:");
         expect(warnings.sort()).toEqual([
-          'warn: Skipped a dependency that names no package ("1.0.0" in "dependencies")',
-          'warn: Skipped a dependency that names no package ("npm:@1.0.0" in "dependencies")',
+          'warn: skipping unnamed dependency ("1.0.0" in "dependencies")',
+          'warn: skipping unnamed dependency ("npm:@1.0.0" in "dependencies")',
         ]);
         expect(urls).toEqual([]);
         expect(await exists(join(ctx.package_dir, "node_modules", "packed", "package.json"))).toBeTrue();
@@ -2158,7 +2158,7 @@ describe.concurrent("bun-install", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain(`error: Invalid dependency name "${alias}"`);
+      expect(stderr).toContain(`error: invalid dependency name "${alias}"`);
       expect(stdout).not.toContain("installed");
       expect(exitCode).toBe(1);
     }
@@ -7436,7 +7436,7 @@ describe.concurrent("bun-install", () => {
     const fileIsEmpty = (path: string) =>
       [
         `error: failed to parse '<dir>/${path}': file is empty`,
-        "note: Restore package.json, or write {} to it to start without dependencies",
+        "note: restore package.json, or write {} to start without dependencies",
       ].join("\n");
 
     for (const [lockfile, withLockfile] of [
@@ -11885,7 +11885,7 @@ describe.concurrent("bun-install", () => {
           requests: [],
           stdout: expect.stringContaining("bun install v1."),
           // Rejected as a name before any URL is built from it.
-          stderr: expect.stringContaining(`error: Invalid dependency name ".."`),
+          stderr: expect.stringContaining(`error: invalid dependency name ".."`),
           exitCode: 1,
         });
       });
@@ -12371,7 +12371,7 @@ it.concurrent("rejects dependency aliases containing '..' path segments", async 
     // directory; nothing may be materialized there.
     expect(await exists(join(ctx.package_dir, "..", escapeName))).toBe(false);
     // The alias is reported as invalid instead of being used as a path.
-    expect(err).toContain("Invalid dependency name");
+    expect(err).toContain("invalid dependency name");
     expect(out).not.toContain("1 package installed");
     expect(await exited).toBe(1);
   });
@@ -12450,7 +12450,7 @@ describe.concurrent.each(namesTheInstallerOwns)("a dependency named %p", key => 
         installed: out.includes("installed"),
         exitCode,
       }).toEqual({
-        errors: [`error: Invalid dependency name "${key}"`, `error: ${key}@npm:baz@0.0.3 failed to resolve`],
+        errors: [`error: invalid dependency name "${key}"`, `error: ${key}@npm:baz@0.0.3 failed to resolve`],
         unpacked: false,
         otherInstalled: false,
         postinstall: false,
@@ -12493,7 +12493,7 @@ describe.concurrent.each(namesTheInstallerOwns)("a dependency named %p", key => 
       installed: out.includes("installed"),
       exitCode,
     }).toEqual({
-      errors: [`error: Invalid dependency name "${key}"`],
+      errors: [`error: invalid dependency name "${key}"`],
       nodeModules: false,
       installed: false,
       exitCode: 1,
@@ -12563,7 +12563,7 @@ it.concurrent("refuses a registry package whose own name is an entry of the inst
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(err).toContain('error: Invalid dependency name ".bin"');
+    expect(err).toContain('error: invalid dependency name ".bin"');
     expect(out).not.toContain("installed");
     expect(urls).toEqual([]);
     expect(exitCode).toBe(1);
@@ -12676,7 +12676,7 @@ it.concurrent("does not extract a tarball for a dependency alias containing '..'
     expect(await readdirSorted(join(zone, "a", "b"))).toEqual(["c"]);
     // The unsafe alias is reported as an error before the tarball is even
     // requested, and nothing is installed.
-    expect(err).toContain('Invalid dependency name "x/../../../.."');
+    expect(err).toContain('invalid dependency name "x/../../../.."');
     expect(urls).toEqual([]);
     expect(out).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
@@ -12757,7 +12757,7 @@ describe.concurrent("dependency names containing terminal control characters", (
         });
         const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
-        expect(err).toContain(`error: Invalid dependency name "${expectedName}"`);
+        expect(err).toContain(`error: invalid dependency name "${expectedName}"`);
         assertNameNeverLeaked(out, err, urls);
         expect(urls).toContain(`${ctx.registry_url}bar`);
         expect(await installed(ctx)).toEqual([]);
@@ -12783,7 +12783,7 @@ describe.concurrent("dependency names containing terminal control characters", (
       });
       const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
-      expect(err).not.toContain("Invalid dependency name");
+      expect(err).not.toContain("invalid dependency name");
       expect(out).toContain("installed bar@");
       expect(await installed(ctx)).toEqual(["bar"]);
       expect(exitCode).toBe(0);
@@ -12808,7 +12808,7 @@ describe.concurrent("dependency names containing terminal control characters", (
       });
       const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
-      expect(err).toContain(`warn: Invalid dependency name "${escapedName}"`);
+      expect(err).toContain(`warn: invalid dependency name "${escapedName}"`);
       assertNameNeverLeaked(out, err, urls);
       expect(await installed(ctx)).toEqual(["bar"]);
       expect(out).toContain("1 package installed");
@@ -12838,7 +12838,7 @@ describe.concurrent("dependency names containing terminal control characters", (
         });
         const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-        expect(err).toContain(`error: Invalid dependency name "${longName}"`);
+        expect(err).toContain(`error: invalid dependency name "${longName}"`);
         expect(urls.filter(url => url.includes(longName))).toEqual([]);
         expect(await installed(ctx)).toEqual([]);
         expect(exitCode).toBe(1);
@@ -12874,7 +12874,7 @@ describe.concurrent("dependency names containing terminal control characters", (
         });
         const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
-        expect(err).toContain(`error: Invalid dependency name "${escapedName}"`);
+        expect(err).toContain(`error: invalid dependency name "${escapedName}"`);
         expect(err).toContain(`error: ${summary} failed to resolve`);
         assertNameNeverLeaked(out, err, urls);
         expect(await installed(ctx)).toEqual([]);
@@ -12905,7 +12905,7 @@ describe.concurrent("dependency names containing terminal control characters", (
       // `bun install` gets a chance to touch it.
       const commands: [string[], string][] = [
         [["pm", "ls", "--all"], "failed to parse lockfile: InvalidLockfile"],
-        [["install"], "Invalid package name"],
+        [["install"], "invalid package name"],
       ];
       for (const [args, expectedError] of commands) {
         const { stdout, stderr, exited } = spawn({
@@ -12980,7 +12980,7 @@ it.concurrent(
       expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
       expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
       // The dependency is reported as unresolvable instead of silently linking local files.
-      expect(err).toContain("Could not find package.json");
+      expect(err).toContain("package.json not found");
       expect(out).not.toContain("2 packages installed");
       expect(exitCode).toBe(1);
     });
@@ -13090,7 +13090,7 @@ describe.concurrent('a registry package\'s file: dependency that hides ".." behi
       });
       const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      expect(err).toContain("Could not find package.json");
+      expect(err).toContain("package.json not found");
       expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
       expect(exitCode).toBe(1);
     });
@@ -13491,7 +13491,7 @@ it.concurrent(
       });
       const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
 
-      expect(err).not.toContain("Could not find package.json");
+      expect(err).not.toContain("package.json not found");
       expect(err).not.toContain("failed to resolve");
       expect(err).not.toContain("unsafe folder path");
       expect(err).not.toContain("refusing to install");
@@ -13619,7 +13619,7 @@ describe.concurrent("a dependency whose own package.json has an invalid name", (
     });
 
     const { err, exitCode } = await install(String(dir));
-    expect(err).toContain('error: Invalid package name "a\\u0000b"');
+    expect(err).toContain('error: invalid package name "a\\u0000b"');
     expect(await exists(join(String(dir), "project", "bun.lock"))).toBe(false);
     expect(exitCode).toBe(1);
   });
@@ -13635,7 +13635,7 @@ describe.concurrent("a dependency whose own package.json has an invalid name", (
     });
 
     const { err, exitCode } = await install(String(dir));
-    expect(err).toContain('error: Invalid package name "a@b"');
+    expect(err).toContain('error: invalid package name "a@b"');
     expect(err).toMatch(/ at .*member[\\/]package\.json:1:9\s/);
     expect(await exists(join(String(dir), "project", "bun.lock"))).toBe(false);
     expect(exitCode).toBe(1);
@@ -13774,7 +13774,7 @@ describe.concurrent.skipIf(isWindows)("file: dependency whose package.json path 
 
     const { folder, err, exitCode } = await installFolderDependency(String(dir), PATH_BUFFER_BYTES - 1);
 
-    expect(err).toContain(`error: Could not find package.json for "file:${folder}"`);
+    expect(err).toContain(`error: package.json not found for "file:${folder}"`);
     expect(exitCode).toBe(1);
   });
 
@@ -13864,8 +13864,8 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
   // declaring package, which depends on where it came from.
   function refusal(name: string, spec: string, declarer: string) {
     return [
-      `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: local tarball dependencies are only allowed in the package.json files of this project`,
-      `note: add "${name}": "${spec}" to the root package.json to install that tarball for ${declarer.slice(0, declarer.indexOf("@"))} as well`,
+      `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: local tarballs are only allowed in this project's package.json files`,
+      `note: add "${name}": "${spec}" to the root package.json to install it for ${declarer.slice(0, declarer.indexOf("@"))} too`,
     ];
   }
 
@@ -14228,7 +14228,7 @@ for (const field of ["resolutions", "overrides"]) {
 
       expect(err).not.toContain("unsafe folder path");
       expect(err).not.toContain("refusing to install");
-      expect(err).not.toContain("Could not find package.json");
+      expect(err).not.toContain("package.json not found");
       expect(err).not.toContain("failed to resolve");
       expect(exitCode).toBe(0);
       expect(out).toContain("shared");
@@ -14318,7 +14318,7 @@ for (const field of ["resolutions", "overrides"]) {
 
     expect(err).not.toContain("unsafe folder path");
     expect(err).not.toContain("refusing to install");
-    expect(err).not.toContain("Could not find package.json");
+    expect(err).not.toContain("package.json not found");
     expect(err).not.toContain("failed to resolve");
     expect(exitCode).toBe(0);
     expect(out).toContain("shared");
@@ -14377,7 +14377,7 @@ for (const field of ["resolutions", "overrides"]) {
 
       expect(await exists(join(ctx.package_dir, "node_modules", "loot"))).toBe(false);
       expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
-      expect(err).toContain("Could not find package.json");
+      expect(err).toContain("package.json not found");
       expect(out).not.toContain("2 packages installed");
       expect(exitCode).toBe(1);
     });
@@ -14434,7 +14434,7 @@ for (const field of ["resolutions", "overrides"]) {
         });
         const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
 
-        expect(err).not.toContain("Could not find package.json");
+        expect(err).not.toContain("package.json not found");
         expect(err).not.toContain("failed to resolve");
         expect(err).not.toContain("unsafe folder path");
         expect(err).not.toContain("refusing to install");
@@ -14516,7 +14516,7 @@ registry = "${ctx.registry_url}"
 
         // stderr also carries the progress lines of the registry fetch of `baz`.
         expect(err.split(/\r?\n/).filter(line => line.startsWith("error:"))).toEqual([
-          'error: Could not find package.json for "file:../shared" dependency "shared"',
+          'error: package.json not found for "file:../shared" dependency "shared"',
           "error: shared@1.0.0 failed to resolve",
         ]);
         expect(out).not.toContain("packages installed");
@@ -14815,7 +14815,7 @@ it.concurrent("fails when a file: override for a registry package's dependency n
     });
 
     // Resolved like a root file: dependency: the missing folder fails the resolve, before anything is installed.
-    expect(err).toContain('Could not find package.json for "file:./vendor/is-odd" dependency "is-odd"');
+    expect(err).toContain('package.json not found for "file:./vendor/is-odd" dependency "is-odd"');
     expect(out).not.toContain("packages installed");
     expect(await exists(join(ctx.package_dir, "node_modules", "is-even", "node_modules", "is-odd"))).toBe(false);
     expect(await exists(join(ctx.package_dir, "bun.lock"))).toBe(false);
@@ -15947,7 +15947,7 @@ it.concurrent(doesNotExtractOutsideTempDir, async () => {
   expect(await exists(join(root, "package.json"))).toBe(false);
   expect(await exists(join(root, "index.js"))).toBe(false);
   // The unsafe alias is rejected as an install folder name and nothing is installed.
-  expect(err).toContain('Invalid dependency name "../../../../../.."');
+  expect(err).toContain('invalid dependency name "../../../../../.."');
   expect(out).not.toContain("1 package installed");
   expect(exitCode).not.toBe(0);
 
@@ -16022,7 +16022,7 @@ it.concurrent(doesNotCreateCacheEntryOutside, async () => {
   // planted next to it.
   expect(await readdirSorted(cacheHolder)).toEqual(["cache"]);
   // The unsafe alias is rejected as an install folder name.
-  expect(err).toContain('Invalid dependency name ".."');
+  expect(err).toContain('invalid dependency name ".."');
   expect(exitCode).not.toBe(0);
 
   // A normal single-segment alias still gets its cache index entry, inside the
@@ -17208,12 +17208,10 @@ describe.concurrent("deprecated versions", () => {
     expect(await resolve(String(dir), registry)).toEqual([]);
   });
 
-  it("the dependencies of dependencies get one line in total", async () => {
+  it("the dependencies of dependencies are only reported with --verbose", async () => {
     using registry = serveManifests(packages);
     using dir = project({ dependencies: { parent: "1.0.0" } });
-    expect(await resolve(String(dir), registry)).toEqual([
-      "warn: 2 deprecated versions among the dependencies of dependencies (--verbose lists them)",
-    ]);
+    expect(await resolve(String(dir), registry)).toEqual([]);
 
     await rm(join(String(dir), "bun.lock"));
     expect((await resolve(String(dir), registry, "install", "--verbose")).sort()).toEqual([
@@ -17231,10 +17229,7 @@ describe.concurrent("deprecated versions", () => {
         "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { old: "1.1.0" } }),
       },
     );
-    expect((await resolve(String(dir), registry)).sort()).toEqual([
-      "warn: 1 deprecated version among the dependencies of dependencies (--verbose lists them)",
-      "warn: deprecated old@1.1.0: use new",
-    ]);
+    expect(await resolve(String(dir), registry)).toEqual(["warn: deprecated old@1.1.0: use new"]);
   });
 
   it("bun add and bun update report what they resolve", async () => {
@@ -17590,7 +17585,7 @@ describe.concurrent.each(["hoisted", "isolated"])(
       const cwd = join(String(dir), "project");
       const { stderr, exitCode } = await bunIn(cwd, ["install"]);
       expect(errors(stderr)).toEqual([
-        `error: Could not find package.json for "file:../inner" dependency "inner"`,
+        `error: package.json not found for "file:../inner" dependency "inner"`,
         "error: inner@file:../inner failed to resolve",
       ]);
       expect(outside(cwd)).toEqual([]);

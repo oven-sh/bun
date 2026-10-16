@@ -1517,7 +1517,7 @@ test.concurrent(
     const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
     expect(stderr.split(/\r?\n/).filter(line => /^(error|note):/.test(line))).toEqual([
       'error: prepare script from "lib" exited with 3',
-      "note: Bun does not install the devDependencies of a git dependency before its prepare scripts",
+      "note: devDependencies of a git dependency are not installed before its prepare scripts",
     ]);
     expect(exitCode).toBe(3);
   },
@@ -1624,7 +1624,7 @@ test.concurrent("a file: folder that a git dependency does not have is an error"
 
   const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
   expect(stderr).toContain(
-    `error: could not read the package.json of "sub@file:./packages/typo" declared by lib@${repoUrl}#${branchCommits(bare).lib}: ENOENT`,
+    `error: failed to read package.json of "sub@file:./packages/typo" declared by lib@${repoUrl}#${branchCommits(bare).lib}: ENOENT`,
   );
   expect(existsSync(join(project, "bun.lock"))).toBe(false);
   expect(exitCode).toBe(1);
@@ -1641,9 +1641,7 @@ test.concurrent("a file: folder of a git dependency is not read through a link t
   const project = writeProject(root, { lib: `git+${pathToFileURL(bare)}#lib` });
 
   const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
-  expect(stderr).toMatch(
-    /error: could not read the package\.json of "sub@file:\.\/packages\/sub" declared by lib@.*: E/,
-  );
+  expect(stderr).toMatch(/error: failed to read package\.json of "sub@file:\.\/packages\/sub" declared by lib@.*: E/);
   expect(exitCode).toBe(1);
 });
 
@@ -3398,7 +3396,7 @@ test.concurrent("a file: folder that a tarball package does not have is an error
 
   const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
   expect(stderr).toMatch(
-    /error: could not read the package\.json of "sub@file:\.\/packages\/typo" declared by lib@.*lib\.tgz: ENOENT/,
+    /error: failed to read package\.json of "sub@file:\.\/packages\/typo" declared by lib@.*lib\.tgz: ENOENT/,
   );
   expect(existsSync(join(project, "bun.lock"))).toBe(false);
   expect(exitCode).toBe(1);
@@ -3414,7 +3412,7 @@ test.concurrent("rejects a file: folder dependency of a tarball package that poi
   const project = writeProject(root, { escaping: `file:../tarballs/escaping.tgz` });
 
   const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
-  expect(stderr).toContain('error: Could not find package.json for "file:../outside" dependency "outside"');
+  expect(stderr).toContain('error: package.json not found for "file:../outside" dependency "outside"');
   expect(stderr).toContain("error: outside@file:../outside failed to resolve");
   expect(await Bun.file(join(project, "node_modules", "outside", "package.json")).exists()).toBe(false);
   expect(

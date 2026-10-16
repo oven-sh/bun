@@ -149,7 +149,7 @@ fn warn_ignored_patched_dependencies(
     key_loc: bun_ast::Loc,
 ) {
     const TEXT: &[u8] =
-        b"\"patchedDependencies\" is ignored in a workspace package. Move it to the root package.json";
+        b"ignoring \"patchedDependencies\" in workspace package, move it to the root package.json";
     let warned = log.msgs.iter().any(|msg| {
         *msg.data.text == *TEXT
             && (msg.data.location.as_ref())
@@ -553,6 +553,7 @@ impl Package<u64> {
     pub(crate) fn from_npm(
         lockfile: &mut Lockfile,
         log: &mut bun_ast::Log,
+        log_level: crate::LogLevel,
         manifest: &Npm::PackageManifest,
         version: SemverVersion,
         package_version_ptr: &Npm::PackageVersion,
@@ -665,17 +666,19 @@ impl Package<u64> {
                     if key.slice(&manifest.string_buf).is_empty()
                         || dependency::nameless_npm_alias(declared).is_some()
                     {
-                        log.add_warning_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Skipped a dependency of {}@{} that names no package (\"{}\" in \"{}\")",
-                                bun_core::fmt::escape_control_chars(manifest.name()),
-                                version.fmt(&manifest.string_buf),
-                                bun_core::fmt::escape_control_chars(declared),
-                                bstr::BStr::new(group.prop),
-                            ),
-                        );
+                        if log_level.is_verbose() {
+                            log.add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "skipping unnamed dependency of {}@{} (\"{}\" in \"{}\")",
+                                    bun_core::fmt::escape_control_chars(manifest.name()),
+                                    version.fmt(&manifest.string_buf),
+                                    bun_core::fmt::escape_control_chars(declared),
+                                    bstr::BStr::new(group.prop),
+                                ),
+                            );
+                        }
                         continue 'list;
                     }
 
@@ -1517,7 +1520,7 @@ impl Diff {
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
-                "the dependencies in {}/package.json changed since the lockfile was saved (run 'bun install' to update it)",
+                "dependencies in {}/package.json changed since lockfile was saved (run 'bun install')",
                 bun_core::fmt::escape_control_chars(
                     lockfile.packages.items_resolution()[folder as usize]
                         .folder()
@@ -1746,7 +1749,7 @@ impl Package<u64> {
                     source,
                     key_loc,
                     format_args!(
-                        "Skipped a dependency that names no package (\"{}\" in \"{}\")",
+                        "skipping unnamed dependency (\"{}\" in \"{}\")",
                         bun_core::fmt::escape_control_chars(version),
                         bstr::BStr::new(group.prop),
                     ),
@@ -1767,7 +1770,7 @@ impl Package<u64> {
                     source,
                     key_loc,
                     format_args!(
-                        "Dependency name cannot be empty (in \"{}\")",
+                        "empty dependency name (in \"{}\")",
                         bstr::BStr::new(group.prop)
                     ),
                 ),
@@ -2224,7 +2227,7 @@ impl Package<u64> {
                                 source,
                                 value_loc_of(source, name_q.loc),
                                 format_args!(
-                                    "Invalid package name {}",
+                                    "invalid package name {}",
                                     bun_core::fmt::EscapeControlChars(bun_core::fmt::quote(name))
                                 ),
                             );

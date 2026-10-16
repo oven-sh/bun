@@ -372,7 +372,7 @@ describe("yarn berry migration", () => {
   describe("package.json edits", () => {
     const editedLine = "rewrote patch:/portal:/link:/npm: ranges, added patchedDependencies in package.json";
     const frozenNote =
-      "note: the lockfile is frozen, so the migration from yarn.lock was not written to bun.lock and package.json; run 'bun install' and commit the result";
+      "note: lockfile is frozen, migration from yarn.lock not written to bun.lock and package.json; run 'bun install' and commit the result";
     const migratedPackageJson = {
       name: "berry-patch",
       dependencies: { "no-deps": "1.0.0", "one-dep": "^1.0.0", "optional-native": "^1.0.0" },
@@ -390,7 +390,7 @@ describe("yarn berry migration", () => {
       const dir = await fixture("patch");
       const before = await Bun.file(join(dir, "package.json")).text();
 
-      const { stdout, stderr, exitCode } = await run(dir, ...args);
+      const { stdout, stderr, exitCode } = await run(dir, ...args, "--verbose");
 
       expect(stderr).not.toContain("error:");
       expect(stderr).toContain("migrated lockfile from yarn.lock");
@@ -469,7 +469,7 @@ describe("yarn berry migration", () => {
         },
       });
 
-      const frozen = await run(dir, "install", "--frozen-lockfile");
+      const frozen = await run(dir, "install", "--frozen-lockfile", "--verbose");
       expect(frozen.stderr).toContain(frozenNote);
       expect(await Bun.file(join(dir, "packages", "pkg-a", "package.json")).json()).toEqual(member);
 
@@ -743,7 +743,7 @@ describe("yarn berry migration", () => {
     const { stderr, exitCode } = await run(dir, "install");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
     // bun has no protocol for a linked folder whose dependencies are installed too, so it becomes a copy
-    expect(stderr).toContain(`"local-portal@portal:./local-portal" is migrated as "file:local-portal"`);
+    expect(stderr).toContain(`migrating "local-portal@portal:./local-portal" as "file:local-portal"`);
     expect(stderr).not.toContain("bun will resolve");
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
@@ -836,7 +836,7 @@ describe("yarn berry migration", () => {
 
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
-    expect(stderr).not.toContain("is migrated as");
+    expect(stderr).not.toContain("migrating ");
     expect(stderr).not.toContain("error:");
     expect((await Bun.file(join(dir, "package.json")).json()).dependencies).toEqual({
       bare: "link:./bare",
@@ -1194,13 +1194,13 @@ catalogs:
       name: "a dependency with no entry",
       manifest: { dependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1" } },
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
-      error: () => `error: yarn.lock has no entry for "a-dep@^1.0.1", a dependency of "berry-reject"`,
+      error: () => `error: yarn.lock missing "a-dep@^1.0.1", a dependency of "berry-reject"`,
     },
     {
       name: "a resolutions rule whose target has no entry",
       manifest: { dependencies: { "no-deps": "^1.0.0" }, resolutions: { "no-deps": "2.0.0" } },
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
-      error: () => `error: yarn.lock has no entry for "no-deps@^1.0.0", a dependency of "berry-reject"`,
+      error: () => `error: yarn.lock missing "no-deps@^1.0.0", a dependency of "berry-reject"`,
     },
     {
       name: "a protocol bun does not have",
@@ -1468,7 +1468,7 @@ catalogs:
           ],
         }),
       error: () =>
-        `error: yarn.lock fetches "what-bin@1.0.0" from http://127.0.0.1:${testRegistry.port}/what-bin/-/what-bin-1.0.0.tgz, which is not under the registry bun is configured with (${testRegistry.registryUrl()}); the integrity of a package comes from that registry`,
+        `error: yarn.lock fetches "what-bin@1.0.0" from http://127.0.0.1:${testRegistry.port}/what-bin/-/what-bin-1.0.0.tgz, outside the configured registry (${testRegistry.registryUrl()}): cannot get integrity`,
     },
     {
       name: "an __archiveUrl on the registry .yarnrc.yml names, which is not bun's",
@@ -1508,7 +1508,7 @@ catalogs:
           ],
         }),
       error: () =>
-        `error: yarn.lock patches 2 packages with several files each ("a-dep@1.0.1" with 3, "no-deps@1.0.0" with 2); bun applies one patch per package — merge the files of each into one`,
+        `error: yarn.lock applies several patch files to 2 packages ("a-dep@1.0.1" with 3, "no-deps@1.0.0" with 2). bun supports one per package, merge them`,
     },
     {
       name: "a yarn.lock that is not YAML",
@@ -1641,14 +1641,14 @@ catalogs:
             `  pkg-a: "npm:^1.0.0"`,
           ],
         }),
-      error: () => `error: yarn.lock has no entry for "pkg-a@^1.0.0", a dependency of "pkg-b"`,
+      error: () => `error: yarn.lock missing "pkg-a@^1.0.0", a dependency of "pkg-b"`,
     },
     {
       name: "a devDependencies range (yarn installs it) the dependencies range (bun installs it) does not accept",
       manifest: { dependencies: { "no-deps": "^2.0.0" }, devDependencies: { "no-deps": "^1.0.0" } },
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
       error: () =>
-        `error: "no-deps" is in several dependency groups of "berry-reject"; yarn installs the range "^1.0.0" for all of them, and "^2.0.0" does not accept what yarn.lock pins for it`,
+        `error: "no-deps" is in several dependency groups of "berry-reject": yarn uses "^1.0.0" for all, but yarn.lock version does not satisfy "^2.0.0"`,
     },
   ];
   for (const { name, manifest, files, lock, error } of rejected) {
@@ -1682,7 +1682,7 @@ catalogs:
     });
 
     const { stderr, exitCode } = await run(dir, "install");
-    expect(stderr).toContain(`error: yarn.lock has no entry for "a-dep@^1.0.1", a dependency of "berry-reject"`);
+    expect(stderr).toContain(`error: yarn.lock missing "a-dep@^1.0.1", a dependency of "berry-reject"`);
     expect(stderr).toContain("InvalidYarnBerryLockfile: failed to migrate lockfile: 'yarn.lock'");
     expect(stderr).not.toContain("migrated lockfile from yarn.lock");
     // resolved fresh: the newest 1.x, not the 1.0.0 yarn.lock named
@@ -1724,7 +1724,7 @@ catalogs:
 
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
     expect(stderr).toContain(
-      `error: yarn.lock has no entry for "direct@http://***@localhost:1/direct-1.0.0.tgz", a dependency of "berry-reject"`,
+      `error: yarn.lock missing "direct@http://***@localhost:1/direct-1.0.0.tgz", a dependency of "berry-reject"`,
     );
     expect(stderr).not.toContain("s3cret");
     expect(exitCode).toBe(1);

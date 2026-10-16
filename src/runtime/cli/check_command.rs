@@ -56,6 +56,10 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!("--threads <n>      Number of threads <d>(default: one per CPU core)<r>"),
     clap::param!("--timing           Print load and check times"),
     clap::param!("--cwd <path>       Set the working directory"),
+    // `script_or_command` reads it.
+    clap::param!(
+        "--no-script        Run the type checker even if the project has a <b>check<r> script"
+    ),
     clap::param!("-h, --help         Print this help menu"),
     // Nothing is ever emitted. `--noEmit` is a compiler option like any other, which the driver sets last.
     clap::param!("--no-emit"),

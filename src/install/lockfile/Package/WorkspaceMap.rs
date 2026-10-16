@@ -55,7 +55,7 @@ impl WorkspaceMap {
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
-                    "Skipping workspace \"{}\": its package.json has no \"name\", so its dependencies will not be installed",
+                    "skipping workspace \"{}\": package.json has no \"name\"",
                     bun_core::fmt::escape_control_chars(dir)
                 ),
             );

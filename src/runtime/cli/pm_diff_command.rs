@@ -2287,7 +2287,7 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
             let at = first_difference(&theirs, &ours);
             notes.push(note!(
                 colors,
-                "the registry and the package.json of {} disagree on <b>{}<r>: {} <d>vs<r> {} <d>(bun install goes by the registry)<r>",
+                "registry and package.json of {} disagree on <b>{}<r>: {} <d>vs<r> {} <d>(bun install uses the registry's)<r>",
                 &[
                     BStr::new(&tree.label).to_string(),
                     BStr::new(field).to_string(),
@@ -2317,7 +2317,7 @@ fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors
             if keys[..i].contains(key) {
                 notes.push(note!(
                     colors,
-                    "<b>{}<r> is in package.json more than once",
+                    "<b>{}<r> listed more than once in package.json",
                     &[BStr::new(key).to_string()],
                 ));
             }

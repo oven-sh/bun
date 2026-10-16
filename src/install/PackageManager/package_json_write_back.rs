@@ -179,7 +179,7 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
                             bun_core::fmt::quote(name),
                         ),
                     );
-                    bun_core::note!("add one of them");
+                    bun_core::note!("add only one of them");
                     Global::crash();
                 }
                 let declared_list = DependencyGroup::prop_for_behavior(declared.behavior);

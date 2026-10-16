@@ -1800,7 +1800,7 @@ describe("minimum-release-age", () => {
         expect(stderr.split(/\r?\n/).filter(line => line.includes("minimumReleaseAgeExcludes"))).toEqual(
           entries.map(
             entry =>
-              `warn: Ignoring minimumReleaseAgeExcludes entry "${entry}": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
+              `warn: ignoring minimumReleaseAgeExcludes entry "${entry}": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
           ),
         );
         // "excluded-package@" must not turn into a whole-package exemption, and
@@ -1883,7 +1883,7 @@ describe("minimum-release-age", () => {
             args: ["--minimum-release-age-excludes", "excluded-package@^1.0.0"],
           });
           expect(stderr.split(/\r?\n/).filter(line => line.includes("minimumReleaseAgeExcludes"))).toEqual([
-            `warn: Ignoring minimumReleaseAgeExcludes entry "excluded-package@^1.0.0": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
+            `warn: ignoring minimumReleaseAgeExcludes entry "excluded-package@^1.0.0": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
           ]);
           expect(resolved).toEqual({ "excluded-package": "excluded-package@1.0.0" });
           expect(exitCode).toBe(0);

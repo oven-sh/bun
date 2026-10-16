@@ -300,7 +300,9 @@ impl Watcher {
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
-                        let _ = bun_sys::close(fd);
+                        if fd.is_valid() {
+                            let _ = bun_sys::close(fd);
+                        }
                     }
                 }
                 true
@@ -371,7 +373,9 @@ impl Watcher {
         if self.close_descriptors.load() {
             let fds = self.watchlist.items_fd();
             for &fd in fds {
-                let _ = bun_sys::close(fd);
+                if fd.is_valid() {
+                    let _ = bun_sys::close(fd);
+                }
             }
         }
         owner_still_alive
@@ -584,9 +588,12 @@ impl Watcher {
         Ok(FdOwnership::Watcher)
     }
 
+    /// `open_missing_fd`: open a descriptor for the entry when `stored_fd` is
+    /// not one.
     fn append_directory_assume_capacity<const CLONE_FILE_PATH: bool>(
         &mut self,
         stored_fd: Fd,
+        open_missing_fd: bool,
         file_path: &[u8],
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
@@ -602,7 +609,7 @@ impl Watcher {
             }
         }
 
-        let fd = if stored_fd.is_valid() {
+        let fd = if stored_fd.is_valid() || !open_missing_fd {
             stored_fd
         } else {
             bun_sys::open_a(file_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?
@@ -722,6 +729,9 @@ impl Watcher {
                 Some(v) => v,
                 None => match self.append_directory_assume_capacity::<CLONE_FILE_PATH>(
                     dir_fd,
+                    // inotify watches a directory by path, so a file that
+                    // brought no descriptor costs none for its directory.
+                    fd.is_valid() || !cfg!(any(target_os = "linux", target_os = "android")),
                     parent_dir,
                     parent_dir_hash,
                 ) {
@@ -793,7 +803,7 @@ impl Watcher {
         self.watchlist
             .ensure_unused_capacity(1)
             .unwrap_or_else(|_| bun_core::out_of_memory());
-        self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash)
+        self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, true, file_path, hash)
     }
 
     /// Lazily watch a file by path (slow path).
@@ -863,6 +873,12 @@ impl Watcher {
         }
     }
 
+    /// Watch a file. `fd` is the descriptor its caller read it through, or
+    /// `Fd::INVALID` when the caller has none, for example because the reader
+    /// closed it (`RealFS::need_to_close_files`). inotify and Windows watch
+    /// the path. kqueue watches a descriptor and this function opens none, so
+    /// there a file with no descriptor is not watched
+    /// (`add_file_by_path_slow` opens one).
     pub fn add_file<const CLONE_FILE_PATH: bool>(
         &mut self,
         fd: Fd,
@@ -871,6 +887,10 @@ impl Watcher {
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
+        if REQUIRES_FILE_DESCRIPTORS && !fd.is_valid() {
+            return Ok(FdOwnership::Caller);
+        }
+
         // This must lock due to concurrent transpiler
         self.mutex.lock();
 
@@ -878,10 +898,10 @@ impl Watcher {
             let mut ownership = FdOwnership::Caller;
             if feature_flags::ATOMIC_FILE_WATCHER && fd.is_valid() {
                 // Upgrade a path-only entry (`add_file_by_path_slow` inserts
-                // fd-less, e.g. the `--hot` entrypoint) so `hot_reloader`'s
-                // directory-event recovery sees a valid fd. A valid stored fd
-                // is never replaced: the watchlist owns it until eviction,
-                // and the old overwrite leaked it.
+                // fd-less, e.g. the `--hot` entrypoint) with the descriptor
+                // of the read. A valid stored fd is never replaced: the
+                // watchlist owns it until eviction, and the old overwrite
+                // leaked it.
                 let fds = self.watchlist.items_fd_mut();
                 if !fds[index as usize].is_valid() {
                     fds[index as usize] = fd;
@@ -1069,9 +1089,10 @@ pub enum FdOwnership {
     /// close it. The caller must not use or close it afterwards.
     Watcher,
     /// The watchlist did not take the descriptor: the file was already
-    /// watched with a valid stored one, or the path is not watchable (e.g.
-    /// outside the project root on Windows). The caller still owns `fd` and
-    /// must close it (or keep using it).
+    /// watched with a valid stored one, the path is not watchable (e.g.
+    /// outside the project root on Windows), or kqueue got no descriptor to
+    /// watch through. The caller still owns `fd` and must close it (or keep
+    /// using it).
     Caller,
 }
 

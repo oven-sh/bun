@@ -13,23 +13,14 @@ use bun_core::Output;
 use bun_core::{Utf8Bytes, ZBox, ZStr, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_options_types::schema as bun_schema;
-use bun_paths::PathBuffer;
 
 use crate::api::js_bundler::Plugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 
-// Note: parent `mod.rs` already declares `dev_server` / `framework_router`
-// as sibling modules of this file; pull them in instead of re-declaring (which
-// would duplicate the module tree and fail on `framework_router` having no
-// matching filename).
 use super::{
     BuildConfigSubset, BuiltInModule, FileSystemRouterType, Framework, ReactFastRefresh,
-    ServerComponents, SplitBundlerOptions, dev_server, framework_router,
+    ServerComponents, SplitBundlerOptions, dev_server, router,
 };
-
-// Note: `pub use dev_server as DevServer` / `framework_router as
-// FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
-// re-exporting here triggers E0365 because `bake_body` is a private module.
 
 use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
 
@@ -324,7 +315,7 @@ impl Framework {
                 ignore_underscores: true,
                 ignore_dirs: literals(&[b"node_modules", b".git"]),
                 extensions: literals(&[b".tsx", b".jsx"]),
-                style: framework_router::Style::NextjsPages,
+                style: router::Style::NextjsPages,
                 allow_layouts: true,
             }],
             built_in_modules,
@@ -859,10 +850,10 @@ fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Utf8By
 }
 
 /// Thin forwarding shim — the real impl lives on
-/// `framework_router::Style::from_js`.
+/// `router::Style::from_js`.
 #[inline]
-fn style_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<framework_router::Style> {
-    framework_router::Style::from_js(value, global)
+fn style_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<router::Style> {
+    router::Style::from_js(value, global)
 }
 
 // Note: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`
@@ -967,53 +958,6 @@ pub(crate) fn add_import_meta_defines(
     Ok(())
 }
 
-/// Stack-allocated structure that is written to from end to start.
-/// Used as a staging area for building pattern strings.
-pub(crate) struct PatternBuffer {
-    pub(crate) bytes: PathBuffer,
-    // On Windows MAX_PATH_BYTES = 32767*3+1 = 98302
-    // (> u16::MAX), so u32 is required; u16 would truncate the initial index
-    // to 32766 and `slice()` would return ~64 KiB of trailing zero bytes.
-    pub(crate) i: u32,
-}
-
-impl PatternBuffer {
-    pub(crate) const EMPTY: PatternBuffer = PatternBuffer {
-        bytes: PathBuffer::ZEROED,
-        i: core::mem::size_of::<PathBuffer>() as u32,
-    };
-
-    pub(crate) fn prepend(&mut self, chunk: &[u8]) {
-        debug_assert!(self.i as usize >= chunk.len());
-        self.i -= u32::try_from(chunk.len()).expect("int cast");
-        self.slice_mut()[..chunk.len()].copy_from_slice(chunk);
-    }
-
-    pub(crate) fn prepend_part(&mut self, part: framework_router::Part) {
-        match part {
-            framework_router::Part::Text(text) => {
-                debug_assert!(text.is_empty() || text[0] != b'/');
-                self.prepend(text);
-                self.prepend(b"/");
-            }
-            framework_router::Part::Param(name)
-            | framework_router::Part::CatchAll(name)
-            | framework_router::Part::CatchAllOptional(name) => {
-                self.prepend(name);
-                self.prepend(b"/:");
-            }
-            framework_router::Part::Group(_) => {}
-        }
-    }
-
-    pub(crate) fn slice(&self) -> &[u8] {
-        &self.bytes[self.i as usize..]
-    }
-
-    fn slice_mut(&mut self) -> &mut [u8] {
-        &mut self.bytes[self.i as usize..]
-    }
-}
 
 pub(crate) fn print_warning() {
     // Silence this for the test suite

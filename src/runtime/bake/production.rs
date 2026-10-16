@@ -9,10 +9,10 @@ use std::sync::OnceLock;
 
 use bstr::BStr;
 
-use super::PatternBuffer;
+use crate::bake::router::PatternBuffer;
 use crate::bake;
 use crate::bake::bake_body;
-use crate::bake::framework_router::{self, FrameworkRouter, OpaqueFileId};
+use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
 use bun_alloc::Arena;
 use bun_bundler::BundleV2;
 use bun_bundler::Transpiler;
@@ -519,7 +519,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
     // Note: borrowck — `framework` is `&mut options.framework`; reborrow
     // through it instead of `options.framework` to avoid stacking borrows.
-    let mut router_types: Vec<framework_router::Type> =
+    let mut router_types: Vec<router::Type> =
         Vec::with_capacity(framework.file_system_router_types.len());
 
     let mut entry_points = EntryPointMap {
@@ -543,7 +543,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         } else {
             None
         };
-        router_types.push(framework_router::Type {
+        router_types.push(router::Type {
             abs_root: Box::from(strings::paths::without_trailing_slash_windows_path(
                 entry.abs_path,
             )),
@@ -569,14 +569,14 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let mut router = FrameworkRouter::init_empty(cwd, router_types.into_boxed_slice())?;
     router.scan_all(
         &mut server_transpiler.resolver,
-        framework_router::InsertionContext::wrap(&mut entry_points),
+        router::InsertionContext::wrap(&mut entry_points),
     )?;
 
     // `bake::Framework` is the runtime-side superset; the bundler reads only
     // `built_in_modules` / `server_components` / `react_fast_refresh` /
     // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
     // (The two Framework types could only merge if `FileSystemRouterType` /
-    // `framework_router::Style` moved down to bun_bundler.)
+    // `router::Style` moved down to bun_bundler.)
     let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {
@@ -895,12 +895,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             .map_err(js_err)?;
     }
 
-    let mut navigatable_routes: Vec<framework_router::RouteIndex> = Vec::new();
+    let mut navigatable_routes: Vec<router::RouteIndex> = Vec::new();
     for (i, route) in router.routes.iter().enumerate() {
         if route.file_page.is_none() {
             continue;
         }
-        navigatable_routes.push(framework_router::RouteIndex::init(
+        navigatable_routes.push(router::RouteIndex::init(
             u32::try_from(i).expect("int cast"),
         ));
     }
@@ -970,20 +970,20 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
         let mut file_count: u32 = 1;
-        let mut next: Option<framework_router::RouteIndex> = Some(route_index);
+        let mut next: Option<router::RouteIndex> = Some(route_index);
         while let Some(current_index) = next {
             let current = router.route_ptr(current_index);
             pattern.prepend_part(current.part);
             match current.part {
-                framework_router::Part::Param(name) | framework_router::Part::CatchAll(name) => {
+                router::Part::Param(name) | router::Part::CatchAll(name) => {
                     params_buf.push(name);
                 }
-                framework_router::Part::CatchAllOptional(_) => {
+                router::Part::CatchAllOptional(_) => {
                     return Err(js_err(global.throw(format_args!(
                         "catch-all routes are not supported in static site generation",
                     ))));
                 }
-                framework_router::Part::Text(_) | framework_router::Part::Group(_) => {}
+                router::Part::Text(_) | router::Part::Group(_) => {}
             }
             if current.file_layout.is_some() {
                 file_count += 1;
@@ -1351,12 +1351,12 @@ extern "C" fn BakeProdResolve(
 pub(crate) use bun_bundler::bake_types::production::EntryPointMap;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
-impl framework_router::InsertionHandler for EntryPointMap {
+impl router::InsertionHandler for EntryPointMap {
     fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
-        _: framework_router::RouteIndex,
-        _: framework_router::FileKind,
+        _: router::RouteIndex,
+        _: router::FileKind,
     ) -> Result<OpaqueFileId, bun_alloc::AllocError> {
         self.get_or_put_entry_point(abs_path, bake::Side::Server)
             .map(|id| OpaqueFileId::init(id.get()))
@@ -1366,7 +1366,7 @@ impl framework_router::InsertionHandler for EntryPointMap {
     fn on_router_syntax_error(
         &mut self,
         _rel_path: &[u8],
-        _fail: framework_router::TinyLog,
+        _fail: router::TinyLog,
     ) -> Result<(), bun_alloc::AllocError> {
         // EntryPointMap does not handle this, so a malformed route pattern
         // during a production build must crash loudly rather than be swallowed.
@@ -1377,7 +1377,7 @@ impl framework_router::InsertionHandler for EntryPointMap {
         &mut self,
         rel_path: &[u8],
         other_id: OpaqueFileId,
-        ty: framework_router::FileKind,
+        ty: router::FileKind,
     ) -> Result<(), bun_alloc::AllocError> {
         bun_core::err_generic!(
             "Multiple {} matching the same route pattern is ambiguous",

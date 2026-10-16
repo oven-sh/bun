@@ -33,7 +33,7 @@ use bun_wyhash::{Wyhash, hash};
 use crate::api::server::StaticRoute;
 use crate::api::{AnyServer, SavedRequest};
 use crate::bake;
-use crate::bake::framework_router::{self as framework_router, FrameworkRouter, OpaqueFileId};
+use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
 use crate::server::html_bundle::HTMLBundleRoute;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_ast::Loader;
@@ -855,7 +855,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     // Initialize FrameworkRouter
     dev.router = 'router: {
-        let mut types: Vec<framework_router::Type> =
+        let mut types: Vec<router::Type> =
             Vec::with_capacity(dev.framework.file_system_router_types.len());
 
         // Note: the loop body mutates `server_transpiler.resolver`,
@@ -892,7 +892,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 incremental_graph::RouteKind::Route,
             )?;
 
-            types.push(framework_router::Type {
+            types.push(router::Type {
                 abs_root: strings::without_trailing_slash(entry.abs_path).into(),
                 ignore_underscores: fsr.ignore_underscores,
                 ignore_dirs: fsr
@@ -924,7 +924,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             unsafe { &mut (*dev_ptr).route_lookup }.put(
                 server_file,
                 RouteIndexAndRecurseFlag::new(
-                    framework_router::RouteIndex::init(u32::try_from(i).expect("int cast")),
+                    router::RouteIndex::init(u32::try_from(i).expect("int cast")),
                     true,
                 ),
             )?;
@@ -1220,7 +1220,7 @@ impl DevServer {
         unsafe {
             (*self_ptr).router.scan_all(
                 &mut (*(*self_ptr).server_transpiler.as_mut_ptr()).resolver,
-                framework_router::InsertionContext::wrap(&mut *self_ptr),
+                router::InsertionContext::wrap(&mut *self_ptr),
             )?;
         }
 
@@ -2322,7 +2322,7 @@ impl DevServer {
         };
         // SAFETY: held raw; deref per-access. `router.types` is a `Box<[Type]>` —
         // never reallocated for the lifetime of `DevServer`.
-        let router_type: *mut framework_router::Type =
+        let router_type: *mut router::Type =
             unsafe { (*this).router.type_ptr(route_type_idx) };
         // SAFETY: scalar copy — `route_bundles[i]` is otherwise only read (via
         // `generate_css_js_array`, which takes `&RouteBundle`).
@@ -2500,7 +2500,7 @@ impl DevServer {
         // TODO: lazy structure caching since we are making these objects a lot
         let global = self.vm().global();
         let params_js_value = {
-            let mut params: framework_router::MatchedParams = Default::default();
+            let mut params: router::MatchedParams = Default::default();
             let url_bunstr = match &req {
                 // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
                 SavedRequestUnion::Stack(r) => bun_core::StringView::borrow_utf8((**r).url()),
@@ -5001,16 +5001,16 @@ impl DevServer {
 
 pub(super) enum OpaqueFileIdOrOptional {
     Id(OpaqueFileId),
-    Optional(framework_router::OpaqueFileIdOptional),
+    Optional(router::OpaqueFileIdOptional),
 }
-impl From<framework_router::OpaqueFileIdOptional> for OpaqueFileIdOrOptional {
-    fn from(v: framework_router::OpaqueFileIdOptional) -> Self {
+impl From<router::OpaqueFileIdOptional> for OpaqueFileIdOrOptional {
+    fn from(v: router::OpaqueFileIdOptional) -> Self {
         Self::Optional(v)
     }
 }
 
 fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> JsResult<()> {
-    let mut params: framework_router::MatchedParams = Default::default();
+    let mut params: router::MatchedParams = Default::default();
     if let Some(route_index) = dev.router.match_slow(req.url(), &mut params) {
         let route_bundle_index = dev
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
@@ -5416,7 +5416,7 @@ impl DevServer {
         &mut self,
         pattern: &[u8],
     ) -> Option<route_bundle::Index> {
-        let mut params: framework_router::MatchedParams = Default::default();
+        let mut params: router::MatchedParams = Default::default();
         if let Some(route_index) = self.router.match_slow(pattern, &mut params) {
             return Some(
                 self.get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
@@ -5499,7 +5499,7 @@ mod c {
 fn mark_all_route_children(
     router: &FrameworkRouter,
     bits: &mut [&mut DynamicBitSet],
-    route_index: framework_router::RouteIndex,
+    route_index: router::RouteIndex,
 ) {
     let mut next = router.route_ptr(route_index).first_child;
     while let Some(child_index) = next {
@@ -5515,7 +5515,7 @@ fn mark_all_route_children(
 }
 
 impl DevServer {
-    fn mark_all_route_children_failed(&mut self, route_index: framework_router::RouteIndex) {
+    fn mark_all_route_children_failed(&mut self, route_index: router::RouteIndex) {
         let mut next = self.router.route_ptr(route_index).first_child;
         while let Some(child_index) = next {
             let route = self.router.route_ptr(child_index);
@@ -5718,8 +5718,8 @@ impl DevServer {
     pub(crate) fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
-        associated_route: framework_router::RouteIndex,
-        file_kind: framework_router::FileKind,
+        associated_route: router::RouteIndex,
+        file_kind: router::FileKind,
     ) -> crate::Result<OpaqueFileId> {
         let index = self
             .server_graph
@@ -5733,7 +5733,7 @@ impl DevServer {
             index,
             RouteIndexAndRecurseFlag::new(
                 associated_route,
-                file_kind == framework_router::FileKind::Layout,
+                file_kind == router::FileKind::Layout,
             ),
         )?;
         Ok(to_opaque_file_id::<{ bake::Side::Server }>(index))
@@ -5742,7 +5742,7 @@ impl DevServer {
     pub(crate) fn on_router_syntax_error(
         &self,
         rel_path: &[u8],
-        log: &framework_router::TinyLog,
+        log: &router::TinyLog,
     ) -> Result<(), AllocError> {
         // TODO: maybe this should track the error, send over HmrSocket?
         log.print(rel_path);
@@ -5753,7 +5753,7 @@ impl DevServer {
         &self,
         rel_path: &[u8],
         other_id: OpaqueFileId,
-        ty: framework_router::FileKind,
+        ty: router::FileKind,
     ) -> Result<(), AllocError> {
         // TODO: maybe this should track the error, send over HmrSocket?
         Output::err_generic(
@@ -5775,12 +5775,12 @@ impl DevServer {
     }
 }
 
-impl framework_router::InsertionHandler for DevServer {
+impl router::InsertionHandler for DevServer {
     fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
-        associated_route: framework_router::RouteIndex,
-        kind: framework_router::FileKind,
+        associated_route: router::RouteIndex,
+        kind: router::FileKind,
     ) -> Result<OpaqueFileId, AllocError> {
         DevServer::get_file_id_for_router(self, abs_path, associated_route, kind)
             .map_err(|_| AllocError)
@@ -5788,7 +5788,7 @@ impl framework_router::InsertionHandler for DevServer {
     fn on_router_syntax_error(
         &mut self,
         rel_path: &[u8],
-        fail: framework_router::TinyLog,
+        fail: router::TinyLog,
     ) -> Result<(), AllocError> {
         DevServer::on_router_syntax_error(self, rel_path, &fail)
     }
@@ -5796,7 +5796,7 @@ impl framework_router::InsertionHandler for DevServer {
         &mut self,
         rel_path: &[u8],
         other_id: OpaqueFileId,
-        file_kind: framework_router::FileKind,
+        file_kind: router::FileKind,
     ) -> Result<(), AllocError> {
         DevServer::on_router_collision_error(self, rel_path, other_id, file_kind)
     }
@@ -5873,15 +5873,15 @@ impl DevServer {
 pub(crate) struct RouteIndexAndRecurseFlag(pub u32);
 impl RouteIndexAndRecurseFlag {
     pub(crate) fn new(
-        route_index: framework_router::RouteIndex,
+        route_index: router::RouteIndex,
         should_recurse_when_visiting: bool,
     ) -> Self {
         RouteIndexAndRecurseFlag(
             (route_index.get() & 0x7FFF_FFFF) | ((should_recurse_when_visiting as u32) << 31),
         )
     }
-    pub(crate) fn route_index(self) -> framework_router::RouteIndex {
-        framework_router::RouteIndex::init(self.0 & 0x7FFF_FFFF)
+    pub(crate) fn route_index(self) -> router::RouteIndex {
+        router::RouteIndex::init(self.0 & 0x7FFF_FFFF)
     }
     pub(crate) fn should_recurse_when_visiting(self) -> bool {
         (self.0 >> 31) != 0

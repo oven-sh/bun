@@ -461,7 +461,7 @@ pub mod bv2_impl {
 
         /// TYPE_ONLY subset of the `Framework` fields
         /// the bundler/parser actually consult; `file_system_router_types`
-        /// stays in T6 because only `bake::framework_router` reads it.
+        /// stays in T6 because only `bake::router` reads it.
         #[non_exhaustive]
         pub struct Framework {
             pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
@@ -602,7 +602,7 @@ pub mod bv2_impl {
             use super::Side;
 
             /// `OpaqueFileId` is the insertion index into `EntryPointMap.files`.
-            /// This is the same newtype as `framework_router::OpaqueFileId`; the
+            /// This is the same newtype as `router::OpaqueFileId`; the
             /// bake crate re-exports that one and converts via `.get()` only at
             /// the FFI boundary.
             #[repr(transparent)]

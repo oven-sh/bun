@@ -24,8 +24,7 @@ pub(crate) use dev_server_body::get_deinit_count_for_testing;
 pub(crate) use dev_server_body::is_allowed_dev_host;
 pub(crate) use dev_server_body::is_allowed_host_header;
 
-#[path = "FrameworkRouter.rs"]
-pub(crate) mod framework_router_body;
+pub(crate) mod router;
 
 #[path = "production.rs"]
 mod production_body;
@@ -35,7 +34,7 @@ mod production_body;
 // codegen-emitted `extern "C"` thunks in `generated_host_exports.rs`.
 pub(crate) mod source_provider_exports;
 
-pub(crate) use bake_body::{PatternBuffer, UserOptions, print_warning};
+pub(crate) use bake_body::{UserOptions, print_warning};
 
 /// All bake JSC references go through this re-export of `bun_jsc`.
 pub(crate) mod jsc {
@@ -122,7 +121,7 @@ pub(crate) struct FileSystemRouterType {
     pub(crate) ignore_underscores: bool,
     pub(crate) ignore_dirs: Vec<Utf8Bytes<'static>>,
     pub(crate) extensions: Vec<Utf8Bytes<'static>>,
-    pub(crate) style: framework_router::Style,
+    pub(crate) style: router::Style,
     pub(crate) allow_layouts: bool,
 }
 
@@ -361,34 +360,6 @@ pub(crate) use bake_body::get_hmr_runtime;
 // the cross-crate hook is gone. This crate's `HmrRuntime` keeps the
 // NUL-terminated `&ZStr` form for JSC handoff; the bundler-side one is plain
 // `&[u8]`.)
-
-// ══════════════════════════════════════════════════════════════════════════
-// FrameworkRouter
-// ══════════════════════════════════════════════════════════════════════════
-pub(crate) mod framework_router {
-    // Everything is re-exported from `framework_router_body`
-    // (FrameworkRouter.rs) so `framework_router::X` ≡
-    // `framework_router_body::X` and the real method bodies resolve directly.
-    /// `generated_js2native.rs` lowers `JSFrameworkRouter.getBindings` to
-    /// `framework_router::js_framework_router::get_bindings`; alias the type so
-    /// the associated-fn path resolves.
-    pub(crate) use super::framework_router_body::JSFrameworkRouter as js_framework_router;
-    pub(crate) use super::framework_router_body::{
-        FileKind, FrameworkRouter, InsertionHandler, JSFrameworkRouter, MatchedParams,
-        OpaqueFileId, OpaqueFileIdOptional, Part, RouteIndex, Style, TinyLog, Type,
-    };
-
-    /// `wrap` shim over the trait-object form (`&mut dyn InsertionHandler`),
-    /// kept so callsites read `InsertionContext::wrap(&mut ctx)`.
-    pub(crate) enum InsertionContext {}
-    impl InsertionContext {
-        /// Thin shim over the trait-object form (`&mut dyn InsertionHandler`).
-        #[inline]
-        pub(crate) fn wrap<T: InsertionHandler>(ctx: &mut T) -> &mut dyn InsertionHandler {
-            ctx
-        }
-    }
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // production

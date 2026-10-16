@@ -6,7 +6,7 @@ use std::io::Write as _;
 use crate::api::js_bundler::PluginJscExt as _;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
 use crate::bake::dev_server::DevServer;
-use crate::bake::framework_router as FrameworkRouter;
+use crate::bake::router as FrameworkRouter;
 use crate::bake::{self as bake};
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::BlobExt;

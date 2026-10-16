@@ -90,6 +90,11 @@ public:
             idleTimeout - (sendPingsAutomatically ? margin : 0), /* reduce normal idleTimeout if it is extended by ping-timeout */
             margin /* ping-timeout - also used for end() timeout */
         };
+        if (!idleTimeout && sendPingsAutomatically) {
+            /* `0 - margin` above is 65532 seconds. The 240-slot wheel that uSockets had wrapped
+             * it to 252, so that is when a socket with idleTimeout 0 sends its ping. */
+            idleTimeoutComponents.first = 252;
+        }
     }
 
     ~WebSocketContextData() {

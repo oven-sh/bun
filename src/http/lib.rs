@@ -348,7 +348,7 @@ pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
     /// `LIBUS_TIMEOUT_GRANULARITY` (packages/bun-usockets/src/libusockets.h).
     const SHORT_WHEEL_PERIOD_SECONDS: u64 = 4;
     const LONG_WHEEL_PERIOD_SECONDS: u64 = 60;
-    /// `SocketTimeout::set_timeout` routes values above this to the long wheel.
+    /// `SocketTimeout::set_timeout_or_long_timeout` routes values above this to the long wheel.
     const SHORT_WHEEL_MAX_SECONDS: u64 = 240;
     /// The long counter wraps `% 240` minutes; one minute of pad stays below.
     const MAX_RAW_SECONDS: u64 = 238 * LONG_WHEEL_PERIOD_SECONDS;
@@ -674,7 +674,7 @@ impl<'a> ThreadlocalAsyncHTTP<'a> {
 trait SocketTimeout {
     /// Seconds-granularity idle timer. Values >240s are routed onto uSockets'
     /// minute-granularity long-timeout wheel; ≤240s use the short-tick timer.
-    fn set_timeout(&self, seconds: core::ffi::c_uint);
+    fn set_timeout_or_long_timeout(&self, seconds: core::ffi::c_uint);
 }
 
 // lowercase hash header names so that we can be sure
@@ -1187,8 +1187,8 @@ pub fn configure_http_client_with_alpn(
 use bun_http_types::ETag::HeaderEntryColumns;
 
 impl<const SSL: bool> SocketTimeout for HttpSocket<SSL> {
-    fn set_timeout(&self, seconds: c_uint) {
-        uws::NewSocketHandler::<SSL>::set_timeout(self, seconds)
+    fn set_timeout_or_long_timeout(&self, seconds: c_uint) {
+        uws::NewSocketHandler::<SSL>::set_timeout_or_long_timeout(self, seconds)
     }
 }
 
@@ -4175,9 +4175,9 @@ impl<'a> HTTPClient<'a> {
     pub(crate) fn set_timeout<S: SocketTimeout>(&self, socket: &S) {
         // Values are pre-normalised (global: `HTTPThread::on_start`;
         // per-request: `AsyncHTTP::init`) so this is a plain pass-through.
-        // `socket.set_timeout` picks the short-tick timer for values ≤ 240s
-        // and the minute-granularity long timer above that.
-        socket.set_timeout(self.effective_idle_timeout_seconds());
+        // `set_timeout_or_long_timeout` picks the short-tick timer for values
+        // ≤ 240s and the minute-granularity long timer above that.
+        socket.set_timeout_or_long_timeout(self.effective_idle_timeout_seconds());
     }
 
     /// Output budget of one decode pass. h1 only: h2/h3 detach before held input could drain.

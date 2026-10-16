@@ -777,7 +777,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
     /// How long a parked socket may sit idle; 0 is the 5 minute default.
     fn arm_idle_timeout(socket: HTTPSocket<SSL>, idle_timeout_seconds: u32) {
-        socket.set_timeout(match idle_timeout_seconds {
+        socket.set_timeout_or_long_timeout(match idle_timeout_seconds {
             0 => 5 * 60,
             seconds => seconds,
         });

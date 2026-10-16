@@ -2491,7 +2491,6 @@ impl PostgresSQLConnection {
                     f.remove(ConnectionFlags::WAITING_TO_PREPARE);
                     f.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 });
-                self.socket.get().set_timeout(300);
 
                 if let Some(request) = self.current() {
                     if request.flags.get().discard_response {

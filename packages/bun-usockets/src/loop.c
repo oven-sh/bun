@@ -247,9 +247,8 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         struct us_socket_group_t *group = loop_data->iterator;
 
         /* Update this group's timestamps (this could be moved to loop and done once) */
-        group->global_tick++;
-        unsigned char short_ticks = group->timestamp = group->global_tick % 240;
-        unsigned char long_ticks = group->long_timestamp = (group->global_tick / 15) % 240;
+        uint32_t short_ticks = ++group->global_tick;
+        unsigned char long_ticks = group->long_timestamp = (short_ticks / 15) % 240;
 
         /* Begin at head */
         struct us_socket_t *s = group->head_sockets;
@@ -257,7 +256,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
             /* Seek until end or timeout found (tightest loop) */
             while (1) {
                 /* We only read from 1 random cache line here */
-                if (short_ticks == s->timeout || long_ticks == s->long_timeout) {
+                if (short_ticks >= s->timeout_tick || long_ticks == s->long_timeout) {
                     break;
                 }
 
@@ -270,8 +269,8 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
             /* Here we have a timeout to emit (slow path) */
             group->iterator = s;
 
-            if (short_ticks == s->timeout) {
-                s->timeout = 255;
+            if (short_ticks >= s->timeout_tick) {
+                s->timeout_tick = LIBUS_TIMEOUT_NONE;
                 s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
             }
             /* An owner must not deinit the embedding group from a timeout handler
@@ -305,18 +304,17 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
     /* Sockets parked in the low-priority queue are unlinked from head_sockets
      * (the queue reuses prev/next), so the walk above never visits them. On an
      * idle loop the queue drains only as fast as loop iterations occur, so a
-     * burst of pre-handshake TLS accepts can still be parked when the single
-     * tick their s->timeout stamp matches passes, after which the exact-match
-     * test above can never fire again. Sweep the parked set here against each
-     * socket's own group's freshly-advanced timestamps. low_prio_iterator lets
+     * burst of pre-handshake TLS accepts can still be parked when their
+     * timeout is due. Sweep the parked set here against each socket's own
+     * group's freshly-advanced ticks. low_prio_iterator lets
      * close_raw/detach advance iteration past a socket they unlink, same as
      * group->iterator does for head_sockets. */
     for (loop_data->low_prio_iterator = loop_data->low_prio_head; loop_data->low_prio_iterator; ) {
         struct us_socket_t *s = loop_data->low_prio_iterator;
-        unsigned char stamp = s->group->timestamp;
+        uint32_t stamp = s->group->global_tick;
         unsigned char long_stamp = s->group->long_timestamp;
-        if (stamp == s->timeout) {
-            s->timeout = 255;
+        if (stamp >= s->timeout_tick) {
+            s->timeout_tick = LIBUS_TIMEOUT_NONE;
             s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
             if (loop_data->low_prio_iterator != s) continue;
         }
@@ -544,7 +542,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->kind = listen_socket->accept_kind;
                         s->ssl = NULL;
                         s->connect_state = NULL;
-                        s->timeout = 255;
+                        s->timeout_tick = LIBUS_TIMEOUT_NONE;
                         s->long_timeout = 255;
                         s->flags.low_prio_state = 0;
                         s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;

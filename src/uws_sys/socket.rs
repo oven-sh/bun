@@ -466,8 +466,30 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── timeouts ────────────────────────────────────────────────────────────
 
-    /// Splits >240s onto the minute-granularity long-timeout wheel.
+    /// 0 disarms, the minute wheel too. A uSockets socket runs `on_timeout`
+    /// once, `ceil(seconds / 4)` sweeps later, for any length. A duplex or a
+    /// named pipe has its own timer, which restarts on I/O.
     pub fn set_timeout(&self, seconds: c_uint) {
+        on_socket!(self.socket;
+            connected s => {
+                s.set_timeout(seconds);
+                s.set_long_timeout(0);
+            },
+            connecting c => {
+                c.timeout(seconds);
+                c.long_timeout(0);
+            },
+            detached => {},
+            duplex d => d.set_timeout(seconds),
+            pipe p => p.set_timeout(seconds),
+        )
+    }
+
+    /// Transitional. Above 240s this arms the minute wheel instead, which
+    /// runs `on_long_timeout`. Only for the fetch and WebSocket clients: they
+    /// pad their value for it (`bun_http::normalize_idle_timeout_seconds`)
+    /// and handle both events.
+    pub fn set_timeout_or_long_timeout(&self, seconds: c_uint) {
         on_socket!(self.socket;
             connected s => if seconds > 240 {
                 s.set_timeout(0);

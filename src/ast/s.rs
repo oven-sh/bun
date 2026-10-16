@@ -6,6 +6,7 @@
 //! `crate::StoreSlice` doc).
 
 use crate::g as G;
+use crate::symbol::Symbol;
 use crate::{
     Case, Catch, ClauseItem, EnumValue, ExprNodeIndex, Finally, LocRef, Ref, StmtData,
     StmtNodeIndex, StmtNodeList, StmtOrExpr,
@@ -267,6 +268,27 @@ impl Local {
         self.kind == other.kind
             && self.is_export == other.is_export
             && self.origin.is_commonjs_export() == other.origin.is_commonjs_export()
+    }
+
+    /// Whether the linker may print `decl` as `var x = value` above the `__esm`
+    /// wrapper of its module, so the store runs when the chunk loads and not at
+    /// the statement. No program can tell for `let`, `const` or `class`: a read
+    /// before the statement throws. A `var` and a lifted `exports.x = value`
+    /// read `undefined` there, so their store keeps its place.
+    ///
+    /// `symbol_of` gives `None` when the file cannot get an `__esm` wrapper.
+    pub fn value_can_leave_esm_wrapper<'s>(
+        &self,
+        decl: &G::Decl,
+        symbol_of: impl FnOnce(Ref) -> Option<&'s Symbol>,
+    ) -> bool {
+        // A pattern runs getters or the iterator.
+        let crate::binding::Data::BIdentifier(id) = decl.binding.data else {
+            return false;
+        };
+        !self.origin.is_commonjs_export()
+            && !symbol_of(id.get().r#ref).is_some_and(|symbol| symbol.kind.is_hoisted_or_function())
+            && decl.value.is_some_and(|value| value.can_be_moved())
     }
 }
 

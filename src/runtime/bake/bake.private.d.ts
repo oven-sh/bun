@@ -144,14 +144,3 @@ declare module "react-dom/server.node" {
     options: RenderToPipeableStreamOptions,
   ): PipeableStream<Uint8Array>;
 }
-
-declare module "bun:wrap" {
-  export const __name: unique symbol;
-  export const __legacyDecorateClassTS: unique symbol;
-  export const __legacyDecorateParamTS: unique symbol;
-  export const __legacyMetadataTS: unique symbol;
-  export const __using: unique symbol;
-  export const __callDispose: unique symbol;
-  export const __MEMO_CACHE_SENTINEL: unique symbol;
-  export const __EARLY_RETURN_SENTINEL: unique symbol;
-}

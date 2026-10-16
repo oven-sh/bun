@@ -639,6 +639,10 @@ class WASI {
         },
       ],
     ]);
+    // fd_renumber moves entries, so the hooks and the stdin read path go with these entries, not with 0 to 2.
+    const stdinEntry = this.FD_MAP.get(WASI_STDIN_FILENO);
+    const stdoutEntry = this.FD_MAP.get(WASI_STDOUT_FILENO);
+    const stderrEntry = this.FD_MAP.get(WASI_STDERR_FILENO);
     const path = bindings.path;
     for (const [k, v] of Object.entries(preopens)) {
       const real = fs.openSync(v, nodeFsConstants.O_RDONLY);
@@ -991,8 +995,8 @@ class WASI {
       }),
       fd_write: wrap((fd, iovs, iovsLen, nwritten) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_WRITE);
-        const IS_STDOUT = fd == WASI_STDOUT_FILENO;
-        const IS_STDERR = fd == WASI_STDERR_FILENO;
+        const IS_STDOUT = stats === stdoutEntry;
+        const IS_STDERR = stats === stderrEntry;
         let written = 0;
         getiovs(iovs, iovsLen).forEach(iov => {
           if (iov.byteLength == 0) return;
@@ -1041,7 +1045,7 @@ class WASI {
       }),
       fd_read: wrap((fd, iovs, iovsLen, nread) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_READ);
-        const IS_STDIN = fd == WASI_STDIN_FILENO;
+        const IS_STDIN = stats === stdinEntry;
         let read = 0;
         outer: for (const iov of getiovs(iovs, iovsLen)) {
           let r = 0;
@@ -1165,15 +1169,13 @@ class WASI {
         return WASI_ESUCCESS;
       }),
       fd_renumber: wrap((from, to) => {
-        // The checks are in the order of uvwasi_fd_table_renumber, which compares the numbers first:
-        // https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/fd_table.c#L419-L436
+        // uvwasi compares the numbers first: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/fd_table.c#L419-L436
         if (from === to) {
           return WASI_ESUCCESS;
         }
         const fromEntry = CHECK_FD(from, BigInt(0));
         const toEntry = CHECK_FD(to, BigInt(0));
-        // uvwasi closes `to` first and keeps its entry when the close fails. A close that reports an error
-        // has closed the descriptor anyway, so the table changes first here.
+        // uvwasi closes `to` first. A close that fails has still closed the descriptor, so the table changes first.
         this.FD_MAP.set(to, fromEntry);
         this.FD_MAP.delete(from);
         fs.closeSync(toEntry.real);
@@ -1450,10 +1452,7 @@ class WASI {
               path: full,
             });
             const entry = stat(this, newfd);
-            // uvwasi masks the rights of a terminal the same way:
-            // https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2131-L2143
-            // wasi-libc's isatty() is "a character device with no FD_SEEK and no FD_TELL", and a seek that
-            // succeeds gives fd_read a position, which a terminal refuses.
+            // uvwasi's mask for a terminal: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L2131-L2143
             if (entry.filetype === WASI_FILETYPE_CHARACTER_DEVICE && bindings.isTTY(realfd)) {
               entry.rights.base &= RIGHTS_TTY_BASE;
               entry.rights.inheriting &= RIGHTS_TTY_INHERITING;
@@ -1590,7 +1589,7 @@ class WASI {
               sout += 1;
               sout += 5;
               nevents += 1;
-              if (fd == WASI_STDIN_FILENO && WASI_EVENTTYPE_FD_READ == type) {
+              if (this.FD_MAP.get(fd) === stdinEntry && WASI_EVENTTYPE_FD_READ == type) {
                 this.shortPause();
               }
               break;

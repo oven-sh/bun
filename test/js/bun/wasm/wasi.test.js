@@ -293,6 +293,75 @@ it("fd_renumber moves the source descriptor onto the target descriptor", () => {
   expect(read(fdA)).toBe("file b");
 });
 
+it("a file that fd_renumber moves onto descriptor 0 or 2 gets the I/O, not getStdin or sendStderr", async () => {
+  using dir = tempDir("wasi-renumber-stdio", {
+    "in.txt": "from the file\n",
+    "out.txt": "",
+  });
+  // fd_renumber closes the host descriptor of its target, here 0 and 2 of the child. The child reports on stdout.
+  const childSrc = `
+    const { WASI } = require("node:wasi");
+    const fs = require("node:fs");
+    const hooked = [];
+    const wasi = new WASI({
+      preopens: { "/": process.cwd() },
+      getStdin: () => Buffer.from("from the hook\\n"),
+      sendStderr: chunk => hooked.push(Buffer.from(chunk).toString()),
+    });
+    wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+    const memory = Buffer.from(wasi.memory.buffer);
+    const view = new DataView(wasi.memory.buffer);
+    const FD_READ = 2n, FD_WRITE = 64n;
+    const pathPtr = 1024, fdPtr = 1536, iovsPtr = 2048, countPtr = 3072, bufPtr = 4096;
+
+    const open = (guestPath, rights) => {
+      const len = memory.write(guestPath, pathPtr);
+      const errno = wasi.wasiImport.path_open(3, 0, pathPtr, len, 0, rights, 0n, 0, fdPtr);
+      if (errno !== 0) throw new Error("path_open " + guestPath + ": errno " + errno);
+      return view.getUint32(fdPtr, true);
+    };
+    const read = fd => {
+      view.setUint32(iovsPtr, bufPtr, true);
+      view.setUint32(iovsPtr + 4, 64, true);
+      const errno = wasi.wasiImport.fd_read(fd, iovsPtr, 1, countPtr);
+      return errno === 0 ? memory.toString("latin1", bufPtr, bufPtr + view.getUint32(countPtr, true)) : errno;
+    };
+    const write = (fd, text) => {
+      const len = memory.write(text, bufPtr);
+      view.setUint32(iovsPtr, bufPtr, true);
+      view.setUint32(iovsPtr + 4, len, true);
+      return wasi.wasiImport.fd_write(fd, iovsPtr, 1, countPtr);
+    };
+
+    const before = { read0: read(0), write2: write(2, "to the hook\\n"), hooked: hooked.splice(0) };
+    const renumber = [
+      wasi.wasiImport.fd_renumber(open("in.txt", FD_READ), 0),
+      wasi.wasiImport.fd_renumber(open("out.txt", FD_WRITE), 2),
+    ];
+    const after = { read0: read(0), write2: write(2, "to the file\\n"), hooked: hooked.splice(0) };
+    console.log(JSON.stringify({ before, renumber, after, outTxt: fs.readFileSync("out.txt", "utf8") }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", childSrc],
+    env: bunEnv,
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    before: { read0: "from the hook\n", write2: 0, hooked: ["to the hook\n"] },
+    renumber: [0, 0],
+    after: { read0: "from the file\n", write2: 0, hooked: [] },
+    outTxt: "to the file\n",
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("path_* syscalls cannot escape the preopened directory", () => {
   using dir = tempDir("wasi-sandbox", {
     "secret.txt": "outside",

@@ -1580,6 +1580,10 @@ pub mod S {
         m & IFMT == IFCHR
     }
     #[inline]
+    pub const fn ISBLK(m: Mode) -> bool {
+        m & IFMT == IFBLK
+    }
+    #[inline]
     pub const fn ISFIFO(m: Mode) -> bool {
         m & IFMT == IFIFO
     }

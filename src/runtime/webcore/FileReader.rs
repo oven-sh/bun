@@ -209,7 +209,8 @@ impl Lazy {
                 return Err(sys::Error::from_code(sys::Errno::EISDIR, sys::Tag::fstat));
             }
 
-            if sys::S::ISREG(mode) {
+            // A block device is read like a regular file: by offset, and the event loop watches neither.
+            if sys::S::ISREG(mode) || sys::S::ISBLK(mode) {
                 is_nonblocking = false;
             }
 
@@ -390,19 +391,38 @@ impl FileReader {
                 self.waiting_for_on_reader_done.set(true);
             }
             self.reader().set_limit(self.max_size);
-            let start_result = if let Some(offset) = self.start_offset {
+            // `open_file_blob` presumes that whatever it opened with `O_NONBLOCK` is pollable.
+            // SAFETY: the reader cell is live for `self`'s lifetime; this is the raw re-entrancy-safe entry (its error dispatch runs user JS).
+            #[cfg(unix)]
+            let watchable = pollable
+                && unsafe { IOReader::start_presumed_pollable(self.reader.get(), self.fd.get()) };
+            #[cfg(windows)]
+            let watchable = true;
+            let start_result = if cfg!(unix) && pollable {
+                Ok(())
+            } else if let Some(offset) = self.start_offset {
                 self.reader()
                     .start_file_offset(self.fd.get(), pollable, offset)
             } else {
                 self.reader().start(self.fd.get(), pollable)
             };
-            if let Err(e) = start_result {
-                if need_io_ref {
-                    self.waiting_for_on_reader_done.set(false);
-                    let parent = self.parent();
-                    // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
-                    let _ = unsafe { Source::decrement_count(parent) };
+            // Its reads go by the fd's position, so a slice starts there.
+            #[cfg(unix)]
+            if pollable && !watchable {
+                if let Some(offset @ 1..) = self.start_offset {
+                    if let Err(err) = sys::set_file_offset(self.fd.get(), offset as u64) {
+                        self.on_reader_error(err);
+                    }
                 }
+            }
+            // No callback comes for an fd the event loop refuses to watch. `on_reader_error` has released the ref already.
+            if self.waiting_for_on_reader_done.get() && (start_result.is_err() || !watchable) {
+                self.waiting_for_on_reader_done.set(false);
+                let parent = self.parent();
+                // SAFETY: see `parent()`; JS finalizer still holds a ref so this cannot free it.
+                let _ = unsafe { Source::decrement_count(parent) };
+            }
+            if let Err(e) = start_result {
                 return streams::Start::Err(e);
             }
         } else {

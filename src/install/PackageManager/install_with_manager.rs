@@ -1602,7 +1602,7 @@ fn frozen_changed_section(
     root_package_json_path: &ZStr,
 ) -> Option<&'static str> {
     if manager.summary.overrides_changed {
-        Some(overrides_field_name(manager, root_package_json_path))
+        Some(overrides_field(manager, root_package_json_path).json_name())
     } else if manager.summary.catalogs_changed {
         Some("the catalog")
     } else if manager.summary.package_extensions_changed {
@@ -1614,19 +1614,19 @@ fn frozen_changed_section(
 
 #[cold]
 #[inline(never)]
-fn overrides_field_name(
+fn overrides_field(
     manager: &mut PackageManager,
     root_package_json_path: &ZStr,
-) -> &'static str {
+) -> lockfile::override_map::Field {
+    use lockfile::override_map::Field;
     let log = manager.log_mut();
     let WorkspacePackageJsonCacheResult::Entry(entry) = manager
         .workspace_package_json_cache
         .get_with_path(log, root_package_json_path.as_bytes(), Default::default())
     else {
-        return "overrides";
+        return Field::Overrides;
     };
-    lockfile::override_map::Field::of(&entry.root)
-        .map_or("overrides", |(field, _)| field.json_name())
+    Field::of(&entry.root).map_or(Field::Overrides, |(field, _)| field)
 }
 
 pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'static str {
@@ -2384,6 +2384,24 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
         .collect()
 }
 
+/// Whether the key of the rule for `row` has another range than `row` declares, and `row` resolves
+/// to a version in the range that it declares.
+fn follows_another_range(lockfile: &Lockfile, row: DependencyID, package_id: PackageID) -> bool {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let dependency = &lockfile.buffers.dependencies[row as usize];
+    let Some(lockfile::override_map::OverrideRule::Scoped(rule)) =
+        crate::dedupe::applied_override(lockfile, row, dependency)
+    else {
+        return false;
+    };
+    rule.has_target_range()
+        && !(rule.target_range.literal).eql(dependency.version.literal, buf, buf)
+        && dependency.version.try_npm().is_some_and(|npm| {
+            let resolved = lockfile.packages.items_resolution()[package_id as usize].npm();
+            npm.version.satisfies(resolved.version, buf, buf)
+        })
+}
+
 /// Resolves the rows in `outside` again and returns the packages that they now resolve to. If the
 /// lockfile is frozen, `frozen` is its file name, and this exits with an error instead.
 #[cold]
@@ -2396,6 +2414,15 @@ fn reresolve_rows_outside_overrides(
     root: &mut lockfile::Package,
     log_level: Options::LogLevel,
 ) -> crate::Result<Vec<PackageID>> {
+    // yarn applies a `resolutions` key that has a range only to a dependency declared with exactly
+    // that range. For any other range, a migrated yarn.lock has the version that yarn resolved.
+    if manager.lockfile.overrides.has_scoped()
+        && overrides_field(manager, root_package_json_path)
+            == lockfile::override_map::Field::Resolutions
+    {
+        let lockfile: &Lockfile = &manager.lockfile;
+        outside.retain(|&(row, package_id)| !follows_another_range(lockfile, row, package_id));
+    }
     let lockfile: &Lockfile = &manager.lockfile;
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let mut is_outside = DynamicBitSet::init_empty(dependencies.len()).unwrap_or_oom();
@@ -2435,7 +2462,7 @@ fn reresolve_rows_outside_overrides(
     };
     if let Some(lockfile_name) = frozen {
         if log_level != Options::LogLevel::Silent {
-            let field = overrides_field_name(manager, root_package_json_path);
+            let field = overrides_field(manager, root_package_json_path).json_name();
             let lockfile: &Lockfile = &manager.lockfile;
             let dependency = &lockfile.buffers.dependencies[first_row as usize];
             let wanted = crate::dedupe::effective_version(lockfile, first_row, dependency)

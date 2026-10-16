@@ -556,6 +556,64 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
+  // yarn compares the range in the key with the range that a dependent declares as text. The root's
+  // ^1.1.0 overlaps with ^1.0.0 and is another range, so yarn.lock has its own version for it.
+  test.concurrent("a name@range resolution leaves the other ranges of that name as yarn.lock has them", async () => {
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "berry-range-resolution",
+          dependencies: { "no-deps": "^1.1.0", "one-range-dep": "^1.0.0" },
+          resolutions: { "no-deps@npm:^1.0.0": "1.0.0" },
+        }),
+        "yarn.lock": yarnLock({
+          "berry-range-resolution@workspace:.": [
+            "version: 0.0.0-use.local",
+            'resolution: "berry-range-resolution@workspace:."',
+            "dependencies:",
+            '  no-deps: "npm:^1.1.0"',
+            '  one-range-dep: "npm:^1.0.0"',
+            "languageName: unknown",
+            "linkType: soft",
+          ],
+          "no-deps@npm:1.0.0": [
+            "version: 1.0.0",
+            'resolution: "no-deps@npm:1.0.0"',
+            "languageName: node",
+            "linkType: hard",
+          ],
+          "no-deps@npm:^1.1.0": [
+            "version: 1.1.0",
+            'resolution: "no-deps@npm:1.1.0"',
+            "languageName: node",
+            "linkType: hard",
+          ],
+          "one-range-dep@npm:^1.0.0": [
+            "version: 1.0.0",
+            'resolution: "one-range-dep@npm:1.0.0"',
+            "dependencies:",
+            '  no-deps: "npm:^1.0.0"',
+            "languageName: node",
+            "linkType: hard",
+          ],
+        }),
+      },
+    });
+
+    const migrated = await run(dir, "pm", "migrate");
+    expect(migrated.stderr).not.toContain("error:");
+    expect(migrated.exitCode).toBe(0);
+    const bunLock = await bunLockOf(dir);
+    expect(lockedVersions(bunLock)).toEqual(["no-deps@1.0.0", "no-deps@1.1.0", "one-range-dep@1.0.0"]);
+
+    await expectFrozenInstall(dir);
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).not.toContain("error:");
+    expect(await bunLockOf(dir)).toBe(bunLock);
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("a parent/name resolution only rebinds that parent's edge", async () => {
     const { packageDir: dir } = await testRegistry.createTestDir({
       bunfigOpts: { linker: "hoisted" },

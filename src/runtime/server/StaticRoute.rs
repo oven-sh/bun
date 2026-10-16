@@ -21,7 +21,7 @@ use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct StaticRoute {
+pub(crate) struct StaticRoute {
     ref_count: Cell<u32>,
     /// The ref that in-flight responses (whose uws userdata is this route)
     /// collectively hold: taken by the first, released with the last in
@@ -39,7 +39,7 @@ pub struct StaticRoute {
 }
 
 #[derive(Clone, Copy)]
-pub struct InitFromBytesOptions<'a> {
+pub(crate) struct InitFromBytesOptions<'a> {
     pub(crate) server: Option<AnyServer>,
     pub(crate) mime_type: Option<&'a MimeType>,
     pub(crate) status_code: u16,
@@ -141,7 +141,7 @@ impl StaticRoute {
         size_of::<StaticRoute>() + self.blob.memory_cost() + self.headers.memory_cost()
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<StaticRoute>>> {

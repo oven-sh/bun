@@ -7,7 +7,7 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-const fmtBinding = $bindgenFn("fmt_jsc.bind.ts", "fmtString");
+const fmtBinding = $bindgen("fmt_jsc.bind.ts", "fmtString");
 
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "highlight-javascript-redacted");
@@ -27,6 +27,9 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // behind `bun_core::strings`, driven directly so tests can sweep lengths and
 // alignments. Returns the kernel's raw result: an index (`haystack.length` =
 // not found), a count, or for memmem/memrmem the offset with -1 = not found.
+// scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
+// fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
+// with uint64 words and returns 0.
 export const highwayStringsForTesting: (
   op:
     | "indexOfChar"
@@ -38,7 +41,10 @@ export const highwayStringsForTesting: (
     | "memmem"
     | "memrmem"
     | "memmem16"
-    | "memrmem16",
+    | "memrmem16"
+    | "scannerRunStops"
+    | "lineStarts"
+    | "oddBlocks",
   haystack: Uint8Array,
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
@@ -76,6 +82,18 @@ export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", 
 
 export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
 
+export const semverIntersects = $newRustFunction("SemverObject.rs", "intersectsForTesting", 2) as (
+  left: string,
+  right: string,
+) => boolean;
+
+/** What a bytecode order file calls the code of `text`: `M <name>` and `<start> <kind> <name>` lines, or null. */
+export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "namesForTesting", 3) as (
+  text: string,
+  kind: "module" | "script" | "builtin" | "internal",
+  chunkPaths?: string,
+) => string | null | undefined;
+
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
   "escapeRegExp.rs",
@@ -101,6 +119,9 @@ export const subprocessInternals = {
   injectStdioReadError: $newRustFunction("subprocess.rs", "TestingAPIs.injectStdioReadError", 2) as (
     subprocess: import("bun").Subprocess,
     kind: "stdout" | "stderr",
+  ) => boolean,
+  closeStdinWriter: $newRustFunction("subprocess.rs", "TestingAPIs.closeStdinWriter", 1) as (
+    subprocess: import("bun").Subprocess,
   ) => boolean,
 };
 
@@ -221,9 +242,34 @@ export const frameworkRouterInternals = $rust("FrameworkRouter.rs", "JSFramework
   };
 };
 
-export const bindgen = $rust("bindgen_test.rs", "getBindgenTestFunctions") as {
-  add: (a: any, b: any) => number;
-  requiredAndOptionalArg: (a: any, b?: any, c?: any, d?: any) => number;
+// Only in a build with assertions: `isCompiled` in scripts/build/codegen.ts.
+export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
+  add: $bindgen("bindgen_test.bind.ts", "add"),
+  requiredAndOptionalArg: $bindgen("bindgen_test.bind.ts", "requiredAndOptionalArg"),
+  utf8Echo: $bindgen("bindgen_test.bind.ts", "utf8Echo"),
+  utf8EchoLoose: $bindgen("bindgen_test.bind.ts", "utf8EchoLoose"),
+  utf8Optional: $bindgen("bindgen_test.bind.ts", "utf8Optional"),
+  utf8Owned: $bindgen("bindgen_test.bind.ts", "utf8Owned"),
+  stringEcho: $bindgen("bindgen_test.bind.ts", "stringEcho"),
+  nextColor: $bindgen("bindgen_test.bind.ts", "nextColor"),
+  optionsEcho: $bindgen("bindgen_test.bind.ts", "optionsEcho"),
+  describeValue: $bindgen("bindgen_test.bind.ts", "describeValue"),
+  describeAnything: $bindgen("bindgen_test.bind.ts", "describeAnything"),
+  overloaded: $bindgen("bindgen_test.bind.ts", "overloaded"),
+  describeDefaults: $bindgen("bindgen_test.bind.ts", "describeDefaults"),
+  names: $bindgen("bindgen_test.bind.ts", "names"),
+  sumArray: $bindgen("bindgen_test.bind.ts", "sumArray"),
+  range: $bindgen("bindgen_test.bind.ts", "range"),
+  words: $bindgen("bindgen_test.bind.ts", "words"),
+  sumBytes: $bindgen("bindgen_test.bind.ts", "sumBytes"),
+  sumBytesOptional: $bindgen("bindgen_test.bind.ts", "sumBytesOptional"),
+  sumBytesThenText: $bindgen("bindgen_test.bind.ts", "sumBytesThenText"),
+  sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
+  withValueEcho: $bindgen("bindgen_test.bind.ts", "withValueEcho"),
+  fail: $bindgen("bindgen_test.bind.ts", "fail"),
+  TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
+  TestHolder: $bindgen("bindgen_test.bind.ts", "TestHolder"),
+  makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
@@ -559,7 +605,7 @@ export const decodeURIComponentSIMD = $newCppFunction(
   1,
 );
 
-export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");
+export const getDevServerDeinitCount = $bindgen("DevServer.bind.ts", "getDeinitCountForTesting");
 export const getCounters = $newRustFunction("Counters.rs", "createCountersObject", 0);
 export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "collections/linear_fifo.rs",
@@ -582,7 +628,7 @@ export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
 /**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
- * "poll_start", "session_buffer"; see fault_inject.h for the per-hook
+ * "poll_start", "session_buffer", "ssl_write"; see fault_inject.h for the per-hook
  * description). Arming anything else is rejected.
  */
 export type SocketFaultSyscall =
@@ -595,7 +641,8 @@ export type SocketFaultSyscall =
   | "accept"
   | "ssl_loop_buffer"
   | "poll_start"
-  | "session_buffer";
+  | "session_buffer"
+  | "ssl_write";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
@@ -709,6 +756,13 @@ export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction
 // null where there is no PSI backend (everything except Linux).
 export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
 
+// The PSI event filter: `armed` is the file at arm time, `polls` one read per POLLPRI. null off Linux.
+export const memoryPressurePsiFilter: (armed: string, ...polls: string[]) => boolean[] | null = $newRustFunction(
+  "memory_pressure.rs",
+  "jsPsiFilter",
+  1,
+);
+
 export const getEventLoopStats: () => {
   activeTasks: number;
   tasks: number;
@@ -800,6 +854,30 @@ export const fetchH3Internals = {
   },
 };
 
+const proxyFor = $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.proxyFor", 2) as (
+  entries: string[],
+  url: string,
+) => string | null;
+
+export const proxyInternals = {
+  /** Whether the `NO_PROXY` value `list` exempts `hostname` on `port`. */
+  noProxyMatches: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.noProxyMatches", 3) as (
+    list: string,
+    hostname: string,
+    port: number,
+  ) => boolean,
+  /** The proxy an environment of exactly `env` selects for `url`, or null. */
+  proxyFor: (env: Record<string, string>, url: string) => proxyFor(Object.entries(env).flat(), url),
+  /** What the HTTP client's URL parser makes of `href`. */
+  parseURL: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.parseURL", 1) as (href: string) => {
+    username: string;
+    password: string;
+    hostname: string;
+    port: string;
+    pathname: string;
+  },
+};
+
 export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };
@@ -819,6 +897,14 @@ export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   "InternalModuleRegistry.cpp",
   "jsInternalModulesLoadedFromBytecode",
   0,
+);
+
+// Whether the source of `fn` knows where its lines start. Before anything asked for a position in it, that means they
+// came with its code: from the parse, or out of the bytecode.
+export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(
+  "ZigSourceProvider.cpp",
+  "jsSourceHasLineStarts",
+  1,
 );
 
 // The bytecode `bun build --compile --bytecode` embeds for a builtin module, plus the external string table it embeds

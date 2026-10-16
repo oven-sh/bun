@@ -911,12 +911,14 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
                 .spawn(move || {
                     for job in rx {
                         let url = BunString::clone_utf8(&job.url);
+                        // No bytecode optimizer: it doubles the write that lands after
+                        // `exit` on every cold start. `bun build --bytecode` pays it once.
                         let result = crate::cached_bytecode::__bun_jsc_generate_cached_bytecode(
                             job.format,
                             &job.code,
                             &url,
                             u32::MAX,
-                            true,
+                            false,
                             None,
                         );
                         let _ = job.resp.send(result);

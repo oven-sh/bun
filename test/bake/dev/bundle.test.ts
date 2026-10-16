@@ -919,3 +919,24 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+// The dev server's runtime threw `$ERR_SSR_RESPONSE_EXPECTED(...)`, a name only src/js resolves: what the
+// user saw was "ReferenceError: $ERR_SSR_RESPONSE_EXPECTED is not defined".
+devTest("a render() that does not return a Response is reported as that", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function () {
+        return "not a response";
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    const text = await response.text();
+    expect({
+      status: response.status,
+      saysWhatIsWrong: text.includes("was expected to return a Response object"),
+      referenceError: text.includes("is not defined"),
+    }).toEqual({ status: 500, saysWhatIsWrong: true, referenceError: false });
+  },
+});

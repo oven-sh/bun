@@ -42,10 +42,10 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
     client.on("error", () => {});
     try {
       const req = client.request({ ":path": "/" });
-      const [headers] = (await once(req, "response")) as [http2.IncomingHttpHeaders];
+      const [headers] = (await once(req, "response")) as [http2.IncomingHttpHeaders & http2.IncomingHttpStatusHeader];
       expect(headers[":status"]).toBe(200);
       const chunks: Buffer[] = [];
-      req.on("data", c => chunks.push(c));
+      req.on("data", (c: Buffer) => chunks.push(c));
       await once(req, "end");
       expect(Buffer.concat(chunks).equals(body)).toBe(true);
     } finally {
@@ -59,7 +59,7 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
     let received = Buffer.alloc(0);
     const { promise: gotBody, resolve } = Promise.withResolvers<void>();
     using server = await makeServer((stream, headers) => {
-      stream.on("data", c => (received = Buffer.concat([received, c])));
+      stream.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
       stream.on("end", () => {
         stream.respond({ ":status": 200 });
         stream.end();
@@ -98,7 +98,7 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
     const chunks: Buffer[] = [];
     const { promise: gotBody, resolve } = Promise.withResolvers<void>();
     using server = await makeServer(stream => {
-      stream.on("data", c => chunks.push(c));
+      stream.on("data", (c: Buffer) => chunks.push(c));
       stream.on("end", () => {
         stream.respond({ ":status": 200 });
         stream.end();
@@ -139,7 +139,7 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
     try {
       const req = client.request({ ":path": "/" });
       const chunks: Buffer[] = [];
-      req.on("data", c => chunks.push(c));
+      req.on("data", (c: Buffer) => chunks.push(c));
       await Promise.all([once(req, "response"), once(req, "end")]);
       expect(Buffer.concat(chunks).equals(body)).toBe(true);
     } finally {
@@ -176,7 +176,7 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
     try {
       await once(client, "connect");
       const req = client.request({ ":path": "/" });
-      const [headers] = (await once(req, "response")) as [http2.IncomingHttpHeaders];
+      const [headers] = (await once(req, "response")) as [http2.IncomingHttpHeaders & http2.IncomingHttpStatusHeader];
       expect(headers[":status"]).toBe(200);
       req.resume();
       await once(req, "end");
@@ -189,7 +189,7 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
   test("https/2: recv → short reads (3 bytes) over TLS deliver complete response", async () => {
     const body = Buffer.alloc(256, "s");
     const server = http2.createSecureServer({ key: certs.key, cert: certs.cert });
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       stream.respond({ ":status": 200 });
       stream.end(body);
     });
@@ -204,7 +204,7 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
       try {
         const req = client.request({ ":path": "/" });
         const chunks: Buffer[] = [];
-        req.on("data", c => chunks.push(c));
+        req.on("data", (c: Buffer) => chunks.push(c));
         await Promise.all([once(req, "response"), once(req, "end")]);
         expect(Buffer.concat(chunks).equals(body)).toBe(true);
       } finally {
@@ -263,7 +263,7 @@ describe.skipIf(skip)("node:http2 seeded short-I/O fuzz", () => {
       try {
         const req = client.request({ ":path": "/" });
         const chunks: Buffer[] = [];
-        req.on("data", c => chunks.push(c));
+        req.on("data", (c: Buffer) => chunks.push(c));
         await Promise.all([once(req, "response"), once(req, "end")]);
         expect(Buffer.concat(chunks).equals(body)).toBe(true);
       } finally {

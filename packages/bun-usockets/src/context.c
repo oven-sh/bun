@@ -399,9 +399,31 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     return ls;
 }
 
+#ifndef _WIN32
+/* The listener of this loop that polls fd, if there is one. */
+static struct us_listen_socket_t *us_internal_loop_listener_of(struct us_loop_t *loop, LIBUS_SOCKET_DESCRIPTOR fd) {
+    for (struct us_socket_group_t *g = loop->data.head; g; g = g->next) {
+        for (struct us_listen_socket_t *ls = g->head_listen_sockets; ls; ls = ls->next) {
+            if (us_poll_fd((struct us_poll_t *) ls) == fd) {
+                return ls;
+            }
+        }
+    }
+    return 0;
+}
+#endif
+
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
+#ifndef _WIN32
+    /* A second listener on one descriptor is EEXIST from epoll. kqueue replaces the registration
+     * of the first listener in silence. */
+    if (us_internal_loop_listener_of(group->loop, fd)) {
+        *error = EEXIST;
+        return 0;
+    }
+#endif
     /* Validate with listen(2) before touching the descriptor's flags: on failure the caller keeps
      * the fd (it may be its stdio), and a non-socket must come back untouched. */
     if (listen(fd, backlog > 0 ? backlog : 512)) {

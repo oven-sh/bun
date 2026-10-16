@@ -428,7 +428,7 @@ console.log(process.execArgv); // ["--smol", "--user-agent=MyBot"]
 
 ### Runtime arguments via `BUN_OPTIONS`
 
-Standalone executables read the `BUN_OPTIONS` environment variable, so you can pass runtime flags without recompiling:
+By default, standalone executables read the `BUN_OPTIONS` environment variable, so you can pass runtime flags without recompiling:
 
 ```bash terminal icon="terminal"
 # Enable CPU profiling on a compiled executable
@@ -440,6 +440,36 @@ BUN_OPTIONS="--heap-prof-md" ./myapp
 # Combine multiple flags
 BUN_OPTIONS="--smol --cpu-prof-md" ./myapp
 ```
+
+### Ignore runtime environment options
+
+Use `--no-compile-env-options` to build an executable that ignores `BUN_OPTIONS`, `BUN_BE_BUN`, `BUN_INSPECT`, `BUN_INSPECT_CONNECT_TO`, and `BUN_INSPECT_PRELOAD`:
+
+```bash terminal icon="terminal"
+bun build ./app.ts --compile --no-compile-env-options --outfile myapp
+```
+
+The equivalent `Bun.build()` option is `compile.envOptions`:
+
+```ts build.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./app.ts"],
+  compile: {
+    outfile: "myapp",
+    envOptions: false,
+  },
+});
+```
+
+With this option disabled, those variables cannot preload code, switch the executable to the Bun CLI, or configure the inspector. The setting is embedded in the executable. Runtime arguments embedded with `--compile-exec-argv` or `compile.execArgv` still apply.
+
+This option requires a compilation target with the same version number as the Bun instance running the build and cannot be combined with `--compile-executable-path` or `compile.executablePath`. An older or custom runtime may not implement the opt-out, so these combinations fail at build time.
+
+If your application launches its own executable with `BUN_BE_BUN=1` to run Bun commands, that subprocess will run the compiled application instead. Use a separate Bun executable for those commands.
+
+The variables remain visible in `process.env`. Other environment variables, including `BUN_JSC_*` and operating system loader variables, are unaffected. This option does not sandbox the application or change automatic configuration file loading; use the [autoload options](#automatic-config-loading) to control that separately.
+
+Executables read these variables by default; `--compile-env-options` keeps that behavior explicitly.
 
 ---
 
@@ -514,6 +544,8 @@ To disable `.env` or `bunfig.toml` loading for deterministic execution:
 <Note>New in Bun v1.2.16</Note>
 
 Set the `BUN_BE_BUN=1` environment variable to run a standalone executable as if it were the `bun` CLI itself. The executable ignores its bundled entrypoint and exposes the full `bun` CLI instead.
+
+Executables built with [`--no-compile-env-options`](#ignore-runtime-environment-options) ignore `BUN_BE_BUN` and run their bundled entrypoint instead of switching to the Bun CLI.
 
 For example, consider an executable compiled from this script:
 

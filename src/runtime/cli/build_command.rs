@@ -873,6 +873,9 @@ impl BuildCommand {
                     {
                         use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
                         let mut flags = Flags::default();
+                        if !ctx.bundler_options.compile_env_options {
+                            flags |= Flags::DISABLE_ENV_OPTIONS;
+                        }
                         if !ctx.bundler_options.compile_autoload_dotenv {
                             flags |= Flags::DISABLE_DEFAULT_ENV_FILES;
                         }

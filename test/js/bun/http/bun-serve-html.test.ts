@@ -1014,10 +1014,14 @@ describe("html route whose file a plugin resolves to a different file", () => {
       stdout: JSON.stringify({ devServer: [failurePage, failurePage], ...builtWithout[target] }),
       exitCode: 0,
     });
-    // Printed by the dev server, and by the build in the other two modes.
-    expect(stderr).toMatch(
-      /error: Bundling "[^"]*index\.html" did not produce an html page for it\. A plugin may have resolved it to another file or loaded it as something other than html\./,
-    );
+    // The dev server prints the failure once per bundle: once with
+    // BUN_ASSUME_PERFECT_INCREMENTAL=1, twice with 0. When the build fails too,
+    // it prints once per request in devWithoutHmr (two) and once in production.
+    const devServerPrints = assumePerfectIncremental === "1" ? 1 : 2;
+    const buildPrints = target === "app.ts" ? 3 : 0;
+    const failure =
+      /error: Bundling "[^"]*index\.html" did not produce an html page for it\. A plugin may have resolved it to another file or loaded it as something other than html\./g;
+    expect(stderr.match(failure)).toHaveLength(devServerPrints + buildPrints);
   });
 });
 
@@ -1145,6 +1149,9 @@ test.concurrent("production html route reports a bundle failure on stderr", asyn
   // The response still hides the reason from the client.
   const statuses = JSON.parse(stdout);
   expect(statuses[0]).toEqual({ status: 500, bodyLength: 0 });
+  // Requests after a failed build answer with an empty body too. Their status
+  // is the subject of #37916.
+  expect(statuses.slice(1).map(({ bodyLength }) => bodyLength)).toEqual([0, 0]);
   expect(exitCode).toBe(0);
 });
 

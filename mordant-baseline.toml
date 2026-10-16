@@ -9,7 +9,6 @@
 "unused_pub:src/collections/StaticHashMap.rs" = 4
 
 [bun_core]
-"defaulted_failure:src/bun_core/string/immutable.rs" = 1
 "generic_body_not_generic:src/bun_core/fmt.rs" = 1
 "generic_body_not_generic:src/bun_core/string/mod.rs" = 1
 "unused_pub:src/bun_core/Global.rs" = 1

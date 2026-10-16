@@ -534,6 +534,7 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
         console.log(JSON.stringify({
           "./end?/addon.node": load("./end?/addon.node"),
           "./end?/addon.node?v=1": load("./end?/addon.node?v=1"),
+          "./a.cjs?from=addon.node": load("./a.cjs?from=addon.node"),
           "./x.mjs?from=addon.node": esm.default,
         }));
       });
@@ -543,6 +544,7 @@ describe.concurrent.skipIf(isWindows)("a `?` in a file or folder name", () => {
       stdout: {
         "./end?/addon.node": ["ERR_DLOPEN_FAILED", true],
         "./end?/addon.node?v=1": ["ERR_DLOPEN_FAILED", true],
+        "./a.cjs?from=addon.node": "a.cjs",
         "./x.mjs?from=addon.node": "x.mjs",
       },
       stderr: "",

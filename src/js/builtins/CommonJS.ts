@@ -72,7 +72,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // match the native-addon extension against the path portion only.
   if (id.indexOf("?") === -1) {
     if (id.endsWith(".node")) return $internalRequire(id, this, requireMap, id.length);
-  } else {
+  } else if (id.endsWith(".node") || id.indexOf(".node?") !== -1) {
     const pathLength = $newCppFunction("NodeModuleModule.cpp", "jsFunctionModuleKeyPathLength", 1)(id);
     if (id.endsWith(".node", pathLength)) return $internalRequire(id, this, requireMap, pathLength);
   }

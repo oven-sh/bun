@@ -235,6 +235,8 @@ pub struct Flags {
     pub(crate) h3_retried: bool,
     pub is_node_http_client: bool,
     pub redirect_credentials: RedirectCredentialsPolicy,
+    /// While all connections are taken, this request lets the ones without the flag go first.
+    pub yields_to_other_requests: bool,
 }
 
 impl Default for Flags {
@@ -259,6 +261,7 @@ impl Default for Flags {
             h3_retried: false,
             is_node_http_client: false,
             redirect_credentials: RedirectCredentialsPolicy::SameOrigin,
+            yields_to_other_requests: false,
         }
     }
 }
@@ -526,6 +529,15 @@ impl<'a> HTTPClientResult<'a> {
 
     pub fn is_success(&self) -> bool {
         self.fail.is_none()
+    }
+
+    /// Returns the response's status and headers, or the error that made the request fail.
+    pub fn into_metadata(self) -> crate::Result<HTTPResponseMetadata> {
+        if let Some(err) = self.fail {
+            return Err(err);
+        }
+        // Having neither an error nor a response is reported as a closed connection, not a panic.
+        self.metadata.ok_or(crate::Error::ConnectionClosed)
     }
 
     pub(crate) fn is_timeout(&self) -> bool {

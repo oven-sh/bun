@@ -240,12 +240,6 @@ where
     pub(crate) fn script_context<'r>(&self) -> &'r bun_jsc::ScriptExecutionContext {
         self.server().context()
     }
-
-    pub(crate) fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
-        let server = self.server.get()?;
-        // SAFETY: BACKREF — the server outlives every context it allocates.
-        unsafe { &*server.as_ptr() }.dev_server()
-    }
 }
 
 // ─── per-request state machine bodies ────────────────────────────────────────

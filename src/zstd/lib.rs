@@ -763,6 +763,9 @@ impl Drop for StreamingDecoder {
 /// JS/CSS bundles that are shipped to a browser (dev-server client runtime,
 /// error overlay/page). Anything that runs inside Bun stays uncompressed.
 ///
+/// The exception is text that only `bun lint`, `bun fmt` and `bun check`
+/// read. It may be compressed because it isn't on the path of running a program.
+///
 /// Release (`bun_codegen_embed`) builds include the `.zst` twin that
 /// `scripts/build/codegen.ts` (`emitCompressedEmbeds`) writes to
 /// `<codegen>/compressed/<name>.zst`; other builds evaluate `$fallback`.

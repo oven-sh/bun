@@ -76,7 +76,7 @@ function expectParses(input: string | Buffer, canonical?: string, compact?: unkn
   const object = XML.parse(input);
   if (canonical !== undefined) {
     expect(canonicalize(node)).toBe(canonical);
-    expect(object).toEqual(compact);
+    expect<unknown>(object).toEqual(compact);
   }
   // stringify of either shape reads back as the same value.
   expect(canonicalize(tree(XML.stringify(node)))).toBe(canonicalize(node));

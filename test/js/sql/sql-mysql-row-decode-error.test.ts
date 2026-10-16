@@ -30,8 +30,9 @@ import {
   mysqlTextResultSet,
 } from "./wire-frames";
 
+type Rejection = { name: string; code?: string; message: string };
 /** One entry per query, in order: its rows, or the error it rejected with. */
-async function settle(queries: PromiseLike<any>[]) {
+async function settle(queries: PromiseLike<any>[]): Promise<(any[] | Rejection)[]> {
   return (await Promise.allSettled(queries)).map(result =>
     result.status === "fulfilled"
       ? [...result.value]
@@ -71,7 +72,7 @@ async function mockServer(responses: Record<string, Buffer[]>) {
     };
     socket.write(mysqlHandshakeV10());
     socket.on("error", () => {});
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;

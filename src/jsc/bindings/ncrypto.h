@@ -1177,6 +1177,12 @@ public:
         const Digest& digest);
     std::optional<EVP_PKEY_CTX*> verifyInit(const EVPKeyPointer& key,
         const Digest& digest);
+    std::optional<EVP_PKEY_CTX*> signInitWithContext(const EVPKeyPointer& key,
+        const Digest& digest,
+        const Buffer<const unsigned char>& context_string);
+    std::optional<EVP_PKEY_CTX*> verifyInitWithContext(const EVPKeyPointer& key,
+        const Digest& digest,
+        const Buffer<const unsigned char>& context_string);
 
     DataPointer signOneShot(const Buffer<const unsigned char>& buf) const;
     DataPointer sign(const Buffer<const unsigned char>& buf) const;

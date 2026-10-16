@@ -32,7 +32,7 @@ export const bool = new BoolType();
 /** Strict: a number (or BigInt) that is an integer in range. `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. */
 export const { u8, u16, i32, u32, u64, usize } = integers;
 
-/** Strict: only a number. */
+/** Strict: only a number. `.loose` for `ToNumber`. */
 export const f64 = new DoubleType();
 
 /** An owned `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. */

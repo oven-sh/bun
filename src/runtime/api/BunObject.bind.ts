@@ -28,3 +28,11 @@ export const gc = b.fn({
   capability: "js",
   rustPath: "crate::api::bun_object::gc_from_js",
 });
+
+export const indexOfLine = b.fn({
+  args: {
+    buffer: b.bufferSource.bytes.allowShared,
+    offset: b.f64.loose.default(0),
+  },
+  returns: b.f64,
+});

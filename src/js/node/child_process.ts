@@ -526,26 +526,6 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     ...normalizeSpawnArguments(file, args, options),
   };
 
-  if (options.windowsBatchFileError) {
-    const error = new SystemError(
-      `spawnSync ${options.file} EINVAL`,
-      options.file,
-      "spawnSync " + options.file,
-      -4071,
-      "EINVAL",
-    );
-    error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
-    return {
-      signal: null,
-      status: null,
-      output: [null, null, null],
-      pid: 0,
-      stdout: null,
-      stderr: null,
-      error,
-    };
-  }
-
   const maxBuffer = options.maxBuffer;
   const encoding = options.encoding;
 
@@ -576,6 +556,16 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   var error;
   try {
+    // node rejects a batch file where it would spawn the process, after it validates the options.
+    if (options.windowsBatchFileError) {
+      throw new SystemError(
+        `spawnSync ${options.file} EINVAL`,
+        options.file,
+        "spawnSync " + options.file,
+        -4071,
+        "EINVAL",
+      );
+    }
     var {
       stdout = null,
       stderr = null,

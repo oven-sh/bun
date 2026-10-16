@@ -2,6 +2,7 @@ import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createSecretKey, type webcrypto } from "node:crypto";
+import { totalmem } from "node:os";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -341,6 +342,134 @@ describe("oversized inputs", () => {
     }
     expect(exitCode).toBe(0);
   });
+});
+
+describe("oversized outputs", () => {
+  // The input cap above leaves room for an output that is larger than the
+  // input: AES-GCM and ChaCha20-Poly1305 append a tag, AES-CBC pads up to the
+  // next block, AES-KW adds 8 bytes, and a JWK export base64-encodes the key.
+  // The OpenSSL backends size that output buffer themselves, and the Vector
+  // size constructor aborts the process when the size is over the cap. The
+  // synthetic limit lowers the cap to 1 MiB so each path is tested on both
+  // sides of it with small buffers.
+  it.concurrent("rejects an output over the buffer limit and accepts one at the limit", async () => {
+    const script = `
+      import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+      const limit = 1024 * 1024;
+      setSyntheticAllocationLimitForTesting(limit);
+      const { subtle } = crypto;
+
+      const gcmKey = await subtle.importKey("raw", new Uint8Array(32).fill(1), "AES-GCM", false, ["encrypt", "decrypt"]);
+      const cbcKey = await subtle.importKey("raw", new Uint8Array(32).fill(2), "AES-CBC", false, ["encrypt"]);
+      const chachaKey = await subtle.importKey("raw-secret", new Uint8Array(32).fill(3), "ChaCha20-Poly1305", false, ["encrypt"]);
+      const kek = await subtle.importKey("raw", new Uint8Array(32).fill(4), "AES-KW", false, ["wrapKey"]);
+      const ctrKey = await subtle.importKey("raw", new Uint8Array(32).fill(5), "AES-CTR", false, ["encrypt"]);
+      const cfbKey = await subtle.importKey("raw", new Uint8Array(32).fill(6), "AES-CFB-8", false, ["encrypt"]);
+      const iv12 = new Uint8Array(12);
+      const iv16 = new Uint8Array(16);
+
+      const results = {};
+      const record = async (label, promise) => {
+        try {
+          results[label] = (await promise).byteLength;
+        } catch (e) {
+          results[label] = e.name;
+        }
+      };
+      const hmac = size => subtle.importKey("raw", new Uint8Array(size), { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+      const wrap = async (format, size) => subtle.wrapKey(format, await hmac(size), kek, "AES-KW");
+      const exportJwk = async size => {
+        try {
+          results["HMAC jwk export " + (size * 4 > limit * 3 ? "over" : "at") + " limit"] = (await subtle.exportKey("jwk", await hmac(size))).k.length;
+        } catch (e) {
+          results["HMAC jwk export over limit"] = e.name;
+        }
+      };
+
+      await record("AES-GCM at limit", subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(limit - 16)));
+      await record("AES-GCM over limit", subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(limit - 15)));
+      await record("ChaCha20-Poly1305 at limit", subtle.encrypt({ name: "ChaCha20-Poly1305", iv: iv12 }, chachaKey, new Uint8Array(limit - 16)));
+      await record("ChaCha20-Poly1305 over limit", subtle.encrypt({ name: "ChaCha20-Poly1305", iv: iv12 }, chachaKey, new Uint8Array(limit - 15)));
+      await record("AES-CBC at limit", subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbcKey, new Uint8Array(limit - 1)));
+      await record("AES-CBC over limit", subtle.encrypt({ name: "AES-CBC", iv: iv16 }, cbcKey, new Uint8Array(limit)));
+      await record("AES-CTR at limit", subtle.encrypt({ name: "AES-CTR", counter: iv16, length: 64 }, ctrKey, new Uint8Array(limit)));
+      await record("AES-CTR over limit", subtle.encrypt({ name: "AES-CTR", counter: iv16, length: 64 }, ctrKey, new Uint8Array(limit + 1)));
+      await record("AES-CFB-8 at limit", subtle.encrypt({ name: "AES-CFB-8", iv: iv16 }, cfbKey, new Uint8Array(limit)));
+      await record("AES-CFB-8 over limit", subtle.encrypt({ name: "AES-CFB-8", iv: iv16 }, cfbKey, new Uint8Array(limit + 1)));
+      await record("AES-KW at limit", wrap("raw", limit - 8));
+      await record("AES-KW over limit", wrap("raw", limit));
+      // base64url of 3 bytes is 4 characters, so a 768 KiB key encodes to exactly 1 MiB.
+      await exportJwk((limit / 4) * 3);
+      await exportJwk((limit / 4) * 3 + 3);
+      await record("AES-KW jwk over limit", wrap("jwk", (limit / 4) * 3));
+
+      // The process is still usable after a rejection.
+      const small = await subtle.encrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, new Uint8Array(16).fill(5));
+      const roundTrip = new Uint8Array(await subtle.decrypt({ name: "AES-GCM", iv: iv12 }, gcmKey, small));
+      results["small round-trip"] = roundTrip.every(b => b === 5) ? "ok" : "mismatch";
+
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "AES-GCM at limit": 1024 * 1024,
+      "AES-GCM over limit": "OperationError",
+      "ChaCha20-Poly1305 at limit": 1024 * 1024,
+      "ChaCha20-Poly1305 over limit": "OperationError",
+      "AES-CBC at limit": 1024 * 1024,
+      "AES-CBC over limit": "OperationError",
+      "AES-CTR at limit": 1024 * 1024,
+      "AES-CTR over limit": "OperationError",
+      "AES-CFB-8 at limit": 1024 * 1024,
+      "AES-CFB-8 over limit": "OperationError",
+      "AES-KW at limit": 1024 * 1024,
+      "AES-KW over limit": "OperationError",
+      "HMAC jwk export at limit": 1024 * 1024,
+      "HMAC jwk export over limit": "OperationError",
+      "AES-KW jwk over limit": "OperationError",
+      "small round-trip": "ok",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The real cap is 2^31 - 1 bytes. One backend is checked at that boundary
+  // with the smallest input from the report whose output is over it. The
+  // input copy alone takes 2 GiB, so the child needs a machine with room for
+  // it. The accept side of the boundary is an encrypt of 2 GiB, which takes
+  // over 30 s in a debug ASAN build, so the synthetic test above covers it.
+  it.concurrent.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 8 * 1024 ** 3)(
+    "AES-GCM rejects an output of 2^31 bytes",
+    async () => {
+      const script = `
+        const key = await crypto.subtle.importKey("raw", new Uint8Array(32), "AES-GCM", false, ["encrypt"]);
+        const iv = new Uint8Array(12);
+        const results = {};
+        try {
+          results.encrypt = (await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new Uint8Array(2147483632))).byteLength;
+        } catch (e) {
+          results.encrypt = e.name;
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ encrypt: "OperationError" });
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 describe("RSA-PSS saltLength", () => {

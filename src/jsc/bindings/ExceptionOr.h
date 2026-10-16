@@ -215,6 +215,12 @@ template<typename T> struct CrossThreadCopierBase<false, false, WebCore::Excepti
             return crossThreadCopy(source.exception());
         return crossThreadCopy(source.returnValue());
     }
+    static Type copy(Type&& source)
+    {
+        if (source.hasException())
+            return crossThreadCopy(source.releaseException());
+        return crossThreadCopy(source.releaseReturnValue());
+    }
 };
 
 template<> struct CrossThreadCopierBase<false, false, WebCore::ExceptionOr<void>> {
@@ -223,6 +229,12 @@ template<> struct CrossThreadCopierBase<false, false, WebCore::ExceptionOr<void>
     {
         if (source.hasException())
             return crossThreadCopy(source.exception());
+        return {};
+    }
+    static Type copy(Type&& source)
+    {
+        if (source.hasException())
+            return crossThreadCopy(source.releaseException());
         return {};
     }
 };

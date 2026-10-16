@@ -1,5 +1,6 @@
 import { expect, it, jest } from "bun:test";
-import { bunEnv, bunExe, gc } from "harness";
+import { bunEnv, bunExe, gc, isLinux, isMacOS, isWindows } from "harness";
+import { readFileSync } from "node:fs";
 
 it("arrayBufferToString u8", async () => {
   var encoder = new TextEncoder();
@@ -156,10 +157,20 @@ it("Bun.unsafe.arrayBufferToString takes a typed array or an ArrayBuffer", () =>
   }
 });
 
-it("Bun.unsafe.memoryFootprint is a number of bytes", () => {
+it("Bun.unsafe.memoryFootprint is a number of bytes, or undefined where there is nothing to read it from", () => {
+  let known = isMacOS || isWindows;
+  if (isLinux) {
+    try {
+      known = readFileSync("/proc/self/smaps_rollup", "utf8").includes("\nPss:");
+    } catch {}
+  }
   const bytes = Bun.unsafe.memoryFootprint();
-  expect(bytes).toBeInteger();
-  expect(bytes).toBeGreaterThan(1024 * 1024);
+  if (known) {
+    expect(bytes).toBeInteger();
+    expect(bytes).toBeGreaterThan(1024 * 1024);
+  } else {
+    expect(bytes).toBeUndefined();
+  }
 });
 
 it("Bun.unsafe.mimallocDump prints to stderr", async () => {

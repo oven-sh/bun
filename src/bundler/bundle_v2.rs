@@ -2525,21 +2525,32 @@ pub mod bv2_impl {
             // What cannot be named stands for what it imports: a page, and what only a plugin can
             // read, like `App.svelte`. What a plugin makes of that imports the plugin's own runtime,
             // which is not of the project.
+            let stands_for_its_imports =
+                |index: usize| loaders[index] == Loader::Html || is_loaded_by_plugin(index);
             let mut named: Vec<usize> = Vec::new();
             let mut is_named = vec![false; sources.len()];
-            // A page that a server imports is in the graph like one that is an entry point.
-            let pages = (0..sources.len()).filter(|&index| loaders[index] == Loader::Html);
-            let entry_points = self.graph.entry_points.iter();
-            let mut pending: Vec<usize> = (entry_points.map(|it| it.get() as usize))
-                .chain(pages)
+            // A page that a server imports, or `App.svelte` that `main.ts` imports, is in the graph
+            // like one that is an entry point. By path: the order of the graph is that of the
+            // threads that parse.
+            let mut elsewhere: Vec<usize> = (0..sources.len())
+                .filter(|&index| stands_for_its_imports(index))
+                .filter(|&index| {
+                    loaders[index] == Loader::Html || !sources[index].path.is_node_module()
+                })
                 .collect();
+            elsewhere.sort_unstable_by_key(|&index| {
+                let path = &sources[index].path;
+                (path.namespace, path.text)
+            });
+            let own_entry_points = || self.graph.entry_points.iter().map(|it| it.get() as usize);
+            let mut pending: Vec<usize> = own_entry_points().chain(elsewhere).collect();
             pending.reverse();
             while let Some(index) = pending.pop() {
                 if std::mem::replace(&mut is_named[index], true) {
                     continue;
                 }
                 named.push(index);
-                if loaders[index] == Loader::Html || is_loaded_by_plugin(index) {
+                if stands_for_its_imports(index) {
                     let records = import_records[index].as_slice().iter().rev();
                     pending.extend(
                         (records.map(|record| record.source_index))
@@ -2549,21 +2560,39 @@ pub mod bv2_impl {
                     );
                 }
             }
-            let mut entry_points = (named.iter().copied())
-                .filter(|&index| {
-                    loaders[index].is_javascript_like() && sources[index].path.is_file()
-                })
-                .map(|index| sources[index].path.text);
+            let has_text = |index: usize| {
+                loaders[index].is_javascript_like_or_json() && sources[index].path.is_file()
+            };
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
-            let mut sources = (sources.iter().zip(loaders).zip(flags))
-                .filter(|((source, loader), flags)| {
-                    loader.is_javascript_like_or_json()
-                        && source.path.is_file()
-                        && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
-                            && bun_sys::exists(source.path.text))
+            let written: Vec<usize> = (0..sources.len())
+                .filter(|&index| is_loaded_by_plugin(index) && has_text(index))
+                .filter(|&index| bun_sys::exists(sources[index].path.text))
+                .collect();
+            let is_written = |index: usize| written.binary_search(&index).is_ok();
+            // What only a plugin provides is not code of the project: it is checked where the
+            // project imports it, and as the entry point that it is.
+            let is_of_the_project = |index: usize| {
+                !is_loaded_by_plugin(index)
+                    || is_written(index)
+                    || own_entry_points().any(|it| it == index)
+            };
+            let mut entry_points = (named.iter().copied())
+                .filter(|&index| {
+                    loaders[index].is_javascript_like()
+                        && sources[index].path.is_file()
+                        && is_of_the_project(index)
                 })
-                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
+                .map(|index| sources[index].path.text);
+            let mut sources = (0..sources.len())
+                .filter(|&index| has_text(index) && !is_written(index))
+                .map(|index| {
+                    (
+                        sources[index].path.text,
+                        sources[index].contents(),
+                        loaders[index],
+                    )
+                });
             let checked = options::TypeChecked {
                 cwd: self.transpiler.fs().top_level_dir,
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),

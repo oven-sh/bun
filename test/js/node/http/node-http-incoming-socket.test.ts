@@ -87,7 +87,7 @@ describe("IncomingMessage exposes socket as an own data property", () => {
           })
           .on("error", reject);
       });
-      expect({ ...result, serverOwnSocket }).toEqual({
+      expect({ ...result, serverOwnSocket }).toEqual<Record<string, unknown>>({
         ownSocket: true,
         encrypted: undefined,
         authorized: undefined,

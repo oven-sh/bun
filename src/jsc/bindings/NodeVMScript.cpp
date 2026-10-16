@@ -96,8 +96,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
-    RETURN_IF_EXCEPTION(scope, {});
+    THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, {});
     ArgList args(callFrame);
     JSValue sourceArg = args.at(0);
     String sourceString;

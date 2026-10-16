@@ -292,7 +292,7 @@ describe("body-mixin-errors", () => {
       connections++;
       sockets.push(socket);
       let buf = Buffer.alloc(0);
-      socket.on("data", d => {
+      socket.on("data", (d: Buffer) => {
         buf = Buffer.concat([buf, d]);
         if (buf.toString("latin1").endsWith("\r\n0\r\n\r\n")) {
           socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");

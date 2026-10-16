@@ -388,3 +388,45 @@ devTest("SSG pages router - catch-all routes [...slug]", {
     expect(await c4.elemsText("li")).toEqual(["blog", "2024", "january", "new-features"]);
   },
 });
+
+// `{ dir, style }` hands the route key, without its `/*`, to the router as the prefix.
+devTest("directory route with a style is mounted on the route's prefix", {
+  framework: "react",
+  files: {
+    "bun.app.ts": `
+      export default {
+        routes: {
+          "/docs/*": { dir: "./pages", style: "nextjs-pages" },
+        },
+        fetch: () => new Response("not a route", { status: 404 }),
+      };
+    `,
+    "pages/index.tsx": `
+      export default function IndexPage() {
+        return <h1>Docs Index</h1>;
+      }
+    `,
+    "pages/about.tsx": `
+      export default function AboutPage() {
+        return <h1>About Page</h1>;
+      }
+    `,
+  },
+  async test(dev) {
+    const text = async (url: string) => {
+      const response = await dev.fetch(url);
+      return response.status + " " + ((await response.text()).match(/<h1>.*?<\/h1>/)?.[0] ?? "");
+    };
+    expect({
+      "/docs": await text("/docs"),
+      "/docs/about": await text("/docs/about"),
+      "/": await text("/"),
+      "/about": await text("/about"),
+    }).toEqual({
+      "/docs": "200 <h1>Docs Index</h1>",
+      "/docs/about": "200 <h1>About Page</h1>",
+      "/": "404 ",
+      "/about": "404 ",
+    });
+  },
+});

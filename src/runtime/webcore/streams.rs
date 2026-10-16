@@ -568,8 +568,7 @@ impl Pending {
     /// the read any more, so drop the promise's root and the parked result.
     pub(crate) fn release_without_running(this: *mut Pending) {
         // SAFETY: heap-allocated in run_on_next_tick; refused, so we own it.
-        let mut boxed = unsafe { bun_core::heap::take(this) };
-        boxed.state = PendingState::Used;
+        let boxed = unsafe { bun_core::heap::take(this) };
         if let PendingFuture::Promise { promise, .. } = &boxed.future {
             JSPromise::opaque_ref(*promise).to_js().unprotect();
         }
@@ -1683,7 +1682,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             }
         }
 
-        self.buffer.clear_retaining_capacity();
         if self
             .buffer
             .try_reserve_exact(self.high_water_mark as usize)

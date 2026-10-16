@@ -895,8 +895,6 @@ impl FetchTasklet {
                     }
                 );
 
-                self.scheduled_response_buffer = MutableString::default();
-
                 if matches!(old, BodyValue::Locked(_)) {
                     bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
                     let mut old = old;
@@ -1863,13 +1861,10 @@ impl FetchTasklet {
         }
 
         let scheduled_response_buffer = core::mem::take(&mut self.scheduled_response_buffer);
-        let response = BodyValue::InternalBlob(InternalBlob {
+        BodyValue::InternalBlob(InternalBlob {
             bytes: scheduled_response_buffer.list,
             was_string: false,
-        });
-        self.scheduled_response_buffer = MutableString::default();
-
-        response
+        })
     }
 
     /// <https://fetch.spec.whatwg.org/#main-fetch>: HEAD responses and null body
@@ -1986,7 +1981,7 @@ impl FetchTasklet {
         cx: &bun_jsc::JsThread<'_>,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
-    ) -> crate::Result<*mut FetchTasklet> {
+    ) -> *mut FetchTasklet {
         let mut fetch_tasklet = Box::new(FetchTasklet {
             sink: None,
             // `AsyncHTTP` has no `Default`/zero-init; defer the Box until
@@ -2223,7 +2218,7 @@ impl FetchTasklet {
             // SAFETY: the tasklet is heap-allocated and drops its handle with itself.
             unsafe { jsc::AbortHandle::follow_owner(fetch_tasklet_ptr, signal) };
         }
-        Ok(fetch_tasklet_ptr)
+        fetch_tasklet_ptr
     }
 
     pub(crate) fn abort_listener(&mut self, reason: JSValue) {
@@ -2452,7 +2447,7 @@ impl FetchTasklet {
     }
 
     /// Cancel an in-flight request-body sink: stores the abort reason, aborts
-    /// the HTTP task, marks the sink ended/done, and fires the controller's
+    /// the HTTP task, marks the sink ended, and fires the controller's
     /// onClose (which cancels the upstream ReadableStream reader). On the JS
     /// pump path the single balancing `write_end_request` is left to the
     /// `assign_to_stream` pump-promise settlement (on_resolve/on_reject); on
@@ -2466,7 +2461,6 @@ impl FetchTasklet {
             return;
         }
         sink.ended = true;
-        sink.done = true;
         let is_native = matches!(
             sink.source,
             SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
@@ -2496,9 +2490,9 @@ impl FetchTasklet {
         cx: &bun_jsc::JsThread<'_>,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
-    ) -> crate::Result<*mut FetchTasklet> {
+    ) {
         http::http_thread::init(&http::http_thread::InitOpts::default());
-        let node = Self::get(cx, fetch_options, promise)?;
+        let node = Self::get(cx, fetch_options, promise);
 
         let node_ref = Self::from_raw_mut(node);
         let mut batch = bun_threading::thread_pool::Batch::default();
@@ -2515,8 +2509,6 @@ impl FetchTasklet {
         // SAFETY: as in `get`.
         unsafe { jsc::AbortHandle::arm_owner(node, cx.context()) };
         http::HTTPThread::schedule(batch);
-
-        Ok(node)
     }
 
     /// Called from HTTP thread. Handles HTTP events received from socket.
@@ -2561,7 +2553,6 @@ impl FetchTasklet {
             result.body.len()
         );
 
-        let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();
         let prev_can_stream = task_ref.result.can_stream;
         // `result.body` borrows the HTTP thread's scratch buffer on non-terminal
@@ -2585,13 +2576,11 @@ impl FetchTasklet {
         }
 
         // metadata should be provided only once
-        if let Some(metadata) = task_ref.result.metadata.take().or(prev_metadata) {
+        if let Some(metadata) = task_ref.result.metadata.take() {
             bun_output::scoped_log!(FetchTasklet, "added callback metadata");
             if task_ref.metadata.is_none() {
                 task_ref.metadata = Some(metadata);
             }
-
-            task_ref.result.metadata = None;
         }
 
         task_ref.body_size = task_ref.result.body_size;
@@ -2681,7 +2670,7 @@ impl FetchTasklet {
 fn on_resolve_request_stream(
     _global_this: &JSGlobalObject,
     callframe: &bun_jsc::CallFrame,
-) -> JsResult<JSValue> {
+) -> JSValue {
     let args = callframe.arguments();
     let this: *mut FetchTasklet = args[args.len() - 1].as_promise_ptr::<FetchTasklet>();
     // SAFETY: `as_promise_ptr` recovers the `*mut FetchTasklet` stashed by
@@ -2694,13 +2683,13 @@ fn on_resolve_request_stream(
         }
         (*this).write_end_request(None);
     }
-    Ok(JSValue::UNDEFINED)
+    JSValue::UNDEFINED
 }
 
 fn on_reject_request_stream(
     _global_this: &JSGlobalObject,
     callframe: &bun_jsc::CallFrame,
-) -> JsResult<JSValue> {
+) -> JSValue {
     let args = callframe.arguments();
     let this: *mut FetchTasklet = args[args.len() - 1].as_promise_ptr::<FetchTasklet>();
     let err = args[0];
@@ -2714,7 +2703,7 @@ fn on_reject_request_stream(
         }
         (*this).write_end_request(Some(err));
     }
-    Ok(JSValue::UNDEFINED)
+    JSValue::UNDEFINED
 }
 
 // Exported as function symbols so `Zig::GlobalObject::promiseHandlerID`'s
@@ -2726,10 +2715,7 @@ bun_jsc::jsc_host_abi! {
         g: *mut JSGlobalObject,
         cf: *mut bun_jsc::CallFrame,
     ) -> JSValue {
-        match on_resolve_request_stream(bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(cf)) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
+        on_resolve_request_stream(bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(cf))
     }
 }
 bun_jsc::jsc_host_abi! {
@@ -2738,10 +2724,7 @@ bun_jsc::jsc_host_abi! {
         g: *mut JSGlobalObject,
         cf: *mut bun_jsc::CallFrame,
     ) -> JSValue {
-        match on_reject_request_stream(bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(cf)) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
+        on_reject_request_stream(bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(cf))
     }
 }
 

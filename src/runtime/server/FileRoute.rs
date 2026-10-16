@@ -42,8 +42,6 @@ pub(crate) struct FileRoute {
 }
 
 pub(crate) struct InitOptions<'a> {
-    pub(crate) server: Option<AnyServer>,
-    pub(crate) status_code: u16, // default 200
     pub(crate) headers: Option<&'a FetchHeaders>,
 }
 
@@ -109,10 +107,10 @@ impl FileRoute {
         Ok(None)
     }
 
-    fn new(blob: Blob, headers: Headers, server: Option<AnyServer>, status_code: u16) -> FileRoute {
+    fn new(blob: Blob, headers: Headers, status_code: u16) -> FileRoute {
         FileRoute {
             ref_count: Cell::new(1),
-            server: Cell::new(server),
+            server: Cell::new(None),
             has_last_modified_header: headers.get(b"last-modified").is_some(),
             has_content_length_header: headers.get(b"content-length").is_some(),
             has_content_range_header: headers.get(b"content-range").is_some(),
@@ -126,7 +124,7 @@ impl FileRoute {
 
     pub(crate) fn init_from_blob(blob: Blob, opts: &InitOptions<'_>) -> RefPtr<FileRoute> {
         let headers = headers_from(opts.headers, &blob);
-        RefPtr::new(FileRoute::new(blob, headers, opts.server, opts.status_code))
+        RefPtr::new(FileRoute::new(blob, headers, 200))
     }
 
     pub(crate) fn from_js(
@@ -171,7 +169,6 @@ impl FileRoute {
                 return Ok(Some(RefPtr::new(FileRoute::new(
                     blob,
                     headers,
-                    None,
                     status_code,
                 ))));
             }
@@ -185,7 +182,7 @@ impl FileRoute {
                     "expected blob not to be heap-allocated"
                 );
                 let headers = headers_from(None, &b);
-                return Ok(Some(RefPtr::new(FileRoute::new(b, headers, None, 200))));
+                return Ok(Some(RefPtr::new(FileRoute::new(b, headers, 200))));
             }
         }
         Ok(None)

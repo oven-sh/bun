@@ -267,9 +267,6 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     match this.state.response_stage {
         HTTPStage::Body => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData body");
-            if decoded_data.is_empty() {
-                return;
-            }
             let report_progress = match this.handle_response_body(decoded_data, false) {
                 Ok(v) => v,
                 Err(err) => {
@@ -289,9 +286,6 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
         }
         HTTPStage::BodyChunk => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData body_chunk");
-            if decoded_data.is_empty() {
-                return;
-            }
             let report_progress = match this.handle_response_body_chunked_encoding(decoded_data) {
                 Ok(v) => v,
                 Err(err) => {

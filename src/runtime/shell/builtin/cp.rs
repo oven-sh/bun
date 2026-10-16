@@ -166,7 +166,7 @@ impl Cp {
             Action::Schedule { start, target } => {
                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
                 let opts = Self::state_mut(interp, cmd).opts;
-                let evtloop = Builtin::event_loop(interp, cmd);
+                let evtloop = Builtin::event_loop(interp);
                 let tgt = Builtin::of(interp, cmd).arg_bytes(target).to_vec();
                 let operands = 1 + (target - start);
                 let interp_ptr = interp.as_ctx_ptr();
@@ -669,8 +669,6 @@ impl ShellCpTask {
             Err(e) => return Some(ShellErr::new_sys(&e)),
         };
 
-        let mut _copying_many = false;
-
         // The following logic is based on the POSIX spec.
         if !src_is_dir && !tgt_is_dir && self.operands == 2 {
             // 1st synopsis: source_file -> target_file. Nothing to adjust.
@@ -691,7 +689,6 @@ impl ShellCpTask {
                         .into_boxed_slice(),
                 ));
             }
-            _copying_many = true;
         } else {
             // 3rd synopsis: source_files... -> target.
             if src_is_dir {
@@ -713,7 +710,6 @@ impl ShellCpTask {
                 buf3.as_mut_slice(),
                 &[tgt.as_bytes(), basename],
             );
-            _copying_many = true;
         }
 
         let args = crate::node::fs::args::Cp::owned(

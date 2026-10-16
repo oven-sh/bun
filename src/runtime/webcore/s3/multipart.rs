@@ -427,7 +427,6 @@ impl Drop for MultiPartUpload {
         // queue: Box<[UploadPart]> — dropped automatically (parts' raw `data` already freed during lifecycle)
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
-        let _ = self.vm;
         self.poll_ref.with_mut(|poll_ref| {
             poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
                 bun_io::AllocatorType::Js,

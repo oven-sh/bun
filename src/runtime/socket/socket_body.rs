@@ -1678,7 +1678,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // http response tests hung on every Linux target). Deliver it now
             // that the open dispatch is done; if it fully drains, complete the
             // pending JS write the same way on_writable's tail does, otherwise
-            // the do_socket_write backpressure arms the normal writable
+            // the socket write backpressure arms the normal writable
             // subscription.
             let _ = this.internal_flush();
             if this.buffered_data_for_node_net.get().len() == 0 {
@@ -1906,7 +1906,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // including the raw twin of an `upgradeTLS` pair, which shares the fd.
         this.update_flags(|f| {
             f.set(Flags::AUTHORIZED, authorized && !verify_failed);
-            f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
             f.set(Flags::REJECTED, transport_unusable);
         });
         if transport_unusable {
@@ -2019,12 +2018,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub(crate) fn reset_client_tls_flags(&self, reject_unauthorized: bool) {
         self.verify_error.set(None);
         self.update_flags(|f| {
-            f.remove(
-                Flags::HANDSHAKE_COMPLETE
-                    | Flags::AUTHORIZED
-                    | Flags::HOSTNAME_MISMATCH
-                    | Flags::REJECTED,
-            );
+            f.remove(Flags::HANDSHAKE_COMPLETE | Flags::AUTHORIZED | Flags::REJECTED);
             f.set(Flags::REJECT_UNAUTHORIZED, reject_unauthorized);
         });
     }
@@ -2643,15 +2637,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    #[inline]
-    fn do_socket_write(&self, buffer: &[u8]) -> i32 {
-        if self.flags.get().contains(Flags::BYPASS_TLS) {
-            self.socket.get().raw_write(buffer)
-        } else {
-            self.socket.get().write(buffer)
-        }
-    }
-
     /// Vectored raw write for plain-TCP sockets: all chunks reach the fd in one
     /// writev. Callers guarantee this socket has no TLS layer (raw writes bypass
     /// SSL framing). Updates bytes_written like the scalar path.
@@ -2684,7 +2669,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // (`s->ssl` is set) but must write raw bytes: write_check_error would
         // route it through the SSL-encrypting us_socket_write.
         if flags.contains(Flags::BYPASS_TLS) {
-            let res = self.do_socket_write(buffer);
+            let res = self.socket.get().raw_write(buffer);
             let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
             self.bytes_written
                 .set(self.bytes_written.get() + uwrote as u64);
@@ -2965,9 +2950,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Fail;
         }
 
-        let buffer: BlobOrStringOrBuffer = if args[0].is_undefined() {
-            BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::EMPTY)
-        } else {
+        let buffer: BlobOrStringOrBuffer =
             match BlobOrStringOrBuffer::from_js_with_encoding_value_allow_request_response(
                 global,
                 args[0],
@@ -2986,8 +2969,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     return WriteResult::Fail;
                 }
                 Err(_) => return WriteResult::Fail,
-            }
-        };
+            };
         // `buffer` Drop frees.
         if matches!(&buffer, BlobOrStringOrBuffer::Blob(b) if b.needs_to_read_file()) {
             let _ = global.throw(format_args!(
@@ -3173,7 +3155,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `noalias` for them and the previous `black_box` launder (which
         // mitigated ASM-verified PROVEN_CACHED stale loads of
         // `bytes_written`/`flags`/`buffered_data_for_node_net` across the
-        // re-entrant `do_socket_write`) is no longer needed.
+        // re-entrant socket write) is no longer needed.
         if self.buffered_data_for_node_net.get().len() > 0 {
             // Neither write call touches `buffered_data_for_node_net`, so a
             // `JsCell::get()` projection is valid for the duration of the call.
@@ -3183,7 +3165,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             // kept this buffer parked forever (the FIN-terminated-response hang).
             // BYPASS_TLS twins keep the raw write path.
             let res: i32 = if self.flags.get().contains(Flags::BYPASS_TLS) {
-                self.do_socket_write(self.buffered_data_for_node_net.get().slice())
+                self.socket
+                    .get()
+                    .raw_write(self.buffered_data_for_node_net.get().slice())
             } else {
                 let (res, fatal_errno) = self
                     .socket
@@ -4208,7 +4192,6 @@ bitflags::bitflags! {
         /// The peer failed verification under an enforcing policy: the socket
         /// refuses writes and is closed right after the handshake callback.
         const REJECTED             = 1 << 10;
-        const HOSTNAME_MISMATCH    = 1 << 11;
         const REJECT_UNAUTHORIZED  = 1 << 12;
         /// Set only by the node:net / node:tls socket constructors: their JS
         /// layer owns server-identity policy (`checkServerIdentity`), so the

@@ -152,7 +152,7 @@ unsafe extern "C" fn Bun__encoding__writeUTF16(
 unsafe extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(input: *const u8, len: usize) -> usize {
     // SAFETY: forwarded from this fn's contract.
     let input = unsafe { bun_core::ffi::slice(input, len) };
-    byte_length_u8::<{ enc::UTF8 }>(input)
+    byte_length_u8(input)
 }
 
 /// # Safety
@@ -390,8 +390,6 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             // chars is a freshly-allocated [u16] buffer; reinterpret as bytes.
             let output_bytes: &mut [u8] = bytemuck::cast_slice_mut(chars);
             let out_len = output_bytes.len();
-            output_bytes[out_len - 1] = 0;
-
             output_bytes.copy_from_slice(&input[..out_len]);
             str
         }
@@ -556,23 +554,12 @@ pub(crate) fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     }
 }
 
-fn byte_length_u8<const ENCODING: u8>(input: &[u8]) -> usize {
+fn byte_length_u8(input: &[u8]) -> usize {
     if input.is_empty() {
         return 0;
     }
 
-    match encoding_from_u8(ENCODING) {
-        Encoding::Utf8 => strings::element_length_latin1_into_utf8(input),
-
-        Encoding::Latin1 | Encoding::Ascii | Encoding::Buffer => input.len(),
-
-        Encoding::Ucs2 | Encoding::Utf16le => strings::element_length_utf8_into_utf16(input) * 2,
-
-        Encoding::Hex => input.len() / 2,
-
-        Encoding::Base64 | Encoding::Base64url => bun_base64::decode_len(input),
-        // else => return &[_]u8{};
-    }
+    strings::element_length_latin1_into_utf8(input)
 }
 
 /// # Safety

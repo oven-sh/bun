@@ -63,7 +63,7 @@ impl Yes {
             copies -= 1;
         }
 
-        let evtloop = Builtin::event_loop(interp, cmd);
+        let evtloop = Builtin::event_loop(interp);
         let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         {
             let me = Self::state_mut(interp, cmd);

@@ -295,13 +295,12 @@ impl Execution {
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
     }
 
-    pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn handle_timeout(&mut self, global_this: &JSGlobalObject) {
         let _g = group_begin!();
         self.kill_dangling_processes_on_timeout(global_this);
         let buntest = self.bun_test();
         // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
         unsafe { (*buntest).add_result(RefDataValue::Start) };
-        Ok(())
     }
 
     /// The kill-only half of [`handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
@@ -464,10 +463,6 @@ impl Execution {
         // index avoids materializing a `&mut BunTest` that would alias `&mut self`.
         if self.group_index >= self.groups.len() || *group_index != self.group_index {
             group_log::log(format_args!("runOneCompleted: the data is for a different group"));
-            return None;
-        }
-        if *group_index >= self.groups.len() {
-            group_log::log(format_args!("runOneCompleted: the data did not know the group"));
             return None;
         }
         // Disjoint split-borrow of `self.groups` and `self.sequences`.

@@ -48,7 +48,6 @@ impl ShellCondExprStatTask {
             interp,
             owned.task.cond,
             &owned.task.stat,
-            &owned.task.path,
         );
     }
 }

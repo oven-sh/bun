@@ -513,9 +513,6 @@ impl IOWriter {
     /// Cancel the chunks enqueued by the given child by marking them as dead.
     pub(crate) fn cancel_chunks(&self, ptr: ChildPtr) {
         let s = self.state();
-        if s.writers.is_empty() {
-            return;
-        }
         let idx = s.writer_idx;
         if idx >= s.writers.len() {
             return;

@@ -25,10 +25,6 @@ pub struct ByteStream {
     pub(crate) has_received_last_chunk: Cell<bool>,
     pub(crate) pending: JsCell<streams::Pending>,
     pub(crate) done: Cell<bool>,
-    /// Borrowed view into a JS `Uint8Array` passed from `on_pull`; kept alive by `pending_value`.
-    // Raw fat slice ptr because the backing store is JS-heap-owned and rooted via
-    // `pending_value: Strong`. Never freed by Rust.
-    pub(crate) pending_buffer: Cell<*mut [u8]>,
     pub(crate) pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
     pub(crate) high_water_mark: blob::SizeType,
     /// Native sink this stream is piped into; `on_data` dispatches and honors `Writable`.
@@ -49,7 +45,6 @@ impl Default for ByteStream {
                 ..Default::default()
             }),
             done: Cell::new(false),
-            pending_buffer: Cell::new(Self::empty_pending_buffer()),
             pending_value: JsCell::new(StrongOptional::empty()),
             high_water_mark: 0,
             sink: JsCell::new(SinkHandle::None),
@@ -324,21 +319,8 @@ impl readable_stream::SourceContext for ByteStream {
 bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent_const; }
 
 impl ByteStream {
-    #[inline]
-    const fn empty_pending_buffer() -> *mut [u8] {
-        core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
-    }
-
-    /// Init-time reset. Runs before the JS
+    /// Seeds the stream from the drain result. Runs before the JS
     /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
-    pub(crate) fn setup(&mut self) {
-        // Called immediately after `ByteStream::default()` construction;
-        // the old value owns nothing the new one
-        // reuses, so dropping it is the intended reset.
-        drop(core::mem::take(self));
-    }
-
-    /// Seeds the stream from the drain result; init-time like [`Self::setup`].
     pub(crate) fn apply_drain_result(&mut self, drain_result: DrainResult) {
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {
@@ -529,8 +511,7 @@ impl ByteStream {
 
             if self.sink_paused.get() {
                 bun_output::scoped_log!(ByteStream, "ByteStream.onData sink paused → buffer");
-                self.append(stream, 0)
-                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+                self.append(stream, 0);
                 return;
             }
 
@@ -652,7 +633,7 @@ impl ByteStream {
             // Re-derive the destination from the GC-rooted view instead of trusting the
             // raw pointer captured at pull time: JS can detach or transfer the backing
             // ArrayBuffer between the pull and the data arriving, leaving
-            // `pending_buffer` dangling. A detached view re-derives to an empty slice.
+            // that pointer dangling. A detached view re-derives to an empty slice.
             let global = self.parent_const().global_this();
             let mut pending_view = self
                 .pending_value
@@ -666,7 +647,6 @@ impl ByteStream {
             debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());
             pending_buf[..to_copy_len].copy_from_slice(&chunk[..to_copy_len]);
             let has_remaining = chunk.len() > to_copy_len;
-            self.pending_buffer.set(Self::empty_pending_buffer());
 
             let is_really_done =
                 self.has_received_last_chunk.get() && to_copy_len <= pending_buffer_len;
@@ -701,8 +681,7 @@ impl ByteStream {
             }
 
             if has_remaining {
-                self.append(stream, to_copy_len)
-                    .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+                self.append(stream, to_copy_len);
             } else {
                 // Only resume the producer when the whole chunk fit the pull
                 // view. When the tail spilled into `buffer` the next `on_pull`
@@ -726,12 +705,11 @@ impl ByteStream {
 
         bun_output::scoped_log!(ByteStream, "ByteStream.onData no action just append");
 
-        self.append(stream, 0)
-            .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
+        self.append(stream, 0);
     }
 
     /// Buffer `stream`, whose first `offset` bytes a pending pull already took.
-    fn append(&self, stream: streams::Result, offset: usize) -> Result<(), bun_alloc::AllocError> {
+    fn append(&self, stream: streams::Result, offset: usize) {
         if self.buffered.capacity() == 0 {
             match stream {
                 streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
@@ -751,7 +729,7 @@ impl ByteStream {
                 streams::Result::Done => {}
                 _ => unreachable!(),
             }
-            return Ok(());
+            return;
         }
 
         match stream {
@@ -776,8 +754,6 @@ impl ByteStream {
             // We don't support the rest of these yet
             _ => unreachable!(),
         }
-
-        Ok(())
     }
 
     fn set_value(&self, view: JSValue) {
@@ -818,8 +794,6 @@ impl ByteStream {
             return streams::Result::Done;
         }
 
-        // Raw borrow of a JS-owned buffer; rooted by `set_value`.
-        self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
         self.set_value(view);
 
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
@@ -858,7 +832,6 @@ impl ByteStream {
         }
 
         if !view.is_empty() {
-            self.pending_buffer.set(Self::empty_pending_buffer());
             self.pending.with_mut(|p| {
                 p.result.release();
                 p.result = streams::Result::Done;
@@ -897,7 +870,6 @@ impl ByteStream {
         if !self.done.get() {
             self.done.set(true);
 
-            self.pending_buffer.set(Self::empty_pending_buffer());
             let is_promise = self.pending.with_mut(|p| {
                 p.result.release();
                 p.result = streams::Result::Done;

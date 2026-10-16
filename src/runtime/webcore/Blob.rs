@@ -2091,14 +2091,6 @@ impl BlobExt for Blob {
             self.resolve_size();
             if self.size.get() == MAX_SIZE && self.store.get().is_some() {
                 return JSValue::js_number(f64::INFINITY);
-            } else if self.size.get() == 0 && self.store.get().is_some() {
-                if let store::Data::File(file) =
-                    &self.store().expect("infallible: store present").data
-                {
-                    if !file.seekable.unwrap_or(true) && file.max_size == MAX_SIZE {
-                        return JSValue::js_number(f64::INFINITY);
-                    }
-                }
             }
         }
         JSValue::js_number(self.size.get() as f64)
@@ -3747,11 +3739,10 @@ struct StructuredCloneWriter {
 }
 
 impl StructuredCloneWriter {
-    fn write(&self, bytes: &[u8]) -> usize {
+    fn write(&self, bytes: &[u8]) {
         // SAFETY: ctx and impl_ are supplied by C++ SerializedScriptValue and valid
         // for the duration of on_structured_clone_serialize.
         unsafe { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
-        bytes.len()
     }
 }
 
@@ -5244,11 +5235,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         pathlike.fd()
     } else {
         let mut file_path = bun_paths::path_buffer_pool::get();
-        let flags = if cfg!(not(windows)) {
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK
-        } else {
-            bun_sys::O::WRONLY | bun_sys::O::CREAT
-        };
+        let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
         match bun_sys::open(
             pathlike.path().slice_z(&mut file_path),
             flags,

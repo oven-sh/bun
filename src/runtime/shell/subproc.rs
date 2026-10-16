@@ -144,8 +144,6 @@ pub(crate) struct ShellIO {
 
 pub(crate) type Subprocess = ShellSubprocess;
 
-pub(crate) const DEFAULT_MAX_BUFFER_SIZE: u32 = 1024 * 1024 * 4;
-
 /// Backref from a heap-allocated [`ShellSubprocess`] to its owning `Cmd`.
 /// Spec stores `cmd_parent: *ShellCmd` directly. In the NodeId-arena port the
 /// `Cmd` lives **inline** in `Interpreter::nodes: Vec<Node>`, so a raw `*mut
@@ -782,8 +780,6 @@ impl ShellSubprocess {
             subprocess,
             spawn_stdout,
             interp,
-            DEFAULT_MAX_BUFFER_SIZE,
-            true,
         );
         let stderr = Readable::init(
             OutKind::Stderr,
@@ -794,8 +790,6 @@ impl ShellSubprocess {
             subprocess,
             spawn_stderr,
             interp,
-            DEFAULT_MAX_BUFFER_SIZE,
-            true,
         );
 
         // SAFETY: `subprocess` points to uninitialised memory of the right
@@ -876,7 +870,6 @@ impl ShellSubprocess {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(_) => {
                 *notify_caller_process_already_exited = true;
-                spawn_args.lazy = false;
             }
         }
 
@@ -895,12 +888,7 @@ impl ShellSubprocess {
         // SAFETY: `subprocess` is live; the slot is passed raw because the
         // reader can complete synchronously and overwrite it via `on_close_io`.
         if let Err(err) = unsafe {
-            Readable::start_pipe_reader(
-                &raw mut (*subprocess).stdout,
-                subprocess,
-                event_loop,
-                !spawn_args.lazy,
-            )
+            Readable::start_pipe_reader(&raw mut (*subprocess).stdout, subprocess, event_loop)
         } {
             let sys_err = err.to_shell_system_error();
             Self::abort_after_failed_start(subprocess);
@@ -909,12 +897,7 @@ impl ShellSubprocess {
 
         // SAFETY: as for stdout above.
         if let Err(err) = unsafe {
-            Readable::start_pipe_reader(
-                &raw mut (*subprocess).stderr,
-                subprocess,
-                event_loop,
-                !spawn_args.lazy,
-            )
+            Readable::start_pipe_reader(&raw mut (*subprocess).stderr, subprocess, event_loop)
         } {
             let sys_err = err.to_shell_system_error();
             Self::abort_after_failed_start(subprocess);
@@ -991,12 +974,6 @@ impl Writable {
     // When the stream has closed we need to be notified to prevent a use-after-free
     // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
     pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
-        match self {
-            Writable::Buffer(_) | Writable::Pipe(_) => {
-                // Dropping the Arc on reassignment below derefs.
-            }
-            _ => {}
-        }
         *self = Writable::Ignore;
     }
 }
@@ -1186,7 +1163,7 @@ pub(crate) enum Readable {
 
 impl Readable {
     /// If the slot is a `Pipe`, start its `BufferedReader` against `process`
-    /// and (when `eager`) immediately drain it. Factors out the per-stream
+    /// and immediately drain it. Factors out the per-stream
     /// stdout/stderr start blocks in `spawn_maybe_sync_impl` so the
     /// `arc_as_mut_ptr` invariant is localised once.
     ///
@@ -1199,7 +1176,6 @@ impl Readable {
         slot: *mut Readable,
         process: *mut ShellSubprocess,
         event_loop: EventLoopHandle,
-        eager: bool,
     ) -> bun_sys::Result<()> {
         // The reader must outlive the re-entrant calls below even if they
         // drop this slot's `Arc`; clone it as a keepalive.
@@ -1213,10 +1189,8 @@ impl Readable {
         // re-entrant reader callbacks only hold raw `*mut PipeReader`, and
         // each `&mut` below is scoped to its own call.
         unsafe { (*p).start(process, event_loop) }?;
-        if eager {
-            // SAFETY: as above.
-            unsafe { (*p).read_all() };
-        }
+        // SAFETY: as above.
+        unsafe { (*p).read_all() };
         Ok(())
     }
 
@@ -1250,8 +1224,6 @@ impl Readable {
         process: *mut ShellSubprocess,
         result: StdioResult,
         interp: *mut crate::shell::interpreter::Interpreter,
-        _max_size: u32,
-        _is_sync: bool,
     ) -> Readable {
         assert_stdio_result!(result);
 
@@ -1345,16 +1317,12 @@ impl Readable {
         match core::mem::replace(self, Readable::Closed) {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             Readable::Memfd(fd) => {
-                *self = Readable::Closed;
                 fd.close();
             }
             // .fd is borrowed from the shell's IOWriter (see IO.OutKind.to_subproc_stdio) or
             // a CowFd redirect; the owner closes it.
-            Readable::Fd => {
-                *self = Readable::Closed;
-            }
+            Readable::Fd => {}
             Readable::Pipe(pipe) => {
-                *self = Readable::Closed;
                 pipe.detach();
             }
             other => {
@@ -1391,19 +1359,18 @@ pub(crate) struct SpawnArgs<'a> {
     /// `> ${arraybuffer}` redirect targets; the matching `stdio` slot is `Pipe`.
     pub(crate) redirect_stdout: Option<jsc::PinnedArrayBuffer>,
     pub(crate) redirect_stderr: Option<jsc::PinnedArrayBuffer>,
-    pub(crate) lazy: bool,
     pub path: &'a [u8],
     // ipc_mode: IPCMode,
     // ipc_callback: JSValue,
 }
 
 impl<'a> SpawnArgs<'a> {
-    pub(crate) fn default<const IS_SYNC: bool>(
+    pub(crate) fn default(
         arena: &'a Arena,
         interp: *mut crate::shell::interpreter::Interpreter,
         event_loop: EventLoopHandle,
     ) -> SpawnArgs<'a> {
-        let mut out = SpawnArgs {
+        SpawnArgs {
             arena,
             interp,
             argv: Vec::new(),
@@ -1414,7 +1381,6 @@ impl<'a> SpawnArgs<'a> {
             stdio: [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit],
             redirect_stdout: None,
             redirect_stderr: None,
-            lazy: false,
             // PATH unset → fall back to _PATH_DEFPATH on POSIX (Android often
             // has no PATH). PATH="" (explicit empty) is preserved — that's a
             // deliberate "search nothing" and substituting a default would
@@ -1433,13 +1399,7 @@ impl<'a> SpawnArgs<'a> {
             },
             // .ipc_mode = IPCMode.none,
             // .ipc_callback = .zero,
-        };
-
-        if IS_SYNC {
-            out.stdio[1] = Stdio::Pipe;
-            out.stdio[2] = Stdio::Pipe;
         }
-        out
     }
 
     /// `object_iter` should be a some type with the following fields:
@@ -2089,11 +2049,6 @@ impl PipeReader {
             // SAFETY: see `arc_as_mut_ptr`; accesses scoped to the `state`
             // writes, ending before `finish_after_state_set` re-enters.
             unsafe {
-                if let PipeReaderState::Done(buf) =
-                    core::mem::replace(&mut (*me).state, PipeReaderState::Err(None))
-                {
-                    drop(buf);
-                }
                 (*me).state = PipeReaderState::Err(Some(Box::new(err.to_system_error())));
                 if !(*me).is_done() {
                     return;
@@ -2167,14 +2122,6 @@ impl Drop for PipeReader {
         }
 
         // PipeReaderState::Done(Box<[u8]>) drops its buffer automatically.
-
-        if !self.captured_writer.dead {
-            // CapturedWriter::drop handles err.deref() and writer Arc drop.
-        }
-
-        if let PipeReaderState::Err(slot) = &mut self.state {
-            *slot = None;
-        }
 
         // buffered_output drops automatically.
         // reader drops automatically.

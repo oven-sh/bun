@@ -108,7 +108,7 @@ impl Mv {
                 let cwd = Builtin::cwd(interp, cmd);
                 let target_idx = Self::state_mut(interp, cmd).args.target_idx;
                 let target = ZBox::from_bytes(Builtin::of(interp, cmd).arg_bytes(target_idx));
-                let evtloop = Builtin::event_loop(interp, cmd);
+                let evtloop = Builtin::event_loop(interp);
                 let mut task = Box::new(ShellMvCheckTargetTask {
                     cmd,
                     cwd,
@@ -210,7 +210,7 @@ impl Mv {
                 const BATCH: usize = ShellMvBatchedTask::BATCH_SIZE;
                 let task_count = n_sources.div_ceil(BATCH);
                 let cwd = Builtin::cwd(interp, cmd);
-                let evtloop = Builtin::event_loop(interp, cmd);
+                let evtloop = Builtin::event_loop(interp);
                 let (sources_start, target_idx) = {
                     let me = Self::state_mut(interp, cmd);
                     (me.args.sources_start, me.args.target_idx)

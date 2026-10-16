@@ -125,13 +125,9 @@ pub mod caching_sha2_password {
     #[derive(Default)]
     pub struct Response {
         pub status: FastAuthStatus,
-        pub(crate) data: Data,
     }
 
     impl Response {
-        // `Data`'s own Drop frees `self.data`, so no explicit Drop impl is
-        // needed here.
-
         pub(crate) fn decode_internal<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
@@ -143,7 +139,7 @@ pub mod caching_sha2_password {
             // Read remaining data if any
             let remaining = reader.peek();
             if !remaining.is_empty() {
-                self.data = reader.read(remaining.len())?;
+                let _ = reader.read(remaining.len())?;
             }
             Ok(())
         }

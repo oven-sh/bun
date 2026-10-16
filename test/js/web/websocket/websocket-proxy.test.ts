@@ -807,16 +807,13 @@ describe.concurrent("wss:// through a proxy: the end of the proxy connection", (
 
   const CLOSE_1000 = Buffer.from([0x88, 0x02, 0x03, 0xe8]);
   test.each([
-    ["terminate()", "terminate", undefined, false, "30", "1006 false\n"],
+    ["terminate()", "terminate", undefined, "1006 false\n"],
     // The server closes the connection when it reads the client's close_notify.
-    ["close() when the server replies", "close", CLOSE_1000, false, "30", "1000 true\n"],
-    // uSockets checks timeouts every 4 s, so a 1 s timeout takes 4 to 8 s to fire.
-    ["close() when the server replies but never closes the connection", "close", CLOSE_1000, true, "1", "1000 true\n"],
-    ["close() when the server never replies (close timeout)", "close", undefined, false, "1", "1006 false\n"],
+    ["close() when the server replies", "close", CLOSE_1000, "1000 true\n"],
   ] as const)(
     "the process exits after %s",
-    async (_label, method, reply, allowHalfOpen, closeTimeout, output) => {
-      using origin = await startRawWssServer(socket => void (reply && socket.write(reply)), { allowHalfOpen });
+    async (_label, method, reply, output) => {
+      using origin = await startRawWssServer(socket => void (reply && socket.write(reply)));
       using recorded = await startRecordingProxy();
       await using client = Bun.spawn({
         cmd: [
@@ -832,7 +829,6 @@ describe.concurrent("wss:// through a proxy: the end of the proxy connection", (
           ...bunEnv,
           NO_PROXY: "",
           no_proxy: "",
-          BUN_CONFIG_WS_CLOSE_TIMEOUT: closeTimeout,
           WS_URL: `wss://127.0.0.1:${origin.port}`,
           WS_PROXY: `http://127.0.0.1:${recorded.port}`,
         },

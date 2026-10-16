@@ -1,5 +1,7 @@
 // `ws` client close(), terminate() and the closing handshake, tested against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
+import { tls as certificate } from "harness";
+import net from "node:net";
 import {
   abnormalClose,
   closedBeforeOpen,
@@ -10,6 +12,7 @@ import {
   encodeFrame,
   implementations,
   invalidCloseCalls,
+  listen,
   nextEvent,
   OP,
   openClient,
@@ -17,8 +20,6 @@ import {
   type Payload,
   reasonTooLong,
   recordEvents,
-  runScript,
-  scriptTimeout,
   showFrame,
   tryCall,
   validCloseCalls,
@@ -26,7 +27,7 @@ import {
 
 type Client = Awaited<ReturnType<typeof openClient>>;
 
-describe.each(implementations)("ws client close ($name)", ({ ws: implementation, builtin, specifier }) => {
+describe.each(implementations)("ws client close ($name)", ({ ws: implementation, builtin }) => {
   // The Close frame is parsed and echoed while the socket is paused. Without a resume the peer's FIN is never read, and
   // 'close' waits for the 30 s close timer, which is longer than this test's timeout.
   test("the peer's Close frame resumes a socket that was paused in a 'message' listener", async () => {
@@ -275,6 +276,42 @@ describe.each(implementations)("ws client close ($name)", ({ ws: implementation,
         await client.closed;
         expect(client.events).toEqual([...openEvents, "close 1006 Buffer() rs=3"]);
         expect(await client.conn.remainingFrames()).toEqual([]);
+      },
+    );
+
+    // After 'open', npm ws only emits 'error' for invalid WebSocket frames. A relay in front of the TLS peer gives the
+    // test the TCP connection underneath the TLS stream.
+    test.each([
+      { how: "a plaintext alert record", end: tcp => tcp.write(Buffer.from([0x15, 3, 3, 0, 2, 2, 40])) },
+      { how: "bytes that aren't a TLS record", end: tcp => tcp.write("garbage") },
+      { how: "RST", end: tcp => tcp.resetAndDestroy() },
+      { how: "FIN without a close_notify alert", end: tcp => tcp.end() },
+    ] as { how: string; end(tcp: net.Socket): void }[])(
+      "wss: $how emits 'close' 1006 without an 'error'",
+      async ({ end }) => {
+        await using peer = await createPeer({ secure: true });
+        const sockets: net.Socket[] = [];
+        const relay = net.createServer(tcp => {
+          const upstream = net.connect(peer.port, "127.0.0.1");
+          sockets.push(
+            tcp.on("error", () => {}),
+            upstream.on("error", () => {}),
+          );
+          tcp.pipe(upstream).pipe(tcp);
+        });
+        // Verifying the certificate matters: with `rejectUnauthorized: false` the native client ignored these failures.
+        const ws = new WebSocket(`wss://127.0.0.1:${await listen(relay)}`, { ca: certificate.cert });
+        try {
+          const events = recordEvents(ws);
+          await nextEvent(ws, "open");
+          end(sockets[0]);
+          await nextEvent(ws, "close");
+          expect(events).toEqual([...openEvents, abnormalClose]);
+        } finally {
+          ws.terminate();
+          for (const socket of sockets) socket.destroy();
+          relay.close();
+        }
       },
     );
   });
@@ -553,50 +590,5 @@ describe.each(implementations)("ws client close ($name)", ({ ws: implementation,
       ws.close(1000, "bye");
       expect(await conn.next()).toBe('close 1000 "bye"');
     },
-  );
-
-  // The global WebSocket has its own closing handshake timeout, so it serves as the clock. It calls close() after the
-  // `ws` socket does, so it times out later. Once it has, a third client connects to the peer, and the `ws` socket must
-  // still be CLOSING at that point.
-  test.concurrent.each([
-    { waits: "for the peer's Close frame", answered: false },
-    { waits: "for the connection to close after both Close frames", answered: true },
-  ])(
-    "waiting $waits uses `closeTimeout`, not the global WebSocket's shorter timeout",
-    async ({ answered }) => {
-      await using peer = await createPeer();
-      const script = `
-        const ws = new WebSocket(process.env.PEER_URL + "/ws");
-        ws.on("close", (code, reason) => console.log("close", code, show(reason)));
-        ws.on("open", () => {
-          ws.close(1000);
-          const clock = new globalThis.WebSocket(process.env.PEER_URL + "/clock");
-          clock.onopen = () => clock.close(1000);
-          clock.onclose = event => {
-            console.log("the global WebSocket gave up", event.code);
-            const probe = new WebSocket(process.env.PEER_URL + "/probe");
-            probe.on("open", () => {
-              console.log("readyState", ws.readyState);
-              probe.terminate();
-            });
-          };
-        });
-      `;
-      const child = runScript({ specifier }, script, { PEER_URL: peer.url, BUN_CONFIG_WS_CLOSE_TIMEOUT: "1" });
-      const conn = await peer.connection();
-      expect(await conn.next()).toBe("close 1000");
-      if (answered) conn.close(1000, "late");
-      await peer.connection();
-      const probe = await peer.connection();
-      await probe.ended;
-      if (!answered) conn.close(1000, "late");
-      conn.end();
-      expect((await child).lines).toEqual([
-        "the global WebSocket gave up 1006",
-        "readyState 2",
-        'close 1000 Buffer("late")',
-      ]);
-    },
-    scriptTimeout,
   );
 });

@@ -4,8 +4,10 @@ import { Duplex, pipeline, Readable } from "node:stream";
 import {
   closedPort,
   connectClient,
+  createPeer,
   createServer,
   implementations,
+  MiB,
   nextEvent,
   openClient,
   openServer,
@@ -38,7 +40,7 @@ function write(duplex: Duplex, chunk: string) {
   return new Promise<string>(resolve => duplex.write(chunk, error => resolve(error ? showError(error) : "written")));
 }
 
-describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implementation, specifier }) => {
+describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implementation, builtin, specifier }) => {
   const { WebSocket, createWebSocketStream } = implementation;
 
   test.each([
@@ -195,6 +197,35 @@ describe.each(implementations)("createWebSocketStream ($name)", ({ ws: implement
       expect(events).toEqual(["finish"]);
       expect(ws.readyState).toBe(WebSocket.CLOSING);
     });
+
+    // The stream's write waits for the drain behind a send() whose callback throws. With npm ws on Bun, node:net
+    // destroys the socket when a write callback throws.
+    test.concurrent.skipIf(!builtin)(
+      "finishes even if the callback of an earlier ws.send() throws",
+      async () => {
+        await using peer = await createPeer();
+        const script = `
+          const ws = new WebSocket(process.env.PEER_URL, { perMessageDeflate: false });
+          ws.on("open", () => {
+            // More than the kernel will buffer.
+            ws.send(Buffer.alloc(${32 * MiB}), () => {
+              throw new Error("thrown by the callback");
+            });
+            const duplex = createWebSocketStream(ws);
+            for (const name of ["finish", "end", "close"]) duplex.on(name, () => console.log(name));
+            duplex.resume();
+            duplex.end("last");
+          });
+        `;
+        const child = runScript({ specifier }, script, { PEER_URL: peer.url });
+        const conn = await peer.connection();
+        expect(await conn.nextFrames(2)).toEqual([`binary ${32 * MiB} bytes`, 'binary "last"']);
+        conn.close();
+        conn.end();
+        expect((await child).lines).toEqual(['uncaught Error "thrown by the callback"', "finish", "end", "close"]);
+      },
+      scriptTimeout,
+    );
 
     test("write() after ws.close() fails and destroys the stream, which terminates the socket", async () => {
       await using client = await openClient(implementation);

@@ -1912,6 +1912,51 @@ describe("client TLS options", () => {
       }).toEqual({ inherited: anonymous, getter: anonymous });
     });
 
+    it("an own `pfx` in the `tls` option keeps the inherited options", async () => {
+      using server = await serve(agent1);
+      const connect = (inherited: object, own: object) =>
+        dial(server.url, { tls: Object.assign(Object.create(inherited), own, { pfx, passphrase: "sample" }) });
+      const refuse = () => new Error("not the pinned certificate");
+      expect({
+        ca: await connect({ ca: ca1 }, { serverName: "agent1" }),
+        serverName: await connect({ serverName: "agent1" }, { ca: ca1 }),
+        checkServerIdentity: await connect({ checkServerIdentity: refuse }, { ca: ca1, serverName: "agent1" }),
+      }).toEqual({ ca: identified, serverName: identified, checkServerIdentity: "refused" });
+    });
+
+    it("ignores a pfx set on Object.prototype", async () => {
+      using server = await serve();
+      await using child = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const WebSocket = require("ws");
+          const { TEST_URL, TEST_CA: ca, TEST_PFX } = process.env;
+          Object.prototype.pfx = require("fs").readFileSync(TEST_PFX);
+          Object.prototype.passphrase = "sample";
+          for (const options of [{ tls: { ca } }, { ca }]) {
+            const ws = new WebSocket(TEST_URL, options);
+            ws.on("message", data => { console.log(String(data)); ws.terminate(); });
+            ws.on("error", error => console.log("refused", error.code));
+            await new Promise(resolve => ws.on("close", resolve));
+          }
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          TEST_URL: server.url,
+          TEST_CA: ca,
+          TEST_PFX: path.join(import.meta.dirname, "../../node/test/fixtures/keys/agent1.pfx"),
+        },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+      expect(stdout.trim().split("\n")).toEqual([anonymous, anonymous]);
+      expect(exitCode).toBe(0);
+    });
+
     it("ignores a checkServerIdentity set on Object.prototype", async () => {
       using server = await serve(agent1);
       await using child = spawn({

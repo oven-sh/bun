@@ -1328,12 +1328,17 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// Shared tail of the writable handlers (direct socket and proxy tunnel).
-    fn flush_send_queue(&self) {
-        // Data queued before close() goes out first. As long as the peer keeps reading it, the
-        // close timeout starts over, or a slow upload would be cut off.
+    /// Call when the socket became writable. Data queued before close() goes out first. As long
+    /// as the peer keeps reading it, the close timeout starts over, or a slow upload would be
+    /// cut off.
+    pub(crate) fn restart_close_timeout_while_sending(&self) {
         if self.close_sent.get() && !self.options.ws_mode && self.has_backpressure() {
             self.arm_close_timeout();
         }
+    }
+
+    fn flush_send_queue(&self) {
+        self.restart_close_timeout_while_sending();
         if self.send_buffer.borrow().readable_length() != 0 {
             self.send_buffer_out();
         }

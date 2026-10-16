@@ -299,13 +299,28 @@ describe("ws package through HTTP CONNECT proxy", () => {
     );
   });
 
-  // The native client has accepted the 101, so giving up on the request has to close the WebSocket too. As with npm ws
-  // on Node, there's no 'error'.
-  test.each([
-    { call: "controller.abort()", listener: "upgrade" },
-    { call: "req.destroy()", listener: "upgrade" },
-    { call: "req.destroy()", listener: "open" },
-  ])("$call in an '$listener' listener emits 'close' 1006 once", async ({ call, listener }) => {
+  // The native client has the 101, so giving up on the request has to close the WebSocket too. In an 'upgrade' listener
+  // that fails the handshake. npm ws on Node emits 'open' and 'close' 1006 there, and no 'error'.
+  test.each<{ call: string; listener: string; events: ClientEvent[]; names: string[] }>([
+    {
+      call: "controller.abort()",
+      listener: "upgrade",
+      events: failed({ error: "The operation was aborted", code: "ABORT_ERR" }),
+      names: ["upgrade", "error", "close"],
+    },
+    {
+      call: "req.destroy()",
+      listener: "upgrade",
+      events: failed({ error: "socket hang up", code: "ECONNRESET" }),
+      names: ["upgrade", "error", "close"],
+    },
+    {
+      call: "req.destroy()",
+      listener: "open",
+      events: [{ close: [1006, Buffer.alloc(0)] }],
+      names: ["upgrade", "open", "close"],
+    },
+  ])("$call in an '$listener' listener emits 'close' 1006 once", async ({ call, listener, events, names }) => {
     using recorded = await startRecordingProxy();
     await using target = await createPeer();
     const controller = new AbortController();
@@ -315,17 +330,16 @@ describe("ws package through HTTP CONNECT proxy", () => {
       signal: controller.signal,
       finishRequest: request => void (req = request).end(),
     } as ClientOptions);
-    const events: string[] = [];
-    for (const name of ["upgrade", "open", "error", "close"]) ws.on(name, () => events.push(name));
+    const emitted: string[] = [];
+    for (const name of ["upgrade", "open", "error", "close"]) ws.on(name, () => emitted.push(name));
     const seen = wsEvents(ws);
     ws.on(listener, () => (call === "req.destroy()" ? req.destroy() : controller.abort()));
-    expect(await seen).toEqual([{ close: [1006, Buffer.alloc(0)] }]);
+    expect(await seen).toEqual(events);
     // Once the target has seen the connection end, nothing is left that could emit another event.
-    await (
-      await target.connection()
-    ).ended;
+    const connection = await target.connection();
+    await connection.ended;
     expect(() => (ws.terminate(), ws.close())).not.toThrow();
-    expect(events).toEqual(["upgrade", "open", "close"]);
+    expect(emitted).toEqual(names);
     expect(getEventListeners(controller.signal, "abort")).toEqual([]);
   });
 
@@ -489,6 +503,68 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
     expect(() => new WebSocket(`ws://127.0.0.1:${wsPort}`, options("wrong"))).toThrow(/mac verif/i);
   });
 
+  test("an own `pfx` in `proxy.tls` keeps the inherited options", async () => {
+    const read = (name: string) => readFileSync(path.join(import.meta.dirname, "../../node/test/fixtures/keys", name));
+    using recorded = await startRecordingProxy({
+      tls: true,
+      tlsOptions: { requestCert: true, rejectUnauthorized: false, ca: read("ca1-cert.pem") },
+    });
+    const connect = (inherited: object, own: object) =>
+      wsEchoSession(
+        new WebSocket(`ws://127.0.0.1:${wsPort}`, {
+          proxy: {
+            url: `https://127.0.0.1:${recorded.port}`,
+            tls: Object.assign(Object.create(inherited), own, { pfx: read("agent1.pfx"), passphrase: "sample" }),
+          },
+        } as ClientOptions),
+        "hello",
+      );
+    const ca = tlsCerts.cert;
+    const pinned = Object.assign(new Error("pinned"), { code: "PINNED" });
+    expect({
+      ca: await connect({ ca }, {}),
+      clientCertificates: [...recorded.clientCertificates],
+      checkServerIdentity: await connect({ checkServerIdentity: () => pinned }, { ca }),
+      serverName: await connect({ serverName: "other.example" }, { ca }),
+    }).toEqual({
+      ca: echoed("hello"),
+      clientCertificates: ["agent1"],
+      checkServerIdentity: failed({ error: "pinned", code: "PINNED" }),
+      serverName: failed({ error: expect.any(String), code: "ERR_TLS_CERT_ALTNAME_INVALID" }),
+    });
+  });
+
+  test.concurrent(
+    "`proxy.tls` ignores a `pfx` set on Object.prototype",
+    async () => {
+      const keys = path.join(import.meta.dirname, "../../node/test/fixtures/keys");
+      using recorded = await startRecordingProxy({
+        tls: true,
+        tlsOptions: { requestCert: true, rejectUnauthorized: false, ca: readFileSync(path.join(keys, "ca1-cert.pem")) },
+      });
+      const { lines, exitCode } = await runClientScript(
+        `
+        const { TARGET, PROXY, PROXY_CA, PFX } = process.env;
+        Object.prototype.pfx = require("fs").readFileSync(PFX);
+        Object.prototype.passphrase = "sample";
+        console.log(await connect(TARGET, { proxy: { url: PROXY, tls: { ca: PROXY_CA } } }));
+      `,
+        {
+          TARGET: `ws://127.0.0.1:${wsPort}`,
+          PROXY: `https://127.0.0.1:${recorded.port}`,
+          PROXY_CA: tlsCerts.cert,
+          PFX: path.join(keys, "agent1.pfx"),
+        },
+      );
+      expect({ lines, clientCertificates: recorded.clientCertificates }).toEqual({
+        lines: ["connected"],
+        clientCertificates: [null],
+      });
+      expect(exitCode).toBe(0);
+    },
+    scriptTimeout,
+  );
+
   test("ws:// through HTTPS proxy fails without CA certificate", async () => {
     using recorded = await startRecordingProxy({ tls: true });
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
@@ -559,7 +635,9 @@ describe("ws package with HttpsProxyAgent", () => {
     const valid = "proxy_user:proxy_pass";
     const basic = (credentials: string) => `Basic ${btoa(credentials)}`;
 
-    test.each<{ where: string; winner: string; options(port: number): ClientOptions }>([
+    type Row = { where: string; winner: string; options(port: number): ClientOptions; kept?: Record<string, string> };
+
+    test.each<Row>([
       ...["Proxy-Authorization", "proxy-authorization"].map(name => ({
         where: `\`${name}\` on an HttpsProxyAgent`,
         winner: "the URL's credentials",
@@ -569,6 +647,17 @@ describe("ws package with HttpsProxyAgent", () => {
           }),
         }),
       })),
+      // Bun-only: https-proxy-agent itself can't read a Headers object.
+      {
+        where: "a Headers object on an HttpsProxyAgent",
+        winner: "the URL's credentials and the other headers",
+        options: port => ({
+          agent: new HttpsProxyAgent(`http://${valid}@127.0.0.1:${port}`, {
+            headers: new Headers({ "Proxy-Authorization": basic("other:other"), "X-Kept": "yes" }) as {},
+          }),
+        }),
+        kept: { "x-kept": "yes" },
+      },
       {
         where: "`Proxy-Authorization` in the `proxy` option",
         winner: "the header",
@@ -576,12 +665,12 @@ describe("ws package with HttpsProxyAgent", () => {
           proxy: { url: `http://other:other@127.0.0.1:${port}`, headers: { "Proxy-Authorization": basic(valid) } },
         }),
       },
-    ])("$where: sends $winner", async ({ options }) => {
+    ])("$where: sends $winner", async ({ options, kept }) => {
       using recorded = await startRecordingProxy({ requireAuth: true });
       const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, options(recorded.port));
       expect({ events: await wsEchoSession(ws, "hello"), requests: recorded.requests }).toEqual({
         events: echoed("hello"),
-        requests: [connectRequest(wsPort, { "proxy-authorization": basic(valid) })],
+        requests: [connectRequest(wsPort, { "proxy-authorization": basic(valid), ...kept })],
       });
     });
   });
@@ -668,6 +757,40 @@ describe("'error' when the proxy can't be reached", () => {
       });
     });
   });
+
+  // For example, a program that reuses one options object and rotates its proxies.
+  test.concurrent(
+    "names the proxy that was dialled, even if the caller has changed `proxy.url` since",
+    async () => {
+      const port = await closedPort();
+      const { lines, exitCode } = await runClientScript(
+        `
+        process.on("uncaughtException", () => process.exit(1));
+        const changes = [
+          proxy => delete proxy.url,
+          proxy => (proxy.url = ""),
+          proxy => (proxy.url = undefined),
+          proxy => (proxy.url = process.env.OTHER_PROXY),
+        ];
+        for (const change of changes) {
+          const proxy = { url: process.env.PROXY };
+          const ws = new WebSocket(process.env.TARGET, { proxy });
+          change(proxy);
+          ws.on("error", error => console.log("error " + error.message));
+          await new Promise(resolve => ws.on("close", resolve));
+        }
+      `,
+        {
+          TARGET: `ws://${unresolvable("target")}:7777`,
+          PROXY: `http://127.0.0.1:${port}`,
+          OTHER_PROXY: `http://${unresolvable("other")}:9`,
+        },
+      );
+      expect(lines).toEqual(Array(4).fill(`error connect ECONNREFUSED 127.0.0.1:${port}`));
+      expect(exitCode).toBe(0);
+    },
+    scriptTimeout,
+  );
 
   test.concurrent(
     "names the target when NO_PROXY bypasses the proxy",

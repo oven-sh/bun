@@ -791,6 +791,58 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
       },
       scriptTimeout,
     );
+
+    // Sends four messages in one tick. The first is more than the kernel will buffer, so every callback has to wait.
+    const sendFour = (thrower: number, options: string, then = "") => `
+      const ws = new WebSocket(process.env.PEER_URL, { perMessageDeflate: false, ${options} });
+      ws.on("close", code => console.log("close", code));
+      ws.on("open", () => {
+        [${32 * MiB}, 1, 1, 1].forEach((size, i) =>
+          ws.send(Buffer.alloc(size), error => {
+            console.log("callback", i, error instanceof Error ? "Error" : error);
+            if (i === ${thrower}) throw new Error("thrown by the callback");
+          }),
+        );
+        ${then}
+      });
+    `;
+
+    // With npm ws, on Node too, node:stream drops the callbacks behind the one that throws unless that's the first. If
+    // it is the first, node:net on Bun destroys the socket.
+    test.concurrent.each(builtin ? [0, 1, 3] : [3])(
+      "when the queue drains and callback %i of 4 throws, every callback still runs once",
+      async thrower => {
+        await using peer = await createPeer();
+        const child = runScript({ specifier }, sendFour(thrower, ""), { PEER_URL: peer.url });
+        const conn = await peer.connection();
+        await conn.nextFrames(4);
+        conn.close(1000);
+        conn.end();
+        const { lines, exitCode } = await child;
+        const expected = [0, 1, 2, 3].map(i => `callback ${i} null`);
+        expected.splice(thrower + 1, 0, 'uncaught Error "thrown by the callback"');
+        expect(lines).toEqual([...expected, "close 1000"]);
+        expect(exitCode).toBe(0);
+      },
+      scriptTimeout,
+    );
+
+    // node:net on Bun calls the write callbacks before the one that threw a second time, and swallows the exception.
+    // Skipped on Windows because Winsock accepts everything on loopback, so nothing is ever buffered.
+    test.concurrent.skipIf(!builtin || isWindows).each([1, 3])(
+      "on the stream transport, when callback %i of 4 throws after terminate(), every callback still runs once",
+      async thrower => {
+        await using peer = await createPeer({ respond: conn => (conn.socket.pause(), response101(conn)) });
+        const script = sendFour(thrower, "family: 4", "ws.terminate();");
+        const { lines, exitCode } = await runScript({ specifier }, script, { PEER_URL: peer.url });
+        expect(lines.filter(line => !line.startsWith("uncaught"))).toEqual([
+          ...[0, 1, 2, 3].map(i => `callback ${i} Error`),
+          "close 1006",
+        ]);
+        expect(exitCode).toBe(0);
+      },
+      scriptTimeout,
+    );
   });
 
   describe("on a socket that isn't open", () => {

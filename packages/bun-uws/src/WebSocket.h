@@ -307,14 +307,6 @@ private:
 
         sendCloseFrame(code, message);
         if (getBufferedAmount() == 0) {
-            /* No writable event follows, so this is the `ws` module's last chance to learn that everything was written. See onWritable. */
-            WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
-            if (webSocketContextData->wsPackage && webSocketContextData->drainHandler) {
-                webSocketContextData->drainHandler(this);
-                if (us_socket_is_closed((us_socket_t *) this)) {
-                    return false;
-                }
-            }
             this->shutdown();
         }
 

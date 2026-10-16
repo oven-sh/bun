@@ -20,6 +20,7 @@ import {
   RawClient,
   reasonTooLong,
   recordEvents,
+  type RequestOptions,
   serve,
   show,
   showError,
@@ -498,70 +499,88 @@ describe.each(implementations)("ws server close ($name)", ({ ws: implementation,
     });
   });
 
-  // For example, to decrement a connections-per-IP counter when a client disconnects.
-  describe("the 'close' listener can still read", () => {
-    const address = ({ ws, req }: Awaited<ReturnType<typeof openServer>>) => {
-      const { remoteAddress, remotePort, remoteFamily } = req.socket;
-      return { remoteAddress, remotePort, remoteFamily, fromWebSocket: (ws as any)._socket.remoteAddress };
-    };
-    const addressOf = (client: RawClient) => ({
-      remoteAddress: "127.0.0.1",
-      remotePort: client.socket.localPort,
-      remoteFamily: "IPv4",
-      fromWebSocket: "127.0.0.1",
-    });
+  // For example, to decrement a connections-per-IP counter when a client disconnects. Middleware like tinyws upgrades
+  // from a 'request' listener, which npm ws can't do on Bun: node:http doesn't give that listener a raw socket.
+  describe.each(builtin ? ["upgrade", "request"] : ["upgrade"])(
+    "after handleUpgrade() from the '%s' event, the 'close' listener can still read",
+    event => {
+      type Connection = Awaited<ReturnType<typeof open>>;
 
-    test.each<{ how: string; end(ws: WsSocket, client: RawClient): void }>([
-      { how: "a closing handshake", end: (ws, client) => client.close(1000) },
-      { how: "terminate()", end: ws => ws.terminate() },
-      { how: "RST", end: (ws, client) => client.reset() },
-    ])("the client's address after $how", async ({ end }) => {
-      await using server = await openServer(implementation);
-      const { ws, client } = server;
-      const expected = addressOf(client);
-      expect(address(server)).toEqual(expected);
-      const inListener = nextEvent(ws, "close").then(() => address(server));
-      end(ws, client);
-      expect(await inListener).toEqual(expected);
-    });
+      async function open(server: http.Server, request?: RequestOptions) {
+        const wss = new WebSocketServer({ noServer: true });
+        server.on(event, (req: http.IncomingMessage) =>
+          wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => wss.emit("connection", ws, req)),
+        );
+        const web = await serve(server);
+        try {
+          return { ...(await web.open(wss, request)), [Symbol.asyncDispose]: web[Symbol.asyncDispose] };
+        } catch (error) {
+          await web[Symbol.asyncDispose]();
+          throw error;
+        }
+      }
 
-    // This one isn't from Node, which only keeps an address that was read while the socket was open.
-    test("the client's address for the first time, after FIN", async () => {
-      await using server = await openServer(implementation);
-      const expected = addressOf(server.client);
-      const inListener = nextEvent(server.ws, "close").then(() => address(server));
-      server.client.end();
-      expect(await inListener).toEqual(expected);
-    });
-
-    test.each([
-      {
-        label: "with a client certificate",
-        clientCertificate: certificate,
-        expected: { authorized: true, authorizationError: null, servername: "localhost" },
-      },
-      {
-        label: "without a client certificate",
-        clientCertificate: {},
-        expected: { authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT", servername: "localhost" },
-      },
-    ])("the TLS handshake's result, $label", async ({ clientCertificate, expected }) => {
-      await using web = await serve(
-        https.createServer({ ...certificate, ca: certificate.cert, requestCert: true, rejectUnauthorized: false }),
-      );
-      const server = await web.open(new WebSocketServer({ server: web.server }), {
-        tls: { servername: "localhost", ...clientCertificate },
-      });
-      const handshakeResult = (): object => {
-        const { authorized, authorizationError, servername } = server.req.socket as TLSSocket;
-        return { authorized, authorizationError, servername };
+      const address = ({ ws, req }: Connection) => {
+        const { remoteAddress, remotePort, remoteFamily } = req.socket;
+        return { remoteAddress, remotePort, remoteFamily, fromWebSocket: (ws as any)._socket.remoteAddress };
       };
-      expect(handshakeResult()).toEqual(expected);
-      const inListener = nextEvent(server.ws, "close").then(handshakeResult);
-      server.client.close(1000);
-      expect(await inListener).toEqual(expected);
-    });
-  });
+      const addressOf = (client: RawClient) => ({
+        remoteAddress: "127.0.0.1",
+        remotePort: client.socket.localPort,
+        remoteFamily: "IPv4",
+        fromWebSocket: "127.0.0.1",
+      });
+
+      test.each<{ how: string; end(ws: WsSocket, client: RawClient): void }>([
+        { how: "a closing handshake", end: (ws, client) => client.close(1000) },
+        { how: "terminate()", end: ws => ws.terminate() },
+        { how: "RST", end: (ws, client) => client.reset() },
+      ])("the client's address after $how", async ({ end }) => {
+        await using server = await open(http.createServer());
+        const { ws, client } = server;
+        const expected = addressOf(client);
+        expect(address(server)).toEqual(expected);
+        const inListener = nextEvent(ws, "close").then(() => address(server));
+        end(ws, client);
+        expect(await inListener).toEqual(expected);
+      });
+
+      // This one isn't from Node, which only keeps an address that was read while the socket was open.
+      test("the client's address for the first time, after FIN", async () => {
+        await using server = await open(http.createServer());
+        const expected = addressOf(server.client);
+        const inListener = nextEvent(server.ws, "close").then(() => address(server));
+        server.client.end();
+        expect(await inListener).toEqual(expected);
+      });
+
+      test.each([
+        {
+          label: "with a client certificate",
+          clientCertificate: certificate,
+          expected: { authorized: true, authorizationError: null, servername: "localhost" },
+        },
+        {
+          label: "without a client certificate",
+          clientCertificate: {},
+          expected: { authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT", servername: "localhost" },
+        },
+      ])("the TLS handshake's result, $label", async ({ clientCertificate, expected }) => {
+        await using server = await open(
+          https.createServer({ ...certificate, ca: certificate.cert, requestCert: true, rejectUnauthorized: false }),
+          { tls: { servername: "localhost", ...clientCertificate } },
+        );
+        const handshakeResult = (): object => {
+          const { authorized, authorizationError, servername } = server.req.socket as TLSSocket;
+          return { authorized, authorizationError, servername };
+        };
+        expect(handshakeResult()).toEqual(expected);
+        const inListener = nextEvent(server.ws, "close").then(handshakeResult);
+        server.client.close(1000);
+        expect(await inListener).toEqual(expected);
+      });
+    },
+  );
 
   describe("wss.clients", () => {
     test("contains a socket from 'connection' until its 'close' event", async () => {

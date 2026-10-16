@@ -396,8 +396,9 @@ interface WebSocketDuplex extends Duplex {
 // node:http is almost the entire cost of require("ws"); load it on first use.
 let http: HttpModule | undefined;
 let kHeaderSource: symbol | undefined;
-let kQueuedReadLength: symbol | undefined;
+let kHasQueuedReads: symbol | undefined;
 let kRememberPeer: symbol | undefined;
+let kUnsentLength: symbol | undefined;
 function lazyHttp(): HttpModule {
   return (http ??= require("node:http"));
 }
@@ -1163,13 +1164,13 @@ class WebSocket extends EventEmitter {
     if (this._isServer) socket[(kRememberPeer ??= require("internal/http").kRememberPeer as symbol)]?.();
 
     // The native server socket only sees data received after it adopts the connection. If handleUpgrade() was called
-    // late, node:http may already have read frames into `head` or `socket`'s buffer, or be about to push them into that
-    // buffer, so use the stream transport.
+    // late, node:http may already have read frames into `head` or `socket`'s buffer, or be about to push them or the
+    // peer's FIN into that buffer, so use the stream transport.
     if (
       options[kResponse] &&
       head.length === 0 &&
       socket.readableLength === 0 &&
-      !socket[(kQueuedReadLength ??= require("internal/http").kQueuedReadLength as symbol)]
+      !socket[(kHasQueuedReads ??= require("internal/http").kHasQueuedReads as symbol)]
     ) {
       const native = upgradeWebSocket(
         options[kResponse],
@@ -1233,7 +1234,7 @@ class WebSocket extends EventEmitter {
     // In npm ws the callbacks and 'close' come from separate events of the socket, so a callback that throws doesn't
     // skip 'close'.
     try {
-      settleCallbacks(this, true);
+      settleCallbacks(this, !wroteEverything(this));
     } finally {
       finishStream(this);
       this.emit("close", this._closeCode, this._closeMessage);
@@ -1560,6 +1561,14 @@ function settleCallbacks(websocket: WebSocket, failed: boolean): void {
   runCallbacks(callbacks, 0, failed ? $ERR_STREAM_DESTROYED("write") : null);
 }
 
+// Once the closing handshake is done, uWS keeps writing what is queued but no longer reports a drain. So when the socket
+// closes, callbacks can still be waiting for data that was written.
+function wroteEverything(websocket: WebSocket): boolean {
+  if (websocket[kTransport] !== NATIVE_SERVER) return false;
+
+  return websocket._socket![(kUnsentLength ??= require("internal/http").kUnsentLength as symbol)] === 0;
+}
+
 function runCallbacks(callbacks: SendCallback[], start: number, err: Error | null): void {
   let i = start;
   try {
@@ -1819,7 +1828,6 @@ const clientHandlers: ClientHandlers = {
 
     // node:http drops the request's timeout once the response is an upgrade, even if an 'upgrade' listener throws.
     clearTimeout(this[kHandshakeTimer]);
-    req.upgradeOrConnect = true;
 
     if (this.listenerCount("upgrade") > 0) {
       const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders);
@@ -1828,21 +1836,15 @@ const clientHandlers: ClientHandlers = {
       res.push(null);
       this.emit("upgrade", res);
 
-      // The user may have closed the connection from a listener of the `'upgrade'` event.
-      if (this.readyState !== CONNECTING) {
-        releaseNative(req);
-        return;
-      }
+      // The user may have closed the connection from a listener of the `'upgrade'` event, or destroyed the request.
+      if (this.readyState !== CONNECTING || req.destroyed) return;
     }
 
-    if (!validateUpgrade(this, req, rawHeaders, headerValue(rawHeaders, "upgrade"))) {
-      // abortHandshake() can't do this if a listener has already destroyed the request.
-      releaseNative(req);
-      return;
-    }
+    if (!validateUpgrade(this, req, rawHeaders, headerValue(rawHeaders, "upgrade"))) return;
 
     // From here on the WebSocket owns the connection.
     req[kNative] = null;
+    req.upgradeOrConnect = true;
     this[kRequest] = req;
 
     return { deflate: nativeDeflateParams(this) };
@@ -1886,8 +1888,6 @@ const clientHandlers: ClientHandlers = {
     if (!req.destroyed) {
       req.destroyed = true;
       req.emit("close");
-    } else if (this._readyState === OPEN) {
-      this.terminate();
     }
   },
   error(error, viaProxy) {
@@ -1947,15 +1947,21 @@ const clientHandlers: ClientHandlers = {
     const callbacks = (this[kCallbacks] ??= []);
 
     let called = false;
+    const once: SendCallback = err => {
+      if (called) return;
 
-    callbacks.push(cb);
+      called = true;
+      cb(err);
+    };
+
+    callbacks.push(once);
     socket.write(chunk, err => {
       // node:net on Bun also calls a callback again if a later one threw while the socket was being destroyed.
       if (called || this[kCallbacks] !== callbacks) return;
 
-      called = true;
-      callbacks.shift();
-      cb(err);
+      // Not always the oldest one: if a callback throws, node:stream skips the rest of that batch.
+      callbacks.splice(callbacks.indexOf(once), 1);
+      once(err);
     });
   },
   end() {
@@ -2482,15 +2488,7 @@ class ClientRequest extends EventEmitter {
   flushHeaders(): void {}
   setNoDelay(): void {}
   setSocketKeepAlive(): void {}
-  // `handshakeTimeout` is this request's timeout in node:http, so an 'unexpected-response' listener can change it or turn
-  // it off. Without `handshakeTimeout` upstream doesn't listen for 'timeout', and nothing happens.
-  setTimeout(msecs?: number): this {
-    const websocket = this[kWebSocket];
-
-    if (websocket._req === this && websocket[kHandshakeTimer] !== undefined) {
-      clearTimeout(websocket[kHandshakeTimer]);
-      websocket[kHandshakeTimer] = msecs ? setTimeout(handshakeOnTimeout, msecs, websocket) : undefined;
-    }
+  setTimeout(): this {
     return this;
   }
   write(): boolean {
@@ -2545,11 +2543,9 @@ class ClientRequest extends EventEmitter {
 
     this.destroyed = true;
 
-    if (this.upgradeOrConnect && !this[kAborted]) {
-      // Called from an 'upgrade' or 'open' listener. node:http destroys the socket, which the WebSocket uses from here
-      // on. In an 'upgrade' listener upstream hasn't looked at the response yet and still emits 'open', so
-      // clientHandlers.open() does it then.
-      if (this[kWebSocket].readyState !== CONNECTING) this[kWebSocket].terminate();
+    if (this.upgradeOrConnect) {
+      // Called from an 'open' listener. node:http destroys the socket, which the WebSocket now uses.
+      this[kWebSocket].terminate();
       process.nextTick(emitRequestClose, this);
       return this;
     }
@@ -2996,10 +2992,12 @@ function initAsClient(
       : proxyTls;
     nativeOptions.proxy =
       wrapped === proxyTls ? proxy : ({ __proto__: proxy, tls: wrapped } as unknown as ProxyOptions);
-    // For connectError(). The caller may change or reuse its `proxy` object before the connection fails.
-    websocket[kProxyUrl] = String(
-      ($isObject(proxy) && getIgnoringObjectPrototype(proxy as ProxyOptions, "url")) || proxy,
-    );
+    // For connectError(). The caller may change or reuse its `proxy` object before the connection fails. A redirect
+    // comes here again with the same `proxy`.
+    if (websocket[kProxyUrl] === undefined) {
+      const url = ($isObject(proxy) && getIgnoringObjectPrototype(proxy as ProxyOptions, "url")) || proxy;
+      if (typeof url === "string" || url instanceof URL) websocket[kProxyUrl] = String(url);
+    }
   }
 
   let tls = opts.tls;

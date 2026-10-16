@@ -485,6 +485,9 @@ impl WebSocketProxyTunnel {
             }
         });
         if still_backpressured {
+            if let Some(ws) = this.connected_websocket.get() {
+                ws.this_ptr().restart_close_timeout_while_sending();
+            }
             return;
         }
 

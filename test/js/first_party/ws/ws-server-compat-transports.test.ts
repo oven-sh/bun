@@ -517,6 +517,42 @@ describe.each(implementations)("ws server transports ($name)", ({ ws: implementa
       "a message sent after the request, with handleUpgrade() deferred to a later task",
       testEarlyFrames({ bytes: frame(OP.text, "early"), late: true, defer: true, events: earlyAndLater }),
     );
+
+    // Bun's node:http passes an upgraded connection's bytes to JS in a task, so for a moment they're in neither `head`
+    // nor `socket`'s buffer. A Bun.listen() handler is called straight from the event loop's poll. If its socket
+    // becomes readable right after the connection does, it runs between that read and the task.
+    test("a message that was read from the connection but hasn't reached `socket` yet", async () => {
+      const server = http.createServer();
+      const wss = new WebSocketServer({ noServer: true });
+      const upgrade = Promise.withResolvers<[http.IncomingMessage, Duplex, Buffer]>();
+      server.on("upgrade", (...args) => upgrade.resolve(args));
+      await using listening = await serve(server);
+      const client = listening.connect();
+      const [req, socket, head] = await upgrade.promise;
+
+      const events: string[] = [];
+      const accepted = Promise.withResolvers<void>();
+      using trigger = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open: () => accepted.resolve(),
+          data: () => wss.handleUpgrade(req, socket, head, ws => void recordEvents(ws, events)),
+        },
+      });
+      const triggerClient = net.connect(trigger.port, "127.0.0.1");
+      try {
+        await accepted.promise;
+        client.text("early");
+        triggerClient.write("now");
+        expect((await client.response).status).toBe(switchingProtocols);
+        client.text("later");
+        expect(await client.roundTrip()).toEqual([]);
+        expect(events).toEqual(earlyAndLater);
+      } finally {
+        triggerClient.destroy();
+      }
+    });
   });
 
   describe("http.Server#close()", () => {

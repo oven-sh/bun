@@ -365,16 +365,16 @@ function stripTls13CipherNames(ciphers: string): { cipherList: string; tls13Only
 function unsealPfxForNative(tls) {
   // `tls` can be the caller's own object, so a `pfx` that comes from a polluted Object.prototype doesn't count.
   if (tls.pfx == null || tls.pfx === (Object.prototype as { pfx?: unknown }).pfx) return tls;
-  // processPfxOptions() copies own properties only, but the native parser also reads inherited ones. Losing an
-  // inherited `ca` or `checkServerIdentity` would loosen the verification.
-  const prototype = Object.getPrototypeOf(tls);
-  tls = Object.setPrototypeOf(processPfxOptions(tls), prototype);
-  const { ca, cert, _pfxExtraCACerts: pfxCAs } = tls;
-  if (!pfxCAs) return tls;
-  if (ca) tls.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];
+  const { key, cert, _pfxExtraCACerts: pfxCAs } = processPfxOptions(tls);
+  // Inherits from `tls`, because a copy only has its own enumerable properties. The native parser also reads inherited
+  // and non-enumerable ones, and losing a `ca` or `checkServerIdentity` would loosen the verification.
+  const { ca } = tls;
+  const unsealed = { __proto__: tls, key, cert, ca, pfx: undefined };
+  if (!pfxCAs) return unsealed;
+  if (ca) unsealed.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];
   // No addCACert() follows to complete the chain of a lone identity. Several carry theirs already.
-  if (typeof cert === "string") tls.cert = cert + pfxCAs[0];
-  return tls;
+  if (typeof cert === "string") unsealed.cert = cert + pfxCAs[0];
+  return unsealed;
 }
 
 const nodeClientTlsKeys = [

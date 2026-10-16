@@ -1,13 +1,15 @@
 // Tests send(), ping() and pong() on a `ws` server socket, using a raw TCP client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tls as certificate, isWindows, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { openAsBlob } from "node:fs";
+import http from "node:http";
+import https from "node:https";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import type { WebSocket as Socket } from "ws";
+import type { ServerOptions, WebSocket as Socket } from "ws";
 import {
   closePayload,
   createInflater,
@@ -26,6 +28,7 @@ import {
   resizable,
   runScript,
   scriptTimeout,
+  serve,
   shared,
   show,
   showFrame,
@@ -72,6 +75,7 @@ async function readLargeFrames(client: RawClient, count: number) {
 
 describe.each(implementations)("ws server send ($name)", ({ ws: implementation, builtin, specifier }) => {
   const { OPEN, CLOSING, CLOSED } = implementation.WebSocket;
+  const { WebSocketServer } = implementation;
 
   describe("send(data)", () => {
     test.each(
@@ -682,25 +686,139 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
       },
     );
 
-    test("callbacks succeed when the peer's Close frame arrives before it has read the messages", async () => {
-      await using server = await openServer(implementation);
-      const { ws, client, events } = server;
-      const recorder = createRecorder();
-      client.socket.pause();
-      // More than the kernel will buffer, so this write can't complete yet.
-      ws.send(Buffer.alloc(12 * MiB), recorder.callback("large"));
-      ws.send("x", recorder.callback("small"));
-      expect(ws.bufferedAmount).toBeGreaterThan(0);
-      ws.on("close", recorder.callback("close"));
+    describe.each([
+      { transport: "tcp", secure: false },
+      { transport: "tls", secure: true },
+    ])("callbacks of messages that are still queued when the peer's Close frame arrives, $transport", ({ secure }) => {
+      const failedCalls = [
+        ["large", expect.any(Error)],
+        ["small", expect.any(Error)],
+      ];
 
-      // The server parses both frames in one read, and the client can't read before this thread's next event loop turn.
-      client.write(Buffer.concat([client.frame(OP.text, "turn"), client.frame(OP.close, closePayload(1000))]));
-      await nextEvent(ws, "message");
-      client.socket.resume();
-      expect(await client.remainingFrames()).toEqual([`binary ${12 * MiB} bytes`, 'text "x"', "close 1000"]);
-      await server.closed;
-      expect(recorder.lines).toEqual(["large null", "small null", "close 1000 Buffer()"]);
-      expect(events).toEqual(['message Buffer("turn") text rs=1', "close 1000 Buffer() rs=3"]);
+      /** The client has stopped reading, two messages are queued for it, and the server has parsed its Close frame. */
+      async function openWithBacklog(options: ServerOptions = {}, inCallback = (ws: Socket) => {}) {
+        const web = await serve(secure ? https.createServer(certificate) : http.createServer());
+        try {
+          const server = await web.open(new WebSocketServer({ server: web.server, ...options }));
+          const { ws, client } = server;
+          const recorder = createRecorder();
+          client.socket.pause();
+          // More than the kernel will buffer, so this write can't complete yet.
+          ws.send(Buffer.alloc(12 * MiB), error => {
+            recorder.callback("large")(error);
+            inCallback(ws);
+          });
+          ws.send("x", recorder.callback("small"));
+          expect(ws.bufferedAmount).toBeGreaterThan(0);
+          ws.on("close", recorder.callback("close"));
+
+          // The server parses both frames in one read. Microtasks can run between the two, an immediate can't.
+          client.write(Buffer.concat([client.frame(OP.text, "turn"), client.frame(OP.close, closePayload(1000))]));
+          await nextEvent(ws, "message");
+          await new Promise(resolve => setImmediate(resolve));
+          expect(ws.readyState).toBe(CLOSING);
+          return { ...server, recorder, [Symbol.asyncDispose]: web[Symbol.asyncDispose] };
+        } catch (error) {
+          await web[Symbol.asyncDispose]();
+          throw error;
+        }
+      }
+
+      test("succeed once the peer has read the messages", async () => {
+        await using server = await openWithBacklog();
+        const { client, recorder, events } = server;
+        client.socket.resume();
+        expect(await client.remainingFrames()).toEqual([`binary ${12 * MiB} bytes`, 'text "x"', "close 1000"]);
+        await server.closed;
+        expect(recorder.lines).toEqual(["large null", "small null", "close 1000 Buffer()"]);
+        expect(events).toEqual(['message Buffer("turn") text rs=1', "close 1000 Buffer() rs=3"]);
+      });
+
+      test("fail if the peer drops the connection without reading them", async () => {
+        await using server = await openWithBacklog();
+        // Closing a socket that has unread data sends RST.
+        server.client.destroy();
+        await server.closed;
+        expect(server.recorder.calls).toEqual([...failedCalls, ["close", 1000, Buffer.alloc(0)]]);
+      });
+
+      // ws added the `closeTimeout` option in 8.19. The version in node_modules hardcodes 30 s. Over TLS, uSockets
+      // gives a peer that isn't reading another 10 s to take the ciphertext it already sealed. That's too slow here.
+      test.skipIf(!builtin || secure)("fail if the peer still hasn't read them after `closeTimeout`", async () => {
+        await using server = await openWithBacklog({ closeTimeout: 50 } as ServerOptions);
+        await server.closed;
+        expect(server.recorder.calls).toEqual([...failedCalls, ["close", 1000, Buffer.alloc(0)]]);
+      });
+
+      test("fail after terminate()", async () => {
+        await using server = await openWithBacklog();
+        server.ws.terminate();
+        // Over TLS, uSockets only closes the connection once the peer has taken the ciphertext it has already sealed.
+        server.client.socket.resume();
+        await server.closed;
+        expect(server.recorder.calls).toEqual([...failedCalls, ["close", 1000, Buffer.alloc(0)]]);
+      });
+
+      test.each<{ call: string; act(ws: Socket): void }>([
+        { call: "terminate()", act: ws => ws.terminate() },
+        { call: "close()", act: ws => ws.close() },
+        { call: 'send("late")', act: ws => ws.send("late") },
+      ])("can call $call: 'close' fires once and nothing follows the Close frame", async ({ act }) => {
+        await using server = await openWithBacklog({}, act);
+        const { client, recorder } = server;
+        client.socket.resume();
+        expect(await client.remainingFrames()).toEqual([`binary ${12 * MiB} bytes`, 'text "x"', "close 1000"]);
+        // Once both ends have closed, nothing is left that could emit another event.
+        await Promise.all([server.closed, client.closed]);
+        expect(recorder.lines).toEqual(["large null", "small null", "close 1000 Buffer()"]);
+      });
+
+      test.concurrent(
+        "can throw: the others still run, and 'close' fires once",
+        async () => {
+          const { lines, exitCode } = await runScript(
+            { specifier },
+            `
+            const secure = ${secure};
+            const { CERT: cert, KEY: key } = process.env;
+            const server = secure ? require("node:https").createServer({ cert, key }) : require("node:http").createServer();
+            const wss = new WebSocketServer({ server });
+            server.listen(0, "127.0.0.1", () => {
+              const address = { port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false };
+              const socket = require(secure ? "node:tls" : "node:net").connect(address);
+              socket.pause();
+              socket.write(${JSON.stringify(upgradeRequest())});
+              wss.on("connection", ws => {
+                ws.on("close", code => {
+                  console.log("close", code);
+                  server.close();
+                });
+                ws.on("message", () => socket.resume());
+                ws.send(Buffer.alloc(${12 * MiB}), error => {
+                  console.log("large", error);
+                  throw new Error("thrown by the callback");
+                });
+                ws.send("x", error => console.log("small", error));
+                socket.write(Buffer.from("${Buffer.concat([
+                  encodeFrame(OP.text, "turn", { mask: true }),
+                  encodeFrame(OP.close, closePayload(1000), { mask: true }),
+                ]).toString("hex")}", "hex"));
+              });
+            });
+          `,
+            { CERT: certificate.cert, KEY: certificate.key },
+          );
+          // On Node, 'close' comes last. The built-in emits it while the exception is still propagating.
+          expect(lines.sort()).toEqual([
+            "close 1000",
+            "large null",
+            "small null",
+            'uncaught Error "thrown by the callback"',
+          ]);
+          expect(exitCode).toBe(0);
+        },
+        scriptTimeout,
+      );
     });
 
     // With npm ws on Bun, the node:http socket skips 'close' after terminate() and swallows the exception on a reset.
@@ -737,6 +855,49 @@ describe.each(implementations)("ws server send ($name)", ({ ws: implementation, 
         );
         // On Node, 'close' comes after the uncaught exception.
         expect(lines).toEqual(["callback true", "close 1006 clients 0", 'uncaught Error "thrown by the callback"']);
+        expect(exitCode).toBe(0);
+      },
+      scriptTimeout,
+    );
+
+    // All four are sent in one tick and the first is more than the kernel will buffer, so they all wait for the drain.
+    // With npm ws, on Node too, node:stream drops the callbacks behind the one that throws unless that's the first.
+    test.concurrent.each(builtin ? [0, 1, 3] : [0, 3])(
+      "when the queue drains and callback %i of 4 throws, every callback still runs once",
+      async thrower => {
+        const sizes = [12 * MiB, 1, 1, 1];
+        const frames = sizes.reduce((sum, size) => sum + size + (size < 126 ? 2 : 10), 0);
+        const { lines, exitCode } = await runScript(
+          { specifier },
+          `
+          const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" }, () => {
+            const socket = require("node:net").connect(wss.address().port, "127.0.0.1");
+            socket.write(${JSON.stringify(upgradeRequest())});
+            // Sends a Close frame once it has read every message.
+            let unread = -1;
+            socket.on("data", chunk => {
+              if (unread === -1) unread = chunk.indexOf("\\r\\n\\r\\n") + 4 + ${frames};
+              unread -= chunk.length;
+              if (unread === 0) socket.write(Buffer.from("${encodeFrame(OP.close, closePayload(1000), { mask: true }).toString("hex")}", "hex"));
+            });
+            wss.on("connection", ws => {
+              ws.on("close", code => {
+                console.log("close", code);
+                wss.close();
+              });
+              ${JSON.stringify(sizes)}.forEach((size, i) =>
+                ws.send(Buffer.alloc(size), error => {
+                  console.log("callback", i, error);
+                  if (i === ${thrower}) throw new Error("thrown by the callback");
+                }),
+              );
+            });
+          });
+        `,
+        );
+        const expected = sizes.map((_, i) => `callback ${i} null`);
+        expected.splice(thrower + 1, 0, 'uncaught Error "thrown by the callback"');
+        expect(lines).toEqual([...expected, "close 1000"]);
         expect(exitCode).toBe(0);
       },
       scriptTimeout,

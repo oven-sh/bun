@@ -14,6 +14,8 @@ import {
   nextEvent,
   openEvents,
   response101,
+  runScript,
+  scriptTimeout,
   tryCall,
   type ClientOptions,
   type PeerOptions,
@@ -36,7 +38,7 @@ function watchRequest(req: ClientRequest) {
   return { events, closed };
 }
 
-describe.each(implementations)("ws client handshake request ($name)", ({ ws: implementation, builtin }) => {
+describe.each(implementations)("ws client handshake request ($name)", ({ ws: implementation, builtin, specifier }) => {
   const { WebSocket } = implementation;
 
   /**
@@ -543,14 +545,14 @@ describe.each(implementations)("ws client handshake request ($name)", ({ ws: imp
     const found = "HTTP/1.1 302 Found\r\nLocation: /dest\r\nContent-Length: 0\r\n\r\n";
 
     // Destroying the request destroys the socket, but npm ws has no listeners on it yet. It goes on to emit 'open', and
-    // learns about the socket from its 'close' event.
-    const opened = [...openEvents, abnormalClose];
+    // learns about the socket from its 'close' event. The built-in's native client fails the handshake instead.
+    const destroyed = (error: string[]) => (builtin ? ["upgrade 101 rs=0", ...error] : [...openEvents, abnormalClose]);
     const aborted = ["upgrade 101 rs=0", ...closedBeforeOpen];
 
     test.each([
-      { call: "req.destroy()", act: req => req.destroy(), events: opened },
-      { call: "req.destroy(error)", act: req => req.destroy(new Error("boom")), events: opened },
-      { call: "req.abort()", act: req => req.abort(), events: opened },
+      { call: "req.destroy()", act: req => req.destroy(), events: destroyed(hangUp) },
+      { call: "req.destroy(error)", act: req => req.destroy(new Error("boom")), events: destroyed(boom) },
+      { call: "req.abort()", act: req => req.abort(), events: destroyed(hangUp) },
       { call: "req.destroy() and ws.terminate()", act: (req, ws) => (req.destroy(), ws.terminate()), events: aborted },
       { call: "req.destroy() and ws.close()", act: (req, ws) => (req.destroy(), ws.close()), events: aborted },
       { call: "ws.terminate() and req.destroy()", act: (req, ws) => (ws.terminate(), req.destroy()), events: aborted },
@@ -568,6 +570,33 @@ describe.each(implementations)("ws client handshake request ($name)", ({ ws: imp
         expect([() => ws.terminate(), () => ws.close()].map(tryCall)).toEqual(["undefined", "undefined"]);
         expect(client.events).toEqual(events);
       },
+    );
+
+    // Only the connection keeps the child alive, so it exits once the connection has closed.
+    test.concurrent.each(["destroy", "abort"])(
+      "req.%s() in an 'upgrade' listener that then throws still closes the connection",
+      async method => {
+        await using peer = await createPeer({ allowHalfOpen: false });
+        const script = `
+          const ws = new WebSocket(process.env.PEER_URL);
+          const req = ws._req;
+          for (const name of ["open", "error", "close"]) ws.on(name, () => console.log(name));
+          ws.on("upgrade", () => {
+            req.${method}();
+            throw new Error("thrown by the listener");
+          });
+        `;
+        const child = runScript({ specifier }, script, { PEER_URL: peer.url });
+        const conn = await peer.connection();
+        expect(await conn.remainingFrames()).toEqual([]);
+        // The throw leaves npm ws CONNECTING.
+        expect(await child).toEqual({
+          lines: ['uncaught Error "thrown by the listener"', ...(builtin ? ["error", "close"] : [])],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      scriptTimeout,
     );
 
     test.each([

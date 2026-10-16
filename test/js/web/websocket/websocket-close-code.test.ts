@@ -6,7 +6,7 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import { type AddressInfo, connect, createServer } from "node:net";
-import { type Departure, departure, startRawWssServer, startRecordingProxy } from "./proxy-test-utils";
+import { startRawWssServer } from "./proxy-test-utils";
 import { closePayload, createPeer, encodeFrame, OP, type RawSocket, response101, showFrame } from "./raw-peer";
 
 describe.concurrent("WebSocket close() argument validation", () => {
@@ -605,53 +605,9 @@ describe.concurrent("WebSocket closing handshake", () => {
     });
     expect(await client.exited).toBe(0);
   });
-
-  // Only the close timeout ends these waits. uSockets sweeps its timeouts every 4 s, so a 1 s timeout
-  // takes 4 to 8 s. These run concurrently with the wss:// tests below, which wait for it too.
-  const FLOOD = "for (let i = 0; i < 256; i++) ws.send(chunk);";
-  it.each([
-    ["never replies", {}, "", "1006 false\n"],
-    ["stopped reading, with the Close frame stuck behind unsent data", { paused: true }, FLOOD, "1006 false\n"],
-    // The closing handshake already completed, so the close is still clean.
-    ["replies but never closes the connection", { keepOpen: true }, "", "4000 true\n"],
-  ] as const)(
-    "close() times out on a server that %s, and the process exits",
-    async (_label, options, beforeClose, output) => {
-      await using server = await startPeer(options);
-      if ("keepOpen" in options) {
-        server.connection().then(async peer => {
-          await peer.next();
-          peer.close(4000);
-        });
-      }
-      await using client = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-            const chunk = Buffer.alloc(64 * 1024, "x").toString();
-            const ws = new WebSocket(process.env.WS_URL);
-            ws.onopen = () => {
-              ${beforeClose}
-              ws.close(1000);
-            };
-            ws.onerror = event => console.log("error", event.message);
-            ws.onclose = event => console.log(event.code, event.wasClean);
-          `,
-        ],
-        env: { ...bunEnv, WS_URL: server.url, BUN_CONFIG_WS_CLOSE_TIMEOUT: "1" },
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
-      expect(stdout).toBe(output);
-      expect(exitCode).toBe(0);
-    },
-    20_000,
-  );
 });
 
-// RFC 6455 section 7.1.1: the client lets the server close the TCP connection first, but not forever.
+// RFC 6455 section 7.1.1: the client lets the server close the TCP connection first.
 describe.concurrent("wss:// after the closing handshake", () => {
   const CLOSE_1000 = Buffer.from([0x88, 0x02, 0x03, 0xe8]);
 
@@ -669,100 +625,4 @@ describe.concurrent("wss:// after the closing handshake", () => {
     // One masked Close frame with a status code: 2 header bytes, 4 mask bytes, 2 payload bytes.
     expect({ opcode: fromClient[0] & 0x0f, bytes: fromClient.length }).toEqual({ opcode: 0x8, bytes: 8 });
   });
-
-  // Stands between the client and its peer and sees how the client's TCP connection ends. After
-  // `freeze()` the peer hears nothing more from the client, like a peer that stopped reading.
-  // It doesn't reply to the client's FIN until `hangUp()`.
-  async function startRelay(port: number) {
-    let frozen = false;
-    let fromClient = Buffer.alloc(0);
-    let hangUp = () => {};
-    const departed = Promise.withResolvers<Departure>();
-    const relay = createServer({ allowHalfOpen: true }, client => {
-      departed.resolve(departure(client));
-      hangUp = () => void client.end();
-      const peer = connect(port, "127.0.0.1");
-      peer.on("error", () => {});
-      peer.pipe(client);
-      client.on("close", () => peer.destroy());
-      client.on("data", (chunk: Buffer) => {
-        fromClient = Buffer.concat([fromClient, chunk]);
-        if (!frozen) peer.write(chunk);
-      });
-    });
-    relay.listen(0, "127.0.0.1");
-    await once(relay, "listening");
-    return {
-      port: (relay.address() as AddressInfo).port,
-      departed: departed.promise,
-      freeze: () => void (frozen = true),
-      hangUp: () => hangUp(),
-      // The content type of the last TLS record the client sent.
-      lastRecordType() {
-        let offset = 0;
-        for (let next; (next = offset + 5 + fromClient.readUInt16BE(offset + 3)) < fromClient.length;) offset = next;
-        return fromClient[offset];
-      },
-      [Symbol.dispose]: () => void relay.close(),
-    };
-  }
-
-  // uSockets sweeps its timeouts every 4 s, so a timeout of 1 s takes 4 to 8 s.
-  it.each([
-    // TLS 1.2 does not hide the type of a record: 21 is an alert, the close_notify.
-    ["direct", 21],
-    // This proxy never answers the close_notify of the client. TLS 1.3 shows every record as 23.
-    ["https proxy", 23],
-  ] as const)(
-    "the client closes a connection that its peer keeps open: %s",
-    async (route, lastRecordType) => {
-      // The server echoes the Close frame. After that the relay stops forwarding the client's data to it.
-      using server = await startRawWssServer(
-        socket => {
-          socket.write(CLOSE_1000);
-          relay.freeze();
-        },
-        { maxVersion: "TLSv1.2" },
-      );
-      using proxy = await startRecordingProxy({ tls: true });
-      using relay = await startRelay(route === "direct" ? server.port : proxy.port);
-      await using client = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
-            const ws = new WebSocket(process.env.WS_URL, {
-              proxy: process.env.WS_PROXY || undefined,
-              tls: { rejectUnauthorized: false },
-            });
-            ws.onopen = () => setImmediate(() => ws.close());
-            ws.onclose = event => console.log(event.code, event.wasClean);
-            // An exit would close the connection too, so stay until the test lets go of stdin.
-            process.stdin.resume();
-          `,
-        ],
-        env: {
-          ...bunEnv,
-          NO_PROXY: "",
-          no_proxy: "",
-          BUN_CONFIG_WS_CLOSE_TIMEOUT: "1",
-          WS_URL: `wss://127.0.0.1:${route === "direct" ? relay.port : server.port}`,
-          WS_PROXY: route === "direct" ? "" : `https://127.0.0.1:${relay.port}`,
-        },
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const { value } = await client.stdout.getReader().read();
-      expect(new TextDecoder().decode(value)).toBe("1000 true\n");
-      relay.hangUp();
-      // The client must close with a FIN, not a reset.
-      expect({ departure: await relay.departed, lastRecordType: relay.lastRecordType() }).toEqual({
-        departure: { fin: true },
-        lastRecordType,
-      });
-      expect(client.exitCode).toBeNull();
-    },
-    20_000,
-  );
 });

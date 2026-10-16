@@ -42,14 +42,14 @@ export default [
     values: ["stream"],
     proto: {
       // bun-types declares `BuildArtifact extends Blob`, and this prototype does
-      // not inherit from `Blob.prototype`: list every member of the `Blob` type.
+      // not inherit from `Blob.prototype`: an output has a member of the `Blob`
+      // type only if it is listed here.
       text: { fn: "getText" },
       json: { fn: "getJSON" },
       arrayBuffer: { fn: "getArrayBuffer" },
       slice: { fn: "getSlice", length: 2 },
       stream: { fn: "getStream", length: 1 },
       bytes: { fn: "getBytes", async: true },
-      formData: { fn: "getFormData", async: true },
       image: { fn: "doImage", length: 0 },
 
       path: { getter: "getPath", cache: true },

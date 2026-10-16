@@ -2103,15 +2103,6 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_form_data(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.blob.get_form_data(global_this, callframe)
-    }
-
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn do_image(
         this: &Self,
         global_this: &JSGlobalObject,

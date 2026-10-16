@@ -7,6 +7,7 @@
 namespace WebCore {
 
 extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
+extern "C" bool Blob__canDupeFromJS(JSC::EncodedJSValue impl);
 extern "C" void* Blob__dupe(void* impl);
 extern "C" void* Blob__getDataPtr(JSC::EncodedJSValue blob);
 extern "C" size_t Blob__getSize(JSC::EncodedJSValue blob);
@@ -53,6 +54,13 @@ public:
         return createAdopted(Blob__dupeFromJS(JSValue::encode(impl)));
     }
 
+    // Whether `create(value)` gives a Blob: `value` is a Blob, or an output of `Bun.build()`,
+    // which wraps one. An overload that takes a Blob dispatches on this.
+    static bool canCreate(JSC::JSValue value)
+    {
+        return Blob__canDupeFromJS(JSValue::encode(value));
+    }
+
     static RefPtr<Blob> create(std::span<const uint8_t> bytes, JSC::JSGlobalObject* globalThis)
     {
         return createAdopted(Blob__fromBytes(globalThis, bytes.data(), bytes.size()));
@@ -93,10 +101,6 @@ private:
     BlobRefPtr m_impl;
     String m_fileName;
 };
-
-// What `Blob::create(JSC::JSValue)` accepts: a Blob, or an output of `Bun.build()`, which wraps
-// one (`JSValue::as(Blob)` in Rust). An overload that takes a Blob dispatches on this.
-bool isBlobOrBuildArtifact(JSC::JSValue);
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Blob&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Blob* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }

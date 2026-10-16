@@ -297,10 +297,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
 
-    RefPtr<Blob> blobValue = nullptr;
-    if (isBlobOrBuildArtifact(argument1.value())) {
-        blobValue = Blob::create(argument1.value());
-    }
+    RefPtr<Blob> blobValue = Blob::create(argument1.value());
 
     if (!blobValue) {
         throwTypeError(lexicalGlobalObject, throwScope, "Expected argument to be a Blob."_s);
@@ -323,7 +320,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_appendOverloadD
     size_t argsCount = std::min<size_t>(3, callFrame->argumentCount());
     if (argsCount == 2) {
         JSValue distinguishingArg = callFrame->uncheckedArgument(1);
-        if (distinguishingArg.isObject() && isBlobOrBuildArtifact(distinguishingArg))
+        if (distinguishingArg.isObject() && Blob::canCreate(distinguishingArg))
             RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_append2Body(lexicalGlobalObject, callFrame, castedThis)));
         RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_append1Body(lexicalGlobalObject, callFrame, castedThis)));
     }
@@ -461,10 +458,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     EnsureStillAliveScope argument2 = callFrame->argument(2);
 
-    RefPtr<Blob> blobValue = nullptr;
-    if (isBlobOrBuildArtifact(argument1.value())) {
-        blobValue = Blob::create(argument1.value());
-    }
+    RefPtr<Blob> blobValue = Blob::create(argument1.value());
 
     if (!blobValue) {
         throwTypeError(lexicalGlobalObject, throwScope, "Expected argument to be a Blob."_s);
@@ -486,7 +480,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_setOverloadDisp
     size_t argsCount = std::min<size_t>(3, callFrame->argumentCount());
     if (argsCount == 2) {
         JSValue distinguishingArg = callFrame->uncheckedArgument(1);
-        if (distinguishingArg.isObject() && isBlobOrBuildArtifact(distinguishingArg))
+        if (distinguishingArg.isObject() && Blob::canCreate(distinguishingArg))
             RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_set2Body(lexicalGlobalObject, callFrame, castedThis)));
         RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_set1Body(lexicalGlobalObject, callFrame, castedThis)));
     }

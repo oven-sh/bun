@@ -6,11 +6,6 @@ extern "C" void Blob__setAsFile(void* impl, const BunString* filename);
 
 namespace WebCore {
 
-bool isBlobOrBuildArtifact(JSC::JSValue value)
-{
-    return value.inherits<JSBlob>() || value.inherits<JSBuildArtifact>();
-}
-
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebCore::Blob& impl)
 {
     BunString filename = Bun::toString(impl.fileName());

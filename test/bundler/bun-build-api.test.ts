@@ -915,19 +915,6 @@ describe("Bun.build", () => {
       expect(decoder.decode(await outputs.sourcemap.bytes())).toBe(await outputs.sourcemap.text());
     });
 
-    test("formData() rejects as a Blob of the same type does", async () => {
-      using dir = tempDir("build-artifact-form-data", files);
-      const { "entry-point": entry } = await build(String(dir));
-
-      expect(entry.type).toBe("text/javascript;charset=utf-8");
-      const error = await entry.formData().then(
-        () => undefined,
-        e => e,
-      );
-      expect(error).toBeInstanceOf(Error);
-      expect(error.message).toBe("Invalid encoding");
-    });
-
     test("image() is new Bun.Image(output)", async () => {
       using dir = tempDir("build-artifact-image", files);
       const { asset } = await build(String(dir));
@@ -983,7 +970,7 @@ describe("Bun.build", () => {
     });
   });
 
-  test("BuildArtifact lacks only the File and Bun.file() members of Blob.prototype", async () => {
+  test("the members of Blob.prototype that a BuildArtifact lacks", async () => {
     using dir = tempDir("build-artifact-blob-members", { "index.js": "console.log(1);\n" });
     const {
       outputs: [output],
@@ -992,7 +979,21 @@ describe("Bun.build", () => {
     // The prototype of an output does not inherit from Blob.prototype. A method added there
     // needs an entry in JSBundler.classes.ts too, or a place in this list.
     const missing = Object.getOwnPropertyNames(Blob.prototype).filter(name => !(name in output));
-    expect(missing.sort()).toEqual(["delete", "exists", "lastModified", "name", "stat", "unlink", "write", "writer"]);
+    expect(missing.sort()).toEqual([
+      // Bun.file()
+      "delete",
+      "exists",
+      // An output never has a form type, so this could only reject.
+      "formData",
+      // File
+      "lastModified",
+      "name",
+      // Bun.file()
+      "stat",
+      "unlink",
+      "write",
+      "writer",
+    ]);
   });
 
   // test("BuildArtifact with assets", async () => {

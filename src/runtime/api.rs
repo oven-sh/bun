@@ -288,10 +288,7 @@ fn with_text_format_source_encoded<R>(
         _str_hold.slice()
     };
 
-    // Every parser reached from here records source positions as an `i32`
-    // (`ast::Loc` via `usize2loc` for JSONC/TOML, JSON5's token locs, YAML's
-    // `Pos`), so an input those offsets cannot represent panics inside the
-    // lexer instead of reporting an error. Reject it before parsing.
+    // The parsers also reject this length, but as a parse error, not a RangeError on the argument.
     if bytes.len() > i32::MAX as usize {
         return Err(global.throw_range_error(
             bytes.len() as i64,

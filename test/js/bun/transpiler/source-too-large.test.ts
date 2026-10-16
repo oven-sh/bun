@@ -1,7 +1,8 @@
 // Every parser records source positions as an i32 byte offset, so a source of
 // 2**31 bytes or more used to abort the process once the parser reached a
 // position past i32::MAX: `panic: int cast: TryFromIntError(PosOverflow)` from
-// the JS lexer, TOML and YAML, and a failed length assertion in the XML indexer.
+// the JS lexer, TOML, YAML and JSON5, and a failed length assertion in the XML
+// indexer.
 // `Bun.TOML.parse` and friends already rejected such inputs at the API boundary;
 // the parsers themselves did not, and they are what `bun build`, `bun run`,
 // `import` and `Bun.Transpiler` feed. They now reject the source by length
@@ -27,6 +28,8 @@ async function run(cmd: string[]) {
 test("Bun.Transpiler reports the limit for every loader that records positions", async () => {
   // Only the first line of the Uint8Array is ever written or read; the rest
   // stays untouched virtual memory, so this costs neither time nor RSS.
+  // "text" is not in the list: that loader has no limit and uses about 11
+  // bytes of memory for each input byte.
   const { stdout, stderr, exitCode } = await run([
     bunExe(),
     "-e",
@@ -35,7 +38,7 @@ test("Bun.Transpiler reports the limit for every loader that records positions",
       input.set(Buffer.from(${JSON.stringify(FIRST_LINE)}));
       const transpiler = new Bun.Transpiler();
       const results = {};
-      for (const loader of ["js", "ts", "toml", "yaml", "xml", "json", "jsonc"]) {
+      for (const loader of ["js", "ts", "toml", "yaml", "xml", "json", "jsonc", "json5"]) {
         try {
           transpiler.transformSync(input, loader);
           results[loader] = "no error";
@@ -56,6 +59,52 @@ test("Bun.Transpiler reports the limit for every loader that records positions",
         xml: "BuildMessage: XML document is too large to parse (2 GiB maximum)",
         json: "BuildMessage: JSON document is too large to parse (2 GiB maximum)",
         jsonc: "BuildMessage: JSON document is too large to parse (2 GiB maximum)",
+        json5: "BuildMessage: JSON5 document is too large to parse (2 GiB maximum)",
+      },
+      null,
+      2,
+    ),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The loop above cannot tell an abort from an error for JSON5: its first line
+// is a syntax error, so a build without the length check answers `Unexpected
+// character` and never reaches a position past i32::MAX. The second document
+// here is valid, one comment from byte 7 to the last three, so such a build
+// scans all of it and aborts on the end-of-input token at offset 2**31. The
+// `}` before it, at i32::MAX, still fits.
+test("Bun.Transpiler rejects a valid 2 GiB JSON5 document; one byte less is not rejected by length", async () => {
+  const { stdout, stderr, exitCode } = await run([
+    bunExe(),
+    "-e",
+    `
+      const input = new Uint8Array(${SIZE});
+      const transpiler = new Bun.Transpiler();
+      const attempt = bytes => {
+        try {
+          return transpiler.transformSync(bytes, "json5").includes("a = 1") ? "parsed" : "unexpected output";
+        } catch (e) {
+          return e.name + ": " + e.message;
+        }
+      };
+      const results = {};
+      input.set(Buffer.from(${JSON.stringify(FIRST_LINE)}));
+      results["one byte less"] = attempt(input.subarray(0, ${SIZE} - 1));
+      input.set(Buffer.from("{a:1,/*"));
+      input.set(Buffer.from("*/}"), ${SIZE} - 3);
+      results["2 GiB"] = attempt(input);
+      results["a small document afterwards"] = attempt(Buffer.from("{a:1}"));
+      console.log(JSON.stringify(results, null, 2));
+    `,
+  ]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify(
+      {
+        "one byte less": "BuildMessage: Unexpected character",
+        "2 GiB": "BuildMessage: JSON5 document is too large to parse (2 GiB maximum)",
+        "a small document afterwards": "parsed",
       },
       null,
       2,

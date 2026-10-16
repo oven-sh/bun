@@ -235,13 +235,13 @@ describe("node:inspector", () => {
     });
 
     test("Profiler.enable succeeds", () => {
-      const result = session.post("Profiler.enable");
+      const result: any = session.post("Profiler.enable");
       expect(result).toEqual({});
     });
 
     test("Profiler.disable succeeds", () => {
       session.post("Profiler.enable");
-      const result = session.post("Profiler.disable");
+      const result: any = session.post("Profiler.disable");
       expect(result).toEqual({});
     });
 
@@ -251,7 +251,7 @@ describe("node:inspector", () => {
 
     test("Profiler.start after enable succeeds", () => {
       session.post("Profiler.enable");
-      const result = session.post("Profiler.start");
+      const result: any = session.post("Profiler.start");
       expect(result).toEqual({});
     });
 
@@ -270,7 +270,7 @@ describe("node:inspector", () => {
         sum += Math.sqrt(i);
       }
 
-      const result = session.post("Profiler.stop");
+      const result: any = session.post("Profiler.stop");
 
       expect(result).toHaveProperty("profile");
       const profile = result.profile;
@@ -298,11 +298,11 @@ describe("node:inspector", () => {
 
     test("complete enable->start->stop workflow", () => {
       // Enable profiler
-      const enableResult = session.post("Profiler.enable");
+      const enableResult: any = session.post("Profiler.enable");
       expect(enableResult).toEqual({});
 
       // Start profiling
-      const startResult = session.post("Profiler.start");
+      const startResult: any = session.post("Profiler.start");
       expect(startResult).toEqual({});
 
       // Do some work
@@ -317,7 +317,7 @@ describe("node:inspector", () => {
       expect(stopResult).toHaveProperty("profile");
 
       // Disable profiler
-      const disableResult = session.post("Profiler.disable");
+      const disableResult: any = session.post("Profiler.disable");
       expect(disableResult).toEqual({});
     });
 
@@ -331,7 +331,7 @@ describe("node:inspector", () => {
         sum += Math.sqrt(i);
       }
 
-      const result = session.post("Profiler.stop");
+      const result: any = session.post("Profiler.stop");
       const profile = result.profile;
 
       expect(profile.samples.length).toBe(profile.timeDeltas.length);
@@ -347,7 +347,7 @@ describe("node:inspector", () => {
         sum += Math.sqrt(i);
       }
 
-      const result = session.post("Profiler.stop");
+      const result: any = session.post("Profiler.stop");
       const profile = result.profile;
 
       const nodeIds = new Set(profile.nodes.map((n: any) => n.id));
@@ -358,7 +358,7 @@ describe("node:inspector", () => {
 
     test("Profiler.setSamplingInterval works", () => {
       session.post("Profiler.enable");
-      const result = session.post("Profiler.setSamplingInterval", { interval: 500 });
+      const result: any = session.post("Profiler.setSamplingInterval", { interval: 500 });
       expect(result).toEqual({});
     });
 
@@ -380,7 +380,7 @@ describe("node:inspector", () => {
     test("double Profiler.start is a no-op", () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");
-      const result = session.post("Profiler.start");
+      const result: any = session.post("Profiler.start");
       expect(result).toEqual({});
       session.post("Profiler.stop");
     });
@@ -391,13 +391,13 @@ describe("node:inspector", () => {
       session.post("Profiler.start");
       let sum = 0;
       for (let i = 0; i < 1000; i++) sum += i;
-      const result1 = session.post("Profiler.stop");
+      const result1: any = session.post("Profiler.stop");
       expect(result1).toHaveProperty("profile");
 
       // Second run
       session.post("Profiler.start");
       for (let i = 0; i < 1000; i++) sum += i;
-      const result2 = session.post("Profiler.stop");
+      const result2: any = session.post("Profiler.stop");
       expect(result2).toHaveProperty("profile");
 
       // Both profiles should be valid
@@ -416,7 +416,7 @@ describe("node:inspector", () => {
       session2.post("Profiler.enable");
 
       // This should work without error (profiler is not running)
-      const result = session2.post("Profiler.setSamplingInterval", { interval: 500 });
+      const result: any = session2.post("Profiler.setSamplingInterval", { interval: 500 });
       expect(result).toEqual({});
       session2.disconnect();
     });
@@ -749,7 +749,7 @@ describe("node:inspector/promises", () => {
     const session = new inspectorPromises.Session();
     session.connect();
 
-    const result = session.post("Profiler.enable");
+    const result: Promise<unknown> = session.post("Profiler.enable");
     expect(result).toBeInstanceOf(Promise);
 
     await expect(result).resolves.toEqual({});

@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { Server } from "node:http";
 const { expect } = createTest(import.meta.path);
 
+// @ts-expect-error without new
 await using server = Server((req, res) => {
   res.end();
 });

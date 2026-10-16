@@ -9,6 +9,7 @@
 
 #include "BunClientData.h"
 #include "NodeVM.h"
+#include "CodeGenerationFromStrings.h"
 #include "NodeVMScript.h"
 #include "NodeVMModule.h"
 #include "NodeVMSourceTextModule.h"
@@ -98,6 +99,10 @@ static JSValue scriptFetchParametersToImportAttributes(JSGlobalObject* globalObj
     case JSC::ScriptFetchParameters::Type::Text:
         // Unreachable with BUN_JSC_ADDITIONS (`type: "text"` parses as HostDefined); kept so the switch stays exhaustive.
         obj->putDirect(vm, vm.propertyNames->type, jsNontrivialString(vm, "text"_s));
+        break;
+    case JSC::ScriptFetchParameters::Type::CSS:
+        // Unreachable for the same reason.
+        obj->putDirect(vm, vm.propertyNames->type, jsNontrivialString(vm, "css"_s));
         break;
     case JSC::ScriptFetchParameters::Type::HostDefined:
         obj->putDirect(vm, vm.propertyNames->type, jsString(vm, params->hostDefinedImportType()));
@@ -540,6 +545,9 @@ static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const St
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope)
 {
     if (auto* errorInstance = dynamicDowncast<ErrorInstance>(exception->value())) {
+        // No stack is captured for a throw that a `catch` clause further up is certain to handle. The error's own is
+        // taken then, and that one is gone once the `stack` property is materialized.
+        auto& e_stack = exception->stackForReporting(vm);
         errorInstance->materializeErrorInfoIfNeeded(vm, vm.propertyNames->stack);
         RETURN_IF_EXCEPTION(throwScope, {});
         JSValue stack_jsval = errorInstance->get(globalObject, vm.propertyNames->stack);
@@ -550,7 +558,6 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
         String stack = stack_jsval.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});
 
-        auto& e_stack = exception->stack();
         size_t stack_size = e_stack.size();
         if (stack_size == 0) {
             return false;
@@ -1051,7 +1058,8 @@ void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
         promiseSpeciesWatchpointSet().fireAll(vm, "node:vm microtaskMode afterEvaluate context");
     }
 
-    setEvalEnabled(m_contextOptions.allowStrings, "Code generation from strings disallowed for this context"_s);
+    // A context decides for itself, as in Node.js, unless nothing in the process may.
+    setEvalEnabled(m_contextOptions.allowStrings && !Bun::isCodeGenerationFromStringsStrict(), Bun::codeGenerationFromStringsDisallowedMessage);
     setWebAssemblyEnabled(m_contextOptions.allowWasm, "Wasm code generation disallowed by embedder"_s);
 
     if (!m_contextOptions.allowWasm) {
@@ -1440,6 +1448,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, {});
 
     // Step 1: Argument validation
     // Get code argument (required)

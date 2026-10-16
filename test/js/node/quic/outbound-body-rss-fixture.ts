@@ -1,89 +1,82 @@
-// Queues one large body on a QUIC stream, waits until the first bytes of it
-// have reached the peer (so the native side has gone through at least one
-// on_write with the whole body still queued), and reports how much this
-// process's resident set grew. Spawned by quic-stream.test.ts, once per way
-// of handing the native side a body:
+// Hands one large body to a QUIC stream and waits until the first bytes of it
+// have reached the peer. By then the native side has written to lsquic at
+// least once with the whole body still queued. quic-stream.test.ts reads the
+// peak RSS of this process, once for each way of handing over a body:
 //
+//   none     the body is not handed over (the baseline)
 //   open     createBidirectionalStream({ body })
 //   setBody  stream.setBody(body)
 //   writer   stream.writer.writeSync(body)
 //
-// The body itself is allocated and filled before the baseline, so the growth
-// is what the native side allocated: the one queue it keeps the body in, plus
-// anything it copied the body into on the way there or on the way out. Freed
-// copies still count: both ASAN's quarantine (debug builds) and mimalloc's
-// page cache (release) keep a just-freed block of this size resident, which
-// is what lets a single rss() reading after the fact see them.
+// The peak of a mode above the peak of `none` is what the native side held at
+// one time for the body: the one queue, plus every copy that was live beside
+// it.
 //
-// Prints one JSON line: { bodyBytes, rssBefore, rssAfter, bytesSent }
+// Prints one JSON line: { bodyBytes, bytesSent }
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { connect, listen } from "node:quic";
+import { connect, listen, type SessionOptions } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
 const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
 
-const BODY_BYTES = 64 * 1024 * 1024;
+const BODY_BYTES = 16 * 1024 * 1024;
 const mode = process.argv[2];
+const transportParams = { maxIdleTimeout: 5 };
 
 // A client-initiated stream only materializes on the server once data for it
 // arrives, so onstream firing means the client drained into lsquic.
 const peerGotData = Promise.withResolvers<void>();
+const closedEarly = (what: string) => () => peerGotData.reject(new Error(`${what} closed before the peer got data`));
+
 const server = await listen(
   (session: any) => {
-    session.closed.catch(() => {});
+    session.closed.then(closedEarly("the server session"), closedEarly("the server session"));
     session.onstream = (stream: any) => {
       stream.closed.catch(() => {});
       peerGotData.resolve();
     };
   },
-  { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["rss-fixture"] },
+  { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["rss-fixture"], transportParams },
 );
 
-const client = await connect(`127.0.0.1:${server.address.port}`, { alpn: "rss-fixture", verifyPeer: "manual" });
-client.closed.catch(() => {});
+const client = await connect(server.address!, {
+  alpn: "rss-fixture",
+  verifyPeer: "manual",
+  transportParams,
+} as SessionOptions);
+client.closed.then(closedEarly("the client session"), closedEarly("the client session"));
 await client.opened;
 
 const body = Buffer.alloc(BODY_BYTES, "body");
 let stream: any;
-if (mode !== "open") {
-  stream = await client.createBidirectionalStream();
-  stream.closed.catch(() => {});
-}
-
-Bun.gc(true);
-const rssBefore = process.memoryUsage.rss();
-
 switch (mode) {
+  case "none":
+    peerGotData.resolve();
+    break;
   case "open":
     stream = await client.createBidirectionalStream({ body });
-    stream.closed.catch(() => {});
     break;
   case "setBody":
+    stream = await client.createBidirectionalStream();
     stream.setBody(body);
     break;
   case "writer":
+    stream = await client.createBidirectionalStream();
     if (!stream.writer.writeSync(body)) throw new Error("writeSync refused the body");
     break;
   default:
     throw new Error(`unknown mode ${JSON.stringify(mode)}`);
 }
+stream?.closed.then(closedEarly("the stream"), closedEarly("the stream"));
 
 await peerGotData.promise;
-const rssAfter = process.memoryUsage.rss();
 
-// Still referenced here, so the caller's copy is part of both readings.
+// Still referenced here, so the caller's copy is part of every peak.
 if (body.byteLength !== BODY_BYTES) throw new Error("unreachable");
 
-console.log(
-  JSON.stringify({
-    bodyBytes: BODY_BYTES,
-    rssBefore,
-    rssAfter,
-    bytesSent: Number(stream.stats.bytesSent),
-  }),
-);
+console.log(JSON.stringify({ bodyBytes: BODY_BYTES, bytesSent: Number(stream?.stats.bytesSent ?? 0) }));
 client.destroy();
 server.destroy();

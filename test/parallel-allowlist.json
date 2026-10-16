@@ -9,7 +9,7 @@
     "stats": {
       "dirs": 250,
       "files": 1513,
-      "excluded": 368
+      "excluded": 367
     }
   },
   "dirs": [
@@ -480,6 +480,7 @@
     "js/node/process/process-stdio.test.ts",
     "js/node/process/process.test.js",
     "js/node/quic/quic-endpoint.test.ts",
+    "js/node/quic/quic-stream.test.ts",
     "js/node/readline/readline_never_unrefs.test.ts",
     "js/node/readline/stdin-pause-pty.test.ts",
     "js/node/tls/fetch-tls-cert.test.ts",

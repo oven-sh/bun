@@ -2,7 +2,7 @@
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, runCommandMaxRSS, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -376,48 +376,149 @@ describe("headers queued before the handshake", () => {
   });
 });
 
-// The native side keeps a stream's unsent body in one queue and, on every
-// on_write, used to copy all of it into a fresh Vec to offer lsquic the few
-// KiB it would take, so sending a body cost (body size x engine ticks) in
-// memcpy and briefly doubled its memory on every tick; setBody() also copied
-// the body twice on the way in. The body must now be resident once beyond
-// the caller's own buffer, whichever way it is handed over. The fixture
-// explains what it measures and why freed copies still show up in it.
+// A debug build takes about 3 s to load node:quic in a fixture.
+const fixtureTimeout = 60_000;
+
+// The native side keeps the unsent body of a stream in one queue. Every write
+// to lsquic used to copy all of that queue first, and setBody() copied the
+// body twice on the way in. The native side must hold the body once,
+// whichever way it is handed over. The fixture says what it measures.
 describe.concurrent("a queued body is buffered natively exactly once", () => {
-  const fixture = join(import.meta.dir, "outbound-body-rss-fixture.ts");
+  async function fixturePeak(mode: string) {
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+      cmd: [bunExe(), join(import.meta.dir, "outbound-body-rss-fixture.ts"), mode],
+      env: withoutAsanQuarantine(bunEnv),
+    });
+    if (exitCode !== 0) throw new Error(`the fixture exited with ${exitCode}:\n${stderr}`);
+    const { bodyBytes, bytesSent }: { bodyBytes: number; bytesSent: number } = JSON.parse(stdout);
+    return { maxRSS, bodyBytes, bytesSent };
+  }
+  let baseline: ReturnType<typeof fixturePeak> | undefined;
 
   test.each(["open", "setBody", "writer"])(
     "%s",
     async mode => {
+      const [none, handedOver] = await Promise.all([(baseline ??= fixturePeak("none")), fixturePeak(mode)]);
+      expect(handedOver.bytesSent).toBeGreaterThan(0);
+      // About 1 measured. About 2 with a copy of the queue for every write.
+      expect((handedOver.maxRSS - none.maxRSS) / handedOver.bodyBytes).toBeLessThan(1.5);
+    },
+    fixtureTimeout,
+  );
+});
+
+// A write offers lsquic all of the queue, and lsquic takes at most one stream
+// window of it. Every write used to copy the whole queue first, so a body
+// cost the sender the square of its size. The fixture queues 48 MiB behind a
+// window of 16 KiB and says how it measures.
+describe("a large body handed to a stream in one piece", () => {
+  // process.cpuUsage() advances in ticks of about 15.6 ms on Windows.
+  test.skipIf(isWindows)(
+    "costs the CPU time of the same bytes in 64 KiB bodies",
+    async () => {
+      const measuredMiB = isDebug ? 1 : isASAN ? 4 : 16;
       await using proc = Bun.spawn({
-        cmd: [bunExe(), fixture, mode],
+        cmd: [bunExe(), join(import.meta.dir, "outbound-body-cpu-fixture.ts"), "48", String(measuredMiB)],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      if (exitCode !== 0) throw new Error(`fixture exited with ${exitCode}:\n${stderr}`);
-      const { bodyBytes, rssBefore, rssAfter, bytesSent } = JSON.parse(stdout);
-      expect(bytesSent).toBeGreaterThan(0);
-      // Fixed: 1.00x to 1.05x measured on debug+ASAN and on release.
-      // Unfixed: at least 2x (the queue plus one on_write copy); 2.0x on
-      // release, 4.4x on debug+ASAN, where every tick before the peer saw
-      // the data left another quarantined copy behind.
-      expect((rssAfter - rssBefore) / bodyBytes).toBeLessThan(1.5);
+      if (exitCode !== 0) throw new Error(`the fixture exited with ${exitCode}:\n${stderr}`);
+      const { pieces, whole, blockedWrites } = JSON.parse(stdout);
+      // Every one of these writes had the rest of the 48 MiB queued behind it.
+      expect(blockedWrites).toBeGreaterThanOrEqual(measuredMiB * 64);
+      // About 1 when a write costs what lsquic takes. 6 and up, whatever the
+      // build, when every write copies the queue first.
+      expect(whole / pieces).toBeLessThan(4);
     },
-    // Debug builds spend a few seconds just loading node:quic in the fixture.
-    60_000,
+    fixtureTimeout,
   );
 });
 
-// The queue is a ring buffer that is handed to lsquic in place as its (up to)
-// two halves, so feed lsquic across the seam and check what comes out. The
-// receiver's stream window is smaller than a chunk, so every chunk is only
-// partly taken, and highWaterMark equals the chunk size, so each next chunk
-// is appended while the previous one still has a tail queued (a drain takes
-// at most one window, which is less than the high water mark). Chunk 1 sizes
-// the buffer, chunk 2 grows it and ends exactly at its physical end, and
-// from then on every other chunk wraps around to the front.
+// lsquic refuses every write of an HTTP/3 body that comes before the header
+// block: it returns -1. The queue must stay as it is, and the body must go
+// out after sendHeaders().
+describe("a body written before the header block", () => {
+  test("waits for sendHeaders() and arrives intact", async () => {
+    const body = Buffer.alloc(1024 * 1024);
+    for (let offset = 0; offset < body.length; offset += 4) body.writeUInt32LE(offset, offset);
+
+    const refused = Promise.withResolvers<{ stream: any; bytesSent: bigint }>();
+    async function respond(stream: any) {
+      const blocked = Promise.withResolvers<void>();
+      stream.onblocked = () => blocked.resolve();
+      stream.closed.then(
+        () => blocked.reject(new Error("the stream closed before a write was refused")),
+        blocked.reject,
+      );
+      stream.writer.writeSync(body);
+      await blocked.promise;
+      refused.resolve({ stream, bytesSent: stream.stats.bytesSent });
+      stream.sendHeaders({ ":status": "200" });
+      stream.writer.endSync();
+    }
+
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any) {
+          respond(this).catch(refused.reject);
+        },
+      },
+    );
+
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    } as SessionOptions);
+    await client.opened;
+    const status = Promise.withResolvers<string>();
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders(headers: Record<string, any>) {
+        status.resolve(headers[":status"]);
+      },
+    });
+    stream.closed.catch(status.reject);
+
+    const chunks: Uint8Array[] = [];
+    for await (const batch of stream) chunks.push(...batch);
+    const received = Buffer.concat(chunks);
+    const atRefusal = await refused.promise;
+    client.close();
+
+    expect({
+      status: await status.promise,
+      bytesSentAtRefusal: atRefusal.bytesSent,
+      bytesSentAtEnd: atRefusal.stream.stats.bytesSent,
+      receivedLength: received.length,
+      receivedEqualsBody: received.equals(body),
+    }).toEqual({
+      status: "200",
+      bytesSentAtRefusal: 0n,
+      bytesSentAtEnd: BigInt(body.length),
+      receivedLength: body.length,
+      receivedEqualsBody: true,
+    });
+  });
+});
+
+// The queue is a ring buffer, and lsquic gets its two halves in one write.
+// This test makes the queue wrap and checks the bytes that arrive. The
+// receiver's stream window is smaller than a chunk, so lsquic takes a part of
+// every chunk. highWaterMark equals the chunk size, so the next chunk is
+// queued while the previous one still has a tail in the queue. Chunk 1 sizes
+// the buffer, chunk 2 grows it and ends at its physical end, and from then on
+// every other chunk wraps around to the front.
 describe("outbound queue wrap-around", () => {
   test("a body fed through a wrapped queue arrives intact", async () => {
     const CHUNK = 48 * 1024;
@@ -445,7 +546,7 @@ describe("outbound queue wrap-around", () => {
       },
     );
 
-    const client = await connect(`127.0.0.1:${server.address.port}`, { alpn: "wrap-test", verifyPeer: "manual" });
+    const client = await connect(server.address!, { alpn: "wrap-test", verifyPeer: "manual" } as SessionOptions);
     client.closed.catch(() => {});
     await client.opened;
     const stream = await client.createBidirectionalStream({ highWaterMark: CHUNK });

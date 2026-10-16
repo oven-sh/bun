@@ -515,18 +515,14 @@ impl Stream {
         // SAFETY: as above; `buf` is a live slice.
         unsafe { lsquic_stream_read(self.0, buf.as_mut_ptr().cast(), buf.len()) }
     }
-    /// Offers `bufs` back to back; returns how many bytes lsquic took (it
-    /// copies them into packets or its own buffer before returning), 0 when
-    /// it can take none, -1 on error.
+    /// Returns the bytes lsquic copied out of `bufs`, 0 when it can take none, -1 on error.
     pub fn writev<const N: usize>(&self, bufs: [&[u8]; N]) -> isize {
         let iov = bufs.map(|buf| iovec {
-            // lsquic only reads through `iov_base`; the struct is `*mut` for
-            // layout parity with the POSIX one.
             iov_base: buf.as_ptr().cast_mut().cast::<c_void>(),
             iov_len: buf.len(),
         });
         // SAFETY: as above; `iov` and the slices it points into are live for
-        // the call, and `N` is a small compile-time constant.
+        // the call, and lsquic only reads through `iov_base`.
         unsafe { lsquic_stream_writev(self.0, iov.as_ptr(), N as c_int) }
     }
     pub fn flush(&self) -> c_int {

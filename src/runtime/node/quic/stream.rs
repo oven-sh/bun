@@ -11,6 +11,7 @@ use bun_lsquic_sys as lsquic;
 
 use super::endpoint::alloc_exposed_array_buffer;
 use super::ffi::lsquic_callback;
+use super::outbound::{Outbound, PendingEnd};
 use super::session::{QuicSession, SessionEvent};
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
@@ -80,21 +81,6 @@ const PULL_STATUS_DATA: f64 = 1.0;
 const PULL_STATUS_BLOCKED: f64 = 2.0;
 const PULL_STATUS_ERROR: f64 = -1.0;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(super) enum PendingEnd {
-    #[default]
-    None,
-    Fin,
-    Trailers,
-}
-
-#[derive(Default)]
-pub(super) struct Outbound {
-    pub data: VecDeque<u8>,
-    pub end: PendingEnd,
-    pub started: bool,
-}
-
 #[derive(Default)]
 pub(super) struct Inbound {
     pub chunks: VecDeque<Vec<u8>>,
@@ -115,7 +101,7 @@ pub(crate) struct QuicStream {
     this_value: JsCell<JsRef>,
     state: Cell<*mut StreamState>,
     stats: Cell<*mut u64>,
-    pub(super) outbound: JsCell<Outbound>,
+    outbound: JsCell<Outbound>,
     inbound: JsCell<Inbound>,
     wakeup: JsCell<Option<Strong>>,
     peer_stop_sending_code: Cell<Option<u64>>,
@@ -358,7 +344,7 @@ impl QuicStream {
     }
     pub(super) fn has_undelivered_outbound(&self) -> bool {
         let out = self.outbound.get();
-        if !out.data.is_empty() || out.end == PendingEnd::Fin {
+        if !out.is_empty() || out.end == PendingEnd::Fin {
             return true;
         }
         self.ls().is_some_and(|s| s.has_unacked_data())
@@ -404,7 +390,7 @@ impl QuicStream {
     pub(super) fn cancel_early_rejected(&self, code: u64) {
         self.mark_reset(code);
         self.outbound.with_mut(|o| {
-            o.data.clear();
+            o.clear();
             o.end = PendingEnd::None;
         });
         self.with_state(|st| st.write_ended = 1);
@@ -479,33 +465,26 @@ impl QuicStream {
 
     fn drain_outbound(&self) {
         let Some(s) = self.ls() else { return };
-        let queued = self.outbound.get().data.len();
+        let queued = self.outbound.get().len();
         if queued > 0 {
-            // Written straight out of the deque: this runs on every on_write,
-            // so copying it first would cost the whole buffered body per
-            // engine tick. Holding the borrow across the call is fine because
-            // lsquic_stream_writev copies what it takes before returning and
-            // never re-enters this stream's callbacks.
-            let taken = {
-                let (head, tail) = self.outbound.get().data.as_slices();
-                s.writev([head, tail])
-            };
-            let taken = usize::try_from(taken).unwrap_or(0).min(queued);
-            if taken > 0 {
-                self.blocked_reported.set(false);
-                self.wrote_to_lsquic.set(true);
-                self.outbound.with_mut(|out| {
-                    out.data.drain(..taken);
-                });
-                self.add_stat(IDX_STATS_BYTES_SENT, taken as u64);
-            }
-            if taken < queued {
+            let taken = Outbound::write_queued(&self.outbound, s);
+            if taken < 0 {
                 self.note_write_blocked();
+            } else {
+                let taken = taken as usize;
+                if taken > 0 {
+                    self.blocked_reported.set(false);
+                    self.wrote_to_lsquic.set(true);
+                    self.add_stat(IDX_STATS_BYTES_SENT, taken as u64);
+                }
+                if taken < queued {
+                    self.note_write_blocked();
+                }
             }
         }
         let (empty, end) = {
             let out = self.outbound.get();
-            (out.data.is_empty(), out.end)
+            (out.is_empty(), out.end)
         };
         if empty {
             if end == PendingEnd::Fin {
@@ -526,7 +505,7 @@ impl QuicStream {
             s.want_write(false);
         }
         s.flush();
-        let pending = self.outbound.get().data.len() as u32;
+        let pending = self.outbound.get().len() as u32;
         let (was_full, hwm) = self.with_state(|s| {
             let was_full = s.write_desired_size == 0 && s.has_outbound != 0;
             s.write_desired_size = s.high_water_mark.saturating_sub(pending);
@@ -587,7 +566,7 @@ impl QuicStream {
             // stream. SAFETY: as above.
             unsafe { (*session).remove_stream(core::ptr::from_ref(self).cast_mut()) };
         }
-        self.outbound.with_mut(|o| o.data.clear());
+        self.outbound.with_mut(|o| o.clear());
         self.inbound.with_mut(|i| {
             i.chunks.clear();
             i.ended = true;
@@ -675,27 +654,28 @@ impl QuicStream {
             return Ok(JSValue::UNDEFINED);
         }
         let source = frame.arguments_as_array::<1>()[0];
-        let body = if source.is_empty_or_undefined_or_null() {
-            None
+        if source.is_empty_or_undefined_or_null() {
+            self.attach_body(&[]);
         } else if let Some(buf) = source.as_array_buffer(global) {
-            Some(buf)
+            self.attach_body(buf.byte_slice());
         } else {
             return Err(global.throw(format_args!(
                 "Unsupported QUIC stream body source (Blob and FileHandle sources are not implemented yet)"
             )));
-        };
-        self.outbound.with_mut(|o| {
-            o.started = true;
-            if let Some(body) = &body {
-                // `extend` from a slice is one memcpy; from `.iter().copied()`
-                // it is a per-byte loop (no VecDeque specialization for it).
-                o.data.extend(body.byte_slice());
-            }
-            o.end = PendingEnd::Fin;
-        });
-        self.with_state(|s| s.has_outbound = 1);
+        }
         self.kick_write();
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// Queues `body` as the whole send side: the bytes, then a FIN.
+    pub(super) fn attach_body(&self, body: &[u8]) {
+        self.outbound.with_mut(|o| {
+            o.started = true;
+            o.push(body);
+            o.end = PendingEnd::Fin;
+        });
+        // A later setOutbound() throws on this instead of appending a second body.
+        self.with_state(|s| s.has_outbound = 1);
     }
 
     pub(crate) fn init_streaming_source(
@@ -722,7 +702,7 @@ impl QuicStream {
         let mut queued: u64 = 0;
         let mut append = |bytes: &[u8]| {
             queued += bytes.len() as u64;
-            self.outbound.with_mut(|o| o.data.extend(bytes));
+            self.outbound.with_mut(|o| o.push(bytes));
         };
         if batch.is_array() {
             let len = batch.get_length(global)?;
@@ -735,7 +715,7 @@ impl QuicStream {
         } else if let Some(buf) = batch.as_array_buffer(global) {
             append(buf.byte_slice());
         }
-        let pending = self.outbound.get().data.len() as u32;
+        let pending = self.outbound.get().len() as u32;
         self.with_state(|s| s.write_desired_size = s.high_water_mark.saturating_sub(pending));
         if let Some(session) = self.session_ref() {
             session.note_stream_write();
@@ -794,7 +774,7 @@ impl QuicStream {
                             }
                         });
                         self.drain_outbound();
-                        if self.outbound.get().data.is_empty() {
+                        if self.outbound.get().is_empty() {
                             s.close();
                         } else {
                             s.reset(code);
@@ -825,7 +805,7 @@ impl QuicStream {
             s.reset_code = code;
         });
         self.outbound.with_mut(|o| {
-            o.data.clear();
+            o.clear();
             o.end = PendingEnd::None;
         });
         if let Some(s) = self.ls() {
@@ -883,7 +863,7 @@ impl QuicStream {
                 s.reset_code = code;
             });
             self.outbound.with_mut(|o| {
-                o.data.clear();
+                o.clear();
                 o.end = PendingEnd::None;
             });
         }

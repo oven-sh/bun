@@ -86,7 +86,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     ".allowShared is for an argument that is always there",
   );
   expect(() => b.fn({ args: { bytes: b.bufferSource.bytes.allowShared }, capability: "js" })).toThrow(
-    "JavaScript can detach a buffer",
+    "bytes: JavaScript can detach a buffer; .allowShared is for a function that cannot run it",
   );
   for (const element of [b.any, b.bufferSource, b.dictionary({ value: b.any }), b.class({ rustPath: "T" })]) {
     expect(() => b.array(element)).toThrow("an array is a Vec, where the GC does not see JS values");

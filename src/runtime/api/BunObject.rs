@@ -1326,8 +1326,8 @@ pub(crate) fn bun_resolve_sync_with_source_if_exists(
 }
 
 pub(crate) fn index_of_line(buffer: PossiblySharedBytes<'_>, offset: f64) -> f64 {
-    // NaN is 0.
-    let offset = offset.max(0.0) as usize;
+    // The cast saturates: NaN and a negative offset are 0.
+    let offset = offset as usize;
     // 0x0A never appears inside a multi-byte UTF-8 sequence.
     match buffer
         .get(offset..)

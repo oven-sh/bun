@@ -1474,7 +1474,9 @@ export class Signature {
     for (const { name, type } of this.args) {
       assert(
         !type.borrowsHeap || this.capability !== "js",
-        `${name}: JavaScript can detach a buffer; take b.bufferSource without .bytes and use with_bytes`,
+        type instanceof PossiblySharedBytesType
+          ? `${name}: JavaScript can detach a buffer; .allowShared is for a function that cannot run it`
+          : `${name}: JavaScript can detach a buffer; take b.bufferSource without .bytes and use with_bytes`,
       );
     }
     assert(!(this.returns instanceof DefaultType), "a result has no default");

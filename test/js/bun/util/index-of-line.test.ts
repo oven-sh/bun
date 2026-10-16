@@ -194,6 +194,8 @@ test("indexOfLine converts the offset to a number, drops the fraction and starts
   expect([5, 5.5, 5.999, 6, 11, 11.9, 12, 13, 1e9].map(from)).toEqual([5, 5, 5, 11, 11, 11, -1, -1, -1]);
   expect([-1, -5.5, -Infinity, -0, NaN].map(from)).toEqual([5, 5, 5, 5, 5]);
   expect([2 ** 53, 2 ** 63, 2 ** 64, Infinity].map(from)).toEqual([-1, -1, -1, -1]);
+  expect(["4294967302", "Infinity", "1e300", { valueOf: () => 2 ** 32 + 6 }].map(from)).toEqual([-1, -1, -1, -1]);
+  expect(["-4294967290", "-Infinity"].map(from)).toEqual([5, 5]);
   expect(["6", " 6 ", "x", "", null, true, [6], new Number(6), { valueOf: () => 6 }].map(from)).toEqual([
     11, 11, 5, 5, 5, 5, 11, 11, 11,
   ]);
@@ -250,50 +252,50 @@ test("indexOfLine searches a SharedArrayBuffer that another thread is writing", 
   const length = 4096;
   const shared = new SharedArrayBuffer(length);
   const stop = new Int32Array(new SharedArrayBuffer(4));
-  const worker = new Worker(
-    URL.createObjectURL(
-      new Blob(
-        [
-          `
-          self.onmessage = ({ data: { shared, stop } }) => {
-            const bytes = new Uint8Array(shared);
-            postMessage("writing");
-            for (let i = 0; Atomics.load(stop, 0) === 0; i = (i + 1) % bytes.length) bytes[i] = bytes[i] === 10 ? 97 : 10;
-            postMessage("stopped");
-          };
-          `,
-        ],
-        { type: "application/javascript" },
-      ),
+  const url = URL.createObjectURL(
+    new Blob(
+      [
+        `
+        self.onmessage = ({ data: { shared, stop } }) => {
+          const bytes = new Uint8Array(shared);
+          postMessage("writing");
+          for (let i = 0; Atomics.load(stop, 0) === 0; i = (i + 1) % bytes.length) bytes[i] = bytes[i] === 10 ? 97 : 10;
+          postMessage("stopped");
+        };
+        `,
+      ],
+      { type: "application/javascript" },
     ),
   );
+  const worker = new Worker(url);
+  const message = () =>
+    new Promise<string>((resolve, reject) => {
+      worker.onmessage = event => resolve(event.data);
+      worker.onerror = reject;
+    });
   try {
-    const messages = (function () {
-      let next = Promise.withResolvers<string>();
-      worker.onmessage = ({ data }) => {
-        next.resolve(data);
-        next = Promise.withResolvers<string>();
-      };
-      worker.onerror = event => next.reject(event);
-      return () => next.promise;
-    })();
-    const writing = messages();
+    const writing = message();
     worker.postMessage({ shared, stop });
     expect(await writing).toBe("writing");
 
     let outOfRange = 0;
+    const fromTheStart = new Set<number>();
     for (let i = 0; i < 20_000; i++) {
       const offset = i % length;
       const index = indexOfLine(shared, offset);
       if (!(index === -1 || (Number.isInteger(index) && index >= offset && index < length))) outOfRange++;
+      fromTheStart.add(indexOfLine(shared));
     }
     expect(outOfRange).toBe(0);
+    // The writer ran meanwhile.
+    expect(fromTheStart.size).toBeGreaterThan(1);
 
-    const stopped = messages();
+    const stopped = message();
     Atomics.store(stop, 0, 1);
     expect(await stopped).toBe("stopped");
   } finally {
     Atomics.store(stop, 0, 1);
     worker.terminate();
+    URL.revokeObjectURL(url);
   }
 });

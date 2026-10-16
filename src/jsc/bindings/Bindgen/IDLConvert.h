@@ -46,7 +46,6 @@ template<> struct IDLHumanReadableName<Bindgen::IDLBufferSourceBytes> : BaseIDLH
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
 };
 template<> struct IDLHumanReadableName<Bindgen::IDLRawBufferSource> : IDLHumanReadableName<Bindgen::IDLBufferSourceBytes> {};
-template<> struct IDLHumanReadableName<WebCore::IDLAllowSharedAdaptor<Bindgen::IDLBufferSourceBytes>> : IDLHumanReadableName<Bindgen::IDLBufferSourceBytes> {};
 
 namespace Bindgen {
 

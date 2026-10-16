@@ -3177,8 +3177,8 @@ impl VirtualMachine {
         VM.set(Some(vm));
         if opts.is_main_thread {
             MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
-            // What the main VM disables stays disabled for VMs created later
-            // without a parent to inherit from (the macro VM of a `Bun.build()`).
+            // What the main VM disables stays disabled for VMs created later without a parent
+            // to inherit from (the macro VM of `Bun.build()` or `Bun.Transpiler#transform()`).
             if opts.transform_options.allow_addons == Some(false) {
                 ADDONS_DISABLED_PROCESS_WIDE.store(true, core::sync::atomic::Ordering::Relaxed);
             }

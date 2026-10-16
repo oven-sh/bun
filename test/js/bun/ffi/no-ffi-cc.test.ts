@@ -103,9 +103,9 @@ async function run(args: string[], env: Record<string, string | undefined> = bun
   return { results, stderr, exitCode };
 }
 
-// A macro runs at bundle time. Bun.build() runs it in a separate VM on a
-// bundler thread, which has no parent VM to inherit the flags from.
-// process.dlopen is only probed on request (PROBE_PROCESS_DLOPEN=1).
+// A macro runs at bundle time. Bun.build() and Bun.Transpiler#transform() run
+// it in a separate VM on another thread, which has no parent VM to inherit the
+// flags from. process.dlopen is only probed on request (PROBE_PROCESS_DLOPEN=1).
 const macroFiles = {
   "macro.ts": /* ts */ `
     import { ptr } from "bun:ffi";
@@ -136,6 +136,15 @@ const macroFiles = {
     const build = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun", outdir: "./out" });
     if (!build.success) throw new AggregateError(build.logs, "build failed");
     const { result } = await import("./out/entry.js");
+    console.log(JSON.stringify(result));
+  `,
+  // The source string has no path, so the macro import is absolute.
+  "transform.ts": /* ts */ `
+    import { join } from "node:path";
+    const macro = JSON.stringify(join(import.meta.dir, "macro.ts"));
+    const source = "import { probe } from " + macro + ' with { type: "macro" };\\nexport const result = probe();\\n';
+    await Bun.write("./out/transformed.js", await new Bun.Transpiler({ loader: "ts" }).transform(source));
+    const { result } = await import("./out/transformed.js");
     console.log(JSON.stringify(result));
   `,
 };
@@ -239,34 +248,39 @@ describe.concurrent("--no-ffi-cc / --no-addons", () => {
     expect({ results, stderr, exitCode }).toMatchObject({ results: disabled, exitCode: 0 });
   });
 
-  it("a macro run by Bun.build() has bun:ffi by default", async () => {
-    using dir = tempDir("no-ffi-cc-macro", macroFiles);
-    const { results, stderr, exitCode } = await run(["build.ts"], bunEnv, String(dir));
-    expect({ results, stderr, exitCode }).toMatchObject({
-      results: { BunFFIptr: "ok", ptr: "ok", processDlopen: "skipped" },
-      exitCode: 0,
+  for (const [api, script] of [
+    ["Bun.build()", "build.ts"],
+    ["Bun.Transpiler#transform()", "transform.ts"],
+  ]) {
+    it(`a macro run by ${api} has bun:ffi by default`, async () => {
+      using dir = tempDir("no-ffi-cc-macro", macroFiles);
+      const { results, stderr, exitCode } = await run([script], bunEnv, String(dir));
+      expect({ results, stderr, exitCode }).toMatchObject({
+        results: { BunFFIptr: "ok", ptr: "ok", processDlopen: "skipped" },
+        exitCode: 0,
+      });
     });
-  });
 
-  it("--no-ffi-cc also applies to a macro run by Bun.build()", async () => {
-    using dir = tempDir("no-ffi-cc-macro", macroFiles);
-    const { results, stderr, exitCode } = await run(["--no-ffi-cc", "build.ts"], bunEnv, String(dir));
-    expect({ results, stderr, exitCode }).toMatchObject({
-      results: { BunFFIptr: "ERR_FFI_DISABLED", ptr: "ERR_FFI_DISABLED", processDlopen: "skipped" },
-      exitCode: 0,
+    it(`--no-ffi-cc also applies to a macro run by ${api}`, async () => {
+      using dir = tempDir("no-ffi-cc-macro", macroFiles);
+      const { results, stderr, exitCode } = await run(["--no-ffi-cc", script], bunEnv, String(dir));
+      expect({ results, stderr, exitCode }).toMatchObject({
+        results: { BunFFIptr: "ERR_FFI_DISABLED", ptr: "ERR_FFI_DISABLED", processDlopen: "skipped" },
+        exitCode: 0,
+      });
     });
-  });
 
-  it("--no-addons also applies to a macro run by Bun.build(), including process.dlopen", async () => {
-    using dir = tempDir("no-ffi-cc-macro", macroFiles);
-    const { results, stderr, exitCode } = await run(
-      ["--no-addons", "build.ts"],
-      { ...bunEnv, PROBE_PROCESS_DLOPEN: "1" },
-      String(dir),
-    );
-    expect({ results, stderr, exitCode }).toMatchObject({
-      results: { BunFFIptr: "ERR_FFI_DISABLED", ptr: "ERR_FFI_DISABLED", processDlopen: "ERR_DLOPEN_DISABLED" },
-      exitCode: 0,
+    it(`--no-addons also applies to a macro run by ${api}, including process.dlopen`, async () => {
+      using dir = tempDir("no-ffi-cc-macro", macroFiles);
+      const { results, stderr, exitCode } = await run(
+        ["--no-addons", script],
+        { ...bunEnv, PROBE_PROCESS_DLOPEN: "1" },
+        String(dir),
+      );
+      expect({ results, stderr, exitCode }).toMatchObject({
+        results: { BunFFIptr: "ERR_FFI_DISABLED", ptr: "ERR_FFI_DISABLED", processDlopen: "ERR_DLOPEN_DISABLED" },
+        exitCode: 0,
+      });
     });
-  });
+  }
 });

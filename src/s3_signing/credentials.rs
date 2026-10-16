@@ -13,16 +13,7 @@ use super::storage_class::StorageClass;
 
 bun_core::declare_scope!(AWS, visible);
 
-use bun_core::fmt::buf_print;
-
-/// Format into a fresh `Vec<u8>` and return it.
-macro_rules! alloc_print {
-    ($($arg:tt)*) => {{
-        let mut v: Vec<u8> = Vec::new();
-        write!(&mut v, $($arg)*).expect("write to Vec<u8> never fails");
-        v
-    }};
-}
+use bun_core::fmt::buf_print_len;
 
 use bun_core::fmt::hex_lower as HexLower;
 
@@ -360,7 +351,6 @@ impl S3Credentials {
         let protocol: &str = if self.insecure_http { "http" } else { "https" };
 
         // detect service name and host from region or endpoint
-        let mut endpoint_owned: Option<Vec<u8>> = None;
         let mut extra_path: &[u8] = b"";
         let host: Box<[u8]> = 'brk_host: {
             if !self.endpoint.is_empty() {
@@ -390,20 +380,20 @@ impl S3Credentials {
                         return Err(SignError::InvalidEndpoint);
                     }
                     // default to https://<BUCKET_NAME>.s3.<REGION>.amazonaws.com/
-                    let mut v = Vec::new();
+                    let mut v = Vec::with_capacity(
+                        encoded_len::<false>(bucket) + ".s3..amazonaws.com".len() + region.len(),
+                    );
                     encode_uri_component_into::<false>(bucket, &mut v);
-                    write!(&mut v, ".s3.{}.amazonaws.com", BStr::new(region)).unwrap();
-                    endpoint_owned = Some(v.clone());
+                    write!(&mut v, ".s3.{}.amazonaws.com", BStr::new(region))
+                        .expect("infallible: in-memory write");
                     break 'brk_host v.into_boxed_slice();
                 }
-                let mut v = Vec::new();
+                let mut v = Vec::with_capacity("s3..amazonaws.com".len() + region.len());
                 write!(&mut v, "s3.{}.amazonaws.com", BStr::new(region))
                     .expect("infallible: in-memory write");
-                endpoint_owned = Some(v.clone());
                 break 'brk_host v.into_boxed_slice();
             }
         };
-        let _ = endpoint_owned; // not read after this point.
         // `host` (Box<[u8]>) drops on `?`.
 
         let date_result = get_amz_date();
@@ -667,40 +657,49 @@ impl S3Credentials {
             }
             let sha_digest = canonical.finish();
 
-            macro_rules! string_to_sign {
+            // The string to sign is the scope of the signature, then the digest of the
+            // canonical request in hex: 124 bytes and the region. It fits the block for every
+            // region that a service has. A longer one goes to the heap.
+            macro_rules! scope {
                 () => {
                     format_args!(
-                        "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n{}",
+                        "AWS4-HMAC-SHA256\n{}\n{}/{}/{}/aws4_request\n",
                         BStr::new(&amz_date),
                         BStr::new(amz_day),
                         BStr::new(region),
-                        service_name,
-                        HexLower(&sha_digest)
+                        service_name
                     )
                 };
             }
-            // The string to sign is 124 bytes and the region, so it fits the block for every
-            // region that a service has. A longer one goes to the heap.
+            const DIGEST_HEX_LEN: usize = bun_sha_hmac::sha::hashers::SHA256::DIGEST * 2;
             let string_to_sign_len = "AWS4-HMAC-SHA256\n\n///aws4_request\n".len()
                 + amz_date.len()
                 + amz_day.len()
                 + region.len()
                 + service_name.len()
-                + sha_digest.len() * 2;
+                + DIGEST_HEX_LEN;
             let mut long_string_to_sign = Vec::new();
-            let in_block = if string_to_sign_len <= HASH_BLOCK_LEN {
+            let scope_len = if string_to_sign_len <= HASH_BLOCK_LEN {
                 // A region that is not UTF-8 is longer as text and can still not fit.
-                buf_print(&mut hash_block, string_to_sign!()).ok()
+                buf_print_len(&mut hash_block[..HASH_BLOCK_LEN - DIGEST_HEX_LEN], scope!()).ok()
             } else {
                 None
             };
-            let string_to_sign: &[u8] = match in_block {
-                Some(string_to_sign) => string_to_sign,
+            let string_to_sign: &[u8] = match scope_len {
+                Some(scope_len) => {
+                    let end = scope_len + DIGEST_HEX_LEN;
+                    bun_core::fmt::bytes_to_hex_lower(&sha_digest, &mut hash_block[scope_len..end]);
+                    &hash_block[..end]
+                }
                 None => {
                     long_string_to_sign.reserve_exact(string_to_sign_len);
-                    long_string_to_sign
-                        .write_fmt(string_to_sign!())
-                        .expect("infallible: in-memory write");
+                    write!(
+                        &mut long_string_to_sign,
+                        "{}{}",
+                        scope!(),
+                        HexLower(&sha_digest)
+                    )
+                    .expect("infallible: in-memory write");
                     &long_string_to_sign
                 }
             };
@@ -721,16 +720,33 @@ impl S3Credentials {
                 break 'brk Box::default();
             }
 
-            alloc_print!(
-                "AWS4-HMAC-SHA256 Credential={}/{}/{}/{}/aws4_request, SignedHeaders={}, Signature={}",
+            // Written once, at its size. The signature is its last 64 bytes.
+            let mut authorization = Vec::with_capacity(
+                "AWS4-HMAC-SHA256 Credential=////aws4_request, SignedHeaders=, Signature=".len()
+                    + self.access_key_id.len()
+                    + amz_day.len()
+                    + region.len()
+                    + service_name.len()
+                    + signed_headers.len()
+                    + SIGNATURE_HEX_LEN,
+            );
+            write!(
+                &mut authorization,
+                "AWS4-HMAC-SHA256 Credential={}/{}/{}/{}/aws4_request, SignedHeaders={}, Signature=",
                 BStr::new(&self.access_key_id),
                 BStr::new(amz_day),
                 BStr::new(region),
                 service_name,
-                BStr::new(signed_headers),
-                HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
+                BStr::new(signed_headers)
             )
-            .into_boxed_slice()
+            .expect("infallible: in-memory write");
+            let signature_start = authorization.len();
+            authorization.resize(signature_start + SIGNATURE_HEX_LEN, 0);
+            bun_core::fmt::bytes_to_hex_lower(
+                &signature[0..DIGESTED_HMAC_256_LEN],
+                &mut authorization[signature_start..],
+            );
+            authorization.into_boxed_slice()
         };
         // `authorization` (Box<[u8]>) drops on `?`.
 
@@ -857,18 +873,16 @@ fn get_amz_date() -> DateResult {
         .as_secs();
     let (year, month, day, hours, minutes, seconds, day_seconds) = epoch_to_utc_components(secs);
 
+    let mut date = Vec::with_capacity("YYYYMMDDTHHMMSSZ".len());
+    write!(
+        &mut date,
+        "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
+        year, month, day, hours, minutes, seconds
+    )
+    .expect("infallible: in-memory write");
     DateResult {
         numeric_day: secs - day_seconds,
-        date: alloc_print!(
-            "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
-            year,
-            month,
-            day,
-            hours,
-            minutes,
-            seconds
-        )
-        .into_boxed_slice(),
+        date: date.into_boxed_slice(),
     }
 }
 

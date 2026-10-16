@@ -302,6 +302,8 @@ const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 // On the handle: the `data` of a pipe connect that failed at connect(2). A later dial replaces `handle.data`.
 const kFailedPipeConnect = Symbol("kFailedPipeConnect");
+// On the socket: connect(path) dials on the handle of an earlier connect(), which can still have a deferred dial.
+const kEarlierConnectPending = Symbol("kEarlierConnectPending");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
@@ -1908,6 +1910,9 @@ function kConnectTcp(self, addressType, req, address, port) {
 
 function kConnectPipe(self, req, address) {
   $debug("SocketHandle.kConnectPipe");
+  // Read before the dial: ticks can run inside it, and one of them can call connect() again.
+  const earlierConnectPending = self[kEarlierConnectPending];
+  const data = { self, req };
   const errno = kConnectDispatch(self, req, {
     hostname: address,
     unix: address,
@@ -1915,15 +1920,17 @@ function kConnectPipe(self, req, address) {
     allowHalfOpen: true,
     tls: req.tls,
     pauseOnConnect: req.pauseOnConnect,
-    data: { self, req },
+    data,
     socket: self[khandlers],
   });
   // libuv queues a connect(2) error on the loop and returns only a name it cannot express: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/pipe.c#L333-L343
   if (errno === 0 || errno === uv().UV_EINVAL) return errno;
+  // A queued failure would leave the socket connecting, and the deferred dial of an earlier connect() would run.
+  if (earlierConnectPending) return errno;
   const handle = self._handle;
   // A 'connectionAttempt' listener destroyed the socket.
   if (!handle) return errno;
-  const data = (handle[kFailedPipeConnect] = handle.data);
+  handle[kFailedPipeConnect] = data;
   setImmediateNative(afterPipeConnectFailed, self, handle, data, req, errno);
   return 0;
 }
@@ -2457,6 +2464,7 @@ Socket.prototype.connect = function connect(...args) {
   const pipe = !!path;
   $debug("pipe", pipe, path);
 
+  if (pipe) this[kEarlierConnectPending] = !!this._handle;
   if (!this._handle) {
     this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
     initSocketHandle(this);

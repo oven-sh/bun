@@ -30,9 +30,11 @@ const childEnv = harness ? harness.bunEnv : process.env;
 const posixTest = process.platform === "win32" ? test.skip : test;
 const bunTest = process.versions.bun && process.platform !== "win32" ? test : test.skip;
 
+// A short base: Node.js fails a name that does not fit sun_path inside connect(), and TMPDIR can be long.
+const base = process.platform === "win32" ? os.tmpdir() : "/tmp";
 const dirs: string[] = [];
 function makeDir() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ucf-"));
+  const dir = fs.mkdtempSync(path.join(base, "ucf-"));
   dirs.push(dir);
   return dir;
 }
@@ -125,6 +127,69 @@ describe("a unix socket connect that fails at connect(2)", () => {
       assert.deepStrictEqual(events, [...expected]);
     });
   }
+
+  // Only in Bun: Node.js fails an internal assertion when the request of the closed handle completes.
+  bunTest("destroy() and a new connect() are not failed by the first connect", async () => {
+    const dir = makeDir();
+    const server = net.createServer(connection => {
+      connection.on("error", () => {});
+      connection.end("hello");
+    });
+    await new Promise<void>(resolve => server.listen(path.join(dir, "live.sock"), resolve));
+    try {
+      const events: string[] = [];
+      const socket = net.connect(path.join(dir, "none.sock"));
+      const done = Promise.withResolvers<void>();
+      socket.on("error", (e: NodeJS.ErrnoException) => {
+        events.push(`error ${e.code}`);
+        done.resolve();
+      });
+      socket.on("connect", () => events.push("connect"));
+      socket.on("data", chunk => {
+        events.push(`data ${chunk}`);
+        done.resolve();
+      });
+      socket.destroy();
+      socket.connect(path.join(dir, "live.sock"));
+      await done.promise;
+      socket.destroy();
+      assert.deepStrictEqual(events, ["connect", "data hello"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  // Only in Bun: Node.js gives the path to the TCP handle of the first connect() and reports EINVAL.
+  bunTest("fails inside connect() when an earlier connect() of the socket is pending", async () => {
+    const server = net.createServer(connection => connection.destroy());
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const events: string[] = [];
+      const socket = new net.Socket();
+      socket.on("connect", () => {
+        events.push("connect");
+        socket.destroy();
+      });
+      socket.on("error", (e: NodeJS.ErrnoException) => events.push(`error ${e.code}`));
+      const closed = new Promise<void>(resolve => {
+        socket.on("close", hadError => {
+          events.push(`close ${hadError}`);
+          resolve();
+        });
+      });
+      socket.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+      socket.connect(path.join(makeDir(), "none.sock"));
+      const destroyedOnReturn = socket.destroyed;
+      await closed;
+      await nextTurn();
+      assert.deepStrictEqual(
+        { destroyedOnReturn, events },
+        { destroyedOnReturn: true, events: ["error ENOENT", "close true"] },
+      );
+    } finally {
+      server.close();
+    }
+  });
 
   // Node.js throws a TypeError from connect() here: it reads `connect` of the handle that destroy() cleared.
   bunTest("a 'connectionAttempt' listener that destroys the socket gets only 'close'", async () => {
@@ -439,14 +504,17 @@ describe("a unix socket connect that fails at connect(2)", () => {
   });
 
   describe("in a process of its own", () => {
-    // The failure holds the loop like a request in flight: unref() does not drop it.
+    // Inside an immediate nothing else holds the loop: the failure does, like a request in flight, and unref() does not drop it.
     posixTest("is reported for a socket that was unref()ed", async () => {
       const result = await run(
         `
-        const socket = require("node:net").connect(process.argv[1]);
-        socket.unref();
-        socket.on("error", e => console.log("error " + e.code));
-        socket.on("close", () => console.log("close"));
+        const net = require("node:net");
+        setImmediate(() => {
+          const socket = net.connect(process.argv[1]);
+          socket.unref();
+          socket.on("error", e => console.log("error " + e.code));
+          socket.on("close", () => console.log("close"));
+        });
         `,
         path.join(makeDir(), "none.sock"),
       );
@@ -470,7 +538,7 @@ describe("a unix socket connect that fails at connect(2)", () => {
   // Each way a failure that is still queued can end must give back the socket.
   bunTest("does not retain the socket, however the attempt ends", async () => {
     const target = path.join(makeDir(), "none.sock");
-    const dials = 8;
+    const dials = 16;
     const ends: ((socket: net.Socket) => void)[] = [
       () => {},
       socket => process.nextTick(() => socket.destroy()),

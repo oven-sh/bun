@@ -909,7 +909,8 @@ declare module "bun" {
      * rejects with nothing to handle the rejection, that is reported as an
      * unhandled rejection. So is an error that a `finally()` callback throws.
      * The failure of a query that was only started, with `execute()` or
-     * `finally()`, is not reported once it has a connection.
+     * `finally()`, is not reported once it has a connection. On SQLite,
+     * `execute()` outside a transaction does report it.
      *
      * Bun reads the parameters when it sends the query. Leave a `Buffer`,
      * `TypedArray`, `Date` or object that you passed alone until the query

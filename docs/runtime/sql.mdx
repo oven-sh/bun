@@ -718,7 +718,7 @@ What `cancel()` does depends on how far the query got:
 
 ### Unhandled rejections
 
-`.then()` and `.catch()` return a promise like any other. When it rejects and nothing handles the rejection, Bun reports an unhandled rejection, which ends the process unless you listen for [`unhandledRejection`](https://nodejs.org/api/process.html#event-unhandledrejection). So does an error that your `.finally()` callback throws. A query that you only start, with `.execute()` or `.finally()`, is the exception: once it has a connection, its own failure is not reported, and the error is lost. Add a `.catch()` to a query that you start and do not await:
+`.then()` and `.catch()` return a promise like any other. When it rejects and nothing handles the rejection, Bun reports an unhandled rejection, which ends the process unless you listen for [`unhandledRejection`](https://nodejs.org/api/process.html#event-unhandledrejection). So does an error that your `.finally()` callback throws. A query that you only start, with `.execute()` or `.finally()`, is the exception: once it has a connection, its own failure is not reported, and the error is lost. On SQLite, `.execute()` outside a transaction does report it. Add a `.catch()` to a query that you start and do not await:
 
 ```ts
 sql`UPDATE stats SET hits = hits + 1`.catch(err => console.error(err));

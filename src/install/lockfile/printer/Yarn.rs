@@ -75,11 +75,20 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
         }
         version.literal.slice(string_buf)
     };
+    // Yarn looks up an `npm:` alias by its name in package.json, not by the package's real name.
+    let requested_name = |dependency_id: DependencyID| -> &[u8] {
+        let name = if requested_as(dependency_id).starts_with(b"npm:") {
+            &dependencies_buffer[dependency_id as usize].name
+        } else {
+            &names[resolutions_buffer[dependency_id as usize] as usize]
+        };
+        name.slice(string_buf)
+    };
     for i in 1..package_count {
         index_sort::sort_indices(&mut requested[starts[i]..starts[i + 1]], &mut |a, b| {
             let tag_of = |id: DependencyID| dependencies_buffer[id as usize].version.tag;
-            tag_of(a)
-                .cmp(tag_of(b))
+            strings::order(requested_name(a), requested_name(b))
+                .then_with(|| tag_of(a).cmp(tag_of(b)))
                 .then_with(|| strings::order(requested_as(a), requested_as(b)))
         });
     }
@@ -99,7 +108,6 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
 
     // When printing, we start at 1
     for &i in alphabetized_names.iter() {
-        let name: &[u8] = names[i as usize].slice(string_buf);
         let resolution = &resolved[i as usize];
         let meta = &metas[i as usize];
         // The manifest's order in a fresh install, this order once loaded from bun.lock.
@@ -121,23 +129,21 @@ fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), 
             writer.write_all(b"\n")?;
             let requests = &requested[starts[i as usize]..starts[i as usize + 1]];
 
-            // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L9
-            let always_needs_quote = strings::must_escape_yaml_string(name);
-
             let mut needs_comma = false;
             for (nth, &request) in requests.iter().enumerate() {
+                let name: &[u8] = requested_name(request);
                 let version_name: &[u8] = requested_as(request);
                 // one key per requested spec as written
-                if requests[..nth]
-                    .iter()
-                    .any(|&earlier| requested_as(earlier) == version_name)
-                {
+                if requests[..nth].iter().any(|&earlier| {
+                    requested_name(earlier) == name && requested_as(earlier) == version_name
+                }) {
                     continue;
                 }
                 if needs_comma {
                     writer.write_all(b", ")?;
                 }
-                let needs_quote = always_needs_quote
+                // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L9
+                let needs_quote = strings::must_escape_yaml_string(name)
                     || strings::index_of_any(version_name, b" |\t-/!:\"\\,\n\r").is_some()
                     || version_name.starts_with(b"npm:");
 

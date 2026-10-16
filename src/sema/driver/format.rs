@@ -82,7 +82,7 @@ fn with_commas(n: usize) -> BString {
     out
 }
 
-fn plural(n: usize, one: &[u8], many: &[u8]) -> BString {
+pub fn plural(n: usize, one: &[u8], many: &[u8]) -> BString {
     let noun = if n == 1 { one } else { many };
     alloc_print!("{} {}", with_commas(n), noun.as_bstr())
 }

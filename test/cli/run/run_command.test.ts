@@ -240,3 +240,45 @@ for (const mode of ctrlCModes) {
     }
   });
 }
+
+describe.concurrent.each([
+  ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
+  ["CR", "\r", "\\r"],
+  ["BEL", "\x07", "\\x07"],
+  ["U+009B", "\u009b2K", "\\u009b2K"],
+  ["OSC 52", "\x1b]52;c;aGk=\x07", "\\x1b]52;c;aGk=\\x07"],
+  ["U+2028", " ", "\\u2028"],
+  ["U+202E", "‮", "\\u202e"],
+  ["U+2066", "⁦", "\\u2066"],
+])("%s in a script of package.json is printed spelled out", (_, raw, spelled) => {
+  async function run(...args: string[]) {
+    using dir = tempDir("run-script-text", {
+      "package.json": JSON.stringify({ name: "run-script-text", scripts: { [`a${raw}b`]: `echo 'c${raw}d'` } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("in the list of `bun run`", async () => {
+    const { stdout, stderr, exitCode } = await run();
+    expect(stdout).toEndWith(
+      `\npackage.json scripts (1 found):\n  $ bun run a${spelled}b\n    echo 'c${spelled}d'\n\n`,
+    );
+    expect(stdout + stderr).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("in the line that says what runs", async () => {
+    const { stdout, stderr, exitCode } = await run(`a${raw}b`);
+    expect(stderr).toBe(`$ echo 'c${spelled}d'\n`);
+    expect(stdout).toBe(`c${raw}d\n`);
+    expect(exitCode).toBe(0);
+  });
+});

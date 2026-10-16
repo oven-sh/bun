@@ -1167,9 +1167,12 @@ class WASI {
       fd_renumber: wrap((from, to) => {
         const fromEntry = CHECK_FD(from, BigInt(0));
         const toEntry = CHECK_FD(to, BigInt(0));
-        fs.closeSync(fromEntry.real);
-        this.FD_MAP.set(from, toEntry);
-        this.FD_MAP.delete(to);
+        if (from === to) {
+          return WASI_ESUCCESS;
+        }
+        this.FD_MAP.set(to, fromEntry);
+        this.FD_MAP.delete(from);
+        fs.closeSync(toEntry.real);
         return WASI_ESUCCESS;
       }),
       fd_seek: wrap((fd, offset, whence, newOffsetPtr) => {
@@ -1442,7 +1445,13 @@ class WASI {
               },
               path: full,
             });
-            stat(this, newfd);
+            const entry = stat(this, newfd);
+            // wasi-libc's isatty() is "a character device with no FD_SEEK and no FD_TELL", and a seek that
+            // succeeds gives fd_read a position, which a terminal refuses.
+            if (entry.filetype === WASI_FILETYPE_CHARACTER_DEVICE && bindings.isTTY(realfd)) {
+              entry.rights.base &= RIGHTS_TTY_BASE;
+              entry.rights.inheriting &= RIGHTS_TTY_INHERITING;
+            }
             this.view.setUint32(fdPtr, newfd, true);
           } catch (e) {
             if (e instanceof WASIError) {

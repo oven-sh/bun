@@ -167,6 +167,130 @@ it("path_open resolves dev/tty and proc/* in the preopen like any other path", (
   expect([...wasi.FD_MAP.keys()]).toEqual([0, 1, 2, 3, 4, 5, 6]);
 });
 
+it.skipIf(isWindows)("path_open opens the host's /dev/tty as a terminal descriptor", async () => {
+  // The child has a pty as its controlling terminal. It opens dev/tty on a preopen of the host "/",
+  // as a wasi-libc guest under `bun file.wasm` does, and reads one line from the new descriptor.
+  const childSrc = `
+    const { WASI } = require("node:wasi");
+    const wasi = new WASI({ preopens: { "/": "/" } });
+    wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+    const memory = Buffer.from(wasi.memory.buffer);
+    const view = new DataView(wasi.memory.buffer);
+    const FD_READ = 2n, FD_SEEK = 4n, FD_TELL = 32n;
+    const WHENCE_CUR = 1;
+    const pathPtr = 1024, fdPtr = 1536, statPtr = 2048, offsetPtr = 3072, iovsPtr = 4096, nreadPtr = 5120, bufPtr = 8192;
+
+    const len = memory.write("dev/tty", pathPtr);
+    const errno = wasi.wasiImport.path_open(3, 0, pathPtr, len, 0, FD_READ | FD_SEEK | FD_TELL, 0n, 0, fdPtr);
+    const result = { errno, fd: view.getUint32(fdPtr, true) };
+    // Descriptors 0 to 2 are the stdio of this process: do not read them.
+    if (errno === 0 && result.fd > 2) {
+      wasi.wasiImport.fd_fdstat_get(result.fd, statPtr);
+      const rightsBase = view.getBigUint64(statPtr + 8, true);
+      result.filetype = view.getUint8(statPtr);
+      result.seekRight = (rightsBase & FD_SEEK) !== 0n;
+      result.tellRight = (rightsBase & FD_TELL) !== 0n;
+      result.seekRefused = wasi.wasiImport.fd_seek(result.fd, 0n, WHENCE_CUR, offsetPtr) !== 0;
+      process.stdout.write("READY\\n");
+      view.setUint32(iovsPtr, bufPtr, true);
+      view.setUint32(iovsPtr + 4, 64, true);
+      result.readErrno = wasi.wasiImport.fd_read(result.fd, iovsPtr, 1, nreadPtr);
+      result.line = memory.toString("latin1", bufPtr, bufPtr + view.getUint32(nreadPtr, true));
+    }
+    process.stdout.write("RESULT " + JSON.stringify(result) + "\\n");
+  `;
+
+  const WASI_FILETYPE_CHARACTER_DEVICE = 2;
+  const decoder = new TextDecoder();
+  const result = Promise.withResolvers();
+  let output = "";
+  let typed = false;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", childSrc],
+    env: bunEnv,
+    terminal: {
+      data(terminal, chunk) {
+        output += decoder.decode(chunk, { stream: true });
+        if (!typed && output.includes("READY")) {
+          typed = true;
+          terminal.write("typed line\n");
+        }
+        const match = output.match(/RESULT (\{.*\})\r?\n/);
+        if (match) result.resolve(JSON.parse(match[1]));
+      },
+      exit() {
+        result.reject(new Error("the child printed no RESULT line: " + JSON.stringify(output)));
+      },
+    },
+  });
+
+  expect(await result.promise).toEqual({
+    errno: 0,
+    fd: 4,
+    filetype: WASI_FILETYPE_CHARACTER_DEVICE,
+    seekRight: false,
+    tellRight: false,
+    seekRefused: true,
+    readErrno: 0,
+    line: "typed line\n",
+  });
+  expect(await proc.exited).toBe(0);
+});
+
+it("fd_renumber moves the source descriptor onto the target descriptor", () => {
+  using dir = tempDir("wasi-fd-renumber", {
+    "a.txt": "file a",
+    "b.txt": "file b",
+  });
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const WASI_EBADF = 8;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const WASI_RIGHT_FD_SEEK = BigInt(4);
+  const preopenFd = 3;
+  const pathPtr = 1024;
+  const fdPtr = 1536;
+  const iovsPtr = 2048;
+  const nreadPtr = 3072;
+  const bufPtr = 4096;
+
+  const open = guestPath => {
+    const len = memory.write(guestPath, pathPtr);
+    const rights = WASI_RIGHT_FD_READ | WASI_RIGHT_FD_SEEK;
+    expect(wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, 0, rights, BigInt(0), 0, fdPtr)).toBe(WASI_ESUCCESS);
+    return view.getUint32(fdPtr, true);
+  };
+  // The whole file from offset 0, or the errno.
+  const read = fd => {
+    view.setUint32(iovsPtr, bufPtr, true);
+    view.setUint32(iovsPtr + 4, 64, true);
+    const errno = wasi.wasiImport.fd_pread(fd, iovsPtr, 1, BigInt(0), nreadPtr);
+    return errno === WASI_ESUCCESS ? memory.toString("latin1", bufPtr, bufPtr + view.getUint32(nreadPtr, true)) : errno;
+  };
+
+  const fdA = open("a.txt");
+  const fdB = open("b.txt");
+  expect({ fdA: read(fdA), fdB: read(fdB) }).toEqual({ fdA: "file a", fdB: "file b" });
+
+  // fdA now names the file of fdB, and fdB is closed.
+  expect(wasi.wasiImport.fd_renumber(fdB, fdA)).toBe(WASI_ESUCCESS);
+  expect({ fdA: read(fdA), fdB: read(fdB) }).toEqual({ fdA: "file b", fdB: WASI_EBADF });
+
+  // The same descriptor on both sides changes nothing.
+  expect(wasi.wasiImport.fd_renumber(fdA, fdA)).toBe(WASI_ESUCCESS);
+  expect(read(fdA)).toBe("file b");
+
+  // A descriptor that is not open, on each side: EBADF, and fdA stays.
+  expect(wasi.wasiImport.fd_renumber(fdB, fdA)).toBe(WASI_EBADF);
+  expect(wasi.wasiImport.fd_renumber(fdA, fdB)).toBe(WASI_EBADF);
+  expect(read(fdA)).toBe("file b");
+});
+
 it("path_* syscalls cannot escape the preopened directory", () => {
   using dir = tempDir("wasi-sandbox", {
     "secret.txt": "outside",

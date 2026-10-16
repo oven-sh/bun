@@ -152,6 +152,23 @@ pub(crate) enum ExpectAssertions {
     Exact(u32),
 }
 
+/// Sequences that have not finished and that still have JS to run.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Unfinished {
+    pub(crate) tests: usize,
+    /// `beforeAll` and `afterAll` hooks that have not started.
+    pub(crate) hooks: usize,
+}
+
+/// The test or hook whose callback is on the stack.
+#[derive(Clone, Copy)]
+pub(crate) enum OnStack<'a> {
+    Test(&'a [u8]),
+    HookOfTest(&'a [u8]),
+    Hook,
+    Nothing,
+}
+
 pub(crate) struct ExecutionSequence {
     pub(crate) first_entry: Option<NonNull<ExecutionEntry>>,
     /// Index into ExecutionSequence.entries() for the entry that is not started or currently running
@@ -563,6 +580,82 @@ impl Execution {
                 return;
             }
             group.remaining_incomplete_entries -= 1;
+        }
+    }
+
+    /// Ends each failed sequence that still runs its hooks, so `advance_sequence` reports it before the process exits.
+    #[cold]
+    pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>) {
+        let (group, range) = {
+            // SAFETY: `buntest` is the live active file. This borrow of its `execution` ends with the block.
+            let bun_test = unsafe { &mut *buntest.as_ptr() };
+            if bun_test.phase != super::bun_test::Phase::Execution {
+                return;
+            }
+            let Some(group) = bun_test.execution.active_group() else {
+                return;
+            };
+            let range = group.sequence_start..group.sequence_end;
+            (NonNull::from(group), range)
+        };
+        for index in range {
+            // SAFETY: as in `advance_sequence`: one element of `buntest.execution.sequences`, disjoint from `groups`.
+            let sequence = unsafe { &mut (*buntest.as_ptr()).execution.sequences[index] };
+            let Some(mut last) = sequence.active_entry else {
+                continue;
+            };
+            if !sequence.result.is_fail() {
+                continue;
+            }
+            // SAFETY: arena-owned entries, alive for the lifetime of the `BunTest`.
+            while let Some(next) = nn(unsafe { last.as_ref() }.next) {
+                last = next;
+            }
+            // `advance_sequence` steps past the last entry and finds the sequence complete.
+            sequence.active_entry = Some(last);
+            sequence.maybe_skip = false;
+            sequence.executing = true;
+            sequence.remaining_retry_count = 0;
+            Execution::advance_sequence(buntest, NonNull::from(sequence), group);
+        }
+    }
+
+    /// Counts from the stepper's cursor. A test with no callback (skip, todo, filtered out) runs no JS and does not count.
+    pub(crate) fn unfinished(&self) -> Unfinished {
+        let mut unfinished = Unfinished::default();
+        let groups = self.groups.get(self.group_index..).unwrap_or_default();
+        for sequence in groups.iter().flat_map(|group| group.sequences(self)) {
+            if sequence.active_entry.is_none() {
+                continue;
+            }
+            let Some(test) = sequence.test_entry else {
+                unfinished.hooks += usize::from(!sequence.executing);
+                continue;
+            };
+            // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
+            let has_callback = unsafe { test.as_ref() }.callback.is_some();
+            unfinished.tests += usize::from(has_callback);
+        }
+        unfinished
+    }
+
+    pub(crate) fn on_stack(&self) -> OnStack<'_> {
+        let (Some(data), Some(group)) = (self.on_stack_entry_data.get(), self.active_group_ref())
+        else {
+            return OnStack::Nothing;
+        };
+        let Some(sequence) = group.sequences(self).get(data.sequence_index) else {
+            return OnStack::Nothing;
+        };
+        let Some(test) = sequence.test_entry else {
+            return OnStack::Hook;
+        };
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
+        let name = unsafe { test.as_ref() }.base.name.as_deref().unwrap_or(b"(unnamed)");
+        if core::ptr::eq(test.as_ptr().cast_const().cast::<()>(), data.entry) {
+            OnStack::Test(name)
+        } else {
+            OnStack::HookOfTest(name)
         }
     }
 

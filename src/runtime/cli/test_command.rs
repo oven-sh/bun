@@ -3137,16 +3137,29 @@ impl TestCommand {
 /// The main thread is about to exit on request. Reports a serial run that is on the stack.
 #[inline]
 pub(crate) fn on_requested_exit(vm: &mut VirtualMachine, code: u8) {
-    if let Some(run) = jest::Jest::runner().and_then(|runner| runner.serial_run.take()) {
+    // The field, not the method: the Debugger VM and a macro VM are not Workers, and they do not own the run.
+    if vm.is_main_thread
+        && let Some(run) = jest::Jest::runner().and_then(|runner| runner.serial_run.take())
+    {
         report_run_ended_by_exit(run, vm, code);
     }
 }
 
-/// Reports the run in place of the tail of `exec`. A run that failed or lost work does not exit 0.
+const MAX_UNRUN_FILES_LISTED: usize = 10;
+
+/// Reports the run in place of the tail of `exec`. A run that failed does not exit 0.
 #[cold]
 fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code: u8) {
+    use bun_test::Execution::OnStack;
+
     let running_file =
         jest::Jest::runner().and_then(|runner| runner.bun_test_root.clone_active_file());
+    if let Some(file) = &running_file
+        && let Some(file) = core::ptr::NonNull::new(file.as_ptr())
+    {
+        // A test that failed and still runs its hooks gets its result before the verdict.
+        bun_test::Execution::Execution::end_failed_sequences_in_flight(file);
+    }
     // The running file holds the reporter pointer that `handle_test_completed` uses.
     let reporter = running_file
         .as_deref()
@@ -3155,120 +3168,147 @@ fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code:
     // SAFETY: the reporter outlives the run. Its borrowers never run again: the caller exits.
     let reporter = unsafe { &mut *reporter };
     let files: &[Interned] = &run.files;
+    let has_failed =
+        reporter.jest.summary.fail > 0 || reporter.jest.unhandled_errors_between_tests > 0;
 
     if should_drain_event_loop() {
         // As under node, the file ends the run with its own code unless a failure is counted.
-        if reporter.jest.summary.fail > 0 || reporter.jest.unhandled_errors_between_tests > 0 {
+        if has_failed {
             vm.exit_handler.min_exit_code = 1;
         }
         return;
     }
 
-    let running = running_file
-        .as_deref()
-        .map(|file| (file.file_id, file.unfinished()));
-    let unfinished = running
-        .map(|(_, unfinished)| unfinished)
-        .unwrap_or_default();
-    let summary = reporter.jest.summary;
-    let nothing_reported =
-        summary.pass + summary.fail + summary.skip + summary.todo + summary.skipped_because_label
-            == 0
-            && reporter.jest.unhandled_errors_between_tests == 0;
-
-    // A lone file that registered nothing is a script. Node's `common.skip()` exits this way.
-    if files.len() == 1 && !vm.is_in_preload && nothing_reported && !unfinished.registered {
-        return;
-    }
-
-    let top_level_dir = FileSystem::instance().top_level_dir;
-    let running_path = running.map(|(file_id, _)| {
-        reporter.jest.files.items_source()[file_id as usize]
-            .path
-            .text
-    });
+    let in_preload = vm.is_in_preload;
     // A preload runs inside the first load of a file that `run` has counted and that does not run.
-    let runs_left = if vm.is_in_preload {
+    if in_preload {
         reporter.jest.summary.files = reporter.jest.summary.files.saturating_sub(1);
-        0
-    } else {
-        reporter.jest.current_file.runs_left()
-    };
+    }
     let started = (reporter.jest.summary.files as usize).min(files.len());
     let not_started = &files[started..];
 
-    // A failure only when the exit leaves work undone.
-    let is_failure =
-        unfinished.tests > 0 || unfinished.collecting || runs_left > 0 || !not_started.is_empty();
+    let top_level_dir = FileSystem::instance().top_level_dir;
+    let running_path = running_file.as_deref().map(|file| {
+        reporter.jest.files.items_source()[file.file_id as usize]
+            .path
+            .text
+    });
+    let running = running_file.as_deref().filter(|_| !in_preload);
+    let collecting = running.is_some_and(|file| file.phase == bun_test::Phase::Collection);
+    let unfinished = running
+        .filter(|file| file.phase == bun_test::Phase::Execution)
+        .map(|file| file.execution.unfinished())
+        .unwrap_or_default();
+
+    let mut what: Vec<u8> = b"process.exit() was called".to_vec();
+    match running.map_or(OnStack::Nothing, |file| file.execution.on_stack()) {
+        OnStack::Test(name) => {
+            let _ = write!(&mut what, " by the test \"{}\"", bstr::BStr::new(name));
+        }
+        OnStack::HookOfTest(name) => {
+            let _ = write!(
+                &mut what,
+                " by a hook of the test \"{}\"",
+                bstr::BStr::new(name)
+            );
+        }
+        OnStack::Hook => what.extend_from_slice(b" by a hook"),
+        OnStack::Nothing => {}
+    }
+    if in_preload {
+        what.extend_from_slice(b" in a preload script");
+    } else if let Some(path) = running_path {
+        let _ = write!(
+            &mut what,
+            " while {} was running",
+            bstr::BStr::new(resolve_path::relative(top_level_dir, path))
+        );
+    } else {
+        what.extend_from_slice(b" between test files");
+    }
+    let _ = write!(&mut what, " (exit code {code})");
 
     if reporter.reporters.dots && reporter.last_printed_dot.replace(false) {
         pretty_error!("<r>\n");
     }
-    if running.is_some() {
+    if running_file.is_some() {
         reporter.jest.current_file.print_if_needed();
         if Output::is_github_action() {
             pretty_errorln!("<r>\n::endgroup::\n");
         }
     }
-    let mut place: Vec<u8> = Vec::new();
-    if vm.is_in_preload {
-        place.extend_from_slice(b"in a preload script");
-    } else if let Some(path) = running_path {
-        let _ = write!(
-            &mut place,
-            "while {} was running",
-            bstr::BStr::new(resolve_path::relative(top_level_dir, path))
-        );
-    } else {
-        place.extend_from_slice(b"between test files");
-    }
-    if is_failure {
-        // The stack of the error is the call site of the exit.
-        let error = vm.global().create_error_instance(format_args!(
-            "process.exit({}) was called {}",
-            code,
-            bstr::BStr::new(&place)
-        ));
-        vm.run_error_handler(error, None);
-        if unfinished.tests > 0 {
-            pretty_error!(
-                "<r><d>{} test{} in this file did not finish<r>\n",
-                unfinished.tests,
-                if unfinished.tests == 1 { "" } else { "s" }
-            );
-        }
-        if runs_left > 0 {
-            pretty_error!(
-                "<r><d>{} run{} of this file did not start<r>\n",
-                runs_left,
-                if runs_left == 1 { "" } else { "s" }
-            );
-        }
-        if !not_started.is_empty() {
-            pretty_error!(
-                "<r><d>{} test file{} did not run:<r>\n",
-                not_started.len(),
-                if not_started.len() == 1 { "" } else { "s" }
-            );
-            for file in not_started {
-                pretty_error!(
-                    "<r><d>  {}<r>\n",
-                    bstr::BStr::new(resolve_path::relative(top_level_dir, file.as_bytes()))
-                );
-            }
-        }
 
+    // A non-zero code is a failure of its own. Code 0 leaves the verdict to the tests.
+    let is_failure = code != 0;
+    if is_failure || has_failed {
+        let mut message = what.clone();
+        if !is_failure {
+            message.extend_from_slice(b". The test run has failed, so bun test exits with code 1.");
+        }
+        // The stack of the error is the call site of the exit.
+        let error = vm
+            .global()
+            .create_error_instance(format_args!("{}", bstr::BStr::new(&message)));
+        vm.run_error_handler(error, None);
+    } else {
+        pretty_error!("<r><blue>note<r><d>:<r> {}\n", bstr::BStr::new(&what));
+    }
+
+    if collecting {
+        pretty_error!("<r><d>this file did not finish registering its tests<r>\n");
+    }
+    if unfinished.tests > 0 {
+        pretty_error!(
+            "<r><d>{} test{} in this file did not finish<r>\n",
+            unfinished.tests,
+            if unfinished.tests == 1 { "" } else { "s" }
+        );
+    }
+    if unfinished.hooks > 0 {
+        pretty_error!(
+            "<r><d>{} hook{} in this file did not run<r>\n",
+            unfinished.hooks,
+            if unfinished.hooks == 1 { "" } else { "s" }
+        );
+    }
+    if !not_started.is_empty() {
+        pretty_error!(
+            "<r><d>{} test file{} did not run:<r>\n",
+            not_started.len(),
+            if not_started.len() == 1 { "" } else { "s" }
+        );
+        for file in not_started.iter().take(MAX_UNRUN_FILES_LISTED) {
+            pretty_error!(
+                "<r><d>  {}<r>\n",
+                bstr::BStr::new(resolve_path::relative(top_level_dir, file.as_bytes()))
+            );
+        }
+        if not_started.len() > MAX_UNRUN_FILES_LISTED {
+            pretty_error!(
+                "<r><d>  ... and {} more<r>\n",
+                not_started.len() - MAX_UNRUN_FILES_LISTED
+            );
+        }
+    }
+    if collecting {
+        if !is_failure {
+            pretty_error!(
+                "<r><blue>note<r><d>:<r> to skip the tests of a file, use describe.skipIf() or test.skipIf()\n"
+            );
+        }
+    } else if unfinished.tests > 0 || unfinished.hooks > 0 || !not_started.is_empty() {
+        pretty_error!(
+            "<r><blue>note<r><d>:<r> bun test exits when the run ends. To test code that calls process.exit(), mock it with spyOn(process, \"exit\")\n"
+        );
+    }
+
+    if is_failure {
         reporter.jest.summary.fail += 1;
         let junit_path =
             running_path.or_else(|| started.checked_sub(1).map(|last| files[last].as_bytes()));
         if let Some(junit) = reporter.reporters.junit.as_mut()
             && let Some(path) = junit_path
         {
-            let mut message: Vec<u8> = Vec::new();
-            let _ = write!(
-                &mut message,
-                "process.exit({code}) was called before the test run finished"
-            );
             junit
                 .record_test_case(&TestCaseReport {
                     file: junit_file_name(path),
@@ -3279,18 +3319,12 @@ fn report_run_ended_by_exit(run: jest::SerialRun, vm: &mut VirtualMachine, code:
                     elapsed_ns: 0,
                     line_number: 0,
                     failure: Some(TestFailure {
-                        message,
+                        message: what,
                         ..Default::default()
                     }),
                 })
                 .expect("oom");
         }
-    } else {
-        pretty_error!(
-            "<r><blue>note<r><d>:<r> process.exit({}) was called {}\n",
-            code,
-            bstr::BStr::new(&place)
-        );
     }
 
     let ctx: &Command::ContextData = Command::get();

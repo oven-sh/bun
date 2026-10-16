@@ -54,13 +54,16 @@ bun publish --dry-run
 </ParamField>
 
 <ParamField path="--tolerate-republish" type="boolean">
-  `bun publish` exits with code 0 instead of 1 when the version being published already exists in the registry.
+  `bun publish` exits with code 0 instead of 1 when the version being published already exists in the registry. That is
+  the case when the registry's manifest lists the version, or when the registry refuses the upload with status `403` and
+  a message that starts with `You cannot publish over the previously published versions`. Every other refusal of the
+  upload is still an error.
 </ParamField>
 
 <ParamField path="--recursive" type="boolean">
 Publish the root package and every workspace package, dependencies before their dependents. Alias: <code>-r</code>
 
-A package is skipped when it is `"private"` or when its version is already on the registry. Every package is packed before the first one is published, and the first failure ends the run; running the command again skips what was published.
+A package is skipped when it is `"private"` or when the registry's manifest already lists its version. Every package is packed before the first one is published, and the first failure ends the run. Running the command again skips the versions that the manifest lists by then.
 
 ```sh terminal icon="terminal"
 bun publish --recursive

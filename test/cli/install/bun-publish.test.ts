@@ -16,6 +16,7 @@ import {
   unprivilegedSpawnOptions,
   writeBinCommand,
 } from "harness";
+import { STATUS_CODES } from "http";
 import { delimiter, join } from "path";
 import { TestRegistry } from "registry";
 
@@ -148,6 +149,13 @@ function mockBunfig(mock: MockRegistry) {
     install: { cache: false, registry: { url: `http://localhost:${mock.port}`, token: registryToken } },
   });
 }
+
+/** What registry.npmjs.org answers to the upload of a version that its manifest lists: a 403 with these words. */
+const VERSION_TAKEN = "You cannot publish over the previously published versions: 1.0.0.";
+const versionTaken = () => Response.json({ error: VERSION_TAKEN }, { status: 403 });
+
+/** What `bun publish --tolerate-republish` prints when it skips version 1.0.0. */
+const SKIPPED = "warn: Registry already knows about version 1.0.0; skipping.\n";
 
 const userAgent = expect.stringMatching(
   new RegExp(
@@ -3580,15 +3588,261 @@ describe.concurrent("--tolerate-republish", () => {
     `);
     expect(exitCode).toBe(0);
   });
+
+  // The manifest does not list the version: it is stale, or another job publishes the version at the same time.
+  // So the upload goes out, and the registry answers it with npm's 403 for a version that its manifest lists.
+  test.each([
+    ["does not list the version", () => Response.json({ name: "republish-refused", versions: { "0.9.0": {} } })],
+    ["is a 404", () => Response.json({ error: "Not found" }, { status: 404 })],
+  ])("an upload answered with npm's 403 for a listed version is skipped when the manifest %s", async (_, manifest) => {
+    using mock = mockRegistry(req => (req.method === "GET" ? manifest() : versionTaken()));
+    using dir = tempDir("publish-republish-refused", {
+      "package.json": JSON.stringify({ name: "republish-refused", version: "1.0.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    const { out, err, exitCode } = await publish(env, String(dir), "--tolerate-republish");
+    expect(err).toBe(SKIPPED);
+    // stdout ends where the ` + name@version` line of a publish would start
+    expect(out).toEndWith(`\nTag: latest\nAccess: default\nRegistry: http://localhost:${mock.port}/\n`);
+    expect(mock.requests).toEqual([
+      expect.objectContaining({ method: "GET", pathname: "/republish-refused" }),
+      request("PUT", "/republish-refused"),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("an upload answered with npm's 403 for a listed version runs the scripts of the pack only", async () => {
+    using mock = mockRegistry(req =>
+      req.method === "GET" ? new Response("not found", { status: 404 }) : versionTaken(),
+    );
+    const events = ["prepublishOnly", "prepack", "prepare", "postpack", "publish", "postpublish"];
+    using dir = tempDir("publish-republish-refused-scripts", {
+      "package.json": JSON.stringify({
+        name: "republish-refused-scripts",
+        version: "1.0.0",
+        scripts: Object.fromEntries(events.map(event => [event, `echo ${event}`])),
+      }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    const { out, err, exitCode } = await publish(env, String(dir), "--tolerate-republish");
+    expect(err.split("\n").filter(line => line !== "")).toEqual([
+      ...events.slice(0, 4).map(event => `$ echo ${event}`),
+      SKIPPED.trimEnd(),
+    ]);
+    expect(out).not.toContain("republish-refused-scripts@");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a tarball upload answered with npm's 403 for a listed version is skipped", async () => {
+    using mock = mockRegistry(req =>
+      req.method === "GET" ? new Response("not found", { status: 404 }) : versionTaken(),
+    );
+    using dir = tempDir("publish-republish-refused-tarball", {
+      "package.json": JSON.stringify({ name: "republish-refused-tarball", version: "1.0.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+    await pack(String(dir), env);
+
+    const tarball = "./republish-refused-tarball-1.0.0.tgz";
+    const { out, err, exitCode } = await publish(env, String(dir), tarball, "--tolerate-republish");
+    expect(err).toBe(SKIPPED);
+    expect(out).toEndWith(`\nTag: latest\nAccess: default\nRegistry: http://localhost:${mock.port}/\n`);
+    expect(mock.requests).toEqual([
+      expect.objectContaining({ method: "GET", pathname: "/republish-refused-tarball" }),
+      request("PUT", "/republish-refused-tarball"),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("the warning for npm's 403 names the version without its build metadata", async () => {
+    using mock = mockRegistry(req =>
+      req.method === "GET" ? new Response("not found", { status: 404 }) : versionTaken(),
+    );
+    using dir = tempDir("publish-republish-refused-build", {
+      "package.json": JSON.stringify({ name: "republish-refused-build", version: "1.0.0+build.5" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    const { err, exitCode } = await publish(env, String(dir), "--tolerate-republish");
+    expect(err).toBe(SKIPPED);
+    expect(exitCode).toBe(0);
+  });
+
+  // The first PUT is answered with a 401 that asks for a one-time password, and the done url hands out `otp`.
+  // `retried` answers the PUT that carries it.
+  function otpRetryRegistry(otp: string, retried: () => Response) {
+    return mockRegistry((req, recorded, mock) => {
+      if (recorded.pathname === "/done") return Response.json({ token: otp });
+      if (req.method === "GET") return new Response("not found", { status: 404 });
+      if (recorded.otp === otp) return retried();
+      return Response.json(
+        { authUrl: "customapp://login", doneUrl: `http://localhost:${mock.port}/done` },
+        { status: 401, headers: { "www-authenticate": "OTP" } },
+      );
+    });
+  }
+
+  test("the upload with the one-time password can get npm's 403 for a listed version too", async () => {
+    const otp = "republish-otp";
+    using mock = otpRetryRegistry(otp, versionTaken);
+    using dir = tempDir("publish-republish-refused-otp", {
+      "package.json": JSON.stringify({ name: "republish-refused-otp", version: "1.0.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+    const uploads = [
+      request("PUT", "/republish-refused-otp"),
+      request("GET", "/done"),
+      request("PUT", "/republish-refused-otp", { authType: "legacy", otp }),
+    ];
+
+    // without the flag it is the error it always was
+    let { out, err, exitCode } = await publish(env, String(dir));
+    expect(err).toBe(`\n403 Forbidden: http://localhost:${mock.port}/republish-refused-otp\n\n - ${VERSION_TAKEN}\n`);
+    expect(mock.requests).toEqual(uploads);
+    expect(exitCode).toBe(1);
+
+    mock.requests.length = 0;
+    ({ out, err, exitCode } = await publish(env, String(dir), "--tolerate-republish"));
+    expect(err).toBe(SKIPPED);
+    expect(out).not.toContain("republish-refused-otp@");
+    expect(mock.requests).toEqual([
+      expect.objectContaining({ method: "GET", pathname: "/republish-refused-otp" }),
+      ...uploads,
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a one-time password that the registry rejects is still an error", async () => {
+    const otp = "republish-bad-otp";
+    using mock = otpRetryRegistry(otp, () =>
+      Response.json(
+        { error: "You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA." },
+        { status: 401 },
+      ),
+    );
+    using dir = tempDir("publish-republish-bad-otp", {
+      "package.json": JSON.stringify({ name: "republish-bad-otp", version: "1.0.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    const { err, exitCode } = await publish(env, String(dir), "--tolerate-republish");
+    expect(err).toBe(
+      `\n401 Unauthorized: http://localhost:${mock.port}/republish-bad-otp\n\n - Received invalid OTP\n`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  const PACKUMENT_NOT_SAVED =
+    "Failed to save packument. A common cause is if you try to publish a new package before the previous package has been fully processed.";
+
+  // Only a 403 whose `error` starts with npm's sentence is skipped. Every other answer to the upload stays an error
+  // with the flag. `message` is what follows the status line.
+  test.each([
+    {
+      refusal: "403 for a package of another user",
+      status: 403,
+      body: { error: 'You do not have permission to publish "republish-kept". Are you logged in as the correct user?' },
+      message: 'You do not have permission to publish "republish-kept". Are you logged in as the correct user?',
+    },
+    {
+      refusal: "403 for a package that was unpublished less than 24 hours ago",
+      status: 403,
+      body: { error: "republish-kept cannot be republished until 24 hours have passed." },
+      message: "republish-kept cannot be republished until 24 hours have passed.",
+    },
+    { refusal: "403 that is not JSON", status: 403, body: "Forbidden", message: null },
+    { refusal: "403 with the sentence in another field", status: 403, body: { message: VERSION_TAKEN }, message: null },
+    {
+      refusal: "403 with the sentence after other words",
+      status: 403,
+      body: { error: `Forbidden: ${VERSION_TAKEN}` },
+      message: `Forbidden: ${VERSION_TAKEN}`,
+    },
+    {
+      refusal: "403 with the sentence after a space",
+      status: 403,
+      body: { error: ` ${VERSION_TAKEN}` },
+      message: ` ${VERSION_TAKEN}`,
+    },
+    {
+      refusal: "403 with the sentence in lowercase",
+      status: 403,
+      body: { error: VERSION_TAKEN.toLowerCase() },
+      message: VERSION_TAKEN.toLowerCase(),
+    },
+    {
+      refusal: "403 with a sentence that is one letter shorter",
+      status: 403,
+      body: { error: "You cannot publish over the previously published version 1.0.0." },
+      message: "You cannot publish over the previously published version 1.0.0.",
+    },
+    { refusal: "409 with the sentence", status: 409, body: { error: VERSION_TAKEN }, message: VERSION_TAKEN },
+    {
+      refusal: "409 for a packument that was not saved",
+      status: 409,
+      body: { error: PACKUMENT_NOT_SAVED },
+      message: PACKUMENT_NOT_SAVED,
+    },
+    {
+      refusal: "409 of Verdaccio",
+      status: 409,
+      body: { error: "this package is already present" },
+      message: "this package is already present",
+    },
+    {
+      refusal: "409 for a staged version",
+      status: 409,
+      body: { error: 'Cannot publish over previously staged version "1.0.0".' },
+      message: 'Cannot publish over previously staged version "1.0.0".',
+    },
+    {
+      refusal: "400 for a version number that was unpublished",
+      status: 400,
+      body: { error: 'Cannot publish over previously published version "1.0.0".' },
+      message: 'Cannot publish over previously published version "1.0.0".',
+    },
+    {
+      refusal: "404",
+      status: 404,
+      body: { error: "Not found" },
+      message: "'republish-kept@1.0.0' does not exist in this registry",
+    },
+  ])("an upload answered with a $refusal is still an error", async ({ status, body, message }) => {
+    using mock = mockRegistry(req =>
+      req.method === "GET"
+        ? new Response("not found", { status: 404 })
+        : typeof body === "string"
+          ? new Response(body, { status })
+          : Response.json(body, { status }),
+    );
+    using dir = tempDir("publish-republish-kept", {
+      "package.json": JSON.stringify({ name: "republish-kept", version: "1.0.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    const { out, err, exitCode } = await publish(env, String(dir), "--tolerate-republish");
+    const statusLine = `\n${status} ${STATUS_CODES[status]}: http://localhost:${mock.port}/republish-kept\n`;
+    expect(err).toBe(message === null ? statusLine : `${statusLine}\n - ${message}\n`);
+    expect(out).not.toContain("republish-kept@");
+    expect(mock.requests).toEqual([
+      expect.objectContaining({ method: "GET", pathname: "/republish-kept" }),
+      request("PUT", "/republish-kept"),
+    ]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 describe.concurrent("--recursive and --filter", () => {
   // `asked`: every request as `METHOD name`, in order. `known`: the name@version pairs the registry already has.
   // `reject`: the names whose PUT it answers with 403. `manifests`: the bodies of the PUTs it accepted, by name.
+  // `taken`: the names whose PUT it answers with npm's 403 for a listed version, although `known` does not list it.
   function workspaceRegistry(secure = false) {
     const asked: string[] = [];
     const known: string[] = [];
     const reject: string[] = [];
+    const taken: string[] = [];
     const manifests: Record<string, any> = {};
     const mock = mockRegistry((req, recorded) => {
       const name = decodeURIComponent(recorded.pathname.slice(1));
@@ -3599,10 +3853,11 @@ describe.concurrent("--recursive and --filter", () => {
         return Response.json({ name, versions: Object.fromEntries(versions.map(version => [version, {}])) });
       }
       if (reject.includes(name)) return Response.json({ error: `${name} is not yours` }, { status: 403 });
+      if (taken.includes(name)) return versionTaken();
       manifests[name] = recorded.manifest;
       return new Response("OK");
     }, secure);
-    return { mock, asked, known, reject, manifests, [Symbol.dispose]: () => mock[Symbol.dispose]() };
+    return { mock, asked, known, reject, taken, manifests, [Symbol.dispose]: () => mock[Symbol.dispose]() };
   }
 
   // A private root with `a`, `b` (depends on `a`), `c` (depends on `b`) and `hidden` (private) in packages/. Nothing is
@@ -3822,6 +4077,40 @@ describe.concurrent("--recursive and --filter", () => {
     ({ out, err, exitCode } = await publish(env, String(dir), "-r"));
     expect(registry.asked).toEqual(["GET rec-a", "GET rec-b", "GET rec-c", "PUT rec-b", "PUT rec-c"]);
     expect(published(out)).toEqual([" + rec-b@1.0.0", " + rec-c@1.0.0"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("npm's 403 for a listed version ends the run, and --tolerate-republish goes on after it", async () => {
+    using registry = workspaceRegistry();
+    registry.taken.push("rec-a");
+    using dir = workspace(registry.mock);
+
+    // without the flag it ends the run as any other refused upload does: `b` and `c` are not sent
+    let { out, err, exitCode } = await publish(env, String(dir), "-r");
+    expect(err).toEndWith(`\n403 Forbidden: http://localhost:${registry.mock.port}/rec-a\n\n - ${VERSION_TAKEN}\n`);
+    expect(registry.asked).toEqual(["GET rec-a", "GET rec-b", "GET rec-c", "PUT rec-a"]);
+    expect(published(out)).toEqual([]);
+    expect(exitCode).toBe(1);
+
+    registry.asked.length = 0;
+    ({ out, err, exitCode } = await publish(env, String(dir), "-r", "--tolerate-republish"));
+    expect(lines(err)).toEqual([
+      "$ echo prepublishOnly rec-a",
+      "$ echo prepublishOnly rec-b",
+      "$ echo prepublishOnly rec-c",
+      SKIPPED.trimEnd(),
+      POSTPUBLISH,
+      POSTPUBLISH,
+    ]);
+    // with the flag, each manifest is read once more right before its upload
+    expect(registry.asked).toEqual([
+      ...["GET rec-a", "GET rec-b", "GET rec-c"],
+      ...["GET rec-a", "PUT rec-a"],
+      ...["GET rec-b", "PUT rec-b"],
+      ...["GET rec-c", "PUT rec-c"],
+    ]);
+    expect(published(out)).toEqual([" + rec-b@1.0.0", " + rec-c@1.0.0"]);
+    expect(out.match(/^postpublish .*$/gm)).toEqual(["postpublish rec-b", "postpublish rec-c"]);
     expect(exitCode).toBe(0);
   });
 

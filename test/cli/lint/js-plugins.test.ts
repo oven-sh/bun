@@ -1389,8 +1389,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       );
       expect(stdout).toMatchInlineSnapshot(`
         "<dir>/a.js:1:1: No foo in a ExpressionStatement. [Error/demo/no-foo]
-        <dir>/b.js:1:1: No foo in a ExpressionStatement. [Error/demo/no-foo]
-        <dir>/b.js:1:1: No foo in a ExpressionStatement. [Warning/fixed/no-foo]
+        <dir>/b.ts:1:1: No foo in a ExpressionStatement. [Error/demo/no-foo]
+        <dir>/b.ts:1:1: No foo in a ExpressionStatement. [Warning/fixed/no-foo]
 
         3 problems"
       `);
@@ -1838,8 +1838,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       expect(stdout).toMatchInlineSnapshot(`
         "<dir>/a.js:1:1: typed/untyped [Error/typed/untyped]
         <dir>/a.js:2:1: Unexpected var, use let or const instead. [Error/no-var]
-        <dir>/b.js:1:1: typed/untyped [Error/typed/untyped]
-        <dir>/b.js:1:1: Unexpected var, use let or const instead. [Error/no-var]
+        <dir>/b.ts:1:1: typed/untyped [Error/typed/untyped]
+        <dir>/b.ts:1:1: Unexpected var, use let or const instead. [Error/no-var]
 
         4 problems"
       `);
@@ -1849,6 +1849,64 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       expect(stderr).not.toContain("You have used a rule");
       expect(exitCode).toBe(2);
       expect((await lint(files, ["--allow-unsupported", "a.js", "b.js"])).exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  // As `eslint-plugin-svelte` and `eslint-plugin-unicorn` do it: a rule that reads `parserServices.program` and does less
+  // when it is null runs in JavaScript without types. On a file whose configuration asks for types that would report what
+  // ESLint does not, so the read throws what `getParserServices` throws and the rule is taken out of that file only.
+  test(
+    "a rule that reads parserServices.program is taken out of the files that want types, and runs on the others",
+    async () => {
+      const files = {
+        "eslint.config.mjs": `
+          const whenNoProgram = program => context => ({ Program(node) { if (!program(context)) context.report({ node, message: "no program" }); } });
+          const typed = {
+            rules: {
+              "at-once": { create: context => { const { program } = context.sourceCode.parserServices; return whenNoProgram(() => program)(context); } },
+              later: { create: whenNoProgram(context => context.parserServices.program) },
+              keys: { create: context => ({ Program(node) { context.report({ node, message: Object.keys(context.sourceCode.parserServices).join() }); } }) },
+            },
+          };
+          export default [
+            { files: ["**/*.ts"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
+            { files: ["src/**/*.ts"], languageOptions: { parserOptions: { projectService: true } } },
+            { plugins: { typed }, rules: { "typed/at-once": "error", "typed/later": "error", "typed/keys": "error" } },
+          ];`,
+        "src/a.ts": "export const a = 1;\n",
+        "b.ts": "export const b = 1;\n",
+      };
+      const withTypes = await lint(files, ["-f", "unix", "src/a.ts", "b.ts"]);
+      expect(withTypes.stdout).toMatchInlineSnapshot(`
+        "<dir>/b.ts:1:1: no program [Error/typed/at-once]
+        <dir>/b.ts:1:1: no program [Error/typed/later]
+        <dir>/b.ts:1:1: emitDecoratorMetadata,experimentalDecorators,isolatedDeclarations,program,esTreeNodeToTSNodeMap,tsNodeToESTreeNodeMap [Error/typed/keys]
+        <dir>/src/a.ts:1:1: emitDecoratorMetadata,experimentalDecorators,isolatedDeclarations,program,esTreeNodeToTSNodeMap,tsNodeToESTreeNodeMap [Error/typed/keys]
+
+        4 problems"
+      `);
+      expect(withTypes.stderr).toContain(
+        "2 rules did not run because rules that run in JavaScript cannot use type information: typed/at-once, typed/later",
+      );
+      expect(withTypes.stderr).not.toContain("You have used a rule");
+      expect(withTypes.stderr).not.toContain("--native-plugin-rules");
+      expect(withTypes.exitCode).toBe(2);
+
+      // `--no-type-aware` decides for every file, as it does for the built-in rules that need types.
+      const withoutTypes = await lint(files, ["-f", "unix", "--no-type-aware", "src/a.ts", "b.ts"]);
+      expect(withoutTypes.stdout).toMatchInlineSnapshot(`
+        "<dir>/b.ts:1:1: no program [Error/typed/at-once]
+        <dir>/b.ts:1:1: no program [Error/typed/later]
+        <dir>/b.ts:1:1: emitDecoratorMetadata,experimentalDecorators,isolatedDeclarations,program,esTreeNodeToTSNodeMap,tsNodeToESTreeNodeMap [Error/typed/keys]
+        <dir>/src/a.ts:1:1: no program [Error/typed/at-once]
+        <dir>/src/a.ts:1:1: no program [Error/typed/later]
+        <dir>/src/a.ts:1:1: emitDecoratorMetadata,experimentalDecorators,isolatedDeclarations,program,esTreeNodeToTSNodeMap,tsNodeToESTreeNodeMap [Error/typed/keys]
+
+        6 problems"
+      `);
+      expect(withoutTypes.stderr).toBe("Linted 2 files");
+      expect(withoutTypes.exitCode).toBe(1);
     },
     timeout,
   );
@@ -2062,7 +2120,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       );
       expect(stderr).toContain("error: nobody handles this");
       expect(stdout).toContain("<dir>/a.js:1:1: first [Error/first/rejects]");
-      expect(stdout).toContain("<dir>/b.js:1:1: second [Error/second/late]");
+      expect(stdout).toContain("<dir>/b.ts:1:1: second [Error/second/late]");
       expect(exitCode).toBe(1);
     },
     timeout,

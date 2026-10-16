@@ -931,7 +931,8 @@ impl Run<'_> {
             environment.js_engine,
             &paths::to_native(environment.cwd.clone()),
         )
-        .measuring(options.timing);
+        .measuring(options.timing)
+        .type_aware(options.type_aware);
         let loader = Loader::new(&linter, options, environment, &js_plugins);
         // `--rules` prints the same list either way, and `--doctor` has this in its report.
         let is_told = !options.rules && !options.doctor && !options.silent;
@@ -1139,7 +1140,9 @@ impl Run<'_> {
                 noun,
                 b" did not run because rules that run in JavaScript cannot use type information: ",
                 &ids.join(&b", "[..]),
-                match linter.registry().answers_for(b"@typescript-eslint") {
+                match linter.registry().answers_for(b"@typescript-eslint")
+                    || !ids.iter().any(|id| id.starts_with(b"@typescript-eslint/"))
+                {
                     true => &b""[..],
                     false => {
                         b"\n  Use --native-plugin-rules=@typescript-eslint to run the built-in versions."

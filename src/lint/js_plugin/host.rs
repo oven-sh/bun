@@ -131,7 +131,15 @@ struct State {
     selector_numbers: FxHashMap<Box<[u8]>, u32>,
     loading: Loading,
     /// [`Host::rules_that_asked_for_types`]
-    asked_for_types: Vec<Arc<Rule>>,
+    asked_for_types: Vec<AskedForTypes>,
+}
+
+/// A rule that has [asked for types](Host::has_asked_for_types).
+struct AskedForTypes {
+    rule: Arc<Rule>,
+    /// Whether it asked on a file that does not want types, where `parserServices.program` is null as
+    /// typescript-eslint's parser gives it without a project. Such a rule asks on every file.
+    without_types: bool,
 }
 
 /// What `getParserServices` of `@typescript-eslint/utils` throws starts so, in all its versions.
@@ -143,6 +151,8 @@ pub struct Host<'e> {
     cwd: Vec<u8>,
     /// Whether [`Host::loading`] is read.
     measures: bool,
+    /// `--type-aware` or `--no-type-aware`, which decides for every file.
+    type_aware: Option<bool>,
     /// Whether a rule [has asked for types](Host::has_asked_for_types).
     has_been_asked_for_types: AtomicBool,
     state: Guarded<State>,
@@ -214,6 +224,7 @@ impl<'e> Host<'e> {
             engine,
             cwd: cwd.to_vec(),
             measures: false,
+            type_aware: None,
             has_been_asked_for_types: AtomicBool::new(false),
             state: Guarded::new(State::default()),
         }
@@ -222,6 +233,19 @@ impl<'e> Host<'e> {
     /// The same host, which keeps track of what is loaded.
     pub fn measuring(self, measures: bool) -> Host<'e> {
         Host { measures, ..self }
+    }
+
+    /// The same host, with `--type-aware` or `--no-type-aware`.
+    pub fn type_aware(self, type_aware: Option<bool>) -> Host<'e> {
+        Host { type_aware, ..self }
+    }
+
+    /// Whether the rules that need types run on `file`: what the driver decides for the rules in Rust, for a
+    /// configuration of ESLint. A rule in JavaScript gets no types. On such a file `parserServices.program`
+    /// throws what `getParserServices` of `@typescript-eslint/utils` throws, instead of being null as the parser
+    /// gives it without a project, so that a rule that reads it does not run without them.
+    pub fn wants_types_of(&self, file: &File) -> bool {
+        self.type_aware.unwrap_or(file.language().wants_types)
     }
 
     pub(super) fn count_one_for_eslint(&self) {
@@ -315,32 +339,40 @@ impl<'e> Host<'e> {
         }
     }
 
-    /// Whether `rule` has asked for types, which are not there for a rule in JavaScript. It runs on no more file.
-    pub fn has_asked_for_types(&self, rule: &Arc<Rule>) -> bool {
+    /// Whether `rule` has asked for types, which are not there for a rule in JavaScript, so that it does not run
+    /// on a file that [wants them](Host::wants_types_of). A rule that asked on a file without them asks on every
+    /// file, and runs on no more.
+    pub fn has_asked_for_types(&self, rule: &Arc<Rule>, wants_types: bool) -> bool {
         self.has_been_asked_for_types.load(Ordering::Relaxed)
-            && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(it, rule))
+            && (self.state.lock().asked_for_types.iter())
+                .any(|it| Arc::ptr_eq(&it.rule, rule) && (wants_types || it.without_types))
     }
 
-    /// Whether `thrown`, the message of what `rule` has thrown, says that it needs types. From then on it
-    /// [has asked](Host::has_asked_for_types).
-    pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
+    /// Whether `thrown`, the message of what `rule` has thrown on a file that `wants_types` or not, says that it
+    /// needs types. From then on it [has asked](Host::has_asked_for_types).
+    pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8], wants_types: bool) -> bool {
         // With an oxlint config the message comes after the class of the error.
         let message = thrown.strip_prefix(b"Error: ").unwrap_or(thrown);
         if !message.starts_with(ASKS_FOR_TYPES) {
             return false;
         }
-        if !self.has_asked_for_types(rule) {
-            self.state.lock().asked_for_types.push(Arc::clone(rule));
-            self.has_been_asked_for_types.store(true, Ordering::Relaxed);
+        let mut state = self.state.lock();
+        match (state.asked_for_types.iter_mut()).find(|it| Arc::ptr_eq(&it.rule, rule)) {
+            Some(asked) => asked.without_types |= !wants_types,
+            None => state.asked_for_types.push(AskedForTypes {
+                rule: Arc::clone(rule),
+                without_types: !wants_types,
+            }),
         }
+        self.has_been_asked_for_types.store(true, Ordering::Relaxed);
         true
     }
 
     /// The rules that [have asked for types](Host::has_asked_for_types), by their names.
     pub fn rules_that_asked_for_types(&self) -> Vec<Arc<Rule>> {
-        let mut rules = self.state.lock().asked_for_types.clone();
+        let mut rules: Vec<Arc<Rule>> =
+            (self.state.lock().asked_for_types.iter()).map(|it| Arc::clone(&it.rule)).collect();
         crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
-        rules.dedup_by(|a, b| Arc::ptr_eq(a, b));
         rules
     }
 
@@ -598,7 +630,8 @@ impl<'e> Host<'e> {
             | (u32::from(settings.sources.is_some()) << 3)
             | (u32::from(file.language().is_oxlint) << 4)
             | (source_type_for_oxlint(file) << 5)
-            | (u32::from(ast::shortens_nodes(file)) << 8);
+            | (u32::from(ast::shortens_nodes(file)) << 8)
+            | (u32::from(self.wants_types_of(file)) << 9);
         wire::words(
             &mut message,
             &[

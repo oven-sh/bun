@@ -1564,6 +1564,21 @@ static void installSpy(Zig::GlobalObject* globalObject, JSMockFunction* mock, JS
 
     bool throughDefineOwnProperty = storesThroughDefineOwnProperty(globalObject, target);
     RETURN_IF_EXCEPTION(scope, );
+    if (throughDefineOwnProperty) [[unlikely]] {
+        // A Proxy can answer the lookup of spyOn() from its `has` and `get` traps. The restore needs what the target holds.
+        PropertyDescriptor own;
+        bool hasOwn = target->getOwnPropertyDescriptor(globalObject, key, own);
+        RETURN_IF_EXCEPTION(scope, );
+        if (hasOwn && !own.isDataDescriptor()) {
+            throwVMError(globalObject, scope, "spyOn(target, prop) does not support accessor properties yet"_s);
+            return;
+        }
+        if (hasOwn) {
+            mock->spyAttributes = own.attributes() & (PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+            mock->spyOriginal.set(vm, mock, own.value());
+            attributes = mock->spyAttributes | (attributes & PropertyAttribute::Accessor);
+        }
+    }
     JSValue storage = mock;
     if (attributes & PropertyAttribute::Accessor)
         storage = JSC::GetterSetter::create(vm, globalObject, mock, mock);
@@ -1634,6 +1649,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
         mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
         mock->spyAttributes = hasValue ? slot.attributes() : 0;
+        mock->spyOriginal.set(vm, mock, value);
         unsigned attributes = 0;
 
         if (hasValue && ((slot.attributes() & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {
@@ -1667,7 +1683,6 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             pushImpl(mock, globalObject, JSMockImplementation::Kind::ReturnValue, value);
         }
 
-        mock->spyOriginal.set(vm, mock, value);
         addToMockSet(globalObject, globalObject->mockModule.activeSpies, mock);
         addToMockSet(globalObject, globalObject->mockModule.activeMocks, mock);
 

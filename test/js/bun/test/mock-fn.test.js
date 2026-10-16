@@ -1175,6 +1175,36 @@ describe("spyOn", () => {
       expect(Object.isSealed(sealed)).toBe(true);
     });
 
+    test("a Proxy that is not extensible gets back the attributes and the value that its target held", () => {
+      const original = () => 1;
+      const wrapper = () => original() + 1;
+      const target = Object.preventExtensions(
+        Object.defineProperty({}, "fn", { value: original, writable: true, enumerable: false, configurable: true }),
+      );
+      const before = Object.getOwnPropertyDescriptor(target, "fn");
+      // The `has` trap hides the attributes from the lookup, and the `get` trap returns another function.
+      const proxy = new Proxy(target, {
+        has: (object, key) => key in object,
+        get: (object, key) => (key === "fn" ? wrapper : object[key]),
+      });
+
+      const spy = spyOn(proxy, "fn");
+      expect(target.fn).toBe(spy);
+      expect(target.fn()).toBe(2);
+      expect(Object.getOwnPropertyDescriptor(target, "fn").enumerable).toBe(false);
+      spy.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(target, "fn")).toEqual(before);
+
+      const accessor = Object.preventExtensions({
+        get x() {
+          return 1;
+        },
+      });
+      expect(() => spyOn(new Proxy(accessor, { has: () => true }), "x")).toThrow(
+        "spyOn(target, prop) does not support accessor properties yet",
+      );
+    });
+
     // The handler refuses a definition while `refuse` is true, so a test can undo the refusal.
     function refusingProxy(original) {
       const state = { refuse: false, target: Object.seal({ fn: original }) };

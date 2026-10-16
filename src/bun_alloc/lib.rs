@@ -9,6 +9,7 @@
 // `__getit()` wrapper, no lazy-init flag check, no dtor-registration probe.
 // Used for the per-allocation hot-path TLS in `ast_alloc::AST_ALLOC`.
 #![feature(thread_local)]
+#![feature(unsafe_pinned)]
 
 use core::mem::{MaybeUninit, size_of};
 use core::ptr::{NonNull, addr_of_mut};

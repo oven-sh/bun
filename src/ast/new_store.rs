@@ -707,8 +707,10 @@ mod tests {
     /// The same shapes through the thread-local front end and the real `Expr` and `Stmt` stores.
     mod front_end {
         use crate::expr::data::Store as ExprStore;
+        use crate::expr::{Data, Expr};
         use crate::stmt::data::Store as StmtStore;
         use crate::{E, G, Loc, S, StoreRef};
+        use bun_alloc::ast_alloc::{DetachAstHeap, ScopedAstAlloc};
 
         /// Both thread-local stores, for one test. libtest runs every test on a thread of its own.
         struct Stores;
@@ -778,6 +780,44 @@ mod tests {
 
             ExprStore::reset();
             StmtStore::reset();
+        }
+
+        fn number(value: f64) -> Expr {
+            Expr {
+                loc: Loc::EMPTY,
+                data: Data::ENumber(E::Number::new(value)),
+            }
+        }
+
+        /// A visitor writes an item of a node's child list after a later list is allocated.
+        #[test]
+        fn child_list_is_written_after_a_later_list() {
+            let _stores = Stores::create();
+            let _lists = ScopedAstAlloc::with_spill(core::ptr::null_mut());
+
+            let mut first = ExprStore::append(E::Array::default());
+            first.items.push(number(1.0));
+            let mut second = ExprStore::append(E::Array::default());
+            second.items.push(number(2.0));
+            first.items[0] = number(3.0);
+
+            assert!(matches!(first.items[0].data, Data::ENumber(n) if n.value() == 3.0));
+            assert!(matches!(second.items[0].data, Data::ENumber(n) if n.value() == 2.0));
+        }
+
+        /// `DetachAstHeap` moves the list state out and back in the middle of a parse.
+        #[test]
+        fn child_list_is_written_after_its_state_moves() {
+            let _stores = Stores::create();
+            let _lists = ScopedAstAlloc::with_spill(core::ptr::null_mut());
+
+            let mut array = ExprStore::append(E::Array::default());
+            array.items.push(number(1.0));
+            drop(DetachAstHeap::new());
+            array.items[0] = number(2.0);
+            array.items.push(number(3.0));
+
+            assert!(matches!(array.items[0].data, Data::ENumber(n) if n.value() == 2.0));
         }
     }
 }

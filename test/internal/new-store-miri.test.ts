@@ -46,8 +46,9 @@ test.skipIf(!miriAvailable)(
       console.error(stderr || stdout);
     }
     expect(stderr).not.toContain("Undefined Behavior");
-    // A filter that matches nothing must not pass.
+    // A filter that matches nothing must not pass: one node test and one list test ran.
     expect(stdout).toContain("test new_store::tests::earlier_nodes_survive_later_appends ... ok");
+    expect(stdout).toContain("test new_store::tests::front_end::child_list_is_written_after_a_later_list ... ok");
     expect(exitCode).toBe(0);
   },
   120_000,

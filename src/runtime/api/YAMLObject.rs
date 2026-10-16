@@ -1064,6 +1064,35 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
 
 #[bun_jsc::host_fn]
 pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    MarkedArgumentBuffer::new(|roots| {
+        let mut pending = Vec::new();
+        let result = parse_to_values(global, call_frame, roots, &mut pending)?;
+        for PendingProperty {
+            mapping,
+            key,
+            value,
+        } in pending
+        {
+            mapping.put_may_be_index(global, &key.to_bun_string(global)?, value)?;
+        }
+        Ok(result)
+    })
+}
+
+/// A property that waits for the tree to be gone. Its key is a sequence or a mapping, or it comes after one that is.
+/// `ToString` of those is JavaScript, which can free the input that the tree points into.
+struct PendingProperty {
+    mapping: JSValue,
+    key: JSValue,
+    value: JSValue,
+}
+
+fn parse_to_values(
+    global: &JSGlobalObject,
+    call_frame: &CallFrame,
+    roots: &mut MarkedArgumentBuffer,
+    pending: &mut Vec<PendingProperty>,
+) -> JsResult<JSValue> {
     // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.
     super::with_text_format_source(
         global,
@@ -1096,13 +1125,14 @@ pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult
                 seen_objects: HashMap::default(),
                 stack_check: StackCheck::init(),
                 global,
-                root,
-                result: JSValue::ZERO,
+                pending,
             };
 
-            MarkedArgumentBuffer::run(&mut ctx, ParserCtx::run);
-
-            Ok(ctx.result)
+            ctx.to_js(roots, root).map_err(|err| match err {
+                ToJsError::OutOfMemory => JsError::OutOfMemory,
+                ToJsError::JsError => JsError::Thrown,
+                ToJsError::StackOverflow => global.throw_stack_overflow(),
+            })
         },
     )
 }
@@ -1112,9 +1142,8 @@ struct ParserCtx<'a> {
     stack_check: StackCheck,
 
     global: &'a JSGlobalObject,
-    root: Expr,
-
-    result: JSValue,
+    /// The `MarkedArgumentBuffer` holds what these do.
+    pending: &'a mut Vec<PendingProperty>,
 }
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
@@ -1154,28 +1183,6 @@ impl From<bun_ast::ToJSError> for ToJsError {
 
 impl<'a> ParserCtx<'a> {
     // deinit: seen_objects has Drop; no explicit impl needed.
-
-    extern "C" fn run(ctx: *mut ParserCtx<'a>, args: *mut MarkedArgumentBuffer) {
-        // SAFETY: MarkedArgumentBuffer::run passes valid non-null pointers for the duration of the call
-        let (ctx, args) = unsafe { (&mut *ctx, &mut *args) };
-        let root = ctx.root;
-        ctx.result = match ctx.to_js(args, root) {
-            Ok(v) => v,
-            Err(ToJsError::OutOfMemory) => {
-                ctx.result = ctx.global.throw_out_of_memory_value();
-                return;
-            }
-            Err(ToJsError::JsError) => {
-                ctx.result = JSValue::ZERO;
-                return;
-            }
-            Err(ToJsError::StackOverflow) => {
-                let _ = ctx.global.throw_stack_overflow();
-                ctx.result = JSValue::ZERO;
-                return;
-            }
-        };
-    }
 
     fn to_js(&mut self, args: &mut MarkedArgumentBuffer, expr: Expr) -> Result<JSValue, ToJsError> {
         if !self.stack_check.is_safe_to_recurse() {
@@ -1223,6 +1230,8 @@ impl<'a> ParserCtx<'a> {
                 args.append(obj);
                 self.seen_objects.put(key, obj)?;
 
+                // Those after the first that waits wait too, to be defined in the order they are written in.
+                let mut is_pending = false;
                 for prop in e_object.properties.slice() {
                     let key_expr = prop.key.expect("infallible: prop has key");
                     let value_expr = prop.value.expect("infallible: prop has value");
@@ -1230,8 +1239,20 @@ impl<'a> ParserCtx<'a> {
                     let key = self.to_js(args, key_expr)?;
                     let value = self.to_js(args, value_expr)?;
 
-                    let name = self.property_name(key_expr, key)?;
-                    obj.put_may_be_index(self.global, &name, value)?;
+                    is_pending |= key.is_object();
+                    if is_pending {
+                        args.append(key);
+                        args.append(value);
+                        self.pending.push(PendingProperty {
+                            mapping: obj,
+                            key,
+                            value,
+                        });
+                        continue;
+                    }
+
+                    let key_str = key.to_bun_string(self.global)?;
+                    obj.put_may_be_index(self.global, &key_str, value)?;
                 }
 
                 Ok(obj)
@@ -1241,59 +1262,5 @@ impl<'a> ParserCtx<'a> {
             // expr types
             _ => Ok(JSValue::UNDEFINED),
         }
-    }
-
-    /// What `ToString` of a key is. `ToString` of a sequence or a mapping is JavaScript that a program can replace, and
-    /// none may run while the tree points into the caller's buffer, so theirs is made from the tree.
-    fn property_name(&mut self, key_expr: Expr, key: JSValue) -> Result<BunString, ToJsError> {
-        if !matches!(key_expr.data, ExprData::EArray(_) | ExprData::EObject(_)) {
-            return Ok(key.to_bun_string(self.global)?);
-        }
-        let mut name = wtf::StringBuilder::init();
-        self.append_to_string(&mut name, key_expr, &mut Vec::new())?;
-        Ok(name.to_string(self.global)?.to_bun_string(self.global)?)
-    }
-
-    /// `joining` is the sequences this one is inside of. As for `Array.prototype.join`, one of those is empty, and so is
-    /// `null`.
-    fn append_to_string(
-        &mut self,
-        out: &mut wtf::StringBuilder,
-        expr: Expr,
-        joining: &mut Vec<*const c_void>,
-    ) -> Result<(), ToJsError> {
-        if !self.stack_check.is_safe_to_recurse() {
-            return Err(ToJsError::StackOverflow);
-        }
-        match expr.data {
-            ExprData::EArray(e_array) => {
-                let sequence = e_array.as_ptr().cast_const().cast::<c_void>();
-                if joining.contains(&sequence) {
-                    return Ok(());
-                }
-                joining.push(sequence);
-                for (i, item) in e_array.slice().iter().enumerate() {
-                    if i != 0 {
-                        out.append_lchar(b',');
-                    }
-                    self.append_to_string(out, *item, joining)?;
-                }
-                joining.pop();
-            }
-            ExprData::EObject(_) => out.append_latin1(b"[object Object]"),
-            ExprData::EBoolean(boolean) => {
-                out.append_latin1(if boolean.value { b"true" } else { b"false" });
-            }
-            ExprData::ENumber(number) => {
-                out.append_string(&JSValue::js_number(number.value()).to_bun_string(self.global)?)
-            }
-            ExprData::EString(str) => out.append_string(
-                &bun_js_parser_jsc::value_string_to_js(str.get(), self.global)?
-                    .to_bun_string(self.global)?,
-            ),
-            // `null`. The YAML tree has no other kind.
-            _ => {}
-        }
-        Ok(())
     }
 }

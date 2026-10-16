@@ -545,41 +545,43 @@ parent: &ref
         expect(names).toEqual([String(YAML.parse(key))]);
       });
 
-      test("naming it runs no JavaScript", () => {
-        const text = "? [a, [b], {c: d}]\n: first\n? {e: f}\n: second\n" + "key: a value to read afterwards\n";
-        const input = new TextEncoder().encode(text);
+      test("it is named once the input has been read", () => {
+        const input = new TextEncoder().encode(
+          "before: a value\n? [a, b]\n: first\nafter: another value\n? {c: d}\n: second\nlast: [x, {y: z}]\n",
+        );
+        const { toString } = Array.prototype;
         let calls = 0;
-        const replaced: [object, PropertyKey, PropertyDescriptor | undefined][] = [];
-        const replace = (holder: object, name: PropertyKey) => {
-          replaced.push([holder, name, Object.getOwnPropertyDescriptor(holder, name)]);
-          Object.defineProperty(holder, name, {
-            configurable: true,
-            value() {
-              calls++;
-              input.buffer.transfer();
-              return "replaced";
-            },
-          });
-        };
         let result;
+        Array.prototype.toString = function () {
+          calls++;
+          input.fill(0x21);
+          return `replaced ${toString.call(this)}`;
+        };
         try {
-          for (const holder of [Array.prototype, Object.prototype]) {
-            for (const name of ["toString", "valueOf", Symbol.toPrimitive]) replace(holder, name);
-          }
-          replace(Array.prototype, "join");
           result = YAML.parse(input);
         } finally {
-          for (const [holder, name, descriptor] of replaced) {
-            if (descriptor) Object.defineProperty(holder, name, descriptor);
-            else delete (holder as any)[name];
-          }
+          Array.prototype.toString = toString;
         }
-        expect(calls).toBe(0);
-        expect(result).toEqual({
-          "a,b,[object Object]": "first",
-          "[object Object]": "second",
-          key: "a value to read afterwards",
-        });
+        expect(calls).toBe(1);
+        expect(Object.entries(result as object)).toEqual([
+          ["before", "a value"],
+          ["replaced a,b", "first"],
+          ["after", "another value"],
+          ["[object Object]", "second"],
+          ["last", ["x", { y: "z" }]],
+        ]);
+      });
+
+      test("the properties are in the order they are written in", () => {
+        expect(Object.entries(YAML.parse("x: 0\n? [a]\n: 1\nb: 2\na: 3\n? [x]\n: 4\n") as object)).toEqual([
+          ["x", 4],
+          ["a", 3],
+          ["b", 2],
+        ]);
+        expect(Object.entries(YAML.parse("? [k]\n: {? [n]: 1, m: 2}\nl: {m: 3, ? [n]: 4}\n") as object)).toEqual([
+          ["k", { n: 1, m: 2 }],
+          ["l", { m: 3, n: 4 }],
+        ]);
       });
     });
 

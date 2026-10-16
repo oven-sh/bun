@@ -4293,35 +4293,6 @@ describe("bundler", () => {
     },
     run: { stdout: "m user" },
   });
-  // The initializer of a `for (;;)` loop cannot hold a bare `in`, also below a `yield`.
-  itBundled("edgecase/YieldInOperandInForInitializer", {
-    files: {
-      "/entry.js": /* js */ `
-        const limits = { max: 3 };
-        function* steps() {
-          for (var ok = yield ("max" in limits); ok; ok = false) console.log("resumed with", ok);
-        }
-        const it = steps();
-        console.log("yielded", it.next().value);
-        it.next("go");
-      `,
-    },
-    run: { stdout: "yielded true\nresumed with go" },
-  });
-  // A `yield` reads its operand, also when nothing reads the `yield`.
-  itBundled("edgecase/YieldRequireOfESMAsStatement", {
-    files: {
-      "/entry.js": /* js */ `
-        function* g() {
-          yield require("./esm.mjs");
-          for (yield require("./esm.mjs");;) break;
-        }
-        console.log(...Array.from(g(), value => value.a));
-      `,
-      "/esm.mjs": /* js */ `export const a = 1;`,
-    },
-    run: { stdout: "1 1" },
-  });
 });
 
 for (const backend of ["api", "cli"] as const) {

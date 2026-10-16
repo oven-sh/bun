@@ -66,6 +66,28 @@ describe("net.createServer listen", () => {
     );
   });
 
+  // Node takes the last argument as the callback whatever the positions before it hold.
+  // Metro calls listen(port, host, undefined, cb).
+  it.each([
+    ["listen(port, host, undefined, cb)", (s: Server, cb: () => void) => s.listen(0, "127.0.0.1", undefined, cb)],
+    ["listen(port, undefined, undefined, cb)", (s: Server, cb: () => void) => s.listen(0, undefined, undefined, cb)],
+    ["listen(port, null, cb)", (s: Server, cb: () => void) => s.listen(0, null as any, cb)],
+    ["listen(port, undefined, 511, cb)", (s: Server, cb: () => void) => s.listen(0, undefined, 511, cb)],
+    ["listen(port, host, 511, cb)", (s: Server, cb: () => void) => s.listen(0, "127.0.0.1", 511, cb)],
+    ["listen(port, host, cb)", (s: Server, cb: () => void) => s.listen(0, "127.0.0.1", cb)],
+    ["listen(port, 511, cb)", (s: Server, cb: () => void) => s.listen(0, 511, cb)],
+    ["listen(port, cb)", (s: Server, cb: () => void) => s.listen(0, cb)],
+    ["listen(cb)", (s: Server, cb: () => void) => s.listen(cb)],
+  ])("calls the callback for %s", async (_name, doListen) => {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const server: Server = createServer();
+    server.on("error", reject);
+    doListen(server, resolve);
+    await promise;
+    expect((server.address() as AddressInfo).port).toBeGreaterThan(0);
+    server.close();
+  });
+
   it("should call listening", done => {
     const { mustCall } = createCallCheckCtx(done);
 

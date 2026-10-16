@@ -1,4 +1,4 @@
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -669,6 +669,87 @@ describe("bundler", () => {
     },
     define: { "exports.foo": '["x"]' },
     run: true,
+  });
+  // Not from esbuild. A define, a fold or a macro puts the value undefined where
+  // the source has a property access. Printed as `delete undefined` it deletes an
+  // identifier: a SyntaxError in an ES module, `false` in cjs and iife output.
+  for (const [format, minify] of [
+    ["esm", false],
+    ["esm", true],
+    ["cjs", false],
+    ["iife", false],
+  ] as const) {
+    itBundled(`extra/DefineDeleteTargetUndefined+${format}${minify ? "+minify" : ""}`, {
+      files: {
+        "in.js": `
+          import { config } from "./config.macro.js" with { type: "macro" };
+          console.log(
+            delete process.env.DEBUG,
+            delete import.meta.flag,
+            delete import.meta.hot,
+            delete config().missing,
+          );
+        `,
+        "config.macro.js": `
+          export function config() {
+            return { missing: undefined };
+          }
+        `,
+      },
+      define: {
+        "process.env.DEBUG": "undefined",
+        "import.meta.flag": "undefined",
+      },
+      format,
+      minifySyntax: minify,
+      minifyWhitespace: minify,
+      onAfterBundle(api) {
+        const code = api.readFile("out.js");
+        expect(code).toContain("delete void 0");
+        expect(code).not.toMatch(/delete\s*undefined\b/);
+      },
+      run: { stdout: "true true true true" },
+    });
+  }
+  // Not from esbuild. Each line is what esbuild 0.28.2 prints. A value is not a
+  // reference, so `delete` is a no-op. An identifier or a member chain is still
+  // a reference, so `delete` must still delete it.
+  itBundled("extra/DefineDeleteTargetReference", {
+    files: {
+      "in.js": `
+        console.log(delete a.undef);
+        console.log(delete a.str);
+        console.log(delete a.nil);
+        console.log(delete a.ident, "x" in globalThis);
+        console.log(delete a.chain, "z" in y);
+      `,
+    },
+    define: {
+      "a.undef": "undefined",
+      "a.str": '"development"',
+      "a.nil": "null",
+      "a.ident": "x",
+      "a.chain": "y.z",
+    },
+    // `delete x` is a SyntaxError in an ES module.
+    format: "cjs",
+    outfile: "/out.cjs",
+    runtimeFiles: {
+      "/test.cjs": `
+        globalThis.x = 1;
+        globalThis.y = { z: 1 };
+        require("./out.cjs");
+      `,
+    },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.cjs");
+      expect(code).toContain("console.log(delete void 0);");
+      expect(code).toContain('console.log(delete "development");');
+      expect(code).toContain("console.log(delete null);");
+      expect(code).toContain('console.log(delete x, "x" in globalThis);');
+      expect(code).toContain('console.log(delete y.z, "z" in y);');
+    },
+    run: { file: "/test.cjs", stdout: "true\ntrue\ntrue\ntrue false\ntrue false" },
   });
 
   // Various ESM cases

@@ -1044,6 +1044,10 @@ impl EventLoop {
             let _ = unsafe { (*this).maybe_drain_microtasks() };
         }
 
+        // The caller polls next, and may sleep there.
+        // SAFETY: as above.
+        let _ = unsafe { (*this).global_ref() }.handle_rejected_promises();
+
         // SAFETY: as above; this read MUST observe pushes JS made during the
         // loop (the recursion check).
         if unsafe { (*this).next_immediate_tasks.capacity() } > 0 {

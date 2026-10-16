@@ -55,6 +55,7 @@ devTest("Response.render() with streaming = true should error", {
   framework: "react",
   files: {
     "pages/index.tsx": `
+      import { Response } from "bun:app";
       export const streaming = true;
       export const mode = "ssr";
 
@@ -81,6 +82,7 @@ devTest("new Response with JSX and custom headers", {
   framework: "react",
   files: {
     "pages/index.tsx": `
+      import { Response } from "bun:app";
       export const streaming = false;
       export const mode = "ssr";
 
@@ -110,6 +112,7 @@ devTest("new Response with JSX when streaming = true should error", {
   framework: "react",
   files: {
     "pages/index.tsx": `
+      import { Response } from "bun:app";
       export const streaming = true;
       export const mode = "ssr";
 
@@ -138,6 +141,7 @@ devTest("Response.redirect() - content matching", {
   framework: "react",
   files: {
     "pages/index.tsx": `
+      import { Response } from "bun:app";
       export const streaming = false;
       export const mode = "ssr";
 
@@ -165,6 +169,7 @@ devTest("Response.redirect() - HTTP redirect status and headers", {
   framework: "react",
   files: {
     "pages/index.tsx": `
+      import { Response } from "bun:app";
       export const streaming = false;
       export const mode = "ssr";
 
@@ -191,6 +196,7 @@ devTest("Response.redirect() when streaming = true should error", {
   framework: "react",
   files: {
     "pages/index.tsx": `
+      import { Response } from "bun:app";
       export const streaming = true;
       export const mode = "ssr";
 
@@ -217,6 +223,7 @@ devTest("Response.render() works like Next.js rewrite", {
   framework: "react",
   files: {
     "pages/index.tsx": `
+      import { Response } from "bun:app";
       export const streaming = false;
       export const mode = "ssr";
 
@@ -246,6 +253,7 @@ devTest("Response.render() with dynamic route", {
   framework: "react",
   files: {
     "pages/product.tsx": `
+      import { Response } from "bun:app";
       export const streaming = false;
       export const mode = "ssr";
 
@@ -272,6 +280,7 @@ devTest("concurrent requests maintain isolated Response options via AsyncLocalSt
   framework: "react",
   files: {
     "pages/request-a.tsx": `
+      import { Response } from "bun:app";
       export const streaming = false;
       export const mode = "ssr";
 
@@ -289,6 +298,7 @@ devTest("concurrent requests maintain isolated Response options via AsyncLocalSt
       }
     `,
     "pages/request-b.tsx": `
+      import { Response } from "bun:app";
       export const streaming = false;
       export const mode = "ssr";
 
@@ -306,6 +316,7 @@ devTest("concurrent requests maintain isolated Response options via AsyncLocalSt
       }
     `,
     "pages/request-c.tsx": `
+      import { Response } from "bun:app";
       export const streaming = false;
       export const mode = "ssr";
 
@@ -399,5 +410,23 @@ devTest("concurrent requests maintain isolated Response options via AsyncLocalSt
         expect(result.text).toContain("<h3>Request C</h3>");
       }
     }
+  },
+});
+
+devTest("the global Response in a server component is the standard one", {
+  framework: "react",
+  files: {
+    "pages/index.tsx": `
+      export const streaming = false;
+      export const mode = "ssr";
+
+      export default async function IndexPage() {
+        return <p>{typeof Response.render}</p>;
+      }
+    `,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    expect(await response.text()).toContain("<p>undefined</p>");
   },
 });

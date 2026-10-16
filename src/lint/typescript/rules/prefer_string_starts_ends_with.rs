@@ -600,6 +600,7 @@ impl PreferStringStartsEndsWith {
         let ExprKind::Binary { op, left, right } = node.kind() else {
             return;
         };
+        let (left, right) = (left.with_jsdoc_cast(), right.with_jsdoc_cast());
         let is_oxlint = cx.language().is_oxlint;
         // A `LogicalExpression` or a `SequenceExpression`. tsgolint listens to the four equality operators alone.
         if matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma)
@@ -617,12 +618,12 @@ impl PreferStringStartsEndsWith {
         };
         let call = match left.kind() {
             ExprKind::Index { obj, index, .. } => {
-                return self.check_single_element(&comparison(left, obj), index, cx);
+                return self.check_single_element(&comparison(left, obj), index.with_jsdoc_cast(), cx);
             }
             ExprKind::Call(call) => call,
             _ => return,
         };
-        let callee = call.callee();
+        let callee = call.callee().with_jsdoc_cast();
         let (object, name) = match callee.kind() {
             // `(a?.b)()` calls a `ChainExpression`. tsgolint has parentheses there, which it skips.
             _ if callee.is_chain_root() && !is_oxlint => return,
@@ -683,6 +684,7 @@ impl PreferStringStartsEndsWith {
         let Some(arg_node) = call.args().first().filter(|_| call.args().len() == 1) else {
             return;
         };
+        let obj = obj.with_jsdoc_cast();
         let Some((side, text)) = parse_reg_exp(obj) else {
             return;
         };

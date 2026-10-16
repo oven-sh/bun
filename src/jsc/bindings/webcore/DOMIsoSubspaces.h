@@ -2,6 +2,7 @@
 #pragma once
 
 #include "root.h"
+#include "GeneratedBindings+Counts.h"
 
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
@@ -77,6 +78,7 @@ public:
     IsoSubspace* m_subspaceForWasmStreamingCompiler { nullptr };
     IsoSubspace* m_subspaceForJSWebView { nullptr };
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
+    IsoSubspace* m_subspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /*-- BUN --*/
 
     IsoSubspace* m_subspaceForFetchHeaders { nullptr };
@@ -177,7 +179,6 @@ public:
     IsoSubspace* m_subspaceForJSHash { nullptr };
     IsoSubspace* m_subspaceForServerRouteList { nullptr };
     IsoSubspace* m_subspaceForBunRequest { nullptr };
-    IsoSubspace* m_subspaceForBakeResponse { nullptr };
     IsoSubspace* m_subspaceForJSDiffieHellman { nullptr };
     IsoSubspace* m_subspaceForJSDiffieHellmanGroup { nullptr };
     IsoSubspace* m_subspaceForJSECDH { nullptr };

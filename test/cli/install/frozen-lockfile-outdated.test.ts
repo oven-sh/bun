@@ -429,7 +429,7 @@ describe.concurrent("--frozen-lockfile still passes after an edit of", () => {
 
       expect(frozen.stderr.split("\n").filter(Boolean)).toEqual([
         ...hashedThePatch,
-        "warn: the dependencies in vendor/vendored/package.json changed since the lockfile was saved (run 'bun install' to update it)",
+        "warn: dependencies in vendor/vendored/package.json changed since lockfile was saved (run 'bun install')",
       ]);
       expect(await lockText(packageDir)).toBe(lock);
       expect(frozen.exitCode).toBe(0);
@@ -478,7 +478,7 @@ describe.concurrent("--frozen-lockfile still passes on", () => {
     ["an override", { dependencies: { "no-deps": "^1.0.0" }, overrides: { "no-deps": "2.0.0" } }, "no-deps@2.0.0"],
     ["a prerelease that latest points at", { dependencies: { "prereleases-1": "*" } }, "prereleases-1@1.0.0-future."],
     ["a peer", { peerDependencies: { "no-deps": "^1.0.0" }, dependencies: { "no-deps": "2.0.0" } }, "no-deps@2.0.0"],
-    // It never resolved. bun.lock binds rows by name, so it reads back as the root's no-deps.
+    // It never resolved, and the root's no-deps has its name.
     [
       "an optional dependency that no version satisfies",
       { workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } },

@@ -325,6 +325,9 @@ fn is_always_boolean(node: Expr) -> bool {
 /// Whether what listens for the parent of the logical expression `node` traverses `node`. Upstream
 /// finds it among its `traversedNodes` then, as a parent comes before its children.
 fn is_traversed_from_parent(node: Expr) -> bool {
+    if node.with_jsdoc_cast() != node {
+        return false;
+    }
     match node.parent() {
         Node::Expr(parent) => match parent.kind() {
             ExprKind::Cond { test, .. } => test == node,
@@ -765,6 +768,11 @@ impl StrictBooleanExpressions {
     /// The operands of a logical expression are traversed in turn. Anything else is checked, unless
     /// it is not a condition: then it is there for its side effects only.
     fn traverse_node<'a>(&self, node: Expr<'a>, is_condition: bool, cx: &Cx<'a, Self>) {
+        self.traverse(node.with_jsdoc_cast(), is_condition, cx);
+    }
+
+    /// `node`: not what is around it, if that is a JSDoc cast.
+    fn traverse<'a>(&self, node: Expr<'a>, is_condition: bool, cx: &Cx<'a, Self>) {
         let mut pending: SmallVec<[(Expr<'a>, bool); 8]> = SmallVec::new();
         pending.push((node, is_condition));
         while let Some((node, is_condition)) = pending.pop() {
@@ -775,8 +783,8 @@ impl StrictBooleanExpressions {
                     right,
                 } => {
                     // The left operand is always a condition.
-                    pending.push((left, true));
-                    pending.push((right, is_condition));
+                    pending.push((left.with_jsdoc_cast(), true));
+                    pending.push((right.with_jsdoc_cast(), is_condition));
                 }
                 _ if is_condition => self.check_node(node, cx),
                 _ => {}
@@ -855,7 +863,7 @@ impl StrictBooleanExpressions {
         for argument in call.args() {
             if Some(argument) == asserted_argument {
                 self.traverse_node(argument, true, cx);
-            } else if ast_utils::is_logical_expression(argument) {
+            } else if ast_utils::is_logical_expression(argument.with_jsdoc_cast()) {
                 self.traverse_node(argument, false, cx);
             }
         }
@@ -918,7 +926,7 @@ impl Rule for StrictBooleanExpressions {
             // On its own a logical expression is control flow, and no condition itself.
             ExprKind::Binary { .. } => {
                 if ast_utils::is_logical_expression(node) && !is_traversed_from_parent(node) {
-                    self.traverse_node(node, false, cx);
+                    self.traverse(node, false, cx);
                 }
             }
             _ => {}

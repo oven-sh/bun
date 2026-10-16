@@ -1238,7 +1238,6 @@ impl JSGlobalObject {
 
         let field_name = range.field_name;
         debug_assert!(!field_name.is_empty(), "field_name must not be empty");
-        let always_allow_zero = range.always_allow_zero;
         // Pass the *unclamped* `range.min`/`range.max` to the range error
         // (not `min_t`/`max_t`). The bounds must fit in the formatter's `i64`
         // range; enforce that as a checked narrowing so an out-of-range bound
@@ -1250,9 +1249,6 @@ impl JSGlobalObject {
 
         if value.is_int32() {
             let int = value.to_int32();
-            if always_allow_zero && int == 0 {
-                return Ok(T::ZERO);
-            }
             if i128::from(int) < min_t || i128::from(int) > max_t {
                 return Err(self.throw_range_error(
                     i64::from(int),
@@ -1271,9 +1267,6 @@ impl JSGlobalObject {
             return Err(self.throw_invalid_property_type_value(field_name, b"number", value));
         }
         let f64_val = value.as_number();
-        if always_allow_zero && f64_val == 0.0 {
-            return Ok(T::ZERO);
-        }
 
         if f64_val.is_nan() {
             // node treats NaN as default

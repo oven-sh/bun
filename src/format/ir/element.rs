@@ -302,6 +302,19 @@ impl Interned {
 pub(crate) struct BestFitting {
     pub(crate) first: u32,
     pub(crate) count: u32,
+    pub(crate) fallback: Fallback,
+}
+
+/// What the printer takes if no variant but the last fits.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub(crate) enum Fallback {
+    MostExpanded,
+    /// The flattest variant, expanded, unless a [`GroupMode::StaysExpanded`] group breaks in it. Then it is the most
+    /// expanded one, with that group broken. For two variants of which `will_break()` picks the second: that is what it
+    /// says when the result is formatted again.
+    ///
+    /// Expanded, the flattest variant has a line break before the first such group.
+    FlattestIfStable,
 }
 
 impl BestFitting {
@@ -418,6 +431,9 @@ impl Tag {
 pub(crate) enum GroupMode {
     #[default]
     Flat,
+    /// The same, but it is [`GroupMode::Expand`] if it is broken in the source. So if it breaks because it does not fit, it is
+    /// written to break when the result is formatted again.
+    StaysExpanded,
     /// It is written to break.
     Expand,
     /// It breaks because something in it does.
@@ -426,7 +442,7 @@ pub(crate) enum GroupMode {
 
 impl GroupMode {
     pub(crate) const fn is_flat(self) -> bool {
-        matches!(self, GroupMode::Flat)
+        matches!(self, GroupMode::Flat | GroupMode::StaysExpanded)
     }
 }
 
@@ -468,7 +484,7 @@ impl Group {
 
     #[inline]
     pub(crate) fn propagate_expand(&mut self) {
-        if self.mode == GroupMode::Flat {
+        if self.mode.is_flat() {
             self.mode = GroupMode::Propagated;
         }
     }

@@ -18,6 +18,7 @@ using namespace JSC;
 
 namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionEnableCompileCache);
 JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*);
 void addNodeModuleConstructorProperties(JSC::VM &vm, Zig::GlobalObject *globalObject);
 

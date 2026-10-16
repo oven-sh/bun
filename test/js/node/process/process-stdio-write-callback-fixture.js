@@ -215,7 +215,9 @@ function stdioRow(name, state, sequence) {
     process.exit(0);
   });
   if (state === "failing") fs.closeSync(readFd);
-  if (state === "parked") fs.createReadStream(process.env.BUN_TEST_FIFO).resume();
+  // Another process reads the pipe. A read of an empty FIFO from this process would hold
+  // a thread, and an exit that tears the VM down waits for that thread.
+  if (state === "parked") spawn("cat", [process.env.BUN_TEST_FIFO], { stdio: "ignore" }).unref();
 }
 
 // Without a FIFO from the caller: make one, and run the row in a child whose stream is

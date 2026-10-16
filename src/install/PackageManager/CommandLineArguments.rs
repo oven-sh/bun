@@ -902,7 +902,7 @@ pub struct CommandLineArguments {
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum AuditLevel {
     Low,
     Moderate,
@@ -920,13 +920,17 @@ bun_core::comptime_string_map! {
 }
 
 impl AuditLevel {
-    pub(crate) fn from_string(str: &[u8]) -> Option<AuditLevel> {
+    pub fn from_string(str: &[u8]) -> Option<AuditLevel> {
         AUDIT_LEVEL_MAP.get(str).copied()
     }
 
-    pub fn should_include_severity(self, severity: &[u8]) -> bool {
-        let severity_level = AuditLevel::from_string(severity).unwrap_or(AuditLevel::Moderate);
-        (severity_level as u8) >= (self as u8)
+    pub fn name(self) -> &'static str {
+        match self {
+            AuditLevel::Low => "low",
+            AuditLevel::Moderate => "moderate",
+            AuditLevel::High => "high",
+            AuditLevel::Critical => "critical",
+        }
     }
 }
 

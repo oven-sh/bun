@@ -24,8 +24,16 @@ use crate::cli::Command;
 use crate::cli::install_command::InstallCommand;
 use crate::cli::package_manager_command::PackageManagerCommand;
 
+enum Severity {
+    /// Below every `--audit-level`: npm, pnpm and yarn rank `info` under `low`.
+    Info,
+    Ranked(AuditLevel),
+    /// The registry's word, empty when it sent none. Never below an `--audit-level`.
+    Unranked(Box<[u8]>),
+}
+
 struct VulnerabilityInfo {
-    severity: Box<[u8]>,
+    severity: Severity,
     title: Box<[u8]>,
     url: Box<[u8]>,
     vulnerable_versions: Box<[u8]>,
@@ -48,15 +56,6 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-fn audit_level_name(level: AuditLevel) -> &'static str {
-    match level {
-        AuditLevel::Low => "low",
-        AuditLevel::Moderate => "moderate",
-        AuditLevel::High => "high",
-        AuditLevel::Critical => "critical",
-    }
-}
-
 fn print_no_vulnerabilities(stats: &AuditStats, audit_level: Option<AuditLevel>) {
     pretty!(
         "<green>No vulnerabilities found<r> <d>(checked {} package{}",
@@ -68,7 +67,7 @@ fn print_no_vulnerabilities(stats: &AuditStats, audit_level: Option<AuditLevel>)
             pretty!(
                 ", {} below --audit-level={}",
                 stats.below_level,
-                audit_level_name(level)
+                level.name()
             );
         }
     }
@@ -720,7 +719,7 @@ fn send_audit_request(
 
 fn parse_vulnerability(package_name: &[u8], vuln: &E::ObjectJSON) -> VulnerabilityInfo {
     let mut vulnerability = VulnerabilityInfo {
-        severity: Box::<[u8]>::from(b"moderate" as &[u8]),
+        severity: Severity::Unranked(Box::default()),
         title: Box::<[u8]>::from(b"Vulnerability found" as &[u8]),
         url: Box::default(),
         vulnerable_versions: Box::default(),
@@ -731,9 +730,18 @@ fn parse_vulnerability(package_name: &[u8], vuln: &E::ObjectJSON) -> Vulnerabili
     for prop in vuln.properties() {
         let field_name: &[u8] = prop.key.slice();
         match &prop.value {
+            E::JsonValue::String(val_str) if field_name == b"severity" => {
+                let word = val_str.slice();
+                vulnerability.severity = match AuditLevel::from_string(word) {
+                    Some(level) => Severity::Ranked(level),
+                    None if word == b"info" => Severity::Info,
+                    None => Severity::Unranked(Box::<[u8]>::from(word)),
+                };
+            }
             E::JsonValue::String(val_str) => {
                 let field = match field_name {
-                    b"severity" => &mut vulnerability.severity,
+                    // Keeps the default title: the report has a line for every counted advisory.
+                    b"title" if val_str.slice().is_empty() => continue,
                     b"title" => &mut vulnerability.title,
                     b"url" => &mut vulnerability.url,
                     b"vulnerable_versions" => &mut vulnerability.vulnerable_versions,
@@ -865,7 +873,12 @@ fn keep_vulnerability(
     stats: &mut AuditStats,
 ) -> bool {
     if let Some(level) = audit_level {
-        if !level.should_include_severity(&vulnerability.severity) {
+        let below = match &vulnerability.severity {
+            Severity::Info => true,
+            Severity::Ranked(rank) => *rank < level,
+            Severity::Unranked(_) => false,
+        };
+        if below {
             stats.below_level += 1;
             return false;
         }
@@ -939,20 +952,26 @@ fn collect_vulnerabilities(
     Ok(Ok(vulnerabilities))
 }
 
-#[derive(Default)]
-struct VulnCounts {
-    low: u32,
-    moderate: u32,
-    high: u32,
-    critical: u32,
-}
+const UNRANKED_LABEL: &str = "unknown severity";
 
-fn print_severity(severity: &[u8]) {
+fn print_severity(severity: &Severity) {
     match severity {
-        b"critical" => pretty!("  <red>critical<d>:<r>"),
-        b"high" => pretty!("  <red>high<d>:<r>"),
-        b"low" => pretty!("  <cyan>low<d>:<r>"),
-        _ => pretty!("  <yellow>moderate<d>:<r>"),
+        Severity::Info => pretty!("  info<d>:<r>"),
+        Severity::Ranked(level) => match level {
+            AuditLevel::Critical | AuditLevel::High => {
+                pretty!("  <red>{}<d>:<r>", level.name())
+            }
+            AuditLevel::Moderate => pretty!("  <yellow>{}<d>:<r>", level.name()),
+            AuditLevel::Low => pretty!("  <cyan>{}<d>:<r>", level.name()),
+        },
+        Severity::Unranked(word) if word.is_empty() => {
+            pretty!("  <red>{}<d>:<r>", UNRANKED_LABEL)
+        }
+        Severity::Unranked(word) => pretty!(
+            "  <red>{}<r> <d>({}):<r>",
+            UNRANKED_LABEL,
+            escape_control_chars(word)
+        ),
     }
 }
 
@@ -1013,15 +1032,6 @@ fn print_enhanced_audit_report(
         return Ok(0);
     }
 
-    let mut vuln_counts = VulnCounts::default();
-    for vulnerability in &vulnerabilities {
-        match &*vulnerability.severity {
-            b"low" => vuln_counts.low += 1,
-            b"high" => vuln_counts.high += 1,
-            b"critical" => vuln_counts.critical += 1,
-            _ => vuln_counts.moderate += 1,
-        }
-    }
     let total = vulnerabilities.len() as u32;
 
     index_sort::sort_vec_by(&mut vulnerabilities, |a, b| {
@@ -1044,9 +1054,6 @@ fn print_enhanced_audit_report(
         }
 
         for vuln in group {
-            if vuln.title.is_empty() {
-                continue;
-            }
             print_severity(&vuln.severity);
             pretty!(" {}", escape_control_chars(&vuln.title));
             if !vuln.vulnerable_versions.is_empty() {
@@ -1061,30 +1068,39 @@ fn print_enhanced_audit_report(
 
     pretty!("<b>{} {}<r> (", total, audit_fix::vuln_word(total));
 
-    let mut has_previous = false;
-    if vuln_counts.critical > 0 {
-        pretty!("<red><b>{} critical<r>", vuln_counts.critical);
-        has_previous = true;
-    }
-    if vuln_counts.high > 0 {
-        if has_previous {
-            pretty!(", ");
+    let count = |wanted: &dyn Fn(&Severity) -> bool| {
+        (vulnerabilities.iter())
+            .filter(|vulnerability| wanted(&vulnerability.severity))
+            .count()
+    };
+    let mut separator = "";
+    for level in [
+        AuditLevel::Critical,
+        AuditLevel::High,
+        AuditLevel::Moderate,
+        AuditLevel::Low,
+    ] {
+        let count = count(&|severity| matches!(severity, Severity::Ranked(rank) if *rank == level));
+        if count == 0 {
+            continue;
         }
-        pretty!("<red>{} high<r>", vuln_counts.high);
-        has_previous = true;
-    }
-    if vuln_counts.moderate > 0 {
-        if has_previous {
-            pretty!(", ");
+        pretty!("{}", separator);
+        match level {
+            AuditLevel::Critical => pretty!("<red><b>{} {}<r>", count, level.name()),
+            AuditLevel::High => pretty!("<red>{} {}<r>", count, level.name()),
+            AuditLevel::Moderate => pretty!("<yellow>{} {}<r>", count, level.name()),
+            AuditLevel::Low => pretty!("<cyan>{} {}<r>", count, level.name()),
         }
-        pretty!("<yellow>{} moderate<r>", vuln_counts.moderate);
-        has_previous = true;
+        separator = ", ";
     }
-    if vuln_counts.low > 0 {
-        if has_previous {
-            pretty!(", ");
-        }
-        pretty!("<cyan>{} low<r>", vuln_counts.low);
+    let info = count(&|severity| matches!(severity, Severity::Info));
+    if info > 0 {
+        pretty!("{}{} info", separator, info);
+        separator = ", ";
+    }
+    let unranked = count(&|severity| matches!(severity, Severity::Unranked(_)));
+    if unranked > 0 {
+        pretty!("{}<red>{} {}<r>", separator, unranked, UNRANKED_LABEL);
     }
     prettyln!(")");
 

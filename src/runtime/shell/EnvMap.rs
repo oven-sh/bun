@@ -63,12 +63,6 @@ impl EnvMap {
         size
     }
 
-    pub(crate) fn init_with_capacity(cap: usize) -> EnvMap {
-        EnvMap {
-            map: EnvMapInner::with_capacity(cap),
-        }
-    }
-
     /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
     /// before handing it to this function!!!
     pub(crate) fn insert(&mut self, key: EnvStr, val: EnvStr) {
@@ -86,30 +80,11 @@ impl EnvMap {
         self.map.keys().iter().zip(self.map.values())
     }
 
-    pub(crate) fn ensure_total_capacity(&mut self, new_capacity: usize) {
-        self.map.ensure_total_capacity(new_capacity).expect("OOM");
-    }
-
     /// NOTE: Make sure you deref the string when done!
     pub(crate) fn get(&self, key: EnvStr) -> Option<EnvStr> {
         let val = *self.map.get(&key)?;
         val.ref_();
         Some(val)
-    }
-
-    pub(crate) fn clone(&self) -> EnvMap {
-        let new = EnvMap {
-            map: self.map.clone().expect("OOM"),
-        };
-        new.ref_strings();
-        new
-    }
-
-    fn ref_strings(&self) {
-        for (key, value) in self.map.keys().iter().zip(self.map.values()) {
-            key.ref_();
-            value.ref_();
-        }
     }
 
     fn deref_strings(&self) {
@@ -127,101 +102,157 @@ impl Drop for EnvMap {
     }
 }
 
-/// Slot attribute: the name has a value and is not exported.
-const LOCAL: u8 = 1 << 0;
-/// Slot attribute: the name is exported and has no value yet.
-const UNSET: u8 = 1 << 1;
+/// One shell variable.
+#[derive(Copy, Clone, Default)]
+enum Var {
+    /// Exported, with a value: a child process inherits it.
+    Exported(EnvStr),
+    /// Has a value, not exported.
+    Local(EnvStr),
+    /// Exported, no value yet.
+    #[default]
+    ExportedUnset,
+}
 
-const _: () = assert!(core::mem::size_of::<EnvStr>() == 16);
+impl Var {
+    fn value(self) -> Option<EnvStr> {
+        match self {
+            Var::Exported(value) | Var::Local(value) => Some(value),
+            Var::ExportedUnset => None,
+        }
+    }
+}
 
-/// Every shell variable: one slot per name, with its value and its attribute bits.
+type VarMap = ArrayHashMap<EnvStr, Var, EnvMapContext>;
+
+/// Every shell variable, one entry per name.
 pub(crate) struct VarTable {
-    map: EnvMap,
+    map: VarMap,
 }
 
 impl VarTable {
-    /// Every entry of `env` becomes an exported variable: its attribute bits are already zero.
-    pub(crate) fn from_exported(env: EnvMap) -> VarTable {
-        VarTable { map: env }
+    pub(crate) fn init() -> VarTable {
+        VarTable { map: VarMap::new() }
+    }
+
+    pub(crate) fn init_with_capacity(cap: usize) -> VarTable {
+        VarTable {
+            map: VarMap::with_capacity(cap),
+        }
+    }
+
+    pub(crate) fn ensure_total_capacity(&mut self, new_capacity: usize) {
+        self.map.ensure_total_capacity(new_capacity).expect("OOM");
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
-        self.map.memory_cost()
+        let mut size: usize = core::mem::size_of::<VarTable>();
+        size += core::mem::size_of_val(self.map.keys());
+        size += core::mem::size_of_val(self.map.values());
+        for (name, var) in self.map.iter() {
+            size += name.memory_cost();
+            size += var.value().map_or(0, EnvStr::memory_cost);
+        }
+        size
     }
 
     pub(crate) fn clone(&self) -> VarTable {
-        VarTable {
-            map: self.map.clone(),
+        let new = VarTable {
+            map: self.map.clone().expect("OOM"),
+        };
+        for (name, var) in new.map.iter() {
+            name.ref_();
+            if let Some(value) = var.value() {
+                value.ref_();
+            }
         }
+        new
     }
 
     /// `NAME=value`: the name keeps its export attribute. Refs `value`, like `EnvMap::insert`.
     pub(crate) fn set(&mut self, name: EnvStr, value: EnvStr) {
-        let slot = self.map.map.get_or_put(name).expect("OOM");
-        let attrs = if slot.found_existing {
-            slot.value_ptr.deref();
-            slot.value_ptr.var_attrs() & !UNSET
-        } else {
-            name.ref_();
-            LOCAL
-        };
+        let slot = self.map.get_or_put(name).expect("OOM");
         value.ref_();
-        *slot.value_ptr = value.with_var_attrs(attrs);
+        if !slot.found_existing {
+            name.ref_();
+            *slot.value_ptr = Var::Local(value);
+            return;
+        }
+        *slot.value_ptr = match *slot.value_ptr {
+            Var::Local(old) => {
+                old.deref();
+                Var::Local(value)
+            }
+            Var::Exported(old) => {
+                old.deref();
+                Var::Exported(value)
+            }
+            Var::ExportedUnset => Var::Exported(value),
+        };
     }
 
     /// `export NAME=value`, or `export NAME` for `None`, which keeps the value. Refs `value`.
     pub(crate) fn export(&mut self, name: EnvStr, value: Option<EnvStr>) {
-        let slot = self.map.map.get_or_put(name).expect("OOM");
+        let slot = self.map.get_or_put(name).expect("OOM");
         if !slot.found_existing {
             name.ref_();
         }
-        match value {
-            Some(value) => {
-                slot.value_ptr.deref();
+        match (value, *slot.value_ptr) {
+            (Some(value), old) => {
                 value.ref_();
-                *slot.value_ptr = value.with_var_attrs(0);
+                if let Some(old) = old.value() {
+                    old.deref();
+                }
+                *slot.value_ptr = Var::Exported(value);
             }
-            None if slot.found_existing => {
-                let attrs = slot.value_ptr.var_attrs() & !LOCAL;
-                *slot.value_ptr = slot.value_ptr.with_var_attrs(attrs);
-            }
-            None => *slot.value_ptr = slot.value_ptr.with_var_attrs(UNSET),
+            (None, Var::Local(value)) => *slot.value_ptr = Var::Exported(value),
+            (None, Var::Exported(_) | Var::ExportedUnset) => {}
         }
     }
 
     /// The value of `$NAME`. Deref it when done, like `EnvMap::get`.
     pub(crate) fn get(&self, name: EnvStr) -> Option<EnvStr> {
-        let slot = *self.map.map.get(&name)?;
-        if slot.var_attrs() & UNSET != 0 {
-            return None;
-        }
-        let value = slot.with_var_attrs(0);
+        let value = self.map.get(&name)?.value()?;
         value.ref_();
         Some(value)
     }
 
     /// The value a child process inherits for `name`. Deref it when done.
     pub(crate) fn get_exported(&self, name: EnvStr) -> Option<EnvStr> {
-        let slot = *self.map.map.get(&name)?;
-        if slot.var_attrs() != 0 {
+        let Var::Exported(value) = *self.map.get(&name)? else {
             return None;
-        }
-        slot.ref_();
-        Some(slot)
+        };
+        value.ref_();
+        Some(value)
     }
 
     /// The environment of a child process: exported names that have a value.
     pub(crate) fn exported(&self) -> impl core::iter::Iterator<Item = (&EnvStr, &EnvStr)> {
-        self.map.iter().filter(|(_, slot)| slot.var_attrs() == 0)
+        self.map.iter().filter_map(|(name, var)| match var {
+            Var::Exported(value) => Some((name, value)),
+            Var::Local(_) | Var::ExportedUnset => None,
+        })
     }
 
     /// Every exported name. The value is `None` until the name is assigned.
     pub(crate) fn exported_names(
         &self,
     ) -> impl core::iter::Iterator<Item = (EnvStr, Option<EnvStr>)> + '_ {
-        self.map
-            .iter()
-            .filter(|(_, slot)| slot.var_attrs() & LOCAL == 0)
-            .map(|(name, slot)| (*name, (slot.var_attrs() & UNSET == 0).then_some(*slot)))
+        self.map.iter().filter_map(|(name, var)| match *var {
+            Var::Exported(value) => Some((*name, Some(value))),
+            Var::ExportedUnset => Some((*name, None)),
+            Var::Local(_) => None,
+        })
+    }
+}
+
+impl Drop for VarTable {
+    fn drop(&mut self) {
+        for (name, var) in self.map.iter() {
+            name.deref();
+            if let Some(value) = var.value() {
+                value.deref();
+            }
+        }
     }
 }

@@ -34,10 +34,7 @@ pub(crate) enum Tag {
 
 const PTR_MASK: u128 = (1u128 << 48) - 1;
 const TAG_SHIFT: u32 = 48;
-const TAG_MASK: u128 = 0x3FFF;
-// The top two bits of the tag field are the attributes of a `VarTable` slot, zero anywhere else.
-const VAR_ATTRS_SHIFT: u32 = 62;
-const VAR_ATTRS_MASK: u128 = 0b11;
+const TAG_MASK: u128 = 0xFFFF;
 const LEN_SHIFT: u32 = 64;
 
 impl EnvStr {
@@ -71,19 +68,6 @@ impl EnvStr {
     #[inline]
     fn len(self) -> usize {
         (self.0 >> LEN_SHIFT) as u64 as usize
-    }
-
-    #[inline]
-    pub(super) fn var_attrs(self) -> u8 {
-        ((self.0 >> VAR_ATTRS_SHIFT) & VAR_ATTRS_MASK) as u8
-    }
-
-    #[inline]
-    pub(super) fn with_var_attrs(self, attrs: u8) -> EnvStr {
-        EnvStr(
-            (self.0 & !(VAR_ATTRS_MASK << VAR_ATTRS_SHIFT))
-                | ((attrs as u128 & VAR_ATTRS_MASK) << VAR_ATTRS_SHIFT),
-        )
     }
 
     #[inline]

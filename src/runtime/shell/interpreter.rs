@@ -477,25 +477,25 @@ impl Interpreter {
         event_loop: EventLoopHandle,
         shargs: Box<ShellArgs>,
         jsobjs: Vec<crate::jsc::JSValue>,
-        export_env_: Option<EnvMap>,
+        export_env_: Option<VarTable>,
         cwd_: Option<&[u8]>,
     ) -> ShellResult<Box<Interpreter>> {
         // ── export_env ─────────────────────────────────────────────────────
         // On the `.js` event loop, take `export_env_` (or empty); on `.mini`,
         // populate from `event_loop.env()` (the loop's `DotEnv::Loader`).
         let export_env = if matches!(event_loop, EventLoopHandle::Js { .. }) {
-            export_env_.unwrap_or_else(EnvMap::init)
+            export_env_.unwrap_or_else(VarTable::init)
         } else {
             // SAFETY: `event_loop.env()` returns the `MiniEventLoop`'s
             // `DotEnv::Loader`, which is set by `init_global()` and outlives
             // the interpreter (thread-lifetime singleton).
             let env_loader = unsafe { &mut *event_loop.env() };
-            let mut export_env = EnvMap::init_with_capacity(env_loader.map.map.count());
+            let mut export_env = VarTable::init_with_capacity(env_loader.map.map.count());
             let mut iter = env_loader.iterator();
             while let Some(entry) = iter.next() {
                 let key = crate::shell::EnvStr::init_slice(&entry.key_ptr[..]);
                 let value = crate::shell::EnvStr::init_slice(&entry.value_ptr.value[..]);
-                export_env.insert(key, value);
+                export_env.export(key, Some(value));
             }
             export_env
         };
@@ -562,7 +562,7 @@ impl Interpreter {
                 _buffered_stdout: Bufio::default(),
                 _buffered_stderr: Bufio::default(),
                 cmd_local_env: EnvMap::init(),
-                vars: VarTable::from_exported(export_env),
+                vars: export_env,
                 __prev_cwd: cwd_arr.clone(),
                 __cwd: cwd_arr,
                 cwd_fd,
@@ -2000,7 +2000,7 @@ impl ShellExecEnv {
         // EnvMap has a Drop impl; replace with fresh to free now and leave
         // valid state for any later `Drop` of the outer `Interpreter` box.
         self.cmd_local_env = EnvMap::init();
-        self.vars = VarTable::from_exported(EnvMap::init());
+        self.vars = VarTable::init();
         self.__cwd = Vec::new();
         self.__prev_cwd = Vec::new();
         closefd(self.cwd_fd);

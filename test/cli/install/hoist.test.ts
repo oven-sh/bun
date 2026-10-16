@@ -302,7 +302,7 @@ describe.concurrent("a dependency cycle that nests without end is an error", () 
     for (const args of [[], ["--lockfile-only"]]) {
       const packageDir = await createTestDir({ bunfigOpts: { linker }, files });
       expect(await spawnBun(packageDir, "install", ...args)).toMatchObject({
-        stderr: expect.stringContaining(`error: dependency cycle cannot be laid out in node_modules: ${cycle}\n`),
+        stderr: expect.stringContaining(`error: cannot install dependency cycle into node_modules: ${cycle}\n`),
         signalCode: null,
         exitCode: 1,
       });

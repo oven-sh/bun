@@ -583,10 +583,10 @@ impl Execution {
         }
     }
 
-    /// Reports each failed sequence that still runs its hooks. The process is about to exit, so the hooks never finish.
+    /// Ends each failed sequence that still runs its hooks, so that it is reported. The process is about to exit.
     #[cold]
     pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>) {
-        let range = {
+        let (group, range) = {
             // SAFETY: `buntest` is the live active file. This borrow of its `execution` ends with the block.
             let bun_test = unsafe { &mut *buntest.as_ptr() };
             if bun_test.phase != super::bun_test::Phase::Execution {
@@ -595,17 +595,34 @@ impl Execution {
             let Some(group) = bun_test.execution.active_group() else {
                 return;
             };
-            group.sequence_start..group.sequence_end
+            let range = group.sequence_start..group.sequence_end;
+            (NonNull::from(group), range)
         };
         for index in range {
-            // SAFETY: as in `advance_sequence`: one element of `buntest.execution.sequences`.
+            // SAFETY: as in `advance_sequence`: one element of `buntest.execution.sequences`, disjoint from `groups`.
             let sequence = unsafe { &mut (*buntest.as_ptr()).execution.sequences[index] };
-            if sequence.active_entry.is_none() || !sequence.result.is_fail() {
+            let Some(mut last) = sequence.active_entry else {
+                continue;
+            };
+            if !sequence.result.is_fail() {
                 continue;
             }
-            sequence.active_entry = None;
-            sequence.executing = false;
-            Execution::on_sequence_completed(buntest, sequence);
+            // SAFETY: arena-owned entries, alive for the lifetime of the `BunTest`.
+            while let Some(next) = nn(unsafe { last.as_ref() }.next) {
+                last = next;
+            }
+            if let Some(mut test) = sequence.test_entry {
+                // SAFETY: arena-owned entry, alive for the lifetime of the `BunTest`.
+                let test = unsafe { test.as_mut() };
+                // No retry runs, and the reporter still prints the number of this attempt.
+                test.retry_count -= sequence.remaining_retry_count;
+            }
+            sequence.remaining_retry_count = 0;
+            // `advance_sequence` is the one caller of `on_sequence_completed`: it steps past the last entry and reports.
+            sequence.active_entry = Some(last);
+            sequence.maybe_skip = false;
+            sequence.executing = true;
+            Execution::advance_sequence(buntest, NonNull::from(sequence), group);
         }
     }
 

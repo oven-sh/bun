@@ -25,6 +25,7 @@ function run(env, steps = [{}]) {
     worker.terminate();
   };
   worker.onerror = e => reject(e.error ?? new Error(e.message));
+  worker.addEventListener("close", () => reject(new Error("the worker closed before it replied")));
   worker.postMessage({ url, steps });
   return promise;
 }

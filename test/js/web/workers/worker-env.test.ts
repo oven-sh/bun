@@ -3,7 +3,8 @@
 // child process inherits, come from the worker's environment rather than the
 // main thread's.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls } from "harness";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { Worker as NodeWorker } from "node:worker_threads";
 
@@ -104,6 +105,7 @@ describe("worker env", () => {
       const { promise, resolve, reject } = Promise.withResolvers<string[]>();
       worker.once("message", resolve);
       worker.once("error", reject);
+      worker.once("exit", code => reject(new Error(`the worker exited with code ${code} before it replied`)));
       expect(await promise).toEqual(["VIA-PROXY", "DIRECT"]);
     } finally {
       await worker.terminate();
@@ -152,6 +154,69 @@ describe("worker env", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  // On every platform the worker's process.env is the main thread's kind of object: a write is
+  // coerced to a string, a symbol key throws, and an accessor descriptor is rejected.
+  test("process.env in a worker with env keeps the env setter semantics", async () => {
+    const source = `
+      const seen = { seeded: process.env.SEEDED };
+      process.env.NUMBER = 42;
+      seen.coerced = process.env.NUMBER;
+      try { process.env[Symbol()] = "v"; seen.symbolKey = "no throw"; } catch (e) { seen.symbolKey = e.name; }
+      try { Object.defineProperty(process.env, "G", { get() {} }); seen.accessor = "no throw"; } catch (e) { seen.accessor = e.code; }
+      postMessage(seen);
+    `;
+    const worker = new Worker(URL.createObjectURL(new Blob([source])), { env: { SEEDED: "yes" } });
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.onmessage = e => resolve(e.data);
+      worker.onerror = e => reject(e.error ?? new Error(e.message));
+      worker.addEventListener("close", () => reject(new Error("the worker closed before it replied")));
+      expect(await promise).toEqual({
+        seeded: "yes",
+        coerced: "42",
+        symbolKey: "TypeError",
+        accessor: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+      });
+    } finally {
+      worker.terminate();
+    }
+  });
+
+  // The resolver's directory cache is shared by every thread, so symlink handling is one setting
+  // for the process. A worker's env does not change it.
+  test.skipIf(isWindows)("NODE_PRESERVE_SYMLINKS stays the process's setting in a worker with env", async () => {
+    using dir = tempDir("worker-env-symlinks", {
+      real: { "mod.cjs": `module.exports = __filename;` },
+      "main.mjs": `
+        const keepsLinkPath = (env, link) =>
+          new Promise((resolve, reject) => {
+            const worker = new Worker(new URL("./worker.cjs", import.meta.url).href, { env });
+            worker.onmessage = e => {
+              resolve(e.data);
+              worker.terminate();
+            };
+            worker.onerror = e => reject(e.error ?? new Error(e.message));
+            worker.addEventListener("close", () => reject(new Error("the worker closed before it replied")));
+            worker.postMessage(link);
+          });
+        console.log(JSON.stringify({
+          without: await keepsLinkPath({}, "link-a"),
+          off: await keepsLinkPath({ NODE_PRESERVE_SYMLINKS: "0" }, "link-b"),
+        }));
+      `,
+      // With symlinks preserved, a module keeps the path that it was required through.
+      "worker.cjs": `
+        const { join, sep } = require("node:path");
+        self.onmessage = ({ data: link }) =>
+          postMessage(require(join(__dirname, link, "mod.cjs")).endsWith(join(sep + link, "mod.cjs")));
+      `,
+    });
+    // One link per worker: each one fills the cache entry for its own path.
+    for (const link of ["link-a", "link-b"]) symlinkSync(join(String(dir), "real"), join(String(dir), link), "dir");
+    const launched = await run([bunExe(), "main.mjs"], { cwd: String(dir), env: { NODE_PRESERVE_SYMLINKS: "1" } });
+    expect(launched).toEqual({ result: { without: true, off: true }, stderr: "", exitCode: 0 });
   });
 
   test("a nested worker started without env from a worker with env inherits exactly that env", async () => {
@@ -210,6 +275,7 @@ describe("worker env", () => {
               worker.terminate();
             };
             worker.onerror = e => reject(e.error ?? new Error(e.message));
+            worker.addEventListener("close", () => reject(new Error("the worker closed before it replied")));
             worker.postMessage(url);
           });
         const [without, disabled] = await Promise.all([fetchIn({}), fetchIn({ NODE_TLS_REJECT_UNAUTHORIZED: "0" })]);

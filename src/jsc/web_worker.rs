@@ -129,6 +129,9 @@ struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
+    /// The parent's process settings, which a VM reads from the launch environment at start.
+    hide_bun_stackframes: bool,
+    aggressive_garbage_collection: virtual_machine::GCLevel,
 }
 
 /// The loader for a worker given its environment as `[key, value, ...]` pairs,
@@ -138,9 +141,8 @@ fn worker_env_loader(
     pairs: &[BunString],
 ) -> Result<bun_dotenv::Loader, bun_alloc::AllocError> {
     let mut loader = parent.for_worker_env(pairs.len() / 2)?;
-    for pair in pairs.chunks_exact(2) {
-        let key = pair[0].to_utf8();
-        let value = pair[1].to_utf8();
+    for [key, value] in pairs.as_chunks::<2>().0 {
+        let (key, value) = (key.to_utf8(), value.to_utf8());
         // Not a valid environment entry. `Bun.spawn` rejects a NUL byte in an explicit `env` too.
         if key.is_empty()
             || bun_core::strings::contains_char(&key, 0)
@@ -407,6 +409,9 @@ impl WebWorker {
                 transform_options.allow_ffi_cc = Some(parent_allows_ffi_cc && flags.allow_ffi_cc);
             }
         }
+        // Every thread shares the resolver's directory cache, so one symlink setting serves the process.
+        transform_options.preserve_symlinks =
+            Some(parent_ref.transpiler.resolver.opts.preserve_symlinks);
         // The worker's env loader (what its `process.env`, fetch() and Bun.spawn
         // read): exactly the given environment, or a copy of the parent's now (as
         // in Node), taken under the parent's proxy-env lock so every
@@ -440,6 +445,8 @@ impl WebWorker {
             transform_options,
             env_loader,
             proxy_env_slots,
+            hide_bun_stackframes: parent_ref.hide_bun_stackframes,
+            aggressive_garbage_collection: parent_ref.aggressive_garbage_collection,
         };
 
         // The construction ref: handed to C++ on success, dropped on failure.
@@ -715,6 +722,8 @@ impl WebWorker {
             transform_options,
             env_loader,
             proxy_env_slots,
+            hide_bun_stackframes,
+            aggressive_garbage_collection,
         } = init;
 
         // worker-thread only field; no other thread reads `arena`.
@@ -758,6 +767,8 @@ impl WebWorker {
                 .with_mut(|a| NonNull::new(std::ptr::from_mut(a.as_mut().unwrap())));
 
             *vm_ref.proxy_env_storage.lock() = proxy_env_slots;
+            vm_ref.hide_bun_stackframes = hide_bun_stackframes;
+            vm_ref.aggressive_garbage_collection = aggressive_garbage_collection;
 
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);

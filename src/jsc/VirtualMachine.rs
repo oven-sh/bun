@@ -4241,30 +4241,37 @@ impl VirtualMachine {
         // allocated it first, `__bun_macro_context_deinit` must not free it.
         SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
 
-        if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
-            self.hide_bun_stackframes = false;
-        }
-
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER::get()
             .unwrap_or(false)
         {
             self.transpiler_store.enabled = false;
         }
 
-        // Only the main thread adopts the process's IPC channel and drops the
-        // variables (as Node does). A worker keeps what its env gave it;
-        // node:worker_threads reads `process.env.NODE_CHANNEL_FD` to stub `process.send`.
-        if self.is_main_thread() {
-            if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
-                let (_, kv) = map.map.swap_remove_at(idx);
-                let fd_s = kv.value;
-                let advanced = map
-                    .map
-                    .get_index(b"NODE_CHANNEL_SERIALIZATION_MODE")
-                    .map(|i| map.map.swap_remove_at(i).1)
-                    .is_some_and(|v| &v.value[..] == b"advanced");
-                // Non-negative i31 only: `u32` then `as i32` would wrap `2^31..` to a
-                // negative fd instead of warning.
+        // Process settings from the launch environment. A worker's map is its own env: it inherits these.
+        if !self.is_main_thread() {
+            return;
+        }
+
+        if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
+            self.hide_bun_stackframes = false;
+        }
+
+        if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
+            let (_, kv) = map.map.swap_remove_at(idx);
+            let fd_s = kv.value;
+            let advanced = map
+                .map
+                .get_index(b"NODE_CHANNEL_SERIALIZATION_MODE")
+                .map(|i| map.map.swap_remove_at(i).1)
+                .is_some_and(|v| &v.value[..] == b"advanced");
+            // Accept only
+            // non-negative values that fit in i31 (i.e. `0..=i32::MAX`).
+            // Parsing as `u32` then `as i32` would silently wrap values in
+            // `2^31..2^32` to a negative fd instead of taking the warn branch.
+            // The channel belongs to the process (its main thread). A worker
+            // sees the same inherited variables but must not open a second
+            // endpoint over the same fd (Node: no process.send() in workers).
+            if self.is_main_thread() {
                 match bun_core::fmt::parse_int::<i32>(&fd_s, 10)
                     .ok()
                     .filter(|&n| n >= 0)

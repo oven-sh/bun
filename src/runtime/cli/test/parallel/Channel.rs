@@ -442,42 +442,35 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// Best-effort drain of any buffered writes.
     #[cfg(not(windows))]
     pub(crate) fn flush(&self) {
-        #[cfg(windows)]
-        {
-            return self.submit_windows_write();
-        }
-        #[cfg(not(windows))]
-        {
-            while !self.done.get() {
-                let mut pending = self.out.replace(Vec::new());
-                let mut head = self.backend.out_head.get();
-                debug_assert!(head <= pending.len());
-                if pending.len() <= head {
-                    self.backend.out_head.set(0);
-                    self.out.set(pending);
-                    return;
-                }
-                let wrote = self.backend.socket.get().write(&pending[head..]);
-                let w = usize::try_from(wrote)
-                    .unwrap_or(0)
-                    .min(pending.len() - head);
-                head += w;
-                if head == pending.len() {
-                    pending.clear();
-                    head = 0;
-                } else if head >= pending.len() - head {
-                    // Sent prefix caught up to the tail: compact (amortized linear).
-                    pending.drain_front(head);
-                    head = 0;
-                }
-                self.backend.out_head.set(head);
-                self.out.with_mut(|cur| {
-                    pending.extend_from_slice(cur);
-                    *cur = pending;
-                });
-                if wrote <= 0 {
-                    return;
-                }
+        while !self.done.get() {
+            let mut pending = self.out.replace(Vec::new());
+            let mut head = self.backend.out_head.get();
+            debug_assert!(head <= pending.len());
+            if pending.len() <= head {
+                self.backend.out_head.set(0);
+                self.out.set(pending);
+                return;
+            }
+            let wrote = self.backend.socket.get().write(&pending[head..]);
+            let w = usize::try_from(wrote)
+                .unwrap_or(0)
+                .min(pending.len() - head);
+            head += w;
+            if head == pending.len() {
+                pending.clear();
+                head = 0;
+            } else if head >= pending.len() - head {
+                // Sent prefix caught up to the tail: compact (amortized linear).
+                pending.drain_front(head);
+                head = 0;
+            }
+            self.backend.out_head.set(head);
+            self.out.with_mut(|cur| {
+                pending.extend_from_slice(cur);
+                *cur = pending;
+            });
+            if wrote <= 0 {
+                return;
             }
         }
     }

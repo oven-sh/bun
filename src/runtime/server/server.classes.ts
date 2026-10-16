@@ -169,8 +169,8 @@ export default [
         fn: "pauseSocketReads",
         length: 0,
       },
-      drainRequestBody: {
-        fn: "drainRequestBody",
+      notifyWhenReadParsed: {
+        fn: "notifyWhenReadParsed",
         length: 0,
       },
       takeRequestTrailers: {
@@ -179,6 +179,10 @@ export default [
       },
       takeRawHeaders: {
         fn: "takeRawHeaders",
+        length: 1,
+      },
+      headersObject: {
+        fn: "headersObject",
         length: 0,
       },
       writeHeadAndEnd: {
@@ -213,10 +217,6 @@ export default [
         getter: "getOnAbort",
         setter: "setOnAbort",
         this: true,
-      },
-      hasCustomOnData: {
-        getter: "getHasCustomOnData",
-        setter: "setHasCustomOnData",
       },
       upgraded: {
         getter: "getUpgraded",

@@ -153,7 +153,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 ### Phase 1 — Configure (`configure.ts::configure`)
 
 1. `resolveToolchain()` — find clang/ar/lld/strip/cmake/cargo/bun/esbuild. Version-checked where it matters; paths stored on `Toolchain`.
-2. `resolveConfig(partial, toolchain)` — produce the flat `Config`. Detect host, derive all target booleans, compute paths, read package.json version + git sha.
+2. `resolveConfig(partial, toolchain)` — produce the flat `Config`. Detect host, derive all target booleans, compute paths, read package.json version + git sha. Fails if clang's LLVM and rustc's LLVM are not the same major version: the link reads LLVM bitcode from both compilers. So the pinned LLVM (`pins.llvm.version`) and the nightly in `rust-toolchain.toml` move together.
 3. `validateBunConfig(cfg)` + `checkWorkarounds(cfg)` — fail early with clear errors.
    - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.hostCxx`. Advisory only for `bun bd` (the rustc edges pass `-C linker` themselves); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
 4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.rs`/codegen-input globs.
@@ -177,7 +177,7 @@ For `mode: "full"` (the normal case):
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
 9. **Checks** — validations of the link edge (`ninja check` names them too), all static except the first: `<exe> --revision` (load-time failures; only when the host can run the target), `verify-binary.ts binary` (exported symbols vs the lists in src/, exact NEEDED/dylib/DLL set and glibc/FBSD symbol-version ceilings, forbidden imports, static-initializer allowlist, W^X / nx-stack / PIE / DllCharacteristics, debug-info shape — expectations in `binary-expectations.ts`), and `verify-binary.ts duplicates` (no symbol strongly defined by two link inputs). Only CI fails on a finding: local builds (`cfg.ci` unset), and ASan and debug builds in CI, run the two scans with `--warn-only` (`binaryChecksWarnOnly` in `bun.ts`) — same report, the step passes.
 
-CI's `build-bun` step uses `archive-link` (`ci-build` profile): the same graph, with the C/C++ objects archived into `libbun-<exe>.a` and linked from that archive; the archive and the dep libs are uploaded from ninja edges as soon as each exists.
+CI's `build-bun` step builds the same graph (`ci-build` profile: release, prebuilt WebKit); `build.ts` then packages and uploads the zips.
 
 **No crate is a final Rust artifact.** `bun_runtime` is a library like the rest and bun's link takes the rlibs, so what rustc decides only when _it_ links is decided here: the allocator marker `__rust_no_alloc_shim_is_unstable_v2` is defined in `src/runtime/bin_entry/mod.rs` (the allocator itself comes from `#[global_allocator]` there, the error handler from std), and `rust.ts` leaves the panic runtime the profile does not use (`panic_unwind` under `panic = "abort"`) out of the link. Release Rust is bitcode in the rlibs (`-C linker-plugin-lto`) and lld optimises it, together with the C++ where cross-language LTO is on.
 
@@ -269,7 +269,7 @@ It is configured by `configureCodegen()`, not `configure()`, and resolves a `Cod
 
 ## CI machine images (`ci-images/`)
 
-What is on CI's build and test machines, and the generator of what bakes them. `ci-images/spec.ts` is also where the versions this build system uses are written (LLVM, Node.js, xwin and the Windows SDK, the macOS SDK, the Android API level, FreeBSD): `tools.ts`, `deps/nodejs-headers.ts`, `winsysroot.ts`, `macos-sdk.ts` and `config.ts` import them from `pins`, the sysroot and download-cache lookups import where things are from `locations`, and `spec.ts` is one of `build.ninja`'s inputs. `findLlvmTool()` accepts only the pinned LLVM release series on every machine, and on a Buildkite agent `checkImageTools()` compares `bun`, `cmake` and `node` with their pins exactly. How the images work and how to change them: `ci-images/CLAUDE.md`.
+What is on CI's build and test machines, and the generator of what bakes them. `ci-images/spec.ts` is also where the versions this build system uses are written (LLVM, Node.js, xwin and the Windows SDK, the macOS SDK, the Android API level, FreeBSD): `tools.ts`, `deps/nodejs-headers.ts`, `winsysroot.ts`, `macos-sdk.ts` and `config.ts` import them from `pins`, the sysroot and download-cache lookups import where things are from `locations`, and `spec.ts` is one of `build.ninja`'s inputs. `findLlvmTool()` accepts only the pinned LLVM release series on every machine, and on a Buildkite agent `checkImageTools()` compares `bun`, `cmake`, `clang` and `node` with their pins exactly. How the images work and how to change them: `ci-images/CLAUDE.md`.
 
 ## Key types
 

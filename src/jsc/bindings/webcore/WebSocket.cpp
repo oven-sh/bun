@@ -556,9 +556,10 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     // Check NO_PROXY even for explicitly-provided proxies
     if (hasProxy) {
         auto hostUtf8 = m_url.host().toString().utf8();
+        auto host = byteCast<char>(hostUtf8.span());
         // The effective port, so a `host:443` entry matches a default-port URL.
         uint16_t port = m_url.port().value_or(is_secure ? 443 : 80);
-        if (Bun__isNoProxy(hostUtf8.data(), hostUtf8.length(), port)) {
+        if (Bun__isNoProxy(host.data(), host.size(), port)) {
             proxyConfig = std::nullopt;
             hasProxy = false;
         }
@@ -999,7 +1000,7 @@ ExceptionOr<void> WebSocket::ping(const String& message)
     if (payloadSize > maxControlFramePayloadSize)
         return controlFramePayloadTooLargeException(payloadSize);
 
-    this->sendWebSocketData(utf8.data(), payloadSize, Opcode::Ping);
+    this->sendWebSocketData(byteCast<char>(utf8.span()).data(), payloadSize, Opcode::Ping);
 
     return {};
 }
@@ -1085,7 +1086,7 @@ ExceptionOr<void> WebSocket::pong(const String& message)
     if (payloadSize > maxControlFramePayloadSize)
         return controlFramePayloadTooLargeException(payloadSize);
 
-    this->sendWebSocketData(utf8.data(), payloadSize, Opcode::Pong);
+    this->sendWebSocketData(byteCast<char>(utf8.span()).data(), payloadSize, Opcode::Pong);
 
     return {};
 }
@@ -1378,7 +1379,7 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     auto* obj = JSC::constructEmptyObject(globalObject);
     obj->putDirect(vm, builtinNames.statusCodePublicName(), JSC::jsNumber(statusCode));
     obj->putDirect(vm, builtinNames.statusMessagePublicName(),
-        JSC::jsString(vm, WTF::String({ statusMessage.data(), statusMessage.size() })));
+        JSC::jsString(vm, WTF::String(byteCast<Latin1Character>(statusMessage))));
 
     auto* rawHeaders = JSC::constructEmptyArray(globalObject, nullptr, headers.size() * 2);
     if (!rawHeaders || scope.exception()) [[unlikely]] {
@@ -1387,10 +1388,10 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     }
     for (size_t i = 0; i < headers.size(); i++) {
         rawHeaders->putDirectIndex(globalObject, i * 2,
-            JSC::jsString(vm, WTF::String(headers[i].name.span())));
+            JSC::jsString(vm, WTF::String(byteCast<Latin1Character>(headers[i].name.span()))));
         RETURN_IF_EXCEPTION(scope, );
         rawHeaders->putDirectIndex(globalObject, i * 2 + 1,
-            JSC::jsString(vm, WTF::String(headers[i].value.span())));
+            JSC::jsString(vm, WTF::String(byteCast<Latin1Character>(headers[i].value.span()))));
         RETURN_IF_EXCEPTION(scope, );
     }
     obj->putDirect(vm, builtinNames.rawHeadersPublicName(), rawHeaders);
@@ -1798,11 +1799,21 @@ extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
     return webSocket->rejectUnauthorized();
 }
 
+extern "C" bool WebSocket__isProxyTLS(WebCore::WebSocket* webSocket)
+{
+    return webSocket->isProxyTLS();
+}
+
 // The Rust half of the context of the script that made the WebSocket. Called from connect(),
 // which has the context.
 extern "C" void* WebSocket__bunContext(WebCore::WebSocket* webSocket)
 {
     return webSocket->scriptExecutionContext()->bunContext();
+}
+
+extern "C" JSC::EncodedJSValue WebSocket__checkServerIdentity(WebCore::WebSocket* webSocket)
+{
+    return JSC::JSValue::encode(webSocket->checkServerIdentity().getValue(JSC::jsUndefined()));
 }
 
 // The native client keeps this object (and its wrapper) alive across work it has queued that will

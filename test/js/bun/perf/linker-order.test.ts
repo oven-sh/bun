@@ -71,7 +71,7 @@ const cfg = (overrides: Partial<Config> = {}) =>
     windows: false,
     freebsd: false,
     canary: true,
-    mode: "archive-link",
+    mode: "full",
     crossTarget: undefined,
     canRunOnHost: true,
     host: { os: "linux" },
@@ -654,7 +654,7 @@ function processState(pid: number): string | undefined {
 async function expectGone(pids: number[]) {
   expect(processState(process.pid)).toBeDefined();
   const alive = () => pids.filter(pid => ![undefined, "Z"].includes(processState(pid)));
-  for (const deadline = Date.now() + 3_000; alive().length && Date.now() < deadline; ) await Bun.sleep(5);
+  for (const deadline = Date.now() + 3_000; alive().length && Date.now() < deadline;) await Bun.sleep(5);
   expect(alive()).toEqual([]);
 }
 

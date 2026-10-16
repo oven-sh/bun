@@ -70,7 +70,7 @@ it("should not allow invalid tls option", () => {
         },
         port: 0,
         hostname: "localhost",
-        tls: value,
+        tls: value as any,
       });
     }).toThrow("TLSOptions must be an object");
   });
@@ -88,7 +88,7 @@ it("should allow using false, null or undefined tls option", () => {
         },
         port: 0,
         hostname: "localhost",
-        tls: value,
+        tls: value as any,
       });
     }).not.toThrow("TLSOptions must be an object");
   });
@@ -311,4 +311,29 @@ it("should not leak memory", async () => {
   expect(stderr).toBe("");
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// stop(true) from alpnCallback or serverName closes the socket whose SSL call
+// is on the stack, so that close waits until the callback returns. stop(true)
+// once spun on that socket and never returned. The fixture runs in a child
+// process, because such a spin also blocks the event loop that times a test
+// out. The cases are not concurrent: the runner kills a child that a timed-out
+// test leaves behind only when that test runs alone.
+describe("TLS listener: stop(true) from inside a selection callback", () => {
+  it.each(["alpnCallback", "serverName"])("%s: stop(true) returns and the connection closes", async hook => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tls-stop-from-selection-fixture.ts"), hook],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      events: ["returned", "handshake:false", "close"],
+      clientConnected: false,
+      serverClosedFirst: true,
+    });
+    expect(exitCode).toBe(0);
+  });
 });

@@ -589,7 +589,7 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
             let remainingRequests = 20;
 
             const socket = await Bun.connect({
-              hostname: server.hostname,
+              hostname: server.hostname!,
               port: server.port!,
               socket: {
                 open(socket: Socket) {

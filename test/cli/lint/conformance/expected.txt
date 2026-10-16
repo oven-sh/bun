@@ -1,0 +1,5 @@
+
+0 cases have their messages in another order
+
+505 rules, 505 without failures, 0 not implemented
+69640 cases passed, 0 failed, 303 skipped

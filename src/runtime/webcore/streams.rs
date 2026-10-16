@@ -558,9 +558,6 @@ impl Pending {
     /// # Safety
     /// `this` must be a valid, uniquely-owned pointer previously produced by
     /// `bun_core::heap::into_raw` (via `Task::from_boxed` in `run_on_next_tick`).
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn run_from_js_thread(this: *mut Pending) {
         // SAFETY: this was heap-allocated in run_on_next_tick
         let mut boxed = unsafe { bun_core::heap::take(this) };
@@ -2072,9 +2069,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// # Safety
     /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
     /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn destroy(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
         // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
@@ -2391,7 +2385,6 @@ impl NetworkSink {
             flushed,
             task.state.get() as u8
         );
-        let _ = task;
         // SAFETY: `this` is the live sink; each access is scoped and ends
         // before the re-entrant wake below.
         let mut source = unsafe {
@@ -2560,7 +2553,6 @@ impl NetworkSink {
     ///
     /// Raw `*mut Self`: `task.fail()` synchronously fires
     /// `S3UploadStreamWrapper::resolve`, which re-borrows this sink.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn fail_from_js_pump(this: *mut Self, global: &JSGlobalObject, reason: JSValue) {
         // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; the
         // borrow ends before `fail` re-enters.
@@ -2594,7 +2586,6 @@ impl NetworkSink {
     /// Raw `*mut Self` because `task.fail()`/`write_bytes(EOF)` synchronously
     /// fire `S3UploadStreamWrapper::resolve`, which re-borrows this sink, and
     /// the terminal `deref_` may drop rc→0 and free `*this` via `detach_sink`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn end_from_stream(this: *mut Self, err: Option<StreamError>) {
         // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; short
         // reborrows below do not span the re-entrant `fail`/`write_bytes` calls.

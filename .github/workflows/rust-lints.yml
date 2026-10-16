@@ -132,7 +132,7 @@ jobs:
       # The pinned commit of https://github.com/scarletindustries/mordant.
       # Bumping it is a PR of its own, where whatever the new revision finds
       # gets fixed or added to mordant-baseline.toml.
-      MORDANT_REV: 52896c0cc7c1751bbe29672dbc1f007d7d52f3f3
+      MORDANT_REV: c5e56d0d9ca6e2adbb3488b7677353f26cd99ba8
       # The nightly in mordant's rust-toolchain file at MORDANT_REV. mordant is
       # built with it and links its rustc, so it is also the compiler that
       # checks this workspace while the lints run, and it must still be able
@@ -185,10 +185,6 @@ jobs:
       - name: mordant
         # scripts/rust-mordant.ts names the targets (Linux, Windows and macOS
         # in one run) and installs their std, so that the job and `bun run
-        # rust:mordant` cannot drift apart. It removes over-baseline.txt first.
+        # rust:mordant` cannot drift apart. `cargo mordant` exits with 101 when
+        # any crate has more findings than mordant-baseline.toml allows.
         run: bun scripts/rust-mordant.ts
-
-      - name: Fail on findings over the baseline
-        # In baseline mode mordant reports findings over mordant-baseline.toml
-        # as warnings and lists them in this file; absent or empty means clean.
-        run: test ! -s target/mordant/over-baseline.txt

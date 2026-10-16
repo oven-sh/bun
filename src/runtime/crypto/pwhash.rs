@@ -364,7 +364,6 @@ pub(crate) mod bcrypt {
             "bcrypt: silently_truncate_password=false is unreachable from Bun \
              and not implemented in this shim",
         );
-        let _ = options;
 
         // Dispatch on prefix:
         //   `$2…`      → modular-crypt verify

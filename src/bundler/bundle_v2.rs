@@ -1466,6 +1466,8 @@ pub mod bv2_impl {
 
         /// Opaque `JSC::EncoderStringTable` — one instance shared by every chunk's `encodeCodeBlock` in a `--compile --bytecode` build.
         pub(crate) enum EncoderStringTable {}
+        /// Opaque `JSC::BytecodeLinkEncoder` — every chunk of a `--compile --bytecode` link encoded into one payload (`bytecode_order`).
+        pub(crate) enum BytecodeLinkEncoder {}
 
         unsafe extern "Rust" {
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Generic
@@ -1506,7 +1508,46 @@ pub mod bv2_impl {
             pub(crate) safe fn __bun_jsc_destroy_bytecode_cache_vm();
             safe fn __bun_jsc_encoder_string_table_take(
                 table: core::ptr::NonNull<EncoderStringTable>,
+                hot_strings: &[u64],
             ) -> Box<[u8]>;
+            safe fn __bun_jsc_bytecode_link_encoder_new(
+                external_strings: core::ptr::NonNull<EncoderStringTable>,
+                hot_functions: &[u64],
+                known_functions: &[u64],
+                evaluated_modules: &[u64],
+                not_evaluated_modules: &[u64],
+            ) -> core::ptr::NonNull<BytecodeLinkEncoder>;
+            safe fn __bun_jsc_bytecode_link_encoder_destroy(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+            );
+            safe fn __bun_jsc_bytecode_link_encoder_add_module(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                format: crate::options_impl::Format,
+                source: &[u8],
+                source_provider_url: &bun_core::String,
+                depth: u32,
+                optimize: bool,
+                names: &crate::bytecode_order::CodeNamesRef<'_>,
+            ) -> bool;
+            safe fn __bun_jsc_bytecode_link_encoder_add_internal_module(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                id: u32,
+                depth: u32,
+                names: &crate::bytecode_order::CodeNamesRef<'_>,
+            ) -> bool;
+            safe fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                source: &[u8],
+                name: &[u8],
+                url: &[u8],
+                source_stamp: u32,
+                depth: u32,
+                names: &crate::bytecode_order::CodeNamesRef<'_>,
+            ) -> bool;
+            safe fn __bun_jsc_bytecode_link_encoder_finish(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                module_count: usize,
+            ) -> Option<crate::bytecode_order::LinkedPayload>;
             /// The runtime-resolvable slot for one module-info string (`EncoderStringTable::slot_for_wtf8`).
             safe fn __bun_jsc_encoder_string_table_slot(
                 table: core::ptr::NonNull<EncoderStringTable>,
@@ -1588,9 +1629,10 @@ pub mod bv2_impl {
             pub(crate) fn get(&self) -> Option<core::ptr::NonNull<EncoderStringTable>> {
                 self.0
             }
+            /// `hot_strings`: a payload order file's strings (`bytecode_order`), whose records go first.
             #[inline]
-            pub(crate) fn take(mut self) -> Box<[u8]> {
-                __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"))
+            pub(crate) fn take(mut self, hot_strings: &[u64]) -> Box<[u8]> {
+                __bun_jsc_encoder_string_table_take(self.0.take().expect("taken once"), hot_strings)
             }
             #[inline]
             pub(crate) fn slot(&self, wtf8: &[u8]) -> u32 {
@@ -1601,8 +1643,101 @@ pub mod bv2_impl {
         impl Drop for EncoderStringTableHandle {
             fn drop(&mut self) {
                 if let Some(table) = self.0.take() {
-                    drop(__bun_jsc_encoder_string_table_take(table));
+                    drop(__bun_jsc_encoder_string_table_take(table, &[]));
                 }
+            }
+        }
+
+        /// Owns a `JSC::BytecodeLinkEncoder`. Lives and dies on the thread that created it (it uses that thread's bytecode VM).
+        pub(crate) struct BytecodeLinkEncoderHandle {
+            encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+            module_count: usize,
+        }
+
+        impl BytecodeLinkEncoderHandle {
+            pub(crate) fn new(
+                external_strings: core::ptr::NonNull<EncoderStringTable>,
+                order: &crate::bytecode_order::BytecodeOrder,
+            ) -> Self {
+                Self {
+                    encoder: __bun_jsc_bytecode_link_encoder_new(
+                        external_strings,
+                        &order.hot_functions,
+                        &order.known_functions,
+                        &order.evaluated_modules,
+                        &order.not_evaluated_modules,
+                    ),
+                    module_count: 0,
+                }
+            }
+            /// Same arguments as `generate_cached_bytecode`, and what an order file calls the chunk's code; false on a
+            /// parse error. A module's position among the successful calls is its index into `finish()`'s lists.
+            pub(crate) fn add_module(
+                &mut self,
+                format: crate::options_impl::Format,
+                source: &[u8],
+                source_provider_url: &bun_core::String,
+                depth: u32,
+                optimize: bool,
+                names: Option<&crate::bytecode_order::CodeNames>,
+            ) -> bool {
+                let depth = match format {
+                    crate::options_impl::Format::Cjs => depth.saturating_add(1),
+                    _ => depth,
+                };
+                let ok = __bun_jsc_bytecode_link_encoder_add_module(
+                    self.encoder,
+                    format,
+                    source,
+                    source_provider_url,
+                    depth,
+                    optimize,
+                    &names.into(),
+                );
+                self.module_count += ok as usize;
+                ok
+            }
+            /// An internal module (this executable's, or with `target_source_stamp` another executable's) as its
+            /// builtins section has it, as one more module of the link.
+            pub(crate) fn add_internal_module(
+                &mut self,
+                id: u32,
+                module: &bun_exe_format::builtins::Module<'_>,
+                target_source_stamp: Option<u32>,
+                depth: u32,
+                names: Option<&crate::bytecode_order::CodeNames>,
+            ) -> bool {
+                let names = names.into();
+                let ok = match target_source_stamp {
+                    Some(source_stamp) => {
+                        __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
+                            self.encoder,
+                            module.source,
+                            module.name,
+                            module.url,
+                            source_stamp,
+                            depth,
+                            &names,
+                        )
+                    }
+                    None => __bun_jsc_bytecode_link_encoder_add_internal_module(
+                        self.encoder,
+                        id,
+                        depth,
+                        &names,
+                    ),
+                };
+                self.module_count += ok as usize;
+                ok
+            }
+            pub(crate) fn finish(&mut self) -> Option<crate::bytecode_order::LinkedPayload> {
+                __bun_jsc_bytecode_link_encoder_finish(self.encoder, self.module_count)
+            }
+        }
+
+        impl Drop for BytecodeLinkEncoderHandle {
+            fn drop(&mut self) {
+                __bun_jsc_bytecode_link_encoder_destroy(self.encoder);
             }
         }
 
@@ -2371,6 +2506,75 @@ pub mod bv2_impl {
                 bun_ast::Loc::EMPTY,
                 "None of the entry points could be bundled",
             );
+            Err(crate::Error::BuildFailed)
+        }
+
+        /// `BundleOptions::type_check`. Every file is parsed, so the pool is idle and the text of
+        /// each file is in the graph.
+        fn type_check(&self) -> Result<(), Error> {
+            let Some(type_check) = self.transpiler.options.type_check else {
+                return Ok(());
+            };
+            let sources = self.graph.input_files.items_source();
+            let loaders = self.graph.input_files.items_loader();
+            let import_records = self.graph.ast.items_import_records();
+            let flags = self.graph.input_files.items_flags();
+            let is_loaded_by_plugin = |index: usize| {
+                flags[index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
+            };
+            // What cannot be named stands for what it imports: a page, and what only a plugin can
+            // read, like `App.svelte`. What a plugin makes of that imports the plugin's own runtime,
+            // which is not of the project.
+            let mut named: Vec<usize> = Vec::new();
+            let mut is_named = vec![false; sources.len()];
+            // A page that a server imports is in the graph like one that is an entry point.
+            let pages = (0..sources.len()).filter(|&index| loaders[index] == Loader::Html);
+            let entry_points = self.graph.entry_points.iter();
+            let mut pending: Vec<usize> = (entry_points.map(|it| it.get() as usize))
+                .chain(pages)
+                .collect();
+            pending.reverse();
+            while let Some(index) = pending.pop() {
+                if std::mem::replace(&mut is_named[index], true) {
+                    continue;
+                }
+                named.push(index);
+                if loaders[index] == Loader::Html || is_loaded_by_plugin(index) {
+                    let records = import_records[index].as_slice().iter().rev();
+                    pending.extend(
+                        (records.map(|record| record.source_index))
+                            .filter(|imported| imported.is_valid())
+                            .map(|imported| imported.get() as usize)
+                            .filter(|&imported| !sources[imported].path.is_node_module()),
+                    );
+                }
+            }
+            let mut entry_points = (named.iter().copied())
+                .filter(|&index| {
+                    loaders[index].is_javascript_like() && sources[index].path.is_file()
+                })
+                .map(|index| sources[index].path.text);
+            // The types are those of what is written, as in `bun check`, not of what a plugin makes
+            // of it. What only a plugin provides is written nowhere else.
+            let mut sources = (sources.iter().zip(loaders).zip(flags))
+                .filter(|((source, loader), flags)| {
+                    loader.is_javascript_like_or_json()
+                        && source.path.is_file()
+                        && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
+                            && bun_sys::exists(source.path.text))
+                })
+                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
+            let checked = options::TypeChecked {
+                cwd: self.transpiler.fs().top_level_dir,
+                tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
+                conditions: &self.transpiler.options.custom_conditions,
+                loaders: &self.transpiler.options.loaders,
+                entry_points: &mut entry_points,
+                sources: &mut sources,
+            };
+            if type_check(checked, self.transpiler.log_mut()) {
+                return Ok(());
+            }
             Err(crate::Error::BuildFailed)
         }
 
@@ -3167,6 +3371,10 @@ pub mod bv2_impl {
                     crate::options::default_min_chunk_size(this.transpiler.options.target)
                 });
             this.linker.options.fold_chunks = this.transpiler.options.fold_chunks;
+            this.linker.options.entry_naming_has_hash = crate::options::path_template_needs(
+                &this.transpiler.options.entry_naming,
+                crate::options::PlaceholderField::Hash,
+            );
             this.linker.options.module_preload = this.transpiler.options.module_preload;
             this.linker.options.source_maps = this.transpiler.options.source_map;
             this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
@@ -3191,6 +3399,45 @@ pub mod bv2_impl {
                 };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
+            // Read now, once and in full (a pipe will do): a path that is wrong fails the build here, before anything
+            // is parsed, not after the link.
+            if this.transpiler.options.bytecode
+                && this.transpiler.options.compile_mode.is_executable()
+            {
+                let paths = this
+                    .transpiler
+                    .options
+                    .bytecode_order
+                    .iter()
+                    .map(|path| &path[..]);
+                match crate::bytecode_order::BytecodeOrder::load(paths) {
+                    Ok((order, without_hints)) => {
+                        for (path, unusable) in without_hints {
+                            this.transpiler.log_mut().add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "the bytecode order file {} {}",
+                                    bstr::BStr::new(path),
+                                    unusable.why()
+                                ),
+                            );
+                        }
+                        this.linker.options.bytecode_order = order;
+                    }
+                    Err((path, err)) => {
+                        this.transpiler.log_mut().add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "cannot read the bytecode order file {}: {}",
+                                bstr::BStr::new(path),
+                                err
+                            ),
+                        );
+                    }
+                }
+            }
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
@@ -3236,7 +3483,6 @@ pub mod bv2_impl {
         /// callers are done); each call returns a fresh disjoint slot, so the
         /// resulting `&mut T` is unique.
         #[inline]
-        #[allow(clippy::mut_from_ref)]
         fn arena_create<'r, T>(&self, value: T) -> &'r mut T {
             // SAFETY: arena slot is fresh + pinned for the bundle pass; see fn doc.
             unsafe { bun_ptr::detach_lifetime_mut(self.arena().alloc(value)) }
@@ -4184,6 +4430,7 @@ pub mod bv2_impl {
                     return Err(crate::Error::BuildFailed);
                 }
                 this.fail_if_no_entry_points()?;
+                this.type_check()?;
 
                 this.scan_for_secondary_paths();
 
@@ -4774,6 +5021,8 @@ pub mod bv2_impl {
                     }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
                         code.loader;
+                    this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
+                        .insert(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN);
                     // For copied assets keep the bytes Owned in `source.contents`
                     // so `process_files_to_copy` can `mem::take` them zero-copy
                     // (it would otherwise clone the whole asset). For everything
@@ -5241,8 +5490,14 @@ pub mod bv2_impl {
         }
 
         pub fn deinit_without_freeing_arena(&mut self) {
+            // A build that stops between `compute_data_for_source_map` and the waits in
+            // `generate_chunks_in_parallel` gets here with those tasks still on the pool,
+            // creating `Worker`s and reading `graph`.
+            self.linker.source_maps.line_offset_wait_group.wait();
+            self.linker.source_maps.quoted_contents_wait_group.wait();
+
             {
-                // We do this first to make it harder for any dangling pointers to data to be used in there.
+                // We do this before the rest to make it harder for any dangling pointers to data to be used in there.
                 let on_parse_finalizers = core::mem::take(&mut self.finalizers);
                 for finalizer in &on_parse_finalizers {
                     finalizer.call();
@@ -5376,6 +5631,7 @@ pub mod bv2_impl {
                 return Err(crate::Error::BuildFailed);
             }
             self.fail_if_no_entry_points()?;
+            self.type_check()?;
 
             self.scan_for_secondary_paths();
 

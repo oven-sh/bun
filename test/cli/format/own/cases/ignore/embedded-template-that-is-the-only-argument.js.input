@@ -1,0 +1,21 @@
+a(
+  // prettier-ignore
+  css`
+    b {   c: d }
+  `,
+);
+a(
+  // e
+  css`
+    b {   c: d }
+  `,
+);
+a(/* prettier-ignore */ css`
+    b {   c: d }
+  `);
+a(
+  // prettier-ignore
+  gql`
+    query {   c }
+  `,
+);

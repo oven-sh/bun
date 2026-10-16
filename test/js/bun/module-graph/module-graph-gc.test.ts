@@ -1,11 +1,12 @@
 // Bun.ModuleGraph and the garbage collector: what keeps a graph (its loader, module
 // records, CommonJS modules and its context) alive, and that nothing else does.
-import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
+import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isArm64, isIntelMacOS, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
+import { collect, heapFromTimer, Lifetimes } from "./module-graph-lifetimes";
 
 const ModuleGraph = Bun.ModuleGraph;
 type Graph = InstanceType<typeof ModuleGraph>;
@@ -38,6 +39,8 @@ const dir = String(
     // What the graph opens reports to, and is stopped through, `control` (a host object in
     // `globals`), so the host can stop it without holding anything of the graph.
     "io.mjs": `
+      import http from "node:http";
+      import https from "node:https";
       export function serve() {
         const server = Bun.serve({ port: 0, fetch: () => new Response("graph " + TAG) });
         control.httpPort = server.port;
@@ -63,143 +66,59 @@ const dir = String(
         const w = new Worker("data:text/javascript,setInterval(() => {}, 1000); postMessage('up')");
         return new Promise(resolve => { w.onmessage = () => resolve(); w.addEventListener("close", () => control.heard.push("worker close")); });
       }
+      // node:http waits for the promise of its native server to emit 'close', and that reaction reaches the server.
+      export function listenWithNode(tls) {
+        const server = tls ? https.createServer(tls, () => {}) : http.createServer(() => {});
+        server.on("close", () => control.heard.push("close"));
+        return new Promise(resolve => server.listen(0, "127.0.0.1", () => { control.httpPort = server.address().port; resolve(); }));
+      }
+      // A stop() that waits for a request nobody answers, with a reaction that reaches the server.
+      export async function stopThatWaitsForARequest() {
+        const asked = Promise.withResolvers();
+        const server = Bun.serve({ port: 0, fetch() { asked.resolve(); return new Promise(() => {}); } });
+        control.httpPort = server.port;
+        fetch("http://127.0.0.1:" + server.port + "/").catch(asked.reject);
+        await asked.promise;
+        server.stop().then(() => control.heard.push("stopped " + server.id));
+      }
+      // An open terminal is a GC root, and its callbacks are the graph's.
+      export function openTerminal() {
+        new Bun.Terminal({ data() { control.heard.push("terminal data"); }, exit() { control.heard.push("terminal exit"); } });
+      }
+      // A rewrite whose <div> is never closed, with an onEndTag() callback that reaches the output Response.
+      export function rewriteThatWaitsForAnEndTag() {
+        let controller;
+        const holder = {};
+        const registered = Promise.withResolvers();
+        holder.response = new HTMLRewriter()
+          .on("div", { element(el) { el.onEndTag(() => void holder.response); registered.resolve(); } })
+          .transform(new Response(new ReadableStream({ start: c => void (controller = c) })));
+        controller.enqueue(new TextEncoder().encode("<div>x"));
+        return registered.promise;
+      }
     `,
   }),
 );
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const file = (name: string) => join(dir, name);
 
-/** A full collection from a timer callback, then a turn for FinalizationRegistry callbacks. Not
- *  from the caller's own continuation: that runs inside a microtask job, which still holds what it
- *  was given (the promise an `await` just resumed from, and through it the module that promise
- *  was fulfilled with). */
-function collect(): Promise<void> {
-  return new Promise(resolve =>
-    setTimeout(() => {
-      Bun.gc(true);
-      setTimeout(resolve, 0);
-    }, 0),
-  );
-}
-
-/** For a failure message: from the debugging heap snapshot, what keeps each live `ModuleGraph` cell
- *  (shortest path from a root), or that nothing in the heap does. */
-function whatRetainsGraphs(): string[] {
-  const snapshot = generateHeapSnapshotForDebugging() as any;
-  const { nodes, edges, roots, nodeClassNames, edgeTypes, edgeNames, labels } = snapshot;
-  const className = new Map<number, string>();
-  for (let i = 0; i < nodes.length; i += 7)
-    className.set(
-      nodes[i],
-      nodeClassNames[nodes[i + 2]] + (labels[nodes[i + 4]] ? "(" + labels[nodes[i + 4]] + ")" : ""),
-    );
-  const incoming = new Map<number, [number, string][]>();
-  for (let i = 0; i < edges.length; i += 4) {
-    const type = edgeTypes[edges[i + 2]];
-    const name = type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : edges[i + 3];
-    let list = incoming.get(edges[i + 1]);
-    if (!list) incoming.set(edges[i + 1], (list = []));
-    list.push([edges[i], type + ":" + name]);
-  }
-  const rootReason = new Map<number, string>();
-  for (let i = 0; i < roots.length; i += 3) rootReason.set(roots[i], String(labels[roots[i + 1]] ?? roots[i + 1]));
-  const report: string[] = [];
-  for (const [id, name] of className) {
-    // A graph (not the constructor or the prototype) is what an overlay's `moduleGraph` variable holds.
-    if (
-      !name.startsWith("ModuleGraph") ||
-      !(incoming.get(id) ?? []).some(([, edge]) => edge === "Variable:moduleGraph")
-    )
-      continue;
-    const from = new Map<number, [number, string] | undefined>([[id, undefined]]);
-    const queue = [id];
-    let root: number | undefined;
-    while (queue.length && root === undefined) {
-      const at = queue.shift()!;
-      if (rootReason.has(at)) root = at;
-      else
-        for (const [parent, edge] of incoming.get(at) ?? [])
-          if (!from.has(parent)) (from.set(parent, [at, edge]), queue.push(parent));
-    }
-    if (root === undefined) {
-      // Unreached from any root, so held from the machine stack or a register, through one of the
-      // cells that lead to it: most likely one nothing in the heap points at.
-      const ancestors = [...from.keys()];
-      const entries = ancestors.filter(cell => !incoming.get(cell)?.length).map(cell => className.get(cell));
-      const classes = [...new Set(ancestors.map(cell => className.get(cell)))];
-      const pointsAt = (cell: number) => {
-        const out: string[] = [];
-        for (let i = 0; i < edges.length; i += 4) {
-          if (edges[i] !== cell) continue;
-          const type = edgeTypes[edges[i + 2]];
-          out.push(
-            (type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : type + edges[i + 3]) +
-              "->" +
-              className.get(edges[i + 1]),
-          );
-        }
-        return out.join(", ");
-      };
-      for (const cell of ancestors.filter(cell => !incoming.get(cell)?.length))
-        report.push(
-          `${name}#${id}: ${className.get(cell)}#${cell}, which nothing in the heap points at, points at: ${pointsAt(cell)}`,
-        );
-      report.push(
-        `${name}#${id}: island of ${ancestors.length} cells (${classes.join(", ")}); nothing in the heap points at: ${entries.join(", ") || "(none: a cycle)"}`,
-      );
-      report.push(
-        `${name}#${id}: no root reaches it; held from ${[...(incoming.get(id) ?? [])].map(([parent, edge]) => className.get(parent) + " " + edge).join(", ") || "nothing"}`,
-      );
-      continue;
-    }
-    const path = [`root(${rootReason.get(root)}) ${className.get(root)}`];
-    for (let at = root, step = from.get(at); step; at = step[0], step = from.get(at))
-      path.push(`-${step[1]}-> ${className.get(step[0])}`);
-    report.push(`${name}#${id}: ${path.join(" ")}`);
-  }
-  return report;
-}
-
-/** Lifetimes by name: `track` an object, then ask which are `gone` or still `alive`. */
-class Lifetimes {
-  #finalized = new Set<string>();
-  #registry = new FinalizationRegistry<string>(name => this.#finalized.add(name));
-  track<T extends object>(name: string, object: T): T {
-    this.#registry.register(object, name);
-    return object;
-  }
-  /** Collects until every name is finalized (bounded); returns the names that still are not. */
-  async stillAlive(...names: string[]): Promise<string[]> {
-    const remaining = () => names.filter(name => !this.#finalized.has(name));
-    for (let i = 0; i < 100 && remaining().length; i++) {
-      await collect();
-    }
-    if (!remaining().length) return [];
-    // Say what keeps them, not just that something does: a heap snapshot taken while they are retained.
-    return [...remaining(), ...whatRetainsGraphs()];
-  }
-  /** Collects a few times; whether `name` survived all of them. */
-  async survives(name: string): Promise<boolean> {
-    for (let i = 0; i < 5; i++) {
-      await collect();
-    }
-    return !this.#finalized.has(name);
-  }
-}
-
 const count = (type: string) => heapStats().objectTypeCounts[type] ?? 0;
-/** Collects until the count of each type is at most its limit (bounded); returns the counts. */
+/** Collects until the count of each type is at most its limit (bounded); returns the counts. When
+ *  the collector's own counts stay above a limit, what counts is the cells a root reaches. The
+ *  limits come from the collector's counts (a snapshot per baseline is too slow on a debug build),
+ *  which can only be higher than what a root reached then. */
 async function settle(limits: Record<string, number>): Promise<Record<string, number>> {
+  const types = Object.keys(limits);
   const counts = () => {
     const all = heapStats().objectTypeCounts;
-    return Object.fromEntries(Object.keys(limits).map(type => [type, all[type] ?? 0]));
+    return Object.fromEntries(types.map(type => [type, all[type] ?? 0]));
   };
   let now = counts();
-  for (let i = 0; i < 100 && Object.keys(limits).some(type => now[type] > limits[type]); i++) {
+  for (let i = 0; i < 100 && types.some(type => now[type] > limits[type]); i++) {
     await collect();
     now = counts();
   }
-  return now;
+  return types.some(type => now[type] > limits[type]) ? (await heapFromTimer()).counts(types) : now;
 }
 /** The counts after what is already garbage has been collected. */
 async function baselineOf(...types: string[]): Promise<Record<string, number>> {
@@ -318,7 +237,8 @@ describe("ModuleGraph GC: what a graph's code made keeps the graph alive, and on
       })();
       // Plain data the module made does not reference its module; everything else does.
       const keepsAlive = what !== "an object created by the graph's module";
-      expect(await lifetimes.survives("graph")).toBe(keepsAlive);
+      if (keepsAlive) expect(await lifetimes.survives("graph")).toBe(true);
+      else expect(await lifetimes.stillAlive("graph")).toEqual([]);
       expect(typeof box.held).toMatch(/object|function/);
       box.held = undefined;
       expect(await lifetimes.stillAlive("graph")).toEqual([]);
@@ -448,10 +368,7 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     expect(await accepts(state.httpPort)).toBe(false);
   });
 
-  // TODO: fails on every build on the macOS x64 CI lane and nowhere else. Its own heap snapshot there shows the
-  // graph's cycle (the Timeout, its callback, tick's closure, the module records) with nothing in the heap and no
-  // root reaching it. What holds it is not established: that needs a debugger on that platform.
-  test.todoIf(isIntelMacOS)("a repeating timer keeps its graph alive; clearing it lets the graph go", async () => {
+  test("a repeating timer keeps its graph alive; clearing it lets the graph go", async () => {
     const lifetimes = new Lifetimes();
     const state = control();
     await (async () => {
@@ -485,6 +402,52 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
       jest.useRealTimers();
     }
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
+  });
+
+  // The callback was a GC root until its end tag came, and it reached its own rewrite through the Response.
+  test("an HTMLRewriter rewrite that waits for an end tag when its graph is disposed goes with the graph", async () => {
+    const lifetimes = new Lifetimes();
+    await (async () => {
+      const graph = lifetimes.track("graph", new ModuleGraph());
+      const io = await graph.import(file("io.mjs"));
+      await graph.run(() => io.rewriteThatWaitsForAnEndTag());
+      graph.dispose();
+    })();
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+  });
+
+  // Nothing settles the promise that tells a server is closed once its graph is disposed, and its reactions reach the server.
+  for (const [what, open] of [
+    ["node:http server that is listening", io => io.listenWithNode()],
+    ["node:https server that is listening", io => io.listenWithNode(tls)],
+    ["Bun.serve() server whose stop() is waited for", io => io.stopThatWaitsForARequest()],
+  ] as [string, (io: any) => Promise<void>][]) {
+    test(`a ${what} when its graph is disposed goes with the graph`, async () => {
+      const lifetimes = new Lifetimes();
+      const state = control();
+      await (async () => {
+        const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+        const io = await graph.import(file("io.mjs"));
+        await graph.run(() => open(io));
+        graph.dispose();
+      })();
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+      expect(state.heard).toEqual([]);
+      expect(await accepts(state.httpPort)).toBe(false);
+    });
+  }
+
+  test("a Bun.Terminal that is open when its graph is disposed goes with the graph", async () => {
+    const lifetimes = new Lifetimes();
+    const state = control();
+    await (async () => {
+      const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+      const io = await graph.import(file("io.mjs"));
+      graph.run(() => io.openTerminal());
+      graph.dispose();
+    })();
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    expect(state.heard).toEqual([]);
   });
 
   // The tick's promise is the host's to settle: the job is still there when it does, and gone afterwards.
@@ -612,26 +575,21 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
 // node:fs remembers every open FileHandle for the life of the realm, to close the ones nobody
 // did: what it remembers of one must not hold the graph whose module holds the handle.
 describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () => {
-  // TODO: fails on every build on the three Linux aarch64 CI lanes and nowhere else (it passes on the CI's own
-  // Linux aarch64 build under emulation, and on macOS arm64). What holds the graph there is not established: the
-  // fixture is a child process and prints no heap snapshot.
-  test.todoIf(isLinux && isArm64)("a dropped graph whose module keeps a FileHandle open is collected", async () => {
+  // A child process: node:fs reports the handle nobody closed as an uncaught exception.
+  test("a dropped graph whose module keeps a FileHandle open is collected", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-          // (node:fs reports the handle nobody closed; whoever that reaches, it is not the point here.)
+          import { Lifetimes } from ${JSON.stringify(join(import.meta.dir, "module-graph-lifetimes.ts"))};
           process.on("uncaughtException", () => {});
-          let collected = false;
-          const registry = new FinalizationRegistry(() => { collected = true; });
+          const lifetimes = new Lifetimes();
           await (async () => {
-            const graph = new Bun.ModuleGraph({ onError() {} });
-            registry.register(graph, "graph");
+            const graph = lifetimes.track("graph", new Bun.ModuleGraph({ onError() {} }));
             await graph.import(${JSON.stringify(join(dir, "keeps-a-file-handle.mjs"))});
           })();
-          for (let i = 0; i < 200 && !collected; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }
-          console.log(JSON.stringify({ collected }));
+          console.log(JSON.stringify(await lifetimes.stillAlive("graph")));
           process.exit(0);
           `,
       ],
@@ -640,7 +598,7 @@ describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () =
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe(`{"collected":true}`);
+    expect(JSON.parse(stdout)).toEqual([]);
     expect(exitCode).toBe(0);
   });
 });
@@ -675,3 +633,41 @@ test("ModuleGraph GC: survives collecting continuously", async () => {
   expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+// The period puts a collection in the middle of the signal's abort steps, whatever came before.
+test.concurrent.each([2, 3, 4])(
+  "ModuleGraph GC: aborting a signal whose fetch responses are garbage, collecting every %i slow allocations",
+  async period => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        const graph = new Bun.ModuleGraph(), other = new Bun.ModuleGraph();
+        const controller = new AbortController();
+        const signal = AbortSignal.any([controller.signal]);
+        const held = { responses: [] };
+        await (async () => {
+          for (let i = 0; i < 1000; i += 50) {
+            const batch = await graph.run(() => Promise.all(Array.from({ length: 50 }, () => fetch(server.url, { signal }))));
+            for (const response of batch) await response.text();
+            held.responses.push(...batch);
+          }
+        })();
+        // Runs between the controller's signal's abort steps and the dependent signal's.
+        controller.signal.addEventListener("abort", () => { held.responses = undefined; });
+        other.run(() => controller.abort());
+        console.log("ok");
+        `,
+      ],
+      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: String(period) },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);

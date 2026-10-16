@@ -3145,7 +3145,8 @@ fn transpile_source_code_of_any_provenance(
                             path.text,
                             None,
                         )
-                    };
+                    }
+                    .map_err(|_| global_object.throw_string_too_long())?;
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     resolved_source.module_info = module_info;
                     resolved_source.bytecode_cache = node_compile_cache_blob.unwrap_or_default();

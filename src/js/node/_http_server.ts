@@ -3980,7 +3980,8 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
   }
   if ($isCallable(callback)) {
     if (result < 0) this[kPendingCallbacks].push(callback);
-    else process.nextTick(callback);
+    // Socket already gone: like Node's _writeRaw(), the write is dropped and its callback never runs: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L400-L406
+    else if (!(handle.flags & NodeHTTPResponseFlags.closed_or_completed)) process.nextTick(callback);
   }
 };
 

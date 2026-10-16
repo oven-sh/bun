@@ -1480,6 +1480,22 @@ describe("backpressure", () => {
         },
       );
 
+      // Node drops a raw write to a destroyed socket, and its callback with it:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L400-L406
+      it("the callback of res._send() to a response whose socket is destroyed never runs", async () => {
+        const seen = Promise.withResolvers<number>();
+        await using server = createServer(false, (req, res) => {
+          let called = 0;
+          req.socket.destroy();
+          // @ts-ignore _send() is not in the types
+          res._send("x", "latin1", () => called++);
+          res.on("close", () => setImmediate(() => seen.resolve(called)));
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        using client = pausedClient((server.address() as AddressInfo).port, single);
+        expect(await seen.promise).toBe(0);
+      });
+
       // The constructor of a response class runs before the server knows that
       // the response has to wait.
       it("a response class whose constructor runs behind an unfinished response counts none of its bytes", async () => {
@@ -1622,9 +1638,10 @@ describe("backpressure", () => {
             (server.address() as AddressInfo).port,
             `${method} / HTTP/1.1\r\nHost: localhost\r\n\r\n`,
           );
-          // Node.js returns false for the GET request up to 26.8, and true from 26.9 on.
+          // Node.js returns false for the GET request up to 26.8, and true from 26.9 on. Bun returns false.
           const [major, minor] = process.versions.node.split(".").map(Number);
-          const returned = method === "HEAD" || major > 26 || (major === 26 && minor >= 9);
+          const nodeReturnsTrue = !process.versions.bun && (major > 26 || (major === 26 && minor >= 9));
+          const returned = method === "HEAD" || nodeReturnsTrue;
           expect(await seen.promise).toEqual({ returned, writableNeedDrain: !returned, drains: 0 });
         },
       );
@@ -3101,9 +3118,9 @@ describe("backpressure", () => {
       const client = await connection.connect();
       try {
         client.write(singlePair);
-        // Node.js returns false up to 26.8, and true from 26.9 on.
+        // Node.js returns false up to 26.8, and true from 26.9 on. Bun returns false.
         const [major, minor] = process.versions.node.split(".").map(Number);
-        const returned = major > 26 || (major === 26 && minor >= 9);
+        const returned = !process.versions.bun && (major > 26 || (major === 26 && minor >= 9));
         expect(await seen.promise).toEqual({ returned, writableNeedDrain: !returned });
       } finally {
         client.destroy();

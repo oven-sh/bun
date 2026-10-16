@@ -2,6 +2,7 @@ use crate::css_parser as css;
 
 use css::css_rules::media::MediaRule;
 
+use crate::generics::DeepClone;
 use css::css_properties::custom::UnparsedProperty;
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 
@@ -307,6 +308,41 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 
+    /// An `@supports` rule is printed after the style rule. Where an earlier declaration of the property is in one, this declaration must follow it there, or the earlier one wins.
+    fn follow_earlier_declarations(
+        &mut self,
+        bump: &bun_alloc::Arena,
+        unparsed: &UnparsedProperty,
+        fallbacks: &[(css::SupportsCondition, css::TokenList)],
+    ) {
+        if self.supports.is_empty() {
+            return;
+        }
+        // A relative color takes no fallback of its own, so it follows every earlier declaration: one of them can be a shorthand or a longhand of its property.
+        let follows_all = unparsed.value.has_relative_color();
+        let is_important = self.is_important;
+        for entry in self.supports.iter_mut() {
+            if fallbacks.iter().any(|f| f.0.eql(&entry.condition)) {
+                continue;
+            }
+            let declarations = if is_important {
+                &mut entry.important_declarations
+            } else {
+                &mut entry.declarations
+            };
+            if follows_all
+                || declarations
+                    .iter()
+                    .any(|d| d.property_id() == unparsed.property_id)
+            {
+                declarations.push(css::Property::Unparsed(UnparsedProperty {
+                    property_id: unparsed.property_id,
+                    value: unparsed.value.deep_clone(bump),
+                }));
+            }
+        }
+    }
+
     pub(crate) fn add_unparsed_fallbacks(
         &mut self,
         bump: &bun_alloc::Arena,
@@ -321,7 +357,9 @@ impl<'a> PropertyHandlerContext<'a> {
         let fallbacks = unparsed.value.get_fallbacks(bump, &self.targets);
         // `SmallList`
         // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
-        for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {
+        let fallbacks = fallbacks.to_owned_slice().into_vec();
+        self.follow_earlier_declarations(bump, unparsed, &fallbacks);
+        for condition_and_fallback in fallbacks {
             self.add_conditional_property(
                 condition_and_fallback.0,
                 css::Property::Unparsed(UnparsedProperty {

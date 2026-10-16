@@ -823,6 +823,19 @@ impl TokenList {
         res
     }
 
+    /// Whether a relative color is in the list, at any depth.
+    pub(crate) fn has_relative_color(&self) -> bool {
+        self.v.iter().any(|token| match token {
+            TokenOrValue::Function(f) => f.is_relative_color() || f.arguments.has_relative_color(),
+            TokenOrValue::Var(v) => v.fallback.as_ref().is_some_and(Self::has_relative_color),
+            TokenOrValue::Env(v) => v.fallback.as_ref().is_some_and(Self::has_relative_color),
+            TokenOrValue::UnresolvedColor(UnresolvedColor::LightDark { light, dark }) => {
+                light.has_relative_color() || dark.has_relative_color()
+            }
+            _ => false,
+        })
+    }
+
     pub(crate) fn get_necessary_fallbacks(
         &self,
         targets: &css::targets::Targets,
@@ -834,7 +847,7 @@ impl TokenList {
                     fallbacks.insert(color.get_possible_fallbacks(targets));
                 }
                 TokenOrValue::Function(f) => {
-                    fallbacks.insert(f.arguments.get_necessary_fallbacks(targets));
+                    fallbacks.insert(f.get_necessary_fallbacks(targets));
                 }
                 TokenOrValue::Var(v) => {
                     if let Some(fallback) = &v.fallback {
@@ -1364,7 +1377,27 @@ impl Function {
 
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
+    /// Whether this is a relative color, as `rgb(from …)`. A browser that reads one reads every color space.
+    fn is_relative_color(&self) -> bool {
+        const NAMES: &[&[u8]] = &[
+            b"rgb", b"rgba", b"hsl", b"hsla", b"hwb", b"lab", b"lch", b"oklab", b"oklch", b"color",
+        ];
+        let first = self.arguments.v.iter().find(|token| !token.is_whitespace());
+        matches!(first, Some(TokenOrValue::Token(Token::Ident(ident))) if strings::eql_case_insensitive_ascii(ident, b"from", true))
+            && strings::eql_any_case_insensitive_ascii(self.name.v(), NAMES)
+    }
+
+    fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
+        if self.is_relative_color() {
+            return ColorFallbackKind::empty();
+        }
+        self.arguments.get_necessary_fallbacks(targets)
+    }
+
     fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+        if self.is_relative_color() {
+            return self.deep_clone(bump);
+        }
         Function {
             name: self.name,
             arguments: self.arguments.get_fallback(bump, kind),

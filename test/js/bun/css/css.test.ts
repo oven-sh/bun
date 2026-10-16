@@ -8038,19 +8038,12 @@ describe("css tests", () => {
       ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b / var(--a)) }",
       ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b/var(--a))}",
     );
-    // Under targets without lab(), the origin literal gets the fallback tiers any unresolved
-    // value containing it gets; the relative color itself is still left alone in each tier.
+    // Under targets without lab(), the declaration is the same: a relative color takes no color fallback.
     prefix_test(
       ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b) }",
       indoc`
         .foo {
-          color: rgb(from #fff r g b);
-        }
-
-        @supports (color: lab(0% 0 0)) {
-          .foo {
-            color: rgb(from lab(100% 104.3 -50.9) r g b);
-          }
+          color: rgb(from lab(100% 104.3 -50.9) r g b);
         }
       `,
       {
@@ -8449,16 +8442,75 @@ describe("css tests", () => {
             print(".a { color: rgb(from #336699 r g b / calc(alpha * var(--o))); }"),
             print(".a { color: hsl(from #336699 h s l / calc(alpha * var(--o))); }"),
             print(".a { color: rgb(from light-dark(#336699, #996633) r g b / calc(alpha * var(--o))); }"),
-            // An origin outside sRGB gets the fallback of any color in an unparsed value.
+            // An origin outside sRGB stays as written too, with no color fallback.
             print(".a { color: rgb(from lab(40% 56.6 39) r g b / calc(alpha * var(--o))); }"),
           ]).toEqual([
             ".a {\n  color: rgb(from #369 r g b / calc(alpha * var(--o)));\n}\n",
             ".a {\n  color: hsl(from #369 h s l / calc(alpha * var(--o)));\n}\n",
             ".a {\n  color: rgb(from var(--buncss-light, #369) var(--buncss-dark, #963) r g b / calc(alpha * var(--o)));\n}\n",
-            ".a {\n  color: rgb(from #b32323 r g b / calc(alpha * var(--o)));\n}\n\n@supports (color: lab(0% 0 0)) {\n  .a {\n    color: rgb(from lab(40% 56.6 39) r g b / calc(alpha * var(--o)));\n  }\n}\n",
+            ".a {\n  color: rgb(from lab(40% 56.6 39) r g b / calc(alpha * var(--o)));\n}\n",
           ]);
         });
       }
+    });
+
+    // A browser that reads a relative color reads every color space. A fallback would change
+    // the origin, and its `@supports` rule would win over a declaration that comes later.
+    describe("relative color that stays as tokens takes no color fallback", () => {
+      const print = (css: string) => cssInternals.minifyTest(css, "", { chrome: 90 << 16 });
+      const asWritten = [
+        ".a{color:oklch(from color(display-p3 0 1 0) l c var(--h))}",
+        ".a{color:OKLCH(FROM color(display-p3 0 1 0) l c var(--h))}",
+        ".a{color:lab(from lab(40% 56.6 39) l a var(--b))}",
+        ".a{color:color(from color(display-p3 0 1 0) srgb r g var(--b))}",
+        ".a{color:var(--x,oklch(from color(display-p3 0 1 0) l c var(--h)))}",
+      ];
+      for (const css of asWritten) {
+        test(css, () => {
+          expect(print(css)).toBe(css);
+        });
+      }
+
+      test("a later declaration wins", () => {
+        expect(print(".a{color:oklch(from color(display-p3 0 1 0) l c var(--h));color:var(--c)}")).toBe(
+          ".a{color:var(--c)}",
+        );
+      });
+
+      // The `@supports` rule of an earlier declaration comes after the style rule. The later declaration follows it there.
+      test("an earlier declaration with a fallback does not win", () => {
+        expect([
+          print(".a{color:var(--c,lab(60% 10 10));color:oklch(from color(display-p3 0 1 0) l c var(--h))}"),
+          print(".a{color:var(--c,lab(60% 10 10));color:var(--x)}"),
+          print(".a{color:var(--c,lab(60% 10 10))!important;color:var(--x)}"),
+          // A relative color follows a declaration of another property too: `border` sets `border-color`.
+          print(
+            ".a{border:1px solid var(--b,lab(60% 10 10));border-color:oklch(from color(display-p3 0 1 0) l c var(--h))}",
+          ),
+          // The declaration that follows is the one of the style rule, which every browser reads.
+          print(".a{color:var(--x,color(display-p3 1 0 0));color:var(--y,lab(20% 10 10))}"),
+        ]).toEqual([
+          ".a{color:oklch(from color(display-p3 0 1 0) l c var(--h))}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10));color:oklch(from color(display-p3 0 1 0) l c var(--h))}}",
+          ".a{color:var(--x)}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10));color:var(--x)}}",
+          ".a{color:var(--x);color:var(--c,#a78a7f)!important}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10))!important}}",
+          ".a{border:1px solid var(--b,#a78a7f);border-color:oklch(from color(display-p3 0 1 0) l c var(--h))}@supports (color:lab(0% 0 0)){.a{border:1px solid var(--b,lab(60% 10 10));border-color:oklch(from color(display-p3 0 1 0) l c var(--h))}}",
+          ".a{color:var(--y,#412b22)}@supports (color:color(display-p3 0 0 0)){.a{color:var(--x,color(display-p3 1 0 0));color:var(--y,#412b22)}}@supports (color:lab(0% 0 0)){.a{color:var(--y,lab(20% 10 10))}}",
+        ]);
+      });
+
+      test("other colors and other functions take their fallback as before", () => {
+        expect([
+          print(
+            ".a{background:linear-gradient(oklch(from color(display-p3 1 0 0) l c var(--h)),color(display-p3 0 1 0))}",
+          ),
+          print(".a{color:color-mix(in srgb,color(display-p3 0 1 0),var(--x))}"),
+          print(".a{color:f(from color(display-p3 0 1 0))}"),
+        ]).toEqual([
+          ".a{background:linear-gradient(oklch(from color(display-p3 1 0 0) l c var(--h)),#00f942)}@supports (color:color(display-p3 0 0 0)){.a{background:linear-gradient(oklch(from color(display-p3 1 0 0) l c var(--h)),color(display-p3 0 1 0))}}",
+          ".a{color:color-mix(in srgb,#00f942,var(--x))}@supports (color:color(display-p3 0 0 0)){.a{color:color-mix(in srgb,color(display-p3 0 1 0),var(--x))}}",
+          ".a{color:f(from #00f942)}@supports (color:color(display-p3 0 0 0)){.a{color:f(from color(display-p3 0 1 0))}}",
+        ]);
+      });
     });
 
     // A value that is kept as tokens is printed token by token. Two tokens that

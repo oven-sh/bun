@@ -925,13 +925,22 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
     let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
 
+    let mut longest_source_text: usize = 0;
+    let mut every_source_has_text = !sources_paths.items().is_empty();
+
     // `Vec<Box<[u8]>>` drops automatically on error.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
         let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items().len());
-        for item in sources_paths.items() {
+        for (item, content) in sources_paths.items().iter().zip(sources_content.items()) {
             let Some(s) = item.as_str() else {
                 return Err(crate::Error::InvalidSourceMap);
             };
+            match content.as_str() {
+                Some(text) if !text.is_empty() => {
+                    longest_source_text = longest_source_text.max(text.len());
+                }
+                _ => every_source_has_text = false,
+            }
             v.push(Box::<[u8]>::from(s));
         }
         Some(v)
@@ -944,7 +953,6 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
             mappings_vlq,
             None,
             i32::MAX,
-            i32::MAX as usize,
             mapping::ParseOptions {
                 allow_names: matches!(
                     hint,
@@ -993,6 +1001,8 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
 
         let mut psm = map_data;
         psm.external_source_names = source_paths_slice.unwrap();
+        psm.longest_source_text =
+            every_source_has_text.then(|| u32::try_from(longest_source_text).unwrap_or(u32::MAX));
         // ParsedSourceMap is `Arc`-managed in the Rust port; the embedded
         // `ref_count` field is layout parity only and FFI ref/deref routes
         // through `Arc::{increment,decrement}_strong_count` (see

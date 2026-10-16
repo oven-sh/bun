@@ -425,14 +425,10 @@ fn print_js<'a>(
                 None => (line, col),
             }
         };
-        let printed_lines = printed
-            .as_ref()
-            .map_or_else(|| bun_core::strings::count_char(&text, b'\n') + 1, Vec::len);
         if let Ok(parsed) = bun_sourcemap::mapping::parse(
             chunk.buffer.list.as_slice(),
             None,
             1,
-            printed_lines,
             bun_sourcemap::mapping::ParseOptions {
                 allow_names: false,
                 sort: true,

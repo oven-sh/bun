@@ -145,7 +145,6 @@ impl JSSourceMap {
             mappings_str.slice(),
             None,                                            // estimated_mapping_count
             i32::try_from(sources.len()).expect("int cast"), // sources_count
-            i32::MAX as usize,
             mapping::ParseOptions {
                 allow_names: true,
                 sort: true,

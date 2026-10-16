@@ -203,6 +203,7 @@ impl InstallResult {
 pub enum Step {
     OpeningCacheDir,
     OpeningDestDir,
+    RemovingOldDir,
     CopyingFiles,
     LinkingDependency,
 }
@@ -214,6 +215,7 @@ impl Step {
             Step::CopyingFiles => b"copying files from cache to destination",
             Step::OpeningCacheDir => b"opening cache/package/version dir",
             Step::OpeningDestDir => b"opening node_modules/package dir",
+            Step::RemovingOldDir => b"removing the old node_modules/package dir",
             Step::LinkingDependency => b"linking dependency/workspace to node_modules",
         }
     }
@@ -1082,7 +1084,15 @@ impl LinkBatch {
         let old = if job.skip_delete {
             None
         } else {
-            move_aside(tree_dir, &job.destination_dir_subpath, job.random)
+            match move_aside(tree_dir, &job.destination_dir_subpath, job.random) {
+                Ok(old) => old,
+                Err(err) => {
+                    let _ = job
+                        .result
+                        .set(InstallResult::fail(err.into(), Step::RemovingOldDir));
+                    return;
+                }
+            }
         };
         let result = PackageFiles {
             cache_dir: job.cache_dir,
@@ -2108,11 +2118,16 @@ impl PackageFiles<'_> {
 pub(crate) const MOVED_ASIDE_PREFIX: &str = ".old-";
 
 /// Renames `subpath`, if it is there, to a name in `destination_dir` made of `random`. On any thread.
+///
+/// `Ok(Some(name))` is the new name. `Ok(None)`: `subpath` is gone, or it is a directory that cannot
+/// be renamed (a mount point, overlayfs, an open file in it on Windows) and is empty now. `Err`: a
+/// file in it could not be deleted. What can be deleted is gone, so that the tree no longer passes
+/// `verify`: the new files must never join the old ones.
 pub(crate) fn move_aside(
     destination_dir: &Dir,
     subpath: &ZStr,
     random: u64,
-) -> Option<bun_core::ZBox> {
+) -> sys::Maybe<Option<bun_core::ZBox>> {
     let old = bun_core::ZBox::from_vec(
         format!(
             "{MOVED_ASIDE_PREFIX}{}",
@@ -2121,32 +2136,44 @@ pub(crate) fn move_aside(
         .into_bytes(),
     );
     match sys::renameat(destination_dir.fd(), subpath, destination_dir.fd(), &old) {
-        Ok(()) => Some(old),
-        // overlayfs moves no directory of a lower layer. The new files must not join the old ones.
-        Err(err) if err.get_errno() == sys::E::EXDEV => {
-            let _ = destination_dir.delete_tree(subpath.as_bytes());
-            None
+        Ok(()) => Ok(Some(old)),
+        Err(err) if err.get_errno() == sys::E::ENOENT => Ok(None),
+        Err(_) => {
+            // Emptied through a handle: `delete_tree` stops at the first entry it cannot delete.
+            let Ok(dir) = destination_dir.open_at_with(
+                subpath.as_bytes(),
+                sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NOFOLLOW,
+            ) else {
+                return destination_dir
+                    .delete_tree(subpath.as_bytes())
+                    .map(|()| None);
+            };
+            let emptied = dir.delete_children();
+            dir.close();
+            // A mount point stays, and the files go into it.
+            let _ = sys::rmdirat(destination_dir.fd(), subpath);
+            emptied.map(|()| None)
         }
-        // It is not there, or it stays: what is in a mount point (EBUSY) is not bun's to delete.
-        Err(_) => None,
     }
 }
 
 impl<'a> PackageInstall<'a> {
-    pub(crate) fn uninstall_before_install(&self, destination_dir: &Dir) {
+    /// `Err`: part of the old copy is still there. See `move_aside`.
+    pub(crate) fn uninstall_before_install(&self, destination_dir: &Dir) -> sys::Maybe<()> {
         let Some(temp_path) = move_aside(
             destination_dir,
             self.destination_dir_subpath,
             bun_core::fast_random(),
-        ) else {
-            return;
+        )?
+        else {
+            return Ok(());
         };
         // What is scheduled on a pool whose first worker the OS refuses never runs.
         let pool = &PackageManager::get().thread_pool;
         pool.warm(1);
         if !pool.has_workers() {
             let _ = destination_dir.delete_tree(temp_path.as_bytes());
-            return;
+            return Ok(());
         }
         // A large tree takes a while to delete. Under its random name another thread can do that.
         let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
@@ -2174,6 +2201,7 @@ impl<'a> PackageInstall<'a> {
         pool.schedule(Batch::from(unsafe {
             core::ptr::addr_of_mut!((*task).task)
         }));
+        Ok(())
     }
 
     fn is_dangling_symlink(path: &ZStr) -> bool {
@@ -2190,10 +2218,11 @@ impl<'a> PackageInstall<'a> {
         destination_dir: &Dir,
     ) -> InstallResult {
         let dest_path = self.destination_dir_subpath;
-        // If this fails, we don't care.
-        // we'll catch it the next error
-        if !skip_delete && dest_path.as_bytes() != b"." {
-            self.uninstall_before_install(destination_dir);
+        if !skip_delete
+            && dest_path.as_bytes() != b"."
+            && let Err(err) = self.uninstall_before_install(destination_dir)
+        {
+            return InstallResult::fail(err.into(), Step::RemovingOldDir);
         }
 
         // `None` when there is no directory component.
@@ -2457,10 +2486,11 @@ impl<'a> PackageInstall<'a> {
         method_: Method,
         resolution_tag: resolution::Tag,
     ) -> InstallResult {
-        // If this fails, we don't care.
-        // we'll catch it the next error
-        if !skip_delete && self.destination_dir_subpath.as_bytes() != b"." {
-            self.uninstall_before_install(destination_dir);
+        if !skip_delete
+            && self.destination_dir_subpath.as_bytes() != b"."
+            && let Err(err) = self.uninstall_before_install(destination_dir)
+        {
+            return InstallResult::fail(err.into(), Step::RemovingOldDir);
         }
 
         PackageFiles {

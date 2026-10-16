@@ -1114,7 +1114,7 @@ snapshots:
 
       const { stderr, exitCode } = await migrate(packageDir);
 
-      expect(stderr).not.toContain("is not in patchedDependencies");
+      expect(stderr).not.toContain("not in patchedDependencies");
       expect(stderr).toContain("copied pnpm.patchedDependencies to patchedDependencies in package.json");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
@@ -1202,7 +1202,7 @@ snapshots:
 
       const { stderr, exitCode } = await migrate(packageDir);
 
-      expect(stderr).not.toContain("is not in patchedDependencies");
+      expect(stderr).not.toContain("not in patchedDependencies");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
@@ -1270,7 +1270,7 @@ snapshots:
 
       const { stderr, exitCode } = await migrate(packageDir);
 
-      expect(stderr).not.toContain("is not in patchedDependencies");
+      expect(stderr).not.toContain("not in patchedDependencies");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 

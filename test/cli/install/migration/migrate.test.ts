@@ -2909,7 +2909,7 @@ describe("package-lock.json migration fixes", () => {
       });
 
       const { stderr, lock } = await migrate(String(dir));
-      expect(stderr).not.toContain("skipped");
+      expect(stderr).not.toContain("skipping");
       expect(lock.packages["no-deps"][0]).toBe("no-deps@no-deps-1.0.0.tgz");
     });
   });

@@ -1147,7 +1147,7 @@ describe.concurrent("directories named by config files", () => {
 
       const { stderr, exitCode } = await run(root, ["add", "-g", join(root, "dep")], noDirs);
       expect(stderr).not.toContain("error:");
-      expect(stderr).not.toContain("is ignored");
+      expect(stderr).not.toContain("ignoring");
       await expectVictimUntouched(root);
       expect(existsSync(join(root, "home", ".bun", "install", "global", "node_modules", "dep", "package.json"))).toBe(
         true,

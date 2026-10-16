@@ -140,6 +140,16 @@ async function assertLastInsertRowidIsExact(options: Bun.SQL.Options) {
     expect(next.lastInsertRowid).toBe(wide(first + 2n));
     expect([...(await sql`SELECT name FROM ${sql(a)} WHERE id = ${next.lastInsertRowid}`)]).toEqual([{ name: "a3" }]);
 
+    // The server sends the key unsigned. A negative key in a signed column
+    // reads back as that key plus 2^64.
+    const signed = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    await sql.unsafe(`CREATE TEMPORARY TABLE \`${signed}\` (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, name text)`);
+    const negative = [
+      await sql.unsafe(`INSERT INTO \`${signed}\` (id, name) VALUES (-5, 'x')`).simple(),
+      await sql`INSERT INTO ${sql(signed)} (id, name) VALUES (${-6}, ${"x"})`,
+    ];
+    expect(negative.map(result => result.lastInsertRowid)).toEqual([wide(2n ** 64n - 5n), wide(2n ** 64n - 6n)]);
+
     // A statement that inserts nothing reports the number 0.
     const rows = await sql`SELECT 1 AS x`;
     expect({ lastInsertRowid: rows.lastInsertRowid, affectedRows: rows.affectedRows }).toEqual({

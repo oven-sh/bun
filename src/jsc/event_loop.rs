@@ -580,8 +580,7 @@ impl EventLoop {
         let _ = self.tick_concurrent_with_count();
     }
 
-    /// Whether a keep-alive delta (`ref_keep_alive`, here or through a
-    /// `VmHandle`) has been queued but not yet applied to the loop's `active` count.
+    /// Whether a keep-alive that another thread queued is not in the loop's `active` count yet.
     pub fn has_pending_refs(&self) -> bool {
         self.concurrent_ref.load(Ordering::SeqCst) > 0
             || self
@@ -595,6 +594,16 @@ impl EventLoop {
             || self
                 .macro_loop_if_not_running()
                 .is_some_and(|m| !m.concurrent_tasks.is_empty())
+    }
+
+    /// JS thread: a queued task holds the loop (`VmHandle::post_holding_loop`). Walks the queue.
+    pub(crate) fn has_held_concurrent_tasks(&self) -> bool {
+        // SAFETY: `any` passes a queued node, whose poster wrote `holds_loop` before the push.
+        let held = |task: NonNull<ConcurrentTaskItem>| unsafe { (*task.as_ptr()).holds_loop };
+        self.concurrent_tasks.any(held)
+            || self
+                .macro_loop_if_not_running()
+                .is_some_and(|m| m.concurrent_tasks.any(held))
     }
 
     pub fn run_imminent_gc_timer(&mut self) {
@@ -694,18 +703,13 @@ impl EventLoop {
         }
     }
 
-    /// Fold refs/unrefs queued through `ref_keep_alive`/`unref_keep_alive`
-    /// (here, or from another thread through `VmHandle`) into this loop's
-    /// keep-alive count. Runs at the top of every tick, and once more from a
-    /// worker's shutdown after its stop phase (which unrefs
-    /// ports/channels/sockets on a loop that no longer ticks) so the loop is not
-    /// torn down still believing something keeps it alive.
-    ///
-    /// Targets `self.native_loop()`, never `vm.event_loop_handle`: on Windows
-    /// `Bun.spawnSync` points the latter at its private loop, and a GC inside it
-    /// still refs this loop (FinalizationRegistry, MessagePort).
+    /// Fold the keep-alive deltas that other threads queued. Every tick and a worker's shutdown do.
     pub(crate) fn apply_concurrent_ref_delta(&self) {
-        let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
+        self.add_keep_alive(self.concurrent_ref.swap(0, Ordering::SeqCst));
+    }
+
+    /// JS thread. Not `vm.event_loop_handle`: Windows `Bun.spawnSync` points that at its own loop.
+    fn add_keep_alive(&self, delta: i32) {
         // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread only.
         let loop_ = unsafe { &mut *self.native_loop() };
         #[cfg(windows)]
@@ -1187,19 +1191,14 @@ impl EventLoop {
         }
     }
 
-    /// JS thread: count one more thing keeping this loop alive (the same
-    /// counter a `VmHandle::ref_keep_alive` from another thread adjusts).
+    /// JS thread: one more thing keeps this loop alive. Does not fold what other threads queued.
     pub fn ref_keep_alive(&self) {
-        let _ = self.concurrent_ref.fetch_add(1, Ordering::SeqCst);
-        // Fold now: JS between the last tick and the poll (an immediate, a
-        // promise reaction) must not leave the loop's active count stale.
-        self.apply_concurrent_ref_delta();
+        self.add_keep_alive(1);
     }
 
     /// JS thread: balance a [`Self::ref_keep_alive`].
     pub fn unref_keep_alive(&self) {
-        let _ = self.concurrent_ref.fetch_sub(1, Ordering::SeqCst);
-        self.apply_concurrent_ref_delta();
+        self.add_keep_alive(-1);
     }
 
     // ──────────── private helpers ────────────

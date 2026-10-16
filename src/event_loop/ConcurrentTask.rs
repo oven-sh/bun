@@ -284,6 +284,8 @@ pub struct ConcurrentTask {
     /// dispatch. Immutable after construction; read only on the consumer thread,
     /// so it does not need to share a word with the contended `next` link.
     pub auto_delete: bool,
+    /// Holds the loop it is queued on until the loop takes it (`VmHandle::post_holding_loop`).
+    pub holds_loop: bool,
 }
 
 impl Default for ConcurrentTask {
@@ -294,6 +296,7 @@ impl Default for ConcurrentTask {
             task: unsafe { bun_core::ffi::zeroed_unchecked() },
             next: Link::new(),
             auto_delete: false,
+            holds_loop: false,
         }
     }
 }
@@ -309,7 +312,7 @@ impl Default for ConcurrentTask {
 const _: () = assert!(
     core::mem::size_of::<ConcurrentTask>()
         == core::mem::size_of::<Task>() + 2 * core::mem::size_of::<usize>(),
-    "ConcurrentTask = Task + next ptr + auto_delete (padded)"
+    "ConcurrentTask = Task + next ptr + auto_delete + holds_loop (padded)"
 );
 
 // SAFETY: `link()` always projects to the same embedded `next: Link<Self>`
@@ -345,6 +348,7 @@ impl ConcurrentTask {
             task,
             next: Link::new(),
             auto_delete: true,
+            holds_loop: false,
         });
         // SAFETY: `new` heap-allocates via `heap::into_raw` — never null.
         unsafe { core::ptr::NonNull::new_unchecked(raw) }
@@ -365,6 +369,7 @@ impl ConcurrentTask {
             task: Task::init(of),
             next: Link::new(),
             auto_delete: auto_deinit == AutoDeinit::AutoDeinit,
+            holds_loop: false,
         };
         self
     }

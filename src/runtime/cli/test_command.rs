@@ -3050,6 +3050,10 @@ impl TestCommand {
                 // it early-returns when unhandled_error_counter > 0, which is fine
                 // here since such a file already failed. Opt-in; one file per process.
                 if should_drain_event_loop() {
+                    while vm.is_event_loop_alive() {
+                        vm.tick();
+                        vm.auto_tick_active();
+                    }
                     vm.on_before_exit();
                 }
                 drop(buntest_strong);

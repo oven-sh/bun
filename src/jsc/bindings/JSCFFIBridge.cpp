@@ -59,7 +59,10 @@ static void Bun__jscFFIThreadsafeDispatch(JSC::FFI::ThreadsafeInvocation& invoca
 {
     static_assert(sizeof(WebCore::ScriptExecutionContextIdentifier) <= sizeof(void*));
     auto contextId = static_cast<WebCore::ScriptExecutionContextIdentifier>(reinterpret_cast<uintptr_t>(invocation.embedderContext()));
-    WebCore::ScriptExecutionContext::postTaskTo(contextId, BunLoopKind::Regular, [protectedInvocation = Ref { invocation }](WebCore::ScriptExecutionContext&) mutable { JSC::FFI::runThreadsafeInvocation(protectedInvocation.get()); });
+    // Native code calls from any thread with no keep-alive: the queued invocation holds the loop.
+    WebCore::ScriptExecutionContext::postTaskTo(
+        contextId, BunLoopKind::Regular, [protectedInvocation = Ref { invocation }](WebCore::ScriptExecutionContext&) mutable { JSC::FFI::runThreadsafeInvocation(protectedInvocation.get()); },
+        WebCore::ScriptExecutionContext::HoldsEventLoop::Always);
 }
 
 extern "C" JSC::EncodedJSValue Bun__CreateJSCFFICallback(

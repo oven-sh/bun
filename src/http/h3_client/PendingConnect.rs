@@ -116,7 +116,9 @@ impl PendingConnect {
         .r#loop();
         RESOLVED.lock().push(Resolved(this));
         // SAFETY: `loop_ptr` is a live uws::Loop for as long as the HTTP thread runs.
-        unsafe { (*loop_ptr).wakeup() };
+        // Call the raw extern, not `Loop::wakeup(&mut self)`: this runs on the
+        // DNS thread while the HTTP thread holds the loop borrowed in `tick`.
+        unsafe { uws::us_wakeup_loop(loop_ptr) };
     }
 
     pub(crate) fn drain_resolved() {

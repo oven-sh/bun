@@ -88,6 +88,9 @@ const EXCLUDED: &[(&str, &str)] = &[
 /// Formatting their output again changes it, in Prettier too: `unstableTests` of
 /// `tests/config/format-test/failed-format-tests.js`.
 const UNSTABLE: &[&str] = &[
+    "flow/hook/declare-hook.js",
+    "flow/hook/hook-type-annotation.js",
+    "flow/comments/type_annotations.js",
     "js/ignore/semi/class-expression-decorator.js",
     "js/ignore/semi/head-ignored.js",
     "js/comments/return-statement.js",
@@ -307,7 +310,7 @@ fn replace_placeholders(original: &[u8], options: &mut FormatOptions) -> Vec<u8>
         .iter()
         .filter_map(|it| Some((strings::index_of(original, it.1)?, it.0, it.1)))
         .collect();
-    found.sort_unstable();
+    bun_format::sort::sort(&mut found[..]);
     let mut text = Vec::with_capacity(original.len());
     let mut end_of_previous = 0;
     for (at, name, placeholder) in found {
@@ -517,7 +520,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 }
                 let tally = by_directory.entry(group.clone()).or_default();
 
-                // `bun format` does not format HTML in templates and in blocks of code by itself yet. Here it is judged.
+                // `bun fmt` does not format HTML in templates and in blocks of code by itself yet. Here it is judged.
                 let mut options = FormatOptions {
                     embedded_html: true,
                     ..FormatOptions::default()

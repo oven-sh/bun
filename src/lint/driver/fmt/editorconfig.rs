@@ -7,8 +7,7 @@
 
 use crate::{fs, paths};
 use bun_core::strings;
-use bun_glob::{Candidate, How, Options, Pattern};
-use bun_lint::options::Json;
+use bun_glob::{Candidate, Pattern};
 
 /// What a property is set to.
 #[derive(Clone, PartialEq)]
@@ -59,6 +58,30 @@ pub(crate) struct File {
     sections: Vec<Section>,
 }
 
+/// Matches any characters, `/` included. For stars that come after the start of a path segment, as in `a**b`.
+const ANYTHING: &[u8] = b"{*,*/**/*}";
+
+/// The run of `*` at some offset in a pattern. It can be empty.
+struct Stars {
+    end: usize,
+    /// A path segment starts with them.
+    starts_name: bool,
+    /// A path segment ends with them.
+    ends_name: bool,
+}
+
+impl Stars {
+    fn at(glob: &[u8], at: usize) -> Stars {
+        let end = at + glob[at..].iter().take_while(|it| **it == b'*').count();
+        let before = at.checked_sub(1).map(|it| glob[it]);
+        Stars {
+            end,
+            starts_name: matches!(before, None | Some(b'/' | b'{' | b',')),
+            ends_name: matches!(glob.get(end), None | Some(b'/' | b',' | b'}')),
+        }
+    }
+}
+
 /// `buildFullGlob`: the name of a section in the `.editorconfig` of `directory`, as a pattern for an absolute path.
 fn full_glob(directory: &[u8], pattern: &[u8]) -> Vec<u8> {
     let glob = match strings::index_of_char_usize(pattern, b'/') {
@@ -66,19 +89,96 @@ fn full_glob(directory: &[u8], pattern: &[u8]) -> Vec<u8> {
         Some(0) => pattern[1..].to_vec(),
         Some(_) => pattern.to_vec(),
     };
-    let glob = strings::replace_owned(&glob, b"\\\\", b"\\\\\\\\");
-    let glob = strings::replace_owned(&glob, b"**", b"{*,**/**/**}");
     let mut full = Vec::with_capacity(directory.len() + 1 + glob.len());
-    // `escape(directory, { windowsPathsNoEscape: true })` of minimatch
     for &byte in directory {
         match byte {
-            b'?' | b'*' | b'(' | b')' | b'[' | b']' => full.extend_from_slice(&[b'[', byte, b']']),
+            b'?' | b'*' | b'(' | b')' | b'[' | b']' | b'{' | b'}' => {
+                full.extend_from_slice(&[b'[', byte, b']']);
+            }
             byte => full.push(byte),
         }
     }
     full.push(b'/');
-    full.extend_from_slice(&glob);
+    // A `**` that's only part of a path segment still matches across `/`.
+    let mut at = 0;
+    while let Some(&byte) = glob.get(at) {
+        let stars = Stars::at(&glob, at);
+        let end = stars.end;
+        match (end - at >= 2, stars.starts_name, stars.ends_name) {
+            (false, ..) => {
+                let len = 1 + usize::from(byte == b'\\' && at + 1 < glob.len());
+                full.extend_from_slice(&glob[at..at + len]);
+                at += len;
+                continue;
+            }
+            (true, true, true) => full.extend_from_slice(b"**"),
+            (true, true, false) => full.extend_from_slice(b"**/*"),
+            (true, false, true) if glob.get(end) == Some(&b'/') => full.extend_from_slice(b"*/**"),
+            (true, false, _) => full.extend_from_slice(ANYTHING),
+        }
+        at = end;
+    }
     full
+}
+
+/// globset's `Glob::new(written)`, where `*` and `?` also match `/`. `None` if globset rejects the pattern. The section
+/// then applies to no file.
+fn glob_of_globset(written: &[u8]) -> Option<Pattern> {
+    let mut glob = Vec::with_capacity(written.len() + ANYTHING.len());
+    if written.starts_with(b"!") {
+        glob.push(b'\\');
+    }
+    // The whole pattern is `**`, which matches everything.
+    if written == b"**/" {
+        return Some(Pattern::new(b"**"));
+    }
+    let (mut at, mut depth) = (0, 0_usize);
+    while let Some(&byte) = written.get(at) {
+        match byte {
+            b'*' => {
+                let stars = Stars::at(written, at);
+                let end = stars.end;
+                // Here only `/` or the start of the pattern begins a segment. An alternative can follow a name directly.
+                let is_after_literal = at > 0 && matches!(written[at - 1], b'{' | b',');
+                glob.extend_from_slice(
+                    match (
+                        stars.starts_name && !is_after_literal,
+                        end - at == 2 && stars.ends_name,
+                    ) {
+                        (true, true) => b"**",
+                        (true, false) => b"**/*",
+                        (false, _) => ANYTHING,
+                    },
+                );
+                at = end;
+                continue;
+            }
+            b'?' => glob.extend_from_slice(b"{?,/}"),
+            b'\\' => {
+                glob.extend_from_slice(written.get(at..at + 2)?);
+                at += 1;
+            }
+            b'[' => {
+                at = bun_lint::glob::from_globset_class(written, at, false, &mut glob).ok()??;
+                continue;
+            }
+            b'{' => {
+                depth += 1;
+                glob.push(byte);
+            }
+            b'}' => {
+                depth = depth.checked_sub(1)?;
+                glob.push(byte);
+            }
+            byte => glob.push(byte),
+        }
+        at += 1;
+    }
+    if depth > 0 {
+        return None;
+    }
+    let glob = bun_lint::glob::without_empty_alternatives(&glob);
+    Some(Pattern::new(&bun_glob::pattern::of_fast_glob(&glob)))
 }
 
 /// A number of JSON.
@@ -145,10 +245,9 @@ impl Value {
             // `String(value)`
             b"null" => Value::Text(written.to_vec()),
             _ => {
-                let string = || match is_one_string(written).then(|| bun_lint::json::parse(written))
-                {
-                    Some(Some(Json::String(text))) => Some(Value::Text(text)),
-                    _ => None,
+                let string = || {
+                    let parsed = is_one_string(written).then(|| bun_lint::json::parse(written));
+                    parsed??.into_string().map(Value::Text)
                 };
                 let as_written = || match is_known {
                     true => Value::Text(written.to_ascii_lowercase()),
@@ -234,10 +333,13 @@ impl File {
                 [b'[', name @ .., b']'] => {
                     let known = file.sections.iter().position(|it| it.name == name);
                     at = Some(known.unwrap_or_else(|| {
-                        // `new Minimatch(glob, { matchBase: true, dot: true })`. It has a slash, so `matchBase` says
-                        // nothing. A section without a name has no pattern.
-                        let glob =
-                            || Pattern::new(&full_glob(directory, name), Options::MINIMATCH_DOT);
+                        // A section with an empty name has no pattern.
+                        let glob = || {
+                            Pattern::with_dots(
+                                &bun_lint::glob::from_minimatch(&full_glob(directory, name)),
+                                bun_glob::Dots::SkipTraversal,
+                            )
+                        };
                         let glob = (!name.is_empty()).then(glob);
                         file.sections.push(Section::new(name, glob));
                         file.sections.len() - 1
@@ -271,7 +373,7 @@ impl File {
             }
             if let [b'[', name @ .., b']'] = line {
                 file.sections
-                    .push(Section::new(name, Pattern::of_globset(name)));
+                    .push(Section::new(name, glob_of_globset(name)));
             }
             // What follows a section that is not closed is of the one before.
             if let Some(section) = file.sections.last_mut()
@@ -300,7 +402,7 @@ impl File {
     }
 }
 
-type Found = Vec<(&'static [u8], Vec<u8>)>;
+pub(crate) type Found = Vec<(&'static [u8], Vec<u8>)>;
 
 fn text_of(value: bool) -> Vec<u8> {
     match value {
@@ -318,7 +420,7 @@ pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]
     for file in files.filter(|it| paths::inside(&it.directory, path).is_some()) {
         let is_for_it = |it: &&Section| {
             let glob = it.glob.as_ref();
-            glob.is_some_and(|it| it.matches_candidate(&candidate, How::default()))
+            glob.is_some_and(|it| it.matches_candidate(&candidate))
         };
         for section in file.sections.iter().filter(is_for_it) {
             for (key, value) in &section.properties {

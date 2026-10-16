@@ -26,7 +26,7 @@ const tools = {
 async function format(files: Record<string, string>, names: string[], flags: string[] = []) {
   using dir = tempDir("bun-format-sort-imports", files);
   await using proc = spawn({
-    cmd: [bunExe(), "format", "--log-level=warn", ...flags, "."],
+    cmd: [bunExe(), "fmt", "--log-level=warn", ...flags, "."],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -82,6 +82,18 @@ describe.concurrent("when imports are sorted", () => {
   const unsorted = `import b from "b";\nimport a from "a";\n`;
   const sorted = `import a from "a";\nimport b from "b";\n`;
 
+  test("for oxfmt a comment before the `*` makes a default import of it", async () => {
+    const files = {
+      ".oxfmtrc.json": `{ "sortImports": { "groups": ["wildcard-import", "default-import", "unknown"] } }`,
+      "a.js": 'import d from "d";\nimport /* c */ * as ns from "x";\nimport * as w from "w";\nimport e from "e";\n',
+    };
+    const result = await format(files, ["a.js"]);
+    expect(result.files).toEqual([
+      'import * as w from "w";\n\nimport d from "d";\nimport e from "e";\nimport /* c */ * as ns from "x";\n',
+    ]);
+    expect(result.exitCode).toBe(0);
+  });
+
   test("not without an option that asks for it", async () => {
     const result = await format({ ".prettierrc.json": `{ "semi": true }`, "a.ts": unsorted }, ["a.ts"]);
     expect(result.files).toEqual([unsorted]);
@@ -92,9 +104,9 @@ describe.concurrent("when imports are sorted", () => {
     const result = await format({ ".prettierrc.json": config, "a.ts": unsorted, "b.ts": unsorted }, ["a.ts", "b.ts"]);
     expect(result.files).toEqual([unsorted, unsorted]);
     expect(result.stderr).toBe(
-      `[warn] Ignored unknown option { importOrder: ["^[./]"] }.\n` +
-        `[warn] Ignored unknown option { importOrderSeparation: true }.\n` +
-        `[warn] Ignored unknown option { organizeImportsTypeOrder: "last" }.\n`,
+      `warn: Ignored unknown option { importOrder: ["^[./]"] }.\n` +
+        `warn: Ignored unknown option { importOrderSeparation: true }.\n` +
+        `warn: Ignored unknown option { organizeImportsTypeOrder: "last" }.\n`,
     );
     expect(result.exitCode).toBe(0);
   });

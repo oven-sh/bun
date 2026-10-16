@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isRoot, isWindows, tempDir } from "harness";
 import {
   chmodSync,
   existsSync,
@@ -91,6 +91,10 @@ async function run(cwd: string, cmd: string[], extra: Record<string, string | un
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A crash, an assertion or a sanitizer report: the test that asserts the exit code says nothing about why.
+  if (exitCode !== 0 && exitCode !== 1 && exitCode !== 2) {
+    console.error(`bun ${cmd.join(" ")} exited with ${exitCode}:\n${stderr}`);
+  }
   const clean = (text: string) =>
     text
       .replaceAll("\\", "/")
@@ -1635,6 +1639,37 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       symlinkSync(String(dir), join(String(dir), "pkg", "up"), "junction");
       const { stdout } = await check(dir, ["."]);
       expect(stdout).toBe(`pkg/a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`);
+    });
+
+    test("links to a file and to directories, side by side in one directory", async () => {
+      using dir = project({
+        "real/file.ts": `export const file: string = 1;\n`,
+        "real/one/index.ts": `export const one: string = 1;\n`,
+        "real/two/index.ts": `export const two: string = 1;\n`,
+        "src/a.ts": `import { file } from "./file";
+import { one } from "./one";
+import { two } from "./two";
+export const a: number[] = [file, one, two];
+`,
+      });
+      const link = (name: string, type: "file" | "dir" | "junction") =>
+        symlinkSync(join(String(dir), "real", name), join(String(dir), "src", name), type);
+      link("file.ts", "file");
+      link("one", "dir");
+      link("two", "junction");
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "real/file.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        real/one/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        real/two/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        src/a.ts(4,29): error TS2322: Type 'string' is not assignable to type 'number'.
+        src/a.ts(4,35): error TS2322: Type 'string' is not assignable to type 'number'.
+        src/a.ts(4,40): error TS2322: Type 'string' is not assignable to type 'number'.
+        src/file.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        src/one/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+        src/two/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."
+      `);
+      expect(exitCode).toBe(1);
     });
 
     test("a path on the command line is relative to the working directory, as in tsc", async () => {
@@ -3488,7 +3523,8 @@ const wrong: number = "";
         );
         expect(exitCode).toBe(1);
       },
-      30_000,
+      // 26 seconds of processor time, shared with 19 other tests.
+      90_000,
     );
 
     test(
@@ -5493,6 +5529,59 @@ ss.length = 2;
         a.ts(20,4): error TS2540: Cannot assign to 'length' because it is a read-only property."
       `);
       expect(exitCode).toBe(1);
+    });
+
+    // `tsc` assigns the list of properties of `Style` once, and while the members of the mapped type are being resolved the
+    // list lacks them. Two tasks of the last step each assign one, and not the same: the files are large enough for a task
+    // each. The second task is checked again, and has to find what the first one assigned.
+    test.each([
+      [
+        "the whole list",
+        ["x.ts", "y.ts"],
+        [
+          "x.ts(4,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.",
+          "y.ts(2,19): error TS2353: Object literal may only specify known properties, and 'notAProperty' does not exist in type 'Omit<Style, \":hover\">'.",
+        ],
+      ],
+      [
+        "the list without the mapped type",
+        ["y.ts", "x.ts"],
+        [
+          "x.ts(4,31): error TS2353: Object literal may only specify known properties, and 'tpo' does not exist in type 'Style'.",
+        ],
+      ],
+    ])("two tasks of the last step keep different lists of an intersection: %s first", async (_, order, expected) => {
+      const constants = (prefix: string) =>
+        Array.from({ length: 2000 }, (_, i) => `export const ${prefix}${i} = ${i};\n`).join("");
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            ...{ strict: true, noEmit: true, target: "es2022", module: "esnext", moduleResolution: "bundler" },
+            ...{ types: [], skipLibCheck: true },
+          },
+          files: [...order, "z0.ts", "z1.ts"],
+        }),
+        "lib.d.ts": `type Pseudos = ':hover';
+export type CSSPseudos = { [P in Pseudos]?: Omit<Style, Pseudos> };
+export type Style = CSSPseudos & { top?: string };
+export declare function css(style: Style): void;
+`,
+        "x.ts": `import { Style } from './lib';
+export const key: keyof Style = 'top';
+export const whole: Style = { top: '' };
+export const wrong: Style = { tpo: '' };
+${constants("x")}`,
+        "y.ts": `import { css } from './lib';
+css({ ':hover': { notAProperty: '1' } });
+${constants("y")}`,
+        "z0.ts": constants("z0_"),
+        "z1.ts": constants("z1_"),
+      });
+      for (const threads of [[], ["--threads=4"], ["--threads=1"]]) {
+        const { stdout, exitCode } = await check(dir, threads);
+        expect({ threads, lines: stdout.split("\n") }).toEqual({ threads, lines: expected });
+        expect(exitCode).toBe(1);
+      }
     });
 
     test("an assertion to a union is explained by the member that the comparison in progress selects", async () => {
@@ -15329,7 +15418,7 @@ export function f<T>(rest: T) {
     });
 
     // The superuser can read every file.
-    const canReadEverything = process.platform === "win32" || process.getuid?.() === 0;
+    const canReadEverything = isWindows || isRoot;
     test.skipIf(canReadEverything)("a source file that cannot be read is reported", async () => {
       using dir = project({ "a.ts": `import "./secret";\n`, "secret.ts": `export {};\n` });
       chmodSync(join(String(dir), "secret.ts"), 0o000);
@@ -15683,6 +15772,16 @@ export function f<T>(rest: T) {
     expect(stdout).toContain("Usage: bun check [flags] [...files or directories]");
     expect(stdout).toContain("-p, --project=<val>");
     expect(stdout).toContain("-b, --build");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--help prints bun check's help even if package.json has a `check` script", async () => {
+    using dir = project({ "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }) });
+    const { stdout, exitCode } = await check(dir, ["--help"]);
+    expect(stdout).toStartWith("Usage: bun check [flags] [...files or directories]");
+    expect(stdout).toEndWith(
+      `note: package.json has a "check" script, so bun check runs that script\n  Change the script to "bun check" to use the built-in command`,
+    );
     expect(exitCode).toBe(0);
   });
 });
@@ -17340,7 +17439,7 @@ describe.concurrent("--check", () => {
       Bun.zstdDecompressSync(readFileSync(join(import.meta.dir, "typescript-go", "bundle.zst"))),
     );
     const entries: [path: string, start: number, length: number][] = [];
-    for (let at = 0; at < bundle.length; ) {
+    for (let at = 0; at < bundle.length;) {
       const end = bundle.indexOf(10, at);
       const [, path, length] = /^=== (.*) (\d+)$/.exec(bundle.toString("latin1", at, end))!;
       entries.push([path, end + 1, +length]);

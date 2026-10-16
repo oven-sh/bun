@@ -14,22 +14,24 @@ mod angular_print;
 mod ast;
 mod cursor;
 mod data;
-mod embed;
+pub(crate) mod embed;
 mod error;
 pub(crate) mod in_js;
-mod js;
+pub(crate) mod js;
 mod lexer;
 mod map_strings;
 mod parse;
 mod parser;
-mod preprocess;
+pub(crate) mod preprocess;
 mod printer;
 mod tag;
 mod tailwind;
 mod utilities;
-mod verify;
+pub(crate) mod verify;
 mod vue;
-mod writer;
+pub(crate) mod writer;
+
+pub use js::is_probably_jsx;
 
 use crate::cursor::Region;
 use crate::ir::formatter::Formatter;
@@ -375,6 +377,9 @@ fn write_document_with_cursor(
     if !preprocess::preprocess(&mut tree, &options) {
         return Err(FormatError::NestedTooDeeply);
     }
+    if options.format.html_template_depth > 0 && in_js::would_repeat_substitution(&tree) {
+        return Err(FormatError::SyntaxError);
+    }
     let mut printer = printer::Printer {
         tree: &tree,
         options: &options,
@@ -426,7 +431,8 @@ fn format_angular_expression(
     if strings::trim_js_whitespace(&text).is_empty() {
         return Ok(());
     }
-    let mut context = JsFormatContext::without_file(&text, options.clone(), &[]);
+    let mut context =
+        JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
     context.parse_javascript = parse_javascript;
     let mut is_written = false;
     let document = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
@@ -512,7 +518,8 @@ pub fn format_with(
     if has_bom {
         out.extend_from_slice(BOM);
     }
-    if strings::trim_js_whitespace(&text).is_empty() {
+    // Prettier goes by what is white space in JavaScript, and makes nothing of a no-break space.
+    if text.trim_ascii().is_empty() {
         return Ok(None);
     }
     // Prettier's `isSourceElement`: nothing can be formatted on its own, except that in Vue everything can. It does not
@@ -565,7 +572,8 @@ pub fn format_with(
     };
     let path = Some(path).filter(|path| !path.is_empty());
     let mut result = Ok(None);
-    let mut context = JsFormatContext::without_file(&text, options.clone(), &[]);
+    let mut context =
+        JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
     context.parse_javascript = parse_javascript;
     let root = crate::ir::run::write_with(context, &text, &mut scratch.document, |f| {
         result = write_document_with_cursor(

@@ -258,11 +258,7 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
             VERSION,
             b"https://oxc.rs/docs/guide/usage/linter.html",
         ),
-        false => (
-            b"bun lint",
-            meta.version,
-            b"https://bun.com/docs/runtime/lint",
-        ),
+        false => (b"bun lint", meta.version, b"https://bun.com/docs/lint"),
     };
     let mut driver = vec![
         (&b"name"[..], text(name)),

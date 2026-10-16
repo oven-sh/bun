@@ -199,7 +199,11 @@ impl Checker<'_, '_> {
             let node = hir[hir[s].func].effective_set_accessor_type_annotation_node(hir);
             node.is_some()
         });
-        let auto_accessor = of_kind(self, MemberKind::Property);
+        // `core.Find(symbol.Declarations, ast.IsAutoAccessorPropertyDeclaration)`
+        let auto_accessor = members.iter().copied().find(|&(file, m)| {
+            let member = &self.hir(file)[m];
+            member.kind == MemberKind::Property && member.flags.contains(Flags::ACCESSOR)
+        });
         // `symbolToString`
         let (file, first) = members[0];
         let end = self.end_of_member_name(file, first);
@@ -207,10 +211,15 @@ impl Checker<'_, '_> {
         let ((file, accessor), code) = match (annotated_getter, annotated_setter) {
             (Some(getter), _) => (getter, 2502),
             (None, Some(setter)) => (setter, 2502),
-            // It is reported on the set accessor, which is nil.
+            // It is reported on the set accessor, which may be nil.
             _ if auto_accessor.is_some_and(|(file, m)| self.hir(file)[m].ty.is_some()) => {
-                let err = Reported::new(NOWHERE, 2502, held(vec![name]));
-                return self.add_diagnostic_of(Some(Query::Symbol(sym)), err);
+                match setter {
+                    Some(setter) => (setter, 2502),
+                    None => {
+                        let err = Reported::new(NOWHERE, 2502, held(vec![name]));
+                        return self.add_diagnostic_of(Some(Query::Symbol(sym)), err);
+                    }
+                }
             }
             _ => match getter {
                 Some(getter) if self.p.files.options.no_implicit_any => (getter, 7023),

@@ -3,32 +3,37 @@
 use super::Difference;
 use bun_core::strings;
 use bun_lint::ast::File;
-use bun_lint::tokens::{Token, skip_trivia};
+use bun_lint::tokens::Token;
+use bun_sema::hir::Comment;
 
 /// The text of a program, and where its comments are.
-type Comments<'a> = (&'a [u8], &'a [(u32, u32)]);
+type Comments<'a> = (&'a [u8], &'a [Comment]);
 
-fn text_of<'a>(text: &'a [u8], comment: (u32, u32)) -> &'a [u8] {
-    text.get(comment.0 as usize..comment.1 as usize)
+#[optimize(size)]
+fn text_of<'a>(text: &'a [u8], comment: Comment) -> &'a [u8] {
+    text.get(comment.pos as usize..comment.end as usize)
         .unwrap_or_default()
 }
 
 /// Allowed: the white space at the start and at the end of the lines of a comment.
+#[optimize(size)]
 fn lines(comment: &[u8]) -> impl Iterator<Item = &[u8]> {
     strings::split_crlf_lines(comment).map(strings::trim_js_whitespace)
 }
 
+#[optimize(size)]
 fn is_same(before: &[u8], after: &[u8]) -> bool {
     before == after || lines(before).eq(lines(after))
 }
 
 /// Allowed: the comments are in another order.
 #[cold]
+#[optimize(size)]
 fn compare_in_any_order(before: Comments<'_>, after: Comments<'_>) -> Result<(), Difference> {
     let sorted = |(text, comments): Comments<'_>| {
         let mut all: Vec<(Vec<u8>, u32)> = comments
             .iter()
-            .map(|&it| (bstr::join(b"\n", lines(text_of(text, it))), it.0))
+            .map(|&it| (bstr::join(b"\n", lines(text_of(text, it))), it.pos))
             .collect();
         crate::sort::sort(&mut all[..]);
         all
@@ -55,6 +60,7 @@ fn compare_in_any_order(before: Comments<'_>, after: Comments<'_>) -> Result<(),
 }
 
 /// The `#!` line of `text`.
+#[optimize(size)]
 fn hashbang(text: &[u8]) -> &[u8] {
     if !text.starts_with(b"#!") {
         return &[];
@@ -73,6 +79,7 @@ fn hashbang(text: &[u8]) -> &[u8] {
 
 /// The tree does not list the comments of HTML, `<!-- a` and `--> a`. Those of `file` have to be
 /// somewhere in `after`.
+#[optimize(size)]
 fn find_html_comments<'f>(file: &'f File<'f>, after: &[u8]) -> Result<(), Difference> {
     let text = file.text();
     if !file.is_javascript()
@@ -108,6 +115,7 @@ fn find_html_comments<'f>(file: &'f File<'f>, after: &[u8]) -> Result<(), Differ
 }
 
 /// What is between `/**` and `*/`, if `comment` is a JSDoc comment.
+#[optimize(size)]
 fn jsdoc(comment: &[u8]) -> Option<&[u8]> {
     comment
         .strip_prefix(b"/**")?
@@ -116,6 +124,7 @@ fn jsdoc(comment: &[u8]) -> Option<&[u8]> {
 }
 
 /// Whether the JSDoc comment says more than the name of one tag. One that does not can be left out.
+#[optimize(size)]
 fn says_something(inner: &[u8]) -> bool {
     let is_part_of_word = |it: &u8| it.is_ascii_alphanumeric() || !it.is_ascii();
     let mut words = inner
@@ -128,9 +137,10 @@ fn says_something(inner: &[u8]) -> bool {
 }
 
 /// The name or the keyword that follows the comment, if it is one that follows.
-fn word_after(text: &[u8], comment: (u32, u32)) -> &[u8] {
+#[optimize(size)]
+fn word_after(text: &[u8], comment: Comment) -> &[u8] {
     let rest = text
-        .get(skip_trivia(text, comment.1) as usize..)
+        .get(comment.next_token_start as usize..)
         .unwrap_or_default();
     let len = rest
         .iter()
@@ -141,8 +151,9 @@ fn word_after(text: &[u8], comment: (u32, u32)) -> &[u8] {
 
 /// Allowed, if JSDoc comments are formatted: anything in them, and those that say nothing are left out. If none is,
 /// each is before the same word.
+#[optimize(size)]
 fn compare_without_jsdoc(before: Comments<'_>, after: Comments<'_>) -> Result<(), Difference> {
-    type Lists = (Vec<(u32, u32)>, Vec<(u32, u32)>);
+    type Lists = (Vec<Comment>, Vec<Comment>);
     // Those that are not JSDoc comments, and those that are.
     let split = |(text, comments): Comments<'_>| -> Lists {
         comments
@@ -167,8 +178,8 @@ fn compare_without_jsdoc(before: Comments<'_>, after: Comments<'_>) -> Result<()
         if word != word2 && !word.is_empty() && !word2.is_empty() {
             return Err(Difference::new(
                 "what follows a JSDoc comment",
-                (before.0, p.0),
-                (after.0, q.0),
+                (before.0, p.pos),
+                (after.0, q.pos),
             ));
         }
     }
@@ -176,6 +187,7 @@ fn compare_without_jsdoc(before: Comments<'_>, after: Comments<'_>) -> Result<()
 }
 
 /// `file`: the program before. `formats_jsdoc`: the option `jsdoc` is set.
+#[optimize(size)]
 pub(super) fn compare<'f>(
     file: &'f File<'f>,
     before: Comments<'_>,

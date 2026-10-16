@@ -1397,6 +1397,27 @@ impl<'a> Printer<'a, '_> {
 
     // ───────────────────────────── nodes ─────────────────────────────
 
+    /// Whether `node`, an emphasis or a strong emphasis, has another of its kind right before or behind it, or is at an end
+    /// of one that has. Prettier gives both the same marker: `*a*_b_` becomes `_a__b_`, which is one emphasis, and
+    /// `**a**__b__` becomes `**a****b**`.
+    fn keeps_marker(&self, mut node: &'a Node) -> bool {
+        loop {
+            let is_of_its_kind =
+                |id: NodeId| self.node(id).is_some_and(|other| other.kind == node.kind);
+            if is_of_its_kind(node.previous) || is_of_its_kind(node.next) {
+                return true;
+            }
+            match self.node(node.parent) {
+                Some(parent)
+                    if parent.kind == node.kind && (node.previous == NONE || node.next == NONE) =>
+                {
+                    node = parent;
+                }
+                _ => return false,
+            }
+        }
+    }
+
     /// Prettier's `printMdast`
     fn print_mdast(&mut self, id: NodeId, node: &'a Node) -> Doc<'a> {
         if self.is_in_label {
@@ -1423,7 +1444,9 @@ impl<'a> Printer<'a, '_> {
             }
             Kind::Sentence => self.print_sentence(id, node),
             Kind::Emphasis => {
-                let style: &'a [u8] = if self.is_autolink(node.first_child) {
+                let style: &'a [u8] = if self.is_autolink(node.first_child)
+                    || self.keeps_marker(node)
+                {
                     self.source(node).get(..1).unwrap_or(b"_")
                 } else {
                     let is_in_strong_next_to_word = self.node(node.parent).is_some_and(|parent| {
@@ -1436,7 +1459,13 @@ impl<'a> Printer<'a, '_> {
                 };
                 docs![style, self.print_children(id), style]
             }
-            Kind::Strong => docs!["**", self.print_children(id), "**"],
+            Kind::Strong => {
+                let style: &'a [u8] = match self.keeps_marker(node) {
+                    true => self.source(node).get(..2).unwrap_or(b"**"),
+                    false => b"**",
+                };
+                docs![style, self.print_children(id), style]
+            }
             Kind::Delete => docs!["~~", self.print_children(id), "~~"],
             Kind::InlineCode => self.print_inline_code(id, node),
             Kind::WikiLink => {
@@ -1909,6 +1938,7 @@ impl<'a> Printer<'a, '_> {
                 code: b"",
                 width: 0,
             }),
+            _ if super::front_matter::has_indented_delimiter(raw) => None,
             _ if is_yaml => (self.embed)(&Embedded {
                 language: b"yaml",
                 code: value,

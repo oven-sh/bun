@@ -284,24 +284,8 @@ impl<'a> Expr<'a> {
     /// what `&amp;` and the like stand for. `None` if it is not [JSX text](Expr::is_jsx_text).
     /// espree has `\n` for each `\r\n` in it.
     pub fn jsx_text_value(self) -> Option<std::borrow::Cow<'a, [u8]>> {
-        use bun_core::strings;
-        if !self.is_jsx_text() {
-            return None;
-        }
-        let written = self.text();
         let is_espree = self.file.language().parser == Parser::Espree;
-        if !is_espree || !strings::contains(written, b"\r\n") {
-            return Some(super::entities::unescape(written, is_espree));
-        }
-        let mut normalized = Vec::with_capacity(written.len());
-        for (at, line) in strings::split(written, b"\r\n").enumerate() {
-            if at > 0 {
-                normalized.push(b'\n');
-            }
-            normalized.extend_from_slice(line);
-        }
-        let value = super::entities::unescape(&normalized, is_espree);
-        Some(value.into_owned().into())
+        (self.is_jsx_text()).then(|| jsx_text_value_of(self.text(), is_espree))
     }
 
     /// It is the name in a tag of a JSX element, or a part of it: the `a`, the `a.b` and the `a.b.c`
@@ -648,6 +632,15 @@ impl<'a> Expr<'a> {
         }
     }
 
+    /// The import, the export or the import type whose attributes are in this `{ .. }`: the `import a from "a" with {}`
+    /// around the `{}`. Such an object is not a node of the tree, and its [parent](Expr::parent) is the file.
+    pub fn owner_of_import_attributes(self) -> Option<Node<'a>> {
+        if self.file.hir.import_attributes.is_empty() {
+            return None;
+        }
+        (self.file.parents()).of_import_attributes(self.file, self.id)
+    }
+
     #[inline]
     pub fn as_template(self) -> Option<Template<'a>> {
         let raw = self.try_raw()?;
@@ -988,8 +981,28 @@ impl<'a> Expr<'a> {
     /// `AssignmentPattern` or `RestElement`. Parentheses make what is in them an ordinary
     /// expression.
     pub fn is_assignment_target(self) -> bool {
+        let mut container = None;
+        let answer = self.is_assignment_target_uncached(&mut container);
+        // The answer is the same for the array or the object that it is in, and so for everything else in that. With it
+        // remembered, what is nested does not go up to the root each time.
+        if let Some(container) = container {
+            let last = &self.file.lazy.last_assignment_target;
+            last.set(Some((container, answer)));
+        }
+        answer
+    }
+
+    /// `container`: the array or the object that it is in.
+    #[inline(always)]
+    fn is_assignment_target_uncached(self, container: &mut Option<hir::ExprId>) -> bool {
         let mut at = self;
         loop {
+            if container.is_some()
+                && let Some((last, answer)) = self.file.lazy.last_assignment_target.get()
+                && last == at.id
+            {
+                return answer;
+            }
             if at.is_parenthesized() {
                 return false;
             }
@@ -1015,6 +1028,7 @@ impl<'a> Expr<'a> {
                 }
                 _ => return false,
             };
+            container.get_or_insert(at.id);
         }
     }
 
@@ -1692,4 +1706,21 @@ impl<'a> Jsx<'a> {
         let jsx = self.raw()?;
         (jsx.close_pos != u32::MAX).then(|| Span::new(jsx.close_pos, jsx.end))
     }
+}
+
+/// [`Expr::jsx_text_value`] for the source text `written`.
+pub(crate) fn jsx_text_value_of(written: &[u8], is_espree: bool) -> std::borrow::Cow<'_, [u8]> {
+    use bun_core::strings;
+    if !is_espree || !strings::contains(written, b"\r\n") {
+        return super::entities::unescape(written, is_espree);
+    }
+    let mut normalized = Vec::with_capacity(written.len());
+    for (at, line) in strings::split(written, b"\r\n").enumerate() {
+        if at > 0 {
+            normalized.push(b'\n');
+        }
+        normalized.extend_from_slice(line);
+    }
+    let value = super::entities::unescape(&normalized, is_espree);
+    value.into_owned().into()
 }

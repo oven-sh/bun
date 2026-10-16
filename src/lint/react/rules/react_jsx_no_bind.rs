@@ -137,7 +137,7 @@ impl Rule for JsxNoBind {
                 }
             }
         }
-        mentions.sort_unstable_by_key(|it| it.span.start);
+        utils::sort::sort_unstable_by_key(&mut mentions, |it| it.span.start);
         for mention in &mentions {
             let Some(open) = open.get_mut(&mention.name) else {
                 continue;

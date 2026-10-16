@@ -1,10 +1,10 @@
 // Runs the command lines of Prettier's own integration tests (`runCli("cli/..", [..])` in tests/integration/__tests__/*.js) with real
-// Prettier and with `bun format`, on a copy of tests/integration/cli, and compares the exit code, the files afterwards, which files
+// Prettier and with `bun fmt`, on a copy of tests/integration/cli, and compares the exit code, the files afterwards, which files
 // `--check` and `--list-different` name, and what is printed for standard input.
 //
-//   bun prettier-fixtures.mjs --prettier=<checkout of prettier> --deps=<directory with node_modules/prettier> --scratch=<directory> --bin="bun format" [--only=substring] [--show]
+//   bun prettier-fixtures.mjs --prettier=<checkout of prettier> --deps=<directory with node_modules/prettier> --scratch=<directory> --bin="bun fmt" [--only=substring] [--show]
 //
-// `bun format` writes unless told otherwise, so Prettier is given `--write` where the command line only prints.
+// `bun fmt` writes unless told otherwise, so Prettier is given `--write` where the command line only prints.
 // `--record=<file>` writes the fixtures and what Prettier does with them, for `test/cli/format/prettier-cli/prettier-cli.test.ts`.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -14,18 +14,18 @@ const flag = name => process.argv.find(it => it.startsWith(`--${name}=`))?.slice
 const integration = path.join(path.resolve(flag("prettier")), "tests/integration");
 const scratch = path.join(path.resolve(flag("scratch")), "prettier-app");
 const prettier = ["node", path.join(path.resolve(flag("deps")), "node_modules/prettier/bin/prettier.cjs")];
-const bin = (flag("bin") ?? "bun format").split(" ");
+const bin = (flag("bin") ?? "bun fmt").split(" ");
 const only = flag("only");
 const show = process.argv.includes("--show");
 
 const compared = /\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|md|markdown|hbs|handlebars|html?|vue|mjml)$/;
-// The languages that `bun format` leaves alone.
+// The languages that `bun fmt` leaves alone.
 const notCompared = /\.mdx$/;
-// What `bun format` does not have, or has on purpose in another way.
+// What `bun fmt` does not have, or has on purpose in another way.
 const leftOut = /^--(cache|debug-|file-info|support-info|plugin|help|version|experimental-cli|no-plugin-search|log-level=?debug|find-config-path|(no-)?unknown)|^-[hva]$/;
 // Plugins do not load.
 const leftOutDirectories = /infer-plugins|config\/plugins/;
-// The flags that take a value. Without a file, a directory or a pattern Prettier formats standard input and `bun format` the directory.
+// The flags that take a value. Without a file, a directory or a pattern Prettier formats standard input and `bun fmt` the directory.
 const takesValue = /^--(config|parser|config-precedence|log-level|end-of-line|ignore-path|stdin-filepath|tab-width|print-width|trailing-comma|range-start|range-end|cursor-offset)$/;
 const hasPattern = args => args.some((arg, index) => !arg.startsWith("-") && !takesValue.test(args[index - 1] ?? ""));
 
@@ -167,7 +167,7 @@ for (const it of commandLines()) {
   else {
     failed.push(title);
     console.log(`FAIL ${title}`);
-    if (show) console.log(`${problems.join("\n")}\n--- stderr of Prettier\n${expected.stderr}\n--- stderr of bun format\n${actual.stderr}\n`);
+    if (show) console.log(`${problems.join("\n")}\n--- stderr of Prettier\n${expected.stderr}\n--- stderr of bun fmt\n${actual.stderr}\n`);
   }
 }
 if (flag("record")) fs.writeFileSync(flag("record"), JSON.stringify(record, null, 1) + "\n");

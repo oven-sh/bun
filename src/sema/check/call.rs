@@ -416,6 +416,12 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_in_progress {
             self.resolution_start = self.stack.len();
         }
+        let serial = self.work;
+        if !is_in_progress {
+            // What a resolution inside `resolve_signature_afresh` has left.
+            self.signatures_resolved_within
+                .retain(|r| !(r.0 == file && r.1 == call));
+        }
         let around = self.call_resolution_errors.take();
         let is_re_resolved = std::mem::replace(&mut self.is_call_re_resolved, is_in_progress);
         let resolved = self.resolve_signature(file, call);
@@ -425,6 +431,16 @@ impl<'p, 's> Checker<'p, 's> {
         self.resolved_meanwhile.push((file, call, resolved));
         let resolved = self.with_return_type(resolved);
         self.resolved_meanwhile.pop();
+        // `getResolvedSignature`: `links.resolvedSignature != c.resolvingSignature`, "this inner
+        // resolution sets the resolvedSignature first", and `result = links.resolvedSignature`.
+        let assigned_within = (self.signatures_resolved_within.iter())
+            .find(|r| r.0 == file && r.1 == call)
+            .map(|r| r.2);
+        let resolved = assigned_within.unwrap_or(resolved);
+        if !is_in_progress {
+            self.signatures_resolved_within
+                .retain(|r| !(r.0 == file && r.1 == call));
+        }
         // tsgo stores `links.resolvedSignature` even while `contextualBindingPatterns` is
         // non-empty.
         let left = self.leave(Query::Call(file, call));
@@ -452,14 +468,24 @@ impl<'p, 's> Checker<'p, 's> {
                 (self.p.diagnostics_of_re_resolved_calls)
                     .insert_ref(&self.task, key, reported, stored);
             }
-            // The resolution around this one takes the result. Not one that depends on a frame in
-            // progress.
+            // The resolution around this one takes the result: from `Program::calls`, or, if it
+            // depends on a frame in progress, from `signatures_resolved_within`. Not one that was
+            // cut short by a refused query.
             if let Ok(stored) = left
                 && !is_in_flow_loop(self)
             {
                 return self.cache_call(file, call, resolved, stored);
             }
-        } else if let Some(stored) = stored {
+            if left.is_err()
+                && assigned_within.is_none()
+                && self.refused_at < serial
+                && !is_in_flow_loop(self)
+            {
+                self.signatures_resolved_within.push((file, call, resolved));
+            }
+        } else if let Some(stored) = stored
+            && !is_in_flow_loop(self)
+        {
             // A task that sees the call resolved also sees this: both are published at the same
             // barrier.
             if let Some(reported) = reported {
@@ -472,6 +498,11 @@ impl<'p, 's> Checker<'p, 's> {
             // `len(c.flowLoopStack) != 0`: the signature is not stored, and what `resolveCall` has
             // reported from the temporary types stays.
             self.reported.extend(reported);
+        }
+        // `getResolvedSignature` assigns `links.resolvedSignature = result` only with an empty
+        // `flowLoopStack`. This is for a result that `Program::calls` does not take.
+        if !is_in_flow_loop(self) {
+            self.resolved_signatures.insert((file, call));
         }
         resolved
     }
@@ -612,22 +643,19 @@ impl<'p, 's> Checker<'p, 's> {
         // subtracted here.
         let index = index + usize::from(hir[func].this_param.is_some());
         // Not under `anySignature`: a request for the call resolves it again.
+        // `assignParameterType` pushes no type resolution, and the arguments are checked with
+        // `checkExpression`: the resolutions of the parameter hide no loop from them.
         if own.flags.contains(Flags::REST) {
-            return Some(self.spread_argument_type(
-                file,
-                &args,
-                index,
-                TypeId::ANY,
-                None,
-                CheckMode::empty(),
-            ));
+            return Some(self.with_loops_in_sight(|c| {
+                c.spread_argument_type(file, &args, index, TypeId::ANY, None, CheckMode::empty())
+            }));
         }
         match args.get(index) {
             Some(&Arg::Expr(a)) => {
                 // `links.resolvedSignature = c.anySignature`: the contextual type of the argument is
                 // what is being computed.
                 self.iife_resolving.push((file, call));
-                let ty = self.type_of_expr(file, a);
+                let ty = self.with_loops_in_sight(|c| c.type_of_expr(file, a));
                 self.iife_resolving.pop();
                 Some(self.widen_literal(ty))
             }
@@ -1247,6 +1275,9 @@ impl<'p, 's> Checker<'p, 's> {
             Some(sig) => sig,
             None => self.candidate_for_overload_failure(&s),
         };
+        // `reorderCandidates`: with `callChainFlags` a candidate is its `getOptionalCallSignature`.
+        // Only the return type of the clone differs, so the chosen signature is cloned.
+        let sig = self.optional_call_signature_in_chain(file, call, sig);
         let resolved = ResolvedCall {
             sig: Some(sig),
             // Not requested yet: see `with_return_type`.
@@ -2631,15 +2662,39 @@ impl<'p, 's> Checker<'p, 's> {
     /// may have short-circuited before the call (`nonOptionalType != funcType`), it includes
     /// `undefined`.
     fn return_type_in_chain(&mut self, file: FileId, call: ExprId, sig: SigId) -> TypeId {
-        let ret = self.sig_return(sig);
         let ExprKind::Call(c) = self.hir(file)[call].kind else {
-            return ret;
+            return self.sig_return(sig);
         };
         let Call { callee, chain, .. } = self.hir(file)[c];
-        if self.chain_receiver(file, callee, chain).1 {
-            self.optional(ret)
+        if !self.chain_receiver(file, callee, chain).1 {
+            return self.sig_return(sig);
+        }
+        let sig = self.optional_call_signature(sig);
+        let ret = self.sig_return(sig);
+        self.optional(ret)
+    }
+
+    /// `getOptionalCallSignature(sig, callChainFlags)` for the call `call`: `sig` itself where
+    /// `callChainFlags` is `SignatureFlagsNone`.
+    fn optional_call_signature_in_chain(
+        &mut self,
+        file: FileId,
+        call: ExprId,
+        sig: SigId,
+    ) -> SigId {
+        let ExprKind::Call(c) = self.hir(file)[call].kind else {
+            return sig;
+        };
+        let Call { callee, chain, .. } = self.hir(file)[c];
+        if chain == Chain::No {
+            return sig;
+        }
+        let clone = self.optional_call_signature(sig);
+        // `nonOptionalType != funcType`
+        if clone != sig && self.chain_receiver(file, callee, chain).1 {
+            clone
         } else {
-            ret
+            sig
         }
     }
 
@@ -2952,7 +3007,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let mapper = self.inference_mapper_comparing(&inference, compare);
-        self.instantiate_sig(sig, mapper)
+        let instantiated = self.instantiate_sig(sig, mapper);
+        // `getSignatureInstantiation` erases the type parameters. One that is a clone and is inferred to be itself
+        // (`wrap(id)` where `Id<string>` is both the type of `id` and what is expected) leaves the mapper as it is.
+        if self.sig_type_params(instantiated).is_empty() {
+            instantiated
+        } else {
+            self.without_filling_in_type_arguments(instantiated)
+        }
     }
 
     /// The name of the type parameter `param`: the name `unique_type_params` gave it, or else the declared name.
@@ -3017,10 +3079,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// `clone_mapper` resolves the renamed siblings of a clone (those of the same function, class or interface with the same mapper)
     /// with the mapper of the clone, so one that an earlier call renamed is cloned again with the same mapper.
     /// `None`: the renamed clones cannot be represented.
+    /// `serial`: of the argument. Each call of `getUniqueTypeParameters` makes type parameters of
+    /// its own, with nothing resolved yet: the clones of one argument are distinct from those of
+    /// every other (`renamed_type_param`).
     pub(super) fn unique_type_params(
         &self,
         inferred: &[TypeId],
         own: &[TypeId],
+        serial: usize,
     ) -> Option<Vec<TypeId>> {
         let mut names: Vec<Atom> = inferred
             .iter()
@@ -3101,6 +3167,10 @@ impl<'p, 's> Checker<'p, 's> {
             let mut pairs = self.types().mapping(around).to_vec();
             pairs.retain(|pair| !renames_of_siblings.iter().any(|rename| rename.0 == pair.0));
             pairs.extend(renames_of_siblings.iter().copied());
+            let serial = self.number_literal(serial as f64, true);
+            if !pairs.iter().any(|pair| pair.0 == serial) {
+                pairs.push((serial, serial));
+            }
             unique.push(self.cloned_type_param(file, tp, self.types().mapper(pairs)));
         }
         Some(unique)
@@ -3140,12 +3210,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// `inferFromAnnotatedParametersAndReturn`: infers to the type parameters in `contextual`, the
     /// contextual signature of `func`, from the parameter annotations of `func`, up to a rest
     /// parameter, and from its return type annotation.
+    /// `level`: the inference context. It stays in `inference_contexts` while an annotation is
+    /// resolved, which can ask `getContextualSignature` of `func` again.
     pub(super) fn infer_from_annotated_parameters_and_return(
         &mut self,
         file: FileId,
         func: FnId,
         contextual: SigId,
-        inference: &mut Inference,
+        level: usize,
     ) {
         let hir = self.hir(file);
         let expected = self.sig_params(contextual);
@@ -3162,13 +3234,13 @@ impl<'p, 's> Checker<'p, 's> {
                 source = self.optional(source);
             }
             if let Some(target) = self.param_type_at(&expected, i) {
-                self.infer(inference, source, target, 0);
+                self.with_inference_context(level, |c, n| c.infer(n, source, target, 0));
             }
         }
         if hir[func].ret.is_some() {
             let source = self.type_from_node(file, hir[func].ret);
             let target = self.sig_return(contextual);
-            self.infer(inference, source, target, 0);
+            self.with_inference_context(level, |c, n| c.infer(n, source, target, 0));
         }
     }
 
@@ -3241,9 +3313,6 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(TypeId::ANY);
         }
         let resolved = self.resolved_signature(file, call);
-        if !is_cached {
-            self.resolved_signatures.insert((file, call));
-        }
         // `resolveUntypedCall`, `resolveErrorCall`: a signature that yields `any` has no
         // parameters.
         let Some(sig) = resolved.sig else {

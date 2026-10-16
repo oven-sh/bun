@@ -9,7 +9,7 @@ pub struct NoUselessSpreadFallback {
 
 const USELESS_FALLBACK: Message = Message::new(
     "uselessFallback",
-    "This empty object is made only to be spread. To spread `false`, `null` or `undefined` into an object does nothing.",
+    "This empty object is not needed. Spreading `false`, `null` or `undefined` into an object does nothing.",
 );
 const USE_LOGICAL_AND: Message = Message::new("useLogicalAnd", "Replace the conditional expression with `&&`.");
 

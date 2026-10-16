@@ -82,7 +82,10 @@ impl Config {
     pub fn new(options: &Options) -> Config {
         let types = options.object(0);
         let (variable_declarator, assignment_expression) = if options.get(0).is_none() {
-            let all = Enabled { array: true, object: true };
+            let all = Enabled {
+                array: true,
+                object: true,
+            };
             (all, all)
         } else if types.has("array") || types.has("object") {
             (Enabled::new(types), Enabled::new(types))
@@ -95,7 +98,9 @@ impl Config {
         Config {
             variable_declarator,
             assignment_expression,
-            enforce_for_renamed_properties: options.object(1).bool_or("enforceForRenamedProperties", false),
+            enforce_for_renamed_properties: options
+                .object(1)
+                .bool_or("enforceForRenamedProperties", false),
         }
     }
 
@@ -115,7 +120,8 @@ impl Config {
         {
             return enabled.array.then_some("array");
         }
-        let is_template = matches!(property, Property::Computed(index) if index.tag() == ExprTag::Template);
+        let is_template =
+            matches!(property, Property::Computed(index) if index.tag() == ExprTag::Template);
         if !enabled.object || is_port_of_oxlint && is_template {
             return None;
         }
@@ -125,7 +131,12 @@ impl Config {
 
     /// ESLint's listener for a `VariableDeclarator`. `can_fix`: whether to offer the fix.
     #[inline(never)]
-    pub fn check_variable_declarator<'a, R: Rule>(&self, declaration: VarDecl<'a>, cx: &Cx<'a, R>, can_fix: bool) {
+    pub fn check_variable_declarator<'a, R: Rule>(
+        &self,
+        declaration: VarDecl<'a>,
+        cx: &Cx<'a, R>,
+        can_fix: bool,
+    ) {
         let Some((object, property)) = declaration.init().and_then(member_expression) else {
             return;
         };
@@ -134,7 +145,9 @@ impl Config {
         }
         let left = declaration.pat().as_ident();
         let is_port_of_oxlint = cx.language().is_oxlint && R::META.plugin == Plugin::Eslint;
-        let Some(kind) = self.perform_check(self.variable_declarator, left, property, is_port_of_oxlint) else {
+        let Some(kind) =
+            self.perform_check(self.variable_declarator, left, property, is_port_of_oxlint)
+        else {
             return;
         };
         let has_same_name = property.is_called(left);
@@ -144,7 +157,14 @@ impl Config {
             Some(init) if is_port_of_oxlint => init.outer_span(),
             _ => declaration.span(),
         };
-        let report = cx.report(place, PREFER_DESTRUCTURING).data("type", type_in_message(kind, cx)).data("kind", kind);
+        let report = cx
+            .report(place, PREFER_DESTRUCTURING)
+            .claims(declaration)
+            .unless_claimed(declaration)
+            .called_with(declaration);
+        let report = report
+            .data("type", type_in_message(kind, cx))
+            .data("kind", kind);
         // oxlint's port also fixes `let x = a["x"]`, does not look for comments, and leaves most parentheses.
         if is_port_of_oxlint {
             if kind == "object" && has_same_name && declaration.ty().is_none() {
@@ -157,10 +177,21 @@ impl Config {
                     let needs_no_parentheses = !object.is_chain_root()
                         && matches!(
                             object.tag(),
-                            ExprTag::Call | ExprTag::Ident | ExprTag::Dot | ExprTag::Index | ExprTag::This
+                            ExprTag::Call
+                                | ExprTag::Ident
+                                | ExprTag::Dot
+                                | ExprTag::Index
+                                | ExprTag::This
                         );
-                    let object = if needs_no_parentheses { object.span() } else { object.outer_span() };
-                    fixer.replace(declaration, [&b"{"[..], name, b"} = ", file.slice(object)].concat())
+                    let object = if needs_no_parentheses {
+                        object.span()
+                    } else {
+                        object.outer_span()
+                    };
+                    fixer.replace(
+                        declaration,
+                        [&b"{"[..], name, b"} = ", file.slice(object)].concat(),
+                    )
                 });
             }
             return;
@@ -208,7 +239,10 @@ impl Config {
                         usize::from(self.enforce_for_renamed_properties && enabled.object)
                             + usize::from(left == Some(name)),
                     ),
-                    _ => (0, usize::from(self.enforce_for_renamed_properties && enabled.object)),
+                    _ => (
+                        0,
+                        usize::from(self.enforce_for_renamed_properties && enabled.object),
+                    ),
                 },
             };
             if arrays + objects == 0 || utils::is_assignment_target(e) {
@@ -216,7 +250,10 @@ impl Config {
             }
             let arrays = std::iter::repeat_n(("Array", "array"), arrays);
             for (said, kind) in arrays.chain(std::iter::repeat_n(("Object", "object"), objects)) {
-                cx.report(e, PREFER_DESTRUCTURING).data("type", said).data("kind", kind);
+                cx.report(e, PREFER_DESTRUCTURING)
+                    .unless_claimed(e)
+                    .data("type", said)
+                    .data("kind", kind);
             }
             return;
         }
@@ -224,7 +261,11 @@ impl Config {
             // A default value in a pattern is not an assignment.
             && !utils::is_assignment_target(e)
         {
-            cx.report(e, PREFER_DESTRUCTURING).data("type", type_in_message(kind, cx)).data("kind", kind);
+            cx.report(e, PREFER_DESTRUCTURING)
+                .claims(e)
+                .unless_claimed(e)
+                .data("type", type_in_message(kind, cx))
+                .data("kind", kind);
         }
     }
 }
@@ -239,7 +280,8 @@ fn is_enabled(it: Enabled) -> bool {
 }
 
 impl Rule for PreferDestructuring {
-    const META: Meta = Meta::eslint("prefer-destructuring", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta =
+        Meta::eslint("prefer-destructuring", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Assign]).var_decls();
     no_state!();
 
@@ -275,7 +317,8 @@ impl Rule for PreferDestructuring {
         }
         let has_type_annotation = cx.language().is_oxlint && declaration.ty().is_some();
         if !has_type_annotation || self.enforce_for_declaration_with_type_annotation {
-            self.config.check_variable_declarator(declaration, cx, !has_type_annotation);
+            self.config
+                .check_variable_declarator(declaration, cx, !has_type_annotation);
         }
     }
 }

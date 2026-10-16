@@ -13,13 +13,20 @@
 //! and `bun_lint_jest`.
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
+// For what only words an error, like the message for a file that doesn't parse or for an option that is refused:
+// `#[optimize(size)]` roughly halves it, and how fast it is doesn't matter. Nothing that runs for a file without errors has it.
+#![feature(optimize_attribute)]
 
 pub mod ast;
 pub mod code_path;
 pub mod context;
+pub mod docs;
 pub(crate) mod estree;
 pub mod fix;
 pub mod formats;
+pub mod glob;
+pub mod ignore;
 pub mod js_plugin;
 pub mod json;
 pub mod language;
@@ -57,6 +64,7 @@ pub mod prelude {
     pub use crate::rule::{Fixable, Kind, Message, Meta, NodeTags, On, Presets, Rule};
     pub use crate::semantic::{
         Declaration, DeclarationKind, Reference, ReferenceFlags, Scope, ScopeKind, Symbol,
+        Variable, VariableKind,
     };
     pub use crate::span::{Position, Span, Spanned};
     pub use crate::tokens::{Token, TokenKind, Tokens, skip_trivia, skip_trivia_back};

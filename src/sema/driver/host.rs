@@ -760,11 +760,14 @@ fn list(path: &[u8]) -> Directory {
         };
         let is_dir = match entry.kind {
             EntryKind::Directory => true,
-            // A symlink has to be followed. It may be dangling.
-            EntryKind::SymLink | EntryKind::Unknown => match is_directory(directory.fd(), name) {
-                Some(is_dir) => is_dir,
-                None => continue,
-            },
+            // A symlink has to be followed, unless the listing says what it stands for. It may be dangling.
+            EntryKind::SymLink | EntryKind::Unknown => {
+                let known = entry.link_is_directory();
+                match known.or_else(|| is_directory(directory.fd(), name)) {
+                    Some(is_dir) => is_dir,
+                    None => continue,
+                }
+            }
             EntryKind::File => false,
             // A FIFO, socket or device.
             _ => continue,
@@ -1049,10 +1052,8 @@ impl Expected {
                 None
             }
             JsonValue::Object(object) if is_map => {
-                let mut value = match self.value.take() {
-                    Some(Json::Object(value)) => value,
-                    _ => Vec::new(),
-                };
+                let value = self.value.take().and_then(Json::into_object);
+                let mut value = value.unwrap_or_default();
                 let refused = unmarshal_map(object.get(), has_duplicates, &mut value);
                 self.value = Some(Json::Object(value));
                 refused
@@ -1523,6 +1524,9 @@ impl Host for Disk {
     }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
         self.io_pool.as_deref()
+    }
+    fn on_this_thread(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        crate::for_each_on_this_thread(&self.caches, count, work);
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         if self.is_of_a_thread_of_the_pool {

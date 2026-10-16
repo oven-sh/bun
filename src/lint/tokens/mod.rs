@@ -11,7 +11,8 @@
 //!
 //! The tokens have the ranges and the types that ESLint's parser for the file gives them:
 //! typescript-estree for TypeScript and where `languageOptions.parser` says so, otherwise espree.
-//! See [`TokenKind`] for where the two differ.
+//! Under a configuration of oxlint they are what oxlint hands to a plugin. See [`TokenKind`] for
+//! where they differ.
 //!
 //! | ESLint | here |
 //! | --- | --- |
@@ -123,6 +124,8 @@ pub fn next_token(text: &[u8], at: u32) -> Span {
 /// | `a` and `b` of the expression `a.b`, anywhere inside a JSX element: `<i>{a.b}</i>` | `Identifier` | `JsxIdentifier` |
 /// | `a` and `b` of `<a:b c:d="">` | `JsxIdentifier` | `Identifier` |
 /// | `this` of `<this.a>` | `JsxIdentifier` | `Keyword` |
+///
+/// Under a configuration of oxlint every file gets the same, whatever its language: what espree says, but for the last row.
 ///
 /// For both:
 /// - A reserved word that is a name is an `Identifier`: `a.if`, `{ default: 1 }`, `class { new() {} }`,
@@ -244,8 +247,8 @@ impl<'a> Token<'a> {
     /// without its delimiters and a private identifier without its `#`.
     ///
     /// espree, not typescript-estree, decodes two things, which stay as they are written here:
-    /// - The escape sequences of a name: the value of `a\u0062` is `ab`. [`Token::decoded_value`] and
-    ///   [`Token::has_same_value`] do that.
+    /// - The escape sequences of a name: the value of `a\u0062` is `ab`. So does oxlint.
+    ///   [`Token::decoded_value`] and [`Token::has_same_value`] do that.
     /// - The text between JSX tags (not the string of an attribute): the value of `&amp;` is `&`, and
     ///   that of a `\r\n` is `\n`. Nothing here does that.
     pub fn value(self) -> &'a [u8] {
@@ -255,18 +258,18 @@ impl<'a> Token<'a> {
         }
     }
 
-    /// Whether espree decodes escape sequences in it: the file is one of espree's, this is a name,
-    /// and there is a `\` in it.
+    /// Whether espree or oxlint decodes escape sequences in it: the file is one of theirs, this is a
+    /// name, and there is a `\` in it.
     fn has_decoded_value(self) -> bool {
         use TokenKind::{Boolean, Identifier, Keyword, Null, PrivateIdentifier};
         matches!(
             self.raw.kind,
             Identifier | Keyword | PrivateIdentifier | Boolean | Null
         ) && bun_core::strings::contains_char(self.text(), b'\\')
-            && scan::is_espree(self.file)
+            && scan::decodes_names(self.file)
     }
 
-    /// [`Token::value`], and for espree a name with what its `\u0061` and `\u{61}` stand for.
+    /// [`Token::value`], and for espree and oxlint a name with what its `\u0061` and `\u{61}` stand for.
     pub fn decoded_value(self) -> Cow<'a, [u8]> {
         if !self.has_decoded_value() {
             return Cow::Borrowed(self.value());

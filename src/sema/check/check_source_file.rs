@@ -47,18 +47,38 @@ impl<'s> Program<'s> {
     /// (`has_order_dependent_assignment_marks`). A task is invalid if it walked a function of a
     /// file it was visiting that is inside or around one that an earlier task of the step walked,
     /// on demand. Retried, it finds those walks published, with what was evaluated along with them.
-    pub fn validate(&self, finished: &[Finished<'s>]) -> Vec<bool> {
+    ///
+    /// Likewise for the list of properties that an intersection keeps (`Finished::listings`). A
+    /// retried task finds the list in the tables that the valid tasks published.
+    /// `is_published`: whether the tasks of this round publish their tables. If not, a retried
+    /// task could not find the list of a valid one: the tasks that noted a list of an
+    /// intersection that an invalid task noted are invalid too, and what the round noted is
+    /// forgotten. A round of retries publishes.
+    pub fn validate(&self, finished: &[Finished<'s>], is_published: bool) -> Vec<bool> {
         let mut serial = self.serial_variances.lock();
+        let mut listings = self.serial_listings.lock();
+        let compares_listings = !*self.listings_are_not_compared.lock();
         let mut walked: Vec<(FileId, Node)> = Vec::new();
-        (finished.iter())
+        let mut invalid: Vec<bool> = (finished.iter())
             .map(|finished| {
                 let is_invalid = (finished.order_dependent_variances.iter()).any(|it| {
                     serial
                         .get(&it.sym)
                         .is_some_and(|first| it.conflicts_with(first))
                 });
-                if is_invalid || self.has_walked_across_earlier_walk(finished, &walked) {
+                // A task before it in the serial order assigned the other list: this one would
+                // have found that.
+                let has_another_list = compares_listings
+                    && (finished.listings.iter())
+                        .any(|it| listings.get(&it.0).is_some_and(|first| first.0 != it.1));
+                if is_invalid
+                    || has_another_list
+                    || self.has_walked_across_earlier_walk(finished, &walked)
+                {
                     return true;
+                }
+                for it in &finished.listings {
+                    listings.entry(it.0).or_insert((it.1, is_published));
                 }
                 for it in &finished.order_dependent_variances {
                     serial.entry(it.sym).or_insert(it.variances);
@@ -66,7 +86,43 @@ impl<'s> Program<'s> {
                 walked.extend(finished.assignments_walked.iter().map(|it| (it.0, it.1)));
                 false
             })
-            .collect()
+            .collect();
+        if !is_published {
+            // Of the intersections that an invalid task noted, and so on from the tasks that this
+            // makes invalid.
+            let mut noted_by_invalid: Vec<Sym> = Vec::new();
+            let mut has_grown = compares_listings;
+            while has_grown {
+                has_grown = false;
+                for (finished, is_invalid) in finished.iter().zip(&mut invalid) {
+                    let of = |it: &(Sym, bool)| noted_by_invalid.contains(&it.0);
+                    if !*is_invalid && finished.listings.iter().any(of) {
+                        (*is_invalid, has_grown) = (true, true);
+                    }
+                    if *is_invalid {
+                        for it in &finished.listings {
+                            if !noted_by_invalid.contains(&it.0) {
+                                noted_by_invalid.push(it.0);
+                                has_grown = true;
+                            }
+                        }
+                    }
+                }
+            }
+            listings.retain(|_, first| first.1);
+        }
+        invalid
+    }
+
+    /// The guarantee that the retries of a step end: called when a round of retries left every
+    /// invalid task invalid.
+    pub fn stop_comparing_listings(&self) {
+        *self.listings_are_not_compared.lock() = true;
+    }
+
+    /// At the start of a step.
+    pub fn compare_listings(&self) {
+        *self.listings_are_not_compared.lock() = false;
     }
 
     /// `earlier`: `Finished::assignments_walked` of the valid tasks before it.
@@ -234,6 +290,7 @@ impl<'s> Checker<'_, 's> {
         }
         self.never_check_with_bodies(file);
         self.never_check_specifier_expressions(file);
+        self.never_check_options_of_import_types(file);
     }
 
     /// Whether `pos` is in a range given to `never_check`.
@@ -276,7 +333,9 @@ impl<'s> Checker<'_, 's> {
     /// - 1: a query has re-entered itself.
     /// - 2: an instantiation limit was reached, or the native stack ran low.
     /// - 4: a comparison was cut short because both types were deeply nested.
-    /// - 8: `check_file` does not check the statements of `file`.
+    /// - 8: `check_file` does not check the statements of `file`. Or the range assigned a list of
+    ///   properties to an intersection (`Finished::listings`): its tables of records are
+    ///   withheld, so the task of `file` could not find the list.
     pub fn check_statements_ahead(
         &mut self,
         file: FileId,
@@ -304,9 +363,12 @@ impl<'s> Checker<'_, 's> {
         let is_cut_short = self.ran_out_of_stack.replace(false)
             || self.cuts() != 0
             || self.instantiation_limit_hits != 0;
+        let has_listed = !self.task.listings.is_empty();
+        self.task.listings.clear();
         u8::from(self.task.closed_a_cycle)
             | u8::from(is_cut_short) << 1
             | u8::from(self.comparisons_of_deeply_nested_types != 0) << 2
+            | u8::from(has_listed) << 3
     }
 
     /// `checkSourceElements`
@@ -396,7 +458,16 @@ impl<'s> Checker<'_, 's> {
                     }
                 }
                 self.check_getter_returns_a_value(file, func);
-                if hir[func].ret.is_none() && hir[func].kind != FnKind::Setter {
+                if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
+                    // `checkAccessorDeclaration`: `getTypeOfAccessors` of the symbol, whose getter comes first.
+                    if let Parent::Prop(p) = self.bound(file).expr_parent[e.idx()] {
+                        let getter = match hir[p].kind {
+                            PropKind::Setter => self.accessor_of_literal(file, p, PropKind::Getter),
+                            _ => None,
+                        };
+                        self.type_of_literal_prop(file, getter.unwrap_or(p));
+                    }
+                } else if hir[func].ret.is_none() {
                     self.return_type_of_fn(file, func);
                 }
                 self.check_all_code_paths_in_non_void_function_return_or_throw(file, func);
@@ -622,10 +693,20 @@ impl<'s> Checker<'_, 's> {
         let has_body = has_body(&hir[func]);
         let is_pattern = matches!(hir[node.pat].kind, PatKind::Object(_) | PatKind::Array(_));
         if p != hir[func].this_param {
-            if self.check_name_and_initializer(file, node.pat, node.default, !has_body) {
+            // `checkExpressionCached(initializer)`: a loop that is being analysed is hidden from it.
+            let check = |c: &mut Self| {
+                let exits = c.check_name_and_initializer(file, node.pat, node.default, !has_body);
+                if !exits {
+                    c.check_parameter_initializer(file, p);
+                }
+                exits
+            };
+            let exits = match self.flow_loops.is_empty() {
+                true => check(self),
+                false => self.outside_flow_loops(check),
+            };
+            if exits {
                 self.error(file, p, 2371, &[]);
-            } else {
-                self.check_parameter_initializer(file, p);
             }
         }
         if node.flags.contains(Flags::PARAMETER_PROPERTY) {
@@ -669,20 +750,30 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
-    /// The end of `checkParameter`: 2370.
-    pub(super) fn check_rest_parameter_type(&mut self, file: FileId, func: FnId, p: ParamId) {
+    /// Whether `assignParameterType` adds `undefined` for the `?` of the parameter `p` of `func`:
+    /// it assigns only the parameters of a context sensitive function expression or method.
+    pub(super) fn is_optional_in_assign_parameter_type(
+        &self,
+        file: FileId,
+        func: FnId,
+        p: ParamId,
+    ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (param, f) = (&hir[p], &hir[func]);
-        let mut ty = self.type_of_param(file, p);
-        // `assignParameterType`: by the time it is checked, a parameter of a context sensitive function expression has had its `?`
-        // added.
-        if param.flags.contains(Flags::OPTIONAL)
+        param.flags.contains(Flags::OPTIONAL)
             && param.ty.is_none()
             && param.default.is_none()
             && f.type_params.is_empty()
             && matches!(f.kind, FnKind::Expr | FnKind::Arrow | FnKind::Method)
             && matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_))
-        {
+    }
+
+    /// The end of `checkParameter`: 2370.
+    pub(super) fn check_rest_parameter_type(&mut self, file: FileId, func: FnId, p: ParamId) {
+        let mut ty = self.type_of_param(file, p);
+        // `assignParameterType`: by the time it is checked, a parameter of a context sensitive function expression has had its `?`
+        // added.
+        if self.is_optional_in_assign_parameter_type(file, func, p) {
             ty = self.optional(ty);
         }
         let ty = self.reduced(ty);
@@ -764,7 +855,7 @@ impl<'s> Checker<'_, 's> {
 
     /// The check of the parent of `e` returns before it checks `e`.
     pub(super) fn leave_unvisited(&mut self, file: FileId, e: ExprId) {
-        if e.is_some() {
+        if e.is_some() && !self.is_checking_in_flow_loop {
             let start = self.start_of(file, e);
             self.unvisited_exprs.push((start, e));
         }
@@ -803,9 +894,11 @@ impl<'s> Checker<'_, 's> {
                     }
                     let (name, prop) = (hir[p].value, &hir[p]);
                     if is_bodiless && self.is_renamed_binding_element(file, p) {
-                        self.renamed_binding_elements_in_types.push(p);
-                        if let PropKey::Computed(key) = prop.key {
-                            self.unvisited_exprs.push((prop.key_pos, key));
+                        if !self.is_checking_in_flow_loop {
+                            self.renamed_binding_elements_in_types.push(p);
+                            if let PropKey::Computed(key) = prop.key {
+                                self.unvisited_exprs.push((prop.key_pos, key));
+                            }
                         }
                         self.leave_unvisited(file, prop.default);
                         continue;
@@ -1848,6 +1941,10 @@ impl<'s> Checker<'_, 's> {
                 self.serialization_level = serialization_level;
                 if matches!(hir[e].kind, ExprKind::TaggedTemplate(_)) {
                     check_tagged_template(self, file, c);
+                }
+                // Otherwise `check_calls`, after the walk.
+                if self.is_checking_in_flow_loop {
+                    self.check_call_like(file, e);
                 }
             }
             ExprKind::BigInt(_) => self.check_grammar_big_int_literal(file, e),

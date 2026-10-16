@@ -385,13 +385,13 @@ test.concurrent("a throw from a 'data' listener is an uncaughtException, and std
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
   let stdout = "";
-  for (let r; !(r = await reader.read()).done; ) {
+  for (let r; !(r = await reader.read()).done;) {
     stdout += decoder.decode(r.value, { stream: true });
     if (stdout.includes("GOT1")) break;
   }
   proc.stdin.write("two");
   await proc.stdin.end();
-  for (let r; !(r = await reader.read()).done; ) stdout += decoder.decode(r.value, { stream: true });
+  for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
 
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode, ...(exitCode === 0 ? {} : { stderr }) }).toEqual({

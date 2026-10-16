@@ -994,7 +994,7 @@ impl NamingConvention {
 
 impl Rule for NamingConvention {
     // It needs types only for the `types` of a selector, and runs without them, as upstream.
-    const META: Meta = Meta::typescript("naming-convention", Kind::Suggestion);
+    const META: Meta = Meta::typescript("naming-convention", Kind::Suggestion).uses_types();
     const ON: On = On::new()
         .funcs()
         .var_decls()

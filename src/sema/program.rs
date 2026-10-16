@@ -7627,26 +7627,23 @@ impl<'s> Files<'s> {
 
     /// The minimum and maximum number of type arguments of a reference to `sym`.
     pub(crate) fn type_argument_arity(&self, sym: Sym) -> (usize, usize) {
-        if let Some((file, params)) = self.only_type_param_list(sym) {
-            let hir = self.hir(file);
-            return (
-                params
-                    .iter()
-                    .rposition(|tp| hir[tp].default.is_none())
-                    .map_or(0, |last| last + 1),
-                params.len(),
-            );
-        }
-        let lists = self.type_param_lists(sym);
-        // `getMinTypeArgumentCount`, `hasTypeParameterDefault`: a parameter has a default if any of
-        // its declarations has one.
+        let lists = match self.only_type_param_list(sym) {
+            Some(list) => std::iter::once(list).collect(),
+            None => self.type_param_lists(sym),
+        };
+        // In a single list a type parameter without a name is a symbol of its own.
+        let is_single_list = lists.len() == 1;
+        // `appendTypeParameters`, `getMinTypeArgumentCount`, `hasTypeParameterDefault`: the type
+        // parameters of one name are one symbol, also within one list (`<T, T>`), and it has a
+        // default if any of its declarations has one.
         let mut all: SmallVec<[(Atom, bool); 4]> = SmallVec::new();
         for (file, params) in lists {
             let hir = self.hir(file);
             for tp in params.iter() {
                 let (name, has_default) = (hir[tp].name, hir[tp].default.is_some());
-                match all.iter_mut().find(|known| known.0 == name) {
-                    Some(known) => known.1 |= has_default,
+                let is_named = !is_single_list || (name != Atom::NONE && name != known::empty);
+                match all.iter_mut().find(|seen| is_named && seen.0 == name) {
+                    Some(seen) => seen.1 |= has_default,
                     None => all.push((name, has_default)),
                 }
             }
@@ -7796,9 +7793,16 @@ impl<'s> Files<'s> {
                 let held = bound.lookup(s.locals, name).map(|id| self.sym(file, id));
                 let is_export_value_only =
                     held.is_some_and(|sym| self.refused_exports.contains(&sym));
-                let meaning = match is_export_value_only {
-                    true => meaning & SymFlags::VALUE,
-                    false => meaning,
+                // `meaning&ast.SymbolFlagsType`: a type parameter of a class or an interface is one symbol with the member of
+                // its name, which is not in scope.
+                let is_type_parameter =
+                    matches!(s.kind, ScopeKind::Class(_) | ScopeKind::Interface(_))
+                        && held
+                            .is_some_and(|sym| self.flags(sym).contains(SymFlags::TYPE_PARAMETER));
+                let meaning = match (is_export_value_only, is_type_parameter) {
+                    (true, _) => meaning & SymFlags::VALUE,
+                    (false, true) => meaning & SymFlags::TYPE,
+                    (false, false) => meaning,
                 };
                 if let Some(sym) = lookup(SymbolTable::Locals(file, scope), held, meaning)
                     && bound.is_seen_from(from, self.flags(sym), meaning)

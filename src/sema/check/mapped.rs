@@ -330,7 +330,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         };
         self.base_types_so_far.iter().any(|it| it.0 == target)
-            && !self.inheriting.contains(&ty)
+            && !self.inheriting.iter().any(|it| it.0 == ty)
             && self.declared_type(target) == ty
     }
 
@@ -1235,12 +1235,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getIndexTypeOfType`
     pub(super) fn index_type_of_type(&mut self, ty: TypeId, key_type: TypeId) -> Option<TypeId> {
-        let ty = self.reduced_apparent_type(ty);
-        if let TypeData::Union(parts) = self.data(ty) {
-            let infos = self.union_index_infos(parts);
-            return Some(infos.iter().find(|info| info.key == key_type)?.value);
-        }
-        let members = self.structured_members(ty)?;
+        let members = self.members_for_index_infos(ty)?;
         let info = members
             .index_infos()
             .iter()
@@ -1554,7 +1549,11 @@ impl<'p, 's> Checker<'p, 's> {
                     let mapping = self.types().mapping(mapper);
                     let mut pairs = Vec::with_capacity(mapping.len() + params.len());
                     pairs.extend_from_slice(mapping);
-                    pairs.extend(params.iter().copied().zip(inferred));
+                    // `combineTypeMappers(context.mapper, mapper)`: an inferred type is
+                    // instantiated with `mapper`.
+                    for (&param, inferred) in params.iter().zip(inferred) {
+                        pairs.push((param, self.instantiate(inferred, mapper)));
+                    }
                     combined = self.types().mapper(pairs);
                 } else if params
                     .iter()
@@ -1577,7 +1576,7 @@ impl<'p, 's> Checker<'p, 's> {
                 || self.is_generic(extends_ty)
                 || check_tuples && self.has_generic_element(extends_ty)
             {
-                break self.deferred_conditional_type(
+                let deferred = self.deferred_conditional_type(
                     file,
                     node,
                     mapper,
@@ -1585,6 +1584,8 @@ impl<'p, 's> Checker<'p, 's> {
                     for_constraint,
                     alias,
                 );
+                self.instantiate_narrowed_check_type(file, node, mapper);
+                break deferred;
             }
             let extends_is_top = self.has_any_flag(extends_ty) || extends_ty == TypeId::UNKNOWN;
             let (branch, branch_mapper, is_false_branch) = if !extends_is_top
@@ -1610,7 +1611,7 @@ impl<'p, 's> Checker<'p, 's> {
                 (no, mapper, true)
             } else {
                 if !extends_is_top && !self.is_assignable_restrictive(check_ty, extends_ty) {
-                    break self.deferred_conditional_type(
+                    let deferred = self.deferred_conditional_type(
                         file,
                         node,
                         mapper,
@@ -1618,6 +1619,8 @@ impl<'p, 's> Checker<'p, 's> {
                         for_constraint,
                         alias,
                     );
+                    self.instantiate_narrowed_check_type(file, node, mapper);
+                    break deferred;
                 }
                 (yes, combined, false)
             };
@@ -1674,6 +1677,25 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `newConditionalType`, with `alias`. Without one it has `instantiateTypeAlias(root.alias,
     /// mapper)`, which the node determines.
+    /// `result.checkType = c.instantiateType(root.checkType, mapper)` of a deferred conditional
+    /// type. The pieces are instantiated when they are read, except a check type that the true
+    /// branch of an enclosing conditional type narrows, or an indexed access of one:
+    /// instantiating that substitution type compares the base type with the constraint, and when
+    /// it does so shows.
+    fn instantiate_narrowed_check_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        mapper: MapperId,
+    ) {
+        if let TypeNodeKind::Cond { check, .. } = self.hir(file)[node].kind {
+            let declared = self.type_from_node(file, check);
+            if self.actual_type_variable(declared) != declared {
+                self.instantiate(declared, mapper);
+            }
+        }
+    }
+
     fn deferred_conditional_type(
         &self,
         file: FileId,
@@ -1836,11 +1858,16 @@ impl<'p, 's> Checker<'p, 's> {
         mapper: MapperId,
     ) -> TypeId {
         // `getConstraintOfTypeParameter` is nil unless `hasNonCircularBaseConstraint`. Where
-        // `pushTypeResolution` fails, every resolution above the first request is in the cycle.
+        // `pushTypeResolution` fails, the first request and every resolution above it are in the
+        // cycle: the cycle start is inclusive.
         let key = (file, node, mapper);
         let mut in_progress = self.mapped_constraints_in_progress.iter();
-        if let Some(&(_, height, _)) = in_progress.find(|it| it.0 == key) {
+        if let Some(start) = in_progress.position(|it| it.0 == key) {
+            let height = self.mapped_constraints_in_progress[start].1;
             if self.mark_cycle_from(height) {
+                for it in &mut self.mapped_constraints_in_progress[start..] {
+                    it.2 = true;
+                }
                 self.note_cycle();
                 self.task.closed_a_cycle = true;
             }
@@ -2556,7 +2583,13 @@ impl<'p, 's> Checker<'p, 's> {
                 break;
             }
         }
-        shape.index.extend(self.union_index_infos(parts));
+        // `getIndexInfosOfType`: what `resolveUnionTypeMembers` has set, once it has run. This
+        // object is also made for the properties alone, which resolve no members of the union.
+        let index = match self.resolved_union_type_members(ty) {
+            Some(resolved) => SmallVec::from_slice(resolved.index_infos()),
+            None => self.union_index_infos(parts),
+        };
+        shape.index.extend(index);
         let object = self.synth(shape);
         match self.end_scope_by_counters(scope) {
             Ok(stored) => (self.p.union_objects).insert(&self.task, ty, object, stored),
@@ -2599,7 +2632,7 @@ impl<'p, 's> Checker<'p, 's> {
                     true => self.union_as_object(ty),
                     false => ty,
                 };
-                (self.members(owner)).map(|members| Modifiers::Object(owner, members))
+                (self.listed_members(owner)).map(|members| Modifiers::Object(owner, members))
             }
             None => None,
         };
@@ -2768,6 +2801,20 @@ impl<'p, 's> Checker<'p, 's> {
             // `mappedType.containsError = true`
             let stored = self.cycle_result();
             (self.p.mapped_types_with_errors).insert(&self.task, of, (), stored);
+            // `resolveMappedTypeMembers` resolves the constraint type of `of` and the members of
+            // a reverse mapped modifiers type before the symbol exists: see `circular_mapped_property`.
+            if let Some(at) = self.stack.iter().rposition(|in_progress| *in_progress == q) {
+                let own = self.mapped_origin(of);
+                let mut constraints = self.mapped_constraints_in_progress.iter();
+                let is_through_members = constraints.any(|it| it.1 > at && Some(it.0) == own)
+                    || self.stack[at + 1..].iter().any(|&between| {
+                        matches!(between, Query::Shape(t) | Query::Properties(t)
+                            if matches!(self.data(t), TypeData::ReverseMapped { .. }))
+                    });
+                if is_through_members {
+                    self.mapped_props_reentered_through_members.push(at);
+                }
+            }
             return TypeId::ERROR;
         }
         let mapped = self.mapped_decl(file, node);
@@ -2784,9 +2831,13 @@ impl<'p, 's> Checker<'p, 's> {
             strips,
         );
         let left = self.leave(q);
+        let at = self.stack.len();
+        let reentered_through_members = self.mapped_props_reentered_through_members.contains(&at);
+        (self.mapped_props_reentered_through_members).retain(|&below| below < at);
         if self.left_a_cycle {
-            // tsgo resolves the property later or never, with another `currentNode`.
-            if !self.eager.is_empty() {
+            // Behind a barrier that is not the value assigned in a loop, tsgo resolves the
+            // property later or never, with another `currentNode`.
+            if self.is_behind_barrier(0) {
                 self.mark_tainted_from(0);
                 return TypeId::ERROR;
             }
@@ -2799,7 +2850,7 @@ impl<'p, 's> Checker<'p, 's> {
             );
             // After `links.resolvedType = c.errorType`: the message prints `of`, which has this
             // property.
-            self.circular_mapped_property(of, prop.name);
+            self.circular_mapped_property(of, prop.name, reentered_through_members);
             return kept;
         }
         match left {
@@ -2859,8 +2910,14 @@ impl<'p, 's> Checker<'p, 's> {
             let key_name = self.property_name_of_type(key);
             // `modifiersProp`: `getPropertyOfType(modifiersType, ..)`
             let source_prop = match (&modifiers, key_name) {
+                // By name, a property is found in the constituents of an intersection also when
+                // the list that the intersection keeps lacks it (`listed_members`).
                 (Some(Modifiers::Object(modifiers_type, m)), Some(name)) => self
                     .property_in_type(*modifiers_type, m, name)
+                    .or_else(|| match self.has_partial_list(*modifiers_type) {
+                        true => self.get_property_of_type(*modifiers_type, name),
+                        false => None,
+                    })
                     .map(|(prop, _)| prop),
                 (Some(Modifiers::Union(union)), Some(name)) => self
                     .get_property_of_type(*union, name)

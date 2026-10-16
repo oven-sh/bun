@@ -2,10 +2,12 @@
 //! parser that refuses it at its first error. What that refuses is parsed again by the parser that
 //! recovers from errors as TypeScript's does.
 
-use crate::{Options, Refusal, Scratch};
+use crate::{Options, Part, Refusal, Scratch};
 use bun_alloc::Arena;
 use bun_sema::atom::{Intern, Interner};
-use bun_sema::hir::{Diagnostic, DiagnosticKind, ExprKind, File, FileBuilder, FileKind};
+use bun_sema::hir::{
+    Diagnostic, DiagnosticKind, ExprKind, File, FileBuilder, FileKind, Stmt, StmtKind,
+};
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 use core::sync::atomic::AtomicU64;
@@ -78,6 +80,8 @@ struct Reading<'a> {
     experimental_decorators: bool,
     every_file_is_a_module: bool,
     jsdoc: JsDoc,
+    /// `Options::attach_comments`
+    attach_comments: bool,
 }
 
 /// `path` has the extension of JSON, and nobody says what else the file is.
@@ -110,19 +114,41 @@ fn file_of(
     text: &[u8],
     atoms: Option<&dyn Intern>,
 ) -> Box<FileBuilder> {
+    // Another text than the last one, maybe at the same address.
+    scratch.stops.forget();
+    let is_named = |names: [&[u8]; 2]| names.iter().any(|it| how.path.ends_with(it));
+    let as_script = Reading {
+        dialect: Dialect {
+            script: true,
+            ..how.dialect
+        },
+        every_file_is_a_module: false,
+        ..how
+    };
+    // Whatever is in it, to oxc it is a script. An `await` expression at its top level is an error that it goes on after.
+    let is_script_by_name = how.dialect.oxc && is_named([b".cjs", b".cts"]);
+    if is_script_by_name && !how.dialect.script {
+        return file_read_as(scratch, as_script, text, atoms, false);
+    }
     let mut file = file_read_as(scratch, how, text, atoms, false);
     let is_refused = |file: &FileBuilder| file.has_errors || file.has_parse_diagnostics;
     let (was_refused, html_opens) = (is_refused(&file), scratch.html_opens);
-    if !how.dialect.oxc || how.dialect.script || !was_refused && html_opens.first.is_none() {
+    let has_only_ambiguous_awaits = scratch.has_only_ambiguous_awaits;
+    let may_be_script = html_opens.first.is_some() || has_only_ambiguous_awaits;
+    if !how.dialect.oxc || how.dialect.script || !was_refused && !may_be_script {
         return file;
     }
-    // For oxc a file is a script if nothing in it says that it is a module, or if its name says so. Here only these are
-    // read otherwise in one.
-    let is_named = |names: [&[u8]; 2]| names.iter().any(|it| how.path.ends_with(it));
-    let is_script_by_name = is_named([b".cjs", b".cts"]);
+    // For oxc a file is a script if nothing in it says that it is a module. Here only these are read otherwise in one.
     let is_module_by_name = is_named([b".mjs", b".mts"]);
-    let is_module = is_module_by_name || file.has_module_syntax && !is_script_by_name;
-    let words: [&[u8]; 3] = [b"await", b"<!--", b"-->"];
+    let has_import_meta = (file.exprs.iter()).any(|e| matches!(e.kind, ExprKind::ImportMeta));
+    // To TypeScript it says nothing about the file.
+    let is_global_name = |it: &Stmt| matches!(it.kind, StmtKind::ExportAsNamespace(..));
+    let is_module = is_module_by_name
+        || file.has_module_syntax
+        || has_import_meta
+        || file.stmts.iter().any(is_global_name);
+    // The last: `await` with an escape is a name in a script.
+    let words: [&[u8]; 4] = [b"await", b"<!--", b"-->", b"\\u"];
     if was_refused && (is_module || !words.iter().any(|it| bun_core::strings::contains(text, it))) {
         return file;
     }
@@ -149,16 +175,13 @@ fn file_of(
         return file;
     }
     scratch.recycle(file);
-    let as_script = Reading {
-        dialect: Dialect {
-            script: true,
-            ..how.dialect
-        },
-        every_file_is_a_module: false,
-        ..how
-    };
     let script = file_read_as(scratch, as_script, text, atoms, true);
-    if (!was_refused || !is_refused(&script)) && (is_script_by_name || !script.has_module_syntax) {
+    // `<!--` makes it a script whatever comes of that. `await (a)` is a call in a script, and `await a` makes it a module. Where
+    // nothing makes it one, oxc has read `await` as a name, and what is wrong with that is what it says: `await /a/;`.
+    let is_script = !is_refused(&script)
+        || !was_refused && html_opens.first.is_some()
+        || has_only_ambiguous_awaits;
+    if is_script && !script.has_module_syntax {
         return script;
     }
     // Atoms of its own are those of the last reading.
@@ -193,9 +216,14 @@ fn file_read_as(
         await_is_a_name: is_json
             || (is_ecmascript || dialect.oxc) && dialect.script
             || is_ecmascript && dialect.flow && !dialect.babel,
+        is_module_or_script: dialect.oxc
+            && !dialect.script
+            && ![&b".mjs"[..], b".mts"].iter().any(|it| path.ends_with(it)),
         recovers: false,
         reads_jsdoc: how.jsdoc == JsDoc::Read,
         dialect,
+        part: None,
+        attach_comments: how.attach_comments,
     };
     let once = |options, scratch: &mut Scratch| match atoms {
         Some(atoms) => crate::parse(text, options, atoms, scratch),
@@ -274,6 +302,8 @@ fn file_read_as(
                     true => Vec::new(),
                     false => vec![error],
                 },
+                // Those that the lexer got past. oxlint looks for `@flow` in the first.
+                comments: std::mem::take(&mut file.comments),
                 ..Default::default()
             };
             return file;
@@ -324,6 +354,7 @@ pub fn summarize<'s>(
         experimental_decorators,
         every_file_is_a_module,
         jsdoc: JsDoc::Read,
+        attach_comments: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         let scratch = all[0].get_or_insert_default();
@@ -374,6 +405,7 @@ pub fn summarize_in<'s>(
         experimental_decorators,
         every_file_is_a_module,
         jsdoc: JsDoc::Ignored,
+        attach_comments: false,
     };
     SCRATCH.with_borrow_mut(|all| {
         parse_into_arena(all[0].get_or_insert_default(), how, memory, text, atoms)
@@ -428,6 +460,7 @@ pub fn with_summary<R>(
         atoms,
         experimental_decorators,
         every_file_is_a_module,
+        false,
         |file, atoms| match file {
             Summary::InArena(mut file) => {
                 file.text = std::borrow::Cow::Borrowed(text);
@@ -454,6 +487,7 @@ pub fn with_summary_in_place<'s, R>(
     atoms: &dyn Intern,
     experimental_decorators: bool,
     every_file_is_a_module: bool,
+    attach_comments: bool,
     then: impl FnOnce(Summary<'_, 's>, &dyn Intern) -> R,
 ) -> R {
     let how = Reading {
@@ -463,6 +497,7 @@ pub fn with_summary_in_place<'s, R>(
         experimental_decorators,
         every_file_is_a_module,
         jsdoc: JsDoc::Ignored,
+        attach_comments,
     };
     // `then` may parse another text.
     let mut scratch = take_scratch();
@@ -481,4 +516,102 @@ pub fn with_summary_in_place<'s, R>(
     scratch.recycle(file);
     give_back_scratch(scratch);
     result
+}
+
+/// Parses the parts of one text: see [`Part`]. What the scanner wants to know of the whole text is found out once.
+/// Why a part cannot be parsed.
+#[derive(Debug, Copy, Clone)]
+pub struct PartError {
+    /// Where the first error is in the whole text.
+    pub at: u32,
+    pub is_too_deep: bool,
+}
+
+impl PartError {
+    fn of(refused: &crate::Refused, at: u32) -> PartError {
+        PartError {
+            at,
+            is_too_deep: refused.why == Refusal::TooDeep,
+        }
+    }
+}
+
+pub struct Parts<'t> {
+    text: &'t [u8],
+    scratch: Option<Box<Scratch>>,
+    /// In the place of those of `scratch`, for the text of one part.
+    stops_of_part: bun_highway::ScannerStopsBuffer,
+}
+
+impl<'t> Parts<'t> {
+    pub fn of(text: &'t [u8]) -> Parts<'t> {
+        let mut scratch = take_scratch();
+        // Another text than the last one, maybe at the same address.
+        scratch.stops.forget();
+        Parts {
+            text,
+            scratch: Some(scratch),
+            stops_of_part: Default::default(),
+        }
+    }
+
+    /// Calls `then` with the file, which has one statement, the interner of its atoms, the text of the file, and where the
+    /// last token of `part` ends in that. The text starts where the part starts and ends with the token behind the part: who
+    /// looks for something in the text of a file does not look through all that is around the part. There is no JSX, `await`
+    /// is a keyword, and nothing is recovered from.
+    pub fn parse<'s, R>(
+        &mut self,
+        dialect: Dialect,
+        is_javascript: bool,
+        part: Part,
+        then: impl FnOnce(Summary<'_, 's>, &dyn Intern, &[u8], u32) -> R,
+    ) -> Result<R, PartError> {
+        let (text, scratch) = (self.text, self.scratch.get_or_insert_default());
+        let options = |from: u32, until: u32| Options {
+            is_javascript,
+            dialect,
+            part: Some(Part {
+                from,
+                until,
+                ..part
+            }),
+            attach_comments: true,
+            ..Default::default()
+        };
+        // Where it ends.
+        let whole = options(part.from, part.until);
+        let found = crate::parse_with_own_atoms(text, whole, scratch).or_else(|refused| {
+            if !refused.why.is_of_scanner() {
+                return Err(PartError::of(&refused, refused.at));
+            }
+            // What follows a part need not be a token: then the text ends before it.
+            crate::parse_with_own_atoms(text, options(part.from, refused.after), scratch)
+                .map_err(|again| PartError::of(&again, refused.after))
+        })?;
+        let until = found.end.1;
+        scratch.recycle(found.file);
+        let code = (text.get(part.from as usize..until as usize)).unwrap_or_default();
+        core::mem::swap(&mut scratch.stops, &mut self.stops_of_part);
+        scratch.stops.forget();
+        let parsed = crate::parse_with_own_atoms(code, options(0, code.len() as u32), scratch);
+        core::mem::swap(&mut scratch.stops, &mut self.stops_of_part);
+        let mut parsed =
+            parsed.map_err(|refused| PartError::of(&refused, part.from + refused.at))?;
+        let result = then(
+            Summary::InPlace(&mut parsed.file),
+            &scratch.atoms(code),
+            code,
+            parsed.end.0,
+        );
+        scratch.recycle(parsed.file);
+        Ok(result)
+    }
+}
+
+impl Drop for Parts<'_> {
+    fn drop(&mut self) {
+        if let Some(scratch) = self.scratch.take() {
+            give_back_scratch(scratch);
+        }
+    }
 }

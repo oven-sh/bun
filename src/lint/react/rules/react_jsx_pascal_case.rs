@@ -1,7 +1,7 @@
 use crate::jsx::get_jsx_element_name;
 use crate::util_jsx::is_dom_component;
 use bun_core::strings;
-use bun_glob::{Options as GlobOptions, Pattern};
+use bun_lint::glob::Minimatch;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::text::glob_match;
@@ -16,7 +16,7 @@ pub struct JsxPascalCase {
 
 struct Ignored {
     entry: Box<[u8]>,
-    minimatch: Pattern,
+    minimatch: Minimatch,
 }
 
 const USE_PASCAL_CASE: Message =
@@ -38,7 +38,7 @@ impl Rule for JsxPascalCase {
         let options = options.object(0);
         let ignored = |entry: &str| Ignored {
             entry: entry.as_bytes().into(),
-            minimatch: Pattern::new(entry.as_bytes(), GlobOptions { noglobstar: true, ..GlobOptions::MINIMATCH_3 }),
+            minimatch: Minimatch::new(entry.as_bytes()),
         };
         JsxPascalCase {
             allow_all_caps: options.bool_or("allowAllCaps", false),

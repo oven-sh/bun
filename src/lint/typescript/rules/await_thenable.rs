@@ -66,7 +66,12 @@ fn has_non_awaitable_value_type<'a>(ty: Type<'a>, node: Expr<'a>) -> bool {
     if ty.is_tuple_type() {
         return ty.get_type_arguments().iter().any(|it| contains_non_awaitable_type(it, node));
     }
-    if ty.is_array_like_type() {
+    // tsgolint takes the number index type of any type, and the type argument only without one.
+    if node.file().language().is_oxlint {
+        if let Some(number_index_type) = ty.get_number_index_type() {
+            return contains_non_awaitable_type(number_index_type, node);
+        }
+    } else if ty.is_array_like_type() {
         return ty.get_number_index_type().is_some_and(|it| contains_non_awaitable_type(it, node));
     }
     // `Iterable<...>`
@@ -102,7 +107,7 @@ impl AwaitThenable {
             labels.first("This expression is not Promise-like");
             labels.push(keyword, "");
         };
-        cx.report(place, AWAIT).comments_apply_at(keyword).labels_with(labels).suggest(REMOVE_AWAIT, |fixer| {
+        cx.report(place, AWAIT).comments_apply_at(keyword).labels_with(labels).suggest_change_of_behavior(REMOVE_AWAIT, &[], |fixer| {
             let file = fixer.file();
             let await_keyword = file.tokens_in(node).find(is_await_keyword)?;
             let await_removal_fix = fixer.remove(get_await_token_removal_range(file, await_keyword));
@@ -130,22 +135,26 @@ impl AwaitThenable {
         if !is_promise_aggregator_method(node) {
             return;
         }
+        // In tsgolint a range has the parentheses.
+        let is_oxlint = cx.language().is_oxlint;
         if let ExprKind::Array(elements) = argument.kind() {
             for element in elements.iter().filter(|element| !element.is_missing()) {
                 if is_always_non_awaitable_type(get_constrained_type_at_location(element), element) {
-                    cx.report(element, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
+                    let place = if is_oxlint { element.outer_span() } else { element.span() };
+                    cx.report(place, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
                         labels.first("This expression is not Promise-like");
                         labels.push(argument.outer_span(), "Promise aggregator input");
-                        labels.push(element, "");
+                        labels.push(place, "");
                     });
                 }
             }
             return;
         }
         if is_invalid_promise_aggregator_input(argument, get_constrained_type_at_location(argument)) {
-            cx.report(argument, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
+            let place = if is_oxlint { argument.outer_span() } else { argument.span() };
+            cx.report(place, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
                 labels.first("This expression is not Promise-like");
-                labels.push(argument, "");
+                labels.push(place, "");
             });
         }
     }
@@ -168,7 +177,7 @@ impl AwaitThenable {
                 labels.first("This value is not async iterable");
                 labels.push(head, "");
             })
-            .suggest(CONVERT_TO_ORDINARY_FOR, |fixer| remove_await_token(fixer, node.span()));
+            .suggest_change_of_behavior(CONVERT_TO_ORDINARY_FOR, &[], |fixer| remove_await_token(fixer, node.span()));
     }
 
     fn check_variable_declaration<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {

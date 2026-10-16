@@ -15,11 +15,11 @@ pub struct NoSideEffectsOnImport {
 
 const CALL: Message = Message::new(
     "call",
-    "This runs whenever the module is imported. Export a function that does it, for the importer to call.",
+    "This runs as soon as the module is imported. Move it into an exported function.",
 );
 const ASSIGNMENT: Message = Message::new(
     "assignment",
-    "This changes an object whenever the module is imported. Export a function that does it, for the importer to call.",
+    "This changes an object as soon as the module is imported. Move it into an exported function.",
 );
 
 const TEST_FUNCTIONS: [&str; 14] = [

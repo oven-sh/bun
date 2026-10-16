@@ -51,7 +51,8 @@ impl NoThisAlias {
         match name {
             Some(name) => {
                 if !self.allowed_names.iter().any(|allowed| name == **allowed) {
-                    cx.report(id, THIS_ASSIGNMENT);
+                    cx.report(id, THIS_ASSIGNMENT)
+                        .hint("Use an arrow function instead. It has the this of the code around it.");
                 }
             }
             None => {
@@ -64,7 +65,7 @@ impl NoThisAlias {
 }
 
 impl Rule for NoThisAlias {
-    const META: Meta = Meta::typescript("no-this-alias", Kind::Suggestion).recommended();
+    const META: Meta = Meta::typescript("no-this-alias", Kind::Suggestion).recommended().hints();
     const ON: On = On::new().exprs(&[ExprTag::This]);
     no_state!();
 

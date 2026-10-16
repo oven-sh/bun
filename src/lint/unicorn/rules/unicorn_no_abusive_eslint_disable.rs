@@ -52,7 +52,13 @@ impl Rule for NoAbusiveEslintDisable {
             });
             let count = if has_rule { invalid_rules } else { 1 };
             for _ in 0..count {
-                cx.report(comment_span, message);
+                let report = cx.report(comment_span, message);
+                // ESLint's disable comments would silence a report at the comment itself. Report at column -1 instead, like
+                // eslint-plugin-unicorn does.
+                if !cx.file().language().is_oxlint {
+                    let line = cx.file().line_of(comment_span.start);
+                    report.start_at(Position { line, column: u32::MAX });
+                }
             }
         }
     }

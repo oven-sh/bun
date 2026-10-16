@@ -6,7 +6,7 @@ pub struct NoFuncAssign;
 const IS_A_FUNCTION: Message = Message::new("isAFunction", "'{{name}}' is a function.");
 
 impl Rule for NoFuncAssign {
-    const META: Meta = Meta::eslint("no-func-assign", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-func-assign", Kind::Problem).recommended().hints();
     const ON: On = On::new().funcs();
     no_state!();
 
@@ -29,7 +29,10 @@ impl Rule for NoFuncAssign {
             return;
         }
         for reference in ast_utils::get_modifying_references(symbol.references()) {
-            cx.report(reference, IS_A_FUNCTION).data("name", reference.name());
+            cx.report(reference, IS_A_FUNCTION).data("name", reference.name()).hint_with(|| {
+                let line = cx.line_of(func.name()?.span().start);
+                Some(format!("This assignment replaces the function declared on line {line}."))
+            });
         }
     }
 }

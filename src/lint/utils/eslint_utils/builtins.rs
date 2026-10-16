@@ -18,7 +18,7 @@ pub(super) enum Member {
     /// The `prototype` of a constructor.
     Prototype,
     /// The same function as the member of that owner and name.
-    Alias(&'static str, &'static str),
+    Alias(&'static (&'static str, &'static str)),
     /// A number.
     Constant(f64),
     /// A well-known symbol.
@@ -30,20 +30,23 @@ pub(super) enum Member {
 }
 
 struct Entry {
-    /// `""` for a global variable.
-    owner: &'static str,
-    name: &'static str,
-    /// `owner.name`
+    /// `owner.name`. The owner of a global variable is `""`.
     path: &'static str,
+    owner_len: u8,
     member: Member,
+}
+
+impl Entry {
+    fn name(&self) -> &'static str {
+        &self.path[usize::from(self.owner_len) + 1..]
+    }
 }
 
 macro_rules! entries {
     ($($owner:literal { $($member:expr => $($name:ident)+;)+ })+) => {
         &[$($($(Entry {
-            owner: $owner,
-            name: stringify!($name),
             path: concat!($owner, ".", stringify!($name)),
+            owner_len: $owner.len() as u8,
             member: {
                 use Member::*;
                 $member
@@ -125,8 +128,8 @@ static ENTRIES: &[Entry] = entries! {
     }
     "Number" {
         Call => isFinite isNaN;
-        Alias("", "parseFloat") => parseFloat;
-        Alias("", "parseInt") => parseInt;
+        Alias(&("", "parseFloat")) => parseFloat;
+        Alias(&("", "parseInt")) => parseInt;
         Function => isInteger isSafeInteger;
         Constant(f64::EPSILON) => EPSILON;
         Constant(9_007_199_254_740_991.0) => MAX_SAFE_INTEGER;
@@ -150,7 +153,7 @@ static ENTRIES: &[Entry] = entries! {
         Prototype => prototype;
     }
     "Object.prototype" {
-        Alias("", "isPrototypeOf") => isPrototypeOf;
+        Alias(&("", "isPrototypeOf")) => isPrototypeOf;
         Function => __defineGetter__ __defineSetter__ __lookupGetter__ __lookupSetter__ hasOwnProperty propertyIsEnumerable
             toLocaleString toString valueOf;
         Getter => __proto__;
@@ -179,7 +182,7 @@ static ENTRIES: &[Entry] = entries! {
     }
     "Set.prototype" {
         Call => entries has values;
-        Alias("Set.prototype", "values") => keys;
+        Alias(&("Set.prototype", "values")) => keys;
         Function => add clear delete difference forEach intersection isDisjointFrom isSubsetOf isSupersetOf symmetricDifference
             union;
         Getter => size;
@@ -191,8 +194,8 @@ static ENTRIES: &[Entry] = entries! {
     "String.prototype" {
         Call => at charAt charCodeAt codePointAt concat endsWith includes indexOf lastIndexOf normalize padEnd padStart slice
             startsWith substr substring toLowerCase toString toUpperCase trim trimEnd trimStart;
-        Alias("String.prototype", "trimStart") => trimLeft;
-        Alias("String.prototype", "trimEnd") => trimRight;
+        Alias(&("String.prototype", "trimStart")) => trimLeft;
+        Alias(&("String.prototype", "trimEnd")) => trimRight;
         Function => anchor big blink bold fixed fontcolor fontsize isWellFormed italics link localeCompare match matchAll
             repeat replace replaceAll search small split strike sub sup toLocaleLowerCase toLocaleUpperCase toWellFormed
             valueOf;
@@ -210,7 +213,13 @@ static ENTRIES: &[Entry] = entries! {
 };
 
 fn find(owner: &str, name: &[u8]) -> Option<usize> {
-    (ENTRIES.iter()).position(|entry| entry.name.as_bytes() == name && entry.owner == owner)
+    ENTRIES.iter().position(|entry| {
+        let path = entry.path.as_bytes();
+        usize::from(entry.owner_len) == owner.len()
+            && path.len() == owner.len() + 1 + name.len()
+            && path.ends_with(name)
+            && path.starts_with(owner.as_bytes())
+    })
 }
 
 /// A function or an object of the standard library.
@@ -268,9 +277,9 @@ fn value_of(at: usize) -> Eval<StaticValue<'static>> {
         | Member::Function
         | Member::Namespace
         | Member::Prototype => Ok(StaticValue::Builtin(Builtin(at as u16))),
-        Member::Alias(owner, name) => value_of(find(owner, name.as_bytes()).ok_or(Stop::Abort)?),
+        Member::Alias(&(owner, name)) => value_of(find(owner, name.as_bytes()).ok_or(Stop::Abort)?),
         Member::Constant(value) => Ok(StaticValue::Number(value)),
-        Member::Symbol => Ok(StaticValue::Symbol(StaticSymbol::WellKnown(entry.name))),
+        Member::Symbol => Ok(StaticValue::Symbol(StaticSymbol::WellKnown(entry.name()))),
         Member::Getter => Err(Stop::NotStatic),
         Member::Opaque => Err(Stop::Abort),
     }
@@ -395,7 +404,7 @@ pub(super) fn get_member<'a>(
             }
             if name == b"name" && builtin.is_callable() {
                 return Ok(StaticValue::string(
-                    builtin.entry().map_or("", |entry| entry.name).as_bytes(),
+                    builtin.entry().map_or("", Entry::name).as_bytes(),
                 ));
             }
             // Only constructors have one.

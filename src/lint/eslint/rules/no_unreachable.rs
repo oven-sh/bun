@@ -269,8 +269,44 @@ fn found_in_all<'a>(file: &'a File<'a>) -> Vec<Span> {
     state.found
 }
 
+/// Explains why the statements in `range` are unreachable.
+fn hint<'a>(range: Span, file: &'a File<'a>) -> Option<String> {
+    let all = KINDS.iter().flat_map(|&kind| file.stmts_of_kind(kind));
+    let first = all.filter(|it| it.span().start == range.start && !it.is_reachable()).max_by_key(|it| it.span().end)?;
+    let list = match first.parent() {
+        Node::File(file) => file.body(),
+        Node::Func(func) => func.body_statements()?,
+        Node::Case(case) => case.body(),
+        Node::Stmt(block) => block.as_block()?,
+        _ => return None,
+    };
+    // Skip back over hoisted declarations. They're unreachable too, but aren't part of `range`.
+    let mut cause = list.before(first.span().start)?;
+    while !cause.is_reachable() {
+        cause = list.before(cause.span().start)?;
+    }
+    let line = file.line_of(cause.span().start);
+    let (jump, around) = match cause.tag() {
+        StmtTag::Return => ("return", ""),
+        StmtTag::Throw => ("throw", ""),
+        StmtTag::Break => ("break", ""),
+        StmtTag::Continue => ("continue", ""),
+        StmtTag::While | StmtTag::DoWhile | StmtTag::For => {
+            return Some(format!("The loop on line {line} runs forever, or leaves by return or throw."));
+        }
+        StmtTag::If => ("", "if"),
+        StmtTag::Switch => ("", "switch"),
+        StmtTag::Try => ("", "try"),
+        _ => ("", "statement"),
+    };
+    Some(match around {
+        "" => format!("Nothing runs after the {jump} on line {line}."),
+        _ => format!("Every path through the {around} on line {line} ends in return, throw, break or continue."),
+    })
+}
+
 impl Rule for NoUnreachable {
-    const META: Meta = Meta::eslint("no-unreachable", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-unreachable", Kind::Problem).recommended().hints();
     const ON: On = On::new()
         .stmts(KINDS)
         .enter(STATEMENTS)
@@ -329,7 +365,7 @@ impl Rule for NoUnreachable {
         cx.state.report_range(None);
         debug_assert!(!is_entered_in_part || cx.state.found == found_in_all(cx.file()));
         for &range in &cx.state.found {
-            cx.report(range, UNREACHABLE_CODE);
+            cx.report(range, UNREACHABLE_CODE).hint_with(|| hint(range, cx.file()));
         }
     }
 }

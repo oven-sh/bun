@@ -704,8 +704,8 @@ fn open_config(
     // `getExtendsConfigPathOrArray`. Of several `extends`, the last one counts.
     let mut extended_config_path = None;
     for written in values_of(b"extends") {
-        let names: Vec<(usize, Vec<u8>)> = match file.convert_property_value_to_json(written) {
-            Json::String(one) => vec![(0, one)],
+        let names: Vec<(usize, Vec<u8>)> = match &mut file.convert_property_value_to_json(written) {
+            Json::String(one) => vec![(0, std::mem::take(one))],
             // `convertArrayLiteralExpressionToJson` leaves out what is `null`, so the index is the
             // one among the others. The node is looked up by it all the same.
             Json::Array(many) => (many.iter().filter(|it| **it != Json::Null))
@@ -753,15 +753,15 @@ impl Open {
         let rebase = |specs: Vec<Json>| -> Vec<Json> {
             specs
                 .into_iter()
-                .map(|spec| match spec {
+                .map(|spec| match &spec {
                     // Not normalized: `..` after `**` is an error that is still to be reported.
-                    Json::String(spec)
-                        if !(starts_with_config_dir_template(&spec)
-                            || is_rooted_disk_path(&spec)) =>
+                    Json::String(path)
+                        if !(starts_with_config_dir_template(path)
+                            || is_rooted_disk_path(path)) =>
                     {
-                        Json::String(combine_paths(&relative_difference, &spec))
+                        Json::String(combine_paths(&relative_difference, path))
                     }
-                    other => other,
+                    _ => spec,
                 })
                 .collect()
         };
@@ -923,10 +923,7 @@ pub fn load_overriding(
 /// `compiler` as `compilerOptions`: the project checked when there is no configuration file.
 pub fn without_config(host: &dyn Host, dir: &[u8], compiler: Json, files: Vec<Vec<u8>>) -> Project {
     let raw = Raw {
-        compiler: match compiler {
-            Json::Object(options) => options,
-            _ => Vec::new(),
-        },
+        compiler: compiler.into_object().unwrap_or_default(),
         files: List {
             is_specified: !files.is_empty(),
             is_array: !files.is_empty(),
@@ -1096,12 +1093,12 @@ fn project_from_raw(
             include: raw.include.written(),
             exclude: raw.exclude.written(),
         },
-        raw_compiler_options: match compiler {
-            Json::Object(mut options) => {
+        raw_compiler_options: match compiler.into_object() {
+            Some(mut options) => {
                 options.retain(|option| option.0 != b"paths");
                 options
             }
-            _ => Vec::new(),
+            None => Vec::new(),
         },
     }
 }

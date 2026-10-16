@@ -21,12 +21,20 @@
 //! | `require("natural-compare")` | [`natural_compare`] |
 //! | `esutils.keyword.isIdentifierES5`, `isIdentifierES6` | [`is_identifier_es5`], [`is_identifier_es6`] |
 //! | `s.split(/\r\n\|[\r\n\u2028\u2029]/u)`, `/\r\n\|[\r\n\u2028\u2029]/u.test(s)` | [`strings::js_lines`], [`strings::contains_js_line_break`] |
-//! | `s.slice(a, b)` with UTF-16 indices | [`strings::wtf8_slice_by_utf16`], [`strings::wtf8_offset_of_utf16_index`] |
+//! | `s.slice(a, b)` with UTF-16 indices that are not in the middle of a surrogate pair, which are taken as its start | [`strings::wtf8_slice_by_utf16`], [`strings::wtf8_offset_of_utf16_index`] |
 
 use bun_core::lexer::{char_and_size, is_type_script_identifier_part};
 use bun_core::strings;
 use std::borrow::Cow;
 use std::cmp::Ordering;
+
+/// TypeScript's `getSpellingSuggestion`. Returns the candidate that `name` is most likely a typo of.
+pub fn spelling_suggestion<'c>(
+    name: &[u8],
+    candidates: impl Iterator<Item = &'c [u8]>,
+) -> Option<&'c [u8]> {
+    bun_sema::check::get_spelling_suggestion(name, candidates, |it| it, |a, b| a.cmp(b))
+}
 
 /// The last code point of `text`.
 pub fn last_code_point(text: &[u8]) -> Option<u32> {

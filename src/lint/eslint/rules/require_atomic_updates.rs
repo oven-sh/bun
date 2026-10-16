@@ -1,5 +1,6 @@
 use bun_lint::code_path::{Event, Step};
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -17,23 +18,6 @@ const NON_ATOMIC_OBJECT_UPDATE: Message = Message::new(
     "Possible race condition: `{{value}}` might be assigned based on an outdated state of `{{object}}`.",
 );
 
-/// ESLint's `Variable`.
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-enum Variable<'a> {
-    Declared(Symbol<'a>),
-    /// A global variable of the configuration.
-    Global(Name<'a>),
-}
-
-impl<'a> Variable<'a> {
-    fn name(self) -> Name<'a> {
-        match self {
-            Variable::Declared(symbol) => symbol.name(),
-            Variable::Global(name) => name,
-        }
-    }
-}
-
 /// A reference, and what it refers to.
 type Resolved<'a> = (Reference<'a>, Variable<'a>);
 
@@ -41,22 +25,22 @@ type Resolved<'a> = (Reference<'a>, Variable<'a>);
 type ReferenceMap<'a> = FxHashMap<u32, Resolved<'a>>;
 
 /// The references in `scope`, which is that of a function, without those in nested functions.
-fn create_reference_map<'a>(scope: Scope<'a>, file: &'a File<'a>) -> ReferenceMap<'a> {
+fn create_reference_map<'a>(scope: Scope<'a>) -> ReferenceMap<'a> {
     let mut map = ReferenceMap::default();
     let mut scopes: SmallVec<[Scope<'a>; 8]> = SmallVec::new();
     scopes.push(scope);
     while let Some(scope) = scopes.pop() {
         for reference in scope.references() {
-            let variable = match reference.symbol() {
-                Some(symbol) => Variable::Declared(symbol),
-                None if ast_utils::is_configured_global(file, reference.name().bytes()) => {
-                    Variable::Global(reference.name())
-                }
-                None => continue,
+            let Some(variable) = reference.variable() else {
+                continue;
             };
             map.insert(reference.ident().start(), (reference, variable));
         }
-        scopes.extend(scope.children().filter(|it| it.kind() != ScopeKind::Function));
+        scopes.extend(
+            scope
+                .children()
+                .filter(|it| it.kind() != ScopeKind::Function),
+        );
     }
     map
 }
@@ -117,10 +101,14 @@ fn assignment_of<'a>(right: Expr<'a>) -> Option<Assignment> {
             _ => None,
         },
         Node::Param(param) if param.default() == Some(right) => Some(with_default(param.pat())),
-        Node::PatProp(property) if property.default() == Some(right) => Some(with_default(property.value())),
+        Node::PatProp(property) if property.default() == Some(right) => {
+            Some(with_default(property.value()))
+        }
         Node::PatElem(element) => element.pat().map(with_default),
         Node::Stmt(statement) => match statement.kind() {
-            StmtKind::ForIn { left, expr, .. } | StmtKind::ForOf { left, expr, .. } if expr == right => {
+            StmtKind::ForIn { left, expr, .. } | StmtKind::ForOf { left, expr, .. }
+                if expr == right =>
+            {
                 let (left, is_left_identifier) = match left.kind() {
                     StmtKind::Expr(target) => (target.span(), target.tag() == ExprTag::Ident),
                     _ => (left.span(), false),
@@ -140,14 +128,20 @@ fn assignment_of<'a>(right: Expr<'a>) -> Option<Assignment> {
 /// Whether the variable can only be observed within the function that declares it.
 fn is_local_variable_without_escape(variable: Variable, is_member_access: bool) -> bool {
     // It is referred to from a function, which is not where it is declared.
-    let Variable::Declared(symbol) = variable else {
+    let VariableKind::Declared(symbol) = variable.kind() else {
         return false;
     };
-    if is_member_access && symbol.declarations().any(|def| matches!(def, Declaration::Param(_))) {
+    if is_member_access
+        && symbol
+            .declarations()
+            .any(|def| matches!(def, Declaration::Param(_)))
+    {
         return false;
     }
     let function_scope = symbol.scope().variable_scope();
-    symbol.references().all(|reference| reference.scope().variable_scope() == function_scope)
+    symbol
+        .references()
+        .all(|reference| reference.scope().variable_scope() == function_scope)
 }
 
 #[derive(Default)]
@@ -165,12 +159,12 @@ struct Frame<'a> {
 #[derive(Default)]
 pub struct State<'a> {
     stack: Vec<Frame<'a>>,
-    /// By `Segment::id`, for the reachable segments of async functions and generators.
-    segment_info: FxHashMap<u32, SegmentInfo<'a>>,
+    /// For the reachable segments of async functions and generators.
+    segment_info: IdMap<Segment<'a>, SegmentInfo<'a>>,
     /// The current segments where the `ChainExpression` that is being left is left.
     segments_after_chain: Option<SmallVec<[Segment<'a>; 2]>>,
     /// By what is assigned: the references to verify once that has been evaluated.
-    assignment_references: FxHashMap<Expr<'a>, SmallVec<[Resolved<'a>; 1]>>,
+    assignment_references: IdMap<Expr<'a>, SmallVec<[Resolved<'a>; 1]>>,
     /// Where the `await` and the `yield` expressions of the file start, in ascending order.
     pauses: Option<Vec<u32>>,
 }
@@ -178,7 +172,9 @@ pub struct State<'a> {
 impl<'a> State<'a> {
     fn has_pause_in(&mut self, file: &'a File<'a>, span: Span) -> bool {
         let pauses = self.pauses.get_or_insert_with(|| {
-            let pauses = file.exprs_of_kind(ExprTag::Await).chain(file.exprs_of_kind(ExprTag::Yield));
+            let pauses = file
+                .exprs_of_kind(ExprTag::Await)
+                .chain(file.exprs_of_kind(ExprTag::Yield));
             let mut starts: Vec<u32> = pauses.map(|it| it.span().start).collect();
             starts.sort_unstable();
             starts
@@ -261,27 +257,43 @@ impl RequireAtomicUpdates {
                 cx.state.segments_after_chain = None;
             }
             match step {
-                Step::Event(Event::CodePathStart(path, node)) => self.on_code_path_start(path, node, cx),
-                Step::Event(Event::CodePathEnd(path, node)) => self.on_code_path_end(path, node, cx),
-                Step::Event(Event::SegmentStart(segment, node)) => self.on_segment_start(segment, node, cx),
+                Step::Event(Event::CodePathStart(path, node)) => {
+                    self.on_code_path_start(path, node, cx)
+                }
+                Step::Event(Event::CodePathEnd(path, node)) => {
+                    self.on_code_path_end(path, node, cx)
+                }
+                Step::Event(Event::SegmentStart(segment, node)) => {
+                    self.on_segment_start(segment, node, cx)
+                }
                 Step::Event(_) => {}
                 Step::Enter(node) => self.on_identifier(node, cx),
-                Step::Exit(node) if matches!(node, Node::Expr(e) if e.is_chain_root()) => chain = Some(node),
+                Step::Exit(node) if matches!(node, Node::Expr(e) if e.is_chain_root()) => {
+                    chain = Some(node)
+                }
                 Step::Exit(node) => self.on_expression_exit(node, cx),
             }
             if chain.is_some() {
-                cx.state.segments_after_chain = cx.state.stack.last().map(|it| it.code_path.current_segments());
+                cx.state.segments_after_chain = cx
+                    .state
+                    .stack
+                    .last()
+                    .map(|it| it.code_path.current_segments());
             }
         }
     }
 
-    fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+    fn on_code_path_start<'a>(
+        &self,
+        code_path: CodePath<'a>,
+        node: Node<'a>,
+        cx: &mut Cx<'a, Self>,
+    ) {
         let scope = match node {
             Node::Func(func) if func.is_async() || func.is_generator() => func.scope(),
             _ => None,
         };
-        let file = cx.file();
-        let reference_map = scope.map(|scope| create_reference_map(scope, file));
+        let reference_map = scope.map(create_reference_map);
         cx.state.stack.push(Frame {
             code_path,
             reference_map,
@@ -298,17 +310,22 @@ impl RequireAtomicUpdates {
 
     fn on_segment_start<'a>(&self, segment: Segment<'a>, _: Node<'a>, cx: &mut Cx<'a, Self>) {
         let state = &mut cx.state;
-        if !state.stack.last().is_some_and(|it| it.reference_map.is_some()) {
+        if !state
+            .stack
+            .last()
+            .is_some_and(|it| it.reference_map.is_some())
+        {
             return;
         }
         let mut info = SegmentInfo::default();
         for prev_segment in segment.prev_segments() {
-            if let Some(prev) = state.segment_info.get(&prev_segment.id()) {
-                info.outdated_read_variables.extend(&prev.outdated_read_variables);
+            if let Some(prev) = state.segment_info.get(prev_segment) {
+                info.outdated_read_variables
+                    .extend(&prev.outdated_read_variables);
                 info.fresh_read_variables.extend(&prev.fresh_read_variables);
             }
         }
-        state.segment_info.insert(segment.id(), info);
+        state.segment_info.insert(segment, info);
     }
 
     fn on_identifier<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
@@ -341,7 +358,7 @@ impl RequireAtomicUpdates {
 
         if reference.is_read() && !write_expr.is_some_and(is_right_of_plain_assignment) {
             for segment in code_path.current_segments() {
-                if let Some(info) = state.segment_info.get_mut(&segment.id()) {
+                if let Some(info) = state.segment_info.get_mut(segment) {
                     info.fresh_read_variables.insert(variable);
                     // What is freshly read again is no longer outdated.
                     info.outdated_read_variables.remove(&variable);
@@ -353,7 +370,10 @@ impl RequireAtomicUpdates {
             && assignment_of(write_expr).is_some()
             && !is_local_variable_without_escape(variable, is_member_access)
         {
-            state.assignment_references.entry(write_expr).or_default().push((reference, variable));
+            state
+                .assignment_references
+                .get_or_insert_with(write_expr, SmallVec::new)
+                .push((reference, variable));
         }
     }
 
@@ -372,8 +392,9 @@ impl RequireAtomicUpdates {
 
         if matches!(e.tag(), ExprTag::Await | ExprTag::Yield) {
             for segment in code_path.current_segments() {
-                if let Some(info) = state.segment_info.get_mut(&segment.id()) {
-                    info.outdated_read_variables.extend(info.fresh_read_variables.drain());
+                if let Some(info) = state.segment_info.get_mut(segment) {
+                    info.outdated_read_variables
+                        .extend(info.fresh_read_variables.drain());
                 }
             }
         }
@@ -382,23 +403,28 @@ impl RequireAtomicUpdates {
         if state.assignment_references.is_empty() || e.is_angle_bracket_assertion() {
             return;
         }
-        let Some(references) = state.assignment_references.remove(&e) else {
+        let Some(references) = state.assignment_references.remove(e) else {
             return;
         };
         let Some(assignment) = assignment_of(e) else {
             return;
         };
-        let segments = cx.state.segments_after_chain.take().unwrap_or_else(|| code_path.current_segments());
+        let segments = cx
+            .state
+            .segments_after_chain
+            .take()
+            .unwrap_or_else(|| code_path.current_segments());
         for (reference, variable) in references {
             let is_outdated = segments.iter().any(|segment| {
-                let info = cx.state.segment_info.get(&segment.id());
+                let info = cx.state.segment_info.get(*segment);
                 info.is_some_and(|it| it.outdated_read_variables.contains(&variable))
             });
             if !is_outdated {
                 continue;
             }
             if assignment.is_left_identifier && assignment.left.start == reference.ident().start() {
-                cx.report(assignment.span, NON_ATOMIC_UPDATE).data("value", variable.name());
+                cx.report(assignment.span, NON_ATOMIC_UPDATE)
+                    .data("value", variable.name());
             } else if !self.allow_properties {
                 cx.report(assignment.span, NON_ATOMIC_OBJECT_UPDATE)
                     .data("value", cx.slice(assignment.left))

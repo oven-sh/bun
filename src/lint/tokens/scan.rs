@@ -16,6 +16,7 @@
 use super::{RawToken, TokenKind, skip_trivia, skip_trivia_back};
 use crate::ast::File;
 use crate::language::{Parser, SourceType};
+use bun_core::strings::{ScannerStops, ScannerStopsBuffer};
 use bun_core::{lexer, strings};
 use bun_sema::atom::known;
 use bun_sema::hir::{
@@ -23,7 +24,7 @@ use bun_sema::hir::{
     TypeNodeKind,
 };
 
-/// The two parsers agree on where every token is. They disagree on the type of some words.
+/// The parsers agree on where every token is. They disagree on the type of some words.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Dialect {
     /// JavaScript files, unless the configuration says `@typescript-eslint/parser`: espree, ESLint's
@@ -42,6 +43,12 @@ enum Dialect {
     ///   `JSXIdentifier`.
     /// - A `#!` with nothing after it on its line is not a comment.
     TypeScript,
+    /// Every file under a configuration of oxlint, whatever its language: what oxlint hands to a plugin.
+    /// - `static`, `let` and `yield` are a `Keyword` wherever they are, as for espree.
+    /// - `implements`, `interface`, `package`, `private`, `protected` and `public` are a `Keyword` where they act as one, as
+    ///   for typescript-estree.
+    /// - Every name in a JSX tag is a `JSXIdentifier`, but a `this` that a tag starts with is a `Keyword`.
+    Oxc,
 }
 
 /// Positions in ascending order, which are asked for in ascending order.
@@ -108,10 +115,10 @@ fn operator_after(text: &[u8], mut at: u32) -> u32 {
 }
 
 impl Marks {
-    fn new(file: &File, dialect: Dialect) -> Marks {
+    fn new(file: &File, stops: ScannerStops, dialect: Dialect) -> Marks {
         let (hir, text) = (&file.hir, file.text());
-        let is_typescript = dialect == Dialect::TypeScript;
-        let marks_accesses = is_typescript && !hir.jsx.is_empty();
+        let is_typescript = !matches!(dialect, Dialect::Espree { .. });
+        let marks_accesses = dialect == Dialect::TypeScript && !hir.jsx.is_empty();
         let mut marks = Marks::default();
         let end_of = |e: hir::ExprId| hir.exprs.get(e.idx()).map_or(0, |e| e.end);
         for e in hir.exprs {
@@ -144,29 +151,29 @@ impl Marks {
         }
         for prop in hir.props {
             if prop.name_kind == NameKind::Identifier && matches!(prop.key, PropKey::Name(_)) {
-                marks.name(text, prop.pos);
+                marks.name(text, stops, prop.pos);
             }
         }
         for member in hir.members {
             use MemberKind::{Getter, Method, Property, Setter, StaticBlock};
             if matches!(member.kind, Property | Method | Getter | Setter) {
-                marks.name(text, member.name_pos);
+                marks.name(text, stops, member.name_pos);
             } else if member.kind == StaticBlock && is_typescript {
                 marks.keywords.push(member.start);
             }
         }
         for prop in hir.pat_props {
-            marks.name(text, prop.key_pos);
+            marks.name(text, stops, prop.key_pos);
         }
         for member in hir.enum_members {
-            marks.name(text, member.pos);
+            marks.name(text, stops, member.pos);
         }
         for spec in hir.import_specs {
-            marks.name(text, spec.imported_pos);
+            marks.name(text, stops, spec.imported_pos);
         }
         for spec in hir.export_specs {
-            marks.name(text, spec.local_pos);
-            marks.name(text, spec.pos);
+            marks.name(text, stops, spec.local_pos);
+            marks.name(text, stops, spec.pos);
         }
         for stmt in hir.stmts {
             if let StmtKind::ExportStar {
@@ -174,11 +181,11 @@ impl Marks {
             } = stmt.kind
                 && alias.is_some()
             {
-                marks.name(text, alias_pos);
+                marks.name(text, stops, alias_pos);
             }
         }
         if is_typescript {
-            marks.names_of_typescript(file);
+            marks.names_of_typescript(file, stops);
             marks.strict_mode_keywords(file);
         }
         if marks_accesses {
@@ -201,9 +208,9 @@ impl Marks {
 
     /// Marks the name at `at` if it is a reserved word.
     #[inline]
-    fn name(&mut self, text: &[u8], at: u32) {
-        let chunk = Chunk::at(text, at as usize);
-        let word = Word::of_chunk(chunk, chunk.count(identifier_parts));
+    fn name(&mut self, text: &[u8], stops: ScannerStops, at: u32) {
+        let len = stops.after_name.run(at as usize) as usize;
+        let word = Word::of_chunk(Chunk::at(text, at as usize), len);
         if !matches!(word, Word::Name | Word::Strict | Word::StrictAndEspree) {
             self.names.push(at);
         }
@@ -250,7 +257,7 @@ impl Marks {
         }
     }
 
-    fn names_of_typescript(&mut self, file: &File) {
+    fn names_of_typescript(&mut self, file: &File, stops: ScannerStops) {
         let (hir, text) = (&file.hir, file.text());
         for elem in hir.tuple_elems {
             if elem.name.is_some() {
@@ -259,7 +266,7 @@ impl Marks {
                 } else {
                     elem.start
                 };
-                self.name(text, start);
+                self.name(text, stops, start);
             }
         }
         for pat in hir.pats {
@@ -343,43 +350,6 @@ impl Marks {
     }
 }
 
-const ONES: u64 = 0x0101_0101_0101_0101;
-const HIGH_BITS: u64 = ONES * 0x80;
-
-/// For 8 bytes that are all below 0x80: the high bit of each that is `byte`.
-#[inline]
-const fn equal_to(bytes: u64, byte: u8) -> u64 {
-    !((bytes ^ (ONES * byte as u64)) + ONES * 0x7F)
-}
-
-/// The same for each that is in `first..=last`.
-#[inline]
-const fn between(bytes: u64, first: u8, last: u8) -> u64 {
-    (bytes + ONES * (0x80 - first as u64)) & !(bytes + ONES * (0x7F - last as u64))
-}
-
-/// The ASCII characters that continue an identifier.
-#[inline]
-const fn identifier_parts(bytes: u64) -> u64 {
-    between(bytes | (ONES * 0x20), b'a', b'z')
-        | between(bytes, b'0', b'9')
-        | equal_to(bytes, b'_')
-        | equal_to(bytes, b'$')
-}
-
-/// The whitespace of ASCII, and the control characters, which are in no token.
-#[inline]
-const fn blanks(bytes: u64) -> u64 {
-    !(bytes + ONES * (0x7F - b' ' as u64))
-}
-
-/// For any 8 bytes: the high bit of the first that is `byte`, and possibly of some after it.
-#[inline]
-const fn first_equal_to(bytes: u64, byte: u8) -> u64 {
-    let difference = bytes ^ (ONES * byte as u64);
-    difference.wrapping_sub(ONES) & !difference
-}
-
 /// The position of the first byte of `text` from `at` that is one of `stops`, or the end of `text`.
 #[inline]
 fn find(text: &[u8], at: usize, stops: &[u8]) -> usize {
@@ -393,36 +363,11 @@ fn find_line_end(text: &[u8], from: usize) -> usize {
     strings::find_js_line_break(rest).map_or(text.len(), |found| from + found.0)
 }
 
-/// `find` for what is likely within a few bytes, as the end of a string is: too near for the call
-/// of a vectorized search to pay off.
-#[inline]
-fn find_nearby<const N: usize>(text: &[u8], mut at: usize, stops: [u8; N]) -> usize {
-    let first = |bytes: u64| {
-        let found = stops
-            .iter()
-            .fold(0, |found, &stop| found | first_equal_to(bytes, stop));
-        (found & HIGH_BITS).trailing_zeros() / 8
-    };
-    for _ in 0..2 {
-        let chunk = Chunk::at(text, at);
-        let (low, high) = (first(chunk.0), first(chunk.1));
-        let plain = (low + if low == 8 { high } else { 0 }) as usize;
-        at += plain;
-        if plain < Chunk::LEN || at >= text.len() {
-            return at.min(text.len());
-        }
-    }
-    find(text, at, &stops)
-}
-
-/// 16 bytes of the text, to classify at once: a loop over the bytes of a word or of an indentation
-/// ends in a branch that the processor cannot predict.
+/// 16 bytes of the text, to compare at once.
 #[derive(Copy, Clone)]
 struct Chunk(u64, u64);
 
 impl Chunk {
-    const LEN: usize = 16;
-
     /// The bytes from `at`. Zeros after the end of the text.
     #[inline]
     fn at(text: &[u8], at: usize) -> Chunk {
@@ -441,18 +386,6 @@ impl Chunk {
         bytes[..rest.len()].copy_from_slice(rest);
         let bytes = u128::from_le_bytes(bytes);
         Chunk(bytes as u64, (bytes >> 64) as u64)
-    }
-
-    /// How many bytes from the start are of a class of ASCII characters. `class` gets 8 bytes with
-    /// their high bits cleared and sets the high bit of each that is of the class.
-    #[inline]
-    fn count(self, class: impl Fn(u64) -> u64) -> usize {
-        let others = |bytes: u64| !(class(bytes & !HIGH_BITS) & !bytes) & HIGH_BITS;
-        let (first, second) = (
-            others(self.0).trailing_zeros() / 8,
-            others(self.1).trailing_zeros() / 8,
-        );
-        (first + if first == 8 { second } else { 0 }) as usize
     }
 }
 
@@ -611,6 +544,8 @@ struct Frame {
 
 struct Scanner<'a> {
     text: &'a [u8],
+    /// Of `text`.
+    stops: ScannerStops<'a>,
     at: usize,
     tokens: Vec<RawToken>,
     comments: Vec<RawToken>,
@@ -630,8 +565,9 @@ struct Scanner<'a> {
 /// The tokens and the comments of `file`.
 pub(super) fn scan<'a>(file: &'a File<'a>) -> (Vec<RawToken>, Vec<RawToken>) {
     let dialect = Dialect::of(file);
-    let capacity = file.text().len() / 5 + 1;
-    let scanner = Scanner::run(file, dialect, Marks::new(file, dialect), capacity);
+    let mut stops = ScannerStopsBuffer::default();
+    let stops = stops.find(file.text());
+    let scanner = Scanner::run(file, stops, dialect, Marks::new(file, stops, dialect));
     (scanner.tokens, scanner.comments)
 }
 
@@ -656,14 +592,18 @@ pub(super) fn comments<'a>(file: &'a File<'a>) -> Option<Vec<RawToken>> {
             });
         }
     }
-    comments.extend(listed.iter().map(|&(start, end)| RawToken {
-        start,
-        end,
-        kind: match text.get(start as usize + 1) {
-            Some(b'*') => TokenKind::Block,
-            _ => TokenKind::Line,
+    comments.extend(listed.iter().map(
+        |&hir::Comment {
+             pos: start, end, ..
+         }| RawToken {
+            start,
+            end,
+            kind: match text.get(start as usize + 1) {
+                Some(b'*') => TokenKind::Block,
+                _ => TokenKind::Line,
+            },
         },
-    }));
+    ));
     Some(comments)
 }
 
@@ -672,8 +612,8 @@ fn start_of_code(file: &File) -> usize {
     if file.has_bom() { 3 } else { 0 }
 }
 
-/// Whether the tokens of `file` are those of espree.
-pub(super) fn is_espree(file: &File) -> bool {
+/// Whether the escape sequences in the names of `file` are decoded, as espree and oxlint do.
+pub(super) fn decodes_names(file: &File) -> bool {
     Dialect::of(file) != Dialect::TypeScript
 }
 
@@ -688,6 +628,7 @@ fn has_html_comments<'a>(file: &'a File<'a>) -> bool {
 impl Dialect {
     fn of(file: &File) -> Dialect {
         match file.is_javascript() && file.language().parser != Parser::TypeScript {
+            _ if file.language().is_oxlint => Dialect::Oxc,
             true => Dialect::Espree {
                 is_es5: file.language().ecma_version <= 5,
             },
@@ -697,12 +638,18 @@ impl Dialect {
 }
 
 impl<'a> Scanner<'a> {
-    fn run(file: &'a File<'a>, dialect: Dialect, marks: Marks, capacity: usize) -> Self {
+    fn run<'f: 'a>(
+        file: &'f File<'f>,
+        stops: ScannerStops<'a>,
+        dialect: Dialect,
+        marks: Marks,
+    ) -> Self {
         let text = file.text();
         let mut scanner = Scanner {
             text,
+            stops,
             at: 0,
-            tokens: Vec::with_capacity(capacity),
+            tokens: Vec::with_capacity(text.len() / 5 + 1),
             comments: Vec::new(),
             marks,
             dialect,
@@ -826,14 +773,9 @@ impl<'a> Scanner<'a> {
             // Whether a token is followed by no blank, by one, or by more is mostly predictable.
             if self.byte(at) <= b' ' {
                 at += 1;
-                if self.byte(at) <= b' ' {
-                    loop {
-                        let blank = Chunk::at(text, at).count(blanks);
-                        at += blank;
-                        if blank < Chunk::LEN || at >= text.len() {
-                            break;
-                        }
-                    }
+                // The whitespace of ASCII, and the control characters, which are in no token.
+                while text.get(at).is_some_and(|&byte| byte <= b' ') {
+                    at = self.stops.after_blanks.next(at + 1);
                 }
             }
             let Some(&first) = text.get(at) else {
@@ -980,20 +922,12 @@ impl<'a> Scanner<'a> {
     #[inline(always)]
     fn word(&mut self) {
         let (text, start) = (self.text, self.at);
-        let chunk = Chunk::at(text, start);
-        let mut end = start + chunk.count(identifier_parts);
-        while end - start >= Chunk::LEN {
-            let parts = Chunk::at(text, end).count(identifier_parts);
-            end += parts;
-            if parts < Chunk::LEN {
-                break;
-            }
-        }
+        let end = self.stops.after_name.next(start);
         if matches!(text.get(end), Some(b'\\' | 0x80..)) && self.unusual_word(end) {
             return;
         }
         let mut kind = TokenKind::Identifier;
-        let word = Word::of_chunk(chunk, end - start);
+        let word = Word::of_chunk(Chunk::at(text, start), end - start);
         if word != Word::Name {
             kind = self.kind_of_word(word);
         }
@@ -1019,7 +953,9 @@ impl<'a> Scanner<'a> {
             | (Word::ReservedSinceEs6, Dialect::Espree { is_es5: true }) => {
                 return TokenKind::Identifier;
             }
-            (Word::Strict | Word::StrictAndEspree, Dialect::TypeScript) => {
+            (Word::StrictAndEspree, Dialect::Oxc) => return TokenKind::Keyword,
+            (Word::Strict, Dialect::Oxc)
+            | (Word::Strict | Word::StrictAndEspree, Dialect::TypeScript) => {
                 let is_keyword = self.marks.keywords.has(self.at);
                 return if is_keyword {
                     TokenKind::Keyword
@@ -1052,9 +988,7 @@ impl<'a> Scanner<'a> {
             return false;
         }
         let mut kind = TokenKind::Identifier;
-        if let Dialect::Espree { .. } = self.dialect
-            && strings::contains_char(&text[start..end], b'\\')
-        {
+        if self.dialect != Dialect::TypeScript && strings::contains_char(&text[start..end], b'\\') {
             let (mut word, mut len, mut at) = ([0u8; 8], 0, start);
             while at < end && len < word.len() {
                 let (c, size) = match text[at] {
@@ -1124,11 +1058,26 @@ impl<'a> Scanner<'a> {
         self.token(TokenKind::Numeric, start, end);
     }
 
+    /// `find` for `stops` that are all among `ScannerStops::in_string`.
+    #[inline]
+    fn find_in_string<const N: usize>(&self, mut at: usize, stops: [u8; N]) -> usize {
+        loop {
+            at = self.stops.in_string.next(at);
+            match self.text.get(at) {
+                None => return self.text.len(),
+                Some(byte) if stops.contains(byte) => return at,
+                // Every byte of such a text is a stop.
+                Some(0x80..) => return find(self.text, at, &stops),
+                Some(_) => at += 1,
+            }
+        }
+    }
+
     fn string(&mut self, quote: u8) {
         let (text, start) = (self.text, self.at);
         let mut end = start + 1;
         loop {
-            end = find_nearby(text, end, [quote, b'\\', b'\n', b'\r']);
+            end = self.find_in_string(end, [quote, b'\\', b'\n', b'\r']);
             match text.get(end) {
                 Some(b'\\') => {
                     end += if text[end + 1..].starts_with(b"\r\n") {
@@ -1150,10 +1099,10 @@ impl<'a> Scanner<'a> {
     /// From a `` ` ``, or from the `}` that ends a substitution, to the next `${` or the closing
     /// `` ` ``.
     fn template(&mut self) {
-        let (text, start) = (self.text, self.at);
+        let start = self.at;
         let mut end = start + 1;
         loop {
-            end = find(text, end, b"`\\$") + 1;
+            end = self.find_in_string(end, *b"`\\$") + 1;
             match self.byte(end - 1) {
                 b'\\' => end += 1,
                 b'$' if self.byte(end) == b'{' => {
@@ -1250,7 +1199,7 @@ impl<'a> Scanner<'a> {
                     self.token(
                         TokenKind::JsxText,
                         at,
-                        find_nearby(self.text, at + 1, [first]) + 1,
+                        self.find_in_string(at + 1, [first]) + 1,
                     );
                 }
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'\\' | 0x80.. => self.jsx_name(),
@@ -1265,7 +1214,15 @@ impl<'a> Scanner<'a> {
         let (text, start) = (self.text, self.at);
         let mut end = start;
         loop {
-            end = lexer::scan_identifier_parts(text, end);
+            let part = end;
+            end = lexer::scan_identifier_parts(text, part);
+            // Only oxc takes an escape in such a name, and once its lexer is past a `-`, an escape ends the name.
+            if part > start
+                && let Some(escape) = strings::index_of_char_usize(&text[part..end], b'\\')
+            {
+                end = part + escape;
+                break;
+            }
             if self.byte(end) != b'-' {
                 break;
             }
@@ -1275,19 +1232,23 @@ impl<'a> Scanner<'a> {
             self.at += 1;
             return;
         }
-        let mut kind = TokenKind::JsxIdentifier;
-        if self.dialect == Dialect::TypeScript {
-            let is_colon = |at: usize| self.byte(at) == b':';
-            let is_after_colon = self
-                .tokens
-                .last()
-                .is_some_and(|last| is_colon(last.start as usize));
-            if is_after_colon || is_colon(skip_trivia(text, end as u32) as usize) {
-                kind = TokenKind::Identifier;
-            } else if &text[start..end] == b"this" && !self.is_after_dot() && self.is_tag_name() {
-                kind = TokenKind::Keyword;
+        let is_colon = |at: usize| self.byte(at) == b':';
+        let is_after_colon = || {
+            let last = self.tokens.last();
+            last.is_some_and(|last| is_colon(last.start as usize))
+        };
+        let kind = match self.dialect {
+            Dialect::Espree { .. } => TokenKind::JsxIdentifier,
+            Dialect::TypeScript
+                if is_after_colon() || is_colon(skip_trivia(text, end as u32) as usize) =>
+            {
+                TokenKind::Identifier
             }
-        }
+            _ if &text[start..end] == b"this" && !self.is_after_dot() && self.is_tag_name() => {
+                TokenKind::Keyword
+            }
+            _ => TokenKind::JsxIdentifier,
+        };
         self.token(kind, start, end);
     }
 

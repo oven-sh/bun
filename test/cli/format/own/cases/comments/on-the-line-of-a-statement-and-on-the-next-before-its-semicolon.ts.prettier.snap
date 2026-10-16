@@ -1,0 +1,51 @@
+------------------
+{ printWidth: 80 }
+------------------
+a(); // comment
+
+// comment
+b();
+c(); /* comment */
+
+// comment
+d();
+const e = 1; // comment
+
+// comment
+// comment
+f();
+g(); // comment
+
+// comment
+h();
+type I = 1; // comment
+// comment
+
+i();
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a(); // comment
+
+// comment
+b();
+c(); /* comment */
+
+// comment
+d();
+const e = 1; // comment
+
+// comment
+// comment
+f();
+g(); // comment
+
+// comment
+h();
+type I = 1; // comment
+// comment
+
+i();
+
+===================== End =====================

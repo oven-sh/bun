@@ -1847,6 +1847,26 @@ function parseAdapterFromProtocol(protocol: string): Bun.SQL.__internal.Adapter 
   }
 }
 
+// An inspect hook, not a non-enumerable `password`: `new SQL(sql.options)` spreads the options.
+function inspectOptionsRedacted(this: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
+  const copy = { ...this };
+  if (copy.password) copy.password = "[REDACTED]";
+  if ($isObject(copy.tls)) {
+    const tls = { __proto__: null, ...(copy.tls as Bun.TLSOptions) };
+    if (tls.key) tls.key = "[REDACTED]";
+    if (tls.passphrase) tls.passphrase = "[REDACTED]";
+    copy.tls = tls;
+  }
+  return copy;
+}
+const inspectOptionsDescriptor = {
+  __proto__: null,
+  value: inspectOptionsRedacted,
+  enumerable: false,
+  configurable: true,
+  writable: true,
+};
+
 function parseOptions(
   stringOrUrlOrOptions: Bun.SQL.Options | string | URL | undefined,
   definitelyOptionsButMaybeEmpty: Bun.SQL.Options,
@@ -2206,23 +2226,7 @@ function parseOptions(
     max: max || 10,
   };
 
-  // An inspect hook, not a non-enumerable `password`: `new SQL(sql.options)` spreads this object.
-  ObjectDefineProperty(ret, kInspectCustom, {
-    value: function inspect(this: typeof ret) {
-      const copy = { ...this };
-      if (copy.password) copy.password = "[REDACTED]";
-      if ($isObject(copy.tls)) {
-        const tls = { __proto__: null, ...(copy.tls as Bun.TLSOptions) };
-        if (tls.key) tls.key = "[REDACTED]";
-        if (tls.passphrase) tls.passphrase = "[REDACTED]";
-        copy.tls = tls;
-      }
-      return copy;
-    },
-    enumerable: false,
-    configurable: true,
-    writable: true,
-  });
+  ObjectDefineProperty(ret, kInspectCustom, inspectOptionsDescriptor);
 
   if (idleTimeout != null) {
     ret.idleTimeout = idleTimeout;

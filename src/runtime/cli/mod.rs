@@ -757,16 +757,23 @@ pub(crate) mod command {
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
-        while !first_arg_name.is_empty()
-            && first_arg_name[0] == b'-'
-            && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
-        {
-            // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
-            // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
-            // that and boot the legacy `bun repl` implementation instead.
-            match iter.next() {
-                Some(n) => first_arg_name = n,
-                None => return Tag::AutoCommand,
+        if let Some(checked) = arguments::checked_command_name() {
+            let Some(name) = checked else {
+                return Tag::AutoCommand;
+            };
+            first_arg_name = name;
+        } else {
+            while !first_arg_name.is_empty()
+                && first_arg_name[0] == b'-'
+                && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
+            {
+                // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
+                // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
+                // that and boot the legacy `bun repl` implementation instead.
+                match iter.next() {
+                    Some(n) => first_arg_name = n,
+                    None => return Tag::AutoCommand,
+                }
             }
         }
 
@@ -1415,6 +1422,9 @@ pub(crate) mod command {
         argv: &'a [&'static bun_core::ZStr],
         command: &[u8],
     ) -> &'a [&'static bun_core::ZStr] {
+        if let Some(at) = arguments::checked_command_index(command) {
+            return &argv[at + 1..];
+        }
         let mut args = argv.iter().enumerate();
         while let Some((at, arg)) = args.next() {
             match arg.as_bytes() {
@@ -1440,11 +1450,17 @@ pub(crate) mod command {
             Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
             None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
         };
-        let before = (argv.iter().skip(1)).take_while(|arg| arg.as_bytes() != command);
+        let before = arguments::checked_flags_before_command(command).unwrap_or_else(|| {
+            argv.iter()
+                .skip(1)
+                .take_while(|arg| arg.as_bytes() != command)
+                .copied()
+                .collect()
+        });
         let mut args: Vec<_> = before
+            .into_iter()
             .filter(|arg| arg.as_bytes().starts_with(b"-"))
             .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
-            .copied()
             .collect();
         args.extend_from_slice(after_command(argv, command));
         args
@@ -1452,7 +1468,17 @@ pub(crate) mod command {
 
     /// `bun --help lint`: prints the help of `command` and exits if `--help` or `-h` is among the flags of `bun`, which precede it.
     fn print_help_if_asked_before(argv: &[&'static bun_core::ZStr], command: &[u8], tag: Tag) {
-        let mut before = (argv.iter().map(|it| it.as_bytes())).take_while(|arg| *arg != command);
+        if let Some(args) = arguments::checked_command_arguments(command) {
+            if args.flag(b"--help") {
+                tag_print_help(tag, false);
+                Global::exit(0);
+            }
+            return;
+        }
+        let at = arguments::checked_command_index(command)
+            .or_else(|| argv.iter().position(|arg| arg.as_bytes() == command))
+            .unwrap_or(argv.len());
+        let mut before = argv.iter().take(at).map(|it| it.as_bytes());
         if before.any(|arg| matches!(arg, b"--help" | b"-h")) {
             tag_print_help(tag, false);
             Global::exit(0);

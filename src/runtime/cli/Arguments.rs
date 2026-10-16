@@ -703,6 +703,54 @@ pub(crate) static TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(TEST
 static BASE_RUNTIME_TRANSPILER_TABLE: &clap::ConvertedTable =
     clap::comptime_table!(BASE_RUNTIME_TRANSPILER_PARAMS, cold);
 
+// `-p` remains `--print`. In check mode, --project shares the existing override's value slot,
+// so the last spelling wins without making --project a runtime option everywhere.
+const fn with_check_project<const N: usize>(params: &[ParamType]) -> [ParamType; N] {
+    let mut result = [params[0]; N];
+    let mut i = 0;
+    while i < N {
+        result[i] = params[i];
+        if let Some(name) = result[i].names.long {
+            if strings::const_bytes_eq(name, b"tsconfig-override") {
+                result[i].names.long_aliases = &[b"project"];
+            }
+        }
+        i += 1;
+    }
+    result
+}
+const CHECK_PARAMS: &[ParamType] = concat_params!(
+    cli::check_command::THREAD_PARAMS,
+    cli::check_command::OUTPUT_PARAMS,
+    cli::check_command::PRETTY
+);
+pub(crate) const CHECK_AUTO_PARAMS: &[ParamType] = concat_params!(
+    &with_check_project::<{ AUTO_PARAMS.len() }>(AUTO_PARAMS),
+    CHECK_PARAMS
+);
+static CHECK_AUTO_TABLE: &clap::ConvertedTable = clap::comptime_table!(CHECK_AUTO_PARAMS, cold);
+static CHECK_RUN_TABLE: &clap::ConvertedTable = clap::comptime_table!(
+    concat_params!(
+        &with_check_project::<{ RUN_PARAMS.len() }>(RUN_PARAMS),
+        CHECK_PARAMS
+    ),
+    cold
+);
+static CHECK_TEST_TABLE: &clap::ConvertedTable = clap::comptime_table!(
+    concat_params!(
+        &with_check_project::<{ TEST_PARAMS.len() }>(TEST_PARAMS),
+        CHECK_PARAMS
+    ),
+    cold
+);
+static CHECK_BUILD_TABLE: &clap::ConvertedTable = clap::comptime_table!(
+    concat_params!(
+        &with_check_project::<{ BUILD_PARAMS.len() }>(BUILD_PARAMS),
+        cli::check_command::THREAD_PARAMS
+    ),
+    cold
+);
+
 /// Per-tag pre-converted clap table (rodata, built at compile time via
 /// `comptime_table!`). This is what `parse` consumes so the startup path never
 /// hits `ConvertedTable::build`'s alloc/sort/lock.
@@ -716,6 +764,125 @@ fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
         CommandTag::BunxCommand => RUN_TABLE,
         _ => BASE_RUNTIME_TRANSPILER_TABLE,
     }
+}
+
+fn parsing_options(cmd: CommandTag) -> clap::ParseOptions<'static> {
+    clap::ParseOptions {
+        optional_booleans: &[b"pretty"],
+        stop_after_positional_at: match cmd {
+            CommandTag::RunCommand => 2,
+            CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
+            _ => 0,
+        },
+        short_aliases: match cmd {
+            CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
+            _ => &[],
+        },
+        ..Default::default()
+    }
+}
+
+/// Extra value-taking options must not change where an ordinary invocation finds its script.
+/// Trial parses honor the same entrypoint and `--` boundaries, without printing anything.
+fn check_table(cmd: CommandTag) -> Option<&'static clap::ConvertedTable> {
+    if !bun_core::argv().iter().any(|arg| arg == b"--check") {
+        return None;
+    }
+    let table = match cmd {
+        CommandTag::AutoCommand => CHECK_AUTO_TABLE,
+        CommandTag::RunCommand => CHECK_RUN_TABLE,
+        CommandTag::TestCommand => CHECK_TEST_TABLE,
+        CommandTag::BuildCommand => CHECK_BUILD_TABLE,
+        _ => return None,
+    };
+    for candidate in [table, tag_table(cmd)] {
+        let parsed = clap::parse_with_table::<clap::Help>(
+            candidate,
+            clap::ParseOptions {
+                suppress_warnings: true,
+                ..parsing_options(cmd)
+            },
+        );
+        if parsed.is_ok_and(|args| args.flag(b"--check")) {
+            return Some(table);
+        }
+    }
+    None
+}
+
+fn checked_auto_arguments() -> Option<Option<clap::Args<clap::Help>>> {
+    let table = check_table(CommandTag::AutoCommand)?;
+    let parsed = clap::parse_with_table::<clap::Help>(
+        table,
+        clap::ParseOptions {
+            suppress_warnings: true,
+            ..parsing_options(CommandTag::AutoCommand)
+        },
+    );
+    Some(parsed.ok())
+}
+
+/// Command dispatch must not mistake the value of `--project` for `build`, `test`, or `run`.
+pub(crate) fn checked_command_name() -> Option<Option<&'static [u8]>> {
+    Some(checked_auto_arguments()?.and_then(|args| {
+        // --filter owns a workspace script, even when its name is a built-in command.
+        // AutoCommand routes the parsed filter to the workspace script runner instead.
+        if !args.options(b"--filter").is_empty() {
+            None
+        } else {
+            args.positionals().first().copied()
+        }
+    }))
+}
+
+/// Script ownership and command argument slicing use the same positional boundary as dispatch.
+/// Equal text in an option value must not hide a later `--cwd`, `--filter`, or help flag.
+pub(crate) fn checked_command_index(command: &[u8]) -> Option<usize> {
+    let args = checked_command_arguments(command)?;
+    let positional = *args.positionals().first()?;
+    // Clap's OsIterator borrows the process-global argv; pointer identity distinguishes equal tokens.
+    bun_core::argv()
+        .iter()
+        .position(|arg| core::ptr::eq(arg, positional))
+}
+
+pub(crate) fn checked_command_arguments(command: &[u8]) -> Option<clap::Args<clap::Help>> {
+    let args = checked_auto_arguments()??;
+    (*args.positionals().first()? == command).then_some(args)
+}
+
+/// Every value consumed before the command belongs to Bun, including an overwritten option.
+pub(crate) fn checked_option_values(command: &[u8]) -> Vec<&'static [u8]> {
+    if checked_command_arguments(command).is_none() {
+        return Vec::new();
+    }
+    clap::option_values(
+        CHECK_AUTO_PARAMS,
+        clap::ParseOptions {
+            suppress_warnings: true,
+            ..parsing_options(CommandTag::AutoCommand)
+        },
+    )
+    .unwrap_or_default()
+}
+
+/// The actual global flags, without option values or argv[0], before an activated checked command.
+pub(crate) fn checked_flags_before_command(command: &[u8]) -> Option<Vec<&'static bun_core::ZStr>> {
+    let at = checked_command_index(command)?;
+    let values = checked_option_values(command);
+    Some(
+        bun_core::argv()
+            .to_vec()
+            .into_iter()
+            .take(at)
+            .skip(1)
+            .filter(|arg| {
+                !values
+                    .iter()
+                    .any(|value| core::ptr::eq(arg.as_bytes(), *value))
+            })
+            .collect(),
+    )
 }
 
 // ─── exported FFI globals (written by parse(), read from C++) ────────────────
@@ -826,23 +993,14 @@ pub(crate) fn disallow_code_generation_from_strings_as_compiled(embedded: &[&bun
 /// `if matches!(cmd, …)`.
 pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
     let mut diag = clap::Diagnostic::default();
-    let table = tag_table(cmd);
+    let check_table = check_table(cmd);
+    let table = check_table.unwrap_or_else(|| tag_table(cmd));
 
     let args = match clap::parse_with_table::<clap::Help>(
         table,
         clap::ParseOptions {
             diagnostic: Some(&mut diag),
-            stop_after_positional_at: match cmd {
-                CommandTag::RunCommand => 2,
-                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
-                _ => 0,
-            },
-            // Only the paths standing in for `node` get node's aliases.
-            short_aliases: match cmd {
-                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
-                _ => &[],
-            },
-            ..Default::default()
+            ..parsing_options(cmd)
         },
     ) {
         Ok(a) => a,
@@ -853,6 +1011,16 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             Global::exit(1);
         }
     };
+
+    if check_table.is_some() {
+        ctx.runtime_options.check_options =
+            cli::check_command::runtime_options(&args, cmd == CommandTag::BuildCommand);
+        if !args.flag(b"--check") {
+            cli::check_command::usage_error(format_args!(
+                "an option is missing its value before --check"
+            ));
+        }
+    }
 
     if args.flag(b"--help") {
         command::tag_print_help(cmd, true);
@@ -1268,7 +1436,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
         // To `node`, `--check` means something else.
-        ctx.runtime_options.check = args.flag(b"--check") && cmd != CommandTag::RunAsNodeCommand;
+        ctx.runtime_options.check = check_table.is_some();
         // Nothing runs unchecked, so the process starts again, as under `--watch`. Decided here: on
         // Windows the process that starts it again is set up right after this.
         if ctx.runtime_options.check && ctx.debug.hot_reload == HotReload::Hot {

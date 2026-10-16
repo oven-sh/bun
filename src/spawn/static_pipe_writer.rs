@@ -153,6 +153,16 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         unsafe { RefPtr::from_raw(this) }
     }
 
+    /// Leaves the descriptor open when the writer closes, for the owner to close in `on_close_io`. Call it before `start`,
+    /// which still closes the descriptor if it fails.
+    ///
+    /// By default the thread pool closes it, and only then does the reader see the end of the input. An owner that waits
+    /// for the reader on a thread of that pool can keep every one of its threads busy, and then would wait forever.
+    #[cfg(unix)]
+    pub fn leave_fd_open(&mut self) {
+        self.writer.close_fd = false;
+    }
+
     pub fn start(&mut self) -> bun_sys::Result<()> {
         bun_output::scoped_log!(
             StaticPipeWriter,

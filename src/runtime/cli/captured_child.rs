@@ -19,8 +19,12 @@ use bun_spawn::subprocess::{Source, StaticPipeWriter, StaticPipeWriterProcess, S
 use bun_spawn::{Process, ProcessHandle, Rusage, SpawnEnv, SpawnOptions, Status, Stdio};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
+#[cfg(unix)]
+use bun_sys::{Fd, FdExt as _};
 
 type StdinWriter = StaticPipeWriter<CapturedChild>;
+
+const SIGTERM: u8 = bun_sys::SignalCode::of(bun_core::SignalCode::SIGTERM).0;
 
 // Callbacks reach the child through a `ThisPtr` while `run` is on the stack, so mutable state sits in cells and every
 // access is a short shared borrow.
@@ -31,6 +35,9 @@ pub(crate) struct CapturedChild {
     process: JsCell<Option<ProcessHandle>>,
     exit_status: JsCell<Option<Status>>,
     stdin: JsCell<Option<RefPtr<StdinWriter>>>,
+    /// Closed here, not by the writer: see `StaticPipeWriter::leave_fd_open`. `bun fmt` works on the thread pool.
+    #[cfg(unix)]
+    stdin_fd: Cell<Option<Fd>>,
     stdout: JsCell<BufferedReader>,
     stderr: JsCell<BufferedReader>,
     open_pipes: Cell<u8>,
@@ -91,6 +98,8 @@ impl CapturedChild {
             process: JsCell::new(None),
             exit_status: JsCell::new(None),
             stdin: JsCell::new(None),
+            #[cfg(unix)]
+            stdin_fd: Cell::new(None),
             stdout: JsCell::new(BufferedReader::init::<Self>()),
             stderr: JsCell::new(BufferedReader::init::<Self>()),
             open_pipes: Cell::new(0),
@@ -137,9 +146,9 @@ impl CapturedChild {
                 ..Default::default()
             },
             stream: false,
-            // The kernel kills the child when bun dies, however that happens.
+            // The kernel ends the child when bun dies, however that happens. Git catches this signal to remove its lock files.
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            linux_pdeathsig: Some(bun_sys::SignalCode::SIGKILL.0),
+            linux_pdeathsig: Some(SIGTERM),
             ..Default::default()
         };
         #[cfg(windows)]
@@ -224,9 +233,18 @@ impl CapturedChild {
             let writer = StdinWriter::create(this.event_loop, this.as_ptr(), stdin, source);
             this.open_pipes.set(this.open_pipes.get() + 1);
             this.stdin.set(Some(writer.clone()));
+            #[cfg(unix)]
+            {
+                // SAFETY: as for `start` below.
+                unsafe { (*writer.as_ptr()).leave_fd_open() };
+                this.stdin_fd.set(spawned.stdin);
+            }
             // SAFETY: `writer` keeps it alive and nothing else borrows it. If this ends in `on_close_io`, that only takes
             // the other ref out of `this.stdin`.
             if let Err(err) = unsafe { (*writer.as_ptr()).start() } {
+                // It has closed the descriptor.
+                #[cfg(unix)]
+                this.stdin_fd.set(None);
                 Self::on_stdin_closed(this, Some(err));
             }
         }
@@ -234,7 +252,12 @@ impl CapturedChild {
         let process = spawned.to_process_handle(this.event_loop);
         process.set_exit_handler(this);
         match process.watch_or_reap() {
-            Ok(false) => this.process.set(Some(process)),
+            Ok(false) => {
+                this.process.set(Some(process));
+                if this.pipe_error.get().is_some() {
+                    Self::terminate(this);
+                }
+            }
             Ok(true) => {}
             Err(err) => {
                 if !process.has_exited() {
@@ -250,7 +273,15 @@ impl CapturedChild {
     fn on_stdin_closed(this: ThisPtr<Self>, err: Option<bun_sys::Error>) {
         // Empty if the writer has been counted out already.
         if this.stdin.take().is_some() {
+            this.close_stdin_fd();
             Self::on_pipe_closed(this, err);
+        }
+    }
+
+    fn close_stdin_fd(&self) {
+        #[cfg(unix)]
+        if let Some(fd) = self.stdin_fd.take() {
+            fd.close();
         }
     }
 
@@ -261,11 +292,24 @@ impl CapturedChild {
             this.pipe_error.with_mut(|first| {
                 first.get_or_insert(err);
             });
+            Self::terminate(this);
+        }
+    }
+
+    /// For when a pipe has failed: a child that waits for that pipe would never exit.
+    fn terminate(this: ThisPtr<Self>) {
+        if let Some(process) = this.process.get() {
+            let _ = process.kill(SIGTERM);
         }
     }
 
     fn on_process_exit(this: ThisPtr<Self>, _: &Process, status: Status, _: &Rusage) {
         this.exit_status.set(Some(status));
+        // Nobody needs the input that it hasn't read, and a process that it started can hold the other end open.
+        if let Some(writer) = this.stdin.get().clone() {
+            // SAFETY: `writer` keeps it alive and nothing else borrows it. This ends in `on_close_io`.
+            unsafe { (*writer.as_ptr()).close() };
+        }
     }
 }
 
@@ -274,6 +318,7 @@ impl Drop for CapturedChild {
         self.process.set(None);
         // Dropping the writer can close it, which calls `on_close_io`. That has to find the slot empty.
         drop(self.stdin.take());
+        self.close_stdin_fd();
         self.stdout.with_mut(|r| r.deinit());
         self.stderr.with_mut(|r| r.deinit());
     }

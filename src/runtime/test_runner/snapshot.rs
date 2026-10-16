@@ -231,6 +231,7 @@ impl Snapshots {
         let opts = js_parser::ParserOptions::init(
             vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Js,
+            js_parser::TsconfigOptions::NONE,
         );
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
@@ -554,10 +555,13 @@ impl Snapshots {
                     }
                     lexer.next()?;
                     // `ParserOptions` isn't `Clone`; rebuild per-iteration.
-                    let opts = js_parser::ParserOptions::init(
+                    let mut opts = js_parser::ParserOptions::init(
                         vm.transpiler.options.jsx.clone(),
                         bun_ast::Loader::Js,
+                        js_parser::TsconfigOptions::NONE,
                     );
+                    // The arguments are parsed as TypeScript, with the legacy decorators.
+                    opts.features.standard_decorators = false;
                     // `P::init` takes an out-param
                     // since 9a98701c980c — `P` is ~5 KiB and the previous
                     // `let p = P::init(..)?` shape forced 2-3 by-value moves.

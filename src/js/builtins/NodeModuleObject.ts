@@ -49,5 +49,6 @@ export function enableCompileCache(options) {
   const disabled = env.NODE_DISABLE_COMPILE_CACHE !== undefined;
 
   const nativeEnableCompileCache = $newCppFunction("NodeModuleModule.cpp", "jsFunctionEnableCompileCache", 3);
-  return nativeEnableCompileCache(directory, portable, disabled);
+  // Node's native binding treats only `true` as portable (`args[1]->IsTrue()`).
+  return nativeEnableCompileCache(directory, portable === true, disabled);
 }

@@ -491,6 +491,18 @@ console.log("survived", require("./late.js"));`,
     expect(stderr).toContain("using relative path");
   });
 
+  test("enableCompileCache treats only portable: true as portable like Node", async () => {
+    const { result, stderr } = await runEnableCompileCache({
+      files: { "dep.js": "module.exports = 7;" },
+      env: { NODE_DEBUG_NATIVE: "COMPILE_CACHE" },
+      code: `const r = require("module").enableCompileCache({ directory: CACHE_DIR, portable: "1" });
+        require("./dep.js");
+        process.stdout.write(JSON.stringify(r));`,
+    });
+    expect(result).toEqual({ status: Module.constants.compileCacheStatus.ENABLED, directory: expect.any(String) });
+    expect(stderr).not.toContain("using relative path");
+  });
+
   test("native module functions are not constructors", () => {
     // Constructing these used to crash instead of throwing.
     const compile = new Module("not-a-constructor-test")._compile;

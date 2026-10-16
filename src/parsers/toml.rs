@@ -1391,10 +1391,7 @@ impl<'a, 'log> Scanner<'a, 'log> {
         Ok(())
     }
 
-    /// `Invalid escape sequence '\c' in basic string{detail}; <fix>`. The
-    /// usual cause is a Windows path or a regex pasted into a basic string,
-    /// so every message names the fix. The byte after the backslash is
-    /// shown the way `err_char` shows it.
+    /// `Invalid escape sequence '\c' in basic string{detail}; <fix>`.
     fn err_escape(&mut self, escape_pos: usize, detail: core::fmt::Arguments<'_>) -> PErr {
         const FIX: &str =
             "; for a literal backslash, use a literal string (single quotes) or write \\\\";

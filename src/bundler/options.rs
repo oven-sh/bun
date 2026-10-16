@@ -1381,7 +1381,7 @@ pub struct BundleOptions<'a> {
     pub metafile_json_path: Box<[u8]>,
     /// Path to write markdown metafile (for Bun.build API)
     pub metafile_markdown_path: Box<[u8]>,
-    /// Absolute paths the caller writes after the build. The overwrite check covers them too.
+    /// Paths the caller writes after the build, relative to the working directory. The overwrite check covers them too.
     pub caller_output_paths: Vec<Box<[u8]>>,
     /// Files and directories the caller reads as inputs outside the module graph (`compile.assets`).
     pub caller_input_roots: Vec<Box<[u8]>>,

@@ -1345,6 +1345,66 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
       expect(exitCode).toBe(1);
     });
 
+    // The kernel resolves a symlink before the `..` after it. `link` is a symlink to src/inner, so `link/..` is src.
+    for (const [args, input] of [
+      [["--outdir", "link/.."], "src/app.js"],
+      [["--outfile", "link/../app.js"], "src/app.js"],
+      [["--outdir", "dist", "--metafile=link/../lib.js"], "src/lib.js"],
+    ] as const) {
+      test(`${args.join(" ")} goes up from a symlink into the source directory`, async () => {
+        using dir = tempDir("build-overwrite-dotdot-after-symlink", { ...files, "src/inner/.keep": "" });
+        fs.symlinkSync("src/inner", path.join(String(dir), "link"));
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "./src/app.js", ...args],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(`Refusing to overwrite input file "${input}"`);
+        expect(await Bun.file(path.join(String(dir), input)).text()).toBe(files[input]);
+        expect(fs.readdirSync(String(dir)).sort()).toEqual(["link", "src"]);
+        expect(exitCode).toBe(1);
+      });
+    }
+
+    test("an output name goes up from a symlinked directory under --outdir", async () => {
+      using dir = tempDir("build-overwrite-name-dotdot", { ...files, "src/inner/.keep": "", "out/.keep": "" });
+      fs.symlinkSync("../src/inner", path.join(String(dir), "out", "sub"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/app.js", "--outdir", "out", "--entry-naming", "sub/../[name].[ext]"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('Refusing to overwrite input file "src/app.js"');
+      expect(await Bun.file(path.join(String(dir), "src", "app.js")).text()).toBe(files["src/app.js"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("an output name that goes up from a symlinked directory and names no input is written", async () => {
+      using dir = tempDir("build-name-dotdot-no-input", { ...files, "src/inner/.keep": "", "out/.keep": "" });
+      fs.symlinkSync("../src/inner", path.join(String(dir), "out", "sub"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/app.js", "--outdir", "out", "--entry-naming", "sub/../built-[name].[ext]"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("Refusing to overwrite");
+      expect(await Bun.file(path.join(String(dir), "src", "built-app.js")).text()).toContain("console.log(");
+      expect(await Bun.file(path.join(String(dir), "src", "app.js")).text()).toBe(files["src/app.js"]);
+      expect(exitCode).toBe(0);
+    });
+
     test("a symlink to a file that is not an input is written through", async () => {
       using dir = tempDir("build-symlink-leaf-unrelated", { ...files, "out/.keep": "", "elsewhere.js": "old\n" });
       fs.symlinkSync("../elsewhere.js", path.join(String(dir), "out", "app.js"));

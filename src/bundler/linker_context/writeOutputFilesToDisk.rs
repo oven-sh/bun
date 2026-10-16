@@ -745,8 +745,10 @@ fn overwritten_input(
         }
     }
 
+    let mut working_dir = None;
     for path in c.options.caller_output_paths {
-        if let Some(input) = check(path) {
+        let working_dir = working_dir.get_or_insert_with(|| resolve_output_root(b""));
+        if let Some(input) = inputs.overwritten_by(working_dir, path, OutputWrite::Truncate) {
             return Some(input);
         }
     }

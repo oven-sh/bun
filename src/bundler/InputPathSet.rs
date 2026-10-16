@@ -88,11 +88,18 @@ impl InputPathSet {
             return None;
         }
         let mut abs_buf = bun_paths::path_buffer_pool::get();
-        let abs = resolve_path::join_abs_string_buf::<platform::Auto>(
-            &root.real,
-            &mut abs_buf.0,
-            &[dest_path],
-        );
+        let physical_abs;
+        let abs: &[u8] = match physical_dest(&root.real, dest_path) {
+            Some(path) => {
+                physical_abs = path;
+                &physical_abs
+            }
+            None => resolve_path::join_abs_string_buf::<platform::Auto>(
+                &root.real,
+                &mut abs_buf.0,
+                &[dest_path],
+            ),
+        };
         let real_path;
         let link_target;
 
@@ -257,32 +264,77 @@ impl RealPath {
         }
     }
 
-    /// A directory that does not exist, with its nearest existing ancestor symlink-resolved, when that differs.
-    fn of_missing(dir: &[u8]) -> Option<Box<[u8]>> {
-        let mut ancestor = dir;
-        loop {
-            let parent =
-                bun_paths::dirname(ancestor).filter(|parent| parent.len() < ancestor.len())?;
-            ancestor = parent;
-            match Self::of(ancestor) {
-                Self::Missing => {}
-                Self::Same => return None,
-                Self::Other(real) => {
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    let rest = bun_paths::string_paths::without_leading_path_separator(
-                        &dir[ancestor.len()..],
-                    );
-                    return Some(Box::from(
-                        resolve_path::join_abs_string_buf::<platform::Auto>(
-                            &real,
-                            &mut buf.0,
-                            &[rest],
-                        ),
-                    ));
-                }
-            }
+    /// `dir` as the kernel resolves it: a symlink before the `..` after it, and the part that does not exist by name.
+    fn resolve(dir: &[u8]) -> Box<[u8]> {
+        match Self::of(dir) {
+            Self::Other(real) => real,
+            Self::Same => Box::from(dir),
+            Self::Missing => Self::resolve_missing(dir),
         }
     }
+
+    /// A directory that does not exist: its parent as the kernel resolves it, then its own name.
+    fn resolve_missing(dir: &[u8]) -> Box<[u8]> {
+        let Some(parent) = bun_paths::dirname(dir).filter(|parent| parent.len() < dir.len()) else {
+            return Box::from(dir);
+        };
+        let parent = Self::resolve(parent);
+        let mut buf = bun_paths::path_buffer_pool::get();
+        Box::from(resolve_path::join_abs_string_buf::<platform::Auto>(
+            &parent,
+            &mut buf.0,
+            &[bun_paths::basename(dir)],
+        ))
+    }
+}
+
+/// Joining collapses `dir/..` by name. The kernel resolves `dir` first, and `dir` can be a symlink.
+fn has_parent_segment(path: &[u8]) -> bool {
+    if !bun_core::strings::contains(path, b"..") {
+        return false;
+    }
+    if cfg!(windows) {
+        bun_core::strings::split_any(path, b"/\\").any(|segment| segment == b"..")
+    } else {
+        bun_core::strings::split(path, b"/").any(|segment| segment == b"..")
+    }
+}
+
+/// `path` under `base`, with its `..` segments kept.
+fn raw_join<'a>(
+    base: &[u8],
+    path: &'a [u8],
+    buf: &'a mut bun_core::PathBuffer,
+) -> Option<&'a [u8]> {
+    if bun_paths::is_absolute(path) {
+        return Some(path);
+    }
+    let len = base.len() + 1 + path.len();
+    if len > buf.0.len() {
+        return None;
+    }
+    buf.0[..base.len()].copy_from_slice(base);
+    buf.0[base.len()] = bun_paths::SEP;
+    buf.0[base.len() + 1..len].copy_from_slice(path);
+    Some(&buf.0[..len])
+}
+
+/// Where a write to `dest_path` under `root` lands, for a path with a `..` in it.
+fn physical_dest(root: &[u8], dest_path: &[u8]) -> Option<Box<[u8]>> {
+    if !has_parent_segment(dest_path) {
+        return None;
+    }
+    let mut raw_buf = bun_paths::path_buffer_pool::get();
+    let raw = raw_join(root, dest_path, &mut raw_buf)?;
+    let parent = RealPath::resolve(bun_paths::dirname(raw)?);
+    let mut buf = bun_paths::path_buffer_pool::get();
+    Some(Box::from(
+        resolve_path::join_abs_string_buf::<platform::Auto>(
+            &parent,
+            &mut buf.0,
+            &[bun_paths::basename(raw)],
+        ),
+    ))
 }
 
 /// The absolute directory that output files are written under.
@@ -304,14 +356,20 @@ pub fn resolve_output_root(root_path: &[u8]) -> OutputRoot {
         &mut abs_buf.0,
         &[root_path],
     );
-    let real = RealPath::of(abs);
+    let mut raw_buf = bun_paths::path_buffer_pool::get();
+    let raw: &[u8] = if has_parent_segment(root_path) {
+        raw_join(top_level_dir, root_path, &mut raw_buf).unwrap_or(abs)
+    } else {
+        abs
+    };
+    let real = RealPath::of(raw);
     let missing = matches!(real, RealPath::Missing);
     let real = match real {
         RealPath::Other(real) => Some(real),
-        RealPath::Missing => RealPath::of_missing(abs),
+        RealPath::Missing => Some(RealPath::resolve_missing(raw)),
         RealPath::Same => None,
     };
-    match real {
+    match real.filter(|real| **real != *abs) {
         Some(real) => OutputRoot {
             real,
             unresolved: Some(Box::from(abs)),

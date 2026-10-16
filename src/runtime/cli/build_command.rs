@@ -267,21 +267,13 @@ impl BuildCommand {
         this_transpiler.options.metafile =
             !ctx.bundler_options.metafile.is_empty() || !ctx.bundler_options.metafile_md.is_empty();
         // The CLI writes the metafile itself. The bundler checks these paths with its own outputs.
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         this_transpiler.options.caller_output_paths = [
             &ctx.bundler_options.metafile,
             &ctx.bundler_options.metafile_md,
         ]
         .into_iter()
         .filter(|path| !path.is_empty())
-        .map(|path| {
-            Box::from(
-                resolve_path::join_abs_string::<resolve_path::platform::Auto>(
-                    top_level_dir,
-                    &[path],
-                ),
-            )
-        })
+        .map(|path| Box::from(&path[..]))
         .collect();
 
         this_transpiler

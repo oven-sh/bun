@@ -193,13 +193,15 @@ export function generate(options: Options = {}): { files: Record<string, string>
       await run("unbundled", import.meta.dir + "/entry" + bundle + ".mjs");
       for (const minify of [false, true]) {
         const name = minify ? "minified" : "plain";
+        // A directory of its own: the module loader has read no listing of it before the bundle is there.
+        const outdir = import.meta.dir + "/" + name + bundle;
         const result = await Bun.build({
           entrypoints: [import.meta.dir + "/entry" + bundle + ".mjs"],
-          outdir: import.meta.dir + "/" + name,
+          outdir,
           minify,
           throw: false,
         });
-        if (result.success) await run(name, import.meta.dir + "/" + name + "/entry" + bundle + ".js");
+        if (result.success) await run(name, outdir + "/entry" + bundle + ".js");
         else runs[name] = result.logs.join("\\n");
       }
     }

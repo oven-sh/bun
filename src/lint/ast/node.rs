@@ -493,10 +493,7 @@ impl<'a> Expr<'a> {
         {
             return Node::Type(TypeNode::new(file, ty));
         }
-        let mut id = self.id;
-        while let Some(cast) = file.jsdoc_cast_around(id) {
-            id = cast;
-        }
+        let id = file.with_jsdoc_casts(self.id);
         match bound.expr_parent.get(id.idx()) {
             // The substitutions of a tagged template are in the template.
             Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {

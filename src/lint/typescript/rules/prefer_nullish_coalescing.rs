@@ -178,6 +178,7 @@ fn ask_outermost<'a>(
     ask: fn(Expr<'a>) -> bool,
 ) -> bool {
     let decide = |at: Node<'a>, parent: Node<'a>| match at {
+        Node::Expr(at) if at.with_jsdoc_cast() != at => Some(false),
         _ if is_passed_on(at, parent) => None,
         Node::Expr(at) => Some(ask(at)),
         _ => Some(false),
@@ -195,7 +196,7 @@ fn is_in_mixed_logical_expression<'a>(
         return is_mixed_logical_expression(node, left, right);
     }
     let decide = |at: Node<'a>, parent: Node<'a>| match (at, parent) {
-        (_, Node::Expr(parent)) if is_logical_or_operator(parent) => None,
+        (Node::Expr(at), Node::Expr(parent)) if at.with_jsdoc_cast() == at && is_logical_or_operator(parent) => None,
         (Node::Expr(at), _) => match at.kind() {
             ExprKind::Binary { left, right, .. } => {
                 Some(is_mixed_logical_expression(at, left, right))
@@ -222,12 +223,13 @@ pub struct Walks<'a> {
 fn is_mixed_logical_expression<'a>(node: Expr<'a>, left: Expr<'a>, right: Expr<'a>) -> bool {
     let mut seen = FxHashSet::default();
     let mut queue: Vec<Expr<'a>> = Vec::new();
+    let parent_of = |it: Expr<'a>| it.parent().as_expr().filter(|_| it.with_jsdoc_cast() == it);
     // For tsgolint the parent of an `a ||= b` that is an operand is the `ParenthesizedExpression`, which is no logical
     // expression: it looks down at the `||=`.
     if is_logical_or_operator(node) || !node.file().language().is_oxlint {
-        queue.extend(node.parent().as_expr());
+        queue.extend(parent_of(node));
     }
-    queue.extend([left, right]);
+    queue.extend([left.with_jsdoc_cast(), right.with_jsdoc_cast()]);
     let mut next = 0;
     while let Some(&current) = queue.get(next) {
         next += 1;
@@ -242,8 +244,8 @@ fn is_mixed_logical_expression<'a>(node: Expr<'a>, left: Expr<'a>, right: Expr<'
                 left,
                 right,
             } => {
-                queue.extend(current.parent().as_expr());
-                queue.extend([left, right]);
+                queue.extend(parent_of(current));
+                queue.extend([left.with_jsdoc_cast(), right.with_jsdoc_cast()]);
             }
             _ => {}
         }
@@ -259,6 +261,7 @@ fn are_nodes_similar_member_access<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool
     }
     let is_private = |name: Ident<'a>| name.bytes().starts_with(b"#");
     loop {
+        (a, b) = (a.with_jsdoc_cast(), b.with_jsdoc_cast());
         (a, b) = match (a.kind(), b.kind()) {
             (
                 ExprKind::Dot { obj: a, name, .. },
@@ -368,6 +371,7 @@ fn tsgolint_is_node_equal<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool {
 /// those without a name by [`tsgolint_is_node_equal`].
 fn tsgolint_are_nodes_similar_member_access<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool {
     loop {
+        (a, b) = (a.with_jsdoc_cast(), b.with_jsdoc_cast());
         for node in [&mut a, &mut b] {
             if let ExprKind::NonNull(operand) = node.kind() {
                 // What is left of `a!!` and of `(a)!` is a node that equals nothing.

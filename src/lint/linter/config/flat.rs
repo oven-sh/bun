@@ -10,7 +10,7 @@ use crate::linter::registry::{Deprecated, Missing, Registry, parse_rule_id};
 use crate::linter::resolved::{find_formatting_rule, find_js_rule, needs_resolver};
 use crate::options::Json;
 use crate::paths::{self, package_of};
-use crate::rule::{Kind, Plugin, minor_of};
+use crate::rule::{Frameworks, Kind, Plugin, minor_of};
 use crate::runner::RuleEntry;
 use std::sync::Arc;
 
@@ -306,7 +306,7 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
                 _ => expected_object(),
             },
             // Not of ESLint: see `Config::from_flat_json_with_plugins`.
-            b"$changesLinter" | b"$defaultOptions" | b"$forReact" | b"$globsOfBun" | b"$ignorePatterns"
+            b"$changesLinter" | b"$defaultOptions" | b"$framework" | b"$globsOfBun" | b"$ignorePatterns"
             | b"$jsPlugins" | b"$otherPlugins" | b"$parser" | b"$pluginModules" | b"$processor" | b"$severityByKind" | b"$source"
             | b"$withoutWarnings" => None,
             b"rules" if !is_object(value) => expected_object(),
@@ -719,7 +719,10 @@ impl Reader<'_> {
         object.source = json.get(b"$source").cloned();
         object.parser_location = json.get(b"$parser").cloned();
         object.changes_linter = json.get(b"$changesLinter").is_some();
-        object.is_for_react = json.get(b"$forReact").is_some();
+        let framework = json.get(b"$framework").and_then(Json::as_str);
+        let mut packages = Frameworks::PACKAGES.iter();
+        object.required_framework = (packages.find(|it| Some(it.0.as_bytes()) == framework))
+            .map_or(Frameworks::empty(), |it| it.1);
         object.processor_location = json
             .get(b"$processor")
             .filter(|it| it.as_object().is_some())

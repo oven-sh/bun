@@ -36,9 +36,9 @@ pub fn contains_name(sorted: &[&str], name: &[u8]) -> bool {
         .is_ok()
 }
 
-/// `fast_glob::glob_match`
+/// `fast_glob::glob_match`, with the groups of ESLint's minimatch.
 pub fn glob_match(pattern: &[u8], text: &[u8]) -> bool {
-    bun_glob::pattern::fast_glob_match(pattern, text)
+    bun_glob::pattern::fast_glob_match_with_groups(pattern, text)
 }
 
 /// `Path::file_name`

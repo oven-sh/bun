@@ -621,7 +621,7 @@ struct Children<'a, 's, V: FnMut(Node) -> bool + ?Sized> {
 impl<V: FnMut(Node) -> bool + ?Sized> Children<'_, '_, V> {
     /// `node.ForEachChild`. `data`: what `node` refers to. A caller that knows it statically is
     /// specialized to the one match arm.
-    #[inline(always)]
+    #[inline]
     fn children(&mut self, data: NodeData, node: Node) -> bool {
         let file = self.file;
         match data {

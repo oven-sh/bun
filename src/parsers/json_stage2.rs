@@ -430,7 +430,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         span
     }
 
-    #[inline(always)]
+    #[inline]
     fn parse_json_value(&mut self) -> PResult<(E::JsonValue, Loc)> {
         let cursor = self.cursor;
         let start = self.pos_at(cursor);

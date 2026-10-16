@@ -159,7 +159,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseObjectBindingElement`, after its `...` if it has one. `pos`: its first token.
-    #[inline(always)]
+    #[inline]
     fn object_binding_element(&mut self, pos: u32) -> PatProp {
         let is_identifier = self.is_binding_identifier();
         let bigint = (self.token() == T::BigInt).then(|| self.lx.text());

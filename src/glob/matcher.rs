@@ -219,7 +219,7 @@ pub fn match_prepared<const WINDOWS: bool>(
 }
 
 /// This is at the call site. Most paths that a pattern is asked about differ from it in the first byte.
-#[inline(always)]
+#[inline]
 fn match_from_first_byte(
     glob: &[u8],
     shape: Option<&Shape>,
@@ -834,7 +834,7 @@ fn match_escapes_at_start(
     match_escapes_from::<true>(glob, shape, path, Start::of(mode))
 }
 
-#[inline(always)]
+#[inline]
 fn match_escapes_from<const IS_AT_START: bool>(
     glob: &[u8],
     shape: Option<&Shape>,
@@ -1440,7 +1440,7 @@ enum Outcome {
 
 /// The loop for patterns without groups, and for groups that are a [`Choice`]. It keeps one `*` and one `**` to go back to.
 /// `glob_start` is the index where the pattern starts. `STRICT` applies the rules for dot segments (see `match_slowly`).
-#[inline(always)]
+#[inline]
 fn run<const STRICT: bool>(
     glob: &[u8],
     glob_start: u32,

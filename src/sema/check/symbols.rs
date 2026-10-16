@@ -259,7 +259,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Inlined: a frame of its own would be one more for each variable in a chain.
-    #[inline(always)]
+    #[inline]
     fn resolve_type_of_symbol_once(&mut self, sym: Sym) -> TypeId {
         let mut value_declaration = self.files().value_declaration(sym);
         // A parameter property has the type of its parameter, which is a separate query.
@@ -4338,7 +4338,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Inlined: see `resolve_type_of_symbol_once`.
-    #[inline(always)]
+    #[inline]
     fn resolve_return_type_of_fn_once(&mut self, file: FileId, func: FnId) -> TypeId {
         if self.prepare_query_for_fn(file, func)
             && let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func))

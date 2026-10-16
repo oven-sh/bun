@@ -1241,7 +1241,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     /// `parseList(PCBlockStatements, parseStatement)`. It has no frame of its own: one is on the
     /// stack for each `{` that is open.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn statements_until_close_brace(&mut self) -> IdList<StmtId> {
         let base = self.s.ids.len();
         // Only a statement of the file makes it a module.
@@ -1272,7 +1272,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// The same for the block of a `catch`, which is one scope with the parameter.
-    #[inline(always)]
+    #[inline]
     fn block_in_open_scope(&mut self) -> StmtId {
         let start = self.start();
         if !self.expect(T::OpenBrace) {
@@ -1317,7 +1317,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_stmt(StmtKind::If { test, yes, no }, start, Span::EMPTY)
     }
 
-    #[inline(always)]
+    #[inline]
     fn body_of_loop(&mut self) -> StmtId {
         let saved = self.enter_context(ctx::IN_LOOP, 0);
         let body = self.embedded_statement();

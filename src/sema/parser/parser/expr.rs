@@ -234,7 +234,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseExpression`. `is_in_parentheses`: for `parseParenthesizedExpression`.
-    #[inline(always)]
+    #[inline]
     fn expression_maybe_in_parentheses(&mut self, is_in_parentheses: bool) -> ExprId {
         let saved = self.enter_context(0, ctx::DECORATOR);
         let mut start = self.pos();
@@ -274,7 +274,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         Some(after_previous)
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) fn assignment_expression(&mut self) -> ExprId {
         self.assignment_expression_or_higher(true)
     }
@@ -626,7 +626,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseBinaryExpressionRest`
-    #[inline(always)]
+    #[inline]
     fn binary_expression_rest(&mut self, precedence: u8, left: ExprId, start: u32) -> ExprId {
         // No operator is here, nor a `>` that one may start with.
         if self.token().binary_precedence() == 0 {
@@ -860,7 +860,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// What `parseUnaryExpressionOrHigher` does after `parseUpdateExpression`.
-    #[inline(always)]
+    #[inline]
     fn rest_of_power(&mut self, start: u32, base: ExprId) -> ExprId {
         if self.token() == T::AsteriskAsterisk {
             let precedence = T::AsteriskAsterisk.binary_precedence();
@@ -1548,7 +1548,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseMemberExpressionRest` and, with `allows_calls`, `parseCallExpressionRest`.
-    #[inline(always)]
+    #[inline]
     fn expression_rest(&mut self, start: u32, expression: ExprId, allows_calls: bool) -> ExprId {
         if !self.token().can_follow_member_expression() {
             return expression;
@@ -1832,7 +1832,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseArgumentList`, at the `(`: the arguments and the position of the `)`.
-    #[inline(always)]
+    #[inline]
     fn argument_list(&mut self) -> (IdList<ExprId>, u32) {
         self.next();
         self.rest_of_argument_list()

@@ -2299,7 +2299,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Inlined: see `resolve_type_of_symbol_once`.
-    #[inline(always)]
+    #[inline]
     fn resolve_declared_type_once(&mut self, sym: Sym) -> TypeId {
         if let Some(raw) = self.provisional(Query::Declared(sym)) {
             return TypeId(raw as u32);

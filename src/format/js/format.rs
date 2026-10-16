@@ -622,7 +622,7 @@ fn write_expression_that_has_asked<'a>(e: Expr<'a>, options: ExprOptions, f: &mu
 }
 
 /// `tag`: that of `e`.
-#[inline(always)]
+#[inline]
 fn write_expression_of<'a>(tag: ExprTag, e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
     match tag {
         ExprTag::Missing => {}

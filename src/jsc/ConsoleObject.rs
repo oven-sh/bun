@@ -5642,7 +5642,7 @@ pub mod formatter {
             }
         }
 
-        #[inline(always)]
+        #[inline]
         pub fn format<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             result: TagResult,

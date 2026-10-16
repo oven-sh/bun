@@ -388,6 +388,7 @@ impl TokenList {
     /// each end of the list does not print: the text next to it is the printer's own, so
     /// nothing there can join two tokens. `None` if nothing else is left, which is a blank
     /// value, and this prints it.
+    #[inline]
     fn tokens_to_print(&self, dest: &mut Printer) -> PrintResult<Option<&[TokenOrValue]>> {
         if !dest.collapse_token_whitespace {
             return Ok(Some(&self.v));
@@ -410,7 +411,8 @@ impl TokenList {
 
     /// Prints a token whose text depends on the tokens next to it: whitespace, a comment and
     /// `\` always, a comma and a math operator in the diff print. Any other token prints as
-    /// it is.
+    /// it is. This is the body of the print loop, and a call costs more than most of its arms.
+    #[inline(always)]
     fn write_token(
         tokens: &[TokenOrValue],
         i: usize,
@@ -423,6 +425,8 @@ impl TokenList {
             Token::Whitespace(_) | Token::Comment(_) if dest.collapse_token_whitespace => {
                 Self::write_collapsed_run(tokens, i, in_math, dest)
             }
+            // One blank is nearly all of the whitespace in values, and it holds no line break.
+            Token::Whitespace([b' ']) => dest.write_char(b' '),
             Token::Whitespace(text) => write_line_breaks_as_lf(text, dest),
             Token::Comment(text) => {
                 dest.write_str("/*")?;
@@ -441,9 +445,9 @@ impl TokenList {
                     dest.write_char(b'\n')
                 }
             }
-            Token::Comma if diff_print => {
+            Token::Comma => {
                 dest.write_char(b',')?;
-                if i + 1 < tokens.len() {
+                if diff_print && i + 1 < tokens.len() {
                     dest.write_char(b' ')?;
                 }
                 Ok(())

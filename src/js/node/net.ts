@@ -262,7 +262,7 @@ let BlockList, SocketAddress;
 function lazyBlockList() {
   return (BlockList ??= $rust("node_net_binding.rs", "BlockList"));
 }
-const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 2);
+const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
@@ -277,8 +277,6 @@ const checkServerIdentityInHandshake = $newRustFunction(
 // destroy() in the handshake callback: drops the handshake flight that the native layer holds.
 const releaseHeldFlight = $newRustFunction("runtime/socket/socket.rs", "jsReleaseHeldFlight", 1);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
-// Node's `handle instanceof Pipe`: a unix socket or a named pipe. One native class backs both kinds of handle here.
-const isPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
 
 const bunTlsSymbol = Symbol.for("::buntls::");
@@ -1993,12 +1991,6 @@ function Socket(options?): void {
   // Bun's native _handle.setKeepAlive takes milliseconds (it is the public
   // Bun.Socket), so store ms here. Node stores seconds because libuv does.
   this[kSetKeepAliveInitialDelay] = MathMax(0, ~~keepAliveInitialDelay);
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L478-L481
-  const typeOfService = opts.typeOfService;
-  if (typeOfService !== undefined) {
-    validateInt32(typeOfService, "options.typeOfService", 0, 255);
-    this[kSetTOS] = typeOfService;
-  }
 
   this[khandlers] = SocketHandlers2;
   this[kDestroyOnRead] = false;
@@ -2030,6 +2022,7 @@ function Socket(options?): void {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
+  let stats;
   if (fd !== undefined) {
     // Adopt pipe/character-device fds with synchronous writes. Matches
     // node's effective semantics for stdio-style sockets: writes to a pipe
@@ -2042,7 +2035,6 @@ function Socket(options?): void {
     // Network-socket fds are not supported (handle adoption needs native
     // support); those keep the previous validated-but-inert behavior.
     if (opts.writable === true) {
-      let stats;
       try {
         stats = require("node:fs").fstatSync(fd);
       } catch {
@@ -2054,6 +2046,18 @@ function Socket(options?): void {
       if (stats.isFile()) {
         throw $ERR_INVALID_FD_TYPE("FILE");
       }
+    }
+  }
+
+  // Node validates this after the type of `fd`. Before the adoption: a throw must leave the caller's fd alone. https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L478-L481
+  const typeOfService = opts.typeOfService;
+  if (typeOfService !== undefined) {
+    validateInt32(typeOfService, "options.typeOfService", 0, 255);
+    this[kSetTOS] = typeOfService;
+  }
+
+  if (fd !== undefined) {
+    if (opts.writable === true) {
       // isSocket() covers stdio handed to a child as a socketpair (how spawn
       // implements pipes on unix); writable-only adoption with sync write(2)
       // is correct there too.
@@ -2445,7 +2449,7 @@ Socket.prototype.connect = function connect(...args) {
   $debug("pipe", pipe, path);
 
   if (!this._handle) {
-    this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function", pipe);
+    this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
     initSocketHandle(this);
   }
 
@@ -2897,9 +2901,9 @@ Socket.prototype.setNoDelay = function setNoDelay(enable = true) {
   return this;
 };
 
-// Node's Pipe handle has no type of service, and its TCP handle stays open until destroy(). Ours closes once both sides ended.
+// Where Node keeps the value in the net.Socket. EINVAL: a unix socket. EBADF when not connecting: a handle with no fd, which is TLS over a stream, or a handle that closed once both sides ended.
 function keepsTypeOfService(socket, errno) {
-  return (errno === -9 /* UV_EBADF */ && !socket.connecting) || isPipeSocket(socket._handle);
+  return errno === -22 /* UV_EINVAL */ || (errno === -9 /* UV_EBADF */ && !socket.connecting);
 }
 
 // Matches Node's setTypeOfService/getTypeOfService (lib/net.js + TCPWrap).

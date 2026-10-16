@@ -1,4 +1,5 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import {
@@ -10,8 +11,11 @@ import {
   gc,
   isASAN,
   isDebug,
+  isFreeBSD,
+  isMacOS,
   isMusl,
   isWindows,
+  libcPathForDlopen,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
@@ -35,6 +39,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
+import { Duplex, duplexPair } from "node:stream";
 import { createServer as createTLSServer, connect as tlsConnect, TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
@@ -1561,6 +1566,38 @@ describe("Socket fd adoption", () => {
     expect(error?.message).toBe("Unsupported fd type: UNKNOWN");
   });
 
+  // Node checks the type of the fd before the typeOfService option. Its constructor throws with the fd still open.
+  it.skipIf(isWindows)("an invalid typeOfService is reported after the fd type and leaves the fd open", async () => {
+    const { rfd, wfd } = openFifo("invalid-tos.fifo");
+    const file = fs.openSync(join(tmpdirSync(), "invalid-tos.txt"), "w");
+    let adopted: Socket | undefined;
+    const codeFor = (fd: number) => {
+      try {
+        adopted = new Socket({ fd, writable: true, typeOfService: 999 } as import("node:net").SocketConstructorOpts);
+        return "accepted";
+      } catch (e) {
+        return (e as NodeJS.ErrnoException).code;
+      }
+    };
+    try {
+      const got = { file: codeFor(file), closedFd: codeFor(0x7ffff), fifo: codeFor(wfd) };
+      // A socket that adopted the fd ends, and closes the fd, on process.nextTick: two immediate turns are past it.
+      await new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
+      expect({ ...got, fileFd: fstatCode(file), fifoFd: fstatCode(wfd) }).toEqual({
+        file: "ERR_INVALID_FD_TYPE",
+        closedFd: "ERR_INVALID_FD_TYPE",
+        fifo: "ERR_OUT_OF_RANGE",
+        fileFd: "open",
+        fifoFd: "open",
+      });
+    } finally {
+      if (adopted) adopted.destroy();
+      else fs.closeSync(wfd);
+      fs.closeSync(rfd);
+      fs.closeSync(file);
+    }
+  });
+
   it("a bare { fd } does not throw so connect({ fd }) can attach a native handle", () => {
     // No explicit writable: true -> no adoption, no fstat. child_process
     // extra stdio relies on this path (connect({ fd }) attaches natively).
@@ -2163,6 +2200,24 @@ describe.concurrent("pauseOnConnect", () => {
   });
 });
 
+// What the kernel holds for an IPv4 connection, whatever getTypeOfService() answers: the upper six bits (DSCP) of
+// IP_TOS. The kernel may rewrite the two ECN bits.
+let libc: ReturnType<typeof openLibc> | undefined;
+const openLibc = () =>
+  dlopen(libcPathForDlopen(), {
+    getsockopt: { args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr, FFIType.ptr], returns: FFIType.int },
+  });
+function kernelDscp(socket: Socket) {
+  const { fd } = (socket as Socket & { _handle: { fd: number } })._handle;
+  const value = new Int32Array(1);
+  const length = new Uint32Array([value.byteLength]);
+  const IP_TOS = isMacOS || isFreeBSD ? 3 : 1;
+  if ((libc ??= openLibc()).symbols.getsockopt(fd, 0 /* IPPROTO_IP */, IP_TOS, ptr(value), ptr(length)) !== 0) {
+    throw new Error(`getsockopt(${fd}, IPPROTO_IP, IP_TOS) failed`);
+  }
+  return value[0] & 0xfc;
+}
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L478-L481
 describe.concurrent("typeOfService option", () => {
   it("is validated by the Socket constructor", () => {
@@ -2222,11 +2277,11 @@ describe.concurrent("typeOfService option", () => {
       const viaSocket = new Socket({ typeOfService: 0x10 }).connect(port, "127.0.0.1");
       const plain = connect(port, "127.0.0.1");
       await Promise.all([once(viaConnect, "connect"), once(viaSocket, "connect"), once(plain, "connect")]);
-      // The kernel may rewrite the two ECN bits; the upper six (DSCP) are what was asked for.
-      const dscp = (socket: Socket) => socket.getTypeOfService() & 0xfc;
-      const got = { viaConnect: dscp(viaConnect), viaSocket: dscp(viaSocket), plain: dscp(plain) };
+      // [what the socket answers, what the kernel holds]
+      const read = (socket: Socket) => [socket.getTypeOfService() & 0xfc, kernelDscp(socket)];
+      const got = { viaConnect: read(viaConnect), viaSocket: read(viaSocket), plain: read(plain) };
       for (const socket of [viaConnect, viaSocket, plain]) socket.destroy();
-      expect(got).toEqual({ viaConnect: 0x10, viaSocket: 0x10, plain: 0 });
+      expect(got).toEqual({ viaConnect: [0x10, 0x10], viaSocket: [0x10, 0x10], plain: [0, 0] });
     } finally {
       server.close();
     }
@@ -2234,7 +2289,7 @@ describe.concurrent("typeOfService option", () => {
 });
 
 // Node's handle of a unix socket is a Pipe, which has no type of service: the net.Socket keeps the value,
-// never throws, and applies it when it later connects over TCP. Every value below is what node v26.3.0 gives.
+// never throws, and applies it when it later connects over TCP. Every value below is what node v26.3.0 gives on Linux.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L661-L710
 // Not on Windows: there the two methods report no error on any kind of socket.
 describe.concurrent.skipIf(isWindows)("type of service that the net.Socket keeps", () => {
@@ -2285,6 +2340,44 @@ describe.concurrent.skipIf(isWindows)("type of service that the net.Socket keeps
     });
   }
 
+  // A TLS socket over a stream has no fd, and node's TLSWrap has no type of service either:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L635-L642
+  // undici 7.23 to 8.7 sets the value on such a socket before each request through an https proxy.
+  for (const transport of ["a Duplex", "a TLS socket"]) {
+    it(`is kept by a TLS socket over ${transport}`, async () => {
+      const sockets: Duplex[] = [];
+      // A TLS connection over two connected streams: the client socket, and the server socket once its handshake is done.
+      const tlsOver = (clientSide: Duplex, serverSide: Duplex) => {
+        const accepted = Promise.withResolvers<TLSSocket>();
+        const server = createTLSServer(tlsCert, socket => accepted.resolve(socket.on("error", () => {})));
+        server.emit("connection", serverSide);
+        const client = tlsConnect({ socket: clientSide, rejectUnauthorized: false });
+        sockets.push(clientSide, serverSide, client);
+        return { client, accepted: accepted.promise };
+      };
+      try {
+        let { client, accepted } = tlsOver(...duplexPair());
+        if (transport === "a TLS socket") {
+          await once(client, "secureConnect");
+          ({ client, accepted } = tlsOver(client, await accepted));
+        }
+        const seen: Record<string, unknown> = { beforeHandshake: setAndGet(client, 1) };
+        client.once("secureConnect", () => {
+          seen.secureConnect = setAndGet(client, 2);
+        });
+        client.once("end", () => {
+          seen.end = setAndGet(client, 3);
+        });
+        client.resume();
+        (await accepted).end("bye");
+        await once(client, "end");
+        expect(seen).toEqual({ beforeHandshake: [0, true, 1], secureConnect: [1, true, 2], end: [2, true, 3] });
+      } finally {
+        for (const socket of sockets) socket.destroy();
+      }
+    });
+  }
+
   it("keeps a value set before connect() and the typeOfService option", async () => {
     const path = socketPath();
     const server = createServer(socket => socket.on("error", () => {}).resume());
@@ -2307,8 +2400,8 @@ describe.concurrent.skipIf(isWindows)("type of service that the net.Socket keeps
     }
   });
 
-  // 'connectionAttempt' runs before the dial starts, 'close' after the handle is gone.
-  it("is kept in every listener of a dial", async () => {
+  // 'close' runs after the handle is gone.
+  it("is kept in the listeners of a dial, from 'connect' to 'close'", async () => {
     const path = socketPath();
     const server = createServer(socket => socket.on("error", () => {}).end("bye"));
     await once(server.listen(path), "listening");
@@ -2316,7 +2409,7 @@ describe.concurrent.skipIf(isWindows)("type of service that the net.Socket keeps
       const socket = new Socket();
       const seen: Record<string, unknown> = {};
       let value = 1;
-      for (const event of ["connectionAttempt", "connect", "ready", "data", "end", "close"]) {
+      for (const event of ["connect", "ready", "data", "end", "close"]) {
         socket.once(event, () => {
           seen[event] = setAndGet(socket, value++);
         });
@@ -2324,12 +2417,11 @@ describe.concurrent.skipIf(isWindows)("type of service that the net.Socket keeps
       socket.connect(path);
       await once(socket, "close");
       expect(seen).toEqual({
-        connectionAttempt: [0, true, 1],
-        connect: [1, true, 2],
-        ready: [2, true, 3],
-        data: [3, true, 4],
-        end: [4, true, 5],
-        close: [5, true, 6],
+        connect: [0, true, 1],
+        ready: [1, true, 2],
+        data: [2, true, 3],
+        end: [3, true, 4],
+        close: [4, true, 5],
       });
     } finally {
       server.close();
@@ -2337,7 +2429,7 @@ describe.concurrent.skipIf(isWindows)("type of service that the net.Socket keeps
   });
 
   // The socket sent its FIN first, so its native handle can be closed already when 'end' arrives.
-  // Node's handle stays open until destroy(), so a TCP socket has its value there too.
+  // Node's handle stays open until destroy(). On Linux its TCP handle still takes the value there.
   for (const kind of ["unix", "TCP"]) {
     it(`is kept in the 'end' listener of a ${kind} socket that ended first`, async () => {
       const server = createServer({ allowHalfOpen: true }, socket => {
@@ -2363,6 +2455,26 @@ describe.concurrent.skipIf(isWindows)("type of service that the net.Socket keeps
       }
     });
   }
+
+  // The other side of the rule: an open TCP handle takes the value, so the kernel has it.
+  it("goes to the kernel on a TCP socket, dialed or accepted", async () => {
+    const accepted = Promise.withResolvers<Socket>();
+    const server = createServer(socket => accepted.resolve(socket.on("error", () => {})));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const dialed = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      await once(dialed, "connect");
+      const got: Record<string, unknown> = {};
+      for (const [name, socket] of Object.entries({ dialed, accepted: await accepted.promise })) {
+        // [setTypeOfService() returned the socket, what the socket answers, what the kernel holds]
+        got[name] = [socket.setTypeOfService(0x20) === socket, socket.getTypeOfService() & 0xfc, kernelDscp(socket)];
+        socket.destroy();
+      }
+      expect(got).toEqual({ dialed: [true, 0x20, 0x20], accepted: [true, 0x20, 0x20] });
+    } finally {
+      server.close();
+    }
+  });
 
   // An extra stdio pipe is a Pipe handle in node too: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L183-L199
   it("is kept by an extra stdio pipe of a child process", async () => {
@@ -2404,8 +2516,8 @@ describe.concurrent.skipIf(isWindows)("type of service that the net.Socket keeps
       // A TCP handle that is not connected yet answers for itself, also after a unix socket.
       const tcpConnecting = setAndGet(socket, 0x20);
       await once(socket, "connect");
-      // The kernel may rewrite the two ECN bits; the upper six (DSCP) are what was asked for.
-      const overTcp = socket.getTypeOfService() & 0xfc;
+      // [what the socket answers, what the kernel holds]
+      const overTcp = [socket.getTypeOfService() & 0xfc, kernelDscp(socket)];
       socket.setTypeOfService(0x40);
       socket.destroy();
       await once(socket, "close");
@@ -2418,7 +2530,7 @@ describe.concurrent.skipIf(isWindows)("type of service that the net.Socket keeps
       expect(got).toEqual({
         overPipe: [0, true, 0x20],
         tcpConnecting: "EBADF (getTypeOfService)",
-        overTcp: 0x20,
+        overTcp: [0x20, 0x20],
         backOverPipe: [0x40, true, 0x60],
         connected: 0x60,
       });

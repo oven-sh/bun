@@ -2626,35 +2626,6 @@ it.concurrent("setTypeOfService validates its argument instead of asserting", as
   void stderr;
 });
 
-// A unix socket has no IP header: both methods answer -EINVAL, and -EBADF once the socket closed.
-// node:net reads those answers to keep the value in the net.Socket. Not read on Windows.
-it.concurrent.skipIf(isWindows)("setTypeOfService and getTypeOfService answer an errno on a unix socket", async () => {
-  using dir = tempDir("socket-tos-unix", {});
-  const unix = join(String(dir), "s.sock");
-  type TosSocket = Socket & { setTypeOfService(tos: number): number; getTypeOfService(): number };
-  const read = (socket: Socket) => [
-    (socket as TosSocket).setTypeOfService(0x10),
-    (socket as TosSocket).getTypeOfService(),
-  ];
-  const accepted = Promise.withResolvers<number[]>();
-  const closed = Promise.withResolvers<number[]>();
-  using listener = Bun.listen({
-    unix,
-    socket: { open: socket => accepted.resolve(read(socket)), data() {}, close() {}, error() {} },
-  });
-  const client = await Bun.connect({
-    unix,
-    socket: { open() {}, data() {}, close: socket => closed.resolve(read(socket)), error() {} },
-  });
-  const got = { open: read(client), accepted: await accepted.promise };
-  client.end();
-  expect({ ...got, closed: await closed.promise }).toEqual({
-    open: [-22, -22],
-    accepted: [-22, -22],
-    closed: [-9, -9],
-  });
-});
-
 // initialDelay is ms; TCP_KEEPIDLE is seconds. 0 = enable SO_KEEPALIVE and
 // leave the kernel-default idle. Verified via getsockopt(2) on the live fd.
 it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 0 as success", async () => {

@@ -9,7 +9,6 @@ use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsCel
 use bun_uws as uws;
 
 use crate::node::util::validators;
-use crate::socket::listener::UnixOrHost;
 use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
 
 static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
@@ -129,14 +128,12 @@ pub(crate) fn BlockList(global: &JSGlobalObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [is_ssl, is_pipe] = frame.arguments_as_array::<2>();
-    let is_ssl = is_ssl.to_boolean();
-    // Node's handle for `connect({ path })` is a `Pipe` before the dial writes the path.
-    let is_pipe = is_pipe.to_boolean();
+    let args = frame.arguments_as_array::<1>();
+    let is_ssl = args[0].to_boolean();
 
     // Only `socket`, `ref_count`, `protos`, `handlers` are
     // specified; the rest take their struct defaults.
-    fn make<const SSL: bool>(global: &JSGlobalObject, is_pipe: bool) -> JSValue {
+    fn make<const SSL: bool>(global: &JSGlobalObject) -> JSValue {
         let socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             ref_count: bun_ptr::RefCount::init(),
@@ -151,7 +148,7 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
-            connection: JsCell::new(is_pipe.then(|| UnixOrHost::Unix(Box::default()))),
+            connection: JsCell::new(None),
             server_name: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
@@ -167,9 +164,9 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
     }
 
     Ok(if !is_ssl {
-        make::<false>(global, is_pipe)
+        make::<false>(global)
     } else {
-        make::<true>(global, is_pipe)
+        make::<true>(global)
     })
 }
 

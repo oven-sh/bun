@@ -134,8 +134,7 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
 
 Ref<JSC::CachedBytecode> createOwnedCachedBytecode(JSC::VM& vm, std::span<const uint8_t> bytes)
 {
-    // JSC's decoder reports none of what a decoded block keeps. The blob size stands in for it until it does, also
-    // for a blob rejected at its header. Before the decode, so that a collection this starts cannot mark the new block.
+    // Stands in for JSC's decoder, which reports no memory. Before the decode: its collection must not mark the new block.
     vm.heap.reportExtraMemoryAllocated(nullptr, bytes.size());
     // UnlinkedFunctionExecutable's Decoder constructor (CachedTypes.cpp) keeps the Decoder and a
     // payload offset, and decodes the body on the function's first call, borrowed payload or not.

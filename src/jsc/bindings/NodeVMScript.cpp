@@ -174,8 +174,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
         JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
         Ref<JSC::CachedBytecode> cachedBytecode = NodeVM::createOwnedCachedBytecode(vm, cachedData.span());
-        // Whether the blob decodes is Node's cachedDataRejected. Runs link their own block (unlinkedCodeBlockFor),
-        // so nothing uses the decoded one again.
+        // Whether the blob decodes is Node's cachedDataRejected. Runs link their own block (unlinkedCodeBlockFor).
         bool accepted = !!JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
         script->cachedDataRejected(accepted ? TriState::False : TriState::True);
     } else if (script->options().produceCachedData)

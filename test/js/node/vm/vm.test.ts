@@ -1152,7 +1152,6 @@ test("a Script does not keep its copy of the cachedData", async () => {
 
 describe("a cachedData decode that is dropped is collected without a request", () => {
   // A function with a 1 MB string constant: a quick decode, and a blob that the decoded function keeps alive.
-  // JSC's decoder reports none of that to the collector, so bun reports the size of the blob before each decode.
   const fixture = (setup: string, cell: string) => `
     const vm = require("node:vm");
     const { heapStats, edenGC } = require("bun:jsc");
@@ -1227,8 +1226,7 @@ describe("a cachedData decode that is dropped is collected without a request", (
     expect(result.rejected).toBe(rejected);
     // With no report for this decode no collection is due, and all 32 are live.
     expect(result.liveAtLoopEnd).toBeLessThan(32);
-    // A collection that the report starts while the constructor holds the new block keeps that block, one for
-    // each collection: 4 of the 32, or 16 with the small heap.
+    // A report made while the constructor holds the new block keeps one block per collection: 4 of 32, or 16.
     expect(result.liveAfterEdenGC).toBeLessThanOrEqual(1);
     expect(exitCode).toBe(0);
   });

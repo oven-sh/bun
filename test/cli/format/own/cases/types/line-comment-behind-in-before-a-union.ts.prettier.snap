@@ -1,0 +1,33 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = {
+  [
+    K in  // c
+      | keyof WithoutIndexSignature<TTypeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee>
+      | keyof WithoutIndexSignature<TWith>
+  ]: 1;
+};
+type B = {
+  [
+    K in keyof T // c
+  ]: 1;
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = {
+  [
+    K in  // c
+      | keyof WithoutIndexSignature<TTypeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee>
+      | keyof WithoutIndexSignature<TWith>
+  ]: 1;
+};
+type B = {
+  [
+    K in keyof T // c
+  ]: 1;
+};
+
+===================== End =====================

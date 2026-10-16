@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { SourceMapConsumer } from "source-map";
+import { SourceMapConsumer, type RawSourceMap } from "source-map";
 
 describe("compile --target=browser", () => {
   test("inlines JS and CSS into HTML", async () => {
@@ -521,7 +521,8 @@ body { color: blue; }`,
       const { stdout, stderr, exitCode } = await build(String(dir), "./src/index.html", `--sourcemap=${sourcemap}`);
 
       expect(stderr).toBe(
-        `error: cannot use ${sourcemap === "external" ? "an external" : "a linked"} source map without --outdir or --outfile (use --sourcemap=inline to print it to stdout)\n`,
+        `error: cannot use ${sourcemap === "external" ? "an external" : "a linked"} source map without --outdir or --outfile\n` +
+          `note: use --sourcemap=inline to print the source map to stdout\n`,
       );
       expect(stdout).toBe("");
       expect(await Bun.file(join(String(dir), "src", "index.html")).text()).toBe(source);
@@ -779,7 +780,7 @@ console.log(greet("world"));`,
       return { html, map: map && JSON.parse(await map.text()) };
     }
 
-    async function expectInlinedScriptToBeMapped(html: string, map: object) {
+    async function expectInlinedScriptToBeMapped(html: string, map: RawSourceMap) {
       const open = '<script type="module">';
       const script = html.slice(html.indexOf(open) + open.length, html.indexOf("</script>"));
       const [firstLine] = script.split("\n");

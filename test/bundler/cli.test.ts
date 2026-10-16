@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } 
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
-describe.concurrent(
+(describe.concurrent as any)(
   "bun build",
   () => {
     test("warnings dont return exit code 1", async () => {
@@ -406,7 +406,8 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
     );
     expect(stdout).toBe("");
     expect(stderr).toBe(
-      `error: cannot use ${kind === "external" ? "an external" : "a linked"} source map without --outdir or --outfile (use --sourcemap=inline to print it to stdout)\n`,
+      `error: cannot use ${kind === "external" ? "an external" : "a linked"} source map without --outdir or --outfile\n` +
+        `note: use --sourcemap=inline to print the source map to stdout\n`,
     );
     expect(tree(String(dir))).toEqual(fixture);
     expect(exitCode).toBe(1);
@@ -444,8 +445,26 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
     },
   );
 
+  test("--no-bundle --outfile in another directory writes there", async () => {
+    using dir = tempDir("build-no-bundle-outfile-dir", fixture);
+    const { stdout, stderr, exitCode } = await build(
+      String(dir),
+      "src/entry.js",
+      "--no-bundle",
+      "--outfile=dist/js/entry.js",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toContain("entry.js");
+    expect(exitCode).toBe(0);
+
+    const after = tree(String(dir));
+    expect(Object.keys(after)).toEqual(["dist/js/entry.js", ...Object.keys(fixture)]);
+    expect(after["dist/js/entry.js"]).toContain("console.log(dep)");
+    for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
+  });
+
   // A standalone html build with no --outdir or --outfile prints the page to
-  // stdout (covered in standalone.test.ts), so the rows above apply to it too.
+  // stdout (covered in standalone.test.ts), so the bare --sourcemap rule applies to it too.
   test("bare --sourcemap prints a standalone html page with an inline map to stdout", async () => {
     using dir = tempDir("build-sourcemap-standalone-html", fixture);
     const { stdout, stderr, exitCode } = await build(
@@ -600,6 +619,27 @@ describe.concurrent("--no-bundle with --outdir", () => {
     const out = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
     expect(out).toContain("jsx");
     expect(out).toContain("app");
+  });
+
+  test("reports the size of the written file", async () => {
+    using dir = tempDir("no-bundle-outdir-size", {
+      "src/app.js": `console.log(1);\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/app.js", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/app\.js\s+16 bytes/);
+    expect(exitCode).toBe(0);
+
+    const out = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
+    expect(out).toBe("console.log(1);\n");
   });
 
   test("writes multiple entry points", async () => {

@@ -1,0 +1,610 @@
+{
+ "@trivago/prettier-plugin-sort-imports": {
+  "config": [
+   ".prettierrc.json",
+   {
+    "plugins": [
+     "@trivago/prettier-plugin-sort-imports"
+    ],
+    "importOrder": [
+     "^[a-z]",
+     "^[./]"
+    ],
+    "importOrderSortSpecifiers": true
+   }
+  ],
+  "files": {
+   "dup.vue": [
+    "<template>\n  <div />\n</template>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<template>\n  <div />\n</template>\n\n<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "html-block.md": [
+    "# a\n\n```html\n<script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n```\n\n```vue\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n```\n",
+    "# a\n\n```html\n<script type=\"module\">\n  import b from \"beta\";\n  import unused from \"unused-module\";\n  import { a, z } from \"zeta\";\n  import { c } from \"./local\";\n\n  console.log(z, a, b, c);\n</script>\n```\n\n```vue\n<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n```\n"
+   ],
+   "ignore.vue": [
+    "<script>\n// prettier-ignore\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script>\n// prettier-ignore\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "jsdoc-expr.vue": [
+    "<template>\n  <a @click=\"/** @return {number} it */ f()\" :b=\"/** @description c */ d\">{{ /** @return x */ e }}</a>\n</template>\n",
+    "<template>\n  <a @click=\"/** @return {number} it */ f()\" :b=\"/** @description c */ d\">{{\n    /** @return x */ e\n  }}</a>\n</template>\n"
+   ],
+   "jsdoc.html": [
+    "<script type=\"module\">\n/**\n * @description This should be inlined\n *\n * @param {string} name - the name\n * @return {number} it\n */\nfunction f(name) {}\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script type=\"module\">\n  import b from \"beta\";\n  import unused from \"unused-module\";\n  import { a, z } from \"zeta\";\n  import { c } from \"./local\";\n\n  /**\n   * @description This should be inlined\n   *\n   * @param {string} name - the name\n   * @return {number} it\n   */\n  function f(name) {}\n\n  console.log(z, a, b, c);\n</script>\n"
+   ],
+   "jsdoc.vue": [
+    "<script>\n/**\n * @description This should be inlined\n *\n * @param {string} name - the name\n * @return {number} it\n */\nfunction f(name) {}\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\n/**\n * @description This should be inlined\n *\n * @param {string} name - the name\n * @return {number} it\n */\nfunction f(name) {}\n\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "jsx.vue": [
+    "<script lang=\"jsx\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n",
+    "<script lang=\"jsx\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n"
+   ],
+   "kinds.html": [
+    "<script type=\"text/babel\" data-type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<script type=\"text/typescript\" lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script type=\"text/babel\" data-type=\"module\">\n  import b from \"beta\";\n  import unused from \"unused-module\";\n  import { a, z } from \"zeta\";\n  import { c } from \"./local\";\n\n  console.log(z, a, b, c);\n</script>\n<script type=\"text/typescript\" lang=\"ts\">\n  import b from \"beta\";\n  import unused from \"unused-module\";\n  import { a, z } from \"zeta\";\n  import { c } from \"./local\";\n\n  console.log(z, a, b, c);\n</script>\n<script lang=\"ts\">\n  import b from \"beta\";\n  import unused from \"unused-module\";\n  import { a, z } from \"zeta\";\n  import { c } from \"./local\";\n\n  console.log(z, a, b, c);\n</script>\n"
+   ],
+   "merge.html": [
+    "<script type=\"module\">\nimport { x } from \"beta\";\nimport { y } from \"beta\";\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<script type=\"module\">\n  import { x } from \"beta\";\n  import { y } from \"beta\";\n  import b from \"beta\";\n  import { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "merge.vue": [
+    "<script>\nimport { x } from \"beta\";\nimport { y } from \"beta\";\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<script>\nimport { x } from \"beta\";\nimport { y } from \"beta\";\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "nested.vue": [
+    "<template>\n  <div><script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script></div>\n</template>\n",
+    "<template>\n  <div>\n    <script>\n      import { z, a } from \"zeta\";\n      import unused from \"unused-module\";\n      import b from \"beta\";\n      import { c } from \"./local\";\n      console.log(z, a, b, c);\n    </script>\n  </div>\n</template>\n"
+   ],
+   "page.component.html": [
+    "<div>\n<script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n</div>\n",
+    "<div>\n  <script type=\"module\">\n    import b from \"beta\";\n    import unused from \"unused-module\";\n    import { a, z } from \"zeta\";\n    import { c } from \"./local\";\n\n    console.log(z, a, b, c);\n  </script>\n</div>\n"
+   ],
+   "page.html": [
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n",
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\n      import b from \"beta\";\n      import unused from \"unused-module\";\n      import { a, z } from \"zeta\";\n      import { c } from \"./local\";\n\n      console.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n"
+   ],
+   "page.mjml": [
+    "<mjml><mj-head><mj-raw><script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script></mj-raw></mj-head></mjml>\n",
+    "<mjml\n  ><mj-head\n    ><mj-raw\n      ><script type=\"module\"> import { z, a } from \"zeta\"; import unused from\n      \"unused-module\"; import b from \"beta\"; import { c } from \"./local\";\n      console.log(z, a, b, c); </script></mj-raw\n    ></mj-head\n  ></mjml\n>\n"
+   ],
+   "setup-first.vue": [
+    "<script setup>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script setup>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "setup-ts.vue": [
+    "<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script setup lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "sfc-js.vue": [
+    "<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "sfc-ts.vue": [
+    "<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "sort-ignore.vue": [
+    "<script>\n// sort-imports-ignore\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script>\n// sort-imports-ignore\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "src.vue": [
+    "<script src=\"./a.js\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script src=\"./a.js\">\n\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\n\n\n\n\n\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "three.vue": [
+    "<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<style>a{b:c}</style>\n<script setup>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n<style>\na {\n  b: c;\n}\n</style>\n<script setup>\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "tpl-html.js": [
+    "const t = html`\n  <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n  </script>\n`;\nconst u = /* HTML */ `\n  <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n  </script>\n`;\n",
+    "const t = html`\n  <script type=\"module\">\n    import b from \"beta\";\n    import unused from \"unused-module\";\n    import { a, z } from \"zeta\";\n    import { c } from \"./local\";\n\n    console.log(z, a, b, c);\n  </script>\n`;\nconst u = /* HTML */ `\n  <script type=\"module\">\n    import b from \"beta\";\n    import unused from \"unused-module\";\n    import { a, z } from \"zeta\";\n    import { c } from \"./local\";\n\n    console.log(z, a, b, c);\n  </script>\n`;\n"
+   ],
+   "tsx.vue": [
+    "<script lang=\"tsx\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n",
+    "<script lang=\"tsx\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n"
+   ],
+   "two.vue": [
+    "<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script lang=\"ts\">\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "upper.vue": [
+    "<SCRIPT>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</SCRIPT>\n",
+    "<SCRIPT>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</SCRIPT>\n"
+   ],
+   "crlf.vue": [
+    "<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "crlf.html": [
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n",
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\n      import b from \"beta\";\n      import unused from \"unused-module\";\n      import { a, z } from \"zeta\";\n      import { c } from \"./local\";\n\n      console.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n"
+   ],
+   "bom.vue": [
+    "\ufeff<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "\ufeff<script lang=\"ts\">\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "comments.vue": [
+    "<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\n// c1\nimport b from \"beta\"; // c2\n/* c3 */\nimport { c } from \"./local\";\n\nconst x = `</scr` + `ipt>`;\n</script>\n\n<template>\n  <div>{{ x }}</div>\n</template>\n\n<style scoped>\na{b:c}\n</style>\n",
+    "<script setup lang=\"ts\">\n// c1\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n// c2\n/* c3 */\nimport { c } from \"./local\";\n\nconst x = `</scr` + `ipt>`;\n</script>\n\n<template>\n  <div>{{ x }}</div>\n</template>\n\n<style scoped>\na {\n  b: c;\n}\n</style>\n"
+   ],
+   "coffee.vue": [
+    "<script lang=\"coffee\">\nimport { z, a } from \"zeta\"\nimport b from \"beta\"\n</script>\n",
+    "<script lang=\"coffee\">\n\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "empty-setup.vue": [
+    "<!-- c -->\n<script>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n<script setup>\n</script>\n<script setup>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<!-- c -->\n<script>\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n<script setup></script>\n<script setup>\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "sorted.vue": [
+    "<script>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n",
+    "<script>\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "front.vue": [
+    "---\ntitle: x\n---\n<script>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "---\ntitle: x\n---\n\n<script>\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "noimports.vue": [
+    "<template>\n  <div />\n</template>\n<script>\nexport default {}\n</script>\n",
+    "<template>\n  <div />\n</template>\n<script>\nexport default {};\n</script>\n"
+   ]
+  }
+ },
+ "@ianvs/prettier-plugin-sort-imports": {
+  "config": [
+   ".prettierrc.json",
+   {
+    "plugins": [
+     "@ianvs/prettier-plugin-sort-imports"
+    ],
+    "importOrder": [
+     "<THIRD_PARTY_MODULES>",
+     "^[./]"
+    ]
+   }
+  ],
+  "files": {
+   "dup.vue": [
+    "<template>\n  <div />\n</template>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<template>\n  <div />\n</template>\n\n<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "html-block.md": [
+    "# a\n\n```html\n<script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n```\n\n```vue\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n```\n",
+    "# a\n\n```html\n<script type=\"module\">\n  import b from \"beta\";\n  import unused from \"unused-module\";\n  import { a, z } from \"zeta\";\n  import { c } from \"./local\";\n\n  console.log(z, a, b, c);\n</script>\n```\n\n```vue\n<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n```\n"
+   ],
+   "ignore.vue": [
+    "<script>\n// prettier-ignore\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script>\n// prettier-ignore\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "jsdoc-expr.vue": [
+    "<template>\n  <a @click=\"/** @return {number} it */ f()\" :b=\"/** @description c */ d\">{{ /** @return x */ e }}</a>\n</template>\n",
+    "<template>\n  <a @click=\"/** @return {number} it */ f()\" :b=\"/** @description c */ d\">{{\n    /** @return x */ e\n  }}</a>\n</template>\n"
+   ],
+   "jsdoc.html": [
+    "<script type=\"module\">\n/**\n * @description This should be inlined\n *\n * @param {string} name - the name\n * @return {number} it\n */\nfunction f(name) {}\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script type=\"module\">\n  import b from \"beta\";\n  import unused from \"unused-module\";\n  import { a, z } from \"zeta\";\n  import { c } from \"./local\";\n\n  /**\n   * @description This should be inlined\n   *\n   * @param {string} name - the name\n   * @return {number} it\n   */\n  function f(name) {}\n\n  console.log(z, a, b, c);\n</script>\n"
+   ],
+   "jsdoc.vue": [
+    "<script>\n/**\n * @description This should be inlined\n *\n * @param {string} name - the name\n * @return {number} it\n */\nfunction f(name) {}\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\n/**\n * @description This should be inlined\n *\n * @param {string} name - the name\n * @return {number} it\n */\nfunction f(name) {}\n\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "jsx.vue": [
+    "<script lang=\"jsx\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n",
+    "<script lang=\"jsx\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n"
+   ],
+   "kinds.html": [
+    "<script type=\"text/babel\" data-type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<script type=\"text/typescript\" lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script type=\"text/babel\" data-type=\"module\">\n  import b from \"beta\";\n  import unused from \"unused-module\";\n  import { a, z } from \"zeta\";\n  import { c } from \"./local\";\n\n  console.log(z, a, b, c);\n</script>\n<script type=\"text/typescript\" lang=\"ts\">\n  import b from \"beta\";\n  import unused from \"unused-module\";\n  import { a, z } from \"zeta\";\n  import { c } from \"./local\";\n\n  console.log(z, a, b, c);\n</script>\n<script lang=\"ts\">\n  import b from \"beta\";\n  import unused from \"unused-module\";\n  import { a, z } from \"zeta\";\n  import { c } from \"./local\";\n\n  console.log(z, a, b, c);\n</script>\n"
+   ],
+   "merge.html": [
+    "<script type=\"module\">\nimport { x } from \"beta\";\nimport { y } from \"beta\";\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<script type=\"module\">\n  import b, { x, y } from \"beta\";\n  import { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "merge.vue": [
+    "<script>\nimport { x } from \"beta\";\nimport { y } from \"beta\";\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<script>\nimport b, { x, y } from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "nested.vue": [
+    "<template>\n  <div><script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script></div>\n</template>\n",
+    "<template>\n  <div>\n    <script>\n      import { z, a } from \"zeta\";\n      import unused from \"unused-module\";\n      import b from \"beta\";\n      import { c } from \"./local\";\n      console.log(z, a, b, c);\n    </script>\n  </div>\n</template>\n"
+   ],
+   "page.component.html": [
+    "<div>\n<script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n</div>\n",
+    "<div>\n  <script type=\"module\">\n    import b from \"beta\";\n    import unused from \"unused-module\";\n    import { a, z } from \"zeta\";\n    import { c } from \"./local\";\n\n    console.log(z, a, b, c);\n  </script>\n</div>\n"
+   ],
+   "page.html": [
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n",
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\n      import b from \"beta\";\n      import unused from \"unused-module\";\n      import { a, z } from \"zeta\";\n      import { c } from \"./local\";\n\n      console.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n"
+   ],
+   "page.mjml": [
+    "<mjml><mj-head><mj-raw><script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script></mj-raw></mj-head></mjml>\n",
+    "<mjml\n  ><mj-head\n    ><mj-raw\n      ><script type=\"module\"> import { z, a } from \"zeta\"; import unused from\n      \"unused-module\"; import b from \"beta\"; import { c } from \"./local\";\n      console.log(z, a, b, c); </script></mj-raw\n    ></mj-head\n  ></mjml\n>\n"
+   ],
+   "setup-first.vue": [
+    "<script setup>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script setup>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "setup-ts.vue": [
+    "<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script setup lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "sfc-js.vue": [
+    "<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "sfc-ts.vue": [
+    "<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "sort-ignore.vue": [
+    "<script>\n// sort-imports-ignore\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script>\n// sort-imports-ignore\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "src.vue": [
+    "<script src=\"./a.js\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script src=\"./a.js\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\n\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "three.vue": [
+    "<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<style>a{b:c}</style>\n<script setup>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n<style>\na {\n  b: c;\n}\n</style>\n<script setup>\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "tpl-html.js": [
+    "const t = html`\n  <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n  </script>\n`;\nconst u = /* HTML */ `\n  <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n  </script>\n`;\n",
+    "const t = html`\n  <script type=\"module\">\n    import b from \"beta\";\n    import unused from \"unused-module\";\n    import { a, z } from \"zeta\";\n    import { c } from \"./local\";\n\n    console.log(z, a, b, c);\n  </script>\n`;\nconst u = /* HTML */ `\n  <script type=\"module\">\n    import b from \"beta\";\n    import unused from \"unused-module\";\n    import { a, z } from \"zeta\";\n    import { c } from \"./local\";\n\n    console.log(z, a, b, c);\n  </script>\n`;\n"
+   ],
+   "tsx.vue": [
+    "<script lang=\"tsx\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n",
+    "<script lang=\"tsx\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n"
+   ],
+   "two.vue": [
+    "<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script lang=\"ts\">\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "upper.vue": [
+    "<SCRIPT>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</SCRIPT>\n",
+    "<SCRIPT>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</SCRIPT>\n"
+   ],
+   "crlf.vue": [
+    "<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "crlf.html": [
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n",
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\n      import b from \"beta\";\n      import unused from \"unused-module\";\n      import { a, z } from \"zeta\";\n      import { c } from \"./local\";\n\n      console.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n"
+   ],
+   "bom.vue": [
+    "\ufeff<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "\ufeff<script lang=\"ts\">\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { a, z } from \"zeta\";\nimport { c } from \"./local\";\n\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "comments.vue": [
+    "<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\n// c1\nimport b from \"beta\"; // c2\n/* c3 */\nimport { c } from \"./local\";\n\nconst x = `</scr` + `ipt>`;\n</script>\n\n<template>\n  <div>{{ x }}</div>\n</template>\n\n<style scoped>\na{b:c}\n</style>\n",
+    "<script setup lang=\"ts\">\n// c1\nimport b from \"beta\"; // c2\nimport { a, z } from \"zeta\";\n/* c3 */\nimport { c } from \"./local\";\n\nconst x = `</scr` + `ipt>`;\n</script>\n\n<template>\n  <div>{{ x }}</div>\n</template>\n\n<style scoped>\na {\n  b: c;\n}\n</style>\n"
+   ],
+   "coffee.vue": [
+    "<script lang=\"coffee\">\nimport { z, a } from \"zeta\"\nimport b from \"beta\"\n</script>\n",
+    "<script lang=\"coffee\">\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "empty-setup.vue": [
+    "<!-- c -->\n<script>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n<script setup>\n</script>\n<script setup>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<!-- c -->\n<script>\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n<script setup></script>\n<script setup>\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "sorted.vue": [
+    "<script>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n",
+    "<script>\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "front.vue": [
+    "---\ntitle: x\n---\n<script>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "---\ntitle: x\n---\n\n<script>\nimport b from \"beta\";\nimport { a, z } from \"zeta\";\n</script>\n"
+   ],
+   "noimports.vue": [
+    "<template>\n  <div />\n</template>\n<script>\nexport default {}\n</script>\n",
+    "<template>\n  <div />\n</template>\n<script>\nexport default {};\n</script>\n"
+   ]
+  }
+ },
+ "oxfmt, sortImports": {
+  "config": [
+   ".oxfmtrc.json",
+   {
+    "printWidth": 80,
+    "sortImports": {}
+   }
+  ],
+  "files": {
+   "custom.vue": [
+    "<template>\n  <div />\n</template>\n\n<docs lang=\"md\">\n# a\n\n```ts\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n```\n</docs>\n",
+    "<template>\n  <div />\n</template>\n\n<docs lang=\"md\">\n# a\n\n```ts\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n```\n</docs>\n"
+   ],
+   "dup.vue": [
+    "<template>\n  <div />\n</template>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<template>\n  <div />\n</template>\n\n<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "html-block.md": [
+    "# a\n\n```html\n<script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n```\n\n```vue\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n```\n",
+    "# a\n\n```html\n<script type=\"module\">\n  import { z, a } from \"zeta\";\n  import unused from \"unused-module\";\n  import b from \"beta\";\n  import { c } from \"./local\";\n  console.log(z, a, b, c);\n</script>\n```\n\n```vue\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n```\n"
+   ],
+   "ignore.vue": [
+    "<script>\n// prettier-ignore\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script>\n// prettier-ignore\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\nimport unused from \"unused-module\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "jsdoc-expr.vue": [
+    "<template>\n  <a @click=\"/** @return {number} it */ f()\" :b=\"/** @description c */ d\">{{ /** @return x */ e }}</a>\n</template>\n",
+    "<template>\n  <a @click=\"/** @return {number} it */ f()\" :b=\"/** @description c */ d\">{{\n    /** @return x */ e\n  }}</a>\n</template>\n"
+   ],
+   "jsdoc.html": [
+    "<script type=\"module\">\n/**\n * @description This should be inlined\n *\n * @param {string} name - the name\n * @return {number} it\n */\nfunction f(name) {}\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script type=\"module\">\n  /**\n   * @description This should be inlined\n   *\n   * @param {string} name - the name\n   * @return {number} it\n   */\n  function f(name) {}\n  import { z, a } from \"zeta\";\n  import unused from \"unused-module\";\n  import b from \"beta\";\n  import { c } from \"./local\";\n  console.log(z, a, b, c);\n</script>\n"
+   ],
+   "jsdoc.vue": [
+    "<script>\n/**\n * @description This should be inlined\n *\n * @param {string} name - the name\n * @return {number} it\n */\nfunction f(name) {}\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script>\n/**\n * @description This should be inlined\n *\n * @param {string} name - the name\n * @return {number} it\n */\nfunction f(name) {}\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "jsx.vue": [
+    "<script lang=\"jsx\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n",
+    "<script lang=\"jsx\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n"
+   ],
+   "kinds.html": [
+    "<script type=\"text/babel\" data-type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<script type=\"text/typescript\" lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script type=\"text/babel\" data-type=\"module\">\n  import { z, a } from \"zeta\";\n  import unused from \"unused-module\";\n  import b from \"beta\";\n  import { c } from \"./local\";\n  console.log(z, a, b, c);\n</script>\n<script type=\"text/typescript\" lang=\"ts\">\n  import { z, a } from \"zeta\";\n  import unused from \"unused-module\";\n  import b from \"beta\";\n  import { c } from \"./local\";\n  console.log(z, a, b, c);\n</script>\n<script lang=\"ts\">\n  import { z, a } from \"zeta\";\n  import unused from \"unused-module\";\n  import b from \"beta\";\n  import { c } from \"./local\";\n  console.log(z, a, b, c);\n</script>\n"
+   ],
+   "merge.html": [
+    "<script type=\"module\">\nimport { x } from \"beta\";\nimport { y } from \"beta\";\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<script type=\"module\">\n  import { x } from \"beta\";\n  import { y } from \"beta\";\n  import { z, a } from \"zeta\";\n  import b from \"beta\";\n</script>\n"
+   ],
+   "merge.vue": [
+    "<script>\nimport { x } from \"beta\";\nimport { y } from \"beta\";\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<script>\nimport { x } from \"beta\";\nimport { y } from \"beta\";\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n"
+   ],
+   "nested.vue": [
+    "<template>\n  <div><script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script></div>\n</template>\n",
+    "<template>\n  <div>\n    <script>\n      import b from \"beta\";\n      import unused from \"unused-module\";\n      import { z, a } from \"zeta\";\n\n      import { c } from \"./local\";\n      console.log(z, a, b, c);\n    </script>\n  </div>\n</template>\n"
+   ],
+   "page.component.html": [
+    "<div>\n<script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n</div>\n",
+    "<div>\n  <script type=\"module\">\n    import { z, a } from \"zeta\";\n    import unused from \"unused-module\";\n    import b from \"beta\";\n    import { c } from \"./local\";\n    console.log(z, a, b, c);\n  </script>\n</div>\n"
+   ],
+   "page.html": [
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n",
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\n      import { z, a } from \"zeta\";\n      import unused from \"unused-module\";\n      import b from \"beta\";\n      import { c } from \"./local\";\n      console.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n"
+   ],
+   "page.mjml": [
+    "<mjml><mj-head><mj-raw><script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script></mj-raw></mj-head></mjml>\n",
+    "<mjml\n  ><mj-head\n    ><mj-raw\n      ><script type=\"module\"> import { z, a } from \"zeta\"; import unused from\n      \"unused-module\"; import b from \"beta\"; import { c } from \"./local\";\n      console.log(z, a, b, c); </script></mj-raw\n    ></mj-head\n  ></mjml\n>\n"
+   ],
+   "setup-first.vue": [
+    "<script setup>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script setup>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "setup-ts.vue": [
+    "<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script setup lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "sfc-js.vue": [
+    "<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "sfc-ts.vue": [
+    "<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "sort-ignore.vue": [
+    "<script>\n// sort-imports-ignore\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\n// sort-imports-ignore\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "src.vue": [
+    "<script src=\"./a.js\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script src=\"./a.js\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "three.vue": [
+    "<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<style>a{b:c}</style>\n<script setup>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<style>\na {\n  b: c;\n}\n</style>\n<script setup>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n"
+   ],
+   "tpl-html.js": [
+    "const t = html`\n  <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n  </script>\n`;\nconst u = /* HTML */ `\n  <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n  </script>\n`;\n",
+    "const t = html`\n  <script type=\"module\">\n    import { z, a } from \"zeta\";\n    import unused from \"unused-module\";\n    import b from \"beta\";\n    import { c } from \"./local\";\n    console.log(z, a, b, c);\n  </script>\n`;\nconst u = /* HTML */ `\n  <script type=\"module\">\n    import { z, a } from \"zeta\";\n    import unused from \"unused-module\";\n    import b from \"beta\";\n    import { c } from \"./local\";\n    console.log(z, a, b, c);\n  </script>\n`;\n"
+   ],
+   "tsx.vue": [
+    "<script lang=\"tsx\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n",
+    "<script lang=\"tsx\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n"
+   ],
+   "two.vue": [
+    "<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script lang=\"ts\">\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "upper.vue": [
+    "<SCRIPT>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</SCRIPT>\n",
+    "<SCRIPT>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</SCRIPT>\n"
+   ],
+   "crlf.vue": [
+    "<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "crlf.html": [
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n",
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\n      import { z, a } from \"zeta\";\n      import unused from \"unused-module\";\n      import b from \"beta\";\n      import { c } from \"./local\";\n      console.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n"
+   ],
+   "bom.vue": [
+    "\ufeff<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "\ufeff<script lang=\"ts\">\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "comments.vue": [
+    "<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\n// c1\nimport b from \"beta\"; // c2\n/* c3 */\nimport { c } from \"./local\";\n\nconst x = `</scr` + `ipt>`;\n</script>\n\n<template>\n  <div>{{ x }}</div>\n</template>\n\n<style scoped>\na{b:c}\n</style>\n",
+    "<script setup lang=\"ts\">\n// c1\nimport b from \"beta\"; // c2\nimport { z, a } from \"zeta\";\n\n/* c3 */\nimport { c } from \"./local\";\n\nconst x = `</scr` + `ipt>`;\n</script>\n\n<template>\n  <div>{{ x }}</div>\n</template>\n\n<style scoped>\na {\n  b: c;\n}\n</style>\n"
+   ],
+   "coffee.vue": [
+    "<script lang=\"coffee\">\nimport { z, a } from \"zeta\"\nimport b from \"beta\"\n</script>\n",
+    "<script lang=\"coffee\">\nimport { z, a } from \"zeta\"\nimport b from \"beta\"\n</script>\n"
+   ],
+   "empty-setup.vue": [
+    "<!-- c -->\n<script>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n<script setup>\n</script>\n<script setup>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<!-- c -->\n<script>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n<script setup></script>\n<script setup>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n"
+   ],
+   "sorted.vue": [
+    "<script>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n",
+    "<script>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n"
+   ],
+   "front.vue": [
+    "---\ntitle: x\n---\n<script>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "---\ntitle: x\n---\n\n<script>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n"
+   ],
+   "noimports.vue": [
+    "<template>\n  <div />\n</template>\n<script>\nexport default {}\n</script>\n",
+    "<template>\n  <div />\n</template>\n<script>\nexport default {};\n</script>\n"
+   ]
+  }
+ },
+ "oxfmt, sortImports and jsdoc": {
+  "config": [
+   ".oxfmtrc.json",
+   {
+    "printWidth": 80,
+    "sortImports": {},
+    "jsdoc": true
+   }
+  ],
+  "files": {
+   "custom.vue": [
+    "<template>\n  <div />\n</template>\n\n<docs lang=\"md\">\n# a\n\n```ts\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n```\n</docs>\n",
+    "<template>\n  <div />\n</template>\n\n<docs lang=\"md\">\n# a\n\n```ts\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n```\n</docs>\n"
+   ],
+   "dup.vue": [
+    "<template>\n  <div />\n</template>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<template>\n  <div />\n</template>\n\n<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "html-block.md": [
+    "# a\n\n```html\n<script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n```\n\n```vue\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n```\n",
+    "# a\n\n```html\n<script type=\"module\">\n  import { z, a } from \"zeta\";\n  import unused from \"unused-module\";\n  import b from \"beta\";\n  import { c } from \"./local\";\n  console.log(z, a, b, c);\n</script>\n```\n\n```vue\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n```\n"
+   ],
+   "ignore.vue": [
+    "<script>\n// prettier-ignore\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script>\n// prettier-ignore\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\nimport unused from \"unused-module\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "jsdoc-expr.vue": [
+    "<template>\n  <a @click=\"/** @return {number} it */ f()\" :b=\"/** @description c */ d\">{{ /** @return x */ e }}</a>\n</template>\n",
+    "<template>\n  <a @click=\"/** @return {number} it */ f()\" :b=\"/** @description c */ d\">{{\n    /** @return x */ e\n  }}</a>\n</template>\n"
+   ],
+   "jsdoc.html": [
+    "<script type=\"module\">\n/**\n * @description This should be inlined\n *\n * @param {string} name - the name\n * @return {number} it\n */\nfunction f(name) {}\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script type=\"module\">\n  /**\n   * @description This should be inlined\n   *\n   * @param {string} name - the name\n   * @return {number} it\n   */\n  function f(name) {}\n  import { z, a } from \"zeta\";\n  import unused from \"unused-module\";\n  import b from \"beta\";\n  import { c } from \"./local\";\n  console.log(z, a, b, c);\n</script>\n"
+   ],
+   "jsdoc.vue": [
+    "<script>\n/**\n * @description This should be inlined\n *\n * @param {string} name - the name\n * @return {number} it\n */\nfunction f(name) {}\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script>\n/**\n * This should be inlined\n *\n * @param {string} name - The name\n * @returns {number} It\n */\nfunction f(name) {}\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "jsx.vue": [
+    "<script lang=\"jsx\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n",
+    "<script lang=\"jsx\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n"
+   ],
+   "kinds.html": [
+    "<script type=\"text/babel\" data-type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<script type=\"text/typescript\" lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script type=\"text/babel\" data-type=\"module\">\n  import { z, a } from \"zeta\";\n  import unused from \"unused-module\";\n  import b from \"beta\";\n  import { c } from \"./local\";\n  console.log(z, a, b, c);\n</script>\n<script type=\"text/typescript\" lang=\"ts\">\n  import { z, a } from \"zeta\";\n  import unused from \"unused-module\";\n  import b from \"beta\";\n  import { c } from \"./local\";\n  console.log(z, a, b, c);\n</script>\n<script lang=\"ts\">\n  import { z, a } from \"zeta\";\n  import unused from \"unused-module\";\n  import b from \"beta\";\n  import { c } from \"./local\";\n  console.log(z, a, b, c);\n</script>\n"
+   ],
+   "merge.html": [
+    "<script type=\"module\">\nimport { x } from \"beta\";\nimport { y } from \"beta\";\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<script type=\"module\">\n  import { x } from \"beta\";\n  import { y } from \"beta\";\n  import { z, a } from \"zeta\";\n  import b from \"beta\";\n</script>\n"
+   ],
+   "merge.vue": [
+    "<script>\nimport { x } from \"beta\";\nimport { y } from \"beta\";\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<script>\nimport { x } from \"beta\";\nimport { y } from \"beta\";\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n"
+   ],
+   "nested.vue": [
+    "<template>\n  <div><script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script></div>\n</template>\n",
+    "<template>\n  <div>\n    <script>\n      import b from \"beta\";\n      import unused from \"unused-module\";\n      import { z, a } from \"zeta\";\n\n      import { c } from \"./local\";\n      console.log(z, a, b, c);\n    </script>\n  </div>\n</template>\n"
+   ],
+   "page.component.html": [
+    "<div>\n<script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n</div>\n",
+    "<div>\n  <script type=\"module\">\n    import { z, a } from \"zeta\";\n    import unused from \"unused-module\";\n    import b from \"beta\";\n    import { c } from \"./local\";\n    console.log(z, a, b, c);\n  </script>\n</div>\n"
+   ],
+   "page.html": [
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n",
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\n      import { z, a } from \"zeta\";\n      import unused from \"unused-module\";\n      import b from \"beta\";\n      import { c } from \"./local\";\n      console.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n"
+   ],
+   "page.mjml": [
+    "<mjml><mj-head><mj-raw><script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script></mj-raw></mj-head></mjml>\n",
+    "<mjml\n  ><mj-head\n    ><mj-raw\n      ><script type=\"module\"> import { z, a } from \"zeta\"; import unused from\n      \"unused-module\"; import b from \"beta\"; import { c } from \"./local\";\n      console.log(z, a, b, c); </script></mj-raw\n    ></mj-head\n  ></mjml\n>\n"
+   ],
+   "setup-first.vue": [
+    "<script setup>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script setup>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "setup-ts.vue": [
+    "<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script setup lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "sfc-js.vue": [
+    "<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "sfc-ts.vue": [
+    "<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "sort-ignore.vue": [
+    "<script>\n// sort-imports-ignore\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\n// sort-imports-ignore\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "src.vue": [
+    "<script src=\"./a.js\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n",
+    "<script src=\"./a.js\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n"
+   ],
+   "three.vue": [
+    "<script>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<style>a{b:c}</style>\n<script setup>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<script>\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n<style>\na {\n  b: c;\n}\n</style>\n<script setup>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n"
+   ],
+   "tpl-html.js": [
+    "const t = html`\n  <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n  </script>\n`;\nconst u = /* HTML */ `\n  <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n  </script>\n`;\n",
+    "const t = html`\n  <script type=\"module\">\n    import { z, a } from \"zeta\";\n    import unused from \"unused-module\";\n    import b from \"beta\";\n    import { c } from \"./local\";\n    console.log(z, a, b, c);\n  </script>\n`;\nconst u = /* HTML */ `\n  <script type=\"module\">\n    import { z, a } from \"zeta\";\n    import unused from \"unused-module\";\n    import b from \"beta\";\n    import { c } from \"./local\";\n    console.log(z, a, b, c);\n  </script>\n`;\n"
+   ],
+   "tsx.vue": [
+    "<script lang=\"tsx\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n",
+    "<script lang=\"tsx\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\nconst d = <a />;\n</script>\n"
+   ],
+   "two.vue": [
+    "<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script lang=\"ts\">\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "upper.vue": [
+    "<SCRIPT>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</SCRIPT>\n",
+    "<SCRIPT>\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</SCRIPT>\n"
+   ],
+   "crlf.vue": [
+    "<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "<script lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "crlf.html": [
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n",
+    "<!doctype html>\n<html>\n  <body>\n    <script type=\"module\">\n      import { z, a } from \"zeta\";\n      import unused from \"unused-module\";\n      import b from \"beta\";\n      import { c } from \"./local\";\n      console.log(z, a, b, c);\n    </script>\n    <script>\n      var x = 1;\n    </script>\n  </body>\n</html>\n"
+   ],
+   "bom.vue": [
+    "\ufeff<script lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\nimport unused from \"unused-module\";\nimport b from \"beta\";\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n",
+    "\ufeff<script lang=\"ts\">\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\nexport default {};\n</script>\n\n<script setup lang=\"ts\">\nimport b from \"beta\";\nimport unused from \"unused-module\";\nimport { z, a } from \"zeta\";\n\nimport { c } from \"./local\";\nconsole.log(z, a, b, c);\n</script>\n\n<template>\n  <div />\n</template>\n"
+   ],
+   "comments.vue": [
+    "<script setup lang=\"ts\">\nimport { z, a } from \"zeta\";\n// c1\nimport b from \"beta\"; // c2\n/* c3 */\nimport { c } from \"./local\";\n\nconst x = `</scr` + `ipt>`;\n</script>\n\n<template>\n  <div>{{ x }}</div>\n</template>\n\n<style scoped>\na{b:c}\n</style>\n",
+    "<script setup lang=\"ts\">\n// c1\nimport b from \"beta\"; // c2\nimport { z, a } from \"zeta\";\n\n/* c3 */\nimport { c } from \"./local\";\n\nconst x = `</scr` + `ipt>`;\n</script>\n\n<template>\n  <div>{{ x }}</div>\n</template>\n\n<style scoped>\na {\n  b: c;\n}\n</style>\n"
+   ],
+   "coffee.vue": [
+    "<script lang=\"coffee\">\nimport { z, a } from \"zeta\"\nimport b from \"beta\"\n</script>\n",
+    "<script lang=\"coffee\">\nimport { z, a } from \"zeta\"\nimport b from \"beta\"\n</script>\n"
+   ],
+   "empty-setup.vue": [
+    "<!-- c -->\n<script>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n<script setup>\n</script>\n<script setup>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "<!-- c -->\n<script>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n<script setup></script>\n<script setup>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n"
+   ],
+   "sorted.vue": [
+    "<script>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n",
+    "<script>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n"
+   ],
+   "front.vue": [
+    "---\ntitle: x\n---\n<script>\nimport { z, a } from \"zeta\";\nimport b from \"beta\";\n</script>\n",
+    "---\ntitle: x\n---\n\n<script>\nimport b from \"beta\";\nimport { z, a } from \"zeta\";\n</script>\n"
+   ],
+   "noimports.vue": [
+    "<template>\n  <div />\n</template>\n<script>\nexport default {}\n</script>\n",
+    "<template>\n  <div />\n</template>\n<script>\nexport default {};\n</script>\n"
+   ]
+  }
+ }
+}

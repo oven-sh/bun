@@ -120,10 +120,7 @@ bun_core::comptime_string_map! {
     };
 }
 
-pub use draft::{
-    ConfigIterator, Parser, RegistryAuth, ScopeItem, ScopeIterator, ToStringFormatter,
-    apply_registry_auth, load_npmrc, load_npmrc_config,
-};
+pub use draft::{Parser, RegistryAuth, apply_registry_auth, load_npmrc, load_npmrc_config};
 
 mod draft {
 
@@ -956,7 +953,7 @@ mod draft {
     // ToStringFormatter
     // ──────────────────────────────────────────────────────────────────────────
 
-    pub struct ToStringFormatter<'a> {
+    pub(crate) struct ToStringFormatter<'a> {
         pub(crate) d: &'a ExprData,
     }
 
@@ -1004,7 +1001,7 @@ mod draft {
     // ConfigIterator
     // ──────────────────────────────────────────────────────────────────────────
 
-    pub struct ConfigIterator<'a> {
+    pub(crate) struct ConfigIterator<'a> {
         pub(crate) config: &'a E::Object,
         pub(crate) log: &'a mut Log,
 
@@ -1176,7 +1173,7 @@ mod draft {
     // ScopeIterator
     // ──────────────────────────────────────────────────────────────────────────
 
-    pub struct ScopeIterator<'a> {
+    pub(crate) struct ScopeIterator<'a> {
         pub(crate) config: &'a E::Object,
         pub(crate) source: &'a Source,
         pub(crate) log: &'a mut Log,
@@ -1185,7 +1182,7 @@ mod draft {
         pub(crate) count: bool,
     }
 
-    pub struct ScopeItem {
+    pub(crate) struct ScopeItem {
         pub(crate) scope: Box<[u8]>,
         pub(crate) registry: NpmRegistry,
     }

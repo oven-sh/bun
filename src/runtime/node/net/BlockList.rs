@@ -60,7 +60,7 @@ fn z(s: &ZStr) -> &str {
 /// `fromJS` / `toJS` are provided by the codegen via `#[bun_jsc::JsClass]`.
 #[bun_jsc::JsClass]
 #[derive(bun_ptr::ThreadSafeRefCounted)]
-pub struct BlockList {
+pub(crate) struct BlockList {
     // Intrusive thread-safe refcount.
     // `ref()`/`deref()` (provided by the derive) bump it; hitting zero drops
     // the `Box` via the trait's default destructor.
@@ -86,14 +86,14 @@ impl BlockList {
     // Trait impl + default destructor (drops the `Box`) provided by
     // `#[derive(ThreadSafeRefCounted)]`; inherent forwarders below.
     #[inline]
-    pub fn ref_(&self) {
+    pub(crate) fn ref_(&self) {
         // SAFETY: `self` is live; `ref_` only touches the atomic `ref_count` field.
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
     }
     /// # Safety
     /// `this` must point to a live `Self` and the caller must own one ref.
     #[inline]
-    pub unsafe fn deref(this: *mut Self) {
+    pub(crate) unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract.
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
@@ -427,10 +427,6 @@ impl BlockList {
         _ = writer.write_int_le(this.serialize_nonce);
     }
 
-    // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
-    // signature is fixed by `generate-classes.ts`, so the deref is documented with
-    // the SAFETY comment below.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     /// `Ok(None)`: the bytes are not a valid record (the deserializer reports its usual error).
     pub(crate) fn on_structured_clone_deserialize(
         global: &JSGlobalObject,

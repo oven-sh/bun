@@ -2608,9 +2608,15 @@ class QuicStream {
     if (this.destroyed) return;
     const inner = this.#inner;
 
-    if (inner.pendingTrailers) {
-      this.sendTrailers(inner.pendingTrailers);
+    const { pendingTrailers } = inner;
+    if (pendingTrailers) {
       inner.pendingTrailers = undefined;
+      try {
+        this.sendTrailers(pendingTrailers);
+      } catch (err) {
+        // As for a throw from onwanttrailers. Node lets it leave the native callback uncaught.
+        this.destroy(err);
+      }
     } else {
       const { onwanttrailers } = inner;
       if (typeof onwanttrailers === "function") safeCallbackInvoke(onwanttrailers, this);
@@ -3295,7 +3301,13 @@ class QuicSession {
     if (onwanttrailers) stream.onwanttrailers = onwanttrailers;
 
     if (headers !== undefined) {
-      stream.sendHeaders(headers, { terminal: validatedBody === undefined && !deferredBody });
+      try {
+        stream.sendHeaders(headers, { terminal: validatedBody === undefined && !deferredBody });
+      } catch (err) {
+        // The caller never gets this stream, so nothing else can end it. Node leaves it open.
+        stream.destroy();
+        throw err;
+      }
     }
 
     if (deferredBody) {

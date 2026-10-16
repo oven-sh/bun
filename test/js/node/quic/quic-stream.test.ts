@@ -439,6 +439,87 @@ describe("received HTTP/3 fields that hold CR or LF", () => {
   });
 });
 
+// A NUL in a value makes sendHeaders() and sendTrailers() throw. These are the
+// two callers inside node:quic that the throw goes through.
+describe("a header block that is refused where node:quic sends it itself", () => {
+  const request = { ":method": "POST", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+  // Longer than the test: an idle timeout must not be what ends a session here.
+  const transportParams = { maxIdleTimeout: 60 };
+
+  test("create*Stream({ headers }) rejects and leaves no stream that keeps the session open", async () => {
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, transportParams },
+    );
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams,
+    } as SessionOptions);
+    await client.opened;
+
+    const headers = { ...request, "x-bad": "a\0b" };
+    const code = (err: any) => err.code;
+    const rejections = {
+      bidirectional: await client.createBidirectionalStream({ headers }).then(() => "resolved", code),
+      unidirectional: await client.createUnidirectionalStream({ headers }).then(() => "resolved", code),
+    };
+    // A graceful close waits for every open stream.
+    await client.close();
+
+    expect(rejections).toEqual({ bidirectional: "ERR_INVALID_CHAR", unidirectional: "ERR_INVALID_CHAR" });
+  });
+
+  test("pendingTrailers destroys the stream with the error", async () => {
+    const serverStreamClosed = Promise.withResolvers<string>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.then(
+            () => serverStreamClosed.resolve("resolved"),
+            (err: any) => serverStreamClosed.resolve(err.code),
+          );
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams,
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" });
+          this.pendingTrailers = { "x-bad": "a\0b" };
+          this.writer.writeSync(new TextEncoder().encode("body"));
+          this.writer.endSync();
+        },
+        // A stream is asked for its trailers only when this is set.
+        onwanttrailers() {},
+      },
+    );
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams,
+    } as SessionOptions);
+    await client.opened;
+
+    const stream: any = await client.createBidirectionalStream({ headers: request, onheaders() {} });
+    stream.closed.catch(() => {});
+    // The trailers would have ended the response. Without them, the destroy does.
+    let body = "";
+    for await (const batch of stream) {
+      for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+    }
+
+    expect({ server: await serverStreamClosed.promise, body }).toEqual({ server: "ERR_INVALID_CHAR", body: "body" });
+    await client.close();
+  });
+});
+
 describe("verifyClient", () => {
   test("a server requiring a client certificate never surfaces streams from a client that presented none", async () => {
     let announcedStreams = 0;

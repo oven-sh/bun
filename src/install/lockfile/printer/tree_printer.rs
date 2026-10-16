@@ -5,7 +5,7 @@ use bun_semver as semver;
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::{PackageUpdateInfo, TrackInstalledBin};
 use bun_core::fmt::{PathSep, escape_control_chars};
-use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
+use bun_install::lockfile::{Printer, package::Meta as PackageMeta, reachable};
 use bun_install::{
     self as install, Bin, Dependency, DependencyID, DependencyVersionTag, INVALID_PACKAGE_ID,
     PackageID, PackageManager, PackageNameHash, Resolution, Subcommand, bin, resolution,
@@ -755,17 +755,33 @@ pub(crate) fn print<W: Write>(
     } else {
         debug_assert_eq!(dependencies_buffer.len(), resolutions_buffer.len());
         let is_update = manager.subcommand == Subcommand::Update;
-        'outer: for (dep_id, (dependency, &package_id)) in dependencies_buffer
-            .iter()
-            .zip(resolutions_buffer)
-            .enumerate()
+        // List only the packages that an install would put on disk, and each of them once.
+        let wanted = reachable::packages(
+            this.lockfile,
+            resolutions_buffer,
+            reachable::Options {
+                bundled: true,
+                ..reachable::Options::install(manager)
+            },
+        );
+        let mut listed = Bitset::init_empty(resolved.len())?;
+        // A package is printed under the name of the first edge that reaches it. Peer edges come
+        // last, so a peer dependency's name is used only when no other edge reaches the package.
+        let edges = || {
+            dependencies_buffer
+                .iter()
+                .zip(resolutions_buffer)
+                .enumerate()
+        };
+        'outer: for (dep_id, (dependency, &package_id)) in edges()
+            .filter(|(_, (dependency, _))| !dependency.behavior.is_peer())
+            .chain(edges().filter(|(_, (dependency, _))| dependency.behavior.is_peer()))
         {
             if package_id >= end {
                 continue;
             }
-            if dependency.behavior.is_peer() {
-                continue;
-            }
+            let listed_before = listed.is_set(package_id as usize);
+            listed.set(package_id as usize);
             let package_name = dependency.name.slice(string_buf);
 
             if !this.updates.is_empty() {
@@ -782,6 +798,9 @@ pub(crate) fn print<W: Write>(
                         continue 'outer;
                     }
                 }
+            }
+            if listed_before || !wanted.is_set(package_id as usize) {
+                continue;
             }
 
             bun_core::write_pretty!(
@@ -821,6 +840,19 @@ pub(crate) fn print<W: Write>(
                 writer,
                 enable_ansi_colors,
                 "<r><yellow>skipped<r> <b>{s}<r><d>@{f}<r> <d>(unsupported platform)<r>\n",
+                escape_control_chars(dependency.name.slice(string_buf)),
+                bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix)),
+            )?;
+            continue;
+        }
+
+        if (this.lockfile.get_parent_pkg_of_dependency(dependency_id))
+            .is_some_and(|owner| this.lockfile.is_member_outside(owner))
+        {
+            bun_core::write_pretty!(
+                writer,
+                enable_ansi_colors,
+                "<r><yellow>skipped<r> <b>{s}<r><d>@{f}<r> <d>(workspace outside the project)<r>\n",
                 escape_control_chars(dependency.name.slice(string_buf)),
                 bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix)),
             )?;

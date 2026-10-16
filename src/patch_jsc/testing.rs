@@ -2,7 +2,7 @@
 
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{ArgumentsSlice, CallFrame, JSGlobalObject, JSValue, JsResult, SysErrorJsc};
-use bun_patch::{ApplyError, ParseErr, PatchFile, git_diff_internal, parse_patch_file};
+use bun_patch::{ApplyError, ParseErr, ParseErrAt, PatchFile, git_diff_internal, parse_patch_file};
 use bun_sys::{Fd, FdExt};
 
 pub(crate) struct TestingAPIs;
@@ -81,7 +81,7 @@ impl TestingAPIs {
 
         let patchfile = match parse_patch_file(patchfile_src.slice()) {
             Ok(p) => p,
-            Err(e) => {
+            Err(ParseErrAt { err: e, .. }) => {
                 if e == ParseErr::hunk_header_integrity_check_failed {
                     return Err(global.throw_error(bun_patch::Error::from(e), "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)"));
                 } else {
@@ -149,7 +149,7 @@ impl TestingAPIs {
         // returned alongside its source without a self-referential struct
         // (forbidden by PORTING.md). We discard it here; `apply()` reparses
         // from the owned bytes below.
-        if let Err(e) = parse_patch_file(patchfile_src.slice()) {
+        if let Err(ParseErrAt { err: e, .. }) = parse_patch_file(patchfile_src.slice()) {
             // TODO: HAVE @zackradisic REVIEW THIS DIFF
             if Fd::cwd() != dir_fd {
                 dir_fd.close();

@@ -349,7 +349,7 @@ impl Origin {
 
     fn position(self, (line, column): (u32, u32)) -> (u32, u32) {
         let columns = if line == 1 { self.columns } else { 0 };
-        (line + self.lines, column + columns)
+        (line.wrapping_add(self.lines), column.wrapping_add(columns))
     }
 
     fn fix(self, fix: &mut Fix) {
@@ -359,7 +359,7 @@ impl Origin {
 
     /// Makes a message about the script one about the file.
     fn message(self, message: &mut LintMessage) {
-        if message.line > 0 {
+        if message.line as i32 > 0 {
             (message.line, message.column) = self.position((message.line, message.column));
         }
         message.end = message.end.map(|it| self.position(it));

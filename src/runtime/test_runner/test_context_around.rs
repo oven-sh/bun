@@ -307,8 +307,8 @@ fn run(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             }
         }
         Around::All => {
-            // SAFETY: the running file keeps the active entry and its scope alive.
             if let Some(entry) = entry
+                // SAFETY: the running file keeps the active entry and its scope alive.
                 && let Some(scope) = unsafe { entry.as_ref() }.base.parent
             {
                 // SAFETY: as above.

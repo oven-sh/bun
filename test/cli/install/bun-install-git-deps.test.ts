@@ -831,6 +831,92 @@ test.concurrent(
   30_000,
 );
 
+// bun.lockb keeps the ref that package.json names beside the commit it resolved
+// to, and bun.lock keeps the commit alone. Both pin the commit. The download of
+// a package that bun.lockb pins asked for the ref again: once the branch had
+// moved, the install failed the integrity check, or with a lockfile from before
+// Bun 1.3.10, which has no integrity for `github:` packages, installed the new
+// commit under the name of the pinned one.
+for (const lockfile of ["bun.lock", "bun.lockb"] as const) {
+  for (const linker of ["hoisted", "isolated"] as const) {
+    test.concurrent(
+      `${linker} linker installs the github: commits that ${lockfile} pins after a branch moved`,
+      async () => {
+        using dir = tempDir(`github-${linker}-moved`, {});
+        const root = String(dir);
+        await using github = await serveGithub();
+        const project = writeProject(root, { a: "github:testowner/testrepo#main" });
+        if (lockfile === "bun.lockb") {
+          writeFileSync(join(project, "bunfig.toml"), "[install]\nsaveTextLockfile = false\n");
+        }
+        // the hoisted linker puts gh-leaf in the root node_modules
+        const leaf = linker === "isolated" ? ghLeafOfGhDep : "gh-leaf";
+
+        {
+          const { stderr, exitCode } = await runInstall(
+            project,
+            join(root, "cache-warm"),
+            github.env,
+            `--linker=${linker}`,
+          );
+          expect(stderr).toContain("Saved lockfile");
+          expect(readdirSync(project).filter(file => file.startsWith("bun.lock"))).toEqual([lockfile]);
+          expect(exitCode).toBe(0);
+        }
+
+        // a fresh machine after the branch of gh-leaf moved: keep the lockfile, drop node_modules + cache
+        rmSync(join(project, "node_modules"), { recursive: true });
+        github.heads.leaf = "ccccccc";
+        github.downloads.length = 0;
+        const frozen = await runInstall(
+          project,
+          join(root, "cache-cold"),
+          github.env,
+          "--frozen-lockfile",
+          `--linker=${linker}`,
+        );
+        expect(frozen.stderr).toBe("");
+        expect(installOutput(frozen.stdout)).toEqual([
+          expect.stringContaining("bun install v"),
+          "",
+          "+ a@github:testowner/testrepo#aaaaaaa",
+          "",
+          "2 packages installed",
+        ]);
+        expect(github.downloads.sort()).toEqual(["leaf#bbbbbbb", "testrepo#aaaaaaa"]);
+        expect(await installedVersions(project, ["a", leaf])).toEqual({ a: "gh-dep", [leaf]: "gh-leaf" });
+        expect(frozen.exitCode).toBe(0);
+
+        // another fresh machine adds a second ref on the commit of gh-dep: the
+        // tarball of that ref fills the cache entry of the locked commit, and
+        // gh-leaf still comes from the commit that the lockfile pins
+        writeProject(root, { a: "github:testowner/testrepo#main", b: "github:testowner/testrepo#v1" });
+        rmSync(join(project, "node_modules"), { recursive: true });
+        github.downloads.length = 0;
+        const joined = await runInstall(project, join(root, "cache-joined"), github.env, `--linker=${linker}`);
+        expect(diagnostics(joined.stderr)).toEqual([]);
+        expect(installOutput(joined.stdout)).toEqual([
+          expect.stringContaining("bun install v"),
+          "",
+          "+ a@github:testowner/testrepo#aaaaaaa",
+          "+ b@github:testowner/testrepo#aaaaaaa",
+          "",
+          "2 packages installed",
+        ]);
+        expect(github.downloads.sort()).toEqual(["leaf#bbbbbbb", "testrepo#v1"]);
+        if (linker === "isolated") expectOneStoreEntry(project, ["a", "b"]);
+        expect(await installedVersions(project, ["a", "b", leaf])).toEqual({
+          a: "gh-dep",
+          b: "gh-dep",
+          [leaf]: "gh-leaf",
+        });
+        expect(joined.exitCode).toBe(0);
+      },
+      30_000,
+    );
+  }
+}
+
 // `bun update` fetches the git and `github:` dependencies of the project again.
 // The dependencies of such a package resolve again too, also when its own
 // commit did not move, so a nested branch ref follows its branch.

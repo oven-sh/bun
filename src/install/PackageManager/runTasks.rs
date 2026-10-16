@@ -12,6 +12,7 @@ use crate::extract_tarball;
 use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
 use crate::patch_install::Callback as PatchTaskCallback;
+use crate::repository_real::RepositoryExt as _;
 use crate::retry_timer;
 use crate::tarball_stream::TarballStream;
 use bun_install::{
@@ -1842,36 +1843,6 @@ pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
         .as_ptr()
 }
 
-pub(crate) fn alloc_github_url_for_ref(
-    this: &PackageManager,
-    repository: &Repository,
-    committish: &[u8],
-) -> Vec<u8> {
-    let mut github_api_url: &[u8] = b"https://api.github.com";
-    if let Some(url) = this.env().get(b"GITHUB_API_URL") {
-        if !url.is_empty() {
-            github_api_url = url;
-        }
-    }
-
-    let owner = this.lockfile.str(&repository.owner);
-    let repo = this.lockfile.str(&repository.repo);
-
-    let mut out = Vec::new();
-    write!(
-        &mut out,
-        "{}/repos/{}/{}{}tarball/{}",
-        bstr::BStr::new(strings::without_trailing_slash(github_api_url)),
-        bstr::BStr::new(owner),
-        bstr::BStr::new(repo),
-        // repo might be empty if dep is https://github.com/... style
-        if !repo.is_empty() { "/" } else { "" },
-        bstr::BStr::new(committish),
-    )
-    .expect("unreachable");
-    out
-}
-
 /// A later dependency that joins an entry left in `task_queue` waits forever. Returns the waiters.
 fn forget_failed_git_task(
     this: &mut PackageManager,
@@ -2282,9 +2253,48 @@ impl PackageManager {
         (self.network_dedupe_map.get(&task_id)).is_some_and(|e| e.failed)
     }
 
+    /// The tarball of a `github:` dependency, or of the package that a lockfile resolved one to.
+    /// Such a package is asked for by its commit: the ref in package.json can have moved since.
     pub(crate) fn alloc_github_url(&self, repository: &Repository) -> Vec<u8> {
-        let committish = self.lockfile.str(&repository.committish);
-        alloc_github_url_for_ref(self, repository, committish)
+        let buf = self.lockfile.buffers.string_bytes.as_slice();
+        let committish = repository.committish.slice(buf);
+        let commit = repository.resolved_commit(buf);
+        let git_ref = if commit.is_empty()
+            // A package-lock.json migration has no other name for the commit.
+            || repository.resolved.eql(repository.committish, buf, buf)
+            // GitHub cannot resolve every 7-digit commit that it names a tarball after.
+            || (committish.len() > commit.len()
+                && committish.iter().all(u8::is_ascii_hexdigit)
+                && committish[..commit.len()].eq_ignore_ascii_case(commit))
+        {
+            committish
+        } else {
+            commit
+        };
+
+        let mut github_api_url: &[u8] = b"https://api.github.com";
+        if let Some(url) = self.env().get(b"GITHUB_API_URL") {
+            if !url.is_empty() {
+                github_api_url = url;
+            }
+        }
+
+        let owner = repository.owner.slice(buf);
+        let repo = repository.repo.slice(buf);
+
+        let mut out = Vec::new();
+        write!(
+            &mut out,
+            "{}/repos/{}/{}{}tarball/{}",
+            bstr::BStr::new(strings::without_trailing_slash(github_api_url)),
+            bstr::BStr::new(owner),
+            bstr::BStr::new(repo),
+            // repo might be empty if dep is https://github.com/... style
+            if !repo.is_empty() { "/" } else { "" },
+            bstr::BStr::new(git_ref),
+        )
+        .expect("unreachable");
+        out
     }
 }
 

@@ -98,16 +98,13 @@ impl AlgorithmValue {
                             }
 
                             let time_cost = time_value.as_number();
+                            let max = pwhash::argon2::MAX_VERIFY_TIME_COST;
 
-                            if time_cost < 1.0 || time_cost.is_nan() {
+                            if time_cost.fract() != 0.0
+                                || !(1.0..=f64::from(max)).contains(&time_cost)
+                            {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Time cost must be greater than 0"
-                                )));
-                            }
-
-                            if time_cost.fract() != 0.0 || time_cost > f64::from(u32::MAX) {
-                                return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Time cost must be an integer between 1 and 4294967295"
+                                    "Time cost must be an integer between 1 and {max}"
                                 )));
                             }
 
@@ -124,19 +121,16 @@ impl AlgorithmValue {
                             }
 
                             let memory_cost = memory_value.as_number();
+                            let max = pwhash::argon2::MAX_VERIFY_MEMORY_COST;
 
                             // argon2 requires `memoryCost >= 8 * parallelism`;
                             // Bun hard-codes `parallelism = 1` (see
                             // `Argon2Params::to_params`), so the floor is 8.
-                            if memory_cost < 8.0 || memory_cost.is_nan() {
+                            if memory_cost.fract() != 0.0
+                                || !(8.0..=f64::from(max)).contains(&memory_cost)
+                            {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Memory cost must be at least 8"
-                                )));
-                            }
-
-                            if memory_cost.fract() != 0.0 || memory_cost > f64::from(u32::MAX) {
-                                return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Memory cost must be an integer between 8 and 4294967295"
+                                    "Memory cost must be an integer between 8 and {max}"
                                 )));
                             }
 

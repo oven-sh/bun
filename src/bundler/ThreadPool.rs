@@ -493,9 +493,18 @@ impl Worker {
         unsafe { Self::deinit(this) };
     }
 
-    pub(crate) fn deinit_soon(&mut self) {
-        if let Some(thread) = self.thread {
-            thread.push_idle_task(&raw mut self.deinit_task);
+    /// Frees the worker on its own pool thread when that thread is next idle,
+    /// or now when the worker has no pool thread.
+    ///
+    /// # Safety
+    /// `this` must have come from `heap::alloc` in [`ThreadPool::get_worker`]
+    /// and must be live. The arm without a pool thread frees it, so it is not
+    /// `&mut self`.
+    pub(crate) unsafe fn deinit_soon(this: *mut Worker) {
+        // SAFETY: caller contract — `this` is a live `Worker`.
+        if let Some(thread) = unsafe { (*this).thread } {
+            // SAFETY: as above; `deinit_task` is a field of that `Worker`.
+            thread.push_idle_task(unsafe { &raw mut (*this).deinit_task });
         } else {
             // `thread` is `ThreadPoolLib::Thread::current()` captured at
             // creation. When null, the Worker was created on a non-pool thread
@@ -507,10 +516,10 @@ impl Worker {
             // `ast_memory_store` mi_heap (every `AstAlloc` buffer the inline
             // parse produced) and `data.transpiler` per `Bun.build()` call.
             //
-            // SAFETY: `self` is the heap-allocated Worker; sole owner now that
+            // SAFETY: `this` is the heap-allocated Worker; sole owner now that
             // the caller is about to `clear_retaining_capacity()` the
             // `workers_assignments` map.
-            unsafe { Self::deinit(std::ptr::from_mut::<Self>(self)) };
+            unsafe { Self::deinit(this) };
         }
     }
 

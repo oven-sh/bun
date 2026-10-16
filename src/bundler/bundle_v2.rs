@@ -5618,7 +5618,7 @@ pub mod bv2_impl {
                 if assignments.count() > 0 {
                     for worker in assignments.values() {
                         // SAFETY: worker ptrs are live until `deinit_soon`.
-                        unsafe { (**worker).deinit_soon() };
+                        unsafe { crate::thread_pool::Worker::deinit_soon(*worker) };
                     }
                     pool.wake_for_idle_events();
                 }

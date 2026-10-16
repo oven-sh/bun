@@ -137,8 +137,8 @@ struct Http3Response {
     void overrideWriteOffset(uint64_t o) { getHttpResponseData()->offset = o; }
     size_t getBufferedAmount() { return getHttpResponseData()->backpressure.length(); }
 
-    Http3Response *pause() { us_quic_stream_want_read((us_quic_stream_t *) this, 0); return this; }
-    Http3Response *resume() { us_quic_stream_want_read((us_quic_stream_t *) this, 1); return this; }
+    Http3Response *pause() { us_quic_stream_hold_window((us_quic_stream_t *) this, 1); return this; }
+    Http3Response *resume() { us_quic_stream_hold_window((us_quic_stream_t *) this, 0); return this; }
 
     Http3Response *cork(MoveOnlyFunction<void()> &&fn) { fn(); return this; }
     void *getSocketData() { return getHttpResponseData()->socketData; }

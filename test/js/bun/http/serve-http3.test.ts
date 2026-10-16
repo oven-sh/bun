@@ -1678,6 +1678,182 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       expect(Number(count)).toBeGreaterThan(0);
     });
   });
+
+  // A request body that no handler reads pauses its stream: at 256 KiB before a handler asks
+  // for it, at 1 MiB behind a reader that stalls. The pause holds the stream's flow-control
+  // window and the server keeps reading, so nothing waits in the QUIC engine: bytes there are
+  // lost with the connection, and they hold the connection's window.
+  describe("a paused request body", () => {
+    // Bun.serve's HTTP/3 stream window (lsquic's default for a server).
+    const window = 1024 * 1024;
+    const turn = () => new Promise(resolve => setImmediate(resolve));
+    type Session = Awaited<ReturnType<typeof connect>>;
+    type Stream = Awaited<ReturnType<Session["createBidirectionalStream"]>>;
+
+    async function session(port: number, endpoint: QuicEndpoint) {
+      const client = await connect(`127.0.0.1:${port}`, {
+        endpoint,
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout: 5 },
+        onerror() {},
+      } as SessionOptions);
+      client.closed.catch(() => {});
+      return client;
+    }
+
+    async function post(client: Session, path: string) {
+      const stream = await client.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      stream.sendHeaders(requestHeaders(path, { ":method": "POST" }));
+      return stream;
+    }
+
+    // Offers `body` to every stream, one piece per stream per turn of the event loop, which
+    // the server shares. A burst would overflow the loopback socket and wait on
+    // retransmissions. A stream whose flow control is closed is offered the same piece again
+    // on the next turn.
+    async function send(streams: Stream[], body: Buffer) {
+      const piece = 16 * 1024;
+      const offsets = streams.map(() => 0);
+      while (streams.some((stream, i) => offsets[i] < body.length && !stream.destroyed)) {
+        await turn();
+        streams.forEach((stream, i) => {
+          if (offsets[i] >= body.length || stream.destroyed) return;
+          if (!stream.writer.writeSync(body.subarray(offsets[i], offsets[i] + piece))) return;
+          if ((offsets[i] += piece) >= body.length) stream.writer.endSync();
+        });
+      }
+    }
+
+    const text = async (stream: Stream) => {
+      let body = "";
+      for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+        for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+      }
+      return body;
+    };
+
+    // HTTP/2's twin is "request body: stream window stays at the initial 64 KB until the
+    // handler reads, then opens" in serve-http2.test.ts.
+    test("stays in its first stream window until the handler reads, and leaves the connection's window to other requests", async () => {
+      const body = Buffer.alloc(window + window / 2, "abcdefghijklmnop");
+      const gate = Promise.withResolvers<void>();
+      await using server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        routes: {
+          "/hello": () => new Response("hello"),
+          "/read": async req => new Response(String((await req.bytes()).length)),
+          "/held": async req => {
+            await gate.promise;
+            return new Response(String((await req.bytes()).length));
+          },
+        },
+      });
+
+      await using endpoint = new QuicEndpoint();
+      const client = await session(server.port!, endpoint);
+      const held = [await post(client, "/held"), await post(client, "/held")];
+      const read = await post(client, "/read");
+      // The three are offered the same body at the same pace. When the one that is read has
+      // its response, the two that are held have had the same chance to send theirs.
+      const sent = send([...held, read], body);
+      const clock = await text(read);
+      // The two hold 2 MiB that nothing has read, and the connection's window is 1.5 MiB.
+      const sibling = await text(await client.createBidirectionalStream({ headers: requestHeaders("/hello") }));
+      const parked = held.map(stream => Math.ceil(Number(stream.stats.bytesSent) / (64 * 1024)));
+      gate.resolve();
+      const lengths = await Promise.all(held.map(text));
+      await sent;
+      if (!client.destroyed) client.close().catch(() => {});
+
+      expect({ clock, parked, sibling, lengths }).toEqual({
+        clock: String(body.length),
+        // In units of 64 KiB: all of the first window, and nothing past it.
+        parked: [16, 16],
+        sibling: "hello",
+        lengths: [String(body.length), String(body.length)],
+      });
+    });
+
+    test("arrives whole when its reader stalls, and outlives its connection", async () => {
+      // Past the mark, and within the half window (512 KiB) that a held stream can always
+      // still take.
+      const body = Buffer.alloc(1408 * 1024, "abcdefghijklmnop");
+      const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+      const seen = Promise.withResolvers<{ length: number; sha: string } | { name: string }>();
+      await using server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        async fetch(req) {
+          const reader = req.body!.getReader();
+          const chunks = [(await reader.read()).value!];
+          // The reader stalls here until the client is gone.
+          await new Promise(resolve => req.signal.addEventListener("abort", resolve));
+          try {
+            for (let next; !(next = await reader.read()).done;) chunks.push(next.value);
+            const bytes = Buffer.concat(chunks);
+            seen.resolve({ length: bytes.length, sha: sha(bytes) });
+          } catch (e) {
+            seen.resolve({ name: (e as Error).name });
+          }
+          return new Response();
+        },
+      });
+
+      await using endpoint = new QuicEndpoint();
+      const client = await session(server.port!, endpoint);
+      await send([await post(client, "/")], body);
+      // An application close waits until the server has acknowledged everything the stream
+      // sent, so the whole body has reached the server by then.
+      client.close({ type: "application", code: 0x100 }).catch(() => {});
+
+      expect(await seen.promise).toEqual({ length: body.length, sha: sha(body) });
+    });
+
+    test("that its client resets aborts its own request only", async () => {
+      const body = Buffer.alloc(window + window / 2, "abcdefghijklmnop");
+      const aborted = Promise.withResolvers<string>();
+      await using server = Bun.serve({
+        port: 0,
+        tls,
+        http3: true,
+        http1: false,
+        routes: {
+          "/hello": () => new Response("hello"),
+          "/held": async req => {
+            await new Promise(resolve => req.signal.addEventListener("abort", resolve));
+            aborted.resolve(
+              await req.bytes().then(
+                bytes => `read ${bytes.length}`,
+                e => e.name,
+              ),
+            );
+            return new Response();
+          },
+        },
+      });
+
+      await using endpoint = new QuicEndpoint();
+      const client = await session(server.port!, endpoint);
+      const held = await post(client, "/held");
+      const sent = send([held], body);
+      // The stream has sent what its held window takes.
+      while (held.stats.bytesSent <= BigInt(window - 64 * 1024)) await turn();
+      held.writer.fail();
+      await sent;
+      const outcome = await aborted.promise;
+      const sibling = await text(await client.createBidirectionalStream({ headers: requestHeaders("/hello") }));
+      if (!client.destroyed) client.close().catch(() => {});
+
+      expect({ outcome, sibling }).toEqual({ outcome: "AbortError", sibling: "hello" });
+    });
+  });
 });
 
 describe("Bun.serve HTTP/3 production", () => {

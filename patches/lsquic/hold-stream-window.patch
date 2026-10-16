@@ -1,0 +1,69 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -1758,6 +1758,22 @@
+ lsquic_stream_wantread (lsquic_stream_t *s, int is_want);
+ 
+ /**
++ * bun: hold or release the stream's flow control window.  While it is held,
++ * the stream's receive limit does not advance: the stream is read as before,
++ * and the connection's window is credited as before, but reads earn the peer
++ * no new MAX_STREAM_DATA.  An update that a read queued before the hold still
++ * goes out, so the peer can send up to one window past the read offset at the
++ * hold.  A release queues the update that the hold kept back.  It goes out
++ * when the connection is next ticked.
++ *
++ * This is receive backpressure that leaves no data in the stream, unlike
++ * lsquic_stream_wantread(s, 0): data left there holds the connection's
++ * window too, and is dropped when the connection goes away.
++ */
++void
++lsquic_stream_hold_window (lsquic_stream_t *s, int hold);
++
++/**
+  * Read up to @param len bytes from stream into @param buf.  Returns number
+  * of bytes read or -1 on error, in which case errno is set.  Possible
+  * errno values:
+--- a/src/liblsquic/lsquic_sfcw.h
++++ b/src/liblsquic/lsquic_sfcw.h
+@@ -20,6 +20,7 @@
+     struct lsquic_conn_public
+                        *sf_conn_pub;
+     unsigned            sf_max_recv_win;    /* Maximum receive window */
++    unsigned            sf_hold;            /* bun: sf_recv_off does not move */
+     lsquic_stream_id_t  sf_stream_id;       /* Used for logging */
+ } lsquic_sfcw_t;
+ 
+--- a/src/liblsquic/lsquic_sfcw.c
++++ b/src/liblsquic/lsquic_sfcw.c
+@@ -94,6 +94,10 @@
+ {
+     lsquic_time_t since_last_update, srtt, now;
+ 
++    /* bun: lsquic_stream_hold_window() */
++    if (fc->sf_hold)
++        return 0;
++
+     if (fc->sf_recv_off - fc->sf_read_off >= fc->sf_max_recv_win / 2)
+     {
+         LSQ_DEBUG("recv_off has not changed, still at %"PRIu64,
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -1524,6 +1524,18 @@
+ }
+ 
+ 
++/* bun: see lsquic.h */
++void
++lsquic_stream_hold_window (struct lsquic_stream *stream, int hold)
++{
++    if (stream->fc.sf_hold == (unsigned) !!hold)
++        return;
++    stream->fc.sf_hold = !!hold;
++    if (!hold)
++        stream_consumed_bytes(stream);
++}
++
++
+ static ssize_t
+ read_data_frames (struct lsquic_stream *stream, int do_filtering,
+         size_t (*readf)(void *, const unsigned char *, size_t, int), void *ctx)

@@ -601,11 +601,9 @@ async function runDisconnectFixture(files: Record<string, string>) {
 // A primary's worker.disconnect() only sends a request. The worker closes its servers, waits for
 // their 'close' events and then closes the channel itself, so everything the primary queued before
 // the request still arrives. https://nodejs.org/api/cluster.html#workerdisconnect
-test.concurrent(
-  "primary worker.disconnect() delivers the messages send() already accepted",
-  async () => {
-    const result = await runDisconnectFixture({
-      "main.js": `
+test.concurrent("primary worker.disconnect() delivers the messages send() already accepted", async () => {
+  const result = await runDisconnectFixture({
+    "main.js": `
         const cluster = require("node:cluster");
         const N = 50;
         if (cluster.isPrimary) {
@@ -629,15 +627,13 @@ test.concurrent(
           process.send("ready");
         }
       `,
-    });
-    expect(result).toEqual({
-      worker: ["disconnect after 50 messages"],
-      primary: { acked: 50, exit: { code: 0, signal: null } },
-      exitCode: 0,
-    });
-  },
-  30_000,
-);
+  });
+  expect(result).toEqual({
+    worker: ["disconnect after 50 messages"],
+    primary: { acked: 50, exit: { code: 0, signal: null } },
+    exitCode: 0,
+  });
+});
 
 // A repeated request finds the worker's handle table already empty, and must still wait for the first one.
 test.concurrent.each([
@@ -705,7 +701,6 @@ test.concurrent.each([
       exitCode: 0,
     });
   },
-  30_000,
 );
 
 // Starts a worker script that never loads node:cluster. Prints { primary: events } once the worker has both
@@ -866,13 +861,9 @@ describe.concurrent("a worker that never loads node:cluster", () => {
         primary: ["online, state online", "message got early", "exit 0 null"],
       },
     },
-  ])(
-    "$name",
-    async ({ files, expected }) => {
-      expect(await runDisconnectFixture(files)).toEqual({ ...expected, exitCode: 0 });
-    },
-    30_000,
-  );
+  ])("$name", async ({ files, expected }) => {
+    expect(await runDisconnectFixture(files)).toEqual({ ...expected, exitCode: 0 });
+  });
 });
 
 test.concurrent.each([
@@ -1011,7 +1002,10 @@ test("listen", async () => {
   server.once("error", reject);
   server.listen(0, () => server.close(resolve));
   await promise;
+  // The test ends when the primary has the message and has asked for the disconnect, not when bun test exits.
+  const disconnected = new Promise(done => process.once("disconnect", done));
   process.send("listened, NODE_UNIQUE_ID " + process.env.NODE_UNIQUE_ID);
+  await disconnected;
 });`,
     },
     expected: {
@@ -1057,13 +1051,9 @@ process.stdout.write(stdout);`,
       primary: [true, null, "5"],
     },
   },
-])(
-  "$name",
-  async ({ files, expected }) => {
-    expect(await runDisconnectFixture(files)).toEqual({ ...expected, exitCode: 0 });
-  },
-  30_000,
-);
+])("$name", async ({ files, expected }) => {
+  expect(await runDisconnectFixture(files)).toEqual({ ...expected, exitCode: 0 });
+});
 
 const listeningPayloadFixture = `
 const cluster = require("node:cluster");

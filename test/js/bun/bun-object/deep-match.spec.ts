@@ -228,11 +228,18 @@ describe("Bun.deepMatch", () => {
         return nodes[0];
       }
       expect(Bun.deepMatch(ring(4), ring(4))).toBe(true);
-      // the subset ring closes on a node that was paired with a different object
       expect(Bun.deepMatch(ring(2), ring(4))).toBe(false);
+      expect(Bun.deepMatch(ring(4), ring(2))).toBe(false);
       expect(Bun.deepMatch(ring(1000), ring(999))).toBe(false);
-      // the object ring unrolls into the subset ring
-      expect(Bun.deepMatch(ring(4), ring(2))).toBe(true);
+    });
+
+    it("a cyclic subset matches a copy whose cycle starts one level down", () => {
+      const node = { id: 1 } as any;
+      node.self = node;
+      const pattern = { id: 1 } as any;
+      pattern.self = pattern;
+      expect(Bun.deepMatch(pattern, { ...node })).toBe(true);
+      expect(Bun.deepMatch(pattern, { ...node, id: 2 })).toBe(false);
     });
   });
 

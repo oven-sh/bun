@@ -3719,19 +3719,24 @@ describe("expect()", () => {
       expect({ a: o, b: o }).toMatchObject({ a: o, b: o });
     });
 
-    test("a getter that throws inside a negated matcher propagates", () => {
+    test("a getter that throws inside a negated matcher stops the walk", () => {
+      let readB = 0;
       const received = {
         a: {
           get x() {
             throw new Error("boom");
           },
         },
-        b: { y: 1 },
+        get b() {
+          readB++;
+          return { y: 1 };
+        },
       };
       expect(() => expect(received).toMatchObject({ a: expect.not.objectContaining({ x: 1 }), b: { y: 1 } })).toThrow(
         "boom",
       );
       expect(() => expect(received).toEqual({ a: expect.not.objectContaining({ x: 1 }), b: { y: 1 } })).toThrow("boom");
+      expect(readB).toBe(0);
     });
 
     test("a real cycle still matches", () => {

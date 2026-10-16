@@ -442,9 +442,6 @@ struct DeferredMatcherWrites {
 
     void append(JSC::JSObject* target, const JSC::Identifier& key, JSC::JSValue matcher)
     {
-        for (size_t i = 0; i < keys.size(); i++) {
-            if (values.at(i * 2) == JSC::JSValue(target) && keys[i] == key) return;
-        }
         values.append(target);
         values.append(matcher);
         keys.append(key);

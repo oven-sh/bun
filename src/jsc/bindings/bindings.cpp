@@ -2164,9 +2164,10 @@ template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JS
 
 void Bun::DeferredMatcherWrites::apply(JSGlobalObject* globalObject, ThrowScope& scope)
 {
-    for (size_t i = 0; i < keys.size(); i++) {
-        JSObject* target = values.at(i * 2).getObject();
-        target->putDirectMayBeIndex(globalObject, keys[i], values.at(i * 2 + 1));
+    // Last to first, so the first matcher recorded for a property is the one that stays.
+    for (size_t i = keys.size(); i > 0; i--) {
+        JSObject* target = values.at((i - 1) * 2).getObject();
+        target->putDirectMayBeIndex(globalObject, keys[i - 1], values.at((i - 1) * 2 + 1));
         RETURN_IF_EXCEPTION(scope, );
     }
 }
@@ -2195,9 +2196,13 @@ bool Bun__deepMatch(
     // fast path for reference equality.
     if (objValue == subsetValue) return true;
 
-    // A subset object already on the path is a cycle. It matches only its first partner.
-    for (const auto& [ancestorObj, ancestorSubset] : stack) {
-        if (ancestorSubset == subsetValue) return ancestorObj == objValue;
+    // A subset object already on the path is a cycle in the pattern. Compare by full equality from here, as Jest does.
+    for (const auto& ancestor : stack) {
+        if (ancestor.second == subsetValue) {
+            Vector<std::pair<JSValue, JSValue>, 16> equalsStack;
+            MarkedArgumentBuffer equalsBuffer;
+            RELEASE_AND_RETURN(throwScope, (Bun__deepEquals<false, enableAsymmetricMatchers, false>(globalObject, objValue, subsetValue, equalsBuffer, equalsStack, throwScope, true)));
+        }
     }
 
     const size_t stackLength = stack.size();

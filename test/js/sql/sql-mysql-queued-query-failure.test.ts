@@ -95,6 +95,10 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
 
   test.each<[string, unknown]>([
     ["an Error", thrown],
+    // As an error of a class that was written without `class`: Error.isError() is false for it.
+    ["an object that inherits from Error.prototype", Object.create(Error.prototype, { message: { value: "boom" } })],
+    ["a DOMException", new DOMException("boom", "AbortError")],
+    ["a plain object", { code: "USER_CODE", message: "boom" }],
     ["a string", "boom"],
     ["a number", 42],
     ["null", null],

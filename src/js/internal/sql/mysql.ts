@@ -1,4 +1,3 @@
-import type { MySQLErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
 import type { ArrayType, DatabaseAdapter, SQLArrayParameter, SQLCommand, SSLMode } from "./shared";
 
@@ -23,12 +22,6 @@ const {
   init: initMySQL,
 } = $rust("mysql.rs", "createBinding") as MySQLDotZig;
 
-function wrapError(error: Error | (MySQLErrorOptions & { message: string })) {
-  if (Error.isError(error)) {
-    return error;
-  }
-  return new MySQLError(error.message, error);
-}
 initMySQL(
   function onResolveMySQLQuery(query, result, commandTag, count, queries, is_last, last_insert_rowid, affected_rows) {
     $assert(result instanceof SQLResultArray, "Invalid result array");
@@ -67,13 +60,8 @@ initMySQL(
     } catch {}
   },
 
-  function onRejectMySQLQuery(
-    query: Query<any, any>,
-    reject: Error | (MySQLErrorOptions & { message: string }),
-    queries: Query<any, any>[],
-  ) {
-    // A parameter can throw a non-object, and the query rejects with it.
-    if ($isObject(reject)) reject = wrapError(reject);
+  // `reject` arrives as it is: an error that native code made, or what a parameter threw.
+  function onRejectMySQLQuery(query: Query<any, any>, reject: unknown, queries: Query<any, any>[]) {
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {
@@ -146,10 +134,6 @@ class PooledMySQLConnection extends BasePooledConnection<$ZigGeneratedClasses.My
       this.nativeCallback(this.handleConnected),
       this.nativeCallback(this.handleClose),
     );
-  }
-
-  protected wrapError(error: any): Error {
-    return wrapError(error);
   }
 
   protected isNonRetryableError(code: string | undefined): boolean {

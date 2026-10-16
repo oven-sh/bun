@@ -631,8 +631,6 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
 
   /** Starts (or restarts) the driver-specific native connection. */
   protected abstract startConnection(): Promise<void>;
-  /** Wraps a value that is not an Error into the driver's Error class. The errors of the native layer are instances of it already. */
-  protected abstract wrapError(error: any): Error;
   /** Whether the given error code is an authentication-style error that retrying cannot fix. */
   protected abstract isNonRetryableError(code: string | undefined): boolean;
   /**
@@ -662,9 +660,6 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   }
 
   protected handleConnected(err: any) {
-    if (err) {
-      err = this.wrapError(err);
-    }
     this.flags |= PooledConnectionFlags.onConnectFired;
     const connectionInfo = this.connectionInfo;
     try {
@@ -698,9 +693,6 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   }
 
   protected handleClose(err: any) {
-    if (err) {
-      err = this.wrapError(err);
-    }
     this.connection = null;
     this.storedError = err;
     if (this.#shouldRetryConnecting(err)) {

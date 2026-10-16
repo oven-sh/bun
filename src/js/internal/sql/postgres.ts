@@ -1,4 +1,3 @@
-import type { PostgresErrorOptions } from "internal/sql/errors";
 import type { Query } from "./query";
 import type { ArrayType, DatabaseAdapter, SQLCommand, SSLMode } from "./shared";
 
@@ -244,13 +243,6 @@ function serializeArray(values: any[], type: ArrayType) {
   return `{${values.map(arrayValueSerializer.bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type))).join(delimiter)}}`;
 }
 
-function wrapPostgresError(error: Error | (PostgresErrorOptions & { message: string })) {
-  if (Error.isError(error)) {
-    return error;
-  }
-  return new PostgresError(error.message, error);
-}
-
 initPostgres(
   function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
     if (is_last) {
@@ -293,13 +285,8 @@ initPostgres(
     }
   },
 
-  function onRejectPostgresQuery(
-    query: Query<any, any>,
-    reject: Error | (PostgresErrorOptions & { message: string }),
-    queries: Query<any, any>[],
-  ) {
-    // A parameter can throw a non-object, and the query rejects with it.
-    if ($isObject(reject)) reject = wrapPostgresError(reject);
+  // `reject` arrives as it is: an error that native code made, or what a parameter threw.
+  function onRejectPostgresQuery(query: Query<any, any>, reject: unknown, queries: Query<any, any>[]) {
     if (queries) {
       const queriesIndex = queries.indexOf(query);
       if (queriesIndex !== -1) {
@@ -360,10 +347,6 @@ class PooledPostgresConnection extends BasePooledConnection<$ZigGeneratedClasses
       this.nativeCallback(this.handleConnected),
       this.nativeCallback(this.handleClose),
     );
-  }
-
-  protected wrapError(error: any): Error {
-    return wrapPostgresError(error);
   }
 
   protected isNonRetryableError(code: string | undefined): boolean {
@@ -645,7 +628,7 @@ class ListenQuery {
     const query = new ListenQuery(handle);
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     query.resolve = resolve;
-    query.reject = err => reject(wrapPostgresError(err as Error));
+    query.reject = reject;
     handle.run(conn, query as any);
     return promise;
   }
@@ -785,7 +768,7 @@ class ListenConnection {
             { ...adapter.connectionInfo, idleTimeout: 0, maxLifetime: 0 },
             adapter.ownerCallback((err, conn) => {
               this.#handshake = null;
-              if (err) return reject(wrapPostgresError(err));
+              if (err) return reject(err);
               if (adapter.closed) {
                 conn.close();
                 return reject(adapter.connectionClosedError());
@@ -801,7 +784,7 @@ class ListenConnection {
             adapter.ownerCallback(err => {
               if (live === null) {
                 this.#handshake = null;
-                return reject(wrapPostgresError(err ?? adapter.connectionClosedError()));
+                return reject(err ?? adapter.connectionClosedError());
               }
               if (this.#conn !== live) return;
               this.#conn = null;

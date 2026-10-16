@@ -107,6 +107,9 @@ const noPosition = { value: undefined, writable: true, enumerable: false, config
 class UserError extends Error {}
 const thrownValues: [kind: string, value: unknown][] = [
   ["an Error subclass", new UserError("thrown by user code")],
+  // As an error of a class that was written without `class`: Error.isError() is false for it.
+  ["an object that inherits from Error.prototype", Object.create(Error.prototype, { message: { value: "thrown" } })],
+  ["a DOMException", new DOMException("thrown by user code", "AbortError")],
   ["a plain object", { code: "USER_CODE", message: "thrown by user code" }],
   ["a string", "thrown by user code"],
   ["a number", 42],
@@ -263,23 +266,6 @@ describeWithContainer("mysql", { image: "mysql_plain", concurrent: true }, conta
     });
   });
 
-  // The request queue writes the first use of a statement text. What a parameter
-  // throws there goes through the reject callback, which makes the class from a
-  // thrown object that is not an Error (#43992).
-  test.failing("a thrown object arrives unchanged when the request queue writes the query", async () => {
-    await container.ready;
-    await using sql = new SQL({ url: url(), max: 1 });
-    await sql`SELECT 1`;
-
-    const thrown = { code: "USER_CODE", message: "thrown by user code" };
-    const parameter = {
-      toJSON() {
-        throw thrown;
-      },
-    };
-    expect(await rejectionOf(sql.unsafe("SELECT ? AS first_use_of_this_text", [parameter]))).toBe(thrown);
-  });
-
   test("an error that the server sends while the client connects is a MySQLError", async () => {
     await container.ready;
     await using sql = new SQL({
@@ -370,23 +356,6 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
 
     expect(errors.map(error => summary(error, SQL.PostgresError))).toEqual([tooMany, tooMany, tooMany]);
     await expectUsable(sql);
-  });
-
-  // The request queue writes the first use of a statement text. What a parameter
-  // throws there goes through the reject callback, which makes the class from a
-  // thrown object that is not an Error (#43992).
-  test.failing("a thrown object arrives unchanged when the request queue writes the query", async () => {
-    await container.ready;
-    await using sql = new SQL({ url: url(), max: 1 });
-    await sql`SELECT 1`;
-
-    const thrown = { code: "USER_CODE", message: "thrown by user code" };
-    const parameter = {
-      toJSON() {
-        throw thrown;
-      },
-    };
-    expect(await rejectionOf(sql.unsafe("SELECT $1::json AS first_use_of_this_text", [parameter]))).toBe(thrown);
   });
 
   test("an error that the server sends while the client connects is a PostgresError", async () => {
@@ -819,4 +788,26 @@ test("a native error has the class of the realm that made the connection", async
     stderr: expect.any(String),
     exitCode: 0,
   });
+});
+
+// Nothing is dialed: the password function throws before the client makes a connection.
+test.each(["mysql", "postgres"])("%s: what the password function throws arrives unchanged", async adapter => {
+  // A query does not settle when the function throws null or undefined.
+  const values = thrownValues.filter(([, value]) => value != null);
+  const arrived: [kind: string, query: string, onclose: string[]][] = [];
+  const how = (value: unknown, thrown: unknown) => (Object.is(value, thrown) ? "unchanged" : Bun.inspect(value));
+  for (const [kind, thrown] of values) {
+    const closedWith: unknown[] = [];
+    await using sql = new SQL({
+      url: `${adapter}://user@127.0.0.1:1/database`,
+      max: 1,
+      password() {
+        throw thrown;
+      },
+      onclose: error => closedWith.push(error),
+    });
+    const rejection = await rejectionOf(sql`SELECT 1`);
+    arrived.push([kind, how(rejection, thrown), closedWith.map(error => how(error, thrown))]);
+  }
+  expect(arrived).toEqual(values.map(([kind]) => [kind, "unchanged", ["unchanged"]]));
 });

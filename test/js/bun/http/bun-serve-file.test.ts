@@ -1,8 +1,8 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles, tls } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, openSync, readSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1148,6 +1148,290 @@ test.concurrent("a download resumed with If-Range after the file changed gets th
   }).toEqual({ status: 200, contentRange: null, body: Buffer.alloc(400, "B").toString() });
 });
 
+// A fetch handler can return Bun.file(fd) for a regular file on a descriptor
+// that the program opened. The body is then a byte range counted from byte 0
+// of the file: the whole file, the slice, or the range of a Range header. The
+// position of the descriptor is the program's. A response does not start at
+// it and does not move it. A range that starts at byte 0 was read from the
+// position, so a descriptor that the program had written or read through
+// sent a body that was short or had the wrong bytes.
+//
+// The Content-Length of a Bun.file(fd) slice is still the size of the file
+// (#44826), so the tests of a slice compare only the body.
+describe.concurrent("Bun.file(fd) of a regular file from a fetch handler", () => {
+  const content = "0123456789ABCDEF";
+
+  // `size` bytes in which every 4 KiB block is different, so that bytes from
+  // the wrong offset cannot compare equal.
+  function distinctBytes(size: number) {
+    const bytes = Buffer.alloc(size, content);
+    for (let offset = 4092; offset + 4 <= size; offset += 4096) bytes.writeUInt32LE(offset, offset);
+    return bytes;
+  }
+
+  // A descriptor of `path` whose position is `position`.
+  function openAt(path: string, position: number) {
+    const fd = openSync(path, "r");
+    if (position > 0) readSync(fd, Buffer.alloc(position), 0, position, null);
+    return fd;
+  }
+
+  // Reads `length` bytes at the position of the descriptor, which moves past them.
+  function readAtPosition(fd: number, length: number) {
+    const buffer = Buffer.alloc(length);
+    return buffer.subarray(0, readSync(fd, buffer, 0, length, null)).toString("latin1");
+  }
+
+  test("a file that was written through the descriptor is sent on the first request", async () => {
+    using dir = tempDir("serve-fd-written", {});
+    const fd = openSync(join(String(dir), "file.txt"), "w+");
+    try {
+      // The write leaves the descriptor at the end of the file.
+      writeSync(fd, content);
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(Bun.file(fd)),
+      });
+      const { status, contentLength, body } = await wireResponse(server.port!, "GET", "/");
+      expect({ status, contentLength, body }).toEqual({ status: 200, contentLength: "16", body: content });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  test("the whole file is sent from byte 0 wherever the descriptor is", async () => {
+    using dir = tempDir("serve-fd-whole-file", { "file.txt": content });
+    const fd = openAt(join(String(dir), "file.txt"), 0);
+    try {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: request => {
+          const response = new Response(Bun.file(fd));
+          // A clone makes the server read the body as a stream of the file.
+          if (new URL(request.url).pathname === "/after-clone") response.clone();
+          return response;
+        },
+      });
+      const get = async (path: string) => {
+        const { contentLength, body } = await wireResponse(server.port!, "GET", path);
+        return { contentLength, body };
+      };
+      const first = await get("/");
+      // The first response left the descriptor at byte 0. This read moves it to byte 3.
+      const readByCaller = readAtPosition(fd, 3);
+      const second = await get("/");
+      // A stream response can be chunked, so fetch() reads it.
+      const afterClone = await (await fetch(new URL("/after-clone", server.url))).text();
+      const whole = { contentLength: "16", body: content };
+      expect({ first, readByCaller, second, afterClone, positionAfter: readAtPosition(fd, 1) }).toEqual({
+        first: whole,
+        readByCaller: "012",
+        second: whole,
+        afterClone: content,
+        positionAfter: "3",
+      });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  test("a Range request that starts at byte 0 is read from byte 0", async () => {
+    using dir = tempDir("serve-fd-range-at-zero", { "file.txt": content });
+    const fd = openAt(join(String(dir), "file.txt"), 3);
+    try {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(Bun.file(fd)),
+      });
+      const response = await fetch(server.url, { headers: { Range: "bytes=0-3" } });
+      expect({
+        status: response.status,
+        contentRange: response.headers.get("content-range"),
+        contentLength: response.headers.get("content-length"),
+        body: await response.text(),
+      }).toEqual({ status: 206, contentRange: "bytes 0-3/16", contentLength: "4", body: "0123" });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  test("a slice that starts at byte 0 is read from byte 0 on every request", async () => {
+    using dir = tempDir("serve-fd-slice-at-zero", { "file.txt": content });
+    const fd = openAt(join(String(dir), "file.txt"), 0);
+    try {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response(Bun.file(fd).slice(0, 4)),
+      });
+      const bodies: string[] = [];
+      for (let i = 0; i < 3; i++) bodies.push((await wireResponse(server.port!, "GET", "/")).body);
+      expect({ bodies, positionAfter: readAtPosition(fd, 1) }).toEqual({
+        bodies: ["0123", "0123", "0123"],
+        positionAfter: "0",
+      });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  // The server reads the file itself for `fileHandlers`, and a stream of the
+  // file for `streamHandlers`. The stream always started at the offset: the
+  // two must agree.
+  test("a slice that starts at byte 0 is the same bytes whatever the handler does with it", async () => {
+    using dir = tempDir("serve-fd-handler-shapes", { "file.txt": content });
+    const path = join(String(dir), "file.txt");
+    let fd = -1;
+    const slice = () => Bun.file(fd).slice(0, 4);
+    type Handler = () => Response | Promise<Response>;
+    const fileHandlers: Record<string, Handler> = {
+      "/blob": () => new Response(slice()),
+      "/after-a-tick": async () => {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        return new Response(slice());
+      },
+      "/unread-stream": () => new Response(slice().stream()),
+      "/request-body": () => new Response(new Request("http://x/", { method: "POST", body: slice() }).body),
+      "/error-handler": () => {
+        throw new Error("answered by error()");
+      },
+    };
+    const streamHandlers: Record<string, Handler> = {
+      "/after-clone": () => {
+        const response = new Response(slice());
+        response.clone();
+        return response;
+      },
+      "/tee": () => new Response(slice().stream().tee()[0]),
+      "/pipe-through": () => new Response(slice().stream().pipeThrough(new TransformStream())),
+      "/html-rewriter": () => new HTMLRewriter().transform(new Response(slice())),
+    };
+    const handlers = { ...fileHandlers, ...streamHandlers };
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: {
+        "/route": () => new Response(slice()),
+      },
+      fetch: request => handlers[new URL(request.url).pathname](),
+      error: () => new Response(slice()),
+    });
+
+    const pathnames = ["/route", ...Object.keys(handlers)];
+    const bodies: Record<string, string> = {};
+    for (const pathname of pathnames) {
+      fd = openAt(path, 3);
+      try {
+        // A stream response can be chunked, so fetch() reads it. The other
+        // responses still declare the size of the file, which fetch() refuses.
+        bodies[pathname] =
+          pathname in streamHandlers
+            ? await (await fetch(new URL(pathname, server.url))).text()
+            : (await wireResponse(server.port!, "GET", pathname)).body;
+      } finally {
+        closeSync(fd);
+      }
+    }
+    expect(bodies).toEqual(Object.fromEntries(pathnames.map(pathname => [pathname, "0123"])));
+  });
+
+  // Each client stops reading at its first chunk. The server fills the socket
+  // buffers and waits, so both responses are in flight and take turns on the
+  // descriptor when the clients read on.
+  test("two responses in flight on one descriptor both get the whole file", async () => {
+    const bytes = distinctBytes(2 * LARGE_SIZE);
+    using dir = tempDir("serve-fd-in-flight", { "file.bin": bytes });
+    const fd = openAt(join(String(dir), "file.bin"), 0);
+    try {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls,
+        fetch: () => new Response(Bun.file(fd)),
+      });
+      const clients = [0, 1].map(() => {
+        const firstChunk = Promise.withResolvers<void>();
+        const closed = Promise.withResolvers<Buffer>();
+        const chunks: Buffer[] = [];
+        const connected = Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port!,
+          tls: { rejectUnauthorized: false },
+          socket: {
+            open(socket) {
+              socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+            },
+            data(socket, chunk) {
+              chunks.push(Buffer.from(chunk));
+              if (chunks.length === 1) {
+                socket.pause();
+                firstChunk.resolve();
+              }
+            },
+            close() {
+              // No effect when the first chunk already arrived.
+              firstChunk.reject(new Error("the connection closed before the first chunk"));
+              closed.resolve(Buffer.concat(chunks));
+            },
+            error(_socket, error) {
+              firstChunk.reject(error);
+              closed.reject(error);
+            },
+          },
+        });
+        return { connected, firstChunk: firstChunk.promise, closed: closed.promise };
+      });
+      await Promise.all(clients.map(client => client.firstChunk));
+      const inFlight = server.pendingRequests;
+      for (const client of clients) (await client.connected).resume();
+      const responses = await Promise.all(clients.map(client => client.closed));
+      const bodies = responses.map(raw => raw.subarray(raw.indexOf("\r\n\r\n") + 4));
+      expect({
+        inFlight,
+        bodies: bodies.map(body => ({ length: body.length, intact: body.equals(bytes) })),
+        positionAfter: readAtPosition(fd, 1),
+      }).toEqual({
+        inFlight: 2,
+        bodies: [
+          { length: bytes.length, intact: true },
+          { length: bytes.length, intact: true },
+        ],
+        positionAfter: "0",
+      });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  // Plain TCP on Linux sends a file of this size with sendfile(2), which
+  // always took the offset. TLS has no sendfile, so it reads the file.
+  test("TLS and plain TCP send the same bytes of one descriptor", async () => {
+    const bytes = distinctBytes(1024 * 1024);
+    using dir = tempDir("serve-fd-tls-and-tcp", { "file.bin": bytes });
+    const fd = openAt(join(String(dir), "file.bin"), 3);
+    try {
+      const handler = () => new Response(Bun.file(fd));
+      await using secure = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: handler });
+      await using plain = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: handler });
+      const get = async (port: number, overTls: boolean) => {
+        const { contentLength, body } = await wireResponse(port, "GET", "/", overTls);
+        return { contentLength, intact: Buffer.from(body, "latin1").equals(bytes) };
+      };
+      const whole = { contentLength: String(bytes.length), intact: true };
+      expect({
+        tls: await get(secure.port!, true),
+        tcp: await get(plain.port!, false),
+        positionAfter: readAtPosition(fd, 1),
+      }).toEqual({ tls: whole, tcp: whole, positionAfter: "3" });
+    } finally {
+      closeSync(fd);
+    }
+  });
+});
+
 // A body write that returns backpressure must pause the reader until the
 // socket drains. For a pollable fd (FIFO, character device, socket) the read
 // loop re-arms its poll after EAGAIN, so a reader that is not paused keeps
@@ -1375,6 +1659,43 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
   }
 });
 
+// One request on its own connection; `Connection: close` makes the server hang
+// up once it considers the response finished, so `body` is every byte that
+// followed the head, however many the head declared.
+async function wireResponse(port: number, method: "GET" | "HEAD", path: string, secure = false) {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  let captured = "";
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    ...(secure ? { tls: { rejectUnauthorized: false } } : {}),
+    socket: {
+      open(socket) {
+        socket.write(`${method} ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      },
+      data(_socket, chunk) {
+        captured += Buffer.from(chunk).toString("latin1");
+      },
+      close() {
+        resolve(captured);
+      },
+      error(_socket, err) {
+        reject(err);
+      },
+    },
+  });
+  const raw = await promise;
+  const headEnd = raw.indexOf("\r\n\r\n");
+  if (headEnd === -1) throw new Error(`no response head in ${JSON.stringify(raw)}`);
+  const head = raw.slice(0, headEnd);
+  return {
+    status: Number(head.split(" ")[1]),
+    contentRange: /^content-range:\s*(.*)$/im.exec(head)?.[1] ?? null,
+    contentLength: /^content-length:\s*(\d+)/im.exec(head)?.[1] ?? null,
+    body: raw.slice(headEnd + 4),
+  };
+}
+
 // A file route serves the window of the Bun.file() slice it was built from,
 // given either the slice or its unread stream (which is turned back into the
 // slice). FileRoute used to clamp the window to the file size without taking
@@ -1406,36 +1727,9 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
     fetch: () => new Response("fallback", { status: 404 }),
   });
 
-  // One GET on its own connection; `Connection: close` makes the server hang
-  // up once it considers the response finished, so `body` is every byte that
-  // followed the head, however many the head declared.
   async function wire(path: string) {
-    const { promise, resolve } = Promise.withResolvers<string>();
-    let captured = "";
-    await Bun.connect({
-      hostname: "127.0.0.1",
-      port: server.port!,
-      socket: {
-        open(socket) {
-          socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
-        },
-        data(_socket, chunk) {
-          captured += Buffer.from(chunk).toString("latin1");
-        },
-        close() {
-          resolve(captured);
-        },
-        error() {
-          resolve(captured);
-        },
-      },
-    });
-    const raw = await promise;
-    const headEnd = raw.indexOf("\r\n\r\n");
-    return {
-      contentLength: /^content-length:\s*(\d+)/im.exec(raw.slice(0, headEnd))?.[1] ?? null,
-      body: raw.slice(headEnd + 4),
-    };
+    const { contentLength, body } = await wireResponse(server.port!, "GET", path);
+    return { contentLength, body };
   }
 
   const results: Record<string, unknown> = {};

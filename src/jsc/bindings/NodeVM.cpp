@@ -132,8 +132,11 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
     return false;
 }
 
-Ref<JSC::CachedBytecode> createOwnedCachedBytecode(std::span<const uint8_t> bytes)
+Ref<JSC::CachedBytecode> createOwnedCachedBytecode(JSC::VM& vm, std::span<const uint8_t> bytes)
 {
+    // JSC's decoder reports none of what a decoded block keeps. The blob size stands in for it until it does, also
+    // for a blob rejected at its header. Before the decode, so that a collection this starts cannot mark the new block.
+    vm.heap.reportExtraMemoryAllocated(nullptr, bytes.size());
     // UnlinkedFunctionExecutable's Decoder constructor (CachedTypes.cpp) keeps the Decoder and a
     // payload offset, and decodes the body on the function's first call, borrowed payload or not.
     auto payload = WTF::MallocSpan<uint8_t, JSC::VMMalloc>::malloc(bytes.size());
@@ -222,7 +225,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     TriState bytecodeAccepted = TriState::Indeterminate;
 
     if (!options.cachedData.isEmpty()) {
-        cachedBytecode = createOwnedCachedBytecode(options.cachedData.span());
+        cachedBytecode = createOwnedCachedBytecode(vm, options.cachedData.span());
         SourceCodeKey key(sourceCode, {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
         unlinkedProgramCodeBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, *cachedBytecode);
         if (unlinkedProgramCodeBlock == nullptr) {

@@ -173,13 +173,11 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     if (!cachedData.isEmpty()) {
         JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
         JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
-        Ref<JSC::CachedBytecode> cachedBytecode = NodeVM::createOwnedCachedBytecode(cachedData.span());
-        // Whether the blob decodes is Node's cachedDataRejected. Runs link their own block (unlinkedCodeBlockFor).
-        JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
-        script->cachedDataRejected(unlinkedBlock ? TriState::False : TriState::True);
-        // The decoded block is garbage already, and it owns the payload copy until the collector reaches it.
-        if (unlinkedBlock)
-            vm.heap.reportExtraMemoryAllocated(unlinkedBlock, cachedData.size());
+        Ref<JSC::CachedBytecode> cachedBytecode = NodeVM::createOwnedCachedBytecode(vm, cachedData.span());
+        // Whether the blob decodes is Node's cachedDataRejected. Runs link their own block (unlinkedCodeBlockFor),
+        // so nothing uses the decoded one again.
+        bool accepted = !!JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
+        script->cachedDataRejected(accepted ? TriState::False : TriState::True);
     } else if (script->options().produceCachedData)
         script->cacheBytecode();
 

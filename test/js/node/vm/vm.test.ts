@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaBelow,
+  isASAN,
+  isDebug,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+} from "harness";
 import { totalmem } from "node:os";
 import { join } from "node:path";
 import {
@@ -1037,6 +1046,27 @@ describe("a Script built from accepted cachedData", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Node's own cachedData tests, in the same kind of process.
+  const nodeTest = (file: string) => async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "..", "test", "parallel", file)],
+      env: { ...bunEnv, BUN_JSC_useJIT: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  };
+  test.concurrent(
+    "runs in a process without a JIT: Node's test-vm-createcacheddata.js",
+    nodeTest("test-vm-createcacheddata.js"),
+  );
+  // It starts four more bun processes, one after the other. A debug build needs more than the test timeout for them.
+  test.concurrent.skipIf(isDebug)(
+    "runs in a process without a JIT: Node's test-vm-cached-data.js",
+    nodeTest("test-vm-cached-data.js"),
+  );
+
   // 8000 statements: about 300 KB of cachedData, and megabytes of machine code if it is ever compiled.
   const bigProgram = `
     const vm = require("node:vm");
@@ -1045,36 +1075,24 @@ describe("a Script built from accepted cachedData", () => {
     const cachedData = new vm.Script(source).createCachedData();
   `;
 
-  test.concurrent("keeps no compiled code, and its payload counts toward the next collection", async () => {
+  test.concurrent("keeps no compiled code", async () => {
     const fixture = `${bigProgram}
       const { heapStats } = require("bun:jsc");
-      const live = (...names) => {
+      const live = () => {
         const counts = heapStats().objectTypeCounts;
-        return names.map(name => counts[name] ?? 0);
+        return ["ProgramExecutable", "ProgramCodeBlock"].map(name => counts[name] ?? 0);
       };
 
       Bun.gc(true);
-      const before = live("ProgramExecutable", "ProgramCodeBlock");
+      const before = live();
       const kept = [];
       for (let i = 0; i < 10; i++) kept.push(new vm.Script(source, { cachedData }));
       Bun.gc(true);
-      const after = live("ProgramExecutable", "ProgramCodeBlock");
-
-      // No collection is requested from here on. Scripts are built and dropped until the
-      // collector takes one back, or until 256 of them exist.
-      const [scriptsBefore] = live("Script");
-      let dropped = 0;
-      let reclaimed = false;
-      while (!reclaimed && dropped < 256) {
-        for (let i = 0; i < 16; i++) new vm.Script(source, { cachedData });
-        dropped += 16;
-        reclaimed = live("Script")[0] - scriptsBefore < dropped;
-      }
+      const after = live();
 
       console.log(JSON.stringify({
         rejected: kept.filter(script => script.cachedDataRejected !== false).length,
         pinnedByKept: after.map((count, i) => count - before[i]),
-        droppedAreReclaimed: reclaimed,
       }));
     `;
     await using proc = Bun.spawn({
@@ -1088,9 +1106,6 @@ describe("a Script built from accepted cachedData", () => {
       rejected: 0,
       // A linked and compiled block pins one ProgramExecutable and one ProgramCodeBlock per kept Script.
       pinnedByKept: [0, 0],
-      // Each dropped Script leaves a decoded block that owns a copy of the blob. While that copy is
-      // not reported, 256 of them (79 MB) do not make a collection due.
-      droppedAreReclaimed: true,
     });
     expect(exitCode).toBe(0);
   });
@@ -1112,6 +1127,109 @@ describe("a Script built from accepted cachedData", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe(JSON.stringify(Array(8).fill(false)) + "\n");
     expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
+test("a Script does not keep its copy of the cachedData", async () => {
+  // The bytes are not bytecode, so nothing is decoded: what 16 live Scripts could hold is bun's copy of the 8 MB.
+  await expectRssDeltaBelow(
+    [
+      "-e",
+      `const vm = require("node:vm");
+      const cachedData = Buffer.alloc(8 * 1024 * 1024, "a");
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      const kept = [];
+      for (let i = 0; i < 16; i++) kept.push(new vm.Script("1", { cachedData }));
+      if (!kept.every(script => script.cachedDataRejected === true)) throw new Error("a blob was accepted");
+      Bun.gc(true);
+      console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));`,
+    ],
+    { release: 32, debug: 64 },
+  );
+});
+
+describe("a cachedData decode that is dropped is collected without a request", () => {
+  // A function with a 1 MB string constant: a quick decode, and a blob that the decoded function keeps alive.
+  // JSC's decoder reports none of that to the collector, so bun reports the size of the blob before each decode.
+  const fixture = (setup: string, cell: string) => `
+    const vm = require("node:vm");
+    const { heapStats, edenGC } = require("bun:jsc");
+    const holder = fill => 'function () { return "' + Buffer.alloc(1024 * 1024, fill).toString() + '".length; }';
+    ${setup}
+    const live = () => heapStats().objectTypeCounts.${cell} ?? 0;
+    const rejected = build(); // The block of the source itself is compiled here, once, and stays in the code cache.
+    Bun.gc(true);
+    const before = live();
+    for (let i = 0; i < 32; i++) build();
+    const liveAtLoopEnd = live() - before;
+    edenGC();
+    console.log(JSON.stringify({ rejected, liveAtLoopEnd, liveAfterEdenGC: live() - before }));
+  `;
+  // [what is built and dropped, its setup, the cell that each decode leaves, its cachedDataRejected]
+  const decodes = [
+    [
+      "an accepted Script",
+      `const source = "(" + holder("a") + ")";
+      const cachedData = new vm.Script(source).createCachedData();
+      const build = () => new vm.Script(source, { cachedData }).cachedDataRejected;`,
+      "UnlinkedProgramCodeBlock",
+      false,
+    ],
+    [
+      "a Script given the blob of another source",
+      `const source = "(" + holder("a") + ")";
+      const cachedData = new vm.Script("(" + holder("b") + ")").createCachedData();
+      const build = () => new vm.Script(source, { cachedData }).cachedDataRejected;`,
+      "UnlinkedProgramCodeBlock",
+      true,
+    ],
+    [
+      "an accepted SourceTextModule",
+      `const source = "export default " + holder("a");
+      const cachedData = new vm.SourceTextModule(source).createCachedData();
+      const build = () => { new vm.SourceTextModule(source, { cachedData }); return false; };`,
+      "UnlinkedModuleProgramCodeBlock",
+      false,
+    ],
+    [
+      "an accepted compileFunction",
+      `const source = "return " + holder("a");
+      const cachedData = vm.compileFunction(source, [], { produceCachedData: true }).cachedData;
+      const build = () => vm.compileFunction(source, [], { cachedData }).cachedDataRejected;`,
+      "UnlinkedProgramCodeBlock",
+      false,
+    ],
+  ] as const;
+  const processes = [
+    ["with a JIT", [], {}],
+    ["with a JIT and a small heap", ["--smol"], {}],
+    ["without a JIT", [], { BUN_JSC_useJIT: "0" }],
+  ] as const;
+
+  test.concurrent.each(
+    processes.flatMap(([where, flags, env]) =>
+      decodes.map(
+        ([what, setup, cell, rejected]) => [`${what}, ${where}`, fixture(setup, cell), rejected, flags, env] as const,
+      ),
+    ),
+  )("%s", async (_, code, rejected, flags, env) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "-e", code],
+      // Collections that run to completion where they start: the counts do not depend on a collector thread.
+      env: { ...bunEnv, BUN_JSC_useConcurrentGC: "0", ...env },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout);
+    expect(result.rejected).toBe(rejected);
+    // With no report for this decode no collection is due, and all 32 are live.
+    expect(result.liveAtLoopEnd).toBeLessThan(32);
+    // A collection that the report starts while the constructor holds the new block keeps that block, one for
+    // each collection: 4 of the 32, or 16 with the small heap.
+    expect(result.liveAfterEdenGC).toBeLessThanOrEqual(1);
     expect(exitCode).toBe(0);
   });
 });
@@ -1244,7 +1362,7 @@ describe("a compile from cachedData keeps the payload alive", () => {
         out.push("inner rejected=" + fn.cachedDataRejected + " call=" + fn()());
       }
 
-      // vm.Script holds its cachedData in a member the garbage collector owns.
+      // vm.Script: bun's copy of the blob dies with the constructor, and a run uses the block compiled from source.
       {
         const source = "(function inner() { return 7 })()";
         const cachedData = new vm.Script(source).createCachedData();

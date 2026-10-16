@@ -124,6 +124,12 @@ test("test without timeout", async () => {
 }, 0);
 ```
 
+## Timers
+
+Like Node.js, Bun makes a `setTimeout()` delay under 1 ms wait for 1 ms. In `bun test` it doesn't wait: when the event loop has nothing else to do, `setTimeout(callback, 0)` runs at once. Messages and immediates that are already queued run first, and so does a timer that was due before it, as in Node.js. Testing Library and user-event await such a timer after every step, so in a test that clicks and types those milliseconds add up.
+
+`setInterval()` keeps its minimum of 1 ms.
+
 ## Error Handling
 
 ### Unhandled Errors

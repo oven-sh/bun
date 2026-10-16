@@ -2074,6 +2074,7 @@ impl TestCommand {
             vm.auto_killer.enabled = true;
         }
         vm.test_isolation_state.shares_global = ctx.test_options.isolate_modules;
+        crate::jsc_hooks::timer_all_mut().zero_delay_is_due_when_idle = true;
 
         if ctx.test_options.coverage.enabled {
             vm.transpiler.options.code_coverage = true;

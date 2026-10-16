@@ -57,6 +57,9 @@ pub struct EventLoopTimer {
     /// Internal heap fields.
     pub heap: IntrusiveField<EventLoopTimer>,
     pub in_heap: InHeap,
+    /// A `setTimeout()` without a delay in `bun test`. Its deadline is 1 ms away, as in Node, so its place among the
+    /// timers is Node's. An event loop that would sleep until then runs it at once.
+    pub is_due_when_idle: bool,
 }
 
 // Duck-typed `.heap` field access for `bun_io::heap::Intrusive`. Implemented
@@ -85,6 +88,7 @@ impl EventLoopTimer {
             tag,
             heap: IntrusiveField::default(),
             in_heap: InHeap::None,
+            is_due_when_idle: false,
         }
     }
 

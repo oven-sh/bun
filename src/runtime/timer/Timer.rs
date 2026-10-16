@@ -128,7 +128,7 @@ impl All {
         global_this: &JSGlobalObject,
         countdown: JSValue,
         overflow_behavior: CountdownOverflowBehavior,
-        clock: Clock,
+        minimum_ms: u32,
         warn: bool,
     ) -> JsResult<u32> {
         // Both match arms below enforce the [0, i32::MAX] range (Clamp
@@ -174,13 +174,8 @@ impl All {
                             )?;
                         }
                     }
-                    // As in @sinonjs/fake-timers, a fake timer without a delay is due now. See `FakeTimers::min_delay_ms()`.
                     let is_too_long = countdown_double > i32::MAX as f64;
-                    if clock == Clock::Fake && !is_too_long {
-                        0
-                    } else {
-                        1
-                    }
+                    if is_too_long { 1 } else { minimum_ms }
                 } else {
                     countdown_double as u32
                 }
@@ -208,7 +203,7 @@ impl All {
             cx.global(),
             countdown,
             CountdownOverflowBehavior::Clamp,
-            Clock::Real,
+            0,
             true,
         )?;
         let wrapped_promise = promise.with_async_context_if_needed(cx.global());
@@ -260,22 +255,32 @@ impl All {
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
         let clock = all.fake_timers.clock_while_active(clock);
+        // As in @sinonjs/fake-timers, a fake timer without a delay is due now. See `FakeTimers::min_delay_ms()`.
+        let may_be_zero = clock == Clock::Fake || all.zero_delay_is_due_when_idle;
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
             countdown,
             CountdownOverflowBehavior::OneMs,
-            clock,
+            if may_be_zero { 0 } else { 1 },
             true,
         )?;
-        Ok(TimeoutObject::init(
+        let is_due_when_idle = clock == Clock::Real && countdown_int == 0;
+        let timeout = TimeoutObject::init(
             cx,
             id,
             Kind::SetTimeout,
-            countdown_int,
+            if is_due_when_idle { 1 } else { countdown_int },
             wrapped_callback,
             arguments,
             clock,
-        ))
+        );
+        if is_due_when_idle {
+            let object =
+                TimeoutObject::from_js(timeout).expect("TimeoutObject::init returns its wrapper");
+            // SAFETY: the wrapper is pinned by the heap that holds the timer.
+            unsafe { (*object).event_loop_timer.is_due_when_idle = true };
+        }
+        Ok(timeout)
     }
 
     pub(crate) fn set_interval(
@@ -297,7 +302,7 @@ impl All {
             cx.global(),
             countdown,
             CountdownOverflowBehavior::OneMs,
-            Clock::Real,
+            1,
             true,
         )?;
         Ok(TimeoutObject::init(

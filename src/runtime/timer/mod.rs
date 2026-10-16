@@ -632,6 +632,9 @@ pub(crate) struct All {
     pub(crate) warned_negative_number: bool,
     /// Whether we have emitted a warning for passing NaN for the timeout duration
     pub(crate) warned_not_number: bool,
+    /// `bun test`: see `EventLoopTimer::is_due_when_idle`. Testing Library and user-event await a `setTimeout()`
+    /// without a delay after every step.
+    pub(crate) zero_delay_is_due_when_idle: bool,
     /// Incremented when timers are scheduled or rescheduled. See
     /// TimerObjectInternals.epoch. Masked to 24 bits on increment.
     pub(crate) epoch: u32,
@@ -656,6 +659,7 @@ impl All {
             uv_timer: bun_core::ffi::zeroed(),
             warned_negative_number: false,
             warned_not_number: false,
+            zero_delay_is_due_when_idle: false,
             epoch: 0,
             immediate_ref_count: 0,
             #[cfg(windows)]
@@ -798,7 +802,11 @@ impl All {
 
         // minimum 1ms
         // https://github.com/nodejs/node/blob/f552c86fecd6c2ba9e832ea129b731dd63abdbe2/src/env.cc#L1512
-        let wait_ms = core::cmp::max(1, wait.ms_unsigned());
+        let wait_ms = if self.deadline_if_due_when_idle().is_some() {
+            0
+        } else {
+            core::cmp::max(1, wait.ms_unsigned())
+        };
 
         // SAFETY: `uv_timer_init` ran above; the handle is live.
         let due_in = unsafe { uv::uv_timer_get_due_in(&self.uv_timer) };
@@ -1037,7 +1045,9 @@ impl All {
         // Real clock: both heaps hold opt-out-of-fake-timers nodes armed in
         // real-time units; the mocked clock made internal pacing spin on re-arm.
         let now = *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
-        if next.greater(&now) {
+        // SAFETY: `this` is live, and only this thread touches the regular heap.
+        let is_due_when_idle = (unsafe { &*this }).deadline_if_due_when_idle().is_some();
+        if next.greater(&now) && !is_due_when_idle {
             *spec = next.duration(&now);
             if let Some(us) = quic_next_tick_us {
                 if us >= 0 {
@@ -1060,6 +1070,16 @@ impl All {
         }
     }
 
+    /// The deadline of the first timer, if it is one that does not wait for it. See `EventLoopTimer::is_due_when_idle`.
+    fn deadline_if_due_when_idle(&self) -> Option<Timespec> {
+        // SAFETY: `peek` returns a live heap node.
+        let first = unsafe { &*self.timers.peek()? };
+        first.is_due_when_idle.then_some(Timespec {
+            sec: first.next.sec,
+            nsec: first.next.nsec,
+        })
+    }
+
     /// Pop the next due timer. `now` is filled lazily on first call so we
     /// don't pay for `clock_gettime` when the heap is empty.
     fn next(&mut self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {
@@ -1068,6 +1088,12 @@ impl All {
             // Real clock: this heap is the opt-out-of-fake-timers set.
             *now = Timespec::now(TimespecMockMode::ForceRealTime);
             *has_set_now = true;
+            // What this drain's callbacks set is due later than this, so it waits for the next turn of the event loop.
+            if let Some(deadline) = self.deadline_if_due_when_idle() {
+                if deadline.greater(now) {
+                    *now = deadline;
+                }
+            }
         }
         // SAFETY: peek returns a live heap node
         let next = unsafe { &(*timer).next };

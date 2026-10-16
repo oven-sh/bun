@@ -1527,6 +1527,51 @@ describe("package-lock.json migration fixes", () => {
     expect(fs.existsSync(join(String(dir), "node_modules/alias/index.js"))).toBeTrue();
   });
 
+  // The migration takes the committish of package-lock.json for the tag of the
+  // package. The download asks for all of it: the part after the last `-` is
+  // the commit only in a tag that comes from the root directory of a tarball.
+  test.concurrent("github dependency that package-lock.json pins by a tag is requested by that tag", async () => {
+    const tag = "v2.0.1-beta";
+    const tgz = githubTarball("User-repo-0123456", {
+      "package.json": JSON.stringify({ name: "tagged", version: "2.0.1" }),
+    });
+    const requests: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(new URL(req.url).pathname);
+        return new Response(tgz, { headers: { "content-type": "application/gzip" } });
+      },
+    });
+    const spec = `git+https://github.com/user/repo#${tag}`;
+    using dir = synthetic("npm-migrate-github-tag", {
+      "package.json": JSON.stringify({ name: "gh-tag", dependencies: { tagged: spec } }),
+      "package-lock.json": npmLock("gh-tag", {
+        "": { name: "gh-tag", dependencies: { tagged: spec } },
+        "node_modules/tagged": {
+          version: "2.0.1",
+          resolved: `git+ssh://git@github.com/user/repo.git#${tag}`,
+        },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+        GITHUB_API_URL: `http://localhost:${server.port}`,
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Saved lockfile");
+    expect(requests).toEqual([`/repos/user/repo/tarball/${tag}`]);
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+  });
+
   // A git resolution is written to bun.lock as "git+" + the repository URL, so a
   // dependency on a plain git:// host comes back as "git+git://...". The lockfile
   // parser has to accept that spelling, otherwise every later install throws the

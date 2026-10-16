@@ -61,3 +61,43 @@ test("operands longer than the path buffer are reported, not a crash", async () 
   });
   expect(exitCode).toBe(0);
 });
+
+// The index of each "nope/<index>" operand that has a line in `text`.
+const reportedOperands = (text: string) => text.split("\n").flatMap(line => /nope[\\/](\d+)/.exec(line)?.[1] ?? []);
+const allOperands = (count: number) => Array.from({ length: count }, (_, i) => String(i)).sort();
+
+// touch reports a failed operand through a task that stays parked until the
+// shell's writer has written its line. touch must not report done while a task
+// is parked. A pipeline stage has its own writer, which is freed with the
+// stage, so there an early done discards the lines with no error. Runs in a
+// child process so that an abort is a failed assertion.
+test.concurrent("touch writes every parked line when it feeds a pipeline", async () => {
+  using dir = tempDir("touch-output-pipeline", {});
+  const fixture = /* ts */ `
+    import { $ } from "bun";
+    // Every operand fails: the parent directory does not exist.
+    const names = Array.from({ length: 256 }, (_, i) => "nope/" + i);
+    const result = await $\`touch \${names} 2>&1 | \${process.execPath} -e \${"process.stdin.pipe(process.stdout)"}\`.quiet().nothrow();
+    const summary = JSON.stringify({ exitCode: result.exitCode, stderr: result.stderr.toString() });
+    // One write, so that the summary line cannot land inside the captured output.
+    console.log(result.stdout.toString() + "RESULT:" + summary);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stderr,
+    reported: reportedOperands(stdout).sort(),
+    result: stdout.split("\n").filter(line => line.startsWith("RESULT:")),
+  }).toEqual({
+    stderr: "",
+    reported: allOperands(256),
+    result: ['RESULT:{"exitCode":0,"stderr":""}'],
+  });
+  expect(exitCode).toBe(0);
+});

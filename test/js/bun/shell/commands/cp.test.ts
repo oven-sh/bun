@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, tempDir, tempDirWithFiles } from "harness";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -172,6 +172,56 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .runAsTest("cp_recurse");
   });
 });
+
+const allOperands = (count: number) => Array.from({ length: count }, (_, i) => String(i)).sort();
+
+// cp writes each source's verbose line and error through a task that stays
+// parked until the shell's writer has written its chunk. cp must not report
+// done while a task is parked. A pipeline stage has its own writer, which is
+// freed with the stage, so there an early done discards the lines with no
+// error. Each child enables the builtin on every platform. That flag also
+// makes `cat` a builtin, so these fixtures do not use it.
+test.concurrent.each([
+  ["copied", "cp -v", "source", / -> .*source(\d+)$/],
+  ["missing", "cp", "nope", /nope(\d+)/],
+] as const)(
+  "cp writes a parked line for every %s source when it feeds a pipeline",
+  async (_, command, prefix, line) => {
+    using dir = tempDir("cp-output-pipeline", {
+      dest: {},
+      ...Object.fromEntries(Array.from({ length: 256 }, (_, i) => ["source" + i, "x"])),
+    });
+    const fixture = /* ts */ `
+      import { $ } from "bun";
+      const names = Array.from({ length: 256 }, (_, i) => "${prefix}" + i);
+      const result = await $\`${command} \${names} dest 2>&1 | \${process.execPath} -e \${"process.stdin.pipe(process.stdout)"}\`.quiet().nothrow();
+      const summary = JSON.stringify({ exitCode: result.exitCode, stderr: result.stderr.toString() });
+      // One write, so that the summary line cannot land inside the captured output.
+      console.log(result.stdout.toString() + "RESULT:" + summary);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stderr,
+      reported: stdout
+        .split("\n")
+        .flatMap(text => line.exec(text)?.[1] ?? [])
+        .sort(),
+      result: stdout.split("\n").filter(text => text.startsWith("RESULT:")),
+    }).toEqual({
+      stderr: "",
+      reported: allOperands(256),
+      result: ['RESULT:{"exitCode":0,"stderr":""}'],
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 function expectSortedOutput(expected: string) {
   return (stdout: string, tempdir: string) =>

@@ -42,8 +42,6 @@ pub(crate) struct ExecState {
     pub(crate) target_idx: usize,
     pub(crate) started: bool,
     pub(crate) tasks_count: u32,
-    pub(crate) output_waiting: u32,
-    pub(crate) output_done: u32,
     pub(crate) err: Option<ShellErr>,
     #[cfg(windows)]
     pub(crate) ebusy: EbusyState,
@@ -91,8 +89,6 @@ impl Cp {
             target_idx,
             started: false,
             tasks_count: 0,
-            output_waiting: 0,
-            output_done: 0,
             err: None,
             #[cfg(windows)]
             ebusy: EbusyState::default(),
@@ -110,13 +106,14 @@ impl Cp {
             #[cfg(windows)]
             Ebusy(ExitCode),
         }
-        let action = match &mut Self::state_mut(interp, cmd).state {
+        let me = Self::state_mut(interp, cmd);
+        let action = match &mut me.state {
             State::Idle => panic!(
                 "Invalid state for \"Cp\": idle, this indicates a bug in Bun. Please file a GitHub issue"
             ),
             State::Exec(exec) => {
                 if exec.started {
-                    if exec.tasks_count == 0 && exec.output_done >= exec.output_waiting {
+                    if exec.tasks_count == 0 && me.output_queue.is_empty() {
                         let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
                         exec.err = None;
                         #[cfg(windows)]
@@ -334,9 +331,6 @@ impl OutputTaskVTable for Cp {
         child: *mut OutputTask<Self>,
         errbuf: &[u8],
     ) -> Option<Yield> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
             // Stash so on_io_writer_chunk can route to the OutputTask state
             // machine and reclaim the box (stopgap for missing WriterTag).
@@ -351,20 +345,12 @@ impl OutputTaskVTable for Cp {
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         None
     }
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
-    }
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         output: &mut OutputSrc,
     ) -> Option<Yield> {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_waiting += 1;
-        }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
             Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
@@ -378,11 +364,6 @@ impl OutputTaskVTable for Cp {
         let buf = output.slice().to_vec();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
         None
-    }
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-            exec.output_done += 1;
-        }
     }
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)

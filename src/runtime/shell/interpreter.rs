@@ -2608,14 +2608,12 @@ pub(crate) trait OutputTaskVTable: Sized {
         child: *mut OutputTask<Self>,
         errbuf: &[u8],
     ) -> Option<Yield>;
-    fn on_write_err(interp: &Interpreter, cmd: NodeId);
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
         child: *mut OutputTask<Self>,
         output: &mut OutputSrc,
     ) -> Option<Yield>;
-    fn on_write_out(interp: &Interpreter, cmd: NodeId);
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield;
 }
 
@@ -2670,7 +2668,6 @@ impl<P: OutputTaskVTable> OutputTask<P> {
             if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
                 return y;
             }
-            P::on_write_out(interp, me.parent);
             me.state = OutputTaskState::Done;
             Self::deinit(this, interp)
         }
@@ -2682,17 +2679,14 @@ impl<P: OutputTaskVTable> OutputTask<P> {
             let me = &mut *this;
             match me.state {
                 OutputTaskState::WaitingWriteErr => {
-                    P::on_write_err(interp, me.parent);
                     me.state = OutputTaskState::WaitingWriteOut;
                     if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
                         return y;
                     }
-                    P::on_write_out(interp, me.parent);
                     me.state = OutputTaskState::Done;
                     Self::deinit(this, interp)
                 }
                 OutputTaskState::WaitingWriteOut => {
-                    P::on_write_out(interp, me.parent);
                     me.state = OutputTaskState::Done;
                     Self::deinit(this, interp)
                 }

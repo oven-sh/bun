@@ -13,7 +13,7 @@
 //! Only a config file, a dependency in package.json, `--config` or `--flavor` pick the tool. Other flags never do, with one
 //! exception: `--no-eslintrc`, `--env` and `--rulesdir` only exist in ESLint 8, so without a config file they mean an ESLint 8 run.
 
-use crate::cli::{Options, Override, Tool, merge};
+use crate::cli::{Options, Override, Tool, Wildcard, merge};
 use crate::embedded::Framework;
 use crate::gitignore::{self, Files, OfGit};
 use crate::print_config::object;
@@ -30,7 +30,7 @@ use bun_lint::linter::{
     oxlint_filter_keys, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
 };
 use bun_lint::options::Json;
-use bun_lint::rule::{Plugin, minor_of};
+use bun_lint::rule::{Frameworks, Plugin, minor_of};
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
 use std::borrow::Cow;
@@ -95,7 +95,7 @@ const NAMES: [(&[u8], Flavor, Syntax); 10] = [
 ];
 
 /// The config used when there's no config file: which files are linted, and with which rules. For `$severityByKind` see
-/// `Reader::grade_by_kind`, for `$forReact` see `ResolvedConfig::outside_of_react`, for `$withoutWarnings` see
+/// `Reader::grade_by_kind`, for `$framework` see `Config::get_with_frameworks`, for `$withoutWarnings` see
 /// `Reader::without_warnings`. The words `UNUSED_ON_PURPOSE` and `TEST_GLOBALS` are replaced with the constants of that name,
 /// and the `basePath` `"PROJECT"` with the project's directory, so that a project in `~/test/app` isn't all tests.
 ///
@@ -186,7 +186,7 @@ const BUILT_IN: &[u8] = br#"[
     },
     { "rules": { "react/jsx-uses-react": "error" } },
     {
-        "$forReact": true,
+        "$framework": "react",
         "rules": {
             "react-hooks/rules-of-hooks": "error",
             "react-hooks/exhaustive-deps": "warn",
@@ -310,18 +310,46 @@ fn is_written_for_oxlint(path: &[u8]) -> bool {
         || schema.is_some_and(|it| strings::contains(it, b"oxlint"))
 }
 
-/// Checks `directory/package.json` for React in `dependencies`, `devDependencies` or `peerDependencies`.
+/// Reads `directory/package.json` and returns the [`Frameworks`] it lists in `dependencies`, `devDependencies` or
+/// `peerDependencies`.
 ///
 /// Returns `None` when this file can't decide and the caller should use the next one up: it doesn't exist, isn't a JSON
 /// object, or has none of the three fields (a nested `{ "type": "module" }`, for example). An empty `"dependencies": {}`
 /// still counts as a decision.
-pub(crate) fn depends_on_react(directory: &[u8]) -> Option<bool> {
+pub(crate) fn read_frameworks(directory: &[u8]) -> Option<Frameworks> {
     let package = fs::read(&paths::join(directory, b"package.json")).ok()?;
     let package = bun_lint::json::parse(&package).filter(|it| it.as_object().is_some())?;
     let fields: [&[u8]; 3] = [b"dependencies", b"devDependencies", b"peerDependencies"];
-    let mut declared = fields.iter().filter_map(|it| package.get(it)).peekable();
-    declared.peek()?;
-    Some(declared.any(|it| it.get(b"react").is_some()))
+    let fields: Vec<&Json> = fields.iter().filter_map(|it| package.get(it)).collect();
+    if fields.is_empty() {
+        return None;
+    }
+    let is_listed = |name: &str| fields.iter().any(|it| it.get(name.as_bytes()).is_some());
+    let listed = Frameworks::PACKAGES.iter().filter(|it| is_listed(it.0));
+    Some(listed.map(|it| it.1).collect())
+}
+
+/// Combines a directory's `own` [`read_frameworks`] result with its `parent` directory's frameworks. The closest
+/// package.json wins, except that a package without a test runner inherits the one from above.
+///
+/// `is_repository_root`: [`gitignore::is_root`] of the directory. A test runner isn't inherited from outside the
+/// repository, such as from a package.json in the home directory. Nothing else stops there: a submodule without a
+/// package.json is still part of the React project around it.
+pub(crate) fn inherit_frameworks(
+    parent: Frameworks,
+    own: Option<Frameworks>,
+    is_repository_root: bool,
+) -> Frameworks {
+    let parent = match is_repository_root {
+        true => parent - Frameworks::TEST_RUNNERS,
+        false => parent,
+    };
+    match own {
+        // With both runners' plugins on, each problem would be reported twice.
+        Some(own) if own.intersects(Frameworks::TEST_RUNNERS) => own,
+        Some(own) => own | (parent & Frameworks::TEST_RUNNERS),
+        None => parent,
+    }
 }
 
 /// A configuration that has been read.
@@ -421,8 +449,8 @@ pub(crate) struct Loader<'l> {
     /// `Inferred` need not ask the system for them.
     pub(crate) searched_from: Guarded<Vec<Vec<u8>>>,
     pub(crate) tsconfigs: Guarded<Vec<Vec<u8>>>,
-    /// Cache for [`Loader::is_of_react`], keyed by directory.
-    of_react: Guarded<FxHashMap<Vec<u8>, bool>>,
+    /// Cache for [`Loader::detect_frameworks`], keyed by directory.
+    frameworks: Guarded<FxHashMap<Vec<u8>, Frameworks>>,
 }
 
 fn strings_of(items: &[Vec<u8>]) -> Json {
@@ -438,7 +466,7 @@ pub(crate) fn severity_name(severity: Severity) -> Json {
 }
 
 /// `normalizePackageName(name, "eslint-plugin")`, if that is another name.
-fn plugin_longhand(name: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn plugin_longhand(name: &[u8]) -> Option<Vec<u8>> {
     let long = match name {
         [b'@', scoped @ ..] => match strings::index_of_char_usize(scoped, b'/') {
             None => [name, b"/eslint-plugin"].concat(),
@@ -489,15 +517,24 @@ fn globals_of(options: &Options) -> Option<Json> {
 
 /// Rule settings from oxlint's `-A`, `-W` and `-D` (when they name a rule), then from ESLint's `--rule`. The oxlint flags
 /// only set a severity, so the rule keeps whatever options it has.
-fn rules_of(options: &Options) -> Vec<(Vec<u8>, Json)> {
+fn rules_of(options: &Options, cwd: &[u8]) -> Vec<(Vec<u8>, Json)> {
     let filters = options.filters.iter();
     let filters = filters.filter(|it| !is_category(&it.1));
     let mut rules = Vec::new();
     for (severity, rule) in filters {
         merge(&mut rules, vec![(rule.clone(), severity_name(*severity))]);
     }
-    merge(&mut rules, options.rule.clone());
+    merge(
+        &mut rules,
+        options.from_the_working_directory(&options.rule, &options.rules_of_bunfig, false, cwd),
+    );
     rules
+}
+
+/// `wildcards` as the value of [`native::WILDCARDS`].
+fn wildcards_of(wildcards: &[Wildcard]) -> Json {
+    let ids = wildcards.iter().map(|it| Json::String(it.id.clone()));
+    Json::Array(ids.collect())
 }
 
 /// The config format to write an override in.
@@ -505,6 +542,8 @@ fn rules_of(options: &Options) -> Vec<(Vec<u8>, Json)> {
 enum Shape {
     /// An object in an `eslint.config.js`.
     Flat,
+    /// The same, in Bun's built-in config. It can have [`native::WILDCARDS`].
+    Native,
     /// An entry of `overrides` in an `.oxlintrc.json`.
     Oxlint,
     /// The same in an `.eslintrc.json`.
@@ -739,7 +778,7 @@ impl<'l> Loader<'l> {
             is_of_vite: OnceLock::new(),
             searched_from: Default::default(),
             tsconfigs: Default::default(),
-            of_react: Default::default(),
+            frameworks: Default::default(),
         }
     }
 
@@ -929,16 +968,41 @@ impl<'l> Loader<'l> {
         by_file.keys().filter(|it| !it.is_empty()).count() > 1
     }
 
+    /// [`Options::start_of_bunfig`]
+    fn start_of_bunfig(&self) -> Vec<u8> {
+        self.options.start_of_bunfig(self.cwd())
+    }
+
+    /// Where the patterns start in the file that `--config` names, or `config` in bunfig.toml.
+    fn start_of_named_config(&self) -> Vec<u8> {
+        match self.options.is_config_of_bunfig {
+            true => self.start_of_bunfig(),
+            false => self.cwd().to_vec(),
+        }
+    }
+
+    /// `ignorePatterns` of bunfig.toml and `--ignore-pattern`, each with where they start.
+    fn ignore_patterns(&self) -> [(Vec<u8>, &[Vec<u8>]); 2] {
+        let all = &self.options.ignore_pattern;
+        let (of_bunfig, of_flags) =
+            all.split_at(self.options.ignore_patterns_of_bunfig.min(all.len()));
+        [
+            (self.start_of_bunfig(), of_bunfig),
+            (self.cwd().to_vec(), of_flags),
+        ]
+    }
+
     /// Writes `[[lint.overrides]]` as config objects in the given `shape`. The command line's rules and globals go last, as
     /// one more override that matches every file. `base_path` is what the config resolves patterns against, unless an
     /// override says otherwise.
     fn overrides(&self, shape: Shape, base_path: &[u8]) -> Vec<Json> {
         let text = |it: &[u8]| Json::String(it.to_vec());
+        let start = self.start_of_bunfig();
         let write = |it: &Override| {
             let mut entries = vec![(&b"files"[..], strings_of(&it.files))];
             if !it.excluded.is_empty() {
                 let key: &[u8] = match shape {
-                    Shape::Flat => b"ignores",
+                    Shape::Flat | Shape::Native => b"ignores",
                     Shape::Oxlint => b"excludeFiles",
                     Shape::Legacy => b"excludedFiles",
                 };
@@ -947,18 +1011,28 @@ impl<'l> Loader<'l> {
             // Tells each config reader to parse the patterns as Bun's globs instead of its own tool's.
             entries.push((b"$globsOfBun", Json::Bool(true)));
             match shape {
-                _ if base_path == self.cwd() => {}
-                Shape::Flat => entries.push((b"basePath", text(self.cwd()))),
-                Shape::Oxlint => entries.push((b"$basePath", text(self.cwd()))),
-                // ESLint 8 already resolves the command line's patterns from the working directory.
+                _ if base_path == start => {}
+                Shape::Flat | Shape::Native => entries.push((b"basePath", text(&start))),
+                Shape::Oxlint => entries.push((b"$basePath", text(&start))),
+                // See `legacy_config`.
                 Shape::Legacy => {}
             }
             if !it.rules.is_empty() {
-                entries.push((b"rules", Json::Object(it.rules.clone())));
+                let is_oxlint = shape == Shape::Oxlint;
+                let rules = (self.options).from_the_working_directory(
+                    &it.rules,
+                    &it.places,
+                    is_oxlint,
+                    self.cwd(),
+                );
+                entries.push((b"rules", Json::Object(rules)));
+            }
+            if shape == Shape::Native && !it.wildcards.is_empty() {
+                entries.push((native::WILDCARDS, wildcards_of(&it.wildcards)));
             }
             match (it.globals.is_empty(), Json::Object(it.globals.clone())) {
                 (true, _) => {}
-                (false, globals) if shape == Shape::Flat => {
+                (false, globals) if matches!(shape, Shape::Flat | Shape::Native) => {
                     entries.push((b"languageOptions", object(vec![(b"globals", globals)])));
                 }
                 (false, globals) => entries.push((b"globals", globals)),
@@ -971,18 +1045,29 @@ impl<'l> Loader<'l> {
         let alone = self.options.of_command_line.as_deref();
         let last = alone.map(|alone| Override {
             files: vec![b"**/*".to_vec()],
-            rules: rules_of(alone),
+            rules: rules_of(alone, self.cwd()),
+            wildcards: alone.wildcards.clone(),
             globals: (globals_of(alone).and_then(Json::into_object)).unwrap_or_default(),
             ..Override::default()
         });
-        let last = last.filter(|it| !it.rules.is_empty() || !it.globals.is_empty());
-        (self.options.overrides.iter().chain(&last))
-            .map(write)
-            .collect()
+        let is_empty =
+            |it: &Override| it.rules.is_empty() && it.globals.is_empty() && it.wildcards.is_empty();
+        let last = last.filter(|it| !is_empty(it));
+        let all = self.options.overrides.iter().chain(&last);
+        let mut written: Vec<Json> = all.map(write).collect();
+        // The last one matches every file, also outside the directory of bunfig.toml. The built-in config's base path is `/`.
+        if shape == Shape::Native
+            && last.is_some()
+            && let Some(Json::Object(entries)) = written.last_mut()
+        {
+            entries.retain(|it| it.0 != b"basePath");
+        }
+        written
     }
 
-    /// ESLint's `overrideConfig`, as `translateOptions` makes it from the command line.
-    fn override_config(&self, base_path: &[u8]) -> Vec<Json> {
+    /// ESLint's `overrideConfig`, as `translateOptions` makes it from the command line. `shape` is [`Shape::Flat`] or
+    /// [`Shape::Native`].
+    fn override_config(&self, base_path: &[u8], shape: Shape) -> Vec<Json> {
         let options = self.options;
         let mut language_options = Vec::new();
         if let Some(globals) = globals_of(options) {
@@ -1001,7 +1086,10 @@ impl<'l> Loader<'l> {
         if !language_options.is_empty() {
             first.push((&b"languageOptions"[..], object(language_options)));
         }
-        first.push((b"rules", Json::Object(rules_of(options))));
+        first.push((b"rules", Json::Object(rules_of(options, self.cwd()))));
+        if shape == Shape::Native && !options.wildcards.is_empty() {
+            first.push((native::WILDCARDS, wildcards_of(&options.wildcards)));
+        }
         if !options.settings.is_empty() {
             first.push((b"settings", Json::Object(options.settings.clone())));
         }
@@ -1033,7 +1121,7 @@ impl<'l> Loader<'l> {
             }
         }
         let mut all = vec![object(first)];
-        all.extend(self.overrides(Shape::Flat, base_path));
+        all.extend(self.overrides(shape, base_path));
         if let Some(extensions) = &options.ext {
             let patterns = extensions.iter().map(|extension| {
                 let dot: &[u8] = if extension.starts_with(b".") {
@@ -1048,16 +1136,19 @@ impl<'l> Loader<'l> {
         all
     }
 
-    /// What ESLint's `calculateConfigArray` adds to what a configuration file exports.
-    fn added(&self, base_path: &[u8]) -> Vec<Json> {
+    /// What ESLint's `calculateConfigArray` adds to what a configuration file exports. `shape`: see
+    /// [`Loader::override_config`].
+    fn added(&self, base_path: &[u8], shape: Shape) -> Vec<Json> {
         let mut added = Vec::new();
-        if !self.options.ignore_pattern.is_empty() {
-            added.push(object(vec![
-                (b"basePath", Json::String(self.cwd().to_vec())),
-                (b"ignores", strings_of(&self.options.ignore_pattern)),
-            ]));
+        for (start, patterns) in self.ignore_patterns() {
+            if !patterns.is_empty() {
+                added.push(object(vec![
+                    (b"basePath", Json::String(start)),
+                    (b"ignores", strings_of(patterns)),
+                ]));
+            }
         }
-        added.extend(self.override_config(base_path));
+        added.extend(self.override_config(base_path, shape));
         added
     }
 
@@ -1087,7 +1178,7 @@ impl<'l> Loader<'l> {
         let only_errors = options.quiet && options.max_warnings == -1;
         let about_layout = formatting_rules().map(|it| Json::String(it.into()));
         let mut added: Vec<Json> = Self::object_of_named(named).into_iter().collect();
-        added.extend(self.added(base_path));
+        added.extend(self.added(base_path, Shape::Flat));
         let mut run = Vec::new();
         bun_lint::linter::write_json(
             &mut run,
@@ -1132,7 +1223,7 @@ impl<'l> Loader<'l> {
         // `built_in` has already added these.
         if is_of_eslint {
             all.extend(Self::object_of_named(&named));
-            all.extend(self.added(base_path));
+            all.extend(self.added(base_path, Shape::Flat));
         }
         let mut all = Json::Array(all);
         if !self.options.ignore {
@@ -1193,23 +1284,15 @@ impl<'l> Loader<'l> {
                     }
                     None => entries.push((key.to_vec(), Json::Array(add))),
                 };
-            if !options.ignore_pattern.is_empty() && options.ignore {
-                put(
-                    b"ignorePatterns",
-                    options
-                        .ignore_pattern
-                        .iter()
-                        .cloned()
-                        .map(Json::String)
-                        .collect(),
-                );
-            }
             let mut last = vec![(
                 &b"files"[..],
                 Json::Array(vec![Json::String(b"**/*".to_vec())]),
             )];
             if !options.rule.is_empty() {
-                last.push((b"rules", Json::Object(options.rule.clone())));
+                let places = &options.rules_of_bunfig;
+                let rules =
+                    options.from_the_working_directory(&options.rule, places, true, self.cwd());
+                last.push((b"rules", Json::Object(rules)));
             }
             if let Some(globals) = globals_of(options) {
                 last.push((b"globals", globals));
@@ -1399,11 +1482,27 @@ impl<'l> Loader<'l> {
                 return Err(mistake(message.to_vec()));
             }
             // A path in bunfig.toml is relative to that file.
-            let bunfig = paths::resolve(self.cwd(), &options.bunfig);
-            let directory = written.map_or_else(|| self.cwd(), |_| paths::dirname(&bunfig));
+            let of_bunfig = paths::resolve(self.cwd(), &self.options.bunfig);
+            let of_bunfig = paths::dirname(&of_bunfig);
+            let directory = written.map_or_else(|| self.cwd(), |_| of_bunfig);
             // Not a package that it needs.
             let is_missing = |why: &[u8], name: &[u8]| {
                 strings::contains(why, &[b"Cannot find module '", name, b"'"].concat())
+            };
+            // It is there, and what its package.json says that it starts with is not.
+            let is_installed = |package: &[u8]| {
+                let file = [b"node_modules/", package, b"/package.json"].concat();
+                paths::ancestors(directory).any(|it| fs::is_file(&paths::join(it, &file)))
+            };
+            let lacks_entry_point = |package: &[u8]| {
+                let parts: [&[u8]; 5] = [
+                    b"Cannot load the plugin \"",
+                    specifier,
+                    b"\"\n  ",
+                    package,
+                    b" is installed, but its entry point cannot be found\n  Check \"main\" and \"exports\" in its package.json",
+                ];
+                mistake(parts.concat())
             };
             let cannot_load = |why: Vec<u8>| {
                 let why = why.strip_prefix(b"ResolveMessage: ").unwrap_or(&why);
@@ -1467,6 +1566,9 @@ impl<'l> Loader<'l> {
                         {
                             continue;
                         }
+                        Err(why) if is_missing(&why, specifier) && is_installed(long) => {
+                            return Err(lacks_entry_point(long));
+                        }
                         Err(why) if is_missing(&why, specifier) => {
                             let parts: [&[u8]; 7] = [
                                 b"Cannot load the plugin \"",
@@ -1496,7 +1598,12 @@ impl<'l> Loader<'l> {
                     loaded => (loaded, &long[..]),
                 },
             };
-            let plugin = loaded.map_err(cannot_load)?;
+            let plugin = loaded.map_err(|why| {
+                match !is_path && is_missing(&why, found_as) && is_installed(found_as) {
+                    true => lacks_entry_point(found_as),
+                    false => cannot_load(why),
+                }
+            })?;
             let name = &plugin.name[..];
             if !is_name(name) {
                 let parts: [&[u8]; 5] = [
@@ -1635,8 +1742,13 @@ impl<'l> Loader<'l> {
             project,
         )];
         let mut of_user = native::categories(self.linter.registry(), self.options);
-        of_user.extend(self.added(b"/"));
-        objects.extend(self.split_pairs(of_user));
+        of_user.extend(self.added(b"/", Shape::Native));
+        let of_user = self.split_pairs(of_user);
+        objects.extend(native::expand_wildcards(
+            self.linter.registry(),
+            &plugins,
+            of_user,
+        ));
         let mut config = self.flat(b"/", Json::Array(objects), false, plugins)?;
         // Without a word: where the run has types, which then cost nothing more.
         config.infer_globals(match self.options.infer_globals {
@@ -1976,6 +2088,19 @@ impl<'l> Loader<'l> {
         let Some((flag, whose)) = self.options.flag_that_means_nothing_to(flavor) else {
             return Ok(());
         };
+        let refusal = [
+            &flag[..],
+            b" is an ",
+            whose,
+            b" flag and has no effect here\n  ",
+            &self.describe(flavor, file),
+        ]
+        .concat();
+        Err(Fatal(self.refused.get_or_init(|| refusal).clone()))
+    }
+
+    /// A sentence that says which config a run uses: "This run uses .oxlintrc.json, an oxlint config."
+    fn describe(&self, flavor: Flavor, file: Option<&[u8]>) -> Vec<u8> {
         let tool: &[u8] = match flavor {
             Flavor::Oxlint => b"oxlint",
             Flavor::EslintRc => b"ESLint 8",
@@ -1992,15 +2117,27 @@ impl<'l> Loader<'l> {
             None if flavor == Flavor::BuiltIn => b"Bun's defaults.".to_vec(),
             None => [tool, b"'s defaults."].concat(),
         };
-        let refusal = [
-            &flag[..],
-            b" is an ",
-            whose,
-            b" flag and has no effect here\n  This run uses ",
-            &uses,
+        [b"This run uses ", &uses[..]].concat()
+    }
+
+    /// Rejects `plugin/*` wildcards if `of_cwd`, the working directory's config, isn't Bun's own. Only native mode expands
+    /// them, so they would do nothing. A config file in a nested directory isn't a reason to fail: the wildcards still
+    /// apply to the rest of the project.
+    pub(crate) fn check_wildcards(&self, of_cwd: &Loaded) -> Result<(), Fatal> {
+        let Some(wildcard) = native::first_wildcard(self.options) else {
+            return Ok(());
+        };
+        if of_cwd.flavor == Flavor::BuiltIn {
+            return Ok(());
+        }
+        let message = [
+            b"\"",
+            &wildcard.id[..],
+            b"\" only works with Bun's own lint config\n  ",
+            &self.describe(of_cwd.flavor, of_cwd.file.as_deref()),
         ]
         .concat();
-        Err(Fatal(self.refused.get_or_init(|| refusal).clone()))
+        Err(self.fatal(native::Mistake::new(message, wildcard.key_at)))
     }
 
     /// Prefixes `why`, ESLint's message about an invalid config, with a line that says where the mistake is. That's `file`
@@ -2192,7 +2329,7 @@ impl<'l> Loader<'l> {
         if !options.settings.is_empty() {
             entries.push((b"settings", Json::Object(options.settings.clone())));
         }
-        let rules = rules_of(options);
+        let rules = rules_of(options, self.cwd());
         if !rules.is_empty() {
             entries.push((b"rules", Json::Object(rules)));
         }
@@ -2252,22 +2389,49 @@ impl<'l> Loader<'l> {
         let cascade = files.len();
         // `createCLIConfigArray`
         if let Some(path) = &options.config {
-            files.push(eslintrc::named(&absolute(path), cwd, &mut modules)?);
+            let start = self.start_of_named_config();
+            files.push(eslintrc::named(&absolute(path), &start, &mut modules)?);
         }
         if options.ignore {
             let path = options.ignore_path.as_ref().map(absolute);
-            files.extend(eslintrc::ignore_file(path.as_deref(), cwd)?);
+            files.extend(eslintrc::ignore_file(
+                path.as_deref(),
+                &self.start_of_ignore_path(),
+            )?);
         }
         // Only if no file says anything.
         if files.is_empty() && options.eslintrc {
             files.extend(eslintrc::personal(cwd, &mut modules)?);
         }
+        let mut of_command_line = modules.command_line.1.clone();
+        // The patterns of a bunfig.toml that is elsewhere start there. They come last, as they do in the one object.
+        let [(start, ignored), (_, ignored_by_flags)] = self.ignore_patterns();
+        let elsewhere = (start != cwd).then(|| {
+            let mut entries = Vec::new();
+            if let Json::Object(all) = &mut of_command_line {
+                all.retain(|it| it.0 != b"ignorePatterns");
+                if !ignored_by_flags.is_empty() {
+                    all.push((b"ignorePatterns".to_vec(), strings_of(ignored_by_flags)));
+                }
+                if !ignored.is_empty() {
+                    entries.push((b"ignorePatterns".to_vec(), strings_of(ignored)));
+                }
+                entries.extend(all.extract_if(.., |it| it.0 == b"overrides"));
+            }
+            LegacyFile {
+                path: paths::join(&start, b"__placeholder__.js"),
+                name: b"CLIOptions".to_vec(),
+                base_path: start.clone(),
+                json: Json::Object(entries),
+            }
+        });
         files.push(LegacyFile {
             path: command_line,
             name: b"CLIOptions".to_vec(),
             base_path: cwd.to_vec(),
-            json: modules.command_line.1.clone(),
+            json: of_command_line,
         });
+        files.extend(elsewhere);
         let mut load = |kind, request: &[u8], from: &[u8], entry: &[u8]| {
             let short = plugin_shorthand(request);
             eslintrc::load(kind, request, &short, from, entry, &mut modules)
@@ -2385,7 +2549,7 @@ impl<'l> Loader<'l> {
             return match &self.options.config {
                 Some(path) => self.load(
                     &paths::resolve(self.cwd(), &paths::from_native(path)),
-                    self.cwd(),
+                    &self.start_of_named_config(),
                 ),
                 None => self.load(b"", self.cwd()),
             };
@@ -2518,28 +2682,28 @@ impl<'l> Loader<'l> {
         loaded.flavor == Flavor::BuiltIn && *self.has_file_of_eslint.get_or_init(has_one)
     }
 
-    /// Returns true if the closest package.json that [lists dependencies](depends_on_react), from `directory` up, has React.
-    /// Only the built-in defaults care, so this is always false with an ESLint or oxlint config.
-    pub(crate) fn is_of_react(&self, loaded: &Loaded, directory: &[u8]) -> bool {
+    /// Detects the frameworks used by files in `directory`, from its package.json and the ones above it.
+    /// Only Bun's built-in config needs this, so the result is empty with an ESLint or oxlint config.
+    pub(crate) fn detect_frameworks(&self, loaded: &Loaded, directory: &[u8]) -> Frameworks {
         if loaded.flavor != Flavor::BuiltIn {
-            return false;
+            return Frameworks::empty();
         }
-        if let Some(known) = self.of_react.lock().get(directory) {
-            return *known;
+        if let Some(cached) = self.frameworks.lock().get(directory) {
+            return *cached;
         }
-        let found = paths::ancestors(directory).find_map(depends_on_react) == Some(true);
-        self.of_react.lock().insert(directory.to_vec(), found);
-        found
+        let parent = Some(paths::dirname(directory)).filter(|it| it.len() < directory.len());
+        let parent = parent.map_or(Frameworks::empty(), |it| self.detect_frameworks(loaded, it));
+        let is_repository_root = gitignore::is_root(directory);
+        let detected = inherit_frameworks(parent, read_frameworks(directory), is_repository_root);
+        (self.frameworks.lock()).insert(directory.to_vec(), detected);
+        detected
     }
 
-    /// Resolves the config for one file. Use this instead of `loaded.config.get()`, which doesn't know about React projects.
+    /// Resolves the config for one file. Use this instead of `loaded.config.get()`, which doesn't know which frameworks the
+    /// project uses.
     pub(crate) fn config_of(&self, loaded: &Loaded, path: &[u8]) -> FileConfig {
-        match loaded.config.get(self.linter.registry(), path) {
-            FileConfig::Matched(config) if !self.is_of_react(loaded, paths::dirname(path)) => {
-                FileConfig::Matched(config.outside_of_react())
-            }
-            config => config,
-        }
+        let detected = self.detect_frameworks(loaded, paths::dirname(path));
+        (loaded.config).get_with_frameworks(self.linter.registry(), path, detected)
     }
 
     /// Whether the rules that need types run on a file that has `config`, which is from `loaded`.
@@ -2567,23 +2731,60 @@ impl<'l> Loader<'l> {
         loaded.flavor == Flavor::Oxlint || (loaded.flavor == Flavor::BuiltIn && self.options.ignore)
     }
 
+    /// Where the patterns start in the file that `--ignore-path`, or `ignorePath` of bunfig.toml, names.
+    fn start_of_ignore_path(&self) -> Vec<u8> {
+        match self.options.ignore_file_name_of_bunfig {
+            Some(_) => self.start_of_bunfig(),
+            None => self.cwd().to_vec(),
+        }
+    }
+
     /// The name of the files that count in every directory beside `.gitignore`. To oxlint, what `--ignore-path` has is such a
     /// name.
     pub(crate) fn ignore_file_name(&self, loaded: &Loaded) -> Option<&[u8]> {
         match &self.options.ignore_path {
             _ if !self.options.ignore => None,
             None => Some(b".eslintignore"),
-            Some(name) => (loaded.flavor == Flavor::Oxlint).then_some(name),
+            Some(name) => (loaded.flavor == Flavor::Oxlint).then_some(
+                self.options
+                    .ignore_file_name_of_bunfig
+                    .as_ref()
+                    .unwrap_or(name),
+            ),
         }
     }
 
     /// Whether a file that is an argument is left out all the same, as by oxlint: `.eslintignore`
-    /// or `--ignore-path` has a pattern for it. `.gitignore` is not asked.
-    pub(crate) fn ignores_named_file(&self, argument: &[u8], loaded: &Loaded) -> bool {
+    /// or `--ignore-path` has a pattern for it, or `--ignore-pattern` is one. `.gitignore` is not asked. `path`: where it is.
+    pub(crate) fn ignores_named_file(&self, argument: &[u8], path: &[u8], loaded: &Loaded) -> bool {
+        if loaded.flavor != Flavor::Oxlint {
+            return false;
+        }
+        let is_in_file = self.ignore_file_name(loaded).is_some_and(|file| {
+            let (start, file) = (self.start_of_ignore_path(), paths::from_native(file));
+            // How it is spelled counts for oxlint. From below bunfig.toml it is spelled as from there.
+            match start == self.cwd() {
+                true => gitignore::has_argument(&start, &file, argument),
+                false => gitignore::has_argument(&start, &file, &paths::relative(&start, path)),
+            }
+        });
+        is_in_file || self.is_ignored_by_the_run(path, loaded)
+    }
+
+    /// The same for the name of what is read from standard input, about which the files are not asked.
+    pub(crate) fn is_ignored_by_the_run(&self, path: &[u8], loaded: &Loaded) -> bool {
         loaded.flavor == Flavor::Oxlint
-            && self.ignore_file_name(loaded).is_some_and(|file| {
-                gitignore::has_argument(self.cwd(), &paths::from_native(file), argument)
-            })
+            && self.options.ignore
+            && gitignore::is_ignored(&self.patterns_of_the_run(), path, false)
+    }
+
+    /// For oxlint `--ignore-pattern` is for the whole run, whatever configuration file is nearest.
+    fn patterns_of_the_run(&self) -> gitignore::Chain {
+        let mut chain = gitignore::Chain::default();
+        for (start, patterns) in self.ignore_patterns() {
+            chain = gitignore::with_lines(chain, &start, patterns.iter().map(|it| &it[..]));
+        }
+        chain
     }
 
     /// The ignore files that count in `directory`, where a search starts. `None`: oxlint does not search it, because those of
@@ -2604,17 +2805,19 @@ impl<'l> Loader<'l> {
         };
         let name = self.ignore_file_name(loaded).map(paths::from_native);
         let mut files = Files::above_and_in(directory, name.as_deref(), of_git);
-        let (cwd, patterns) = (self.cwd(), &self.options.ignore_pattern);
         if !self.options.ignore {
             return Some(files);
         }
         if loaded.flavor == Flavor::Oxlint {
             // For oxlint `--ignore-pattern` is for the whole run, whatever configuration file is nearest.
-            files.named =
-                gitignore::with_lines(files.named, cwd, patterns.iter().map(|it| &it[..]));
+            for (start, patterns) in self.ignore_patterns() {
+                let lines = patterns.iter().map(|it| &it[..]);
+                files.named = gitignore::with_lines(files.named, &start, lines);
+            }
         } else if let Some(path) = &self.options.ignore_path {
-            let path = paths::resolve(cwd, &paths::from_native(path));
-            files.named = gitignore::with_file(files.named, cwd, &path, true);
+            let path = paths::resolve(self.cwd(), &paths::from_native(path));
+            let start = self.start_of_ignore_path();
+            files.named = gitignore::with_file(files.named, &start, &path, true);
         }
         Some(files)
     }

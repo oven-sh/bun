@@ -1,7 +1,8 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{intersection_constituents, is_object_type, union_constituents};
 use bun_lint::types::utils::{
-    get_constrained_type_at_location, get_type_name, is_type_any_type, is_type_flag_set,
+    get_constrained_type_at_location, get_type_name, is_global_reg_exp_type, is_type_any_type,
+    is_type_flag_set,
 };
 use bun_lint::types::{Type, TypeFlags};
 
@@ -72,7 +73,11 @@ impl RestrictPlusOperands {
         }
         let mut had_individual_complaint = false;
         for sub_base_type in union_constituents(base_type) {
-            let is_invalid = match is_named_reg_exp(sub_base_type) {
+            let is_reg_exp = match cx.language().is_oxlint {
+                true => is_global_reg_exp_type(sub_base_type),
+                false => is_named_reg_exp(sub_base_type),
+            };
+            let is_invalid = match is_reg_exp {
                 true => !self.allow_reg_exp || other_type.has_flags(TypeFlags::NUMBER_LIKE),
                 false => (!self.allow_any && is_type_any_type(sub_base_type)) || is_deeply_object_type(sub_base_type),
             };

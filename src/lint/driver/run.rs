@@ -509,7 +509,10 @@ impl Run<'_> {
         );
         loader.name(paths::dirname(&path));
         let loaded = loader.for_directory(paths::dirname(&path))?;
-        let status: Status = loader.config_of(&loaded, &path).into();
+        let status: Status = match loader.is_ignored_by_the_run(&path, &loaded) {
+            true => Status::Ignored,
+            false => loader.config_of(&loaded, &path).into(),
+        };
         let Status::Matched(config) = &status else {
             let results = self
                 .options
@@ -929,12 +932,6 @@ impl Run<'_> {
             &paths::to_native(environment.cwd.clone()),
         )
         .measuring(options.timing);
-        let store = bun_lint_graph::Store::new(&environment.cwd);
-        let modules = bun_lint_graph::Graph::new(&store);
-        modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
-            let of_the_run = (&linter, environment, &js_plugins);
-            discover::list_as_eslint_8(of_the_run, &pool, patterns, extensions)
-        }));
         let loader = Loader::new(&linter, options, environment, &js_plugins);
         // `--rules` prints the same list either way, and `--doctor` has this in its report.
         let is_told = !options.rules && !options.doctor && !options.silent;
@@ -949,7 +946,11 @@ impl Run<'_> {
         }
         if options.init {
             return match loader.for_directory(&environment.cwd) {
-                Ok(found) => crate::init::LINT.add(found.file.as_deref(), environment),
+                Ok(found) => crate::init::LINT.add(
+                    found.file.as_deref(),
+                    options.bunfig_above(),
+                    environment,
+                ),
                 Err(Fatal(error)) => self.fail(&error),
             };
         }
@@ -962,12 +963,21 @@ impl Run<'_> {
         if let Some(refusal) = loader.refused() {
             return self.refuse_flag(refusal);
         }
+        // Recorded as the loader's mistake, which is printed next.
+        let _ = of_cwd.as_ref().map(|it| loader.check_wildcards(it));
         if let Some(mistake) = loader.mistake() {
             self.out.stderr.extend_from_slice(mistake);
             self.out.exit_code = 2;
             return self.out;
         }
         let is_native = (of_cwd.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
+        let store = bun_lint_graph::Store::new(&environment.cwd);
+        let store = if is_native { store.by_file() } else { store };
+        let modules = bun_lint_graph::Graph::new(&store);
+        modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
+            let of_the_run = (&linter, environment, &js_plugins);
+            discover::list_as_eslint_8(of_the_run, &pool, patterns, extensions)
+        }));
         let format = match self.format(is_oxlint, is_native) {
             Ok(format) => format,
             Err(error) => return self.refuse(&error),
@@ -1015,6 +1025,7 @@ impl Run<'_> {
         let memory = bun_sema::session::Session::new();
         let (skipped_in_comments, out_of_stack) =
             (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
+        let without_include = Guarded::new(Vec::new());
         let broken_fixes = Guarded::new(Vec::new());
         let handed_back = Guarded::new(Vec::new());
         let unread = Guarded::new(Vec::new());
@@ -1033,6 +1044,7 @@ impl Run<'_> {
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
             out_of_stack: &out_of_stack,
+            without_include: &without_include,
             broken_fixes: &broken_fixes,
             handed_back: &handed_back,
             unread: &unread,
@@ -1179,6 +1191,63 @@ impl Run<'_> {
                     &shown.join(&b", "[..])[..],
                     more,
                     b"\n  Rules that need type information may have missed problems there. This is a bug in Bun.",
+                ]
+                .concat(),
+            );
+        }
+        // Who says which files to lint knows that they are few: `--staged`, `--changed`, standard input, or their names.
+        let named: Vec<Vec<u8>> = (options.patterns.iter())
+            .map(|it| paths::resolve(&environment.cwd, &paths::from_native(it)))
+            .collect();
+        let is_named = |path: &Vec<u8>| named.contains(&paths::from_native(path));
+        let mut without_include = std::mem::take(&mut *without_include.lock());
+        if options.only.is_some() || options.stdin || options.silent {
+            without_include.clear();
+        }
+        without_include.retain(|program| {
+            typed::is_out_of_proportion(program) && !program.files.iter().all(is_named)
+        });
+        for program in without_include {
+            let relative =
+                |path: &[u8]| paths::relative(&environment.cwd, &paths::from_native(path));
+            let shown: Vec<Vec<u8>> = program
+                .files
+                .iter()
+                .take(3)
+                .map(|it| relative(it))
+                .collect();
+            let more: &[u8] = if program.files.len() > 3 {
+                b", .."
+            } else {
+                b""
+            };
+            let plural = bun_sema_driver::format::plural;
+            let seconds = program.load_time.as_secs_f64();
+            let took = match seconds >= 1.0 {
+                true => format!("{seconds:.1}s"),
+                false => format!("{:.0}ms", seconds * 1e3),
+            };
+            let config = relative(&program.config_path);
+            let or_the_flag: &[u8] = match options.tsconfig {
+                Some(_) => b".",
+                None => b", or pass --tsconfig.",
+            };
+            self.warn(
+                &[
+                    b"Loaded ",
+                    &plural(program.included, b"file", b"files")[..],
+                    b" in ",
+                    took.as_bytes(),
+                    b" to lint ",
+                    &plural(program.files.len(), b"file", b"files")[..],
+                    b": ",
+                    &shown.join(&b", "[..])[..],
+                    more,
+                    b"\n  ",
+                    &config,
+                    b" has no \"include\", so every file below it is part of its project.",
+                    b"\n  To lint faster, add \"include\" to it",
+                    or_the_flag,
                 ]
                 .concat(),
             );
@@ -1350,11 +1419,16 @@ impl Run<'_> {
 
         let suppressed = match options.stdin {
             true => Suppressed::default(),
-            false => match self.apply_suppressions(&mut results, is_oxlint) {
+            false => match self.apply_suppressions(&mut results, is_oxlint, is_native) {
                 Ok(suppressed) => suppressed,
                 Err(Fatal(error)) => return self.fail(&error),
             },
         };
+        for result in &mut results {
+            if LintMessage::hide_claimed(&mut result.messages) {
+                result.counts = Counts::of(&result.messages);
+            }
+        }
         let has_unused = suppressed.has_unused && !options.pass_on_unpruned_suppressions;
         // oxlint reports it like problems, after those of all files.
         let about_suppressions = match is_oxlint {
@@ -1582,6 +1656,7 @@ impl Run<'_> {
         &self,
         results: &mut [FileResult],
         is_oxlint: bool,
+        is_native: bool,
     ) -> Result<Suppressed, Fatal> {
         let (options, cwd) = (self.options, &self.environment.cwd);
         let location = options
@@ -1593,7 +1668,32 @@ impl Run<'_> {
         } else {
             suppressions::DEFAULT_FILE_NAME
         };
-        let path = paths::resolve(cwd, location.as_deref().unwrap_or(default));
+        // One file for a run from any directory of the project: the names in it start where bunfig.toml is. Without a word about
+        // where it is, it is the nearest from the working directory up to there, and the names start beside it. A new one is
+        // where ESLint or oxlint, whose configuration there is, would look for it.
+        let project = options.start_of_bunfig(cwd);
+        let start = match &location {
+            Some(_) if options.is_suppressions_location_of_flag => cwd.clone(),
+            Some(_) => project,
+            None => paths::ancestors(cwd)
+                .take_while(|it| it.starts_with(&project))
+                .find(|it| fs::is_file(&paths::join(it, default)))
+                .map_or_else(
+                    || {
+                        if is_native {
+                            project.clone()
+                        } else {
+                            cwd.clone()
+                        }
+                    },
+                    <[u8]>::to_vec,
+                ),
+        };
+        let path = match &location {
+            Some(location) => paths::resolve(cwd, location),
+            None => paths::resolve(&start, default),
+        };
+        let cwd = &start;
         let writes = options.suppress_all || options.suppress_rule.is_some();
         let exists = fs::is_file(&path);
         if location.is_some() && !exists && !writes {

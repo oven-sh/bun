@@ -36,6 +36,8 @@ import whatOxlintFixes from "./oracle/plugins/oxlint/fixes.expected.json";
 import whatOxlintMarks from "./oracle/plugins/oxlint/labels.json";
 import { filesOf as filesOfMessages, helpsOf, entries as messages, messagesOf } from "./oracle/plugins/oxlint/messages";
 import optionsOfOxlint from "./oracle/plugins/oxlint/options.json";
+import parenthesesExpected from "./oracle/plugins/oxlint/parentheses.expected.json";
+import parentheses from "./oracle/plugins/oxlint/parentheses.json";
 import { labelsOf, projects } from "./oracle/plugins/oxlint/projects";
 
 afterAll(endChildren);
@@ -623,6 +625,49 @@ describe.concurrent("bun lint", () => {
 
   // Each row is what oxlint 1.87 prints. oxc's parser reports these, so the file isn't linted. tsc leaves them to its checker
   // (TS1308, TS1163), and typescript-estree says nothing.
+  // Every row was run on oxlint 1.87.
+  test("with .oxlintrc.json an `await` that is put up with outside every body makes the file a module", async () => {
+    // What the `await` of `await (z);` in the next line is. In a script it is the name of a function.
+    const rows: [extensions: string, code: string, found: "the operator" | "a name"][] = [
+      ["ts tsx", "function f(): { [await g()]: 1 } { return null!; }", "the operator"],
+      ["ts", "const f = function (): { [await g()]: 1 } { return null!; };", "the operator"],
+      ["ts", "function* f(): { [await g()]: 1 } {}", "the operator"],
+      ["ts", "function f<T extends { [await g()]: 1 }>(t: T) {}", "the operator"],
+      ["ts", "function f<T = { [await g()]: 1 }>() {}", "the operator"],
+      ["ts", "function f(this: { [await g()]: 1 }) {}", "the operator"],
+      ["ts", "declare function f(): { [await g()]: 1 };", "the operator"],
+      ["ts", "class A { m(): { [await g()]: 1 } { return null!; } }", "the operator"],
+      ["ts", "class A { get x(): { [await g()]: 1 } { return null!; } }", "the operator"],
+      ["ts", "const o = { m(): { [await g()]: 1 } { return null!; } };", "the operator"],
+      ["ts", "function f(a = (): { [await g()]: 1 } => null!) {}", "the operator"],
+      ["ts", "function f(a = function (): { [await g()]: 1 } { return null!; }) {}", "the operator"],
+      ["ts", "class A { x = function (): { [await g()]: 1 } { return null!; }; }", "the operator"],
+      ["ts", "class A { static { function f(): { [await g()]: 1 } { return null!; } } }", "the operator"],
+      ["ts js", "class A { x = await g(); }", "the operator"],
+      ["ts", "enum E { A = await g }", "the operator"],
+      ["ts", "type T = { [await g()]: 1 };", "the operator"],
+      ["ts", "const f = (): { [await g()]: 1 } => null!;", "the operator"],
+      ["ts js", "function f() {}", "a name"],
+      ["ts", "function f(): { [await (g)]: 1 } { return null!; }", "a name"],
+      ["ts", "async function f(): { [await g()]: Promise<1> } { return null!; }", "a name"],
+      ["ts", "const f = async (): { [await g()]: 1 } => null!;", "a name"],
+      ["ts", "const f = async <T extends { [await g()]: 1 }>() => {};", "a name"],
+      ["ts", "async function o() { const f = (): { [await g()]: 1 } => null!; }", "a name"],
+    ];
+    const cases = rows.flatMap(([extensions, code, found], i) =>
+      extensions.split(" ").map(extension => ({ name: `${i}.${extension}`, code, found })),
+    );
+    const files = Object.fromEntries(cases.map(({ name, code }) => [name, code + "\nawait (z);\n"]));
+    const config = { categories: { correctness: "off" }, rules: { "no-undef": "error" } };
+    const { raw } = await lint({ ".oxlintrc.json": JSON.stringify(config), ...files }, ["-f", "json"]);
+    const found: Record<string, string> = Object.fromEntries(cases.map(({ name }) => [name, "the operator"]));
+    for (const { filename, code, message } of JSON.parse(raw).diagnostics as Diagnostic[]) {
+      if (code !== "eslint(no-undef)") found[filename] = message;
+      else if (message === "'await' is not defined.") found[filename] = "a name";
+    }
+    expect(found).toEqual(Object.fromEntries(cases.map(({ name, found }) => [name, found])));
+  });
+
   test("with .oxlintrc.json `await` outside an async function and `yield` outside a generator are errors", async () => {
     const all = "ts tsx mts cts js jsx mjs cjs";
     const typescript = "ts tsx mts cts";
@@ -723,6 +768,28 @@ describe.concurrent("bun lint", () => {
       [typescript, "function f() { type T = { [await g]: 1 }; }", "await@27"],
       ["ts tsx", "function f(): { [await g]: 1 } { return null!; }", "linted"],
       ["mts cts", "function f(): { [await g]: 1 } { return null!; }", "await@17"],
+      // A signature in a type starts nothing: it is in the block.
+      [
+        "ts tsx",
+        "class A { static { type F = { (): { [await g()]: 1 } }; } }",
+        "Cannot use await in class static initialization block @37+5",
+      ],
+      ["mts cts", "class A { static { type F = { (): { [await g()]: 1 } }; } }", "await@37"],
+      [
+        "ts tsx",
+        "class A { static { interface I { m<T extends { [await g()]: 1 }>(): void } } }",
+        "Cannot use await in class static initialization block @48+5",
+      ],
+      ["mts cts", "class A { static { interface I { m<T extends { [await g()]: 1 }>(): void } } }", "await@48"],
+      // The type of a variable is read in the context of the block, where `await` is the operator.
+      [
+        typescript,
+        "class A { static { let v: { get x(): { [await g()]: 1 } }; } }",
+        "Cannot use await in class static initialization block @40+5",
+      ],
+      // A function does, with or without a body.
+      ["ts tsx", "class A { static { abstract class B { abstract m(): { [await g()]: 1 }; } } }", "linted"],
+      ["ts tsx", "class A { static { function f(): { [await g()]: 1 } { return null!; } } }", "linted"],
       [typescript, "function o() { @dec(await g()) class A {} }", "await@20"],
       [typescript, "async function o() { @dec(await g()) class A {} }", "linted"],
       ["ts tsx", "declare const x = await g;", "linted"],
@@ -4229,6 +4296,75 @@ describe.concurrent("bun lint", () => {
         expect(results.map(it => it.exitCode)).toEqual(rows.map(() => 1));
       });
 
+      // Recorded from oxlint 1.87.0 with tsgolint. typescript-eslint passes over `finally`, which waits for the Promise.
+      test("no-misused-promises reports an async function that is handed to finally()", async () => {
+        const texts = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+          "a.ts": `declare const p: Promise<number>;
+declare function f(): Promise<void>;
+void p.finally(async () => {});
+void p.finally(f);
+void p
+  .then(() => 1)
+  // oxlint-disable-next-line typescript/no-misused-promises
+  .finally(async () => {});
+void p.finally(() => {});
+`,
+        };
+        const rule = { "no-misused-promises": ["error", { checksVoidReturn: { attributes: false } }] };
+        const oxlint = {
+          categories: { correctness: "off" },
+          rules: { "typescript/no-misused-promises": rule["no-misused-promises"] },
+        };
+        const flags = ["--type-aware", "--report-unused-disable-directives", "-f", "json", "a.ts"];
+        const [forOxlint, alone] = await Promise.all([
+          lint({ ...texts, ".oxlintrc.json": JSON.stringify(oxlint) }, flags),
+          lint({ ...texts, "bunfig.toml": `[lint.rules]\n"typescript/no-misused-promises" = "error"\n` }, flags),
+        ]);
+        expect(places(forOxlint.raw)).toEqual([
+          "a.ts:3 typescript(no-misused-promises) error",
+          "a.ts:4 typescript(no-misused-promises) error",
+        ]);
+        const found = JSON.parse(alone.raw)[0].messages as { line: number; message: string }[];
+        expect(found.map(it => `${it.line} ${it.message}`)).toEqual([
+          "7 Unused oxlint-disable directive (no problems were reported from 'typescript/no-misused-promises').",
+        ]);
+      });
+
+      // Recorded from oxlint 1.87.0 with tsgolint.
+      test("no-misused-promises on what a function returns: a type in parentheses, and the type that a callback is given", async () => {
+        const texts = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+          "a.ts": `declare function f(): Promise<void>;
+declare function on(callback: () => () => void): void;
+declare function maybe(callback?: () => () => void): void;
+export function a(): () => void { return f; }
+export function b(): (() => void) { return f; }
+on(() => { return f; });
+maybe(() => { return f; });
+`,
+        };
+        const oxlint = { categories: { correctness: "off" }, rules: { "typescript/no-misused-promises": "error" } };
+        const flags = ["--type-aware", "-f", "json", "a.ts"];
+        const [forOxlint, alone] = await Promise.all([
+          lint({ ...texts, ".oxlintrc.json": JSON.stringify(oxlint) }, flags),
+          lint({ ...texts, "bunfig.toml": `[lint.rules]\n"typescript/no-misused-promises" = "error"\n` }, flags),
+        ]);
+        type Label = { label?: string; span: { line: number; column: number; length: number } };
+        const found = (JSON.parse(forOxlint.raw).diagnostics as { labels: Label[] }[]).map(it =>
+          it.labels.map(({ label, span }) => `${span.line}:${span.column}+${span.length} ${label ?? ""}`.trimEnd()),
+        );
+        const value = "This callback has type \`() => Promise<void>\`.";
+        const context = "This context accepts a \`void\`-returning callback through type \`() => void\`.";
+        expect(found).toEqual([
+          [`4:42+1 ${value}`, `4:22+10 ${context}`, "4:42+1"],
+          [`6:19+1 ${value}`, `2:37+10 ${context}`, "6:19+1"],
+          [`7:22+1 ${value}`, "7:22+1"],
+        ]);
+        const lines = (JSON.parse(alone.raw)[0].messages as { line: number }[]).map(it => it.line);
+        expect(lines).toEqual([4, 5, 6, 7]);
+      });
+
       // Recorded from oxlint 1.87.0 with tsgolint.
       test("a type-aware rule reports with the severity of the ESLint rule of the same name, if that one is on", async () => {
         const texts = {
@@ -4248,11 +4384,11 @@ describe.concurrent("bun lint", () => {
           ],
           [
             { rules: { "eslint/require-await": "warn", "typescript/require-await": "error" } },
-            ["a.ts:2 eslint(require-await) warning", "a.ts:2 typescript(require-await) warning"],
+            ["a.ts:2 typescript(require-await) warning"],
           ],
           [
             { rules: { "typescript/require-await": "warn", "eslint/require-await": "error" } },
-            ["a.ts:2 eslint(require-await) error", "a.ts:2 typescript(require-await) error"],
+            ["a.ts:2 typescript(require-await) error"],
           ],
         ];
         const results = await Promise.all(
@@ -4261,6 +4397,505 @@ describe.concurrent("bun lint", () => {
           ),
         );
         expect(results.map(it => places(it.raw))).toEqual(rows.map(it => it[1]));
+      });
+
+      describe("a rule with types and a rule without types that look for the same problem", () => {
+        const tsconfig = JSON.stringify({
+          compilerOptions: { strict: true, target: "esnext", lib: ["esnext", "dom"] },
+        });
+        const config = (rules: Record<string, string>, more: object = {}) =>
+          rc({ plugins: ["unicorn", "typescript"], env: { browser: true }, rules, ...more });
+        const on = (rules: string[]) => config(Object.fromEntries(rules.map(it => [it, "error"])));
+        /** Each row in a directory of its own. What is reported for each, in the order of the rows. */
+        const lintRows = async (rows: [config: string, text: string][], args: string[]) => {
+          const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+          rows.forEach(([config, text], index) => {
+            files[`${index}/.oxlintrc.json`] = config;
+            files[`${index}/tsconfig.json`] = tsconfig;
+            files[`${index}/a.ts`] = text;
+          });
+          const all = places((await lint(files, ["-f", "json", ...args])).raw);
+          return rows.map((_, index) =>
+            all.filter(it => it.startsWith(`${index}/`)).map(it => it.slice(`${index}/`.length)),
+          );
+        };
+        // The rule without types, the rule with types, and code with one thing to report per line.
+        const pairs: [untyped: string, typed: string, lines: string[]][] = [
+          [
+            "require-await",
+            "typescript/require-await",
+            [
+              "declare const p: Promise<number>;",
+              "export async function a() { return 1; }",
+              "export const b = async () => 1;",
+              "export const c = { async m() { return 1; } };",
+              "export class D { async m() { return 1; } }",
+              "export async function e() { return p; }",
+              "export async function f() { await p; }",
+              "export async function* g() { yield 1; }",
+            ],
+          ],
+          [
+            "no-implied-eval",
+            "typescript/no-implied-eval",
+            [
+              'setTimeout("alert(1)", 1);',
+              'window.setTimeout("alert(1)", 1);',
+              'self.setTimeout("alert(1)", 1);',
+              'window[`setTimeout`]("alert(1)", 1);',
+              '(window?.setTimeout)("alert(1)", 1);',
+              "declare const s: string;",
+              "setTimeout(s, 1);",
+              "setTimeout(() => {}, 1);",
+              "export {};",
+            ],
+          ],
+          [
+            "no-throw-literal",
+            "typescript/only-throw-error",
+            [
+              "declare const e: Error;",
+              "declare const x: any;",
+              'export function a() { throw "a"; }',
+              "export function b() { throw 1; }",
+              'export function c() { throw "a" as any; }',
+              "export function d() { throw class extends Error {}; }",
+              'export function f() { throw x && "a"; }',
+              "export function g(s: string) { throw s; }",
+              "export function h() { throw e; }",
+            ],
+          ],
+          [
+            "prefer-promise-reject-errors",
+            "typescript/prefer-promise-reject-errors",
+            [
+              "declare const s: string;",
+              "void Promise.reject(5);",
+              'void Promise[("reject")](5);',
+              "void new Promise((_, reject) => reject(5));",
+              "void new Promise((...a) => a[1](5));",
+              "void Promise.reject(s);",
+              'void Promise.reject(new Error("a"));',
+            ],
+          ],
+          [
+            "prefer-destructuring",
+            "typescript/prefer-destructuring",
+            [
+              "declare const o: { a: number; b: number[] };",
+              "export const a = o.a;",
+              "export const b: number[] = o.b;",
+              "export const { b: c } = o;",
+            ],
+          ],
+          [
+            "unicorn/prefer-string-starts-ends-with",
+            "typescript/prefer-string-starts-ends-with",
+            [
+              "declare const s: string;",
+              "export const a = /^abc/.test(s);",
+              "export const b = /abc$/.test(s);",
+              "export const c = /^abc/g.test(s);",
+              "export const d = /^123/i.test(s);",
+              "export const e = /^abc/.test!(s);",
+              "export const f = /^{{/.test(s);",
+              'export const g = s.slice(0, 3) === "abc";',
+              "export const h = /^a|b/.test(s);",
+            ],
+          ],
+          [
+            "unicorn/prefer-includes",
+            "typescript/prefer-includes",
+            [
+              "declare const a: string[];",
+              "declare const x: any;",
+              "declare const o: { indexOf(a: string): number };",
+              'export const b = a.indexOf("b") !== -1;',
+              'export const c = a.indexOf!("b") !== -1;',
+              'export const d = (a.indexOf)("b") !== -1;',
+              'export const e = a["indexOf"]("b") !== -1;',
+              'export const f = a.indexOf("b") !== (-1);',
+              'export const g = x.indexOf("b") !== -1;',
+              'export const h = o.indexOf("b") !== -1;',
+              'export const i = a.indexOf("b") <= -1;',
+              'export const j = a.includes("b");',
+            ],
+          ],
+          [
+            "unicorn/prefer-array-find",
+            "typescript/prefer-find",
+            [
+              "declare const a: string[];",
+              "declare const aa: string[][];",
+              "declare const x: any;",
+              "export const b = a.filter(Boolean)[0];",
+              "export const c = a.filter(Boolean).at(0);",
+              "export const d = a.filter(Boolean)![0];",
+              "export const e = (a.filter(Boolean) as string[])[0];",
+              "export const f = a.filter?.(Boolean)[0];",
+              "export const g = a.filter(Boolean)?.at(0);",
+              "export const h = a.filter(Boolean).at!(0);",
+              "export const i = a.filter(Boolean).shift();",
+              "export const [j] = a.filter(Boolean);",
+              "export const k = x.filter(Boolean)[0];",
+              // Two calls that start at the same place. Only the first is for both rules.
+              "export const l = aa.filter(Boolean)[0]",
+              "  .filter(Boolean).pop();",
+              "export const m = a.find(Boolean);",
+            ],
+          ],
+        ];
+        const text = (lines: string[]) => lines.join("\n") + "\n";
+        const lineOf = (place: string) => place.slice(0, place.indexOf(" "));
+
+        test("with both on, what either reports alone is reported once", async () => {
+          const rowsOf = (rules: (pair: (typeof pairs)[number]) => string[]) =>
+            pairs.map((pair): [string, string] => [on(rules(pair)), text(pair[2])]);
+          const [untyped, typed, both] = await Promise.all([
+            lintRows(
+              rowsOf(it => [it[0]]),
+              ["--type-aware"],
+            ),
+            lintRows(
+              rowsOf(it => [it[1]]),
+              ["--type-aware"],
+            ),
+            lintRows(
+              rowsOf(it => [it[0], it[1]]),
+              ["--type-aware"],
+            ),
+          ]);
+          for (const [index, [name]] of pairs.entries()) {
+            const withTypes = new Set(typed[index].map(lineOf));
+            const rest = untyped[index].filter(it => !withTypes.has(lineOf(it)));
+            expect([name, both[index]]).toEqual([name, [...typed[index], ...rest].sort()]);
+            // There is code that both report, and all but one pair has code that only the rule without types reports.
+            const hasBoth = untyped[index].length > rest.length;
+            const hasRest = rest.length > 0 || name === "prefer-destructuring";
+            expect([name, hasBoth, hasRest]).toEqual([name, true, true]);
+          }
+          expect(Object.fromEntries(pairs.map(([name], index) => [name, both[index]]))).toMatchInlineSnapshot(`
+            {
+              "no-implied-eval": [
+                "a.ts:1 typescript(no-implied-eval) error",
+                "a.ts:2 typescript(no-implied-eval) error",
+                "a.ts:3 eslint(no-implied-eval) error",
+                "a.ts:4 eslint(no-implied-eval) error",
+                "a.ts:5 eslint(no-implied-eval) error",
+                "a.ts:7 typescript(no-implied-eval) error",
+              ],
+              "no-throw-literal": [
+                "a.ts:3 typescript(only-throw-error) error",
+                "a.ts:4 typescript(only-throw-error) error",
+                "a.ts:5 eslint(no-throw-literal) error",
+                "a.ts:6 eslint(no-throw-literal) error",
+                "a.ts:7 eslint(no-throw-literal) error",
+                "a.ts:8 typescript(only-throw-error) error",
+              ],
+              "prefer-destructuring": [
+                "a.ts:2 eslint(prefer-destructuring) error",
+              ],
+              "prefer-promise-reject-errors": [
+                "a.ts:2 typescript(prefer-promise-reject-errors) error",
+                "a.ts:3 eslint(prefer-promise-reject-errors) error",
+                "a.ts:4 typescript(prefer-promise-reject-errors) error",
+                "a.ts:5 eslint(prefer-promise-reject-errors) error",
+                "a.ts:6 typescript(prefer-promise-reject-errors) error",
+              ],
+              "require-await": [
+                "a.ts:2 typescript(require-await) error",
+                "a.ts:3 typescript(require-await) error",
+                "a.ts:4 typescript(require-await) error",
+                "a.ts:5 typescript(require-await) error",
+                "a.ts:6 eslint(require-await) error",
+                "a.ts:8 typescript(require-await) error",
+              ],
+              "unicorn/prefer-array-find": [
+                "a.ts:10 unicorn(prefer-array-find) error",
+                "a.ts:11 unicorn(prefer-array-find) error",
+                "a.ts:12 unicorn(prefer-array-find) error",
+                "a.ts:13 unicorn(prefer-array-find) error",
+                "a.ts:14 typescript(prefer-find) error",
+                "a.ts:15 unicorn(prefer-array-find) error",
+                "a.ts:4 typescript(prefer-find) error",
+                "a.ts:5 typescript(prefer-find) error",
+                "a.ts:6 unicorn(prefer-array-find) error",
+                "a.ts:7 unicorn(prefer-array-find) error",
+                "a.ts:8 unicorn(prefer-array-find) error",
+                "a.ts:9 typescript(prefer-find) error",
+              ],
+              "unicorn/prefer-includes": [
+                "a.ts:10 unicorn(prefer-includes) error",
+                "a.ts:11 typescript(prefer-includes) error",
+                "a.ts:4 typescript(prefer-includes) error",
+                "a.ts:5 unicorn(prefer-includes) error",
+                "a.ts:6 unicorn(prefer-includes) error",
+                "a.ts:7 unicorn(prefer-includes) error",
+                "a.ts:8 unicorn(prefer-includes) error",
+                "a.ts:9 unicorn(prefer-includes) error",
+              ],
+              "unicorn/prefer-string-starts-ends-with": [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) error",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) error",
+                "a.ts:4 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:5 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:6 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:7 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:8 typescript(prefer-string-starts-ends-with) error",
+              ],
+            }
+          `);
+        });
+
+        const await_ = ["require-await", "typescript/require-await"];
+        const throw_ = ["no-throw-literal", "typescript/only-throw-error"];
+        const f = "export async function f() {\n  return 1;\n}\n";
+
+        test("without types for the file, the rule without types reports", async () => {
+          const rows = pairs
+            .slice(0, 4)
+            .map(([untyped, typed, lines]): [string, string] => [on([untyped, typed]), text(lines)]);
+          const alone = pairs.slice(0, 4).map(([untyped, , lines]): [string, string] => [on([untyped]), text(lines)]);
+          expect(await lintRows(rows, [])).toEqual(await lintRows(alone, []));
+        });
+
+        test("where the rule without types is the more severe, both report", async () => {
+          const starts = (untyped: string, typed: string) =>
+            config({
+              "unicorn/prefer-string-starts-ends-with": untyped,
+              "typescript/prefer-string-starts-ends-with": typed,
+            });
+          const code =
+            'declare const s: string;\nexport const a = /^a/.test(s);\nexport const b = s.slice(0, 1) === "a";\n';
+          const rows: [string, string][] = [
+            [starts("error", "warn"), code],
+            [starts("warn", "error"), code],
+            [starts("warn", "warn"), code],
+          ];
+          expect(await lintRows(rows, ["--type-aware"])).toMatchInlineSnapshot(`
+            [
+              [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) warning",
+                "a.ts:2 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) warning",
+              ],
+              [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) error",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) error",
+              ],
+              [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) warning",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) warning",
+              ],
+            ]
+          `);
+        });
+
+        test("comments that disable work as they do for two reports", async () => {
+          const find = ["unicorn/prefer-array-find", "typescript/prefer-find"];
+          const first = "declare const a: string[];\n";
+          const rows: [string, string][] = [
+            // A name means the rule whatever plugin it is written with.
+            [on(await_), `// oxlint-disable-next-line require-await\n${f}`],
+            [on(await_), `// oxlint-disable-next-line typescript/require-await\n${f}`],
+            [on(await_), `// oxlint-disable-next-line require-await, typescript/require-await\n${f}`],
+            // Nothing to disable.
+            [on(await_), "// oxlint-disable-next-line require-await\nexport function f() {\n  return 1;\n}\n"],
+            [on(throw_), "// oxlint-disable-next-line\nexport const a = 1;\n"],
+            // The two have different names. A comment for one leaves the report of the other, and is in use.
+            [on(throw_), '// oxlint-disable-next-line no-throw-literal\nthrow "a";\n'],
+            [on(throw_), '// oxlint-disable-next-line typescript/only-throw-error\nthrow "a";\n'],
+            [on(throw_), '// oxlint-disable-next-line no-throw-literal, typescript/only-throw-error\nthrow "a";\n'],
+            [on(throw_), '// oxlint-disable-next-line\nthrow "a";\n'],
+            [
+              on(find),
+              `${first}// oxlint-disable-next-line typescript/prefer-find\nexport const b = a.filter(Boolean)[0];\n`,
+            ],
+            [
+              on(find),
+              `${first}// oxlint-disable-next-line unicorn/prefer-array-find\nexport const b = a.filter(Boolean)[0];\n`,
+            ],
+            // The two report on different lines.
+            [
+              on(await_),
+              "export const g = async (\n  a: number,\n  // oxlint-disable-next-line require-await\n) => a;\n",
+            ],
+          ];
+          const reported = await lintRows(rows, ["--type-aware", "--report-unused-disable-directives"]);
+          expect(Object.fromEntries(rows.map(([, code], index) => [code, reported[index]]))).toMatchInlineSnapshot(`
+            {
+              "// oxlint-disable-next-line\\nexport const a = 1;\\n": [
+                "a.ts:1 undefined warning",
+              ],
+              "// oxlint-disable-next-line\\nthrow \\"a\\";\\n": [],
+              "// oxlint-disable-next-line no-throw-literal\\nthrow \\"a\\";\\n": [
+                "a.ts:2 typescript(only-throw-error) error",
+              ],
+              "// oxlint-disable-next-line no-throw-literal, typescript/only-throw-error\\nthrow \\"a\\";\\n": [],
+              "// oxlint-disable-next-line require-await\\nexport async function f() {\\n  return 1;\\n}\\n": [],
+              "// oxlint-disable-next-line require-await\\nexport function f() {\\n  return 1;\\n}\\n": [
+                "a.ts:1 undefined warning",
+              ],
+              "// oxlint-disable-next-line require-await, typescript/require-await\\nexport async function f() {\\n  return 1;\\n}\\n": [],
+              "// oxlint-disable-next-line typescript/only-throw-error\\nthrow \\"a\\";\\n": [
+                "a.ts:2 eslint(no-throw-literal) error",
+              ],
+              "// oxlint-disable-next-line typescript/require-await\\nexport async function f() {\\n  return 1;\\n}\\n": [],
+              "declare const a: string[];\\n// oxlint-disable-next-line typescript/prefer-find\\nexport const b = a.filter(Boolean)[0];\\n": [
+                "a.ts:3 unicorn(prefer-array-find) error",
+              ],
+              "declare const a: string[];\\n// oxlint-disable-next-line unicorn/prefer-array-find\\nexport const b = a.filter(Boolean)[0];\\n": [
+                "a.ts:3 typescript(prefer-find) error",
+              ],
+              "export const g = async (\\n  a: number,\\n  // oxlint-disable-next-line require-await\\n) => a;\\n": [
+                "a.ts:1 eslint(require-await) error",
+              ],
+            }
+          `);
+        });
+
+        test("a file that is linted again for a rule about several files", async () => {
+          const files = {
+            ".oxlintrc.json": config(
+              { "no-throw-literal": "error", "typescript/only-throw-error": "error", "import/named": "error" },
+              { plugins: ["unicorn", "typescript", "import"] },
+            ),
+            "tsconfig.json": tsconfig,
+            "a.ts": 'import { b } from "./b";\n// oxlint-disable-next-line no-throw-literal\nthrow `${b}`;\n',
+            "b.ts": 'export const b = 1;\nthrow "b";\n',
+          };
+          const { raw } = await lint(files, ["-f", "json", "--type-aware", "--report-unused-disable-directives"]);
+          expect(places(raw)).toMatchInlineSnapshot(`
+            [
+              "a.ts:3 typescript(only-throw-error) error",
+              "b.ts:2 typescript(only-throw-error) error",
+            ]
+          `);
+        });
+
+        test("what a hidden report would change is changed", async () => {
+          const includes = ["unicorn/prefer-includes", "typescript/prefer-includes"];
+          const destructuring = ["prefer-destructuring", "typescript/prefer-destructuring"];
+          const rows: [rules: string[], flag: string, code: string][] = [
+            [throw_, "--fix-suggestions", 'throw "a";\n'],
+            [includes, "--fix-suggestions", 'declare const a: string[];\nexport const b = a.indexOf("b") !== -1;\n'],
+            [destructuring, "--fix", 'declare const o: { a: number };\nexport const a = o["a"];\n'],
+            // The comment is for the report that has the suggestion.
+            [throw_, "--fix-suggestions", '// oxlint-disable-next-line no-throw-literal\nthrow "a";\n'],
+          ];
+          const fixed = await Promise.all(
+            rows.map(async ([rules, flag, code]) => {
+              const project = { ".oxlintrc.json": on(rules), "tsconfig.json": tsconfig, "a.ts": code };
+              return (await lint(project, ["--type-aware", flag, "a.ts"], { reads: ["a.ts"] })).files["a.ts"];
+            }),
+          );
+          expect(fixed).toMatchInlineSnapshot(`
+            [
+              
+            "throw new Error("a");
+            "
+            ,
+              
+            "declare const a: string[];
+            export const b = a.includes("b");
+            "
+            ,
+              
+            "declare const o: { a: number };
+            export const {a} = o;
+            "
+            ,
+              
+            "// oxlint-disable-next-line no-throw-literal
+            throw "a";
+            "
+            ,
+            ]
+          `);
+        });
+
+        test("a report that a file of suppressions hides hides no other", async () => {
+          const project = { ".oxlintrc.json": on(throw_), "tsconfig.json": tsconfig, "a.ts": 'throw "a";\n' };
+          const suppress = (rule: string) => lint(project, ["--type-aware", "-f", "json", "--suppress-rule", rule]);
+          const [typed, untyped] = await Promise.all([
+            suppress("typescript/only-throw-error"),
+            suppress("no-throw-literal"),
+          ]);
+          expect([places(typed.raw), places(untyped.raw)]).toMatchInlineSnapshot(`
+            [
+              [
+                "a.ts:1 eslint(no-throw-literal) error",
+              ],
+              [
+                "a.ts:1 typescript(only-throw-error) error",
+              ],
+            ]
+          `);
+        });
+
+        // Without a configuration in the working directory the formats are ESLint's, whose JSON has the suggestions.
+        test("the configuration of the file counts, not that of the working directory", async () => {
+          const project = {
+            "throw/.oxlintrc.json": on(throw_),
+            "throw/tsconfig.json": tsconfig,
+            "throw/a.ts": 'throw "a";\n',
+            // Both rules suggest the same.
+            "await/.oxlintrc.json": on(await_),
+            "await/tsconfig.json": tsconfig,
+            "await/a.ts": f,
+          };
+          const results: { messages: { ruleId: string; suggestions?: { desc: string }[] }[] }[] = JSON.parse(
+            (await lint(project, ["--type-aware", "-f", "json"])).raw,
+          );
+          const reported = results.flatMap(it =>
+            it.messages.map(it => [it.ruleId, it.suggestions?.map(it => it.desc)]),
+          );
+          expect(reported).toMatchInlineSnapshot(`
+            [
+              [
+                "@typescript-eslint/require-await",
+                [
+                  "Remove 'async'.",
+                ],
+              ],
+              [
+                "@typescript-eslint/only-throw-error",
+                [
+                  "Expected an error object to be thrown",
+                ],
+              ],
+            ]
+          `);
+        });
+
+        test("dot-notation and consistent-return have no version without types", async () => {
+          const code =
+            'declare const o: { a: number };\nexport const a = o["a"];\nexport function f(x: boolean) {\n  if (x) return 1;\n  return;\n}\n';
+          const names = ["dot-notation", "consistent-return"];
+          const rows: [string, string][] = [
+            [on(names), code],
+            [on([...names, ...names.map(it => `typescript/${it}`)]), code],
+          ];
+          const [withTypes, without] = await Promise.all([lintRows(rows, ["--type-aware"]), lintRows(rows, [])]);
+          expect({ withTypes, without }).toMatchInlineSnapshot(`
+            {
+              "withTypes": [
+                [
+                  "a.ts:2 typescript(dot-notation) error",
+                  "a.ts:5 typescript(consistent-return) error",
+                ],
+                [
+                  "a.ts:2 typescript(dot-notation) error",
+                  "a.ts:5 typescript(consistent-return) error",
+                ],
+              ],
+              "without": [
+                [],
+                [],
+              ],
+            }
+          `);
+        });
       });
 
       // Recorded from oxlint 1.87.0.
@@ -4435,11 +5070,11 @@ describe.concurrent("bun lint", () => {
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
-      // Each project is a program of its own. In four runs: one takes seconds in a debug build.
-      test.serial.each([0, 1, 2, 3])(
+      // Each project is a program of its own. In twelve runs: one takes seconds in a debug build.
+      test.serial.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])(
         "the rules that need types report what tsgolint's report: part %d",
         async part => {
-          const some = projects.filter(it => it.typed).filter((_, index) => index % 4 === part);
+          const some = projects.filter(it => it.typed).filter((_, index) => index % 12 === part);
           const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
           const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
           for (const { name, config, files: texts } of some) {
@@ -4454,6 +5089,20 @@ describe.concurrent("bun lint", () => {
         },
         isDebug || isASAN ? 120_000 : 30_000,
       );
+
+      // parentheses.json has code in parentheses that aren't needed, for the type-aware rules that used to treat it
+      // differently from the same code without them. parentheses.expected.json is what `bun lint` reports for it.
+      test("type-aware rules see through redundant parentheses", async () => {
+        const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        for (const { name, config, files: texts } of parentheses) {
+          files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
+          files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions });
+          for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
+        }
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        expect(foundExactly(raw, Object.keys(parenthesesExpected))).toEqual(parenthesesExpected);
+      });
 
       // messages.json has what oxlint 1.87.0 with tsgolint 7.0.2003 says.
       test("the rules that oxlint shares with ESLint and typescript-eslint say what oxlint's say", async () => {
@@ -4652,6 +5301,102 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(1);
       });
 
+      describe("a file that the nearest tsconfig.json does not include", () => {
+        const compilerOptions = { strict: true, lib: ["es2022"], types: [] };
+        // A promise that is declared in a project is only one in the program of that project, so what is reported in
+        // `config.ts` says which program it was. `src/b.ts` is reported in any case.
+        const files = {
+          ".oxlintrc.json": rc({ rules: { "typescript/no-floating-promises": "error" } }),
+          // Without `include` it includes everything.
+          "tsconfig.json": JSON.stringify({ compilerOptions, exclude: ["dist"] }),
+          "other/top.d.ts": "declare const ofTheTop: Promise<void>;\n",
+          "packages/tsconfig.json": JSON.stringify({ compilerOptions, include: ["between"] }),
+          "packages/between/between.d.ts": "declare const ofTheOneBetween: Promise<void>;\n",
+          "packages/a/tsconfig.json": JSON.stringify({ compilerOptions, include: ["src"] }),
+          "packages/a/all.json": JSON.stringify({ extends: "./tsconfig.json", include: ["**/*"] }),
+          "packages/a/src.json": JSON.stringify({ extends: "./tsconfig.json", include: ["src"] }),
+          "packages/a/src/a.d.ts": "declare const ofThePackage: Promise<void>;\n",
+          "packages/a/src/b.ts": "ofThePackage;\nexport {};\n",
+          "packages/a/config.ts": "ofTheTop;\nofTheOneBetween;\nofThePackage;\nexport {};\n",
+        };
+        const between = JSON.stringify({ compilerOptions, include: ["between", "a/config.ts"] });
+
+        // Without the flag this is what oxlint 1.87.0 with tsgolint 7.0.2003 does. There the flag does not change the program
+        // of a file.
+        test.each([
+          ["is in the first project upwards that includes it", {}, [], [1, 2, 3]],
+          ["is not in one further up than that", { "packages/tsconfig.json": between }, [], [2]],
+          ["is in the project of --tsconfig if that includes it", {}, ["--tsconfig", "all.json"], [3]],
+          ["is in no project if that of --tsconfig does not include it", {}, ["--tsconfig", "src.json"], []],
+        ])("%s", async (_, others, flags, lines) => {
+          const args = ["-f", "unix", "--type-aware", ...flags, "."];
+          const { stdout, stderr, exitCode } = await lint({ ...files, ...others }, args, { cwd: "packages/a" });
+          const places = stdout.split("\n").filter(it => it.includes("[Error/"));
+          expect({ places: places.map(it => it.replace(/: .* \[/, " [")), stderr, exitCode }).toEqual({
+            places: [...lines.map(line => `config.ts:${line}:1`), "src/b.ts:1:1"].map(
+              it => `${it} [Error/typescript(no-floating-promises)]`,
+            ),
+            stderr: "",
+            exitCode: 1,
+          });
+        });
+
+        const many = Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`other/${i}.ts`, "export {};\n"]));
+        const withInclude = JSON.stringify({ compilerOptions, include: ["**/*"] });
+        const warning = `warn: Loaded 1,005 files in <time> to lint 1 file: config.ts
+  ../../tsconfig.json has no "include", so every file below it is part of its project.
+  To lint faster, add "include" to it, or pass --tsconfig.`;
+        const ofFlag = `warn: Loaded 1,005 files in <time> to lint 3 files: config.ts, src/a.d.ts, src/b.ts
+  ../../tsconfig.json has no "include", so every file below it is part of its project.
+  To lint faster, add "include" to it.`;
+        test.each([
+          ["a warning says that a thousand files were loaded for it", {}, [], "packages/a", warning],
+          ["not if the tsconfig.json says what it includes", { "tsconfig.json": withInclude }, [], "packages/a", ""],
+          ["not with --tsconfig", {}, ["--tsconfig", "all.json"], "packages/a", ""],
+          ["but if that one has no include either", {}, ["--tsconfig", "../../tsconfig.json"], "packages/a", ofFlag],
+          ["not with --silent", {}, ["--silent"], "packages/a", ""],
+          ["not if they are all linted", {}, [], ".", ""],
+          // Who names the files knows that they are few.
+          ["not if the file is named", {}, ["config.ts", "src/b.ts"], "packages/a", ""],
+          ["but if a directory is named too", {}, ["src/b.ts", "."], "packages/a", warning],
+        ])("%s", async (_, others, flags, cwd, expected) => {
+          const paths = flags.some(it => it.endsWith(".ts")) ? [] : ["."];
+          const args = ["-f", "unix", "--type-aware", ...flags, ...paths];
+          const { stderr, exitCode } = await lint({ ...files, ...many, ...others }, args, { cwd });
+          expect({ stderr: stderr.replace(/ in [\d.]+m?s /, " in <time> "), exitCode }).toEqual({
+            stderr: expected,
+            exitCode: 1,
+          });
+        });
+
+        // A thousand files or more, and a hundred or more for each that is linted.
+        test.each([
+          [1000, 1, [], true],
+          [999, 1, [], false],
+          [1000, 10, [], true],
+          [1000, 11, [], false],
+          // The second pass is only about the one file that was fixed. There is none with the configuration of oxlint.
+          [1000, 11, ["--fix"], false],
+        ])("of %d files, %d are linted %j: a warning %p", async (all, linted, flags, warns) => {
+          const names = Array.from({ length: all }, (_, i) => (i < linted ? `sub/${i}.ts` : `other/${i}.ts`));
+          const { stderr, exitCode } = await lint(
+            {
+              "tsconfig.json": JSON.stringify({ compilerOptions }),
+              ...Object.fromEntries(names.map(name => [name, "export {};\n"])),
+              "sub/0.ts": "debugger;\nvar b = 1;\nexport { b };\n",
+            },
+            ["--type-aware", "--rule", "no-var: error", "--rule", "no-debugger: error", ...flags, "sub"],
+          );
+          const warnings = stderr.split("\n").filter(it => it.startsWith("warn: "));
+          const noun = linted === 1 ? "file" : "files";
+          const expected = `warn: Loaded ${all.toLocaleString("en-US")} files in <time> to lint ${linted} ${noun}:`;
+          expect({
+            warnings: warnings.map(it => it.replace(/ in [\d.]+m?s /, " in <time> ").replace(/: sub\/.*/, ":")),
+            exitCode,
+          }).toEqual({ warnings: warns ? [expected] : [], exitCode: 1 });
+        });
+      });
+
       // A file is parsed once for all projects of a run that read it alike. Each of these pairs reads it in two ways.
       describe("a file of two projects is to each what the options of the project make of it", () => {
         const project = (more: object, include: string[]) =>
@@ -4806,6 +5551,180 @@ describe.concurrent("bun lint", () => {
         },
         isDebug || isASAN ? 120_000 : 30_000,
       );
+
+      // tsgolint's fix writes code that does not parse, or that does something else. `bun lint` makes the same report and
+      // leaves the code, or writes the code that does the same.
+      test("a fix of tsgolint that changes what the code does is not copied", async () => {
+        const shapes: [rule: string, file: string, text: string, fixed?: string, options?: object][] = [
+          // One match where `match` gave all of them.
+          ["prefer-regexp-exec", "a.ts", "declare const s: string;\nexport const a = s.match(new RegExp(/x/g));\n"],
+          [
+            "prefer-regexp-exec",
+            "a.ts",
+            "declare const s: string;\nexport const a = s.match(new RegExp(/x/g, undefined));\n",
+          ],
+          // `p` is `/b+/` there, and tsgolint writes `s.includes('abc')`.
+          [
+            "prefer-includes",
+            "a.ts",
+            "declare const s: string;\nlet p = /abc/;\np = /b+/;\nexport const a = p.test(s);\n",
+          ],
+          [
+            "prefer-string-starts-ends-with",
+            "a.ts",
+            "declare const s: string;\nlet p = /^a/;\np = /b/;\nexport const a = p.test(s);\n",
+          ],
+          // `<Icons["default"] />` does not parse.
+          [
+            "dot-notation",
+            "a.tsx",
+            "declare const Icons: { default: () => null };\nexport const a = <Icons.default />;\n",
+            undefined,
+            { allowKeywords: false },
+          ],
+          // An `await` in a parameter does not parse.
+          [
+            "no-misused-spread",
+            "a.ts",
+            "declare const p: Promise<{ a: 1 }>;\nexport async function f(o = { ...p }) {\n  return o;\n}\n",
+          ],
+        ];
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        shapes.forEach(([rule, file, text, , options], index) => {
+          const it = {
+            rule: `typescript/${rule}`,
+            file,
+            text,
+            typed: true,
+            options,
+            compilerOptions: { jsx: "preserve" },
+          };
+          for (const [path, text] of Object.entries(filesOf(it))) files[`${index}/${path}`] = text;
+        });
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        const reported = shapes.map((_, index) =>
+          JSON.parse(raw)
+            .diagnostics.filter((it: { filename: string }) => it.filename.startsWith(`${index}/`))
+            .map((it: { code: string }) => it.code),
+        );
+        expect(reported).toEqual(shapes.map(([rule]) => [`typescript(${rule})`]));
+        const reads = shapes.map(([, file], index) => `${index}/${file}`);
+        const result = await lint(files, ["--fix-dangerously", "--type-aware"], { reads });
+        expect(result.files).toEqual(
+          Object.fromEntries(shapes.map(([, file, text, fixed], index) => [`${index}/${file}`, fixed ?? text])),
+        );
+      });
+
+      test("redundant parentheses don't change what a type-aware rule reports", async () => {
+        const pairs: [rule: string, plain: string, parenthesized: string, reports: number][] = [
+          [
+            "require-array-sort-compare",
+            "declare const a: number[];\na.sort();\n",
+            "declare const a: number[];\n(a.sort)();\n",
+            1,
+          ],
+          [
+            "dot-notation",
+            'declare const a: { b: number };\nexport const c = a["b"];\n',
+            'declare const a: { b: number };\nexport const c = a[("b")];\n',
+            1,
+          ],
+          [
+            "use-unknown-in-catch-callback-variable",
+            "declare const p: Promise<number>;\nvoid p.catch((e) => e);\n",
+            "declare const p: Promise<number>;\nvoid (p.catch)((e) => e);\n",
+            1,
+          ],
+          [
+            "prefer-reduce-type-parameter",
+            "declare const a: number[];\nexport const r = a.reduce((x, y) => x.concat(y), [] as number[]);\n",
+            "declare const a: number[];\nexport const r = a.reduce((x, y) => x.concat(y), ([] as number[]));\n",
+            1,
+          ],
+          ["no-implied-eval", 'setTimeout("alert(1)", 1);\n', '(setTimeout)("alert(1)", 1);\n', 1],
+          [
+            "no-duplicate-type-constituents",
+            "export function f(a?: string | undefined) {\n  return a;\n}\n",
+            "export function f(a?: (string | undefined)) {\n  return a;\n}\n",
+            1,
+          ],
+          [
+            "prefer-regexp-exec",
+            "declare const s: string;\nexport const m = s.match(/x/);\n",
+            "declare const s: string;\nexport const m = (s.match)(/x/);\n",
+            1,
+          ],
+          [
+            "prefer-regexp-exec",
+            'declare const s: string;\nconst r = RegExp("a");\nexport const m = s.match(r);\n',
+            'declare const s: string;\nconst r = (RegExp)("a");\nexport const m = s.match(r);\n',
+            1,
+          ],
+          [
+            "await-thenable",
+            "export async function f() {\n  await Promise.all([1, 2]);\n}\n",
+            "export async function f() {\n  await Promise.all(([1, 2]));\n}\n",
+            2,
+          ],
+        ];
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        pairs.forEach(([rule, plain, parenthesized], index) => {
+          for (const [name, text] of [
+            ["plain", plain],
+            ["parenthesized", parenthesized],
+          ]) {
+            const it = { rule: `typescript/${rule}`, file: "a.ts", text, typed: true };
+            for (const [path, text] of Object.entries(filesOf(it))) files[`${index}-${name}/${path}`] = text;
+          }
+        });
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        const reported = (directory: string) =>
+          JSON.parse(raw)
+            .diagnostics.filter((it: { filename: string }) => it.filename.startsWith(`${directory}/`))
+            .map((it: { code: string }) => it.code);
+        const expected = pairs.map(([rule, , , reports]) =>
+          Array.from({ length: reports }, () => `typescript(${rule})`),
+        );
+        expect(pairs.map((_, index) => reported(`${index}-plain`))).toEqual(expected);
+        expect(pairs.map((_, index) => reported(`${index}-parenthesized`))).toEqual(expected);
+      });
+
+      test("unbound-method knows RegExp.escape and the other newer built-ins that are bound", async () => {
+        const it = {
+          rule: "typescript/unbound-method",
+          file: "a.ts",
+          text: "export const all = [RegExp.escape, Atomics.pause, Math.f16round, Intl.DurationFormat];\n",
+          typed: true,
+          compilerOptions: { lib: ["esnext"] },
+        };
+        const { raw } = await lint(filesOf(it), ["-f", "json", "--type-aware"]);
+        expect(JSON.parse(raw).diagnostics.map((it: { code: string }) => it.code)).toEqual([]);
+      });
+
+      test("what is left after the fixes is reported once, where it was", async () => {
+        const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } });
+        const { files, raw } = await lint(
+          {
+            ".oxlintrc.json": JSON.stringify({
+              plugins: ["typescript"],
+              categories: { correctness: "off" },
+              rules: { "no-var": "error", "no-debugger": "error", "typescript/await-thenable": "error" },
+            }),
+            "tsconfig.json": tsconfig,
+            // `var` becomes `const` twice: a name that is declared twice, which is not said about the text that is written.
+            "a.ts": "var a = 1; debugger;\nvar a = 2;\nexport async function f() {\n  await a;\n}\n",
+          },
+          ["--fix", "--type-aware", "-f", "json"],
+          { reads: ["a.ts"] },
+        );
+        expect(files).toEqual({
+          "a.ts": "const a = 1; debugger;\nconst a = 2;\nexport async function f() {\n  await a;\n}\n",
+        });
+        const places = JSON.parse(raw).diagnostics.map(
+          (it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`,
+        );
+        expect(places.sort()).toEqual(["a.ts:1:12 eslint(no-debugger)", "a.ts:4:9 typescript(await-thenable)"]);
+      });
 
       test("the options that oxlint accepts are accepted", async () => {
         // A configuration that is refused ends the run. options.json is what oxlint 1.87.0 accepts. Each of the configurations has

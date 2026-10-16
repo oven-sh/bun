@@ -92,7 +92,7 @@ lists! {
     import_attributes: (u32, ExprId),
     deferred_import_calls: (ExprId, u32),
     import_call_type_args: (ExprId, IdList<TypeNodeId>),
-    comments: (u32, u32),
+    comments: Comment,
     diagnostics: Diagnostic,
     specifier_uses: SpecifierUse,
 }

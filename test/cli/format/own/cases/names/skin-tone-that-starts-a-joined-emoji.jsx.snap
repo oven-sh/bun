@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+a = (
+  <Translate>
+    🏻‍🌾 Work in progress React developer, maintains Docusaurus, writes docs and
+    spams this world with many websites.
+  </Translate>
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a = (
+  <Translate>
+    🏻‍🌾 Work in progress React developer, maintains Docusaurus, writes docs and spams this world with
+    many websites.
+  </Translate>
+);
+
+===================== End =====================

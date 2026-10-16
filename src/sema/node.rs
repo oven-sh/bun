@@ -24,7 +24,7 @@ use crate::check::spans::{
     jsx_identifier_end, skip_trivia, skip_trivia_back, start_of_token_before,
 };
 use crate::hir::*;
-use crate::session::{Arena, ArenaBox};
+use crate::util::SharedSort;
 use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
 
@@ -317,7 +317,7 @@ macro_rules! node_vectors {
         const VECTORS: usize = [$($index),*].len();
 
         /// The first handle of the HIR nodes of each vector, and the end of the last vector.
-        #[derive(Copy, Clone, Default)]
+        #[derive(Copy, Clone, Default, Debug)]
         pub struct NodeBases([u32; VECTORS + 1]);
 
         impl File<'_> {
@@ -419,13 +419,19 @@ node_vectors! {
 }
 
 /// `node.Parent` for every node of a file.
-pub struct Parents<'s> {
+pub struct Parents {
     /// Indexed by HIR node: one load.
-    rows: ArenaBox<'s, [Node]>,
+    rows: Box<[Node]>,
     /// The parents of the `TemplateSpan` and the `JsxExpression` around an expression and of the
     /// `QualifiedName` that ends with a name, which are themselves the entry in `rows` for that
     /// expression or name. Sorted.
-    around: ArenaBox<'s, [(Node, Node)]>,
+    around: Box<[(Node, Node)]>,
+}
+
+/// The node of every function and of every class of a file.
+pub struct Owners {
+    fns: Box<[Node]>,
+    classes: Box<[Node]>,
 }
 
 /// A typed id that is, or belongs to, a node.
@@ -507,14 +513,15 @@ impl ToNode for ExprId {
 impl ToNode for FnId {
     #[inline]
     fn to_node(self, file: &File) -> Node {
-        file.fn_nodes.get(self.idx()).copied().unwrap_or(Node::NONE)
+        let function = file.owners().fns.get(self.idx());
+        function.copied().unwrap_or(Node::NONE)
     }
 }
 
 impl ToNode for ClassId {
     #[inline]
     fn to_node(self, file: &File) -> Node {
-        let class = file.class_nodes.get(self.idx());
+        let class = file.owners().classes.get(self.idx());
         class.copied().unwrap_or(Node::NONE)
     }
 }
@@ -1219,8 +1226,8 @@ impl<'s> File<'s> {
     }
 
     #[inline]
-    fn parents(&self) -> &Parents<'s> {
-        self.lazy.parents.get_or_init(|| self.parents_of_all())
+    fn parents(&self) -> &Parents {
+        (self.lazy.cells.parents).get_or_init(|| self.parents_of_all())
     }
 
     /// `node.Parent`. `NONE` for the file, and for a HIR node that is unreachable from the file.
@@ -1355,7 +1362,7 @@ impl<'s> File<'s> {
     /// with the same child (a HIR node that is not a tsgo node, or that is unreachable, has the
     /// children of the node around it) the later one is the tsgo node, and overwrites the earlier.
     #[cold]
-    fn parents_of_all(&self) -> Parents<'s> {
+    fn parents_of_all(&self) -> Parents {
         let total = self.bases.0[VECTORS];
         let mut rows = vec![Node::NONE; total as usize];
         let mut around = Vec::new();
@@ -1415,7 +1422,7 @@ impl<'s> File<'s> {
             }
         }
         // The later entry wins here too.
-        around.sort_by_key(|&(inner, _)| inner);
+        around.shared_sort_by_key(|&(inner, _)| inner);
         around.dedup_by(|later, kept| {
             let is_same = later.0 == kept.0;
             if is_same {
@@ -1423,10 +1430,9 @@ impl<'s> File<'s> {
             }
             is_same
         });
-        let arena = self.lazy.session.arena();
         Parents {
-            rows: ArenaBox::copy_from_slice_in(&rows, arena),
-            around: ArenaBox::copy_from_slice_in(&around, arena),
+            rows: rows.into(),
+            around: around.into(),
         }
     }
 
@@ -1600,6 +1606,12 @@ impl<'s> File<'s> {
                 ) => label,
                 _ => Atom::NONE,
             },
+            NodeData::Part(Part::Specifier, row) => match statement(row) {
+                Some(StmtKind::Import(i)) => self[i].spec,
+                Some(StmtKind::ExportNamed(x)) => self[x].spec,
+                Some(StmtKind::ExportStar { spec, .. }) => spec,
+                _ => Atom::NONE,
+            },
             NodeData::Part(Part::BindingsName, row) => match statement(row) {
                 Some(StmtKind::Import(i)) => self[i].namespace,
                 Some(StmtKind::ExportStar { alias, .. }) => alias,
@@ -1769,6 +1781,16 @@ impl<'s> File<'s> {
     /// Computes the data that `node` and `data` read. No HIR node is added afterwards.
     pub fn finish_nodes(&mut self) {
         self.bases = self.node_bases();
+    }
+
+    #[inline]
+    fn owners(&self) -> &Owners {
+        (self.lazy.cells.owners).get_or_init(|| self.owners_of_all())
+    }
+
+    /// Computed when the first is requested: a linter without types requests none.
+    #[cold]
+    fn owners_of_all(&self) -> Owners {
         let mut fn_nodes = vec![Node::NONE; self.fns.len()];
         let mut class_nodes = vec![Node::NONE; self.classes.len()];
         for (i, statement) in self.stmts.iter().enumerate() {
@@ -1803,9 +1825,10 @@ impl<'s> File<'s> {
                 _ => {}
             }
         }
-        let arena = self.arena();
-        self.fn_nodes = copy_to_arena(&mut fn_nodes, arena);
-        self.class_nodes = copy_to_arena(&mut class_nodes, arena);
+        Owners {
+            fns: fn_nodes.into(),
+            classes: class_nodes.into(),
+        }
     }
 
     /// `node.Kind`
@@ -2645,7 +2668,7 @@ impl Places {
     /// Nested or overlapping ranges are merged.
     pub fn new(ranges: impl Iterator<Item = TextRange>) -> Places {
         let mut ranges: Vec<TextRange> = ranges.collect();
-        ranges.sort_unstable_by_key(|range| range.pos);
+        ranges.shared_sort_unstable_by_key(|range| range.pos);
         ranges.dedup_by(|next, kept| {
             let is_in_it = next.pos < kept.end;
             kept.end = if is_in_it {
@@ -2658,8 +2681,8 @@ impl Places {
         Places(ranges)
     }
 
-    pub fn into_arena(self, arena: &Arena) -> Places<ArenaBox<'_, [TextRange]>> {
-        Places(ArenaBox::copy_from_slice_in(&self.0, arena))
+    pub fn at_its_size(self) -> Places<Box<[TextRange]>> {
+        Places(self.0.into())
     }
 }
 
@@ -2668,6 +2691,11 @@ impl<R: std::ops::Deref<Target = [TextRange]>> Places<R> {
     pub fn contain(&self, pos: u32) -> bool {
         let after = self.0.partition_point(|range| range.pos <= pos);
         after > 0 && pos < self.0[after - 1].end
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -2724,7 +2752,7 @@ impl File<'_> {
     /// Every `Identifier` whose text is one of `Atom::is_keyword_identifier`, in source order,
     /// except those for which `is_identifier_name` is true, of which only some are included.
     pub fn keyword_identifiers(&self) -> &[Node] {
-        self.lazy.keyword_identifiers.get_or_init(|| {
+        self.lazy.cells.keyword_identifiers.get_or_init(|| {
             let mut found = Vec::new();
             for &pos in self.keyword_identifier_positions.iter() {
                 // Descends from the file, at each level into the last child that does not start
@@ -2747,9 +2775,9 @@ impl File<'_> {
                     node = inside;
                 }
             }
-            found.sort_unstable_by_key(|&node| (self.start(node), node));
+            found.shared_sort_unstable_by_key(|&node| (self.start(node), node));
             found.dedup();
-            ArenaBox::copy_from_slice_in(&found, self.lazy.session.arena())
+            found.into()
         })
     }
 
@@ -3305,8 +3333,8 @@ impl File<'_> {
 
     /// The ranges in which `isInAmbientOrTypeNode` is true: the interfaces, type aliases and type
     /// literals, and the `declare` declarations.
-    fn ambient_or_type_places(&self) -> &Places<ArenaBox<'_, [TextRange]>> {
-        self.lazy.ambient_or_type_places.get_or_init(|| {
+    fn ambient_or_type_places(&self) -> &Places<Box<[TextRange]>> {
+        self.lazy.cells.ambient_or_type_places.get_or_init(|| {
             let statements = self.stmts.iter().enumerate().filter(|&(s, statement)| {
                 matches!(
                     statement.kind,
@@ -3329,8 +3357,29 @@ impl File<'_> {
                         end: if node.end == 0 { u32::MAX } else { node.end },
                     })),
             )
-            .into_arena(self.lazy.session.arena())
+            .at_its_size()
         })
+    }
+
+    /// Whether `e` begins in what a class extends.
+    pub fn is_in_class_extends(&self, e: ExprId) -> bool {
+        let places = self.lazy.cells.class_extends_places.get_or_init(|| {
+            let bases = self.classes.iter().flat_map(|class| {
+                std::iter::once(class.extends).chain(self.ids(class.other_extends))
+            });
+            let bases = bases.filter(|base| base.is_some());
+            // One whose end is unknown extends to the end.
+            Places::new(bases.map(|base| TextRange {
+                pos: self[base].pos,
+                end: if self[base].end == 0 {
+                    u32::MAX
+                } else {
+                    self[base].end
+                },
+            }))
+            .at_its_size()
+        });
+        places.contain(self[e].pos)
     }
 
     /// `isInAmbientOrTypeNode`, in one walk up the parents. A node that starts outside every such
@@ -3393,8 +3442,23 @@ impl File<'_> {
         found.is_some()
     }
 
-    /// `IsInTypeQuery`. The operand of a `typeof` in a type is stored as an expression.
+    /// `IsInTypeQuery`. The operand of a `typeof` in a type is stored as an expression. A node that starts outside every
+    /// `typeof` type needs no walk, which from each link of `a.b.b ..` is as long as what is left of the chain.
     pub fn is_in_type_query(&self, mut node: Node) -> bool {
+        let places = self.lazy.cells.type_query_places.get_or_init(|| {
+            let queries = self.types.iter();
+            let queries = queries.filter(|node| matches!(node.kind, TypeNodeKind::Typeof { .. }));
+            // One whose end is unknown extends to the end.
+            Places::new(queries.map(|node| TextRange {
+                pos: node.pos,
+                end: if node.end == 0 { u32::MAX } else { node.end },
+            }))
+            .at_its_size()
+        });
+        // Where a name begins is not known without the text. It is in the node that it is the name of.
+        if places.is_empty() || !places.contain(self.start(node.row())) {
+            return false;
+        }
         loop {
             match self.data(node) {
                 NodeData::Expr(e)

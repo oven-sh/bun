@@ -1236,3 +1236,26 @@ jsimd_ycc_extrgbx_convert_avx2           [AVX, AVX2]
 jsimd_ycc_extxbgr_convert_avx2           [AVX, AVX2]
 jsimd_ycc_extxrgb_convert_avx2           [AVX, AVX2]
 jsimd_ycc_rgb_convert_avx2               [AVX, AVX2]
+
+# ----------------------------------------------------------------------------
+# Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun fmt`. Gate: hwy::SupportedTargets via CPUID.
+# (18 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::ScannerRunStopsImpl       [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::LineStartsImpl            [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::OddBlocksImpl             [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX3::ScannerRunStopsImpl       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX3::LineStartsImpl            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX3::OddBlocksImpl             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX10_2::ScannerRunStopsImpl    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX10_2::LineStartsImpl         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX10_2::OddBlocksImpl          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_DL::ScannerRunStopsImpl    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_DL::LineStartsImpl         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_DL::OddBlocksImpl          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_SPR::ScannerRunStopsImpl   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_SPR::LineStartsImpl        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_SPR::OddBlocksImpl         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_ZEN4::ScannerRunStopsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_ZEN4::LineStartsImpl       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_ZEN4::OddBlocksImpl        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]

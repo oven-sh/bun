@@ -4,12 +4,13 @@
 // CTX, not one per connection. The cache holds zero refs — when the last
 // real owner drops, BoringSSL's ex_data free callback tombstones the entry.
 import { expect, test } from "bun:test";
+import { X509Certificate } from "node:crypto";
 import { once } from "node:events";
 import tls from "node:tls";
 // debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
-import { tempDir, tls as tlsCerts } from "harness";
-import { readFileSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, expiredTls, tempDir, tls as tlsCerts } from "harness";
+import { readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 async function withServer(fn: (port: number) => Promise<void>) {
@@ -211,6 +212,91 @@ test("file-backed config: in-place rotation invalidates cache (mtime+size in dig
   });
 });
 
+test("file-backed config: a relative path is keyed on the cwd at the time of the call", async () => {
+  // Same name, size and mtime in both directories, so only the resolved path tells the files apart in the digest.
+  const pad = (a: string, b: string) => a.padEnd(Math.max(a.length, b.length), "\n");
+  using dir = tempDir("ssl-ctx-cafile-cwd", {
+    "valid/cert.pem": pad(tlsCerts.cert, expiredTls.cert),
+    "valid/key.pem": pad(tlsCerts.key, expiredTls.key),
+    "expired/cert.pem": pad(expiredTls.cert, tlsCerts.cert),
+    "expired/key.pem": pad(expiredTls.key, tlsCerts.key),
+  });
+  for (const file of ["valid/cert.pem", "valid/key.pem", "expired/cert.pem", "expired/key.pem"]) {
+    utimesSync(join(String(dir), file), 1_700_000_000, 1_700_000_000);
+  }
+
+  using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: tlsCerts, fetch: () => new Response("OK") });
+  const script = `
+    import tls from "node:tls";
+    import { once } from "node:events";
+    const pinned = [];
+    function viaBunConnect() {
+      return new Promise(resolve => {
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: ${server.port},
+          tls: { caFile: "cert.pem" },
+          socket: {
+            open(s) { pinned.push(s); },
+            handshake(s, ok, err) { resolve(ok ? "OK" : err.code); },
+            error(s, err) { resolve(err.code); },
+            connectError(s, err) { resolve(err.code); },
+            data() {},
+            close() {},
+          },
+        }).catch(err => resolve(err.code));
+      });
+    }
+    function viaNodeTls() {
+      return new Promise(resolve => {
+        const s = tls.connect({ host: "127.0.0.1", port: ${server.port}, caFile: "cert.pem", servername: "localhost" });
+        pinned.push(s);
+        s.once("secureConnect", () => resolve("OK"));
+        s.once("error", err => resolve(err.code));
+      });
+    }
+    const mtls = tls.createServer({ key: process.env.KEY, cert: process.env.CERT, requestCert: true, rejectUnauthorized: false });
+    await once(mtls.listen(0, "127.0.0.1"), "listening");
+    async function clientCertificate() {
+      const seen = once(mtls, "secureConnection");
+      pinned.push(
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: mtls.address().port,
+          tls: { keyFile: "key.pem", certFile: "cert.pem", rejectUnauthorized: false },
+          socket: { data() {} },
+        }),
+      );
+      return (await seen)[0].getPeerCertificate().valid_to;
+    }
+    const out = {};
+    for (const [name, attempt] of [["connect", viaBunConnect], ["tls", viaNodeTls], ["clientCert", clientCertificate]]) {
+      out[name] = [];
+      for (const cwd of ["valid", "expired", "valid"]) {
+        process.chdir(process.env.DIR + "/" + cwd);
+        out[name].push(await attempt());
+      }
+    }
+    console.log(JSON.stringify(out));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, DIR: String(dir), KEY: tlsCerts.key, CERT: tlsCerts.cert },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const validTo = (pem: string) => new X509Certificate(pem).validTo;
+  expect(stdout ? JSON.parse(stdout) : stderr).toEqual({
+    connect: ["OK", "DEPTH_ZERO_SELF_SIGNED_CERT", "OK"],
+    tls: ["OK", "DEPTH_ZERO_SELF_SIGNED_CERT", "OK"],
+    clientCert: [validTo(tlsCerts.cert), validTo(expiredTls.cert), validTo(tlsCerts.cert)],
+  });
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test("addCACert on one user-facing context does not affect another with identical options", () => {
   const a = tls.createSecureContext({});
   const b = tls.createSecureContext({});
@@ -331,6 +417,40 @@ test("ca: [] skips the setDefaultCACertificates override (distinct from ca: unde
   }
 });
 
+test("setDefaultCACertificates() applies to a server whose ca is falsy, as to one with no ca", async () => {
+  // tls.Server counts a falsy ca as absent:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1451-L1454
+  const keys = (f: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", f), "utf8");
+  const agent1 = { key: keys("agent1-key.pem"), cert: keys("agent1-cert.pem") };
+  const prevCerts = tls.getCACertificates("default");
+  tls.setDefaultCACertificates([keys("ca1-cert.pem")]);
+  try {
+    for (const ca of ["", false, 0]) {
+      const server = tls.createServer({ ...agent1, ca, requestCert: true, rejectUnauthorized: false } as any);
+      try {
+        const authorized = Promise.withResolvers<boolean>();
+        server.on("secureConnection", socket => {
+          authorized.resolve(socket.authorized);
+          socket.end();
+        });
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const port = (server.address() as import("net").AddressInfo).port;
+        // ca1, now a process default, issued the client's certificate.
+        const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...agent1 });
+        await once(client, "secureConnect");
+        expect([ca, await authorized.promise]).toEqual([ca, true]);
+        client.end();
+        await once(client, "close");
+      } finally {
+        server.close();
+      }
+    }
+  } finally {
+    tls.setDefaultCACertificates(prevCerts);
+  }
+});
+
 test("setDefaultCACertificates() applies to a server's client-cert verification (no explicit ca)", async () => {
   // The server path (setSecureContext -> Bun.listen) does not go through
   // InternalSecureContext; the process-default override must still apply so
@@ -375,31 +495,36 @@ test("setDefaultCACertificates() applies to a server's client-cert verification 
   }
 });
 
-// `tls.Server.close()` must release the listener's SSL_CTX ref immediately.
-// It used to be dropped only when the GC finalized the Listener, so a `Server`
-// the program still references — or any server at process exit — kept its CTX
+// stop(), which `tls.Server.close()` calls, must release the listener's SSL_CTX ref immediately.
+// It used to be dropped only when the GC finalized the Listener, so a listener
+// the program still references — or any at process exit — kept its CTX
 // alive. That is the leak `leak:create_ssl_context_from_bun_options` used to
 // suppress. The listen socket up_refs its own ref in
 // `us_internal_init_listen_socket` and each accepted socket's `SSL_new()` takes
-// another, so releasing at close() cannot dangle.
-test("tls.Server.close() releases the listener's SSL_CTX without waiting for GC", async () => {
+// another, so releasing at stop() cannot dangle.
+test("Listener.stop() releases its SSL_CTX without waiting for GC", () => {
+  // A tls.Server's listener serves the Server's own context, which outlives close(). One from
+  // Bun.listen() is the only owner of the context it builds, so the count shows its reference.
   Bun.gc(true);
   const before = sslCtxLiveCount();
 
-  // Hold strong references so the GC can never finalize these Listeners; a
-  // distinct `sessionTimeout` per server gives each its own cache entry.
-  const kept: tls.Server[] = [];
+  // Hold strong references so the GC can never finalize these Listeners.
+  const kept: Bun.TCPSocketListener[] = [];
+  let peak = 0;
   for (let i = 0; i < 5; i++) {
-    const server = tls.createServer({ ...tlsCerts, sessionTimeout: 100 + i });
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    server.close();
-    await once(server, "close");
-    kept.push(server);
+    const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls: tlsCerts, socket: { data() {} } });
+    kept.push(listener);
+    peak = Math.max(peak, sslCtxLiveCount() - before);
+    listener.stop();
   }
 
-  // No Bun.gc() here on purpose: the point is that close() alone frees them.
-  expect({ leaked: sslCtxLiveCount() - before, servers: kept.length }).toEqual({ leaked: 0, servers: 5 });
+  // No Bun.gc() here on purpose: the point is that stop() alone frees them.
+  // `peak: 1` proves each listener did hold a context of its own meanwhile.
+  expect({ leaked: sslCtxLiveCount() - before, peak, listeners: kept.length }).toEqual({
+    leaked: 0,
+    peak: 1,
+    listeners: 5,
+  });
 });
 
 // Releasing at close() must not pull the CTX out from under a socket the
@@ -424,4 +549,99 @@ test("a connection accepted before close() keeps working after it", async () => 
   const [echoed] = await once(client, "data");
   expect(echoed.toString()).toBe("ping");
   client.destroy();
+});
+
+test("fetch takes a context of its own per tls.DEFAULT_CIPHERS, and none while nothing is assigned", async () => {
+  const script = `
+    import tls from "node:tls";
+    import { sslCtxLiveCount } from "bun:internal-for-testing";
+    using server = Bun.serve({ port: 0, tls: ${JSON.stringify(tlsCerts)}, fetch: () => new Response("ok") });
+    const request = () => fetch(server.url, { keepalive: false, tls: { rejectUnauthorized: false } }).then(res => res.text());
+    await request(); // the server's context and the default one of fetch
+    const created = [];
+    for (const list of [undefined, undefined, "ECDHE-RSA-AES256-GCM-SHA384", undefined, "ECDHE-RSA-AES128-GCM-SHA256", undefined]) {
+      if (list) tls.DEFAULT_CIPHERS = list;
+      const before = sslCtxLiveCount();
+      await request();
+      created.push(sslCtxLiveCount() - before);
+    }
+    console.log(JSON.stringify(created));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Nothing assigned x2, a first list and the same again, a second list and the same again.
+  expect(JSON.parse(stdout)).toEqual([0, 0, 1, 0, 1, 0]);
+  expect(exitCode).toBe(0);
+});
+
+test("the default client context follows tls.DEFAULT_CIPHERS, and the one it replaces is released", async () => {
+  using dir = tempDir("ssl-ctx-default-client", { "ca.pem": tlsCerts.cert });
+  const script = `
+    import tls from "node:tls";
+    import { once } from "node:events";
+    import { sslCtxLiveCount } from "bun:internal-for-testing";
+    using server = Bun.serve({
+      port: 0,
+      tls: ${JSON.stringify(tlsCerts)},
+      fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("no")),
+      websocket: { message: (ws, message) => void ws.send(message) },
+    });
+    async function open() {
+      const ws = new WebSocket("wss://localhost:" + server.port + "/");
+      await once(ws, "open");
+      return ws;
+    }
+    async function close(ws) {
+      ws.close();
+      await once(ws, "close");
+    }
+    function assign(list) {
+      tls.DEFAULT_CIPHERS = list;
+      Bun.gc(true); // the context the setter validates the list with
+    }
+    const deltas = {};
+    async function step(name, expected, run) {
+      const before = sslCtxLiveCount();
+      await run();
+      // A closed socket is freed a few turns of the loop after its 'close' event.
+      for (let i = 0; i < 1000 && sslCtxLiveCount() - before !== expected; i++) await new Promise(setImmediate);
+      deltas[name] = sslCtxLiveCount() - before;
+    }
+    let kept;
+    await step("first connection", 1, async () => void (kept = await open()));
+    await step("second connection", 0, async () => close(await open()));
+    await step("assignment while a connection is open", 0, () => assign("ECDHE-RSA-AES256-GCM-SHA384"));
+    await step("that connection still works", 0, async () => {
+      kept.send("ping");
+      if ((await once(kept, "message"))[0].data !== "ping") throw new Error("no echo");
+    });
+    await step("connection after the assignment", 1, async () => close(await open()));
+    await step("another one", 0, async () => close(await open()));
+    await step("the first connection closes", -1, () => close(kept));
+    await step("reassignment", -1, () => assign("ECDHE-RSA-AES128-GCM-SHA256"));
+    await step("connection after the reassignment", 1, async () => close(await open()));
+    console.log(JSON.stringify(deltas));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(String(dir), "ca.pem") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "first connection": 1,
+    "second connection": 0,
+    "assignment while a connection is open": 0,
+    "that connection still works": 0,
+    "connection after the assignment": 1,
+    "another one": 0,
+    "the first connection closes": -1,
+    "reassignment": -1,
+    "connection after the reassignment": 1,
+  });
+  expect(exitCode).toBe(0);
 });

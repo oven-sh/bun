@@ -229,7 +229,7 @@ pub struct RareData {
     /// CTX. Cached separately so the hot `tls:true` / `wss://` path skips even the
     /// SHA-256 + map lookup. Ref owned here. Lazy-init body lives in
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
-    /// Held for the VM's lifetime so the weak-cache entry never tombstones.
+    /// Held until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
     pub default_client_ssl_ctx: Option<boring::OwnedSslCtx>,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
@@ -820,6 +820,8 @@ impl RareData {
         owned.extend_from_slice(ciphers);
         owned.push(0);
         self.tls_default_ciphers = Some(owned.into_boxed_slice());
+        // Built from the previous list. Open connections hold their own reference.
+        self.default_client_ssl_ctx = None;
     }
 
     pub fn push_cleanup_hook(

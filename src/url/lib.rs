@@ -192,15 +192,6 @@ pub enum AuthorityEnd {
     SlashQueryOrHash,
 }
 
-/// What `pathname` keeps of a path that starts with `//`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum LeadingSlashes {
-    /// One `/`.
-    Collapse,
-    /// Every `/`. For a path that is signed: the request target must be the bytes of the signature.
-    Keep,
-}
-
 // URL is a pure view struct — every field is a slice into `href` (or a
 // literal default).
 #[derive(Clone)]
@@ -484,10 +475,9 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// `bucket/key` of `s3://bucket/key`. A string without a protocol is returned whole.
     pub fn s3_path(&self) -> &'a [u8] {
         if !self.protocol.is_empty() && self.href.len() > self.protocol.len() + 2 {
-            &self.href[self.protocol.len() + 3..]
+            &self.href[self.protocol.len() + 2..]
         } else {
             self.href
         }
@@ -699,28 +689,15 @@ impl<'a> URL<'a> {
 
     /// Reads the authority as `new URL()` reads it. See [`URL::parse_single_reader`] for the other rule.
     pub fn parse(base: &'a [u8]) -> URL<'a> {
-        Self::parse_with(base, AuthorityEnd::LikeNewURL, LeadingSlashes::Collapse)
+        Self::parse_with(base, AuthorityEnd::LikeNewURL)
     }
 
     /// `parse` for a string this parser alone reads, where a `\` before the `@` is userinfo.
     pub fn parse_single_reader(base: &'a [u8]) -> URL<'a> {
-        Self::parse_with(
-            base,
-            AuthorityEnd::SlashQueryOrHash,
-            LeadingSlashes::Collapse,
-        )
+        Self::parse_with(base, AuthorityEnd::SlashQueryOrHash)
     }
 
-    /// `parse` whose `pathname` is the path as written, so `http://h//a` is sent as `//a`.
-    pub fn parse_keeping_leading_slashes(base: &'a [u8]) -> URL<'a> {
-        Self::parse_with(base, AuthorityEnd::LikeNewURL, LeadingSlashes::Keep)
-    }
-
-    fn parse_with(
-        base: &'a [u8],
-        authority_end: AuthorityEnd,
-        leading_slashes: LeadingSlashes,
-    ) -> URL<'a> {
+    fn parse_with(base: &'a [u8], authority_end: AuthorityEnd) -> URL<'a> {
         if base.is_empty() {
             return URL::default();
         }
@@ -847,7 +824,6 @@ impl<'a> URL<'a> {
         const SLASH_SLASH: u16 = u16::from_le_bytes(*b"//");
         while url.pathname.len() > 1
             && u16::from_le_bytes([url.pathname[0], url.pathname[1]]) == SLASH_SLASH
-            && leading_slashes == LeadingSlashes::Collapse
         {
             url.pathname = &url.pathname[1..];
         }
@@ -1887,28 +1863,6 @@ mod tests {
         assert_eq!(url.path, b"/path");
         assert_eq!(url.search, b"?q=1");
         assert_eq!(url.hash, b"#frag?x=2");
-    }
-
-    #[test]
-    fn leading_slashes_of_the_path_are_kept_only_on_request() {
-        let url = URL::parse_keeping_leading_slashes(b"http://localhost:3000//dir?x=1#frag");
-        assert_eq!((url.hostname, url.port), (&b"localhost"[..], &b"3000"[..]));
-        assert_eq!(url.pathname, b"//dir?x=1");
-        assert_eq!(url.search, b"?x=1");
-        assert_eq!(
-            URL::parse_keeping_leading_slashes(b"http://localhost:3000//").pathname,
-            b"//"
-        );
-        assert_eq!(
-            URL::parse_keeping_leading_slashes(b"http://localhost:3000/a//b").pathname,
-            b"/a//b"
-        );
-
-        assert_eq!(
-            URL::parse(b"http://localhost:3000//dir?x=1").pathname,
-            b"/dir?x=1"
-        );
-        assert_eq!(URL::parse(b"http://localhost:3000//").pathname, b"/");
     }
 
     #[test]

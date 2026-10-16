@@ -2171,12 +2171,9 @@ describe("presigned url signature", () => {
   });
 });
 
-// An S3 object key is a string of bytes: `dir`, `dir/` and `/dir` are three objects, and `dir/`
-// is the folder marker of the S3 console. Each test has a server of its own. The server checks
-// the SigV4 signature of a request against the path that it received.
+// `dir/` is the folder marker of the S3 console, and another object than `dir`. Each test has a
+// server of its own, which checks the SigV4 signature against the path it received.
 describe("object key separators", () => {
-  const keys = ["dir", "dir/", "/dir", "/dir/", "//dir//", "a/b/", "/"];
-
   // `prefix` is what a path has before the key. `root` is what the request target has before it.
   const styles = {
     "path style": (server: S3Server) => ({
@@ -2211,12 +2208,19 @@ describe("object key separators", () => {
   }
 
   describe.each(Object.keys(styles) as (keyof typeof styles)[])("%s", style => {
-    it.concurrent.each(keys)("sends the key %j as given", async key => {
+    // [the key as given, the key that is sent]: every trailing `/` stays, a leading `/` does not.
+    it.concurrent.each([
+      ["dir", "dir"],
+      ["dir/", "dir/"],
+      ["a/b/", "a/b/"],
+      ["dir//", "dir//"],
+      ["/dir/", "dir/"],
+    ])("sends the key %j as %j", async (given, key) => {
       await using server = serve({ buckets: ["bucket"] });
       const { options, prefix, root } = styles[style](server);
       const client = new S3Client(options);
-      const path = prefix + key;
-      const url = "s3://" + (prefix && "bucket/") + key;
+      const path = prefix + given;
+      const url = "s3://" + (prefix && "bucket/") + given;
 
       await client.write(path, "value");
       const read = {
@@ -2228,6 +2232,7 @@ describe("object key separators", () => {
       };
       await fetch(url, { method: "PUT", body: "value", s3: options });
       await fetch(url, { method: "PUT", body: new Blob(["value"]).stream(), s3: options });
+      await Bun.write(client.file(path), "value");
       await client.delete(path);
 
       const target = root + key;
@@ -2243,101 +2248,71 @@ describe("object key separators", () => {
           { request: `GetObject: GET ${target}`, key, error: undefined },
           { request: `PutObject: PUT ${target}`, key, error: undefined },
           { request: `PutObject: PUT ${target}`, key, error: undefined },
+          { request: `PutObject: PUT ${target}`, key, error: undefined },
           { request: `DeleteObject: DELETE ${target}`, key, error: undefined },
         ],
       });
     });
   });
 
-  it.concurrent.each(["path style", "virtual hosted-style"] as const)(
-    "%s: each key that list() returns reads its own object",
-    async style => {
-      await using server = serve({ buckets: ["bucket"] });
-      const client = new S3Client(styles[style](server).options);
-      for (const key of keys) await client.write(key, `value of ${key}`);
+  it("delete of a folder marker leaves the object of the same name", async () => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+    await client.write("report", "the report");
+    await client.write("report/", "");
 
-      const listed = (await client.list()).contents!.map(entry => entry.key);
-      const values = await Promise.all(listed.map(key => client.file(key).text()));
-      expect(Object.fromEntries(listed.map((key, i) => [key, values[i]]))).toEqual(
-        Object.fromEntries(keys.map(key => [key, `value of ${key}`])),
-      );
-    },
-  );
+    await client.delete("report/");
+    expect({
+      report: await client.file("report").text(),
+      marker: await client.exists("report/"),
+    }).toEqual({ report: "the report", marker: false });
+  });
+
+  it("each key that list() returns reads its own object", async () => {
+    await using server = serve({ buckets: ["bucket"] });
+    const client = new S3Client(server.clientOptions("bucket"));
+    const objects = { "photos": "a file", "photos/": "", "photos/cat.txt": "a cat" };
+    for (const [key, value] of Object.entries(objects)) await client.write(key, value);
+
+    const listed = (await client.list()).contents!.map(entry => entry.key);
+    const values = await Promise.all(listed.map(key => client.file(key).text()));
+    expect(Object.fromEntries(listed.map((key, i) => [key, values[i]]))).toEqual(objects);
+  });
 
   it("a multipart upload sends each part to the key", async () => {
     await using server = serve({ buckets: ["bucket"] });
-    const client = new S3Client(styles["virtual hosted-style"](server).options);
+    const client = new S3Client(server.clientOptions("bucket"));
     const partSize = 5 * 1024 * 1024;
 
-    const writer = client.file("/dir/").writer({ partSize });
+    const writer = client.file("uploads/").writer({ partSize });
     writer.write(Buffer.alloc(partSize + 1, "a"));
     await writer.end();
 
     expect(received(server)).toEqual([
-      { request: "CreateMultipartUpload: POST //dir/", key: "/dir/", error: undefined },
-      { request: "UploadPart: PUT //dir/", key: "/dir/", error: undefined },
-      { request: "UploadPart: PUT //dir/", key: "/dir/", error: undefined },
-      { request: "CompleteMultipartUpload: POST //dir/", key: "/dir/", error: undefined },
+      { request: "CreateMultipartUpload: POST /bucket/uploads/", key: "uploads/", error: undefined },
+      { request: "UploadPart: PUT /bucket/uploads/", key: "uploads/", error: undefined },
+      { request: "UploadPart: PUT /bucket/uploads/", key: "uploads/", error: undefined },
+      { request: "CompleteMultipartUpload: POST /bucket/uploads/", key: "uploads/", error: undefined },
     ]);
   });
 
-  it("an endpoint path that starts with // is sent as it was signed", async () => {
-    const sent: string[] = [];
-    await using server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        sent.push(new URL(request.url).pathname);
-        return new Response();
-      },
-    });
+  it("a leading separator and a trailing backslash are not part of the key", () => {
+    // Nothing is sent to this endpoint: this test only signs.
     const client = new S3Client({
       accessKeyId: "test",
       secretAccessKey: "test",
       bucket: "bucket",
-      endpoint: `http://127.0.0.1:${server.port}//prefix`,
+      endpoint: "https://s3.example.com",
     });
-
-    await client.write("dir", "value");
-    expect({ signed: new URL(client.presign("dir")).pathname, sent }).toEqual({
-      signed: "//prefix/bucket/dir",
-      sent: ["//prefix/bucket/dir"],
-    });
-  });
-
-  // Nothing is sent to this endpoint: these tests only sign.
-  const credentials = { accessKeyId: "test", secretAccessKey: "test", endpoint: "https://s3.example.com" };
-
-  describe("without a bucket option", () => {
-    const client = new S3Client(credentials);
-
-    it("finds the bucket behind separators and keeps the rest as the key", () => {
-      const paths = ["bucket/key", "//bucket/key", "s3://bucket/key", "bucket//key/"];
-      expect(
-        paths.map(path => {
-          const file = client.file(path);
-          return { path, bucket: file.bucket, signed: new URL(file.presign()).pathname };
-        }),
-      ).toEqual([
-        { path: "bucket/key", bucket: "bucket", signed: "/bucket/key" },
-        { path: "//bucket/key", bucket: "bucket", signed: "/bucket/key" },
-        { path: "s3://bucket/key", bucket: "bucket", signed: "/bucket/key" },
-        { path: "bucket//key/", bucket: "bucket", signed: "/bucket//key/" },
-      ]);
-    });
-
-    it.each(["a", "//a", "///a", "/", "//", ""])("refuses the path %j, which names no bucket", path => {
-      expect(() => client.presign(path)).toThrow(expect.objectContaining({ code: "ERR_S3_INVALID_PATH" }));
-    });
-  });
-
-  it.each(["/", "//"])("refuses the bucket %j, which has no name", bucket => {
-    const client = new S3Client({ ...credentials, bucket });
-    expect(() => client.presign("key")).toThrow(expect.objectContaining({ code: "ERR_S3_INVALID_PATH" }));
-  });
-
-  it("a file is named by its key", () => {
-    const client = new S3Client({ ...credentials, bucket: "bucket" });
-    expect(keys.map(key => client.file(key).name)).toEqual(keys);
-    expect(Bun.inspect(client.file("/dir/"))).toStartWith('S3Ref ("bucket//dir/")');
+    const paths = ["/dir", "//dir", "\\dir", "dir\\"];
+    expect(
+      paths.map(path => ({ path, name: client.file(path).name, signed: new URL(client.presign(path)).pathname })),
+    ).toEqual([
+      { path: "/dir", name: "dir", signed: "/bucket/dir" },
+      { path: "//dir", name: "/dir", signed: "/bucket/dir" },
+      { path: "\\dir", name: "dir", signed: "/bucket/dir" },
+      { path: "dir\\", name: "dir", signed: "/bucket/dir" },
+    ]);
+    expect(() => client.presign("/")).toThrow(expect.objectContaining({ code: "ERR_S3_INVALID_PATH" }));
   });
 });

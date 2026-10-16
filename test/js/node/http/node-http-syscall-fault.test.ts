@@ -13,6 +13,25 @@ afterEach(() => fault.clear());
 // and server, which makes errno injection ambiguous. Tests that need a
 // one-sided fault run the faulted side in a subprocess.
 
+// Runs `fixture`, which prints the port that its server listens on.
+async function spawnServer(fixture: string) {
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const reader = proc.stdout.getReader();
+  let portLine = "";
+  while (!portLine.includes("\n")) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error("server exited before printing port: " + (await proc.stderr.text()));
+    portLine += new TextDecoder().decode(value);
+  }
+  reader.releaseLock();
+  return { proc, port: Number(portLine.trim()), [Symbol.asyncDispose]: () => proc[Symbol.asyncDispose]() };
+}
+
 describe.skipIf(skip)("node:http under injected syscall faults", () => {
   test("upRes.pipe(res) with res.destroy() racing a queued drain (subprocess)", async () => {
     // A TLS-terminating proxy re-streams a large upstream body via pipe(),
@@ -322,6 +341,137 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
     };
   }
 
+  // An upgraded socket sends the writes of a task that follow the first one together. Here the kernel takes that send a few bytes at a time.
+  // Whatever tells the program that the bytes have left (a write callback, 'finish', writableLength) has to wait for the rest of them.
+  test.concurrent.each([
+    // The connection stays half-open, so the server still reads what the client sends after the FIN.
+    { how: "end() in their task", then: "socket.end()", events: ["finish", "data: bye"] },
+    { how: "end() in a later task", then: "setImmediate(() => socket.end())", events: ["finish", "data: bye"] },
+    { how: "destroy() on 'finish'", then: `socket.once("finish", () => socket.destroy()).end()`, events: ["finish"] },
+    { how: "destroy() in the callback of end()", then: "socket.end(() => socket.destroy())", events: ["finish"] },
+    {
+      how: "destroy() in the callback of a write behind them, in their task",
+      then: `socket.write("<last>", () => socket.destroy())`,
+      last: "<last>",
+      events: [],
+    },
+    {
+      how: "destroy() in the callback of a write behind them, in a later task",
+      then: `setImmediate(() => socket.write("<last>", () => socket.destroy()))`,
+      last: "<last>",
+      events: [],
+    },
+    {
+      how: "destroy() in the callback of an empty write behind them",
+      then: `socket.write("", () => socket.destroy())`,
+      events: [],
+    },
+    {
+      how: "a write that cork() collects in their task until a later one",
+      then: `socket.cork(); socket.write("<last>"); setImmediate(() => { socket.uncork(); socket.end(); })`,
+      last: "<last>",
+      events: ["finish", "data: bye"],
+    },
+    {
+      how: "destroy() once writableLength is 0",
+      then: `setImmediate(function poll() { if (socket.writableLength === 0) socket.destroy(); else setImmediate(poll); })`,
+      events: [],
+    },
+    {
+      how: "end() in their task, then destroy() once writableLength is 0",
+      then: `socket.end(); setImmediate(function poll() { if (socket.writableLength === 0) socket.destroy(); else setImmediate(poll); })`,
+      events: ["finish"],
+    },
+    // 'finish' destroys a socket whose readable side has ended.
+    { how: "end() after the client's FIN", then: "socket.end()", clientEndsFirst: true, events: ["finish"] },
+    {
+      how: "destroySoon() after the client's FIN",
+      then: "socket.destroySoon()",
+      clientEndsFirst: true,
+      events: ["finish"],
+    },
+  ])(
+    "the writes of one task on an upgraded socket arrive whole under short sends, $how (subprocess server)",
+    async ({ then, events, last = "", clientEndsFirst = false }) => {
+      const fixture = /* js */ `
+      const http = require("node:http");
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const server = http.createServer();
+      server.on("upgrade", (req, socket) => {
+        const events = [];
+        socket.on("error", () => {});
+        socket.on("finish", () => events.push("finish"));
+        socket.on("data", chunk => events.push("data: " + chunk));
+        socket.on("close", () => {
+          fault.clear();
+          console.error(JSON.stringify(events));
+          server.close();
+        });
+        function send() {
+          fault.set({ syscall: "send", action: "short", bytes: 7, after: 1, repeat: -1 });
+          for (let i = 0; i < 40; i++) socket.write("<piece " + i + ">");
+          ${then};
+        }
+        ${clientEndsFirst ? `socket.on("end", send)` : "send()"};
+      });
+      server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+    `;
+      await using server = await spawnServer(fixture);
+      const { proc, port } = server;
+      const client = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+      const chunks: Buffer[] = [];
+      client.on("data", chunk => chunks.push(chunk));
+      client.on("error", () => {});
+      client.on("end", () => {
+        if (!clientEndsFirst) client.end("bye");
+      });
+      const closed = once(client, "close");
+      client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n");
+      if (clientEndsFirst) client.end();
+      await closed;
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ received: Buffer.concat(chunks).toString("latin1"), events: JSON.parse(stderr) }).toEqual({
+        received: Array.from({ length: 40 }, (_, i) => `<piece ${i}>`).join("") + last,
+        events,
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Until the body of an Upgrade request has arrived the connection is not a tunnel, and no drain call sends what a short send leaves.
+  test.concurrent(
+    "the writes of one task on an upgraded socket are not held back while the request body arrives (subprocess server)",
+    async () => {
+      const fixture = /* js */ `
+      const http = require("node:http");
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const server = http.createServer();
+      server.on("upgrade", (req, socket) => {
+        socket.on("error", () => {});
+        req.on("error", () => {});
+        fault.set({ syscall: "send", action: "short", bytes: 7, after: 1, repeat: -1 });
+        for (let i = 0; i < 10; i++) socket.write("<piece " + i + ">");
+        fault.clear();
+        console.error(JSON.stringify({ writableLength: socket.writableLength }));
+        socket.destroy();
+        server.close();
+      });
+      server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+    `;
+      await using server = await spawnServer(fixture);
+      const { proc, port } = server;
+      const client = net.connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      client.resume();
+      const closed = once(client, "close");
+      client.write("POST / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: raw\r\nContent-Length: 5\r\n\r\nhe");
+      await closed;
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      // The second one waits for the kernel to take its rest, and the eight behind it wait for the second one.
+      expect({ ...JSON.parse(stderr), exitCode }).toEqual({ writableLength: "<piece 1>".length * 9, exitCode: 0 });
+    },
+  );
+
   test("randomized short-send sizes during streaming response deliver intact (subprocess server)", async () => {
     const rand = makePrng(seed);
     const bodyLen = 8 * 1024;
@@ -347,21 +497,8 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
       process.on("SIGTERM", () => server.close(() => process.exit(0)));
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const reader = proc.stdout.getReader();
-    let portLine = "";
-    while (!portLine.includes("\n")) {
-      const { value, done } = await reader.read();
-      if (done) throw new Error("server exited before printing port: " + (await proc.stderr.text()));
-      portLine += new TextDecoder().decode(value);
-    }
-    reader.releaseLock();
-    const port = Number(portLine.trim());
+    await using server = await spawnServer(fixture);
+    const { proc, port } = server;
 
     try {
       for (let i = 0; i < 8; i++) {

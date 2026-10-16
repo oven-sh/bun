@@ -2266,3 +2266,368 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
     });
   });
 });
+
+// The first write of a task goes to the kernel in the call. The ones that follow it in the same task go out together, once its microtasks have run.
+describe("several writes to a handed-off socket in one task", () => {
+  const pieces = Array.from({ length: 40 }, (_, i) => `<piece ${i}>`);
+  const upgradeRequest = "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n";
+
+  // Runs `onUpgrade` on the handed-off socket, and gives what the client read until the connection closed.
+  async function readUpgraded(
+    proto: string,
+    onUpgrade: (socket: Duplex, req: http.IncomingMessage) => void,
+    request = upgradeRequest,
+  ) {
+    const server =
+      proto === "https" ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert }) : http.createServer();
+    server.on("upgrade", (req, socket) => {
+      socket.on("error", () => {});
+      onUpgrade(socket, req);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const client =
+      proto === "https"
+        ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+        : net.connect(port, "127.0.0.1");
+    try {
+      const chunks: Buffer[] = [];
+      client.on("data", (chunk: Buffer) => chunks.push(chunk));
+      client.on("error", () => {});
+      const closed = once(client, "close");
+      client.write(request);
+      await closed;
+      return Buffer.concat(chunks).toString("latin1");
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  describe.each(["http", "https"])("%s", proto => {
+    test.each([
+      ["end()", (socket: net.Socket) => void socket.end("<end>"), "<end>"],
+      ["destroy()", (socket: net.Socket) => void socket.destroy(), ""],
+      ["destroySoon()", (socket: net.Socket) => void socket.destroySoon(), ""],
+    ] as const)("%s sends them before it closes the connection", async (_, close, last) => {
+      const received = await readUpgraded(proto, socket => {
+        for (const piece of pieces) socket.write(piece);
+        close(socket as net.Socket);
+      });
+      expect(received).toBe(pieces.join("") + last);
+    });
+
+    test("an empty one with a callback sends the ones ahead of it", async () => {
+      const received = await readUpgraded(proto, socket => {
+        for (const piece of pieces) socket.write(piece);
+        socket.write("", () => socket.end("<end>"));
+      });
+      expect(received).toBe(pieces.join("") + "<end>");
+    });
+
+    test("they keep their order across microtasks, ticks and later tasks", async () => {
+      const received = await readUpgraded(proto, async socket => {
+        socket.write("a");
+        socket.write("b");
+        process.nextTick(() => {
+          socket.write("c");
+          socket.write("d");
+        });
+        await null;
+        socket.write("e");
+        socket.write("f");
+        await new Promise<void>(resolve => setImmediate(resolve));
+        socket.write("g");
+        socket.write("h");
+        socket.end();
+      });
+      expect(received).toBe("abcdefgh");
+    });
+
+    test("more of them than are held back at once arrive whole", async () => {
+      const block = Buffer.alloc(10_000, "0123456789");
+      const received = await readUpgraded(proto, socket => {
+        for (let i = 0; i < 100; i++) socket.write(block);
+        // One that is too large to hold back, with another held back ahead of it.
+        socket.write("<small>");
+        socket.write(Buffer.alloc(300_000, "z"));
+        socket.end("<end>");
+      });
+      const expected =
+        Buffer.alloc(1_000_000, "0123456789").toString() + "<small>" + Buffer.alloc(300_000, "z") + "<end>";
+      expect(received.length).toBe(expected.length);
+      expect(received === expected).toBe(true);
+    });
+  });
+
+  test("their callbacks run in order, after the task", async () => {
+    const events: string[] = [];
+    const received = await readUpgraded("http", socket => {
+      socket.on("drain", () => events.push("drain"));
+      socket.on("finish", () => events.push("finish"));
+      for (let i = 0; i < 3; i++) {
+        events.push(`write ${i}: ${socket.write(pieces[i], () => events.push(`callback ${i}`))}`);
+      }
+      socket.end(() => events.push("end callback"));
+      events.push("end of the task");
+    });
+    expect({ received, events }).toEqual({
+      received: pieces.slice(0, 3).join(""),
+      events: [
+        "write 0: true",
+        "write 1: true",
+        "write 2: true",
+        "end of the task",
+        "callback 0",
+        "callback 1",
+        "callback 2",
+        "end callback",
+        "finish",
+      ],
+    });
+  });
+
+  test("a client that does not read makes write() return false, and 'drain' follows once it reads", async () => {
+    const server = http.createServer();
+    const full = Promise.withResolvers<number>();
+    const events: string[] = [];
+    server.on("upgrade", (req, socket) => {
+      socket.on("error", () => {});
+      socket.once("drain", () => {
+        events.push("drain");
+        socket.end("<end>");
+      });
+      const block = Buffer.alloc(1000, "x");
+      let written = 0;
+      do written += block.length;
+      while (socket.write(block));
+      full.resolve(written);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      client.pause();
+      client.on("error", () => {});
+      client.write(upgradeRequest);
+      const written = await full.promise;
+      let received = 0;
+      let tail = "";
+      client.on("data", (chunk: Buffer) => {
+        received += chunk.length;
+        tail = (tail + chunk.toString("latin1")).slice(-5);
+      });
+      const closed = once(client, "close");
+      client.resume();
+      await closed;
+      expect({ received, tail, events }).toEqual({ received: written + 5, tail: "<end>", events: ["drain"] });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  const websocketRequest =
+    "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+
+  test("ws.handleUpgrade() answers behind them", async () => {
+    const wss = new WebSocketServer({ noServer: true });
+    const received = await readUpgraded(
+      "http",
+      (socket, req) => {
+        socket.write("<raw 1>");
+        socket.write("<raw 2>");
+        wss.handleUpgrade(req, socket, Buffer.alloc(0), ws => ws.terminate());
+      },
+      websocketRequest,
+    );
+    expect(received.slice(0, "<raw 1><raw 2>HTTP/1.1 101 ".length)).toBe("<raw 1><raw 2>HTTP/1.1 101 ");
+  });
+
+  test("the ones that follow ws.handleUpgrade() in the same task are sent too", async () => {
+    const wss = new WebSocketServer({ noServer: true });
+    const received = await readUpgraded(
+      "http",
+      (socket, req) => {
+        socket.write("<raw>");
+        wss.handleUpgrade(req, socket, Buffer.alloc(0), ws => {
+          socket.write("<after 1>");
+          socket.write("<after 2>");
+          ws.terminate();
+        });
+      },
+      websocketRequest,
+    );
+    expect(received.replace(/HTTP\/1\.1 101 [^]*?\r\n\r\n/, "<101>")).toBe("<raw><101><after 1><after 2>");
+  });
+
+  // Both end the response that the request of the handoff never used, and that puts bytes on the connection.
+  test.each([
+    ["req.destroy()", (socket, req) => void req.destroy()],
+    ["a 'close' event that the listener emits", socket => void socket.emit("close")],
+  ] as [string, (socket: Duplex, req: http.IncomingMessage) => void][])(
+    "%s writes nothing ahead of them",
+    async (_, endTheResponse) => {
+      const received = await readUpgraded("http", (socket, req) => {
+        req.on("error", () => {});
+        // The server listens for 'close' once the 'upgrade' listener has returned.
+        setImmediate(() => {
+          for (const piece of pieces) socket.write(piece);
+          endTheResponse(socket, req);
+          setImmediate(() => socket.destroy());
+        });
+      });
+      expect(received.slice(0, pieces.join("").length)).toBe(pieces.join(""));
+    },
+  );
+
+  test("the response ahead of a pipelined CONNECT writes in call order with them", async () => {
+    let ahead!: http.ServerResponse;
+    const inFlight = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      ahead = res;
+      res.write("A");
+      inFlight.resolve();
+    });
+    server.on("connect", (req, socket) => {
+      socket.on("error", () => {});
+      socket.write("<1>");
+      socket.write("<2>");
+      ahead.write("B");
+      socket.write("<3>");
+      socket.write("<4>");
+      ahead.end("C");
+      setImmediate(() => socket.end());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      const chunks: Buffer[] = [];
+      client.on("data", (chunk: Buffer) => chunks.push(chunk));
+      client.on("error", () => {});
+      const closed = once(client, "close");
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      await inFlight.promise;
+      client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+      await closed;
+      const wire = Buffer.concat(chunks).toString("latin1");
+      expect(wire.slice(wire.indexOf("\r\n\r\n") + 4)).toBe("1\r\nA\r\n<1><2>1\r\nB\r\n<3><4>1\r\nC\r\n0\r\n\r\n");
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  // On Windows the end of a process resets its connections, so the client gets ECONNRESET instead of the end of the stream.
+  test.concurrent
+    .skipIf(isWindows)
+    .each([
+      "process.exit(0)",
+      "process.reallyExit(0)",
+      "process.kill(process.pid, 'SIGTERM')",
+      "process.kill(process.pid, 'SIGKILL')",
+      "process.abort()",
+      "process.execve(process.execPath, [process.execPath, '-e', '0'])",
+      "throw new Error('uncaught')",
+    ])("%s sends them", async endTheProcess => {
+    const fixture = /* js */ `
+      const http = require("node:http");
+      const server = http.createServer();
+      server.on("upgrade", (req, socket) => {
+        for (let i = 0; i < 40; i++) socket.write("<piece " + i + ">");
+        ${endTheProcess};
+      });
+      server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+    `;
+    // process.abort() must not leave a core file: the CI lanes that upload them fail the test file for it.
+    const cmd = ["/bin/sh", "-c", 'ulimit -c 0 && exec "$@"', "--", bunExe(), "-e", fixture];
+    await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "ignore" });
+    const reader = proc.stdout.getReader();
+    const port = Number(new TextDecoder().decode((await reader.read()).value));
+    reader.releaseLock();
+    const client = net.connect(port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    client.on("data", (chunk: Buffer) => chunks.push(chunk));
+    client.on("error", () => {});
+    const closed = once(client, "close");
+    client.write(upgradeRequest);
+    await closed;
+    expect(Buffer.concat(chunks).toString("latin1")).toBe(pieces.join(""));
+  });
+
+  // The client is a thread that reads at two points only: once the writes are made, while their task still runs, and after that task.
+  test.concurrent.each([
+    ["the first one is sent in the call, the others in one piece after the task", ""],
+    // The names of these signals are unknown on Windows.
+    ...(isWindows
+      ? []
+      : [
+          [
+            "a signal to itself that is ignored by default leaves the others for the end of the task",
+            "process.kill(process.pid, 'SIGWINCH');",
+          ],
+          [
+            "a signal to itself that is set to be ignored leaves the others for the end of the task",
+            "process.kill(process.pid, 'SIGPIPE');",
+          ],
+          [
+            "a signal to itself that kill() refuses leaves the others for the end of the task",
+            "try { process.kill(process.pid, 999); } catch {}",
+          ],
+        ]),
+  ])("%s", async (_, afterTheWrites) => {
+    using dir = tempDir("node-http-upgrade-write-batch", {
+      "server.js": `
+        const http = require("node:http");
+        const { Worker } = require("node:worker_threads");
+        const WRITTEN = 0, READ = 1;
+        const state = new Int32Array(new SharedArrayBuffer(8));
+        const server = http.createServer();
+        server.on("upgrade", (req, socket) => {
+          socket.write("<first>");
+          for (let i = 0; i < 40; i++) socket.write("<piece " + i + ">");
+          ${afterTheWrites}
+          Atomics.store(state, WRITTEN, 1);
+          Atomics.notify(state, WRITTEN);
+          Atomics.wait(state, READ, 0);
+          socket.end();
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const worker = new Worker("./client.js", { workerData: { port: server.address().port, state } });
+          worker.on("message", chunks => {
+            console.log(JSON.stringify(chunks));
+            server.close();
+          });
+        });
+      `,
+      "client.js": `
+        const net = require("node:net");
+        const { parentPort, workerData: { port, state } } = require("node:worker_threads");
+        const WRITTEN = 0, READ = 1;
+        const chunks = [];
+        const client = net.connect(port, "127.0.0.1", () => {
+          client.write(${JSON.stringify(upgradeRequest)});
+          Atomics.wait(state, WRITTEN, 0);
+        });
+        client.on("data", chunk => {
+          chunks.push(chunk.toString("latin1"));
+          Atomics.store(state, READ, 1);
+          Atomics.notify(state, READ);
+        });
+        client.on("close", () => parentPort.postMessage(chunks));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual(["<first>", pieces.join("")]);
+    expect(exitCode).toBe(0);
+  });
+});

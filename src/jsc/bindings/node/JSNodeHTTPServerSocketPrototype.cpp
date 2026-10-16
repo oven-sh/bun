@@ -42,6 +42,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReset);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketFlushWrites);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketUpgradeToTunnel);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReadStop);
@@ -84,7 +85,8 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "localAddress"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterLocalAddress, noOpSetter } },
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketClose, 0 } },
     { "reset"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketReset, 0 } },
-    { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketWrite, 2 } },
+    { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketWrite, 3 } },
+    { "flushWrites"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketFlushWrites, 0 } },
     { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketEnd, 0 } },
     { "upgradeToTunnel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketUpgradeToTunnel, 0 } },
     { "readStop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketReadStop, 0 } },
@@ -271,14 +273,31 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
     }
 
     thisObject->flushResponseBytesAhead();
+    // write(chunk, encoding, mayHoldBack): nobody waits to hear what the kernel did with the chunk.
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->argument(0)); view && callFrame->argument(2).isTrue() && thisObject->batchWrite(view->span())) {
+        thisObject->updateTunnelIdle();
+        return JSValue::encode(JSC::jsBoolean(true));
+    }
+    // Not left to the write below: an empty chunk sends nothing, and its callback would wait for a drain that nothing armed.
+    thisObject->flushWriteBatch();
     const bool hold = thisObject->hasUnsentResponseBytes();
     auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, hold, thisObject->flushesStreamBufferOnDrain(), &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
     // JS parks the write callback on false only when it has an ondrain (_write in _http_server.ts).
     if (hold && thisObject->functionToCallOnDrain && JSValue::decode(result).isFalse()) {
         thisObject->heldWriteAwaitsDrain = true;
     }
+    thisObject->openWriteBatch();
     thisObject->updateTunnelIdle();
     return result;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketFlushWrites, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
+    if (!thisObject || !thisObject->flushWriteBatch()) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    return JSValue::encode(thisObject->takeRefusedWrites(globalObject));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

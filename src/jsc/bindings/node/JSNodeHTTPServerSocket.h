@@ -61,6 +61,10 @@ public:
     unsigned tunnelReadEnded : 1 = 0;
     /* write() returned false for bytes that went into the uWS buffer, and JS waits for ondrain. streamBuffer does not show them. */
     unsigned heldWriteAwaitsDrain : 1 = 0;
+    /* A tunnel wrote in the running task. Until endWriteBatch(), batchWrite() takes its next writes. */
+    unsigned writeBatchOpen : 1 = 0;
+    /* batchWrite() put bytes into the uWS buffer, and nothing has tried to send that buffer since. */
+    unsigned writeBatchHeld : 1 = 0;
     /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
     unsigned peer_ended : 1 = 0;
     int closeReadError = 0;
@@ -154,6 +158,16 @@ public:
     void flushResponseBytesAhead();
     /* Only a tunnel gets the drain call that flushes streamBuffer. On any other socket the uWS buffer takes what the kernel does not. */
     bool flushesStreamBufferOnDrain() const { return !!functionToCallOnDrain; }
+    /* Only the first write of a task is tried in the call, unlike in Node: https://github.com/nodejs/node/blob/v26.3.0/src/stream_base.cc#L95-L96 */
+    void openWriteBatch();
+    /* Holds the bytes back in the uWS buffer, which every other writer of the connection sends first. False: they take the usual path. */
+    bool batchWrite(std::span<const uint8_t> bytes);
+    /* Ahead of a close or of a write that is not held back. True: the kernel refused a part, which is still in the uWS buffer. */
+    bool flushWriteBatch();
+    /* The refused part leaves the uWS buffer as a Buffer, for the stream to write again. */
+    JSC::JSUint8Array* takeRefusedWrites(JSC::JSGlobalObject*);
+    void endWriteBatch();
+    void cancelWriteBatch();
     /* The WebSocket that adopted the connection reads from here on. */
     void releaseTunnelReadsForUpgrade();
 

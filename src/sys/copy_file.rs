@@ -249,11 +249,10 @@ pub fn copy_file(in_: InputType<'_>, out: InputType<'_>) -> CopyFileReturnType {
     copy_file_with_state(in_, out, &mut state)
 }
 
-/// Copy `in_` to a new file at `out`, replacing whatever is at that name: the path form of
+/// Copy `in_` to a new file at `out`, replacing a file at that name: the path form of
 /// [`Dir::create_fresh_file_z`](crate::Dir::create_fresh_file_z). The existing file is never
 /// overwritten in place. It can be a hardlink of `in_`, which `CopyFileW` cannot overwrite. The
-/// delete goes through `delete_tree`, which ignores the read-only attribute and removes a
-/// directory at the name.
+/// delete goes through `delete_tree`, which ignores the read-only attribute.
 #[cfg(windows)]
 pub fn copy_file_replacing(in_: &bun_core::WStr, out: &bun_core::WStr) -> CopyFileReturnType {
     use crate::windows::{CopyFileW, Win32Error};

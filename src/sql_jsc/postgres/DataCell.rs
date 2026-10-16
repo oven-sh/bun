@@ -371,7 +371,7 @@ fn binary_array(element: types::Tag, mut rest: &[u8]) -> Result<SQLDataCell> {
     Ok(cell)
 }
 
-/// `Tag::is_binary_format_supported`, plus the types whose binary form is their text.
+/// `ResultFormats::Decodable`, plus the types whose binary form is their text.
 fn from_binary(tag: types::Tag, bytes: &[u8]) -> Result<SQLDataCell> {
     use types::Tag as T;
     match tag {
@@ -460,8 +460,8 @@ fn from_text(
 pub(crate) struct Putter<'a> {
     pub list: &'a mut [SQLDataCell],
     pub fields: &'a [protocol::FieldDescription],
-    /// Bind asked for binary; the `fields` of the Describe before it always say text.
-    pub binary: bool,
+    /// What Bind asked for; the `fields` of the Describe before it always say text.
+    pub formats: types::ResultFormats,
     pub bigint: bool,
     pub global_object: &'a JSGlobalObject,
 }
@@ -521,7 +521,7 @@ impl<'a> Putter<'a> {
             let tag = types::Tag::from_oid(field.type_oid);
             *cell = match optional_bytes {
                 None => SQLDataCell::null(),
-                Some(data) if field.binary || (self.binary && tag.is_binary_format_supported()) => {
+                Some(data) if field.binary || tag.is_binary_in(self.formats) => {
                     from_binary(tag, data.slice())?
                 }
                 Some(data) => from_text(self.bigint, tag, data.slice(), self.global_object)?,

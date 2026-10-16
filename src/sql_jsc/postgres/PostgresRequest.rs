@@ -10,7 +10,6 @@ use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::postgres::postgres_types as types;
 use bun_sql::postgres::postgres_types::{AnyPostgresError, Int4};
 use bun_sql::postgres::protocol::{ReaderContext, WriterContext};
-use bun_sql::shared::SQLQueryResultMode;
 use bun_sql::shared::SSLMode;
 
 use crate::jsc::js_error_to_postgres;
@@ -186,6 +185,7 @@ fn write_bind<Context: WriterContext>(
     values_array: JSValue,
     parameter_fields: &[Int4],
     result_fields: &[protocol::FieldDescription],
+    formats: types::ResultFormats,
     writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
     let len =
@@ -236,11 +236,11 @@ fn write_bind<Context: WriterContext>(
 
     if result_fields
         .iter()
-        .any(|field| field.type_tag().is_binary_format_supported())
+        .any(|field| field.type_tag().is_binary_in(formats))
     {
         writer.short(result_fields.len())?;
         for field in result_fields {
-            writer.short(field.type_tag().format_code())?;
+            writer.short(field.type_tag().format_code(formats))?;
         }
     } else {
         writer.short(0)?;
@@ -275,17 +275,6 @@ fn write_binary_parameter<Context: WriterContext>(
         _ => return Ok(false),
     }
     Ok(true)
-}
-
-/// `.raw()` hands out the bytes of the text format: no column is asked for in binary.
-fn binary_result_fields(
-    statement: &PostgresSQLStatement,
-    result_mode: SQLQueryResultMode,
-) -> &[protocol::FieldDescription] {
-    if result_mode == SQLQueryResultMode::Raw {
-        return &[];
-    }
-    &statement.fields
 }
 
 fn write_parse<Context: WriterContext>(
@@ -328,7 +317,7 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
     global: &JSGlobalObject,
     statement: &PostgresSQLStatement,
     values: JSValue,
-    result_mode: SQLQueryResultMode,
+    formats: types::ResultFormats,
     mut writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
     let name = &statement.signature.prepared_statement_name;
@@ -337,7 +326,8 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
         global,
         values,
         statement.parameter_types(),
-        binary_result_fields(statement, result_mode),
+        &statement.fields,
+        formats,
         writer,
     )?;
     protocol::Execute {
@@ -355,7 +345,7 @@ pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
     query: &[u8],
     statement: &PostgresSQLStatement,
     values: JSValue,
-    result_mode: SQLQueryResultMode,
+    formats: types::ResultFormats,
     include_describe: bool,
     writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
@@ -363,7 +353,7 @@ pub(crate) fn parse_and_bind_and_execute<Context: WriterContext>(
     if include_describe {
         write_describe(&statement.signature, writer)?;
     }
-    bind_and_execute(global, statement, values, result_mode, writer)
+    bind_and_execute(global, statement, values, formats, writer)
 }
 
 pub(crate) fn write_close_statement<Context: WriterContext>(

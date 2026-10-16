@@ -138,9 +138,10 @@ function arrayLiteral(values: ArrayLike<unknown>, kind: ArrayKind): string {
   for (let i = 0, length = values.length; i < length; i++) {
     if (i > 0) literal += delimiter;
     const value = values[i];
-    if (value == null) literal += "NULL";
-    else if (kind === ArrayKind.json) literal += jsonElement(value);
+    // null is a JSON value.
+    if (value === undefined || (value === null && kind !== ArrayKind.json)) literal += "NULL";
     else if ($isArray(value)) literal += arrayLiteral(value, kind);
+    else if (kind === ArrayKind.json) literal += jsonElement(value);
     else if (typeof value !== "object") literal += quoteElement(String(value));
     else if (value instanceof Date) literal += quoteElement(value.toISOString());
     else if (ArrayBuffer.isView(value)) literal += hex(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
@@ -244,7 +245,6 @@ class PostgresAdapter extends BaseSQLAdapter<
   readonly codePrefix = "ERR_POSTGRES_";
   protected readonly commitPrepared = "COMMIT PREPARED";
   protected readonly rollbackPrepared = "ROLLBACK PREPARED";
-  readonly rawChangesFormat = true;
 
   array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter {
     const arrayType = getArrayType(typeNameOrID);

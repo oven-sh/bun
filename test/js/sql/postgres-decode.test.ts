@@ -1,6 +1,6 @@
 // What a PostgreSQL value reads as in JS. It has to be the same on every path a result takes, in text or in binary.
 import { SQL } from "bun";
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, describeWithContainer } from "harness";
 
 /** One line per value, so that -0, NaN, an Invalid Date, a Buffer and a typed array differ from their look-alikes. */
@@ -276,6 +276,161 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       expect(await read(bigints, path[0], { ...path[1], bigint: true })).toEqual(bigints);
     });
   }
+
+  describe("raw()", () => {
+    // [type, literal, the text format, the binary format in hex of a column that raw() asks for in binary]
+    const columns: [type: string, literal: string, text: string, binary?: string][] = [
+      ["bool", "true", "t", "01"],
+      ["int2", "1", "1"],
+      ["int4", "1", "1", "00000001"],
+      ["int8", "1", "1"],
+      ["oid", "1", "1"],
+      ["float4", "1.5", "1.5", "3fc00000"],
+      ["float8", "1.5", "1.5", "3ff8000000000000"],
+      ["numeric", "1.5", "1.5", "000200000000000100011388"],
+      ["money", "1.5", "$1.50"],
+      ["text", "ab", "ab"],
+      ["varchar", "ab", "ab"],
+      ["bpchar", "a", "a"],
+      ["name", "ab", "ab"],
+      ["bytea", "\\x0102ff", "\\x0102ff", "0102ff"],
+      ["date", "2024-01-02", "2024-01-02"],
+      ["time", "03:04:05", "03:04:05", "0000000292555340"],
+      ["timetz", "03:04:05+00", "03:04:05+00"],
+      ["timestamp", "2024-01-02 03:04:05", "2024-01-02 03:04:05", "0002b0ec8515f340"],
+      ["timestamptz", "2024-01-02 03:04:05+00", "2024-01-02 03:04:05+00", "0002b0ec8515f340"],
+      ["interval", "1 day", "1 day"],
+      ["uuid", "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11", "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"],
+      ["json", "[1]", "[1]"],
+      ["jsonb", "[1]", "[1]"],
+      ["inet", "1.2.3.4", "1.2.3.4"],
+      ["point", "(1,2)", "(1,2)"],
+      ["bool[]", "{t}", "{t}"],
+      ["int2[]", "{1,2}", "{1,2}"],
+      ["int4[]", "{1,2}", "{1,2}", "000000010000000000000017000000020000000100000004000000010000000400000002"],
+      ["int8[]", "{1,2}", "{1,2}"],
+      ["float4[]", "{1.5}", "{1.5}", "0000000100000000000002bc0000000100000001000000043fc00000"],
+      ["float8[]", "{1.5}", "{1.5}"],
+      ["numeric[]", "{1.5}", "{1.5}"],
+      ["text[]", "{a}", "{a}"],
+      ["bytea[]", '{"\\\\x01"}', '{"\\\\x01"}'],
+      ["timestamptz[]", '{"2024-01-02 03:04:05+00"}', '{"2024-01-02 03:04:05+00"}'],
+      ["jsonb[]", "{1}", "{1}"],
+      ["uuid[]", "{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}", "{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}"],
+    ];
+    // A mode that decodes asks for these the other way, and execute() writes the Bind of a prepared statement.
+    const otherwiseDecoded: Record<string, string> = {
+      "float4": "1.5",
+      "numeric": "1.5",
+      "time": "03:04:05",
+      "int2[]": "0x0000000100000000000000150000000200000001000000020001000000020002",
+      "float8[]": "0x0000000100000000000002bd0000000100000001000000083ff8000000000000",
+    };
+    type Columns = typeof columns;
+    const select = (list: Columns) =>
+      "select " + list.map(([type, literal], i) => `'${literal}'::${type} as c${i}`).join(", ");
+    const inText = (list: Columns) => Object.fromEntries(list.map(([type, , text]) => [type, text]));
+    const inBinary = (list: Columns) =>
+      Object.fromEntries(list.map(([type, , text, binary]) => [type, binary ? "0x" + binary : text]));
+    /** Each cell as its text, or as 0x and its bytes where it is not the text format. */
+    const cells = (list: Columns, rows: Uint8Array[][]) =>
+      Object.fromEntries(
+        list.map(([type, , text], i) => {
+          const cell = Buffer.from(rows[0][i]);
+          return [type, cell.equals(Buffer.from(text)) ? text : "0x" + cell.toString("hex")];
+        }),
+      );
+
+    const raw = (query: any, late: boolean): Promise<Uint8Array[][]> => (late ? query.execute().raw() : query.raw());
+    type Run = (sql: SQL, text: string, late: boolean) => Promise<Uint8Array[][]>;
+    const runs: [name: string, binary: boolean, prepared: boolean, run: Run][] = [
+      ["the first run", false, false, (sql, text, late) => raw(template(sql, text), late)],
+      [
+        "the second run",
+        true,
+        true,
+        async (sql, text, late) => {
+          await template(sql, text).raw();
+          return await raw(template(sql, text), late);
+        },
+      ],
+      [
+        "a run after one that decoded",
+        true,
+        true,
+        async (sql, text, late) => {
+          await template(sql, text);
+          return await raw(template(sql, text), late);
+        },
+      ],
+      // Its Bind waits for the server's parameter types.
+      ["with a parameter", true, false, (sql, text, late) => raw(sql.unsafe(text + " where $1 = 1", [1]), late)],
+      [
+        "with a parameter, the second run",
+        true,
+        true,
+        async (sql, text, late) => {
+          await sql.unsafe(text + " where $1 = 1", [1]);
+          return await raw(sql.unsafe(text + " where $1 = 1", [1]), late);
+        },
+      ],
+      ["simple()", false, false, (sql, text, late) => raw(sql.unsafe(text).simple(), late)],
+    ];
+    async function session(options?: SQL.Options) {
+      await container.ready;
+      const sql = connect(options);
+      await sql.unsafe("set time zone 'UTC'");
+      return sql;
+    }
+
+    describe.each([
+      ["raw()", false],
+      ["execute().raw()", true],
+    ])("%s", (_, late) => {
+      test.each(runs)("%s", async (_, binary, prepared, run) => {
+        await using sql = await session();
+        const list = late && prepared ? columns.filter(([type]) => !(type in otherwiseDecoded)) : columns;
+        expect(cells(list, await run(sql, select(list), late))).toEqual((binary ? inBinary : inText)(list));
+      });
+
+      test.each(runs)("prepare: false, %s", async (_, __, ___, run) => {
+        await using sql = await session({ prepare: false });
+        expect(cells(columns, await run(sql, select(columns), late))).toEqual(inText(columns));
+      });
+    });
+
+    test.each(runs.filter(([, , prepared]) => prepared))(
+      "execute().raw(), %s: the columns that a mode that decodes asks for the other way",
+      async (_, __, ___, run) => {
+        await using sql = await session();
+        const list = columns.filter(([type]) => type in otherwiseDecoded);
+        expect(cells(list, await run(sql, select(list), true))).toEqual(otherwiseDecoded);
+      },
+    );
+
+    const undecodable = ["float4", "numeric", "time"];
+
+    test("raw().execute().values() decodes what raw() asked for", async () => {
+      await using sql = await session();
+      const text = select(columns.filter(([type]) => !undecodable.includes(type)));
+      await template(sql, text);
+      const values = await template(sql, text).values();
+      expect(await template(sql, text).raw().execute().values()).toEqual(values);
+    });
+
+    test.each(undecodable)("raw().execute().values() of a %s in binary has no decoder", async type => {
+      await using sql = await session();
+      const text = select(columns.filter(column => column[0] === type));
+      await template(sql, text);
+      expect(
+        await template(sql, text)
+          .raw()
+          .execute()
+          .values()
+          .catch((error: any) => error.code),
+      ).toBe("ERR_POSTGRES_UNKNOWN_FORMAT_CODE");
+    });
+  });
 
   // An element of an array of numbers is read by other code than a column. Three readers have to agree on every
   // value: the array's, the column's, and JS's own on the text that the server prints.

@@ -218,6 +218,11 @@ describe("named statements", () => {
     expect(resultFormats(drain())).toEqual([[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0]]);
   });
 
+  test("raw() asks for the columns in binary that it has always handed out in binary", async () => {
+    await sql.unsafe(`select $1 /* raw formats: params=${OID.int4} cols=${columns.slice(0, -1)} */`, [1]).raw();
+    expect(resultFormats(drain())).toEqual([[1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0]]);
+  });
+
   test("values of an object through the sql() helper", async () => {
     // Literal OIDs: an interpolation in a tagged template is a parameter.
     await sql`insert into t ${sql({ a: 7, b: "seven", c: null })} /* params=23,25,23 cols=25 */`;
@@ -343,7 +348,8 @@ describe("prepare: false", () => {
           statement: "",
           paramFormats: [0, 1],
           params: [Buffer.from(text), Buffer.from("00000007", "hex")],
-          resultFormats: [1],
+          // Text, as in the one batch of every other query without a named statement.
+          resultFormats: [],
         }),
         pgExecute(),
         pgSync(),

@@ -668,8 +668,7 @@ declare module "bun" {
       connection?: Record<string, string | boolean | number> | undefined;
 
       /**
-       * Maximum number of connections in the pool. Bun opens them on demand:
-       * one when a query finds no idle connection, until the pool has `max`.
+       * Maximum number of connections in the pool
        * @default 10
        */
       max?: number | undefined;
@@ -904,9 +903,13 @@ declare module "bun" {
      * {@link ResultMetadata}.
      *
      * A query is lazy. It starts in the call to `then()`, `catch()`,
-     * `finally()` or {@link execute}, and `await` calls `then()`. Like any
-     * promise, a query that fails with nothing to handle the rejection is
-     * reported as an unhandled rejection.
+     * `finally()` or {@link execute}, and `await` calls `then()`.
+     *
+     * What `then()` and `catch()` return is a promise like any other: when it
+     * rejects with nothing to handle the rejection, that is reported as an
+     * unhandled rejection. So is an error that a `finally()` callback throws.
+     * The failure of a query that was only started, with `execute()` or
+     * `finally()`, is not reported once it has a connection.
      *
      * Bun reads the parameters when it sends the query. Leave a `Buffer`,
      * `TypedArray`, `Date` or object that you passed alone until the query
@@ -993,11 +996,16 @@ declare module "bun" {
       /**
        * Returns rows as arrays of `Buffer` objects instead of objects.
        *
-       * PostgreSQL: the text form of each value. MySQL: the bytes the server
-       * sent, binary for a prepared query. SQLite: `Uint8Array` objects.
+       * PostgreSQL and MySQL: the bytes the server sent. On PostgreSQL a
+       * prepared query gets `bool`, `int4`, `float4`, `float8`, `numeric`,
+       * `bytea`, `time`, `timestamp`, `timestamptz`, `int4[]` and `float4[]` in
+       * binary and every other type as text; all types are text on the first run
+       * of a query without parameters, with `.simple()` and with
+       * `prepare: false`. On MySQL a prepared query is binary. SQLite:
+       * `Uint8Array` objects.
        *
-       * Call it before the query starts. After that, SQLite and a prepared query
-       * on PostgreSQL ignore it.
+       * Call it before the query starts. After that, SQLite ignores it, and on
+       * PostgreSQL some types can arrive in the other format.
        */
       raw(): Query<T>;
 
@@ -1314,7 +1322,9 @@ declare module "bun" {
      * cast and the server infers the type from the column, the compared value
      * or a cast in the query. Pass it when the query gives no context: a bare
      * `SELECT ${sql.array([1])}` returns the text `{"1"}`. Pass `"JSON"` or
-     * `"JSONB"` to encode each element as JSON.
+     * `"JSONB"` to encode each element as JSON: there `null` is the JSON value
+     * `null`, `undefined` is SQL `NULL`, and `sql.json([1, 2])` stores a JSON
+     * array as one element.
      * @returns The array parameter, ready to interpolate into a query
      *
      * @example

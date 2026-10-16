@@ -140,10 +140,12 @@ for (const server of servers) {
     async function start() {
       const tag = `bun_hot_${randomBytes(6).toString("hex")}`;
       const { host, port } = container;
+      const defaultClient = new URL(server.url(host, port, tag));
+      defaultClient.searchParams.set("max", "2");
       const program = new HotProgram({
         SQL_URL: server.url(host, port, tag),
         SQL_OTHER_URL: server.otherDatabase(host, port, tag),
-        DATABASE_URL: server.url(host, port, tag),
+        DATABASE_URL: defaultClient.href,
         SQL_SESSION_ID: server.sessionId,
         SQL_WAIT_FOR_LOCK: server.waitForLock(tag),
         SQL_CHANNEL: tag,
@@ -193,14 +195,33 @@ for (const server of servers) {
         expect(await program.load(sameSettings)).toEqual(first);
         expect(await program.open()).toBe(2);
       }
-      // `max` is the pool's and `bigint` the queries', not the connections'.
+      // `max` is the pool's and `bigint` the queries', not the connections'. The third one is dialed.
       expect(
         await program.load(`
           const sql = new SQL(url, { max: 3, bigint: true });
           report({ ids: await sessions(sql) });
         `),
       ).toEqual({ ids: first.ids });
-      expect(await program.open()).toBe(2);
+      expect(await program.settlesAt(3)).toBe(3);
+    });
+
+    test("the first query of a load takes over the whole pool", async () => {
+      await using program = await start();
+      const body = /* ts */ `
+        let connected = 0;
+        const all = Promise.withResolvers();
+        const sql = new SQL(url, { max: 3, onconnect: () => void (++connected === 3 && all.resolve()), onclose });
+        const query = sql.unsafe("select 1").execute();
+        const inTheCall = connected;
+        await query;
+        await all.promise;
+        report({ inTheCall, closed: globalThis.closed });
+      `;
+      expect(await program.load(body)).toEqual({ inTheCall: 0, closed: [] });
+      for (let i = 0; i < 2; i++) {
+        expect(await program.load(body)).toEqual({ inTheCall: 3, closed: [] });
+        expect(await program.open()).toBe(3);
+      }
     });
 
     test("also when the first query of a load comes from a Bun.serve() handler", async () => {

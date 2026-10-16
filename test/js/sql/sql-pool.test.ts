@@ -59,14 +59,19 @@ async function unhandledRejections(url: string) {
       async function row(name, start, on) {
         reported.length = 0;
         start();
-        // Answered after the query of the row.
-        await good(on);
+        // Answered after the query of the row. PostgreSQL refuses it in a transaction that failed.
+        await good(on).catch(() => {});
         await new Promise(setImmediate);
         result[name] = reported.join();
       }
       await row("execute()", () => bad().execute());
       await row("then(f)", () => bad().then(() => {}));
       await row("finally(f)", () => bad().finally(() => {}));
+      await row("finally(rethrow)", () => bad().finally(rethrow));
+      await row("finally(rethrow).catch(g)", () => bad().finally(rethrow).catch(() => {}));
+      await row("finally(f that returns a rejected promise)", () => bad().finally(() => Promise.reject(new Error("handler"))));
+      await row("finally(rethrow) of a query that succeeds", () => good().finally(rethrow));
+      await row("finally(f).then(h)", () => bad().finally(() => {}).then(() => {}));
       await row("catch(f)", () => bad().catch(() => {}));
       await row("then(f, g)", () => bad().then(() => {}, () => {}));
       await row("catch(rethrow)", () => bad().catch(rethrow));
@@ -77,6 +82,7 @@ async function unhandledRejections(url: string) {
         await row("execute() on a reservation", () => bad(reserved).execute(), reserved);
         reserved.release();
       }
+      await sql.begin(tx => row("execute() in a transaction", () => bad(tx).execute(), tx)).catch(() => {});
       await sql.close();
       console.log(JSON.stringify(result));
       `,
@@ -89,19 +95,70 @@ async function unhandledRejections(url: string) {
   return { result: stdout && JSON.parse(stdout), exitCode };
 }
 
-const reportedLikeAnyPromise = {
-  "execute()": "query",
-  "then(f)": "query",
-  "finally(f)": "query",
+/** Without a listener. Not in a top-level await: while one is pending, Bun reports the rejection and goes on. */
+async function outlivesAQueryThatIsOnlyStarted(url: string) {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const sql = new Bun.SQL(process.env.SQL_URL, { max: 1 });
+      (async () => {
+        await sql.unsafe("select 1");
+        sql.unsafe("select * from bun_pool_no_such_table").execute();
+        await sql.unsafe("select 1");
+        await new Promise(setImmediate);
+        console.log("alive");
+        await sql.close();
+      })();
+      `,
+    ],
+    env: { ...bunEnv, SQL_URL: url },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  return { stdout, exitCode };
+}
+
+/** Nothing of the caller's threw, and the query had a connection. */
+const onlyStarted = {
+  "execute()": "",
+  "execute() on a reservation": "",
+  "execute() in a transaction": "",
+  "finally(f)": "",
+};
+const handled = {
   "catch(f)": "",
   "then(f, g)": "",
+  "finally(rethrow).catch(g)": "",
+};
+/** What then() and catch() return, and what a handler of the caller throws. */
+const reportedLikeAnyPromise = {
+  "then(f)": "query",
+  "finally(f).then(h)": "query",
+  "finally(rethrow)": "handler",
+  "finally(f that returns a rejected promise)": "handler",
+  "finally(rethrow) of a query that succeeds": "handler",
   "catch(rethrow)": "handler",
   "then(null, rethrow)": "handler",
   "then(rethrow, g) of a query that succeeds": "handler",
 };
 
-test.concurrent("sqlite: a failure that nobody handles is reported", async () => {
-  expect(await unhandledRejections(":memory:")).toEqual({ result: reportedLikeAnyPromise, exitCode: 0 });
+describe.concurrent("sqlite: a failure that nobody handles", () => {
+  let rows: ReturnType<typeof unhandledRejections> | undefined;
+  const reported = () => (rows ??= unhandledRejections(":memory:"));
+
+  test("of a query that is only started is reported outside a transaction", async () => {
+    expect(await reported()).toMatchObject({
+      result: { ...handled, "execute()": "query", "execute() in a transaction": "", "finally(f)": "" },
+      exitCode: 0,
+    });
+  });
+
+  test("of what then() and catch() return, and what a handler throws, is reported as of any promise", async () => {
+    expect(await reported()).toMatchObject({ result: reportedLikeAnyPromise, exitCode: 0 });
+  });
 });
 
 const mysqlDialect = {
@@ -166,30 +223,33 @@ for (const server of servers) {
     }
 
     describe("dials", () => {
-      test("queries that follow each other share one connection", async () => {
+      test.each([
+        ["query", (sql: SQL) => sql.unsafe("select 1")],
+        ["reserve()", (sql: SQL) => sql.reserve().then(reserved => reserved.release())],
+        ["begin()", (sql: SQL) => sql.begin(tx => tx.unsafe("select 1"))],
+        ["connect()", (sql: SQL) => sql.connect()],
+      ])("the first %s starts the pool until max is reached", async (_, call) => {
         const connected = new Calls();
         await using sql = await pool({ max: 5, onconnect: connected.hit });
+        await call(sql);
+        await connected.reached(5);
         const sessions = new Set([await sessionId(sql), await sessionId(sql), await sessionId(sql)]);
-        expect({ sessions: sessions.size, dials: connected.count }).toEqual({ sessions: 1, dials: 1 });
+        expect({ sessions: sessions.size, dials: connected.count }).toEqual({ sessions: 1, dials: 5 });
       });
 
       test("queries that run together get a connection each, up to max", async () => {
         const connected = new Calls();
         await using sql = await pool({ max: 3, onconnect: connected.hit });
-        await using held = await gate();
-        const two = [held.wait(sql), held.wait(sql)].map(outcome);
-        await connected.reached(2);
-        await held.roundTrip();
-        expect(connected.count).toBe(2);
+        expect((await threeSessions(sql, () => connected.reached(3))).size).toBe(3);
 
-        const five = Array.from({ length: 5 }, () => outcome(held.wait(sql)));
-        await connected.reached(3);
+        await using held = await gate();
+        const seven = Array.from({ length: 7 }, () => outcome(held.wait(sql)));
         await held.open();
-        expect(await Promise.all([...two, ...five])).toEqual(Array(7).fill("resolved"));
+        expect(await Promise.all(seven)).toEqual(Array(7).fill("resolved"));
         expect(connected.count).toBe(3);
       });
 
-      test("reserve() dials instead of waiting for a busy connection", async () => {
+      test("reserve() does not wait for a busy connection", async () => {
         await using sql = await pool({ max: 2 });
         await using held = await gate();
         const busy = outcome(held.wait(sql));
@@ -212,14 +272,14 @@ for (const server of servers) {
         expect({ sessions: sessions.size, kept: sessions.has(kept) }).toEqual({ sessions: 3, kept: true });
       });
 
-      test("a pool that idled out dials once for one query", async () => {
+      test("a pool that idled out is started again until max is reached", async () => {
         const connected = new Calls();
         const closed = new Calls();
         await using sql = await pool({ max: 3, idleTimeout: 0.05, onconnect: connected.hit, onclose: closed.hit });
         expect((await threeSessions(sql, () => connected.reached(3))).size).toBe(3);
         await closed.reached(3);
         await sessionId(sql);
-        expect(connected.count).toBe(4);
+        await connected.reached(6);
       });
     });
 
@@ -314,9 +374,15 @@ for (const server of servers) {
         const closed = new Calls();
         await using sql = await pool({ max: 2, onclose: closed.hit });
         const name = `bun_pool_${(Math.random() * 2 ** 31) | 0}`;
-        await sql.beginDistributed(name, tx => tx.unsafe("select 1"));
-        // One of them runs on that connection.
-        await Promise.all([sql.unsafe("select 1"), sql.unsafe("select 2")]);
+        let prepared: unknown;
+        await sql.beginDistributed(name, async tx => {
+          prepared = await sessionId(tx);
+        });
+        // MariaDB commits it on that connection only, so the other one is kept away from what follows.
+        const [first, second] = await Promise.all([sql.reserve(), sql.reserve()]);
+        using other = (await sessionId(first)) === prepared ? second : first;
+        (other === first ? second : first).release();
+        await sql.unsafe("select 1");
         expect([await outcome(sql.commitDistributed(name)), closed.count]).toEqual(["resolved", 0]);
       });
 
@@ -565,11 +631,27 @@ for (const server of servers) {
       });
     });
 
-    test("a failure that nobody handles is reported", async () => {
-      await container.ready;
-      expect(await unhandledRejections(server.url(container.host, container.port))).toEqual({
-        result: { ...reportedLikeAnyPromise, "execute() on a reservation": "query" },
-        exitCode: 0,
+    describe("a failure that nobody handles", () => {
+      let rows: ReturnType<typeof unhandledRejections> | undefined;
+      async function reported() {
+        await container.ready;
+        return (rows ??= unhandledRejections(server.url(container.host, container.port)));
+      }
+
+      test("of a query that is only started, by execute() or finally(f), is not reported", async () => {
+        expect(await reported()).toMatchObject({ result: { ...onlyStarted, ...handled }, exitCode: 0 });
+      });
+
+      test("of a query that is only started does not end the process", async () => {
+        await container.ready;
+        expect(await outlivesAQueryThatIsOnlyStarted(server.url(container.host, container.port))).toEqual({
+          stdout: "alive\n",
+          exitCode: 0,
+        });
+      });
+
+      test("of what then() and catch() return, and what a handler throws, is reported as of any promise", async () => {
+        expect(await reported()).toMatchObject({ result: reportedLikeAnyPromise, exitCode: 0 });
       });
     });
 
@@ -579,7 +661,6 @@ for (const server of servers) {
     });
 
     describe("once the query has started", () => {
-      const isPostgres = server.image === "postgres_plain";
       const query = (sql: SQL) => sql`select ${7} + 0 as x, ${"a"} as y`;
 
       test("values() counts", async () => {
@@ -592,9 +673,9 @@ for (const server of servers) {
         }
       });
 
-      test(isPostgres ? "raw() is neither chosen nor left" : "raw() counts", async () => {
+      test("raw() counts", async () => {
         await using sql = await pool();
-        // The second time the statement is prepared, and PostgreSQL is asked for binary results unless it is raw().
+        // The second time the statement is prepared, and execute() has asked PostgreSQL for the formats.
         for (let i = 0; i < 2; i++) {
           const raw = await query(sql).raw();
           expect({
@@ -602,11 +683,7 @@ for (const server of servers) {
             left: await query(sql).raw().execute().values(),
             // simple() comes too late to make it a simple query
             leftAfterSimple: await query(sql).raw().execute().simple().values(),
-          }).toEqual(
-            isPostgres
-              ? { chosen: [{ x: 7, y: "a" }], left: raw, leftAfterSimple: raw }
-              : { chosen: raw, left: [[7, "a"]], leftAfterSimple: [[7, "a"]] },
-          );
+          }).toEqual({ chosen: raw, left: [[7, "a"]], leftAfterSimple: [[7, "a"]] });
         }
       });
 
@@ -706,8 +783,11 @@ const scripted = [
     adapter: "postgres",
     url: (port: number) => `postgres://u@127.0.0.1:${port}/db`,
     prefix: "ERR_POSTGRES_",
-    ready(socket: net.Socket) {
-      socket.once("data", () => socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()])));
+    ready(socket: net.Socket, answers = false) {
+      socket.once("data", () => {
+        socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        if (answers) socket.on("data", () => this.answer(socket));
+      });
     },
     refuseLogin(socket: net.Socket) {
       socket.once("data", () =>
@@ -720,13 +800,13 @@ const scripted = [
     adapter: "mysql",
     url: (port: number) => `mysql://u@127.0.0.1:${port}/db`,
     prefix: "ERR_MYSQL_",
-    ready(socket: net.Socket) {
+    ready(socket: net.Socket, answers = false) {
       let buffered: Buffer = Buffer.alloc(0);
       let authenticated = false;
       socket.write(mysqlHandshakeV10());
       socket.on("data", chunk => {
         buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
-          if (authenticated) return void mysqlAckSessionSetup(socket, payload);
+          if (authenticated) return void (mysqlAckSessionSetup(socket, payload) || (answers && this.answer(socket)));
           authenticated = true;
           socket.write(mysqlOkPacket(seq + 1));
         });
@@ -740,7 +820,11 @@ const scripted = [
   },
 ];
 
-describe.each(scripted)("$adapter, scripted server", ({ url, prefix, ready, refuseLogin, answer }) => {
+describe.each(scripted)("$adapter, scripted server", script => {
+  const { url, prefix, refuseLogin, answer } = script;
+  const ready = (socket: net.Socket) => script.ready(socket);
+  /** It also answers each simple query. */
+  const serving = (socket: net.Socket) => script.ready(socket, true);
   async function serverOf(onSocket: (socket: net.Socket, nth: number) => void) {
     const sockets: net.Socket[] = [];
     const { port, server } = await listeningServer(socket => {
@@ -761,7 +845,7 @@ describe.each(scripted)("$adapter, scripted server", ({ url, prefix, ready, refu
   /** These servers answer no query: a connection that has one stays busy, and close() would wait for it. */
   const unanswered = (sql: SQL) => ({ [Symbol.asyncDispose]: () => sql.close({ timeout: 0 }) });
 
-  test.concurrent("a query whose login is refused costs one dial", async () => {
+  test.concurrent("a server that refuses every login is dialed `max` times for each query", async () => {
     await using server = await serverOf(refuseLogin);
     await using sql = new SQL({ url: url(server.port), max: 5 });
     const dials: number[] = [];
@@ -770,7 +854,7 @@ describe.each(scripted)("$adapter, scripted server", ({ url, prefix, ready, refu
       expect(await outcome(sql.unsafe("select 1"))).toBe(prefix + "SERVER_ERROR");
       dials.push(server.sockets.length - before);
     }
-    expect(dials).toEqual([1, 1, 1]);
+    expect(dials).toEqual([5, 5, 5]);
   });
 
   test.concurrent("a login that is refused once does not stay refused", async () => {
@@ -790,108 +874,73 @@ describe.each(scripted)("$adapter, scripted server", ({ url, prefix, ready, refu
     expect(await outcome(reserved.unsafe("select 1"))).toBe(prefix + "CONNECTION_CLOSED");
   });
 
-  test.concurrent("callers that no connection can take get the error of the dial that was made for them", async () => {
-    await using server = await serverOf((socket, nth) => (nth === 1 ? ready(socket) : refuseLogin(socket)));
+  test.concurrent.each([
+    ["query", (sql: SQL) => sql.unsafe("select 1").simple()],
+    ["reserve()", (sql: SQL) => sql.reserve().then(reserved => reserved.release())],
+    ["begin()", (sql: SQL) => sql.begin(tx => tx.unsafe("select 1").simple())],
+  ])("a %s waits for the connection that is reserved when nothing more can be dialed", async (_, call) => {
+    await using server = await serverOf((socket, nth) => (nth === 1 ? serving(socket) : refuseLogin(socket)));
     const closed = new Calls();
-    const sql = new SQL({ url: url(server.port), max: 2, onclose: closed.hit });
-    await using _ = unanswered(sql);
-    using holder = await sql.reserve();
-    const [first, second] = [sql.unsafe("select 1").execute(), sql.reserve()].map(outcome);
-    expect(await unlessPending(first, closed.reached(1).then(nextTurn))).toBe(prefix + "SERVER_ERROR");
-    expect(await second).toBe(prefix + "SERVER_ERROR");
+    await using sql = new SQL({ url: url(server.port), max: 2, onclose: closed.hit });
+    const holder = await sql.reserve();
+    await closed.reached(1);
+    const waiting = outcome(call(sql));
+    expect(await unlessPending(waiting, closed.reached(2).then(nextTurn))).toBe("pending");
+    holder.release();
+    expect(await waiting).toBe("resolved");
     expect(server.sockets.length).toBe(3);
   });
 
-  test.concurrent("queries on a cold pool wait for the dial on its way when the others are refused", async () => {
+  test.concurrent("queries on a cold pool are served by the one connection that comes up", async () => {
     const closed = new Calls();
     // Room for one, which is let in once the client knows of the refusals.
     await using server = await serverOf((socket, nth) =>
-      nth === 1 ? void closed.reached(2).then(() => ready(socket)) : refuseLogin(socket),
+      nth === 1 ? void closed.reached(2).then(() => serving(socket)) : refuseLogin(socket),
     );
-    const sql = new SQL({ url: url(server.port), max: 3, onclose: closed.hit });
-    await using _ = unanswered(sql);
-    const queries = [1, 2, 3].map(() => sql.unsafe("select 1").execute());
-    const refused = closed.reached(2).then(nextTurn);
-    expect(await Promise.all(queries.map(query => unlessPending(outcome(query), refused)))).toEqual(
-      Array(3).fill("pending"),
-    );
-    // With a connection up the pool tries to grow once more, and then makes do.
-    await closed.reached(4);
-    expect(queries.map(query => query.active)).toEqual([true, true, true]);
-    expect(server.sockets.length).toBe(5);
+    await using sql = new SQL({ url: url(server.port), max: 3, onclose: closed.hit });
+    const queries = [1, 2, 3].map(() => outcome(sql.unsafe("select 1").simple()));
+    expect(await Promise.all(queries)).toEqual(Array(3).fill("resolved"));
+    expect(server.sockets.length).toBe(3);
   });
 
-  test.concurrent("queries make do with a connection that is up", async () => {
-    await using server = await serverOf((socket, nth) => (nth === 1 ? ready(socket) : refuseLogin(socket)));
-    const closed = new Calls();
-    const sql = new SQL({ url: url(server.port), max: 2, onclose: closed.hit });
-    await using _ = unanswered(sql);
-    await sql.connect();
-    const queries = [1, 2].map(() => sql.unsafe("select 1").execute());
-    queries.forEach(outcome);
-    await closed.reached(1);
-    expect(queries.map(query => query.active)).toEqual([true, true]);
-  });
-
-  test.concurrent("they leave its share to a dial that is on its way", async () => {
-    const closed = new Calls();
+  test.concurrent("a pool that lost connections grows by one dial for each caller that waits", async () => {
+    await using server = await serverOf(ready);
     const connected = new Calls();
-    const letIn = Promise.withResolvers<void>();
-    await using server = await serverOf((socket, nth) => {
-      if (nth === 2) return refuseLogin(socket);
-      if (nth === 3) return void letIn.promise.then(() => ready(socket));
-      ready(socket);
-    });
+    const closed = new Calls();
     const sql = new SQL({ url: url(server.port), max: 3, onconnect: connected.hit, onclose: closed.hit });
     await using _ = unanswered(sql);
     await sql.connect();
-    const queries = [1, 2, 3].map(() => sql.unsafe("select 1").execute());
-    queries.forEach(outcome);
-    await closed.reached(1);
-    expect(queries.map(query => query.active)).toEqual([true, true, false]);
-    letIn.resolve();
-    await connected.reached(2);
-    expect(queries.map(query => query.active)).toEqual([true, true, true]);
-  });
-
-  test.concurrent("a reservation whose dial is refused gets the connection that is up: it drains for it", async () => {
-    await using server = await serverOf((socket, nth) => (nth === 1 ? ready(socket) : refuseLogin(socket)));
-    const closed = new Calls();
-    const sql = new SQL({ url: url(server.port), max: 2, onclose: closed.hit });
-    await using _ = unanswered(sql);
-    await sql.connect();
-    const busy = outcome(sql.unsafe("select 1").simple().execute());
-    const reservation = outcome(sql.reserve());
-    expect(await unlessPending(reservation, closed.reached(1).then(nextTurn))).toBe("pending");
-    // Nobody got an answer, so nothing is dialed for the next one. Accepted after whatever the pool would have dialed:
+    await connected.reached(3);
+    server.sockets[1].destroy();
+    server.sockets[2].destroy();
+    await closed.reached(2);
+    [1, 2].forEach(() => outcome(sql.unsafe("select 1").execute()));
+    await connected.reached(4);
+    // Accepted after whatever the pool would have dialed.
     const probe = net.connect(server.port, "127.0.0.1");
     await once(probe, "connect");
     probe.destroy();
-    while (server.sockets.length < 3) await nextTurn();
-    expect(server.sockets.length).toBe(3);
-    const later = sql.unsafe("select 2").execute();
-    outcome(later);
-    expect(later.active).toBe(false);
-    answer(server.sockets[0]);
-    expect([await busy, await reservation]).toEqual(["resolved", "resolved"]);
+    while (server.sockets.length < 5) await nextTurn();
+    expect(server.sockets.length).toBe(5);
   });
 
-  test.concurrent("a caller is left to a dial that is on its way when another one is refused", async () => {
+  test.concurrent("the connection that is up drains for a reservation that nothing can be dialed for", async () => {
+    await using server = await serverOf((socket, nth) => (nth === 1 ? ready(socket) : refuseLogin(socket)));
     const closed = new Calls();
-    await using server = await serverOf((socket, nth) => {
-      if (nth === 2) return refuseLogin(socket);
-      // Let in once the client knows of the refusal.
-      if (nth === 3) return void closed.reached(1).then(() => ready(socket));
-      ready(socket);
-    });
-    const sql = new SQL({ url: url(server.port), max: 3, onclose: closed.hit });
-    await using _ = unanswered(sql);
+    await using sql = new SQL({ url: url(server.port), max: 2, onclose: closed.hit });
     await sql.connect();
-    const left = [sql.unsafe("select 1").execute(), sql.unsafe("select 2").execute()].map(outcome);
-    expect(await outcome(sql.reserve())).toBe("resolved");
-    expect(server.sockets.length).toBe(3);
-    await sql.close({ timeout: 0 });
-    await Promise.all(left);
+    await closed.reached(1);
+    const busy = outcome(sql.unsafe("select 1").simple().execute());
+    const reservation = sql.reserve();
+    expect(await unlessPending(outcome(reservation), closed.reached(2).then(nextTurn))).toBe("pending");
+    const later = sql.unsafe("select 2").simple().execute();
+    expect(later.active).toBe(false);
+    answer(server.sockets[0]);
+    expect(await busy).toBe("resolved");
+    (await reservation).release();
+    await once(server.sockets[0], "data");
+    answer(server.sockets[0]);
+    expect(await outcome(later)).toBe("resolved");
   });
 
   test.concurrent("a server that refuses everybody is dialed `max` times for callers that wait together", async () => {

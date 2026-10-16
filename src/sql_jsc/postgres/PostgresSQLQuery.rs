@@ -18,6 +18,7 @@ use super::postgres_sql_connection;
 use super::postgres_sql_statement::{ResultDescription, Status as StatementStatus, describe};
 use bun_sql::postgres::CommandTag;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
+use bun_sql::postgres::postgres_types::ResultFormats;
 use bun_sql::shared::ConnectionFlags;
 use bun_sql::shared::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
@@ -61,7 +62,8 @@ impl Default for PostgresSQLQuery {
 
 #[derive(Clone, Copy)]
 pub struct Flags {
-    pub(crate) binary: bool,
+    /// What its Bind asked for.
+    pub(crate) formats: ResultFormats,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
     /// Parse + Describe go out first and Bind waits for the server's parameter types.
@@ -113,7 +115,7 @@ pub enum RequestCounter {
 impl Default for Flags {
     fn default() -> Self {
         Self {
-            binary: false,
+            formats: ResultFormats::Text,
             bigint: false,
             simple: false,
             describe_first: false,

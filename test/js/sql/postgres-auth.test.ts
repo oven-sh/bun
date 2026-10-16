@@ -708,8 +708,9 @@ describe.concurrent("scripted server", () => {
 
   test("the pool goes on with the one that logged in", async () => {
     await using mock = await pgScramServer({ password: "aIX" });
-    await using sql = new SQL({ ...client(mock.port), password: "\u00aa\u2168", max: 2 });
-    using first = await sql.reserve();
+    await using sql = new SQL({ ...client(mock.port), password: "\u00aa\u2168", max: 1 });
+    const first = await sql.reserve();
+    await first.close();
     using second = await sql.reserve();
     expect(mock.exchanges.map(exchange => exchange.proofOk)).toEqual([false, true, true]);
   });

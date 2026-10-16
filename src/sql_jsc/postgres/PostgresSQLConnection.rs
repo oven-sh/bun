@@ -46,7 +46,7 @@ use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::Status;
 use bun_sql::postgres::TLSStatus;
 use bun_sql::postgres::postgres_protocol as protocol;
-use bun_sql::postgres::postgres_types::Int4;
+use bun_sql::postgres::postgres_types::{Int4, ResultFormats};
 use bun_sql::postgres::socket_monitor as SocketMonitor;
 use bun_sql::shared::ConnectionFlags;
 use bun_sql::shared::Data;
@@ -1893,7 +1893,6 @@ impl PostgresSQLConnection {
             return self.remove_unwritten(&req);
         };
         let values = postgres_sql_query::js::binding_get_cached(this_value).unwrap_or_default();
-        let result_mode = req.flags.get().result_mode;
         let unnamed = self
             .flags
             .get()
@@ -1919,14 +1918,22 @@ impl PostgresSQLConnection {
                 if !self.stage(&req, values, statement.parameter_types()) {
                     return true;
                 }
-                req.update_flags(|f| f.binary = !statement.fields.is_empty());
+                // Whether an unnamed statement is described before its Bind depends on the values.
+                let formats = if unnamed {
+                    ResultFormats::Text
+                } else if req.flags.get().result_mode == SQLQueryResultMode::Raw {
+                    ResultFormats::Raw
+                } else {
+                    ResultFormats::Decodable
+                };
+                req.update_flags(|f| f.formats = formats);
                 if let Err(err) = if unnamed {
                     PostgresRequest::parse_and_bind_and_execute(
                         self.global(),
                         req.query.to_utf8().slice(),
                         statement,
                         values,
-                        result_mode,
+                        formats,
                         false,
                         self.writer(),
                     )
@@ -1935,7 +1942,7 @@ impl PostgresSQLConnection {
                         self.global(),
                         statement,
                         values,
-                        result_mode,
+                        formats,
                         self.writer(),
                     )
                 } {
@@ -1966,7 +1973,7 @@ impl PostgresSQLConnection {
                         query.slice(),
                         statement,
                         values,
-                        result_mode,
+                        ResultFormats::Text,
                         true,
                         self.writer(),
                     )
@@ -2041,7 +2048,7 @@ impl PostgresSQLConnection {
                 let mut putter = DataCell::Putter {
                     list: &mut cells.0,
                     fields: &statement.fields,
-                    binary: request_flags.binary,
+                    formats: request_flags.formats,
                     bigint: request_flags.bigint,
                     global_object: self.global(),
                 };
@@ -2702,7 +2709,7 @@ impl PostgresSQLConnection {
                             request.statement.set(Some(replacement));
                             request.update_flags(|f| {
                                 f.retried = true;
-                                f.binary = false;
+                                f.formats = ResultFormats::Text;
                             });
                             // It keeps its place: nothing is written until its ReadyForQuery, then it.
                             self.count(&request, RequestCounter::Pending);

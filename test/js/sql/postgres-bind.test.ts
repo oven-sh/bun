@@ -219,7 +219,8 @@ const matrix: [label: string, value: () => unknown, cells: Cells, unprepared?: C
       "[1,null]": "json",
       "[1, null]": "jsonb",
       ERR_INVALID_ARG_TYPE: "bytea",
-      "{1,NULL}": "int4_array float4_array text_array jsonb_array",
+      "{1,NULL}": "int4_array float4_array text_array",
+      '{1,"null"}': "jsonb_array",
     },
   ],
   [
@@ -233,8 +234,7 @@ const matrix: [label: string, value: () => unknown, cells: Cells, unprepared?: C
       "[[1,2],[3,4]]": "json",
       "[[1, 2], [3, 4]]": "jsonb",
       ERR_INVALID_ARG_TYPE: "bytea",
-      "{{1,2},{3,4}}": "int4_array float4_array text_array",
-      '{"[1, 2]","[3, 4]"}': "jsonb_array",
+      "{{1,2},{3,4}}": "int4_array float4_array text_array jsonb_array",
     },
   ],
   [
@@ -434,17 +434,6 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       );
       expect(refused).toBeInstanceOf(TypeError);
       expect(await sql`select ${"next"}::text as x`).toEqual([{ x: "next" }]);
-    });
-
-    test("raw() returns the text format on every run", async () => {
-      const run = async () => {
-        const [row] = await sql`select ${1}::int4, ${true}::bool, ${1.5}::float8, ${Buffer.from("hi")}::bytea`.raw();
-        return row.map((cell: Uint8Array) => Buffer.from(cell).toString());
-      };
-      expect([await run(), await run()]).toEqual([
-        ["1", "t", "1.5", "\\x6869"],
-        ["1", "t", "1.5", "\\x6869"],
-      ]);
     });
 
     test.each<[string, (sql: SQL) => Promise<unknown>]>([

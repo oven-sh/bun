@@ -73,18 +73,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   #setMode(mode: SQLQueryResultMode) {
-    const flags = this[_flags];
-    if (this[_queryStatus] & SQLQueryStatus.executed) {
-      if (
-        this[_adapter].rawChangesFormat &&
-        !(flags & SQLQueryFlags.simple) &&
-        (mode === SQLQueryResultMode.raw || ((flags >> resultModeShift) & 3) === SQLQueryResultMode.raw)
-      ) {
-        return this;
-      }
-      this[_handle]?.setMode(mode);
-    }
-    this[_flags] = (flags & ~(3 << resultModeShift)) | (mode << resultModeShift);
+    this[_flags] = (this[_flags] & ~(3 << resultModeShift)) | (mode << resultModeShift);
+    this[_handle]?.setMode(mode);
     return this;
   }
 
@@ -260,9 +250,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   simple() {
-    if (!(this[_queryStatus] & SQLQueryStatus.executed)) {
-      this[_flags] |= SQLQueryFlags.simple;
-    }
+    this[_flags] |= SQLQueryFlags.simple;
     return this;
   }
 
@@ -309,15 +297,23 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return super.catch.$apply(this, arguments);
   }
 
-  finally(_onfinally?: (() => void) | undefined | null) {
+  finally(onFinally?: (() => void) | undefined | null) {
     this.#runTagged();
-    return super.finally.$apply(this, arguments);
+    if (!$isCallable(onFinally)) {
+      return super.finally.$apply(this, arguments);
+    }
+    // Once `onFinally` and what it returned are through, the failure of the query passes on to `result`: as with
+    // execute(), nobody has to handle it. What `onFinally` throws is the caller's own, and the mark is not reached.
+    const result = super.finally(() => PublicPromise.$resolve(onFinally()).$then(() => $pokePromiseAsHandled(result)));
+    return result;
   }
 }
 
-/// Calls `callback` in a microtask once the query has settled, before the reactions of the caller. It is not a
-/// reaction of the query: that would count as a handler, and a failure that nobody handles would not be reported.
+/// Calls `callback` in a microtask once the query has settled, before the reactions of the caller.
 function onQuerySettled(query: Query<any, any>, callback: () => void) {
+  // A query that is only started, sql`...`.execute(), does not end the process when it fails. What the caller makes
+  // of it with then() or catch() is a promise like any other.
+  $pokePromiseAsHandled(query);
   let settled = query[_settled];
   if (settled === null) {
     settled = query[_settled] = $newPromise<void>();

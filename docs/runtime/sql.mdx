@@ -414,11 +414,11 @@ const rows = await sql`SELECT * FROM users`.raw();
 console.log(rows); // [[Buffer, Buffer], [Buffer, Buffer], [Buffer, Buffer]]
 ```
 
-- On PostgreSQL, each `Buffer` holds the text form of the value, such as `1`, `t` or `\x0102`.
+- On PostgreSQL, each `Buffer` holds the bytes the server sent. A prepared query gets `bool`, `int4`, `float4`, `float8`, `numeric`, `bytea`, `time`, `timestamp`, `timestamptz`, `int4[]` and `float4[]` in PostgreSQL's binary format, so a `bytea` column is its bytes. Every other type is text. All types are text on the first run of a query without parameters, with `.simple()`, and with `prepare: false`.
 - On MySQL, each `Buffer` holds the bytes the server sent. They are binary for a prepared query and text for `.simple()`.
 - SQLite returns `Uint8Array` objects.
 
-Call `.raw()` before the query starts, that is before `await`, `.then()` or `.execute()`. After that, a prepared query on PostgreSQL ignores it. On SQLite, `.execute()` has already run the query when it returns, so `.values()` has no effect after it either.
+Call `.raw()` before the query starts, that is before `await`, `.then()` or `.execute()`. After that, Bun may already have asked PostgreSQL for the formats that it decodes. Then `float4`, `numeric` and `time` arrive as text, and `int2[]` and `float8[]` in binary. On SQLite, `.execute()` has already run the query when it returns, so `.raw()` and `.values()` have no effect after it.
 
 ### Result metadata
 
@@ -601,7 +601,14 @@ await sql`SELECT ${sql.array([1, 2, 3], "INT")} AS ids`;
 // Sends: SELECT $1::INT[] AS ids
 ```
 
-A `null` element is SQL `NULL`, and nested arrays make a multi-dimensional array. Pass `"JSON"` or `"JSONB"` for a `json[]` or `jsonb[]` column, so that Bun encodes each element as JSON.
+A `null` element is SQL `NULL`, and nested arrays make a multi-dimensional array.
+
+Pass `"JSON"` or `"JSONB"` for a `json[]` or `jsonb[]` column, so that Bun encodes each element as JSON. There, `null` is the JSON value `null`, and `undefined` is SQL `NULL`. A nested array is still a dimension. To store a JSON array as one element, wrap it in [`sql.json`](#sql-json):
+
+```ts
+await sql`INSERT INTO events (payloads) VALUES (${sql.array([{ a: 1 }, null, sql.json([1, 2])], "JSONB")})`;
+// three elements: {"a": 1}, null and [1, 2]
+```
 
 <Note>`sql.array` is PostgreSQL-only.</Note>
 
@@ -711,7 +718,7 @@ What `cancel()` does depends on how far the query got:
 
 ### Unhandled rejections
 
-A query is a promise. When it fails and nothing handles the rejection, Bun reports an unhandled rejection, which ends the process unless you listen for [`unhandledRejection`](https://nodejs.org/api/process.html#event-unhandledrejection). Add a `.catch()` to a query that you start and do not await:
+`.then()` and `.catch()` return a promise like any other. When it rejects and nothing handles the rejection, Bun reports an unhandled rejection, which ends the process unless you listen for [`unhandledRejection`](https://nodejs.org/api/process.html#event-unhandledrejection). So does an error that your `.finally()` callback throws. A query that you only start, with `.execute()` or `.finally()`, is the exception: once it has a connection, its own failure is not reported, and the error is lost. Add a `.catch()` to a query that you start and do not await:
 
 ```ts
 sql`UPDATE stats SET hits = hits + 1`.catch(err => console.error(err));
@@ -879,7 +886,7 @@ DATABASE_URL=postgres://user:pass@localhost:5432/db bun --sql-preconnect index.j
 bun --sql-preconnect --hot index.js
 ```
 
-The `--sql-preconnect` flag opens one connection of the default client, `Bun.sql`, using your configured environment variables. It also works when `DATABASE_URL` is a MySQL or MariaDB URL. If the connection fails, Bun handles the error without crashing your application.
+The `--sql-preconnect` flag connects the default client, `Bun.sql`, at startup using your configured environment variables. It also works when `DATABASE_URL` is a MySQL or MariaDB URL. If the connection fails, Bun handles the error without crashing your application.
 
 ---
 
@@ -1354,26 +1361,26 @@ const sql = new SQL({
 });
 ```
 
-Bun opens connections on demand. It doesn't open one until you run a query.
+Bun doesn't open a connection until you run a query.
 
 ```ts
 const sql = new SQL(); // no connection yet
 
-await sql`...`; // opens the first connection
-await sql`...`; // reuses it
+await sql`...`; // pool is started until max is reached (if possible), first available connection is used
+await sql`...`; // previous connection is reused
 
-// two queries at the same time: Bun opens a second connection
+// two connections are used now at the same time
 await Promise.all([
   sql`INSERT INTO users ${sql({ name: "Alice" })}`,
   sql`UPDATE users SET name = ${user.name} WHERE id = ${user.id}`,
 ]);
 ```
 
-- Bun opens a connection when a query finds no idle one, until the pool has `max` connections. After that, queries share the open connections.
+- Bun starts the pool when a caller finds no connection ready: at the first query, and again after every connection has closed, for example at `idleTimeout`. It opens connections until the pool has `max`. Queries share the open connections.
 - `sql.begin` and `sql.reserve` need a connection of their own, so they wait for an idle one.
 - Bun serves the callers that wait for a connection oldest first.
-- A pool that loses connections opens new ones for the next queries.
-- When Bun cannot open a new connection, queries run on the connections that are open. A caller that none of them can take rejects with the error of that attempt: `sql.reserve`, `sql.begin`, or a query while every connection is reserved.
+- A pool that lost some of its connections opens new ones when queries have to wait.
+- When Bun cannot open a new connection, callers wait for the connections that are open. They reject with the error of that attempt only when the pool has no connection left.
 - Bun closes a connection that goes back to the pool inside a transaction, and the server rolls that transaction back. That covers a reserved connection that you release after a manual `BEGIN`, and a query that leaves a transaction open or failed, such as `SELECT 1; BEGIN`. Queries of other callers that Bun already sent behind such a query are rolled back with it. With `max: 1`, where a manual `BEGIN` is allowed, a query can leave its transaction open.
 
 ### Hot reloading

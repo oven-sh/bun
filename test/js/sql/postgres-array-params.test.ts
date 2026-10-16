@@ -62,7 +62,16 @@ const cases: [string, string, any, string][] = [
   ["bytea, Uint8Array", "bytea[]", [new Uint8Array([1, 2, 44])], raw`{"\\x01022c"}`],
   ["bytea, DataView", "bytea[]", [new DataView(new Uint8Array([1, 2, 3]).buffer, 1)], raw`{"\\x0203"}`],
   ["bytea, ArrayBuffer", "bytea[]", [new Uint8Array([7]).buffer], raw`{"\\x07"}`],
-  ["json", "json[]", [{ a: 1 }, [1, 2], "s", 1, true, null], raw`{"{\"a\":1}","[1,2]","\"s\"",1,true,NULL}`],
+  ["json", "json[]", [{ a: 1 }, "s", 1, true, null, undefined], raw`{"{\"a\":1}","\"s\"",1,true,"null",NULL}`],
+  [
+    "json, nested",
+    "json[]",
+    [
+      [1, "a"],
+      [{ b: 2 }, null],
+    ],
+    raw`{{1,"\"a\""},{"{\"b\":2}","null"}}`,
+  ],
   ["jsonb", "jsonb[]", [{ a: 'q"' }, "s"], raw`{"{\"a\": \"q\\\"\"}","\"s\""}`],
   ["Int32Array", "int4[]", new Int32Array([100, 200]), "{100,200}"],
   ["Float32Array", "float4[]", new Float32Array([1.5, 2.5]), "{1.5,2.5}"],
@@ -123,7 +132,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       const { sql } = db;
       const cast = (type: string, value: any) => sql`${sql.array(value)}::${sql.unsafe(type)}`;
       // these three are written differently when the type is known
-      const needTheType = ["json", "jsonb", "box"];
+      const needTheType = ["json", "json, nested", "jsonb", "box"];
       const others = cases.filter(([label]) => !needTheType.includes(label));
       expect(byLabel(await selectEach(sql, cast, others), others)).toEqual(
         Object.fromEntries(others.map(([label, , , stored]) => [label, stored])),
@@ -188,6 +197,40 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
       expect(byLabel(await sql`update ${table} set ${sql(row)} returning ${sql.unsafe(everyColumnAsText)}`)).toEqual(
         expected,
       );
+    });
+  });
+
+  describe("an array of JSON", () => {
+    test.each<[unknown[], string]>([
+      [[1, null], '{1,"null"}'],
+      [[undefined], "{NULL}"],
+      [[[null]], '{{"null"}}'],
+      [[[1]], "{{1}}"],
+      [[[1], [2]], "{{1},{2}}"],
+      [[[{ a: 1 }]], raw`{{"{\"a\": 1}"}}`],
+    ])("%p: null is a JSON value, a nested array a dimension", async (values, stored) => {
+      await using db = await connect();
+      expect(await db.sql`select ${db.sql.array(values, "JSONB")}::text as x`).toEqual([{ x: stored }]);
+    });
+
+    test.each<[unknown[]]>([[[[1], [2, 3]]], [[[1], 2]], [[[]]]])("%p has no dimensions", async values => {
+      await using db = await connect();
+      expect(await db.sql`select ${db.sql.array(values, "JSONB")} as x`.catch(error => error.errno)).toBe("22P02");
+    });
+
+    test("sql.json() makes one element of an array", async () => {
+      await using db = await connect();
+      const { sql } = db;
+      expect(await sql`select ${sql.array([sql.json([1, 2]), sql.json([]), { a: 1 }], "JSONB")}::text as x`).toEqual([
+        { x: raw`{"[1, 2]",[],"{\"a\": 1}"}` },
+      ]);
+    });
+
+    test("a plain array is written the same way", async () => {
+      await using db = await connect();
+      expect(
+        await db.sql`select ${[1, null, undefined]}::jsonb[]::text as flat, ${[[1], [null]]}::jsonb[]::text as nested`,
+      ).toEqual([{ flat: '{1,"null",NULL}', nested: '{{1},{"null"}}' }]);
     });
   });
 

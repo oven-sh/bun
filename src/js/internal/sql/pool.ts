@@ -647,22 +647,24 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     return connecting;
   }
 
+  /// For the callers that wait. If no connection is ready, the pool is started: it dials until `max` is reached.
+  /// Otherwise it grows by one dial for each waiting caller that no dial in flight covers.
   #dialForQueued() {
-    const wanted = this.queue.length;
-    if (wanted === 0) {
+    if (this.queue.length === 0) {
       return;
     }
+    const start = this.readyConnections.size === 0;
     const connections = this.connections;
-    let connecting = this.#connecting();
-    while (connecting < wanted && connections.length < this.connectionInfo.max && this.#closing === null) {
-      if (this.#adopt()) {
-        // it has served the queue and dialed for the rest
-        return;
+    while (
+      connections.length < this.connectionInfo.max &&
+      this.#closing === null &&
+      (start || this.#connecting() < this.queue.length)
+    ) {
+      if (!this.#adopt()) {
+        const connection = new PooledConnection(this);
+        connections.push(connection);
+        connection.dial();
       }
-      const connection = new PooledConnection(this);
-      connections.push(connection);
-      connecting++;
-      connection.dial();
     }
   }
 
@@ -724,17 +726,16 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   }
 
   /// Serves the oldest caller that can be served now. It is booked before it is called: it can re-enter the pool.
-  /// `size`: how many connections the pool counts on.
-  #serveNext(size: number): boolean {
+  #serveNext(): boolean {
     const queue = this.queue;
     let reservationsAhead = 0;
     for (let i = 0; i < queue.length; i++) {
       const waiter = queue[i];
       if (typeof waiter === "function") {
-        // An even share of the demand over `size` connections: what is above it gets a new connection.
+        // An even share of the demand over `max` connections.
         // A reservation ahead gets a dial that is on its way, or one connection has to drain for it.
         const connection = this.#leastBusy(
-          Math.ceil((queue.length + this.totalQueries) / size),
+          Math.ceil((queue.length + this.totalQueries) / this.connectionInfo.max),
           reservationsAhead && Math.max(reservationsAhead - this.#connecting(), 0),
         );
         if (connection === null) {
@@ -762,8 +763,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   }
 
   #serve() {
-    while (this.#serveNext(this.connectionInfo.max));
-    this.#dialForQueued();
+    while (this.#serveNext());
   }
 
   /// `prepared`: a distributed transaction ended with its PREPARE.
@@ -828,32 +828,22 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
         return;
       }
     } else if (waiting > 0) {
-      // They never used `connection`. After one that worked they get a new one.
+      // They never used `connection`. If it was established, they get a new one. A failed dial rejects them only
+      // when the pool has no connection left.
       if (established) {
         this.#serve();
-      } else {
-        // The callers make do with the connections that are up or on their way: any of them takes every query,
-        // and a reservation once it is idle. With none, the oldest caller has its answer, and the next one is
-        // dialed for while the server is known to answer.
-        const connecting = this.#connecting();
-        while (this.#serveNext(this.readyConnections.size + connecting));
-        if (this.readyConnections.size + connecting === 0) {
-          this.#failQueued(err, 1);
-          if (this.isConnected()) {
-            this.#dialForQueued();
-          }
-        }
+        this.#dialForQueued();
       }
       if (connections.length === 0) {
-        this.#failQueued(err, this.queue.length);
+        this.#failQueued(err);
       }
       this.#closeIfDrained();
     }
     this.runUserCallback(this.connectionInfo.onclose, err);
   }
 
-  #failQueued(err: Error, oldest: number) {
-    const failed = this.queue.splice(0, oldest);
+  #failQueued(err: Error) {
+    const failed = this.queue.splice(0);
     for (let i = 0; i < failed.length; i++) {
       const waiter = failed[i];
       (typeof waiter === "function" ? waiter : waiter.onConnected)(err, null);
@@ -895,7 +885,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       clearTimeout(timers[i]);
     }
     timers.length = 0;
-    this.#failQueued(this.connectionClosedError(), this.queue.length);
+    this.#failQueued(this.connectionClosedError());
     const connections = this.connections.slice();
     for (let i = 0; i < connections.length; i++) {
       connections[i].destroy();
@@ -939,6 +929,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     this.asked = true;
     this.queue.push(reserved ? new Reservation(onConnected) : onConnected);
     this.#serve();
+    this.#dialForQueued();
   }
 }
 

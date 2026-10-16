@@ -139,24 +139,34 @@ impl Tag {
         if self == Tag::box_array { b';' } else { b',' }
     }
 
-    /// The result columns `DataCell` decodes from binary. Not read for parameters.
-    pub fn is_binary_format_supported(self) -> bool {
-        matches!(
-            self,
+    /// Of a result column. Not read for parameters.
+    pub fn is_binary_in(self, formats: ResultFormats) -> bool {
+        match self {
             Tag::bool
-                | Tag::int4
-                | Tag::float8
-                | Tag::timestamp
-                | Tag::timestamptz
-                | Tag::bytea
-                | Tag::int2_array
-                | Tag::int4_array
-                | Tag::float4_array
-                | Tag::float8_array
-        )
+            | Tag::int4
+            | Tag::float8
+            | Tag::timestamp
+            | Tag::timestamptz
+            | Tag::bytea
+            | Tag::int4_array
+            | Tag::float4_array => formats != ResultFormats::Text,
+            Tag::int2_array | Tag::float8_array => formats == ResultFormats::Decodable,
+            Tag::float4 | Tag::numeric | Tag::time => formats == ResultFormats::Raw,
+            _ => false,
+        }
     }
 
-    pub fn format_code(self) -> Short {
-        Short::from(self.is_binary_format_supported())
+    pub fn format_code(self, formats: ResultFormats) -> Short {
+        Short::from(self.is_binary_in(formats))
     }
+}
+
+/// The result columns that a Bind asks for in binary.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ResultFormats {
+    Text,
+    /// Those that `DataCell` decodes from binary.
+    Decodable,
+    /// Those that `.raw()` has always handed out in binary: programs parse these bytes.
+    Raw,
 }

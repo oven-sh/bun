@@ -178,7 +178,7 @@ for (const [adapter, refusedCode] of [
   );
 }
 
-// One query is one attempt, whatever `max` is.
+// The first query starts the pool: `max` attempts.
 test.concurrent("postgres: pool calls from onclose are safe when the password function throws", async () => {
   const fixture = /* ts */ `
 import { SQL } from "bun";
@@ -211,7 +211,7 @@ try {
 process.exit(0);
 `;
   expect(await runFixture(fixture)).toEqual({
-    stdout: "reentry ok\nquery rejected: password error\n",
+    stdout: "reentry ok\nreentry ok\nquery rejected: password error\n",
     stderr: "",
     exitCode: 0,
   });

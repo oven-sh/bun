@@ -1,4 +1,6 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -332,5 +334,34 @@ describe("bundler", () => {
     },
     run: true,
     capture: ["1 /* Value */", "1 /* Value */", "1 /* Value */"],
+  });
+
+  // The failed import used to replace the file's parse result, and the log in
+  // it, with an error. `itBundled` does not check warnings when a build fails.
+  test("regression/FileKeepsWarningsWhenAnImportDoesNotResolve", async () => {
+    using dir = tempDir("bundler-warnings-with-resolve-error", {
+      "warn.js": `import "./does-not-exist.js";\nclass A { #m() {} f() { this.#m = 1; } }\nexport default A;\n`,
+      "warn.css": `@import "./does-not-exist.css";\n.b { @nest .c & { color: blue } }\n`,
+    });
+    const logsOf = async (entry: string) => {
+      const { success, logs } = await Bun.build({ entrypoints: [join(String(dir), entry)], throw: false });
+      return { success, logs: logs.map(log => [log.level, log.name, log.message]) };
+    };
+    expect({ js: await logsOf("warn.js"), css: await logsOf("warn.css") }).toEqual({
+      js: {
+        success: false,
+        logs: [
+          ["error", "ResolveMessage", 'Could not resolve: "./does-not-exist.js"'],
+          ["warn", "BuildMessage", 'Writing to read-only method "#m" will throw'],
+        ],
+      },
+      css: {
+        success: false,
+        logs: [
+          ["error", "ResolveMessage", 'Could not resolve: "./does-not-exist.css"'],
+          ["warn", "BuildMessage", "The @nest rule is deprecated, use standard CSS nesting instead"],
+        ],
+      },
+    });
   });
 });

@@ -259,6 +259,25 @@ devTest("css url resolve error on hot reload is recoverable", {
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+devTest("css parse warnings are reported with a resolve error", {
+  files: {
+    // 0xE9 is "é" in Latin-1 and is not valid UTF-8.
+    "styles.css": Buffer.from('@import "./missing.css";\n.a::before { content: "caf\xE9"; }\n', "latin1"),
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `hello world`,
+    }),
+  },
+  async test(dev) {
+    // The failed import used to drop the log of the parse, and the warning in it.
+    await using c = await dev.client("/", {
+      errors: [
+        'styles.css:1:1: error: Could not resolve: "./missing.css"',
+        "styles.css:2:27: warn: This file is not valid UTF-8, each invalid byte sequence was replaced with U+FFFD",
+      ],
+    });
+  },
+});
 devTest("circular css imports handle hot reload", {
   files: {
     "index.html": emptyHtmlFile({

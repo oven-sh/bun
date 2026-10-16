@@ -4399,8 +4399,7 @@ pub(crate) mod __gated_printer {
                             self.print(b"*");
                         }
                         self.print_space();
-                        // `yield AssignmentExpression[?In]`: in a `for` initializer the operand
-                        // cannot hold a bare `in` either. esbuild passes no flags here.
+                        // `yield AssignmentExpression[?In]`. esbuild passes no flags here.
                         self.print_expr(*val, Level::Yield, flags & ExprFlag::ForbidIn);
                     }
 

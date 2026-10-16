@@ -1946,10 +1946,12 @@ describe("bundler", () => {
   // `AssignedInBranchingCatch` is skipped (its phi has an operand of a removed
   // block). `DeadTryInDoWhile` loses the test of its do-while with the handler
   // and is skipped too: a merge into that `break` would move `p.f()` into the
-  // `if`.
+  // `if`. The handler of `BindingInNestedCatch` has two blocks: in the outer
+  // try, the store of `e` ends a block.
   itBundled("react-compiler/TryBodyThatCannotThrowWithBranchingCatchKeepsTheRestOfTheFunction", {
     files: {
       "/entry.jsx": /* jsx */ `
+        import { useMemo } from "react";
         import { sizes } from "react/compiler-runtime";
 
         const validate = () => {};
@@ -2019,6 +2021,59 @@ describe("bundler", () => {
           } catch {}
           return <div>{p.a}</div>;
         }
+        function BindingInNestedCatch(p) {
+          try {
+            try {
+              const limit = 3;
+            } catch (e) {}
+            p.f();
+          } catch {}
+          return <div>{p.a}</div>;
+        }
+        function RestOfSwitchCase(p) {
+          switch (p.k) {
+            case 1: {
+              try {
+                const limit = 3;
+              } catch {
+                if (p.c) console.log(1);
+              }
+              return <div>{p.a}</div>;
+            }
+            default:
+              return <div>other</div>;
+          }
+        }
+        function RestOfMemoCallback(p) {
+          const v = useMemo(() => {
+            try {
+              const limit = 3;
+            } catch {
+              if (p.c) console.log(1);
+            }
+            return [p.a];
+          }, [p.a, p.c]);
+          return <div>{v}</div>;
+        }
+        function MutationAfterTry(p) {
+          const out = [];
+          try {
+            const limit = 3;
+          } catch {
+            if (p.c) console.log(1);
+          }
+          out.push(p.a);
+          return <div>{out}</div>;
+        }
+        function DebuggerInBody(props) {
+          try {
+            const limit = 3;
+            debugger;
+          } catch (e) {
+            if (props.debug) console.warn(e);
+          }
+          return <div>{props.a}</div>;
+        }
         function SingleBlockCatch(props) {
           try {
             const limit = 3;
@@ -2074,6 +2129,11 @@ describe("bundler", () => {
           useOptionalInCatch: render(useOptionalInCatch, { a: 5 }),
           RestOfLoopBody: render(RestOfLoopBody, { list: [1, 2] }),
           RestOfOuterTryBody: render(RestOfOuterTryBody, { a: 6, f }),
+          BindingInNestedCatch: render(BindingInNestedCatch, { a: 10, f }),
+          RestOfSwitchCase: render(RestOfSwitchCase, { a: 11, k: 1 }),
+          RestOfMemoCallback: render(RestOfMemoCallback, { a: 12 }),
+          MutationAfterTry: render(MutationAfterTry, { a: 13 }),
+          DebuggerInBody: render(DebuggerInBody, { a: 14 }),
           SingleBlockCatch: render(SingleBlockCatch, { a: 7 }),
           CanThrow: render(CanThrow, { a: 8, load: f }),
           AssignedInBranchingCatch: render(AssignedInBranchingCatch, { strict: true }),
@@ -2082,7 +2142,7 @@ describe("bundler", () => {
         }));
       `,
       "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
-      "/node_modules/react/index.js": `exports.createElement = () => null;`,
+      "/node_modules/react/index.js": `exports.useMemo = fn => fn();`,
       "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
       "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
       "/node_modules/react/compiler-runtime.js": /* js */ `
@@ -2107,13 +2167,100 @@ describe("bundler", () => {
         useOptionalInCatch: [[5], [2]],
         RestOfLoopBody: [[1, 2], [2]],
         RestOfOuterTryBody: [6, [2]],
+        BindingInNestedCatch: [10, [2]],
+        RestOfSwitchCase: [11, [3]],
+        RestOfMemoCallback: [[12], [4]],
+        MutationAfterTry: [[13], [2]],
+        DebuggerInBody: [14, [2]],
         SingleBlockCatch: [7, [2]],
         CanThrow: [8, [2]],
         AssignedInBranchingCatch: ["on", []],
         DeadTryInDoWhile: [9, []],
-        fCalls: 3,
+        fCalls: 4,
       }),
     },
+  });
+
+  // When no path reaches the test of a do-while, the loop becomes a goto, and what follows the loop is merged into the
+  // block of the `break`: `InTry` returns null, and `BreakInTry` calls `p.f()` in its try block. Upstream 1.0.0 does
+  // the same.
+  itBundled("react-compiler/DoWhileWhoseTestIsUnreachableKeepsWhatFollowsIt", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function InTry(p) {
+          try {
+            do {
+              if (p.a) break;
+              return null;
+            } while (p.c);
+            p.f();
+          } catch {}
+          return <div>{p.z}</div>;
+        }
+        function BreakInTry(p) {
+          do {
+            try {
+              if (p.a) break;
+              return null;
+            } catch {
+              return <div>caught</div>;
+            }
+          } while (p.c);
+          p.f();
+          return <div>{p.z}</div>;
+        }
+        const fail = () => {
+          throw new Error("f");
+        };
+        console.log(InTry({ a: true, z: 1, f() {} })?.props.children ?? "nothing");
+        try {
+          console.log(BreakInTry({ a: true, z: 2, f: fail })?.props.children ?? "nothing");
+        } catch (e) {
+          console.log("threw " + e.message);
+        }
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "1\nthrew f" },
+  });
+
+  // The blocks of an inlined function of more than one block have no edge to the handler, so the handler is removed
+  // although `p.f()` can throw. Upstream 1.0.0 does the same.
+  itBundled("react-compiler/InlinedFunctionInTryKeepsTheHandler", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Comp(p) {
+          try {
+            (() => {
+              if (p.a) p.f();
+            })();
+          } catch {
+            return <div>caught</div>;
+          }
+          return <div>{p.z}</div>;
+        }
+        const fail = () => {
+          throw new Error("f");
+        };
+        console.log(Comp({ a: true, z: 1, f: fail }).props.children);
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "caught" },
   });
 
   // A 0-arg call to an unknown import is non-reactive in InferReactivePlaces

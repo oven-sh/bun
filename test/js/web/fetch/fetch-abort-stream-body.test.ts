@@ -389,17 +389,18 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
     },
   );
 
-  // Nothing waits, so nothing can take the reason, and to keep it natively would root it. The
-  // source still has to fail: main ended such a stream as if the body were complete.
-  test.concurrent("Readable.fromWeb(res.body) that has not read yet fails with an AbortError", async () => {
+  // Nothing waits on the native source, and to keep the reason there would root it. The Readable
+  // takes the reason from the web stream, which the abort errors.
+  test.concurrent("Readable.fromWeb(res.body) that has not read yet fails with signal.reason", async () => {
     using server = await stalledBodyServer();
     const controller = new AbortController();
+    const reason = new Error("custom");
     const res = await fetch(server.url, { signal: controller.signal });
     const readable = Readable.fromWeb(res.body as any);
-    const settled = new Promise<any>(resolve => readable.on("error", resolve).on("end", () => resolve("ended")));
-    controller.abort(new Error("custom"));
+    const settled = new Promise(resolve => readable.on("error", resolve).on("end", () => resolve("ended")));
+    controller.abort(reason);
     readable.resume();
-    expect((await settled)?.name).toBe("AbortError");
+    expect(await settled).toBe(reason);
   });
 
   // The reason is not kept natively: a Strong there would root reason -> Response -> stream.

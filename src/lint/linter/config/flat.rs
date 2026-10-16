@@ -37,21 +37,66 @@ impl ConfigError {
 pub type LoadLocatedPlugin<'l> =
     dyn FnMut(&Json, &[u8]) -> Result<Arc<js_plugin::Plugin>, Vec<u8>> + 'l;
 
-/// What depends on the kind of the configuration file: the fields of these names of [`Config`].
+/// The kind of the configuration file. Its methods say what depends on it.
 #[derive(Copy, Clone)]
-pub(super) struct Semantics {
-    pub(super) keeps_options: bool,
-    pub(super) accepts_all_plugins: bool,
-    pub(super) is_legacy: bool,
+pub(super) enum Semantics {
+    /// [`Config::from_flat_json`]
+    Flat,
+    /// [`Config::without_a_file`]
+    BuiltIn,
+    /// [`Config::from_legacy`]
+    Legacy,
+    /// [`Config::from_rc_json`]
+    Rc,
+}
+
+impl Semantics {
+    /// A rule setting that is only a severity keeps the options of the one it overrides.
+    pub(super) fn keeps_options(self) -> bool {
+        match self {
+            Semantics::Flat | Semantics::BuiltIn | Semantics::Legacy => true,
+            Semantics::Rc => false,
+        }
+    }
+
+    /// Any plugin that is not implemented here counts as configured.
+    pub(super) fn accepts_all_plugins(self) -> bool {
+        match self {
+            Semantics::Flat | Semantics::BuiltIn => false,
+            Semantics::Legacy | Semantics::Rc => true,
+        }
+    }
+
+    /// It is made of the files of ESLint 8.
+    pub(super) fn is_legacy(self) -> bool {
+        match self {
+            Semantics::Flat | Semantics::BuiltIn | Semantics::Rc => false,
+            Semantics::Legacy => true,
+        }
+    }
+
+    /// A rule of ESLint that typescript-eslint extends stands for the extension, as in oxlint.
+    pub(super) fn prefers_typescript_rules(self) -> bool {
+        match self {
+            Semantics::Flat | Semantics::BuiltIn | Semantics::Legacy => false,
+            Semantics::Rc => true,
+        }
+    }
+
+    /// [`ResolvedConfig::has_every_rule`](crate::linter::ResolvedConfig)
+    pub(super) fn has_every_rule(self) -> bool {
+        match self {
+            Semantics::BuiltIn => true,
+            Semantics::Flat | Semantics::Legacy | Semantics::Rc => false,
+        }
+    }
 }
 
 /// What is collected while the objects are read.
 pub(super) struct Reader<'r> {
     pub(super) registry: &'r Registry,
     pub(super) base_path: Vec<u8>,
-    pub(super) prefers_typescript_rules: bool,
-    /// [`ResolvedConfig::has_every_rule`](crate::linter::ResolvedConfig)
-    pub(super) has_every_rule: bool,
+    pub(super) semantics: Semantics,
     pub(super) objects: Vec<ConfigObject>,
     pub(super) notes: Vec<Vec<u8>>,
     /// [`Config::advice`]
@@ -417,21 +462,21 @@ impl Reader<'_> {
 
     /// The rule here that answers for `id`. Without one, the plugin is loaded that the configuration has for it.
     pub(super) fn native_rule(&self, id: &[u8]) -> Option<&'static RuleEntry> {
-        if self.has_every_rule {
+        if self.semantics.has_every_rule() {
             return self.registry.find_by_any_name(id);
         }
         let prefix = parse_rule_id(id).0;
         let is_foreign = self.foreign_prefixes.iter().any(|it| **it == *prefix);
         (self
             .registry
-            .find_preferring(id, self.prefers_typescript_rules))
+            .find_preferring(id, self.semantics.prefers_typescript_rules()))
         .filter(|it| !is_foreign && !(self.has_unknown_resolver && needs_resolver(it.meta)))
     }
 
     /// [`find_formatting_rule`]. oxlint has no such rules.
     pub(super) fn formatting_rule(&self, id: &[u8]) -> Option<&'static Deprecated> {
         find_formatting_rule(self.registry, id, &self.foreign_prefixes, &self.js_plugins)
-            .filter(|_| !self.prefers_typescript_rules)
+            .filter(|_| !self.semantics.prefers_typescript_rules())
     }
 
     /// The rules of an object.
@@ -454,7 +499,9 @@ impl Reader<'_> {
             if !is_about_layout && let Some(found) = find_js_rule(&self.js_plugins, id) {
                 // Also for a rule that is off, as in oxlint. ESLint does not look at such a rule.
                 let Some(rule) = found else {
-                    if !self.prefers_typescript_rules && setting.severity == Severity::Off {
+                    if !self.semantics.prefers_typescript_rules()
+                        && setting.severity == Severity::Off
+                    {
                         continue;
                     }
                     return Err(ConfigError::new(&[
@@ -467,7 +514,7 @@ impl Reader<'_> {
                 };
                 // oxlint checks the options of every entry before it lints, also of one that is off or in an override that
                 // matches no file. ESLint checks them for the files that the rule is on for.
-                if self.prefers_typescript_rules
+                if self.semantics.prefers_typescript_rules()
                     && let Err(lines) = crate::linter::schema::validate_js(rule, &setting.options)
                 {
                     let message = super::js_options_error_of_oxlint(rule, &setting.options, &lines);
@@ -492,11 +539,11 @@ impl Reader<'_> {
                 continue;
             }
             let is_foreign = self.foreign_prefixes.iter().any(|it| **it == *prefix);
-            setting.written_for = match self.prefers_typescript_rules {
+            setting.written_for = match self.semantics {
                 _ if is_foreign => None,
-                _ if self.has_every_rule => self.native_rule(id).map(|it| it.meta.plugin),
-                true => Plugin::of_oxlint_prefix(prefix),
-                false => Plugin::of_prefix(prefix),
+                Semantics::BuiltIn => self.native_rule(id).map(|it| it.meta.plugin),
+                Semantics::Rc => Plugin::of_oxlint_prefix(prefix),
+                Semantics::Flat | Semantics::Legacy => Plugin::of_prefix(prefix),
             };
             if !matches!(prefix, b"eslint" | b"typescript" | b"typescript-eslint") {
                 setting.plugin = parse_rule_id(id).0.into();
@@ -519,7 +566,9 @@ impl Reader<'_> {
                     if setting.severity != Severity::Off && is_new {
                         self.unknown_rules.push(id.into());
                     }
-                    if setting.severity == Severity::Off && self.prefers_typescript_rules {
+                    if setting.severity == Severity::Off
+                        && self.semantics.prefers_typescript_rules()
+                    {
                         self.note_unknown_rule_that_is_off(id);
                     }
                 }
@@ -912,8 +961,10 @@ impl Config {
         let mut reader = Reader {
             registry,
             base_path: paths::absolute(base_path),
-            prefers_typescript_rules: false,
-            has_every_rule,
+            semantics: match has_every_rule {
+                true => Semantics::BuiltIn,
+                false => Semantics::Flat,
+            },
             objects: Vec::new(),
             notes: Vec::new(),
             advice: Vec::new(),
@@ -946,11 +997,7 @@ impl Config {
         if let Some(load) = load_plugin {
             reader.load_js_plugins(load)?;
         }
-        Ok(reader.finish(Semantics {
-            keeps_options: true,
-            accepts_all_plugins: false,
-            is_legacy: false,
-        }))
+        Ok(reader.finish())
     }
 }
 
@@ -1038,21 +1085,20 @@ impl Reader<'_> {
         Ok(())
     }
 
-    pub(super) fn finish(self, semantics: Semantics) -> Config {
+    pub(super) fn finish(self) -> Config {
         Config {
             base_path: self.base_path,
             heads: super::Heads::new(&self.objects),
             objects: self.objects,
-            keeps_options: semantics.keeps_options,
-            accepts_all_plugins: semantics.accepts_all_plugins,
-            is_legacy: semantics.is_legacy,
-            eslint_major: if semantics.is_legacy { 8 } else { 10 },
+            semantics: self.semantics,
+            eslint_major: match self.semantics {
+                Semantics::Legacy => 8,
+                Semantics::Flat | Semantics::BuiltIn | Semantics::Rc => 10,
+            },
             without_modules: false,
             infers_globals: crate::language::InferGlobals::No,
             lints_all_that_is_named: false,
             dot_patterns: None,
-            prefers_typescript_rules: self.prefers_typescript_rules,
-            has_every_rule: self.has_every_rule,
             options_of_oxlint: Vec::new(),
             printed_for_oxlint: Vec::new(),
             notes: self.notes,

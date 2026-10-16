@@ -82,6 +82,7 @@ use crate::runner::RuleEntry;
 use bun_glob::Candidate;
 use cache::Cache;
 pub use eslintrc::{Eslint8, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions, LoadLegacy};
+use flat::Semantics;
 pub use flat::{ConfigError, LoadLocatedPlugin, NamedPlugin};
 use ignore_lines::IgnoreLines;
 use merge::RuleSetting;
@@ -651,12 +652,8 @@ impl Heads {
 pub struct Config {
     base_path: Vec<u8>,
     objects: Vec<ConfigObject>,
-    /// A rule setting that is only a severity keeps the options of the one it overrides.
-    keeps_options: bool,
-    /// Any plugin that is not implemented here counts as configured.
-    accepts_all_plugins: bool,
-    /// It is made of the files of ESLint 8.
-    is_legacy: bool,
+    /// The kind of file that it was read from.
+    semantics: Semantics,
     /// [`LanguageOptions::eslint_major`]
     eslint_major: u8,
     /// [`LanguageOptions::without_modules`]
@@ -667,10 +664,6 @@ pub struct Config {
     lints_all_that_is_named: bool,
     /// Which object has the patterns with which ESLint 8 ignores what starts with a dot.
     dot_patterns: Option<usize>,
-    /// A rule of ESLint that typescript-eslint extends stands for the extension, as in oxlint.
-    prefers_typescript_rules: bool,
-    /// [`ResolvedConfig::has_every_rule`]
-    has_every_rule: bool,
     /// `options` of an `.oxlintrc.json` and of what it extends.
     options_of_oxlint: Vec<(Vec<u8>, Json)>,
     /// [`Config::printed_for_oxlint`]
@@ -829,7 +822,7 @@ impl Within<'_> {
         is_selected: bool,
     ) -> FileConfig {
         let config = self.config;
-        let must_match = !(is_selected && config.is_legacy);
+        let must_match = !(is_selected && config.semantics.is_legacy());
         let missing = self.missing_frameworks;
         let matching = {
             let Some((parts, entry)) = self.see(path, false) else {
@@ -995,8 +988,8 @@ impl Config {
         let mut found: Vec<InJavaScript> = Vec::new();
         let mut seen: Vec<&[u8]> = Vec::new();
         let settings = self.objects.iter().flat_map(|it| &it.rules);
-        for setting in
-            settings.filter(|_| self.prefers_typescript_rules && !self.js_plugins.is_empty())
+        for setting in settings
+            .filter(|_| self.semantics.prefers_typescript_rules() && !self.js_plugins.is_empty())
         {
             let id = &setting.id[..];
             let is_on = setting.severity != Severity::Off && setting.written_for.is_none();
@@ -1090,7 +1083,7 @@ impl Config {
     /// a configuration: what is not in the base path is matched by its absolute path.
     fn relative(&self, path: &[u8]) -> Vec<u8> {
         let relative = paths::relative_to_base(&self.base_path, path);
-        match self.prefers_typescript_rules && paths::is_external(&relative) {
+        match self.semantics.prefers_typescript_rules() && paths::is_external(&relative) {
             true => paths::rooted(path),
             false => relative,
         }
@@ -1105,7 +1098,7 @@ impl Config {
     pub fn see(&self, directory: &[u8]) -> Seen {
         let before_name = paths::relative_to_base_before_name(&self.base_path, directory);
         let before_name = before_name.map(|seen| {
-            if !(self.prefers_typescript_rules && paths::is_external(&seen)) {
+            if !(self.semantics.prefers_typescript_rules() && paths::is_external(&seen)) {
                 return seen;
             }
             let mut rooted = paths::rooted(directory);
@@ -1208,7 +1201,7 @@ impl Config {
         }
         // ESLint 8 lints what it is told to, whatever it is called.
         let missing = self.missing_frameworks(detected);
-        self.get_if(registry, file, !self.is_legacy, missing)
+        self.get_if(registry, file, !self.semantics.is_legacy(), missing)
     }
 
     /// The same for a file that is known not to be ignored, and to be inside the base path:
@@ -1355,7 +1348,7 @@ impl Config {
         let meta = entry.meta;
         let is_extension =
             meta.plugin == Plugin::TypeScript && meta.extends_base_rule == Some(meta.name);
-        if !self.prefers_typescript_rules || !is_extension {
+        if !self.semantics.prefers_typescript_rules() || !is_extension {
             return meta;
         }
         // A few are in both plugins.
@@ -1397,7 +1390,7 @@ impl Config {
     /// What ESLint, or oxlint, says about options that the schema of a rule of a JavaScript plugin does not allow.
     /// `lines`: of [`schema::validate_js`].
     fn js_options_error(&self, rule: &js_plugin::Rule, options: &[Json], lines: &[u8]) -> Vec<u8> {
-        match self.prefers_typescript_rules {
+        match self.semantics.prefers_typescript_rules() {
             true => js_options_error_of_oxlint(rule, options, lines),
             false => [b"Key \"rules\": Key \"", &rule.id[..], b"\":\n", lines].concat(),
         }
@@ -1412,7 +1405,7 @@ impl Config {
         options: Arc<[Json]>,
     ) -> ConfiguredJsRule {
         // ESLint 8 has validated them already, and takes any for a rule without a schema.
-        let validated = match self.is_legacy {
+        let validated = match self.semantics.is_legacy() {
             true => Ok(schema::with_js_defaults(rule, &options)),
             false => schema::validate_js(rule, &options),
         };
@@ -1444,10 +1437,10 @@ impl Config {
         };
         let mut rules: Vec<RuleSetting> = Vec::new();
         let mut config = ResolvedConfig {
-            skips_unknown_rules: self.accepts_all_plugins,
-            prefers_typescript_rules: self.prefers_typescript_rules,
-            has_every_rule: self.has_every_rule,
-            understands_oxlint_comments: self.prefers_typescript_rules,
+            skips_unknown_rules: self.semantics.accepts_all_plugins(),
+            prefers_typescript_rules: self.semantics.prefers_typescript_rules(),
+            has_every_rule: self.semantics.has_every_rule(),
+            understands_oxlint_comments: self.semantics.prefers_typescript_rules(),
             ..ResolvedConfig::default()
         };
         let mut plugins: Vec<&[u8]> = Vec::new();
@@ -1481,13 +1474,13 @@ impl Config {
                 }
                 places.push(place);
             }
-            let merge_into = match self.is_legacy {
+            let merge_into = match self.semantics.is_legacy() {
                 true => eslintrc::merge_into,
                 false => merge::deep_merge_into,
             };
             merge_into(&mut language_options, &object.language_options);
             if let Some(of_object) = &object.settings {
-                if settings.is_none() && stay_as_they_are(of_object, self.is_legacy) {
+                if settings.is_none() && stay_as_they_are(of_object, self.semantics.is_legacy()) {
                     settings = Some(Arc::clone(of_object));
                 } else {
                     let merged = settings.get_or_insert_with(|| Arc::new(Json::Null));
@@ -1495,7 +1488,7 @@ impl Config {
                 }
             }
             linter.merge_json(&object.linter_options);
-            match self.is_legacy {
+            match self.semantics.is_legacy() {
                 true => eslintrc::merge_rules(&mut rules, &object.rules),
                 false => {
                     let skipped = match object.plugins_of_override.is_some() && !have_categories {
@@ -1507,7 +1500,7 @@ impl Config {
                         }
                     };
                     let settings = object.rules.get(skipped..).unwrap_or_default();
-                    merge::merge_rules(&mut rules, settings, self.keeps_options);
+                    merge::merge_rules(&mut rules, settings, self.semantics.keeps_options());
                 }
             }
             for plugin in &object.foreign_plugins {
@@ -1528,35 +1521,36 @@ impl Config {
                 (config.processor_location).clone_from(&object.processor_location);
             }
         }
-        let eslint_8 = match (self.is_legacy).then(|| eslintrc::resolve(&mut language_options)) {
-            Some(Ok(eslint_8)) => Some(Arc::new(eslint_8)),
-            Some(Err(message)) => {
-                config.error = Some(message);
-                return config;
-            }
-            None => None,
-        };
+        let eslint_8 =
+            match (self.semantics.is_legacy()).then(|| eslintrc::resolve(&mut language_options)) {
+                Some(Ok(eslint_8)) => Some(Arc::new(eslint_8)),
+                Some(Err(message)) => {
+                    config.error = Some(message);
+                    return config;
+                }
+                None => None,
+            };
         // Another language validates its own.
         if config.is_javascript() {
             config.validate_language_options(&language_options);
         }
-        let whose = match (self.is_legacy, self.prefers_typescript_rules) {
-            (true, _) => Tables::Eslint8,
-            (false, true) => Tables::Oxlint,
-            (false, false) => Tables::Today,
+        let whose = match self.semantics {
+            Semantics::Legacy => Tables::Eslint8,
+            Semantics::Rc => Tables::Oxlint,
+            Semantics::Flat | Semantics::BuiltIn => Tables::Today,
         };
         let settings = settings.unwrap_or_else(|| Arc::new(Json::Null));
         // oxlint has no such setting.
         config.has_unknown_resolver =
-            !self.prefers_typescript_rules && flat::names_unknown_resolver(&settings);
+            !self.semantics.prefers_typescript_rules() && flat::names_unknown_resolver(&settings);
         let make = || GlobalsOfOptions::new(&language_options, whose);
         let globals = self.cache.globals(&language_options, make);
         config.language = LanguageOptions::from_json_with(&language_options, settings, globals);
         // oxlint has no `parser`.
-        config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
-        config.language.is_oxlint = self.prefers_typescript_rules;
-        config.language.stands_alone = self.has_every_rule;
-        config.language.has_scopes_of_oxc = self.prefers_typescript_rules;
+        config.language.refuses_what_parser_refuses = !self.semantics.prefers_typescript_rules();
+        config.language.is_oxlint = self.semantics.prefers_typescript_rules();
+        config.language.stands_alone = self.semantics.has_every_rule();
+        config.language.has_scopes_of_oxc = self.semantics.prefers_typescript_rules();
         config.language.eslint_8 = eslint_8;
         config.language.eslint_major = self.eslint_major;
         config.language.without_modules = self.without_modules;
@@ -1604,8 +1598,8 @@ impl Config {
         for setting in rules {
             // ESLint's `throwRuleNotFoundError`, where it can be known that ESLint has no such rule.
             if setting.severity != Severity::Off
-                && !self.accepts_all_plugins
-                && !self.has_every_rule
+                && !self.semantics.accepts_all_plugins()
+                && !self.semantics.has_every_rule()
                 && config.error.is_none()
             {
                 let problem = match &setting.plugin[..] {
@@ -1644,7 +1638,7 @@ impl Config {
                 continue;
             }
             let foreign = &config.foreign_plugins;
-            if !self.prefers_typescript_rules
+            if !self.semantics.prefers_typescript_rules()
                 && let Some(rule) =
                     find_formatting_rule(registry, &setting.id, foreign, &js_plugins)
             {
@@ -1664,9 +1658,9 @@ impl Config {
             let prefix = super::registry::parse_rule_id(&setting.id).0;
             // Not what is written with a name that oxlint has for the plugin here, `node/..`, or comes from a category.
             let is_native_for_oxlint =
-                self.prefers_typescript_rules && setting.written_for.is_some();
+                self.semantics.prefers_typescript_rules() && setting.written_for.is_some();
             let is_hidden = js.is_some()
-                && self.accepts_all_plugins
+                && self.semantics.accepts_all_plugins()
                 && !is_native_for_oxlint
                 && !config.prefers_native_rules_of(registry, prefix);
             let native = match is_hidden {
@@ -1708,7 +1702,9 @@ impl Config {
             let is_validated =
                 !options.is_empty() && config.error.is_none() && setting.severity != Severity::Off;
             let index = is_validated.then(|| registry.index_of(entry)).flatten();
-            if !self.is_legacy && !index.is_some_and(|it| self.cache.is_valid(it, &options)) {
+            if !self.semantics.is_legacy()
+                && !index.is_some_and(|it| self.cache.is_valid(it, &options))
+            {
                 config.validate(entry, name.as_deref(), setting.severity, &options);
                 if let Some(index) = index.filter(|_| config.error.is_none()) {
                     self.cache.set_valid(index, &options);
@@ -1736,7 +1732,7 @@ impl Config {
                     .or(or_else),
             );
         }
-        if self.prefers_typescript_rules {
+        if self.semantics.prefers_typescript_rules() {
             let makes_variables = |it: &ConfiguredRule| {
                 it.severity != Severity::Off && it.entry.meta.name == "no-unused-vars"
             };
@@ -1746,7 +1742,7 @@ impl Config {
             config.language.rules_that_oxlint_lacks = lacking.map(|it| it.entry.meta).collect();
         }
         // oxlint looks up the severity of a tsgolint report by the rule's bare name, and finds ESLint's rule first if it's on.
-        if self.prefers_typescript_rules {
+        if self.semantics.prefers_typescript_rules() {
             let is_on = |it: &ConfiguredRule, plugin: Plugin| {
                 it.severity != Severity::Off && it.entry.meta.plugin == plugin
             };
@@ -1767,7 +1763,9 @@ impl Config {
         if !self.js_plugins.is_empty() {
             // ESLint looks for a rule in the plugins that the objects for the file have.
             let has = |it: &&Arc<js_plugin::Plugin>| {
-                self.accepts_all_plugins || self.has_every_rule || plugins.contains(&&it.name[..])
+                self.semantics.accepts_all_plugins()
+                    || self.semantics.has_every_rule()
+                    || plugins.contains(&&it.name[..])
             };
             config.js_plugins = js_plugins.iter().filter(has).cloned().collect();
             let sources: Vec<&Json> = indices
@@ -1781,7 +1779,7 @@ impl Config {
             ));
         }
         // From here on: a rule that is turned off can be configured without its plugin.
-        if !self.accepts_all_plugins && !self.has_every_rule {
+        if !self.semantics.accepts_all_plugins() && !self.semantics.has_every_rule() {
             let mut implemented: Vec<Plugin> = Vec::new();
             let is_foreign =
                 |it: &&&[u8]| config.foreign_plugins.iter().any(|other| **other == ***it);

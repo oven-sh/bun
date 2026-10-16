@@ -82,7 +82,7 @@ function parseV8OrIE(stack: string): Frame[] {
 
 function parseFFOrSafari(stack: string): Frame[] {
   // Using string literal "\n" does not work in Safari.
-  return stack.split(/\n/g).map((source, i) => {
+  return stack.split(/\n/g).map(source => {
     let fn = "";
     let file: string | null = null;
     let line: number | null = null;
@@ -92,7 +92,7 @@ function parseFFOrSafari(stack: string): Frame[] {
       fn = source.slice(0, -1);
     } else if (source.indexOf("@") === -1 && source.indexOf(":") === -1) {
       // Safari eval frames only have function names and nothing else
-      fn = source.endsWith("@") ? source.slice(0, -1) : source;
+      fn = source;
     } else {
       var functionNameRegex = /((.*".+"[^@]*)?[^@]*)(?:@)/;
       var matches = source.match(functionNameRegex);

@@ -68,8 +68,6 @@ static JSObject* objectForEventTargetListeners(VM& vm, JSGlobalObject* exec, Eve
                 continue;
 
             auto& jsListener = downcast<JSEventListener>(eventListener->callback());
-            // if (jsListener.isolatedWorld() != &currentWorld(*exec))
-            //     continue;
 
             auto* jsFunction = jsListener.ensureJSFunction(*scriptExecutionContext);
             if (!jsFunction)

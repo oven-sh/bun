@@ -64,13 +64,6 @@ enum uws_sendstatus_t : uint32_t { BACKPRESSURE,
     SUCCESS,
     DROPPED };
 
-typedef struct {
-
-    int port;
-    const char* host;
-    int options;
-} uws_app_listen_config_t;
-
 struct uws_app_s;
 struct uws_req_s;
 struct uws_res_s;

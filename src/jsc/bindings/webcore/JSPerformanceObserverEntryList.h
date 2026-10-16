@@ -64,9 +64,7 @@ protected:
 };
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, PerformanceObserverEntryList&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceObserverEntryList* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<PerformanceObserverEntryList>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<PerformanceObserverEntryList>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<PerformanceObserverEntryList> {
     using WrapperClass = JSPerformanceObserverEntryList;

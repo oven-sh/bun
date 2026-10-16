@@ -335,8 +335,7 @@ export async function onRuntimeError(err: any, fatal = false, async = false) {
 
 function expandHighlight(line: string, col: number) {
   let rest = line.slice(Math.max(0, col - 1));
-  let len = 1;
-  len = 0;
+  let len = 0;
   let prev = line.slice(0, col - 1);
   // expand forward from new
   if (rest.match(/^new\s/)) {

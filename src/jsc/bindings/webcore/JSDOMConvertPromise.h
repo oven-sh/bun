@@ -28,7 +28,6 @@
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMPromise.h"
-// #include "WorkerGlobalScope.h"
 
 namespace WebCore {
 

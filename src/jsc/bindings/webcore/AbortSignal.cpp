@@ -28,7 +28,6 @@
 
 #include "AbortAlgorithm.h"
 #include "DOMException.h"
-// #include "DOMTimer.h"
 #include "Event.h"
 #include "EventNames.h"
 #include "JSDOMException.h"

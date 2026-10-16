@@ -64,10 +64,7 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, EventEmitter*)
     return &owner.get();
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, EventEmitter&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, EventEmitter* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<EventEmitter>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<EventEmitter>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
 template<> struct JSDOMWrapperConverterTraits<EventEmitter> {
     using WrapperClass = JSEventEmitter;

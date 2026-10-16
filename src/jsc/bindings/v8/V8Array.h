@@ -29,12 +29,9 @@ public:
         Local<Context> context, size_t length,
         std::function<MaybeLocal<v8::Value>()> next_value_callback);
 
-    // Cast a Value to Array (with optional type checking)
+    // Cast a Value to Array
     inline static Array* Cast(Value* value)
     {
-#ifdef V8_ENABLE_CHECKS
-        CheckCast(value);
-#endif
         return static_cast<Array*>(value);
     }
 

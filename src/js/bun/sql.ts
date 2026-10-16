@@ -622,36 +622,36 @@ const SQL = function SQL(
       ) {
         return Promise.$resolve(undefined);
       }
-      state.connectionState &= ~ReservedConnectionState.acceptQueries;
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
-        if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
-          const { promise, resolve } = Promise.withResolvers();
-          // race all queries vs timeout
-          const pending_queries = Array.from(reserveQueries);
-          const pending_transactions = Array.from(reservedTransaction);
-          const timer = setTimeout(() => {
-            state.connectionState |= ReservedConnectionState.closed;
-            for (const query of reserveQueries) {
-              (query as Query<any, any>).cancel();
-            }
-            state.connectionState |= ReservedConnectionState.closed;
-            pooledConnection.close();
+      }
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      if (timeout && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
+        const { promise, resolve } = Promise.withResolvers();
+        // race all queries vs timeout
+        const pending_queries = Array.from(reserveQueries);
+        const pending_transactions = Array.from(reservedTransaction);
+        const timer = setTimeout(() => {
+          state.connectionState |= ReservedConnectionState.closed;
+          for (const query of reserveQueries) {
+            (query as Query<any, any>).cancel();
+          }
+          state.connectionState |= ReservedConnectionState.closed;
+          pooledConnection.close();
 
-            resolve();
-          }, timeout * 1000);
-          timer.unref(); // dont block the event loop
-          // allSettled: the wait is for all of the work, and it does not report the error of a query as unhandled
-          Promise.allSettled([...pending_queries, ...pending_transactions]).then(() => {
-            clearTimeout(timer);
-            resolve();
-          });
-          return promise;
-        }
+          resolve();
+        }, timeout * 1000);
+        timer.unref(); // dont block the event loop
+        // allSettled: the wait is for all of the work, and it does not report the error of a query as unhandled
+        Promise.allSettled([...pending_queries, ...pending_transactions]).then(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+        return promise;
       }
       state.connectionState |= ReservedConnectionState.closed;
       for (const query of reserveQueries) {
@@ -930,29 +930,28 @@ const SQL = function SQL(
       if (ending) {
         return rollBackNow();
       }
-      state.connectionState &= ~ReservedConnectionState.acceptQueries;
-      const transactionQueries = state.queries;
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
-
-        if (timeout > 0 && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {
-          const { promise, resolve, reject } = Promise.withResolvers<void>();
-          // race all queries vs timeout
-          const pending_queries = Array.from(transactionQueries);
-          const pending_savepoints = Array.from(transactionSavepoints);
-          const timer = setTimeout(() => rollBackNow().then(resolve, reject), timeout * 1000);
-          timer.unref(); // dont block the event loop
-          // allSettled: the wait is for all of the work, and it does not report the error of a query as unhandled
-          Promise.allSettled([...pending_queries, ...pending_savepoints]).then(() => {
-            clearTimeout(timer);
-            resolve();
-          });
-          return promise;
-        }
+      }
+      state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      const transactionQueries = state.queries;
+      if (timeout && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        // race all queries vs timeout
+        const pending_queries = Array.from(transactionQueries);
+        const pending_savepoints = Array.from(transactionSavepoints);
+        const timer = setTimeout(() => rollBackNow().then(resolve, reject), timeout * 1000);
+        timer.unref(); // dont block the event loop
+        // allSettled: the wait is for all of the work, and it does not report the error of a query as unhandled
+        Promise.allSettled([...pending_queries, ...pending_savepoints]).then(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+        return promise;
       }
       return rollBackNow();
     };

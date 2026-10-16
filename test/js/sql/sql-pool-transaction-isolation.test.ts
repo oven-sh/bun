@@ -1414,6 +1414,43 @@ describe.each(adapters)("$adapter", entry => {
     }
   });
 
+  // An invalid timeout is refused before close() changes anything: the handle stays open, and a
+  // later close() rolls back.
+  test("close() with an invalid timeout leaves the handle open", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const code = (promise: Promise<unknown>) =>
+        promise.then(
+          () => "resolved",
+          err => err.code,
+        );
+      const reserved = await sql.reserve();
+      expect(await code(reserved.close({ timeout: -1 }))).toBe("ERR_INVALID_ARG_VALUE");
+      await reserved.unsafe("SELECT 'still reserved'");
+      reserved.release();
+
+      const outcome = await code(
+        sql.begin(async tx => {
+          expect(await code(tx.close({ timeout: -1 }))).toBe("ERR_INVALID_ARG_VALUE");
+          await tx.unsafe("SELECT 'still open'");
+          await tx.close();
+        }),
+      );
+      expect(outcome).toBe(closedCode);
+      expect(received.map(entry => entry.sql)).toEqual([
+        "SELECT 'still reserved'",
+        beginCommand,
+        "SELECT 'still open'",
+        "ROLLBACK",
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   test("tx.savepoint(name, fn) names the savepoint like tx.savepoint(fn, name)", async () => {
     const received: Received[] = [];
     const { port, server } = await mockServer(received);

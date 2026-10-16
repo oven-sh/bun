@@ -1130,7 +1130,7 @@ pub(crate) fn bss_lazy_bytes(size: usize, align: usize) -> NonNull<u8> {
 /// Size of the shared demand-zero arena backing every `bss_*!` singleton on
 /// unix. Sum of all live monomorphizations on the `bun run` path is ≈2 MiB
 /// (`entry_store_backing` 1,216,560 B + `dirname_store_backing` 528,384 B +
-/// `hash_map_instance` 229,440 B + slice/key buffers); 4 MiB leaves ~2×
+/// `hash_map_instance` 229,440 B + the other singletons); 4 MiB leaves ~2×
 /// headroom. `MAP_NORESERVE` means the unused tail costs only address space.
 #[cfg(unix)]
 const BSS_ARENA_SIZE: usize = 4 * 1024 * 1024;
@@ -1580,8 +1580,7 @@ unsafe impl<ValueType: Send, const COUNT: usize> Sync for BSSList<ValueType, COU
 
 const BSS_LIST_CHUNK_SIZE: usize = 256;
 
-/// The per-store overflow-block size is `count / 4`; this shared constant must
-/// be >= the largest store's, i.e. the filename store's `8192 / 4`.
+/// Slots in one heap block of a `BSSMapInner`'s `overflow_list`.
 const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
 
 /// `#[repr(C)]` with `prev` before `data` so the inline `BSSList::tail` block's
@@ -1775,29 +1774,27 @@ impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Append-only list.
-/// Stores an initial count in .bss section of the object file.
-/// Overflows to heap when count is exceeded.
+/// Stores the first `COUNT * ITEM_LENGTH` bytes in a demand-faulted region.
+/// A string that does not fit there is a heap allocation of its own. Neither
+/// is freed, and `append` fails only when that allocation does.
 ///
 /// Same const-generic-arithmetic and per-type-static caveats as `BSSList`.
 pub struct BSSStringList<
     const COUNT: usize,       /* = _COUNT * 2 */
     const ITEM_LENGTH: usize, /* = _ITEM_LENGTH + 1 */
 > {
-    // Inline arrays would live in the same demand-faulted allocation
-    // as the rest of the singleton with `init()` writing only the four scalar
+    // An inline array would live in the same demand-faulted allocation
+    // as the rest of the singleton with `init()` writing only the scalar
     // fields — pages are committed lazily as `append` writes bytes. Stable
     // Rust can't spell `[u8; COUNT*ITEM_LENGTH]` without `generic_const_exprs`,
-    // so we store fat pointers to *separate* `bss_lazy_bytes` mappings instead.
+    // so we store a fat pointer to a *separate* `bss_lazy_bytes` mapping instead.
     // Same laziness guarantee (MAP_NORESERVE), same lifetime (process-static,
     // never freed), no eager memset.
     //
-    // `MaybeUninit` because both arrays are logically uninitialized; only
-    // `[..backing_buf_used]` / `[..slice_buf_used]` are ever read.
+    // `MaybeUninit` because the array is logically uninitialized; only
+    // `[..backing_buf_used]` is ever read.
     pub(crate) backing_buf: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ITEM_LENGTH
     pub(crate) backing_buf_used: u64,
-    pub(crate) overflow_list: OverflowList<&'static [u8], BSS_OVERFLOW_BLOCK_SIZE>,
-    pub(crate) slice_buf: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
-    pub(crate) slice_buf_used: u16,
     pub(crate) mutex: Mutex,
 }
 
@@ -1842,27 +1839,19 @@ impl BSSAppendable for &[&[u8]] {
 }
 
 impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LENGTH> {
-    const MAX_INDEX: usize = COUNT - 1;
-
     /// In-place field initialization into uninitialized storage.
     ///
     /// SAFETY: `slot` must point to writable, properly-aligned, uninitialized
     /// storage of `size_of::<Self>()` bytes that lives for `'static`.
     pub unsafe fn init_at(slot: *mut Self) {
-        // `backing_buf`/`slice_buf` are left uninitialized so the
-        // ~1.4 MiB of array storage stays unfaulted until `append` writes a byte:
-        // lazy-map the arrays, write the four scalars, and
-        // zero only the three OverflowList counters (its 32 KiB `ptrs` array is
-        // already `[None; 4096]` because `slot` came from `bss_heap_init`).
+        // `backing_buf` is left uninitialized so its storage stays unfaulted
+        // until `append` writes a byte: lazy-map the array and write the scalars.
         // SAFETY: caller contract — `slot` is a valid, exclusive, aligned
         // `*mut Self` in all-zeros storage from `bss_heap_init`.
         unsafe {
             addr_of_mut!((*slot).mutex).write(Mutex::new());
             addr_of_mut!((*slot).backing_buf).write(bss_lazy_slice::<u8>(COUNT * ITEM_LENGTH));
             addr_of_mut!((*slot).backing_buf_used).write(0);
-            addr_of_mut!((*slot).slice_buf).write(bss_lazy_slice::<&'static [u8]>(COUNT));
-            addr_of_mut!((*slot).slice_buf_used).write(0);
-            OverflowList::init_counters_at(addr_of_mut!((*slot).overflow_list));
         }
     }
 
@@ -2054,8 +2043,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// Returns `(ptr, len)` of the freshly-appended payload (excluding the trailing NUL),
     /// where `ptr` carries write provenance (`out.as_mut_ptr()`). Callers reconstruct a
     /// `&[u8]` (`append`) or `&mut [u8]` (`append_mutable`) from it; returning raw parts
-    /// avoids the `&self.backing_buf` ↔ `&mut self.slice_buf` borrowck conflict and
-    /// `&[u8] → &mut [u8]` provenance laundering.
+    /// avoids `&[u8] → &mut [u8]` provenance laundering.
     #[inline]
     fn do_append<A: BSSAppendable>(
         &mut self,
@@ -2063,8 +2051,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     ) -> core::result::Result<(*mut u8, usize), AllocError> {
         let value_len: usize = value.total_len() + 1;
 
-        let (out_ptr, out_len): (*mut u8, usize);
-        let mut from_heap = false;
         if value_len + (self.backing_buf_used as usize) < self.backing_buf.len() - 1 {
             let start = self.backing_buf_used as usize;
             self.backing_buf_used += value_len as u64;
@@ -2085,64 +2071,19 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             value.copy_into(&mut dst[..value_len - 1]);
             dst[value_len - 1] = 0;
 
-            (out_ptr, out_len) = (dst.as_mut_ptr(), value_len - 1);
+            Ok((dst.as_mut_ptr(), value_len - 1))
         } else {
             // Propagate OOM.
             let ptr = default_alloc::malloc(value_len).cast::<u8>();
             if ptr.is_null() {
                 return Err(AllocError);
             }
-            from_heap = true;
             // SAFETY: `ptr` is a fresh allocation of `value_len` bytes with no other alias.
             let value_buf = unsafe { core::slice::from_raw_parts_mut(ptr, value_len) };
             value.copy_into(&mut value_buf[..value_len - 1]);
             value_buf[value_len - 1] = 0;
-            let out = &mut value_buf[..value_len - 1];
-            (out_ptr, out_len) = (out.as_mut_ptr(), out.len());
+            Ok((value_buf.as_mut_ptr(), value_len - 1))
         }
-
-        let mut result = IndexType::new(
-            u32::MAX >> 1,
-            self.slice_buf_used as usize > Self::MAX_INDEX,
-        );
-
-        if result.is_overflow() {
-            result.set_index(self.overflow_list.len());
-        } else {
-            result.set_index(self.slice_buf_used as u32);
-            self.slice_buf_used += 1;
-        }
-
-        // SAFETY: `out_ptr` addresses self.backing_buf or a process-lifetime alloc, both
-        // outliving 'static (singleton).
-        let stored: &'static [u8] = unsafe { core::slice::from_raw_parts(out_ptr, out_len) };
-
-        if result.is_overflow() {
-            if self.overflow_list.len() == result.index() {
-                if let Err(e) = self.overflow_list.append(stored) {
-                    if from_heap {
-                        // SAFETY: `out_ptr` is the `default_alloc::malloc` above, unreferenced now.
-                        unsafe { default_alloc::free(out_ptr.cast()) };
-                    }
-                    return Err(e);
-                }
-            } else {
-                *self.overflow_list.at_index_mut(result) = stored;
-            }
-        } else {
-            // SAFETY: `slice_buf` is a process-lifetime mapping of `COUNT`
-            // `&[u8]`-sized slots owned by this singleton; `result.index() <
-            // slice_buf_used <= COUNT`; we hold `&mut self`. Raw write — slot
-            // may be uninit.
-            unsafe {
-                self.slice_buf
-                    .as_ptr()
-                    .cast::<MaybeUninit<&'static [u8]>>()
-                    .add(result.index() as usize)
-                    .write(MaybeUninit::new(stored));
-            }
-        }
-        Ok((out_ptr, out_len))
     }
 }
 

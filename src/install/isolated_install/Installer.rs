@@ -180,9 +180,6 @@ impl<'a> Installer<'a> {
     /// Called from main thread, for an existing project-local store entry.
     pub(crate) fn start_relink_task(&mut self, entry_id: StoreEntryId) {
         let newly_trusted = self.is_newly_trusted(entry_id);
-        if newly_trusted {
-            self.list_pending_scripts(entry_id);
-        }
         let task = &mut self.tasks[entry_id.get() as usize];
         task.relink = Relink::Pending;
         task.newly_trusted = newly_trusted;
@@ -193,31 +190,15 @@ impl<'a> Installer<'a> {
     /// Like the hoisted linker, runs a `link:` dependency's scripts if no dependent links to
     /// `target` yet. Call this before the dependents' tasks start, because they create those links.
     pub(crate) fn start_link_task(&mut self, entry_id: StoreEntryId, target: &ZStr) {
-        // The links that a dead install listed do not say that the scripts of the entry ran.
-        let stale = if self.manager().retries_pending_scripts() {
-            self.stale_links_to(entry_id, target)
-        } else {
-            Vec::new()
-        };
-        let left_pending = !stale.is_empty() && self.runs_scripts(entry_id);
         let linked = !self.manager().options.enable.force_install()
-            && !left_pending
             && self.has_link_from_dependent(entry_id, target);
-        let skips = linked && !self.is_newly_trusted(entry_id);
-        if !skips {
-            if linked {
-                self.tasks[entry_id.get() as usize].relink = Relink::Unchanged;
-            }
-            self.list_pending_scripts(entry_id);
-        }
-        // After the line of this pass: an install that dies here leaves one of the two.
-        for key in &stale {
-            (self.manager().pending_scripts.borrow_mut()).forget_stale(key);
-        }
-        if skips {
+        if linked && !self.is_newly_trusted(entry_id) {
             self.set_step(entry_id, Step::Done);
             self.on_task_complete(entry_id, CompleteState::Skipped);
             return;
+        }
+        if linked {
+            self.tasks[entry_id.get() as usize].relink = Relink::Unchanged;
         }
         self.set_step(entry_id, Step::RunPreinstall);
         self.start_task(entry_id);
@@ -227,47 +208,22 @@ impl<'a> Installer<'a> {
         let Ok(target) = sys::stat(target) else {
             return false;
         };
-        (self.links_from_dependents(entry_id, AutoPath::init_top_level_dir)).any(|mut link| {
-            sys::stat(link.slice_z())
-                .is_ok_and(|st| st.st_ino == target.st_ino && st.st_dev == target.st_dev)
-        })
-    }
-
-    /// The paths of the links to the entry in the `node_modules` of its dependents, each from `base()`.
-    fn links_from_dependents(
-        &self,
-        entry_id: StoreEntryId,
-        base: fn() -> AutoPath,
-    ) -> impl Iterator<Item = AutoPath> + '_ {
         let lockfile = self.lockfile();
         let entry_dependencies = self.store.entries.items_dependencies();
         let dependents = &self.store.entries.items_parents()[entry_id.get() as usize];
-        dependents.iter().flat_map(move |&dependent| {
+        dependents.iter().any(|&dependent| {
             (entry_dependencies[dependent.get() as usize].slice().iter())
-                .filter(move |dep| dep.entry_id == entry_id)
-                .map(move |dep| {
-                    let mut link = base();
+                .filter(|dep| dep.entry_id == entry_id)
+                .any(|dep| {
+                    let mut link = AutoPath::init_top_level_dir();
                     self.append_store_node_modules_path(&mut link, dependent);
                     append_dependency_link_name(
                         &mut link,
                         lockfile.str(&lockfile.buffers.dependencies[dep.dep_id as usize].name),
                         self.entry_store_node_modules_package_name(dependent),
                     );
-                    link
-                })
-        })
-    }
-
-    /// The stale records of the `link:` entry: a link from a dependent of this pass, or a link to `target`.
-    #[cold]
-    fn stale_links_to(&self, entry_id: StoreEntryId, target: &ZStr) -> Vec<Box<[u8]>> {
-        let links: Vec<AutoPath> = (self.links_from_dependents(entry_id, AutoPath::init)).collect();
-        let target = sys::stat(target).ok();
-        (self.manager().pending_scripts.borrow()).stale_where(|key| {
-            links.iter().any(|link| link.slice() == key)
-                || sys::stat(&bun_core::ZBox::from_bytes(key)).is_ok_and(|st| {
-                    (target.as_ref())
-                        .is_some_and(|to| st.st_ino == to.st_ino && st.st_dev == to.st_dev)
+                    sys::stat(link.slice_z())
+                        .is_ok_and(|st| st.st_ino == target.st_ino && st.st_dev == target.st_dev)
                 })
         })
     }
@@ -691,19 +647,14 @@ impl<'a> Installer<'a> {
         None
     }
 
-    /// The entry's path in `PendingScripts`, from the project's root: its package directory.
+    /// The entry's package directory from the project's root: its path in `PendingScripts`.
     fn pending_scripts_key(&self, entry_id: StoreEntryId) -> Vec<u8> {
-        if self.resolution(entry_id).tag == ResolutionTag::Symlink {
-            // It has no directory in `node_modules`. A link to it is what says that its scripts ran.
-            let link = self.links_from_dependents(entry_id, AutoPath::init).next();
-            return link.map_or_else(Vec::new, |link| link.slice().to_vec());
-        }
         let mut path = AutoRelPath::init();
         self.append_store_path(&mut path, entry_id);
         path.slice().to_vec()
     }
 
-    /// Main thread, before the task of an entry starts: lists what a failed script discards.
+    /// Main thread, before the task of an entry starts: lists it if its scripts can run.
     pub(crate) fn list_pending_scripts(&mut self, entry_id: StoreEntryId) {
         let is_trusted = self.is_trusted(entry_id);
         self.tasks[entry_id.get() as usize].trusted = Some(is_trusted);
@@ -713,7 +664,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Before the walk: what a dead install listed goes if it is still trusted, and is placed again.
+    /// Before the walk: what a dead install listed goes if its scripts still run, and is placed again.
     #[cold]
     pub(crate) fn discard_left_pending(&self) {
         let pending = &self.manager().pending_scripts;
@@ -740,10 +691,7 @@ impl<'a> Installer<'a> {
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
         self.manager_mut().decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
-        // The record of a `link:` entry that is left out goes after the links to it.
-        let is_left_out_link = self.resolution(entry_id).tag == ResolutionTag::Symlink
-            && self.left_out_entries.contains(&entry_id);
-        if state != CompleteState::Fail && !is_left_out_link {
+        if state != CompleteState::Fail {
             (self.manager().pending_scripts.borrow_mut()).done(entry_id.get(), b"");
         }
 
@@ -884,13 +832,12 @@ impl<'a> Installer<'a> {
             // Every unfinished trusted entry is discarded, because it is not known yet whether it
             // has scripts: a bun.lock written by an older Bun does not record that.
             if entry_id == failed || (!is_done && self.is_trusted(entry_id)) {
+                self.delete_store_copy(entry_id);
+                pending.borrow_mut().done(entry_id.get(), b"");
                 // Also remove the symlinks to a `link:` dependency, because `start_link_task` takes
                 // them to mean that its scripts already ran.
                 if self.resolution(entry_id).tag == ResolutionTag::Symlink {
                     self.left_out_entries.push(entry_id);
-                } else {
-                    self.delete_store_copy(entry_id);
-                    pending.borrow_mut().done(entry_id.get(), b"");
                 }
             } else if is_done && matches!(self.tasks[index].result, Result::Done) {
                 // Its task ended after the last `run_tasks`: no script of it is left to run.
@@ -2300,8 +2247,6 @@ impl<'a> Installer<'a> {
                     let _ = remove_link(hidden.slice_z());
                 }
             }
-            // After the links of a `link:` entry are gone: an install that dies before leaves it listed.
-            (self.manager().pending_scripts.borrow_mut()).done(entry_id.get(), b"");
         }
     }
 

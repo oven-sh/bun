@@ -3372,9 +3372,11 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     },
   );
 
+  // The isolated linker takes a link to a `link:` folder for the sign that its scripts ran. It lists no such folder.
+  const linked = linker === "hoisted" ? [{ title: "a link: folder", dependencies: { held: "link:./held" } }] : [];
   test.skipIf(isWindows).each([
     { title: "a file: folder", manifest: { ...trusted, dependencies: { held: "file:./held" } }, dir: "held" },
-    { title: "a link: folder", manifest: { ...trusted, dependencies: { held: "link:./held" } }, dir: "held" },
+    ...linked.map(({ title, dependencies }) => ({ title, manifest: { ...trusted, dependencies }, dir: "held" })),
     {
       title: "a workspace",
       manifest: { name: "foo", workspaces: ["packages/*"], dependencies: { held: "workspace:*" } },
@@ -3470,11 +3472,12 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     );
   });
 
-  // The shell runs the wait in a child of its own, which PR_SET_PDEATHSIG does not reach: it is
-  // still there when the next install places the package again, as it is under --force. It takes
-  // the line from the gate only after that install.
+  // The shell runs the wait in a child of its own, which PR_SET_PDEATHSIG does not reach. The child
+  // says that it is there, and it takes the line from the gate only after the next install has
+  // placed the package again, as `--force` does.
   test.skipIf(isWindows)("a script that outlives the install does not keep the next one from building", async () => {
-    const wait = '(read line < "$GATE" && echo "$line" > "$GATE.line" && mv "$GATE.line" "$GATE.outlived" && false)';
+    const outlive = 'read line < "$GATE" && echo "$line" > "$GATE.line" && mv "$GATE.line" "$GATE.outlived" && false';
+    const postinstall = `{ test -z "$GATE" && echo started >> "$STARTED" || (echo started >> "$STARTED" && ${outlive}); } && echo built > built.txt`;
     await whileInstalling(
       async ({ ctx, proc, release, bun }) => {
         proc.kill("SIGKILL");
@@ -3487,7 +3490,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
         while (!existsSync(outlived)) await Bun.sleep(1);
         expect(readFileSync(outlived, "utf8")).toBe("stop\n");
       },
-      { packages: { held: { scripts: { postinstall: script(wait) } } } },
+      { packages: { held: { scripts: { postinstall } } } },
     );
   });
 
@@ -3541,12 +3544,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
       files: {},
       env: { BUN_INSTALL_GLOBAL_STORE: "1" },
     },
-    {
-      title: "a link: folder",
-      dependencies: { held: "link:./held" },
-      files: { [join("held", "package.json")]: JSON.stringify(held) },
-      env: {},
-    },
+    ...linked.map(row => ({ ...row, files: { [join("held", "package.json")]: JSON.stringify(held) }, env: {} })),
   ])("$title that is not trusted any more is not built", async ({ dependencies, files, env }) => {
     await whileInstalling(
       async ({ ctx, kill, bun }) => {
@@ -3557,26 +3555,6 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
         expect(await readdirSorted(ctx.installed())).toEqual(installed);
       },
       { manifest: { ...trusted, dependencies }, files, before: async ctx => void Object.assign(ctx.env, env) },
-    );
-  });
-
-  // `held` was in place and not trusted. Its script runs there once it is trusted. The lockfile
-  // gets the trust from the install that ignores scripts: only the list has the script after that.
-  test.skipIf(isWindows)("a package that was in place when it became trusted", async () => {
-    await whileInstalling(
-      async ({ kill, bun }) => {
-        await kill("SIGKILL");
-
-        expect(await bun("install", "--ignore-scripts")).toEqual({ errors: [], ran: false, built: false, exitCode: 0 });
-        expect(await bun("install")).toEqual({ errors: [], ran: true, built: true, exitCode: 0 });
-      },
-      {
-        async before(ctx) {
-          await writeFile(ctx.packageJson, JSON.stringify({ name: "foo", dependencies: { held: "1.0.0" } }));
-          expect((await ctx.bun("install")).exitCode).toBe(0);
-          await writeFile(ctx.packageJson, JSON.stringify(trusted));
-        },
-      },
     );
   });
 
@@ -3671,108 +3649,6 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
       },
     );
   });
-
-  // Hoisted, the workspace `b` is there as `b` and as `bb`: the trees of both are one folder, and
-  // each has a row for `dep`. The install after places it once, for one of them.
-  test.skipIf(isWindows)("a package under a workspace that has two names is built once", async () => {
-    const dep = linker === "hoisted" ? join("packages", "b", "node_modules", "dep") : directory;
-    await whileInstalling(
-      async ({ ctx, kill, bun }) => {
-        await kill("SIGKILL");
-
-        expect(await bun("install")).toMatchObject({ errors: [], ran: true, exitCode: 0 });
-        expect(existsSync(join(ctx.packageDir, dep, "built.txt"))).toBe(true);
-        expect(await bun("install")).toMatchObject({ errors: [], ran: false, exitCode: 0 });
-        expect(existsSync(ctx.installed(record))).toBe(false);
-      },
-      {
-        packages: { other: {} },
-        manifest: {
-          name: "foo",
-          workspaces: ["packages/*"],
-          dependencies: { bb: "workspace:packages/b", dep: "npm:other@1.0.0" },
-          trustedDependencies: ["held"],
-        },
-        files: {
-          "packages/b/package.json": JSON.stringify({
-            name: "b",
-            version: "1.0.0",
-            dependencies: { dep: "npm:held@1.0.0" },
-          }),
-        },
-        // One script at a time: a new tree runs the script of `dep` for each of the two rows.
-        args: ["--concurrent-scripts=1"],
-      },
-    );
-  });
-
-  // Isolated, a link to a `link:` folder from any dependent says that its scripts ran. The install
-  // that died made the link of `b` only.
-  test.skipIf(isWindows)("a link: folder of two workspaces, after an install of one of them", async () => {
-    const member = (name: string) =>
-      JSON.stringify({ name, version: "1.0.0", dependencies: { held: "link:../../held" } });
-    await whileInstalling(
-      async ({ ctx, kill, bun }) => {
-        await kill("SIGKILL");
-
-        expect(await bun("install")).toMatchObject({ errors: [], ran: true, exitCode: 0 });
-        expect(existsSync(join(ctx.packageDir, "held", "built.txt"))).toBe(true);
-        expect(await bun("install")).toMatchObject({ errors: [], ran: false, exitCode: 0 });
-        expect(existsSync(ctx.installed(record))).toBe(false);
-      },
-      {
-        manifest: { name: "foo", workspaces: ["packages/*"], trustedDependencies: ["held"] },
-        files: {
-          "held/package.json": JSON.stringify(held),
-          "packages/a/package.json": member("a"),
-          "packages/b/package.json": member("b"),
-        },
-        args: ["--filter", "b"],
-      },
-    );
-  });
-
-  // The script of `opt` fails, and the install goes on without it. The links to `opt` go at the
-  // end of the install: until then they say that its scripts ran. `held` comes after `opt` failed.
-  test.skipIf(isWindows || linker === "hoisted")(
-    "an optional link: folder whose script failed before the install died",
-    async () => {
-      const tarball = Promise.withResolvers<void>();
-      const wait = '{ echo started > started.txt && read line < "$GATE" && test "$line" = go; }';
-      const postinstall = `{ test -z "$GATE" || ${wait}; } && echo built > built.txt`;
-      await whileInstalling(
-        async ({ ctx, proc, kill, bun }) => {
-          tarball.resolve();
-          while (!existsSync(ctx.installed("held", "started.txt"))) {
-            expect(proc.exitCode).toBe(null);
-            await Bun.sleep(1);
-          }
-          await kill("SIGKILL");
-
-          expect(await bun("install")).toMatchObject({ ran: true, exitCode: 0 });
-        },
-        {
-          packages: { held: { hold: tarball.promise, scripts: { postinstall } } },
-          manifest: {
-            name: "foo",
-            dependencies: { held: "1.0.0" },
-            optionalDependencies: { opt: "link:./opt" },
-            trustedDependencies: ["held", "opt"],
-          },
-          files: {
-            "opt/package.json": JSON.stringify({
-              name: "opt",
-              version: "1.0.0",
-              scripts: { postinstall: 'echo started >> "$STARTED" && exit 1' },
-            }),
-          },
-          lockfile: true,
-          // One script at a time: the script of `held` starts after the one of `opt` has failed.
-          args: ["--concurrent-scripts=1"],
-        },
-      );
-    },
-  );
 
   // Hoisted, `k` of `held` is in the directory of `held`, which goes as a whole when `held` is placed
   // again. The record of `held` goes with the copy to edit instead, and `held` is not built.
@@ -3955,6 +3831,90 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     expect(await readdirSorted(ctx.installed())).toEqual([...installed, ...kept].sort());
     expect(exitCode).toBe(0);
   });
+
+  // Hoisted, the workspace `b` is there as `b` and as `bb`. The trees of both are one folder, and
+  // each has a row for `dep`: one of them places it again, and the record of the other one goes too.
+  test.skipIf(linker === "isolated")(
+    "a package under a workspace that has two names is installed again once",
+    async () => {
+      using ctx = await setupScriptPackages(linker, {
+        held: { scripts: { postinstall: "echo ran > ran.txt" } },
+        other: {},
+      });
+      await writeFile(
+        ctx.packageJson,
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: { bb: "workspace:packages/b", dep: "npm:other@1.0.0" },
+          trustedDependencies: ["held"],
+        }),
+      );
+      await write(
+        join(ctx.packageDir, "packages", "b", "package.json"),
+        JSON.stringify({ name: "b", version: "1.0.0", dependencies: { dep: "npm:held@1.0.0" } }),
+      );
+      expect((await ctx.bun("install")).exitCode).toBe(0);
+      const dep = join(ctx.packageDir, "packages", "b", "node_modules", "dep");
+      await rm(join(dep, "ran.txt"));
+      const rows = ["b", "bb"].map(name => `+${join("node_modules", name, "node_modules", "dep")}\n`);
+      await writeFile(ctx.installed(record), rows.join(""));
+
+      expect((await ctx.bun("install")).exitCode).toBe(0);
+      expect({ ran: existsSync(join(dep, "ran.txt")), list: existsSync(ctx.installed(record)) }).toEqual({
+        ran: true,
+        list: false,
+      });
+      await writeFile(join(dep, "kept.txt"), "kept");
+      expect((await ctx.bun("install")).exitCode).toBe(0);
+      expect(existsSync(join(dep, "kept.txt"))).toBe(true);
+    },
+  );
+
+  // Hoisted, no script of these runs: a member outside the project, and a folder inside the package
+  // that declares it. The project is in `project`, so that `../out` is in the directory of the test.
+  test.skipIf(linker === "isolated")(
+    "a member outside the project and a folder inside its declarer are not listed",
+    async () => {
+      using ctx = await setupScriptPackages(linker, {});
+      const project = join(ctx.packageDir, "project");
+      const scripted = (name: string, more: object = {}) =>
+        JSON.stringify({ name, version: "1.0.0", scripts: { postinstall: "echo ran > ran.txt" }, ...more });
+      await Promise.all([
+        write(join(project, "bunfig.toml"), readFileSync(join(ctx.packageDir, "bunfig.toml"), "utf8")),
+        write(
+          join(project, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            workspaces: ["../out"],
+            dependencies: { outer: "file:./outer" },
+            trustedDependencies: ["inner", "outer"],
+          }),
+        ),
+        write(join(ctx.packageDir, "out", "package.json"), scripted("out")),
+        write(join(project, "outer", "package.json"), scripted("outer", { dependencies: { inner: "file:./inner" } })),
+        write(join(project, "outer", "inner", "package.json"), scripted("inner")),
+      ]);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: project,
+        env: ctx.env,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect({
+        list: existsSync(join(project, "node_modules", record)),
+        outer: existsSync(join(project, "node_modules", "outer", "ran.txt")),
+        out: existsSync(join(ctx.packageDir, "out", "ran.txt")),
+        inner: existsSync(join(project, "node_modules", "outer", "node_modules", "inner", "ran.txt")),
+      }).toEqual({ list: false, outer: true, out: false, inner: false });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // `held` is a dependency of the workspace `b` only. The install of `a` cuts the list back to its
   // whole lines, writes the lines of `other` after them, and leaves the rest for the install that

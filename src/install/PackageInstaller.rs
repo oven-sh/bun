@@ -537,15 +537,15 @@ pub(crate) fn pending_scripts_key(
     key
 }
 
-/// Of a workspace or `link:` package only the link goes.
+/// Of a workspace or `link:` package only the link goes. False: the `node_modules` of the tree is not there.
 pub(crate) fn remove_placed_package(
     lockfile: &Lockfile,
     tree_id: lockfile::tree::Id,
     alias: &[u8],
-) {
+) -> bool {
     let path = abs_node_modules_path(lockfile, lockfile.buffers.string_bytes.as_slice(), tree_id);
     let Ok(node_modules) = Dir::open(path.slice()) else {
-        return;
+        return false;
     };
     // Rename first: a delete can stop midway, and a half-deleted package must not pass `verify`.
     let moved = package_install::move_aside(
@@ -564,6 +564,7 @@ pub(crate) fn remove_placed_package(
         let _ = node_modules.delete_tree(alias);
     }
     crate::prune::prune_bins(&node_modules);
+    true
 }
 
 /// The path rules alone, for the own name of the project, a workspace or a folder.
@@ -732,8 +733,9 @@ impl<'a> PackageInstaller<'a> {
                     pending.borrow_mut().forget_stale(&key);
                 } else if !(is_workspace && pending.borrow().has_stale_behind(&key)) {
                     // A link stays while it leads to a stale package that this pass does not come to.
-                    remove_placed_package(lockfile, tree.id, alias);
-                    pending.borrow_mut().forget_removed(&key);
+                    if remove_placed_package(lockfile, tree.id, alias) {
+                        pending.borrow_mut().forget_removed(&key);
+                    }
                 }
             }
         }
@@ -2864,9 +2866,12 @@ impl<'a> PackageInstaller<'a> {
                 .bins_after_scripts
                 .push(dependency_id);
         }
-        // New here: a package that was in place, and a workspace whose scripts the lockfile did not have.
         let (lockfile, tree_id) = (self.lockfile(), self.current_tree_id);
         (self.manager().pending_scripts.borrow_mut()).begin(tree_id, folder_name, || {
+            // A package that was in place gets no line: the lockfile has it run again, in place.
+            if resolution.tag != resolution::Tag::Workspace {
+                return Vec::new();
+            }
             pending_scripts_key(lockfile, tree_id, folder_name)
         });
         self.pending_lifecycle_scripts.push(PendingLifecycleScript {

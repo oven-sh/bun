@@ -100,15 +100,7 @@ impl PendingScripts {
         (self.stale.iter()).any(|stale| is_behind(stale, key) && is_in_place(stale))
     }
 
-    /// The stale paths that `is_one` takes.
-    pub(crate) fn stale_where(&self, mut is_one: impl FnMut(&[u8]) -> bool) -> Vec<Box<[u8]>> {
-        (self.stale.iter())
-            .filter(|key| is_one(key))
-            .cloned()
-            .collect()
-    }
-
-    /// The package at a stale `key` stays as it is: its scripts are not to run any more.
+    /// Ends what a dead install left at `key`: its package runs no script any more, or is gone.
     pub(crate) fn forget_stale(&mut self, key: &[u8]) {
         if let Some(index) = self.stale.iter().position(|stale| **stale == *key) {
             self.stale.swap_remove(index);
@@ -116,7 +108,7 @@ impl PendingScripts {
         }
     }
 
-    /// The package at a stale `key` was removed. Gone, it needs no record: two trees can be one folder.
+    /// The package at a stale `key` was removed from a `node_modules` that is there. Two trees can be one folder.
     pub(crate) fn forget_removed(&mut self, key: &[u8]) {
         if !is_in_place(key) {
             self.forget_stale(key);

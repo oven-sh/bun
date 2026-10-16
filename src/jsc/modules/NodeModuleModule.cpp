@@ -800,14 +800,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-// Who reports the load Module.runMain() is about to start: the values of `RunMainOwner` in hw_exports.rs.
-enum class RunMainOwner : uint8_t {
-    Caller = 0,
-    EntryAwaits = 1,
-    EntryLoads = 2,
-};
-extern "C" RunMainOwner Bun__VirtualMachine__runMainOwner(void* bunVM, const BunString* key);
-extern "C" bool Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
+extern "C" bool Bun__VirtualMachine__entryPointTakesRunMain(void* bunVM, const BunString* key, JSPromise* promise);
 BUN_DECLARE_HOST_FUNCTION(Bun__onRunMainRejected);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -821,16 +814,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, name), {}, nullptr, /* useImportMap */ true);
     RETURN_IF_EXCEPTION(scope, {});
 
-    void* bunVM = defaultGlobalObject(globalObject)->bunVM();
-    BunString keyString = Bun::toString(key.string());
-    auto owner = Bun__VirtualMachine__runMainOwner(bunVM, &keyString);
-
     auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
-    if (owner == RunMainOwner::EntryLoads)
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    // False when a load that started inside this one is the entry point's already.
-    if (owner == RunMainOwner::EntryAwaits && Bun__VirtualMachine__setOverrideModuleRunMainPromise(bunVM, promise))
+    BunString keyString = Bun::toString(key.string());
+    if (Bun__VirtualMachine__entryPointTakesRunMain(defaultGlobalObject(globalObject)->bunVM(), &keyString, promise))
         return JSC::JSValue::encode(JSC::jsUndefined());
 
     // JSC marks this promise as handled. Node raises an uncaught exception: https://github.com/nodejs/node/blob/v26.12.0/lib/internal/modules/run_main.js#L111

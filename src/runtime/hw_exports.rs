@@ -103,44 +103,23 @@ pub(crate) fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: 
     }
 }
 
-/// `export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm, promise)`
-// HOST_EXPORT(Bun__VirtualMachine__setOverrideModuleRunMainPromise, c)
-pub(crate) fn set_override_module_run_main_promise(
+/// Whether the entry point reports the load that `Module.runMain(key)` started. If not, the call does.
+// HOST_EXPORT(Bun__VirtualMachine__entryPointTakesRunMain, c)
+pub(crate) fn entry_point_takes_run_main(
     vm: &mut VirtualMachine,
+    key: &bun_core::String,
     promise: *mut JSInternalPromise,
 ) -> bool {
+    if !vm.has_patched_run_main {
+        // `reload_entry_point` loads the entry point itself.
+        return vm.is_entry_point(key);
+    }
+    // `reload_entry_point` takes the first load of the `Module.runMain` that it calls.
     if vm.pending_internal_promise().is_none() {
         vm.set_pending_internal_promise(Some(promise));
         return true;
     }
     false
-}
-
-/// Who reports the load `Module.runMain(key)` starts. NodeModuleModule.cpp mirrors the values.
-#[repr(u8)]
-enum RunMainOwner {
-    /// `Module.runMain`: nobody else looks at the promise of this load.
-    Caller = 0,
-    /// `reload_entry_point`: the first load of the `Module.runMain` override it calls is its own.
-    EntryAwaits = 1,
-    /// `reload_entry_point`: `key` is the entry point, which it loads itself.
-    EntryLoads = 2,
-}
-
-// HOST_EXPORT(Bun__VirtualMachine__runMainOwner, c)
-pub(crate) fn run_main_owner(vm: &mut VirtualMachine, key: &bun_core::String) -> u8 {
-    let owner = if vm.has_patched_run_main {
-        if vm.pending_internal_promise().is_none() {
-            RunMainOwner::EntryAwaits
-        } else {
-            RunMainOwner::Caller
-        }
-    } else if vm.is_entry_point(key) {
-        RunMainOwner::EntryLoads
-    } else {
-        RunMainOwner::Caller
-    };
-    owner as u8
 }
 
 // HOST_EXPORT(Bun__onRunMainRejected)

@@ -718,7 +718,7 @@ impl BlobExt for Blob {
             self.offset.get()
         })?;
 
-        let ct = self.content_type_slice();
+        let ct = self.content_type.get().given();
         writer.write_int_le::<u32>(ct.len() as u32)?;
         writer.write_all(ct)?;
         writer.write_int_le::<u8>(self.content_type_was_set.get() as u8)?;
@@ -1109,7 +1109,7 @@ impl BlobExt for Blob {
                         writer,
                         ENABLE_ANSI_COLORS,
                         "type<d>:<r> <green>\"{s}\"<r>",
-                        bstr::BStr::new(self.content_type_slice()),
+                        bstr::BStr::new(self.content_type.get().given()),
                     )?;
                     if self.offset.get() > 0 || self.last_modified.get() != 0.0 {
                         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
@@ -1804,7 +1804,8 @@ impl BlobExt for Blob {
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
         if content_type.is_empty()
-            && matches!(self.content_type.get(), BlobContentType::Static(s) if !s.is_empty())
+            && !self.content_type.get().is_owned()
+            && !self.content_type.get().is_empty()
         {
             blob.content_type.set(self.content_type.get().clone());
         } else {
@@ -1887,10 +1888,7 @@ impl BlobExt for Blob {
                     if !is_valid_blob_type(slice) {
                         break 'inner;
                     }
-                    content_type = match global_this.bun_vm().as_mut().mime_type(slice) {
-                        Some(mime) => BlobContentType::from(mime),
-                        None => BlobContentType::from_lowercased(slice),
-                    };
+                    content_type = BlobContentType::from_script(slice);
                 }
             }
         }
@@ -1906,7 +1904,7 @@ impl BlobExt for Blob {
     }
 
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue {
-        let ct = self.content_type_slice();
+        let ct = self.content_type.get().given();
         if !ct.is_empty() {
             return EncodedSlice::latin1(ct).to_js(global_this);
         }
@@ -2221,12 +2219,7 @@ impl BlobExt for Blob {
                                         break 'inner;
                                     }
                                     blob.content_type_was_set.set(true);
-                                    blob.content_type.set(
-                                        match global_this.bun_vm().as_mut().mime_type(slice) {
-                                            Some(mime) => BlobContentType::from(mime),
-                                            None => BlobContentType::from_lowercased(slice),
-                                        },
-                                    );
+                                    blob.content_type.set(BlobContentType::from_script(slice));
                                 }
                             }
                         }
@@ -3954,7 +3947,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
     if !content_type.is_empty() {
         blob.content_type
-            .set(BlobContentType::Owned(std::sync::Arc::from(content_type)));
+            .set(BlobContentType::from_script(&content_type));
         blob.content_type_was_set.set(content_type_was_set);
     }
 
@@ -5367,12 +5360,7 @@ pub(crate) fn jsdom_file_construct(
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);
-                        blob.content_type.set(
-                            match global_this.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => BlobContentType::from(mime),
-                                None => BlobContentType::from_lowercased(slice),
-                            },
-                        );
+                        blob.content_type.set(BlobContentType::from_script(slice));
                     }
                 }
             }

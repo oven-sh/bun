@@ -496,14 +496,7 @@ impl SideEffects {
         }
     }
 
-    /// `Expr::join_with_left_associative_op` for the test of an unused ternary
-    /// whose other branch was removed: "(a, b) ? c() : 0" => "a, b && c()".
-    ///
-    /// Hoisting the comma operands out of the operator turns them into unused
-    /// expressions of their own (only the last operand is still used, by the
-    /// operator), so they are simplified like any other unused expression:
-    /// "(0, b) ? c() : 0" => "b && c()", not "0, b && c()", which a second
-    /// transpile would simplify further.
+    /// "(a(), 0, b) ? c() : 1" => "a(), b && c()"
     fn join_unused_test_with_branch<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, TS, SCAN>,
         op: Op::Code,

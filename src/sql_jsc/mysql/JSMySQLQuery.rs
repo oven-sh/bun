@@ -265,8 +265,6 @@ impl JSMySQLQuery {
         };
         debug_assert!(function.is_callable(), "onQueryResolveFn is not callable");
 
-        // `result()` above accepted this result, so a throw from the string
-        // allocation takes that back to reject the query.
         let global = self.global_object();
         let js_command = match self.query.get().command_to_js(global, keyword) {
             Ok(command) => command,

@@ -94,9 +94,10 @@ impl PatchCommitResult {
         let lockfile = &manager.lockfile;
         let real = resolve_links(&self.patchfile_path).ok();
         let own_key = string_hash(&self.patch_key);
-        let is_shared = (lockfile.patched_dependencies.iter()).any(|(key, other)| {
-            *key != own_key && resolve_links(lockfile.str(&other.path)).ok() == real
-        });
+        let is_shared = real.is_some()
+            && (lockfile.patched_dependencies.iter()).any(|(key, other)| {
+                *key != own_key && resolve_links(lockfile.str(&other.path)).ok() == real
+            });
         let (outcome, why) = if is_shared {
             ("kept", ", which another package also uses")
         } else if is_file_of_the_project(&path) && sys::unlink(&path).is_ok() {

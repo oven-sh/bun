@@ -361,7 +361,7 @@ const messages: Record<string, Message> = {
       }),
     }),
     command: ["pm", "migrate"],
-    printed: value => `not depended on by any package: "node_modules/${value}"\n`,
+    printed: value => `that no package depends on: "node_modules/${value}"\n`,
     exitCode: 0,
   },
   "a version in yarn.lock that is not one": {

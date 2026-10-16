@@ -383,25 +383,25 @@ const hostile: Hostile[] = [
   {
     title: "a package of 2^64-1 bytes",
     packages: [record(PACKAGE, evil, 0, evilBody, { size: U64_MAX })],
-    error: "cut short",
+    error: "truncated",
   },
   {
     title: "a package of 2^63 bytes",
     packages: [record(PACKAGE, evil, 0, evilBody, { size: 1n << 63n })],
-    error: "cut short",
+    error: "truncated",
   },
-  inPackage("a file of 2^64-1 bytes", [record(FILE, "a", 0o644, "x", { size: U64_MAX })], "cut short"),
-  inPackage("a file of 2^63 bytes", [record(FILE, "a", 0o644, "x", { size: 1n << 63n })], "cut short"),
-  inPackage("a file of 1 TB", [record(FILE, "a", 0o644, "x", { size: 1n << 40n })], "cut short"),
+  inPackage("a file of 2^64-1 bytes", [record(FILE, "a", 0o644, "x", { size: U64_MAX })], "truncated"),
+  inPackage("a file of 2^63 bytes", [record(FILE, "a", 0o644, "x", { size: 1n << 63n })], "truncated"),
+  inPackage("a file of 1 TB", [record(FILE, "a", 0o644, "x", { size: 1n << 40n })], "truncated"),
   inPackage("a file that swallows the checksum", [record(FILE, "a", 0o644, "x", { size: 30n })], "runs past the end"),
   inPackage("a path of 2^32-1 bytes", [record(FILE, "a", 0o644, "x", { pathLen: 0xffff_ffff })], "path is too long"),
   inPackage(
     "a path that swallows the rest",
     [record(FILE, "a", 0o644, "x", { pathLen: 60 })],
-    /cut short|unsafe path|past the end/,
+    /truncated|unsafe path|past the end/,
   ),
   inPackage("a symlink target of 10 000 bytes", [link("l", Buffer.alloc(10_000, "a"))], "symlink target is too long"),
-  inPackage("a symlink target of 2^64-1 bytes", [record(SYMLINK, "l", 0o777, "a", { size: U64_MAX })], "cut short"),
+  inPackage("a symlink target of 2^64-1 bytes", [record(SYMLINK, "l", 0o777, "a", { size: U64_MAX })], "truncated"),
 
   // The file as a whole.
   { title: "an empty file", pack: Buffer.alloc(0), error: "not a bun cache pack" },
@@ -416,8 +416,8 @@ const hostile: Hostile[] = [
     pack: Buffer.concat([Buffer.from("BUNCACHEPACK\0v2\n"), end()]),
     error: "not a bun cache pack",
   },
-  { title: "the magic alone", pack: MAGIC, error: "cut short" },
-  { title: "no end record", pack: Buffer.concat([MAGIC, pkg(evil)]), error: "cut short" },
+  { title: "the magic alone", pack: MAGIC, error: "truncated" },
+  { title: "no end record", pack: Buffer.concat([MAGIC, pkg(evil)]), error: "truncated" },
   {
     title: "a byte after the end",
     pack: Buffer.concat([packOf(pkg(evil)), Buffer.from([0])]),

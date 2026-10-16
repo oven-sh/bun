@@ -1535,7 +1535,7 @@ describe.concurrent("a commit whose patch bun install cannot apply changes nothi
 
     const { stderr, exitCode } = await runBun(dir, env, "patch", "--commit", name);
     expect(stderr).toContain("error: failed applying patch file: ");
-    expect(stderr).toContain("nothing was written");
+    expect(stderr).toContain("nothing was changed");
     expect(await state()).toEqual(before);
     expect(exitCode).toBe(1);
   });

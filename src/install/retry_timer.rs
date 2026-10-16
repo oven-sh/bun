@@ -13,20 +13,24 @@ use crate::{NetworkTask, PackageManager};
 
 /// Install thread only. Its tasks are not in `pending_tasks`: `pending_task_count` adds `len()`.
 #[derive(Default)]
-pub(crate) struct RetryQueue(Vec<(Instant, *mut NetworkTask)>);
+pub(crate) struct RetryQueue {
+    waiting: Vec<(Instant, *mut NetworkTask)>,
+    /// The highest attempt whose wait was announced since the queue was last empty.
+    announced: u16,
+}
 
 impl RetryQueue {
     pub(crate) fn len(&self) -> usize {
-        self.0.len()
+        self.waiting.len()
     }
 
     pub(crate) fn pop_due(&mut self) -> Option<*mut NetworkTask> {
-        if self.0.is_empty() {
+        if self.waiting.is_empty() {
             return None;
         }
         let now = Instant::now();
-        let index = self.0.iter().position(|(due, _)| *due <= now)?;
-        Some(self.0.swap_remove(index).1)
+        let index = self.waiting.iter().position(|(due, _)| *due <= now)?;
+        Some(self.waiting.swap_remove(index).1)
     }
 }
 
@@ -45,16 +49,23 @@ pub(crate) fn retry(
         enqueue::enqueue_network_task(manager, task);
         return Duration::ZERO;
     }
-    // An outage hits many requests at once, so a wait is announced once per wave. `--verbose` has a
-    // line for each request.
-    if manager.retry_queue.len() == 0 && manager.options.log_level != LogLevel::Silent {
+    // An outage hits many requests at once, so a wait is announced once for each attempt number,
+    // not for each request. `--verbose` has a line for each request.
+    if manager.retry_queue.len() == 0 {
+        manager.retry_queue.announced = 0;
+    }
+    if attempt > manager.retry_queue.announced
+        && (asked || wait >= ANNOUNCED_WAIT)
+        && manager.options.log_level != LogLevel::Silent
+    {
+        manager.retry_queue.announced = attempt;
         if asked {
             Output::flush();
             manager.progress.log(format_args!(
                 "warn: the registry asked to wait {}s before the next attempt\n",
                 wait.as_secs(),
             ));
-        } else if wait >= ANNOUNCED_WAIT && !manager.options.log_level.is_verbose() {
+        } else if !manager.options.log_level.is_verbose() {
             Output::flush();
             manager.progress.log(format_args!(
                 "warn: a request to the registry failed. Retry {}/{} in {}ms...\n",
@@ -70,7 +81,7 @@ pub(crate) fn retry(
         enqueue::enqueue_network_task(manager, task);
         return Duration::ZERO;
     }
-    manager.retry_queue.0.push((due, task));
+    manager.retry_queue.waiting.push((due, task));
     wait
 }
 
@@ -129,22 +140,38 @@ fn wait_before(
     if base_ms == 0 || manager.options.runtime_auto_install {
         return (Duration::ZERO, false);
     }
-    // A busy server needs time, so waiting helps. Nothing listening at the address, or a name that
-    // does not resolve, mostly means being offline, and then the install should fail right away.
-    if matches!(
-        response.fail,
-        Some(
-            bun_http::Error::ConnectionRefused
-                | bun_http::Error::DNSResolveFailed
-                | bun_http::Error::FailedToOpenSocket
-        )
-    ) {
+    if is_unreachable(response) {
         return (Duration::ZERO, false);
     }
     let wait = backoff(base_ms, attempt);
     match retry_after(response).filter(|asked| *asked > wait) {
         Some(asked) => (asked, true),
         None => (wait, false),
+    }
+}
+
+/// Whether nothing listens at the address, no route leads to it, or its name does not resolve. That
+/// mostly means being offline, so the install should fail right away. A busy server needs time, and
+/// so does a machine that is out of file descriptors or ports, so there the wait helps.
+fn is_unreachable(response: &HTTPClientResult<'static>) -> bool {
+    use bun_errno::SystemErrno as E;
+    // `connect_errno` is a Winsock code on Windows: WSAECONNREFUSED, WSAENETUNREACH, WSAEHOSTUNREACH.
+    const UNREACHABLE: [i32; 3] = if cfg!(windows) {
+        [10061, 10051, 10065]
+    } else {
+        [
+            E::ECONNREFUSED as i32,
+            E::ENETUNREACH as i32,
+            E::EHOSTUNREACH as i32,
+        ]
+    };
+    let errno = response.connect_errno;
+    match response.fail {
+        Some(bun_http::Error::DNSResolveFailed) => true,
+        // This is the name of every failed `connect`. Windows does not always say why it failed.
+        Some(bun_http::Error::ConnectionRefused) => errno == 0 || UNREACHABLE.contains(&errno),
+        Some(bun_http::Error::FailedToOpenSocket) => UNREACHABLE.contains(&errno),
+        _ => false,
     }
 }
 

@@ -1739,7 +1739,7 @@ describe("package-lock.json migration fixes", () => {
     async () => {
       using dir = fixture("minimist-git-metadep");
       const { stderr, exitCode, lock } = await migrate(dir);
-      expect(stderr).toContain("not depended on by any package");
+      expect(stderr).toContain("that no package depends on");
       expect(stderr).toContain('"node_modules/@isaacs/no-thing-here"');
       expect(lock.packages.minimist[0]).toBe(
         "minimist@github:substack/minimist#3754568bfd43a841d2d72d7fb54598635aea8fa4",
@@ -1831,7 +1831,7 @@ describe("package-lock.json migration fixes", () => {
     using dir = fixture("carbonium");
     const before = await pmHash(dir);
     const { stderr, exitCode, lock } = await migrate(dir);
-    expect(stderr).not.toContain("not depended on");
+    expect(stderr).not.toContain("that no package depends on");
     expect(exitCode).toBe(0);
     expect(await pmHash(dir)).toBe(before);
     // npm nested four copies of 1.3.0; bun keeps one package and hoists it (2.0.0 stays under eslint).
@@ -2852,7 +2852,7 @@ describe("package-lock.json migration fixes", () => {
       expect(install.stderr).toContain(skipped("d"));
       expect(install.stderr).toContain(skipped("v"));
       // `e` goes with the `d` that declares it
-      expect(install.stderr).not.toContain("not depended on by any package");
+      expect(install.stderr).not.toContain("that no package depends on");
       expect(install.stderr).not.toContain("error");
       expect(await Bun.file(join(dir, "node_modules", "d", "index.js")).text()).toBe("module.exports = 'd';");
       expect(await Bun.file(join(dir, "node_modules", "v", "package.json")).json()).toEqual({

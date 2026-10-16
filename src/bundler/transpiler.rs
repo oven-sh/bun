@@ -416,11 +416,10 @@ impl<'a> Transpiler<'a> {
                     let parts: [&[u8]; 2] = [entry_point, b".."];
                     let top_level_dir = self.fs().top_level_dir;
 
-                    let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
-                        bun_paths::platform::Auto,
-                    >(
-                        top_level_dir, &mut cache_bust_buf[..], &parts
-                    );
+                    let buster_name =
+                        bun_paths::resolve_path::join_abs_string_buf_z::<
+                            bun_paths::platform::AutoLoose,
+                        >(top_level_dir, &mut cache_bust_buf[..], &parts);
                     self.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(
                             buster_name.as_bytes(),
@@ -2969,7 +2968,7 @@ impl<'a> Transpiler<'a> {
         output: &[u8],
     ) -> Box<[u8]> {
         let rel_to_root = bun_paths::resolve_path::relative_platform::<
-            bun_paths::resolve_path::platform::Auto,
+            bun_paths::resolve_path::platform::AutoLoose,
             false,
         >(&self.options.root_dir, file_path_text);
         let pathname = Fs::PathName::init(rel_to_root);

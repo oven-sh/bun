@@ -2224,7 +2224,7 @@ impl<'a> PackageInstaller<'a> {
                         } else if installer.cache_dir_subpath.as_bytes() != b"." {
                             // What a package ships inside itself is linked where it is.
                             let mut shipped_buf = bun_paths::path_buffer_pool::get();
-                            match join_abs_string_buf_z_checked::<platform::Auto>(
+                            match join_abs_string_buf_z_checked::<platform::AutoLoose>(
                                 dir_name,
                                 shipped_buf.as_mut_slice(),
                                 &[installer.cache_dir_subpath.as_bytes()],

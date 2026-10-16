@@ -605,6 +605,23 @@ describe.concurrent("flags", () => {
     expect(tarballEntries(join(dir, filename))).toEqual(["package/package.json", "package/index.js"]);
   });
 
+  test.skipIf(isWindows)("a backslash in --destination and --filename is part of the name", async () => {
+    using dir = tempDir("pack-backslash", {
+      "package.json": JSON.stringify({ name: "pack-dest-test", version: "1.1.1" }),
+      "index.js": indexJs,
+    });
+
+    const destination = await runPack(dir, ["--destination=de\\st"]);
+    expect(destination.err).toBe("");
+    expect(destination.exitCode).toBe(0);
+    const filename = await runPack(dir, ["--filename=fi\\le.tgz"]);
+    expect(filename.err).toBe("");
+    expect(filename.exitCode).toBe(0);
+
+    expect(await sortedNames(dir)).toEqual(["de\\st", "fi\\le.tgz", "index.js", "package.json"]);
+    expect(await sortedNames(join(dir, "de\\st"))).toEqual(["pack-dest-test-1.1.1.tgz"]);
+  });
+
   test("--filename into a directory that does not exist", async () => {
     using dir = tempDir("pack-filename-missing-dir", {
       "package.json": JSON.stringify({ name: "pack-dest-test", version: "1.1.1" }),
@@ -4201,6 +4218,29 @@ describe.concurrent(".gitignore/.npmignore", () => {
 });
 
 describe.concurrent("bins", () => {
+  test('a backslash separates in "bin" and "files"', async () => {
+    using dir = tempDir("pack-backslash-manifest", {
+      "package.json": JSON.stringify({
+        name: "pack-backslash-manifest",
+        version: "1.0.0",
+        files: ["lib\\a.js"],
+        bin: { x: "bin\\x.js" },
+      }),
+      "lib/a.js": "a",
+      "lib/b.js": "b",
+      "bin/x.js": "x",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-backslash-manifest-1.0.0.tgz")).sort()).toEqual([
+      "package/bin/x.js",
+      "package/lib/a.js",
+      "package/package.json",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("basic", async () => {
     using dir = tempDir("pack-bins", {
       "package.json": JSON.stringify({ name: "pack-bins", version: "1.2.3", bin: "bin.js" }),

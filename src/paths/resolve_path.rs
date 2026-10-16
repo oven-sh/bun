@@ -640,12 +640,13 @@ pub fn dirname_w(str: &[u16]) -> &[u16] {
     &str[..separator]
 }
 
+/// Splits at `\` too, like `relative_buf_z` and `relative_alloc`: most callers pass a path the resolver spelled.
 pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
-    relative_platform::<platform::Auto, false>(from, to)
+    relative_platform::<platform::AutoLoose, false>(from, to)
 }
 
 pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr {
-    let rel = relative_platform_buf::<platform::Auto, true>(buf, from, to);
+    let rel = relative_platform_buf::<platform::AutoLoose, true>(buf, from, to);
     let len = rel.len();
     // reshaped for borrowck — drop `rel` borrow before mutating buf
     buf[len] = 0;
@@ -745,7 +746,7 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
 }
 
 pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
-    let result = relative_platform::<platform::Auto, false>(from, to);
+    let result = relative_platform::<platform::AutoLoose, false>(from, to);
     Ok(Box::<[u8]>::from(result))
 }
 
@@ -1122,6 +1123,8 @@ mod sealed {
 }
 pub trait PlatformT: Copy + sealed::Sealed + 'static {
     const P: Platform;
+    /// `normalize_*`, `join_abs*` and `relative*` split at `\` as well where `P` is `Posix`.
+    const LOOSE_SEPARATORS: bool = false;
 }
 macro_rules! platform_variant {
     ($name:ident => $variant:ident) => {
@@ -1145,6 +1148,22 @@ pub mod platform {
     pub type Auto = Posix;
     #[cfg(all(not(windows), not(unix)))]
     pub type Auto = Loose;
+
+    /// `Posix` for text out of a file, which may have been written on Windows, and for what is matched against the resolver's paths.
+    #[derive(Copy, Clone)]
+    pub struct PosixLoose;
+    impl sealed::Sealed for PosixLoose {}
+    impl PlatformT for PosixLoose {
+        const P: Platform = Platform::Posix;
+        const LOOSE_SEPARATORS: bool = true;
+    }
+    /// `Auto` for such a path.
+    #[cfg(windows)]
+    pub type AutoLoose = Windows;
+    #[cfg(unix)]
+    pub type AutoLoose = PosixLoose;
+    #[cfg(all(not(windows), not(unix)))]
+    pub type AutoLoose = Loose;
 }
 
 impl Platform {
@@ -1383,10 +1402,16 @@ fn normalize_string_buf_t<
         Platform::Windows => {
             normalize_string_windows_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
         }
-        Platform::Posix => {
-            normalize_string_loose_buf_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
+        // A file name cannot hold a `\` on Windows, where `Posix` is given native paths to print with `/`.
+        Platform::Posix if cfg!(not(windows)) && !P::LOOSE_SEPARATORS => {
+            normalize_string_generic_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(
+                str,
+                buf,
+                T::from_u8(SEP_POSIX),
+                is_sep_posix_t::<T>,
+            )
         }
-        Platform::Loose => {
+        Platform::Posix | Platform::Loose => {
             normalize_string_loose_buf_t::<T, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(str, buf)
         }
     }
@@ -1714,6 +1739,35 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     let len = joined.len();
     buf[..len].copy_from_slice(joined);
     Some(&buf[..len])
+}
+
+/// Joins a directory from disk and `text` out of a file: as with `AutoLoose`, but a `\` in `dir` stays part of a name.
+pub fn join_abs_text_buf_checked<'a>(
+    dir: &'a [u8],
+    buf: &'a mut [u8],
+    text: &[u8],
+) -> Option<&'a [u8]> {
+    if cfg!(windows) {
+        return join_abs_string_buf_checked::<platform::Auto>(dir, buf, &[text]);
+    }
+    // Only a `/` in `text` itself makes it absolute or asks for a trailing `/`.
+    let relative: &[u8] = if text.first() == Some(&b'\\') {
+        b"."
+    } else {
+        b""
+    };
+    let slashes: Vec<u8> = relative
+        .iter()
+        .chain(text)
+        .map(|&c| if c == b'\\' { SEP_POSIX } else { c })
+        .collect();
+    let mut part = &slashes[..];
+    while let ([rest @ .., SEP_POSIX], Some(b'\\')) = (part, text.last())
+        && !rest.is_empty()
+    {
+        part = rest;
+    }
+    join_abs_string_buf_checked::<platform::Auto>(dir, buf, &[part])
 }
 
 /// [`join_abs_string_buf_checked`], NUL-terminated; the last byte of `buf` is reserved for the NUL.
@@ -2737,6 +2791,65 @@ mod tests {
         let mut spill = Vec::new();
         assert_eq!(norm(&mut buf[..1], &mut spill, b""), b".\0");
         assert_eq!(spill.len(), 2);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn posix_keeps_a_backslash_in_a_name_and_posix_loose_splits_at_it() {
+        let mut buf = [0u8; 64];
+        let mut join = |loose: bool, part: &[u8]| {
+            if loose {
+                join_abs_string_buf::<platform::PosixLoose>(b"/w", &mut buf, &[part]).to_vec()
+            } else {
+                join_abs_string_buf::<platform::Posix>(b"/w", &mut buf, &[part]).to_vec()
+            }
+        };
+        assert_eq!(join(false, b"a\\b"), b"/w/a\\b");
+        assert_eq!(join(true, b"a\\b"), b"/w/a/b");
+        assert_eq!(join(false, b"a\\..\\b"), b"/w/a\\..\\b");
+        assert_eq!(join(true, b"a\\..\\b"), b"/w/b");
+        // Only `/` makes a part absolute, so neither leaves `/w`.
+        assert_eq!(join(true, b"\\etc"), b"/w/etc");
+        assert_eq!(join(true, b"C:\\etc"), b"/w/C:/etc");
+
+        let mut buf = [0u8; 64];
+        assert_eq!(
+            normalize_buf::<platform::Posix>(b"a\\..\\b", &mut buf),
+            b"a\\..\\b"
+        );
+        assert_eq!(
+            normalize_buf::<platform::PosixLoose>(b"\\..\\..\\b", &mut buf),
+            b"b"
+        );
+        assert_eq!(
+            relative_platform::<platform::Posix, false>(b"/w/a\\b", b"/w/a\\c"),
+            b"../a\\c"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn join_abs_text_splits_the_text_at_a_backslash_and_not_the_directory() {
+        let (mut loose, mut text_only) = ([0u8; 64], [0u8; 64]);
+        for len in 0..=6u32 {
+            for n in 0..4usize.pow(len) {
+                let text: Vec<u8> = (0..len).map(|i| b"a./\\"[(n >> (2 * i)) & 3]).collect();
+                assert_eq!(
+                    join_abs_text_buf_checked(b"/w/d", &mut text_only, &text).unwrap(),
+                    join_abs_string_buf::<platform::PosixLoose>(b"/w/d", &mut loose, &[&text]),
+                    "{:?}",
+                    bstr::BStr::new(&text),
+                );
+            }
+        }
+        let mut join = |text: &[u8]| {
+            join_abs_text_buf_checked(b"/w\\d", &mut text_only, text)
+                .unwrap()
+                .to_vec()
+        };
+        assert_eq!(join(b"a\\b"), b"/w\\d/a/b");
+        assert_eq!(join(b"..\\x"), b"/x");
+        assert_eq!(join(b"\\etc"), b"/w\\d/etc");
     }
 
     #[test]

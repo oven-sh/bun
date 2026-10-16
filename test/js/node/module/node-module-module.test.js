@@ -116,6 +116,22 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(isWindows)("module.enableCompileCache keeps a backslash in the directory name", async () => {
+    using dir = tempDir("compile-cache-backslash", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(require("node:module").enableCompileCache("c\\\\d").directory)`],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(path.basename(stdout.trim())).toBe("c\\d");
+    expect(fs.readdirSync(String(dir))).toEqual(["c\\d"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("module.enableCompileCache validates its argument", () => {
     expect(Module.enableCompileCache.length).toBe(1);
     for (const invalid of [0, null, false, 1, NaN, true, Symbol(0)]) {
@@ -517,6 +533,10 @@ console.log("survived", require("./late.js"));`,
     // dropped rather than producing an extra ".../<sep>/node_modules" entry.
     expect(_nodeModulePaths("/a/b/c/d/")).toEqual(_nodeModulePaths("/a/b/c/d"));
     expect(_nodeModulePaths(ospath("/a/b/c/d") + path.sep)).toEqual(_nodeModulePaths("/a/b/c/d"));
+  });
+
+  test.skipIf(isWindows)("_nodeModulePaths() keeps a backslash in a directory name", () => {
+    expect(_nodeModulePaths("/x\\y/z")).toEqual(["/x\\y/z/node_modules", "/x\\y/node_modules", "/node_modules"]);
   });
 
   test("_nodeModulePaths() is stable across process.chdir()", async () => {

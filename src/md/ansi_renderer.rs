@@ -2765,8 +2765,10 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
             Err(_) => return None,
         }
     };
-    let joined =
-        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(base, &[&decoded]);
+    let joined = bun_paths::resolve_path::join_abs_string::<bun_paths::platform::AutoLoose>(
+        base,
+        &[&decoded],
+    );
     let abs = Box::<[u8]>::from(joined);
     // Stat instead of plain exists() so a directory like `./assets/` gets
     // rejected. bun.sys.exists wraps access(path, F_OK) which returns true

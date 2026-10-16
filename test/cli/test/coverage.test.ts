@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "path";
 
 test("coverage crash", () => {
@@ -55,6 +55,25 @@ export class Y {
   expect(normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir)).toMatchSnapshot(
     "lcov-coverage-reporter-output",
   );
+});
+
+test.skipIf(isWindows)("a backslash in --coverage-dir is part of the directory name", async () => {
+  using dir = tempDir("cov-dir-backslash", {
+    "lib.ts": `export const one = () => 1;`,
+    "a.test.ts": `import { test } from "bun:test"; import { one } from "./lib"; test("t", () => { one(); });`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "--coverage-dir=cv\\r", "./a.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(readdirSync(String(dir)).sort()).toEqual(["a.test.ts", "cv\\r", "lib.ts"]);
+  expect(readdirSync(path.join(String(dir), "cv\\r"))).toEqual(["lcov.info"]);
+  expect(exitCode).toBe(0);
 });
 
 // https://github.com/oven-sh/bun/issues/17502

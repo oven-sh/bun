@@ -509,7 +509,7 @@ pub fn select_lockfile_workspaces(
             };
             // A path out of bun.lock that fits no path buffer is selected by its name only.
             strings::without_trailing_slash(
-                join_abs_string_buf_checked::<platform::Posix>(
+                join_abs_string_buf_checked::<platform::PosixLoose>(
                     top_level_dir,
                     &mut path_buf.0,
                     &[rel],

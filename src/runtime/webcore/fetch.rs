@@ -1400,7 +1400,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
                 let main = global_this.bun_vm().as_mut().main();
                 let fullpath = bun_paths::resolve_path::join_abs_string_buf::<
-                    bun_paths::platform::Auto,
+                    bun_paths::platform::AutoLoose,
                 >(
                     cwd, &mut path_buf, &[main, b"../", url_path_decoded]
                 );

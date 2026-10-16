@@ -365,6 +365,27 @@ describe("Bun.build", () => {
     },
   );
 
+  test.skipIf(isWindows)("outputs[].path keeps a backslash in outdir and naming", async () => {
+    using dir = tempDir("build-backslash", { "entry.js": "console.log(1);" });
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "o\\p"),
+      naming: "x\\[name].js",
+    });
+    expect(build.outputs.map(output => output.path)).toEqual([join(String(dir), "o\\p", "x\\entry.js")]);
+    expect(readdirSync(join(String(dir), "o\\p"))).toEqual(["x\\entry.js"]);
+  });
+
+  test.skipIf(isWindows)("`sources` of a source map counts an outdir with a backslash as one directory", async () => {
+    using dir = tempDir("build-backslash-sources", { "entry.js": "console.log(1);" });
+    await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "o\\p"),
+      sourcemap: "external",
+    });
+    expect((await Bun.file(join(String(dir), "o\\p", "entry.js.map")).json()).sources).toEqual(["../entry.js"]);
+  });
+
   test("passing undefined doesnt segfault", () => {
     try {
       // @ts-ignore

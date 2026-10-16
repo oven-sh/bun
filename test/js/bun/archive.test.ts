@@ -927,6 +927,16 @@ describe("Bun.Archive", () => {
   });
 
   describe("path safety", () => {
+    test("a backslash in an entry name separates, and `..` behind one stays inside", async () => {
+      using dir = tempDir("archive-backslash", {});
+      const out = join(String(dir), "a", "b", "out");
+      const archive = new Bun.Archive({ "p\\q.txt": "q", "..\\..\\up.txt": "up" });
+      expect(await archive.extract(out)).toBe(2);
+      expect(readdirSync(String(dir), { recursive: true }).map(String).sort()).toEqual(
+        ["a", "a/b", "a/b/out", "a/b/out/p", "a/b/out/p/q.txt", "a/b/out/up.txt"].map(name => join(name)),
+      );
+    });
+
     test("skips tar entries whose pathname exceeds the platform path limit", async () => {
       // GNU `@LongLink` ('L') records let a tar entry carry a pathname of
       // arbitrary length, far beyond what fits in the extractor's fixed-size

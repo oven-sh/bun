@@ -819,7 +819,10 @@ impl TarballStream {
         let normalized = if self.npm_mode {
             bun_libarchive::normalize_npm_entry_path(rest, &mut norm_buf[..])
         } else {
-            resolve_path::normalize_buf_t::<OSPathChar, platform::Auto>(rest, &mut norm_buf[..])
+            resolve_path::normalize_buf_t::<OSPathChar, platform::AutoLoose>(
+                rest,
+                &mut norm_buf[..],
+            )
         };
         let norm_len = normalized.len();
         norm_buf[norm_len] = 0;

@@ -254,6 +254,25 @@ describe("fs.watch", () => {
     });
   }, 10000);
 
+  test.skipIf(isWindows)("a backslash is part of the file name", async () => {
+    using dir = tempDir("watch-backslash", { "a\\b": "real", "a/b": "decoy" });
+    const real = path.join(String(dir), "a\\b");
+    const decoy = path.join(String(dir), "a", "b");
+
+    const { promise, resolve } = Promise.withResolvers<string | null>();
+    const watcher = fs.watch(real, (_event, filename) => resolve(filename));
+    const interval = repeat(() => {
+      fs.writeFileSync(decoy, "decoy");
+      fs.writeFileSync(real, "real");
+    });
+    try {
+      expect(await promise).toBe("a\\b");
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
+  });
+
   test("should error on invalid path", done => {
     try {
       fs.watch(path.join(testDir, "404.txt"));

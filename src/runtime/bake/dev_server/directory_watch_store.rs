@@ -172,7 +172,7 @@ impl DirectoryWatchStore {
         }
 
         let mut buf = bun_paths::path_buffer_pool::get();
-        let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+        let joined = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::AutoLoose>(
             bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
             &mut buf.0,
             &[specifier],

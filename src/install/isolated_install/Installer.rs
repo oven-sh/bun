@@ -2723,7 +2723,7 @@ impl<'a> Installer<'a> {
             &self.manager().global_link_dir_path
         };
         debug_assert!(!base.is_empty());
-        let len = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+        let len = paths::resolve_path::join_abs_string_buf::<paths::platform::AutoLoose>(
             base,
             &mut buf[..],
             &[target],

@@ -2132,7 +2132,7 @@ impl TestCommand {
             let dir_to_scan_owned: Vec<u8>;
             let dir_to_scan: &[u8] = 'brk: {
                 if !ctx.debug.test_directory.is_empty() {
-                    dir_to_scan_owned = resolve_path::join_abs::<bun_path::platform::Auto>(
+                    dir_to_scan_owned = resolve_path::join_abs::<bun_path::platform::AutoLoose>(
                         scanner.fs().top_level_dir,
                         &ctx.debug.test_directory,
                     )

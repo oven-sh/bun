@@ -533,6 +533,27 @@ describe("bun", () => {
   });
 
   describe("test command line arguments", () => {
+    test.skipIf(isWindows)("a backslash in --config is part of the file name", async () => {
+      using dir = tempDir("config-backslash", {
+        "cfg\\x.toml": `preload = ["./real.ts"]`,
+        "cfg/x.toml": `preload = ["./decoy.ts"]`,
+        "real.ts": `console.log("real");`,
+        "decoy.ts": `console.log("decoy");`,
+        "main.ts": `console.log("main");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--config=cfg\\x.toml", "main.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("real\nmain\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("test --config, issue #4128", () => {
       const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;
       fs.writeFileSync(path, "[debug]");

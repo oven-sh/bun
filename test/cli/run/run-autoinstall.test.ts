@@ -687,6 +687,7 @@ describe.concurrent("auto-install reads the project's package.json as `bun insta
     ["a member that is not listed", { workspaces: ["local"] }],
     ["file:", { dependencies: { "no-deps": "file:./local" } }],
     ["link:", { dependencies: { "no-deps": "link:./local" } }],
+    ["file: written with a backslash", { dependencies: { "no-deps": "file:.\\local" } }],
   ])("%s is the folder on disk", async (_, packageJson) => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-local-folder", {

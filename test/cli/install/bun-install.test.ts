@@ -7371,6 +7371,17 @@ describe.concurrent("bun-install", () => {
 
   // The root package.json is read on two paths: against a bun.lock that already lists
   // dependencies, and when the lockfile has to be created. Both report it the same way.
+  test.skipIf(isWindows)('a backslash separates in a "file:" path and in the "bin" of a dependency', async () => {
+    using dir = tempDir("manifest-backslash", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { dep: "file:deps\\dep" } }),
+      "deps/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", bin: { hb: "bin\\hb.js" } }),
+      "deps/dep/bin/hb.js": "#!/usr/bin/env node\n",
+    });
+    await runBunInstall(env, String(dir));
+    expect(await file(join(String(dir), "node_modules", "dep", "package.json")).json()).toMatchObject({ name: "dep" });
+    expect(await readlink(join(String(dir), "node_modules", ".bin", "hb"))).toBe(join("..", "dep", "bin", "hb.js"));
+  });
+
   describe.concurrent("root package.json that cannot be read or parsed", () => {
     async function installWithBrokenRootPackageJson(
       withLockfile: boolean,

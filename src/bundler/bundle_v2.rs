@@ -4774,7 +4774,7 @@ pub mod bv2_impl {
                             // TODO: outbase
                             let pathname =
                                 Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Auto,
+                                    bun_paths::resolve_path::platform::AutoLoose,
                                     false,
                                 >(
                                     &self.transpiler.options.root_dir,

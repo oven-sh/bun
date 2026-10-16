@@ -1163,7 +1163,8 @@ pub(crate) fn bin_subpath<'a>(
     buf: &'a mut [u8],
     spill: &'a mut Vec<u8>,
 ) -> Option<&'a [u8]> {
-    let normalized = normalize_buf_z_spill::<path::platform::Posix>(buf, spill, value).as_bytes();
+    let normalized =
+        normalize_buf_z_spill::<path::platform::PosixLoose>(buf, spill, value).as_bytes();
     let subpath = match ty {
         BinType::Dir => strings::without_trailing_slash(normalized),
         BinType::File if normalized.ends_with(b"/") || normalized == b"package.json" => {
@@ -1453,7 +1454,7 @@ pub(crate) fn published_files(
         let Some(file_entry_str) = files_entry.as_string(bump) else {
             fail_files();
         };
-        let normalized = normalize_buf_z_spill::<path::platform::Posix>(
+        let normalized = normalize_buf_z_spill::<path::platform::PosixLoose>(
             &mut path_buf,
             &mut path_spill,
             file_entry_str,

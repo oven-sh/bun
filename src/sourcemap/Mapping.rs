@@ -333,7 +333,7 @@ impl Lookup {
             // type alias (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
             return Some(bun_core::String::clone_utf8(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
+                bun_paths::resolve_path::join_abs::<bun_paths::platform::AutoLoose>(dir, name),
             ));
         }
 

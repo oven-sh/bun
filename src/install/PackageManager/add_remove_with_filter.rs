@@ -60,7 +60,9 @@ impl WorkspaceTarget {
                 Some(WorkspaceTarget {
                     name: Box::from(lockfile.packages.items_name()[pkg_id as usize].slice(buf)),
                     name_hash: Some(lockfile.packages.items_name_hash()[pkg_id as usize]),
-                    package_json_path: resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+                    package_json_path: resolve_path::join_abs_string_buf_checked::<
+                        platform::AutoLoose,
+                    >(
                         top_level,
                         &mut path_buf.0,
                         &[res.workspace().slice(buf), b"package.json"],

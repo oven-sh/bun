@@ -1,9 +1,6 @@
-import { expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-
-// On a debug build a fixture takes 4 to 6 s and `bun bd test` allows 5 s. CI passes its own --timeout.
-if (isDebug) setDefaultTimeout(60_000);
 
 const fixture = join(import.meta.dir, "v8-heap-snapshot-fixture.ts");
 const namesFixture = join(import.meta.dir, "v8-heap-snapshot-names-fixture.ts");

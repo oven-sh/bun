@@ -262,7 +262,7 @@ test("--heap-prof-name and --heap-prof-dir work together", async () => {
 // A default-named profile takes its sequence number when the profiler starts,
 // as in node, so a default-named snapshot written while the program runs gets
 // a later number. The snapshots are "{}": only their names matter here.
-// Sequential on a debug build, where six children at once exceed the 5 s of `bun bd test`.
+// Sequential on a debug build: six debug children at once can exceed the 5 s of `bun bd test`.
 test.concurrentIf(!isDebug).each([
   {
     flags: ["--cpu-prof"],

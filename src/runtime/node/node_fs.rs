@@ -989,6 +989,15 @@ mod _async_tasks {
     // NewAsyncFSTask — runs a NodeFS method on the thread pool.
     // ──────────────────────────────────────────────────────────────────────────
 
+    /// Which arm of an async binding was called.
+    #[derive(Clone, Copy)]
+    pub(crate) enum AsyncArm {
+        /// `node:fs/promises`: returns a promise.
+        Promise,
+        /// Argument 0 is the callback. `fs.promises` forwards user arguments, so a trailing function cannot mark this arm.
+        Callback,
+    }
+
     /// One `fs.*` operation's parsed arguments.
     pub(crate) trait FsArgument: Sized + ThreadIsolatedArg {
         const HAVE_ABORT_SIGNAL: bool = false;
@@ -997,14 +1006,25 @@ mod _async_tasks {
         /// `from_js`; the trait forwards to it so the generic `Bindings` in
         /// `node_fs_binding.rs` can call it without per-type macro arms.
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self>;
-        /// [`from_js`](Self::from_js) for a work-pool job: paths and data parse
+        /// [`from_js`](Self::from_js) for one arm of an async binding. Node
+        /// parses both arms alike, except for the `flag` of `readFile`.
+        #[inline]
+        fn from_js_for_arm(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+            _arm: AsyncArm,
+        ) -> JsResult<Self> {
+            Self::from_js(ctx, arguments)
+        }
+        /// [`from_js_for_arm`](Self::from_js_for_arm) for a work-pool job: paths and data parse
         /// thread-isolated / pinned and rooted under `will_be_async`.
         fn from_js_async(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
+            arm: AsyncArm,
         ) -> JsResult<ThreadIsolated<Self>> {
             arguments.will_be_async = true;
-            let args = Self::from_js(ctx, arguments)?;
+            let args = Self::from_js_for_arm(ctx, arguments, arm)?;
             // SAFETY: parsed with `will_be_async`.
             Ok(unsafe { ThreadIsolated::new(args) })
         }
@@ -1077,6 +1097,17 @@ mod _async_tasks {
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             args::ReadFile::from_js(ctx, arguments)
+        }
+        #[inline]
+        fn from_js_for_arm(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+            arm: AsyncArm,
+        ) -> JsResult<Self> {
+            match arm {
+                AsyncArm::Promise => args::ReadFile::from_js_promises(ctx, arguments),
+                AsyncArm::Callback => args::ReadFile::from_js(ctx, arguments),
+            }
         }
         #[inline]
         fn signal(&self) -> Option<&AbortSignal> {
@@ -2721,7 +2752,8 @@ mod _async_tasks {
     }
 } // mod _async_tasks
 pub(crate) use _async_tasks::{
-    AsyncCpTask, AsyncReaddirRecursiveTask, FsArgument, FsReturn, ShellAsyncCpTask, async_,
+    AsyncArm, AsyncCpTask, AsyncReaddirRecursiveTask, FsArgument, FsReturn, ShellAsyncCpTask,
+    async_,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4141,7 +4173,27 @@ pub(crate) mod args {
         }
     }
     impl ReadFile<'static> {
+        /// `fs.readFileSync` and `fs.readFile(cb)`: Node passes `options.flag`
+        /// to `stringToFlags` as it is.
         pub(crate) fn from_js(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
+            Self::parse::<false>(ctx, arguments)
+        }
+        /// `fs.promises.readFile`: `const flag = options.flag || 'r'`.
+        /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1928
+        // Not inlined: `run_async::<ReadFile>` is also the frame of the callback arm.
+        #[inline(never)]
+        pub(crate) fn from_js_promises(
+            ctx: &JSGlobalObject,
+            arguments: &mut ArgumentsSlice,
+        ) -> JsResult<Self> {
+            Self::parse::<true>(ctx, arguments)
+        }
+        // Inlined first: as a function of its own it costs `from_js` the inlined `get_encoding`.
+        #[inline(always)]
+        fn parse<const FALSY_FLAG_IS_DEFAULT: bool>(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
         ) -> JsResult<Self> {
@@ -4165,7 +4217,11 @@ pub(crate) mod args {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
-                    if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
+                    if FALSY_FLAG_IS_DEFAULT {
+                        if let Some(flag_) = arg.get(ctx, "flag")? {
+                            flag = FileSystemFlags::from_js_or_default(ctx, flag_, flag)?;
+                        }
+                    } else if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
@@ -4260,8 +4316,8 @@ pub(crate) mod args {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
-                    if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
-                        flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
+                    if let Some(flag_) = arg.get(ctx, "flag")? {
+                        flag = FileSystemFlags::from_js_or_default(ctx, flag_, flag)?;
                     }
                     if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);

@@ -1,4 +1,5 @@
 import { expect, mock, test } from "bun:test";
+import { readFileSync } from "fs";
 import { writeFile } from "fs/promises";
 import { tempDir } from "harness";
 test("fs.promises.writeFile async iterator", async () => {
@@ -50,4 +51,47 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
   };
   expect(() => writeFile(String(dir), fn as any)).toThrow();
   expect(fn[Symbol.asyncIterator]).not.toBeCalled();
+});
+
+// Node: `const flag = options.flag || 'w'`.
+test("fs.promises.writeFile with iterable data takes a falsy flag as the default flag", async () => {
+  await using dir = tempDir("fs-promises-writeFile-falsy-flag", {});
+  const path = dir + "/file.txt";
+  const falsy: [string, any][] = [
+    ["false", false],
+    ["zero", 0],
+    ["negative zero", -0],
+    ["NaN", NaN],
+    ["0n", 0n],
+    ["empty string", ""],
+    ["null", null],
+    ["undefined", undefined],
+  ];
+  const sources: [string, () => Iterable<string> | AsyncIterable<string>][] = [
+    ["iterable", () => ["n", "e", "w"]],
+    [
+      "async iterable",
+      async function* () {
+        yield "n";
+        yield "e";
+        yield "w";
+      },
+    ],
+  ];
+
+  const results: Record<string, string> = {};
+  const expected: Record<string, string> = {};
+  for (const [kind, data] of sources) {
+    for (const [label, flag] of falsy) {
+      // Longer than "new": the default flag truncates.
+      await Bun.write(path, "old content");
+      const row = `${kind}, flag ${label}`;
+      results[row] = await writeFile(path, data(), { flag }).then(
+        () => readFileSync(path, "utf8"),
+        e => `${e.code}, the file holds ${readFileSync(path, "utf8")}`,
+      );
+      expected[row] = "new";
+    }
+  }
+  expect(results).toEqual(expected);
 });

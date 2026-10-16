@@ -1614,7 +1614,8 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
   let signal: AbortSignal | null = null;
   if (typeof optionsOrEncoding === "object") {
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
-    flag = optionsOrEncoding?.flag ?? (flag || "w");
+    // Node: `options.flag || 'w'`. Every falsy flag is the default.
+    flag = optionsOrEncoding?.flag || flag || "w";
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
     signal = optionsOrEncoding?.signal ?? null;
     if (signal?.aborted) {

@@ -632,35 +632,21 @@ impl Route {
                         continue;
                     }
 
-                    // The bundled HTML references this file by its percent-encoded
-                    // name, which is what a browser puts on the request line. The raw
-                    // name stays registered for JS `file` loader strings, which are
-                    // emitted as is.
-                    let static_route = RefPtr::new(static_route);
-                    if let std::borrow::Cow::Owned(encoded) =
-                        strings::percent_encode_url_path(route_path)
-                    {
-                        bun_core::handle_oom(server.append_static_route(
-                            &encoded,
-                            AnyRoute::Static(static_route.clone()),
-                            MethodOptional::Any,
-                        ));
-                    }
-                    bun_core::handle_oom(server.append_static_route(
+                    server.append_bundled_file_route(
                         route_path,
-                        AnyRoute::Static(static_route),
+                        AnyRoute::Static(RefPtr::new(static_route)),
                         MethodOptional::Any,
-                    ));
+                    );
                 }
 
                 let (mut html_route, html_route_path) =
                     this_html_route.expect("the loop above visited html_index");
                 let html_route_clone = html_route.clone(global_this);
-                bun_core::handle_oom(server.append_static_route(
+                server.append_bundled_file_route(
                     &html_route_path,
                     AnyRoute::Static(RefPtr::new(html_route)),
                     MethodOptional::Any,
-                ));
+                );
                 self.state.set(State::Html(html_route_clone));
 
                 if !bun_core::handle_oom(server.reload_static_routes()) {

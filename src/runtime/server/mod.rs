@@ -163,7 +163,8 @@ pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<S
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
-/// The route table's ref on each route.
+/// The route table's ref on each route. A clone is another ref on the same route.
+#[derive(Clone)]
 pub(crate) enum AnyRoute {
     /// Serve a static file — `"/robots.txt": new Response(...)`
     Static(bun_ptr::RefPtr<StaticRoute>),
@@ -4139,13 +4140,20 @@ impl AnyServer {
         any_server_dispatch_mut!(self, |s| s.get_or_load_plugins(callback))
     }
 
-    pub(crate) fn append_static_route(
+    pub(crate) fn append_bundled_file_route(
         &self,
         path: &[u8],
         route: AnyRoute,
         method: server_config::MethodOptional,
-    ) -> Result<(), crate::Error> {
-        any_server_dispatch_mut!(self, |s| s.config.append_static_route(path, route, method))
+    ) {
+        any_server_dispatch_mut!(self, |s| {
+            server_config::StaticRouteEntry::push_bundled_file(
+                &mut s.config.static_routes,
+                path,
+                route,
+                method,
+            )
+        })
     }
 
     pub(crate) fn reload_static_routes(&self) -> Result<bool, crate::Error> {

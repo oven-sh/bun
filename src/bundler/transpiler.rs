@@ -562,7 +562,7 @@ impl<'a> Transpiler<'a> {
 
     /// The resolver
     /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
-    /// rather than `Clone`. Called after `init_transpiler_with_options` mutates
+    /// rather than `Clone`. Called after `init_transpiler` mutates
     /// `self.options` so the resolver sees the same conditions/target/public_path.
     pub fn sync_resolver_opts(&mut self) {
         self.resolver.opts = resolver_bundle_options_subset(&self.options);
@@ -1024,8 +1024,8 @@ fn resolver_bundle_options_subset(
                 .zip(f.built_in_modules.values().iter())
             {
                 let rv = match v {
-                    B::Import(p) => R::Import(p.clone()),
-                    B::Code(c) => R::Code(c.clone()),
+                    B::Import(p) => R::Import(p.as_ref().into()),
+                    B::Code(c) => R::Code(c.as_ref().into()),
                 };
                 m.put(k, rv).expect("oom");
             }

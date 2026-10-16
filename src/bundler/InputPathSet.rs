@@ -176,6 +176,9 @@ impl InputPathSet {
     /// The inputs keep the spelling the resolver saw. On Windows `realpath` rewrites a subst or mapped drive.
     fn index_of_unresolved(&self, root: &OutputRoot, dest_path: &[u8]) -> Option<usize> {
         let unresolved = root.unresolved.as_deref()?;
+        if has_parent_segment(dest_path) {
+            return None;
+        }
         let mut buf = bun_paths::path_buffer_pool::get();
         self.paths
             .get_index(resolve_path::join_abs_string_buf::<platform::Auto>(
@@ -273,18 +276,23 @@ impl RealPath {
         }
     }
 
-    /// A directory that does not exist: its parent as the kernel resolves it, then its own name.
+    /// A path that `realpath` does not find: its parent as the kernel resolves it, then its own name.
     fn resolve_missing(dir: &[u8]) -> Box<[u8]> {
         let Some(parent) = bun_paths::dirname(dir).filter(|parent| parent.len() < dir.len()) else {
             return Box::from(dir);
         };
+        let name = bun_paths::basename(dir);
         let parent = Self::resolve(parent);
         let mut buf = bun_paths::path_buffer_pool::get();
-        Box::from(resolve_path::join_abs_string_buf::<platform::Auto>(
-            &parent,
-            &mut buf.0,
-            &[bun_paths::basename(dir)],
-        ))
+        let joined =
+            resolve_path::join_abs_string_buf::<platform::Auto>(&parent, &mut buf.0, &[name]);
+        // `new/../out`: `new` does not exist, and `out` can exist and be a symlink.
+        if name != b".." && has_parent_segment(dir) {
+            if let Self::Other(real) = Self::of(joined) {
+                return real;
+            }
+        }
+        Box::from(joined)
     }
 }
 
@@ -356,23 +364,28 @@ pub fn resolve_output_root(root_path: &[u8]) -> OutputRoot {
         &mut abs_buf.0,
         &[root_path],
     );
+    let has_parent = has_parent_segment(root_path);
     let mut raw_buf = bun_paths::path_buffer_pool::get();
-    let raw: &[u8] = if has_parent_segment(root_path) {
+    let raw: &[u8] = if has_parent {
         raw_join(top_level_dir, root_path, &mut raw_buf).unwrap_or(abs)
     } else {
         abs
     };
-    let real = RealPath::of(raw);
-    let missing = matches!(real, RealPath::Missing);
-    let real = match real {
-        RealPath::Other(real) => Some(real),
-        RealPath::Missing => Some(RealPath::resolve_missing(raw)),
-        RealPath::Same => None,
+    let (real, missing) = match RealPath::of(raw) {
+        RealPath::Other(real) => (Some(real), false),
+        RealPath::Same => (None, false),
+        RealPath::Missing => {
+            let real = RealPath::resolve_missing(raw);
+            // After a `..`, the directory can be one that exists.
+            let missing = !has_parent || matches!(RealPath::of(&real), RealPath::Missing);
+            (Some(real), missing)
+        }
     };
     match real.filter(|real| **real != *abs) {
         Some(real) => OutputRoot {
+            // `abs` is a second spelling of `real` only when both name one directory. After a `..` it can name another.
+            unresolved: (!has_parent || *RealPath::resolve(abs) == *real).then(|| Box::from(abs)),
             real,
-            unresolved: Some(Box::from(abs)),
             missing,
         },
         None => OutputRoot {

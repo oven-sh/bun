@@ -1370,6 +1370,64 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
       });
     }
 
+    test("--outdir that goes up from a symlink and holds no input is written", async () => {
+      const app = `import { v } from "./lib.js";\nconsole.log(v);\n`;
+      using dir = tempDir("build-outdir-dotdot-no-input", {
+        "app.js": app,
+        "lib.js": `export const v = 42;\n`,
+        "sub/inner/.keep": "",
+      });
+      fs.symlinkSync("sub/inner", path.join(String(dir), "link"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./app.js", "--outdir", "link/.."],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("Refusing to overwrite");
+      expect(await Bun.file(path.join(String(dir), "sub", "app.js")).text()).toContain("console.log(");
+      expect(await Bun.file(path.join(String(dir), "app.js")).text()).toBe(app);
+      expect(exitCode).toBe(0);
+    });
+
+    // `new` does not exist, so `new/../out` is `out`, which exists.
+    test("--outdir names a missing directory before a `..`, and a symlink to an input is at the output path", async () => {
+      using dir = tempDir("build-overwrite-missing-dotdot-leaf", { ...files, "out/.keep": "" });
+      fs.symlinkSync("../src/lib.js", path.join(String(dir), "out", "app.js"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/app.js", "--outdir", "new/../out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('Refusing to overwrite input file "src/lib.js"');
+      expect(await Bun.file(path.join(String(dir), "src", "lib.js")).text()).toBe(files["src/lib.js"]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("--outdir names a missing directory before a `..`, and then a symlink to the source directory", async () => {
+      using dir = tempDir("build-overwrite-missing-dotdot-dir", files);
+      fs.symlinkSync("src", path.join(String(dir), "out"));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/app.js", "--outdir", "new/../out"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('Refusing to overwrite input file "src/app.js"');
+      expect(await Bun.file(path.join(String(dir), "src", "app.js")).text()).toBe(files["src/app.js"]);
+      expect(exitCode).toBe(1);
+    });
+
     test("an output name goes up from a symlinked directory under --outdir", async () => {
       using dir = tempDir("build-overwrite-name-dotdot", { ...files, "src/inner/.keep": "", "out/.keep": "" });
       fs.symlinkSync("../src/inner", path.join(String(dir), "out", "sub"));

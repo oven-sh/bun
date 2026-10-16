@@ -116,7 +116,9 @@ impl PendingConnect {
         .r#loop();
         RESOLVED.lock().push(Resolved(this));
         // SAFETY: `loop_ptr` is a live uws::Loop for as long as the HTTP thread runs.
-        unsafe { (*loop_ptr).wakeup() };
+        // Call the raw extern, not `Loop::wakeup(&mut self)`: this runs on the
+        // DNS thread while the HTTP thread holds the loop borrowed in `tick`.
+        unsafe { uws::us_wakeup_loop(loop_ptr) };
     }
 
     pub(crate) fn drain_resolved() {
@@ -135,7 +137,12 @@ impl PendingConnect {
         // `session_mut` centralises the backref upgrade.
         let s = session_mut(session);
         s.closed = true;
-        if let Some(ctx) = super::client_context::ClientContext::get() {
+        // `ClientContext::connect` unregisters the session before calling this
+        // on its error path and still holds the context borrowed, so only
+        // borrow the context when there is something to unregister.
+        if s.registry_index != u32::MAX
+            && let Some(ctx) = super::client_context::ClientContext::get()
+        {
             super::client_context::ClientContext::as_mut(ctx).unregister(s);
         }
         while !s.pending.is_empty() {

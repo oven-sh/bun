@@ -129,21 +129,33 @@ impl ClientSession {
     /// Queue `client` for a stream on this connection. The lsquic stream is
     /// created asynchronously, so the request goes into `pending` until
     /// `onStreamOpen` pops it.
-    pub(crate) fn enqueue(&mut self, client: &mut HTTPClient) {
-        debug_assert!(!self.closed);
-        client.h3 = None;
-        client.flags.protocol = Protocol::Http3;
-        client.allow_retry = false;
+    ///
+    /// Takes a raw pointer because `make_stream` can run `on_stream_open`
+    /// right away, and that callback borrows this session again through the
+    /// socket's ext slot. No borrow of the session is held across that call.
+    pub(crate) fn enqueue(this: *mut Self, client: &mut HTTPClient) {
+        let qs = {
+            let session = session_mut(this);
+            debug_assert!(!session.closed);
+            client.h3 = None;
+            client.flags.protocol = Protocol::Http3;
+            client.allow_retry = false;
 
-        let stream = Stream::new(self, client);
-        let _ = H3::live_streams.fetch_add(1, Ordering::Relaxed);
-        client.h3 = Some(NonNull::new(stream).expect("Stream::new returns a fresh allocation"));
-        self.pending.push(stream);
-        self.ref_();
+            let stream = Stream::new(session, client);
+            let _ = H3::live_streams.fetch_add(1, Ordering::Relaxed);
+            client.h3 = Some(NonNull::new(stream).expect("Stream::new returns a fresh allocation"));
+            session.pending.push(stream);
+            session.ref_();
 
-        if self.handshake_done {
             // handshake_done implies qsocket is Some and valid.
-            self.qsocket_mut().unwrap().make_stream();
+            if session.handshake_done {
+                session.qsocket_mut()
+            } else {
+                None
+            }
+        };
+        if let Some(qs) = qs {
+            qs.make_stream();
         }
     }
 
@@ -257,31 +269,36 @@ impl ClientSession {
     /// standard h2/h3 client behavior for the GOAWAY / stateless-reset /
     /// port-reuse race where a pooled session goes stale between the
     /// `matches()` check and the first stream open.
-    pub(crate) fn retry_or_fail(&mut self, stream: *mut Stream, err: crate::Error) {
+    ///
+    /// Takes a raw pointer because `connect` borrows every registered session,
+    /// this one included, while it looks for a connection to reuse.
+    pub(crate) fn retry_or_fail(this: *mut Self, stream: *mut Stream, err: crate::Error) {
         // Shaped for Stacked Borrows like `fail` below — `detach()`
         // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
         // would invalidate any `&mut HTTPClient` held across it. Hold the raw
         // `client_ptr` across `detach` and only form `&mut` afterward.
         let st = stream_mut(stream);
         let Some(client_ptr) = st.client else {
-            return self.fail(stream, err);
+            return session_mut(this).fail(stream, err);
         };
         // `Stream.client` is a live backref while attached; `ParentRef::from`
         // (NonNull → shared deref) reads the Copy `flags` field without
         // forming `&mut HTTPClient` across the `detach()` below.
         if bun_ptr::ParentRef::from(client_ptr).flags.h3_retried || st.is_streaming_body {
-            return self.fail(stream, err);
+            return session_mut(this).fail(stream, err);
         }
         let Some(ctx) = ClientContext::get() else {
-            return self.fail(stream, err);
+            return session_mut(this).fail(stream, err);
         };
         // Same backref as above; short-lived write before detach().
         client_mut(client_ptr).flags.h3_retried = true;
         // The old session is dead from our perspective; make sure connect()
         // can't pick it again.
-        self.closed = true;
-        let port = self.port;
-        let host: Vec<u8> = self.hostname.clone();
+        let (port, host) = {
+            let session = session_mut(this);
+            session.closed = true;
+            (session.port, session.hostname.clone())
+        };
         bun_core::scoped_log!(
             h3_client,
             "retry {}:{} after {}",
@@ -289,7 +306,7 @@ impl ClientSession {
             port,
             bstr::BStr::new(err.name()),
         );
-        self.detach_with(stream, true);
+        session_mut(this).detach_with(stream, true);
         // Formed only after detach() so its Unique tag is not invalidated by
         // detach()'s aliasing write to `client.h3`.
         let client = client_mut(client_ptr);
@@ -328,22 +345,26 @@ impl ClientSession {
     /// `done` = the lsquic stream is gone; deliver whatever is buffered then
     /// detach. Mirrors H2's `ClientSession.deliverStream` so the HTTPClient state
     /// machine sees the same call sequence regardless of transport.
-    pub(crate) fn deliver(&mut self, stream: *mut Stream, done: bool) {
+    ///
+    /// Takes a raw pointer because a redirect or retry started from here can
+    /// queue a request on this same session, so no borrow of it may stay live
+    /// across those calls.
+    pub(crate) fn deliver(this: *mut Self, stream: *mut Stream, done: bool) {
         let st = stream_mut(stream);
         let Some(client_ptr) = st.client else {
             if done {
-                self.detach(stream);
+                session_mut(this).detach(stream);
             }
             return;
         };
         // NB: `detach()` writes `client.h3 = None` through this same raw
         // backref, which pops this `&mut`'s Unique tag under Stacked Borrows —
-        // so every `self.detach(stream)` below that is followed by further
+        // so every `session_mut(this).detach(stream)` below that is followed by further
         // `client` use re-derives a fresh `&mut` from `client_ptr` first.
         let client = client_mut(client_ptr);
 
         if client.signals.get(Signal::Aborted) {
-            return self.fail(stream, crate::Error::Aborted);
+            return session_mut(this).fail(stream, crate::Error::Aborted);
         }
 
         if st.status_code != 0 && !st.headers_delivered {
@@ -352,7 +373,7 @@ impl ClientSession {
                 .apply_multiplexed_headers(u32::from(st.status_code), &st.decoded_headers)
             {
                 Ok(r) => r,
-                Err(e) => return self.fail(stream, e),
+                Err(e) => return session_mut(this).fail(stream, e),
             };
             // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an
             // SSE content-type), which would make the headerProgress update
@@ -362,7 +383,7 @@ impl ClientSession {
                 || client.state.is_done()
             {
                 if client.state.flags.is_redirect_pending {
-                    self.detach(stream);
+                    session_mut(this).detach(stream);
                     // SAFETY: re-derive — detach() invalidated the prior Unique tag.
                     let client = client_mut(client_ptr);
                     return client.do_redirect_h3();
@@ -372,7 +393,7 @@ impl ClientSession {
                 if result == HeaderResult::Finished {
                     client.state.content_length = Some(0);
                 }
-                self.detach(stream);
+                session_mut(this).detach(stream);
                 // SAFETY: re-derive — detach() invalidated the prior Unique tag.
                 let client = client_mut(client_ptr);
                 return finish(client);
@@ -386,7 +407,8 @@ impl ClientSession {
         if client.state.response_stage != HTTPStage::Body {
             if done {
                 // Stream closed before headers — handshake/reset failure.
-                return self.retry_or_fail(
+                return Self::retry_or_fail(
+                    this,
                     stream,
                     if st.status_code == 0 {
                         crate::Error::HTTP3StreamReset
@@ -406,19 +428,19 @@ impl ClientSession {
                 Ok(r) => r,
                 Err(e) => {
                     st.body_buffer.clear();
-                    return self.fail(stream, e);
+                    return session_mut(this).fail(stream, e);
                 }
             };
             st.body_buffer.clear();
             if done {
-                self.detach(stream);
+                session_mut(this).detach(stream);
                 // SAFETY: re-derive — detach() invalidated the prior Unique tag.
                 let client = client_mut(client_ptr);
                 return finish(client);
             }
             if report {
                 if client.state.is_done() {
-                    self.detach(stream);
+                    session_mut(this).detach(stream);
                     // SAFETY: re-derive — detach() invalidated the prior Unique tag.
                     let client = client_mut(client_ptr);
                     return client.progress_update_h3();
@@ -429,7 +451,7 @@ impl ClientSession {
         }
 
         if done {
-            self.detach(stream);
+            session_mut(this).detach(stream);
             // SAFETY: re-derive — detach() invalidated the prior Unique tag.
             let client = client_mut(client_ptr);
             if let Err(err) = client.state.finalize_body_on_eof() {

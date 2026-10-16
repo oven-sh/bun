@@ -143,11 +143,20 @@ impl MacroContext {
                 break 'brk replacement.path.as_bytes();
             }
 
-            let resolve_result = match resolver.resolve(
+            // The resolver writes errors through its own `log` pointer, which
+            // can be the `Log` the parser lent us as `log`. Point it at our
+            // borrow for this call so both writers go through `log`.
+            let saved_log = resolver.log;
+            if core::ptr::eq(saved_log.as_ptr(), &raw const *log) {
+                resolver.log = NonNull::from(&mut *log);
+            }
+            let resolved = resolver.resolve(
                 source_dir,
                 import_record_path_without_macro_prefix,
                 bun_ast::ImportKind::Stmt,
-            ) {
+            );
+            resolver.log = saved_log;
+            let resolve_result = match resolved {
                 Ok(r) => r,
                 Err(bun_resolver::Error::ModuleNotFound) => {
                     log.add_resolve_error(

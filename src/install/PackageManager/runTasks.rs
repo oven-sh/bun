@@ -454,7 +454,8 @@ fn run_tasks_erased(
     // The first task of a pass names the line of the progress bar.
     let name_progress = |manager: &mut PackageManager, name: &[u8], emoji: &str| {
         if log_level.show_progress() && !has_updated_this_run.replace(true) {
-            manager.set_node_name::<true>(manager.downloads_node_mut(), name, emoji.as_bytes());
+            let node_name = manager.progress_node_name::<true>(name, emoji.as_bytes());
+            manager.downloads_node_mut().name = node_name;
         }
     };
     let return_network_task = |task: *mut NetworkTask| {
@@ -1262,11 +1263,11 @@ fn run_tasks_erased(
                 }
 
                 if let Some(name) = progress_name {
-                    manager.set_node_name::<true>(
-                        manager.downloads_node_mut(),
+                    let node_name = manager.progress_node_name::<true>(
                         &name,
                         ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                     );
+                    manager.downloads_node_mut().name = node_name;
                     has_updated_this_run.set(true);
                 }
             }

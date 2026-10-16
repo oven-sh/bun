@@ -656,8 +656,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
                 Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
             } else if let Some(scripts_node) = (*manager).scripts_node_mut() {
-                (*manager).set_node_name::<true>(
-                    scripts_node,
+                scripts_node.name = (*manager).progress_node_name::<true>(
                     &(*this).package_name,
                     ProgressStrings::SCRIPT_EMOJI.as_bytes(),
                 );

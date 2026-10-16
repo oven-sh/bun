@@ -260,9 +260,20 @@ impl PosixLoop {
     /// than read again. `NOW_NS_UNKNOWN` if the caller has none to share.
     pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>, now_ns: u64) {
         // SAFETY: self is a valid loop pointer
+        unsafe { Self::tick_with_timeout_raw(self, timespec, now_ns) };
+    }
+
+    /// Like [`tick_with_timeout`](Self::tick_with_timeout), for callers whose
+    /// loop callbacks reach the loop again through their own pointer. No
+    /// borrow of the loop is held while the callbacks run.
+    ///
+    /// # Safety
+    /// `this` must point to a live loop owned by the current thread.
+    pub unsafe fn tick_with_timeout_raw(this: *mut Self, timespec: Option<&Timespec>, now_ns: u64) {
+        // SAFETY: caller contract.
         unsafe {
             c::us_loop_run_bun_tick(
-                self,
+                this,
                 timespec.map_or(core::ptr::null(), std::ptr::from_ref),
                 now_ns,
             )
@@ -385,9 +396,18 @@ impl WindowsLoop {
     /// Signature matches the POSIX impl so callers need no `cfg`. `now_ns` is unused here: on
     /// Windows the park hook is driven from `us_loop_run` (libuv.c), which reads libuv's
     /// already-refreshed clock via `uv_now` rather than taking one of its own.
-    pub fn tick_with_timeout(&mut self, _: Option<&Timespec>, _now_ns: u64) {
+    pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>, now_ns: u64) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
+        unsafe { Self::tick_with_timeout_raw(self, timespec, now_ns) };
+    }
+
+    /// See the POSIX `tick_with_timeout_raw`.
+    ///
+    /// # Safety
+    /// `this` must point to a live loop owned by the current thread.
+    pub unsafe fn tick_with_timeout_raw(this: *mut Self, _: Option<&Timespec>, _now_ns: u64) {
+        // SAFETY: caller contract.
+        unsafe { c::us_loop_run(this) };
     }
 
     pub fn tick_without_idle(&mut self) {

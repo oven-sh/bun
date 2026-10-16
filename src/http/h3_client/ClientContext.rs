@@ -112,15 +112,15 @@ impl ClientContext {
             // sessions vec holds live ClientSession pointers; removed via
             // unregister() before destroy — `session_mut` centralises that
             // backref upgrade.
-            let s = session_mut(s);
-            if s.matches(hostname, port, reject, client.pool.id) && s.has_headroom() {
+            let session = session_mut(s);
+            if session.matches(hostname, port, reject, client.pool.id) && session.has_headroom() {
                 bun_core::scoped_log!(
                     h3_client,
                     "reuse session {}:{}",
                     bstr::BStr::new(hostname),
                     port,
                 );
-                s.enqueue(client);
+                ClientSession::enqueue(s, client);
                 return true;
             }
         }
@@ -140,7 +140,7 @@ impl ClientContext {
         // upgrades the fresh heap pointer (sole owner) for these set-up writes.
         session_mut(session).registry_index = u32::try_from(self.sessions.len()).expect("int cast");
         self.sessions.push(session);
-        session_mut(session).enqueue(client);
+        ClientSession::enqueue(session, client);
 
         let result =
             self.qctx_mut()

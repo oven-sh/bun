@@ -2710,8 +2710,7 @@ impl<'a> PackageInstaller<'a> {
         let m = self.manager_mut();
         m.total_scripts += scripts_list.total as usize;
         if let Some(scripts_node) = m.scripts_node_mut() {
-            m.set_node_name::<true>(
-                scripts_node,
+            scripts_node.name = m.progress_node_name::<true>(
                 &scripts_list.package_name,
                 ProgressStrings::SCRIPT_EMOJI.as_bytes(),
             );

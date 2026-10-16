@@ -303,7 +303,7 @@ registry = http://localhost:${registry.port}/
       using dir = tempDir("npmrc-userconfig-directory", { ...pkg, "home/.keep": "", "elsewhere/ci.npmrc/.keep": "" });
       const directory = join(String(dir), "elsewhere", "ci.npmrc");
       const result = await bun(String(dir), { NPM_CONFIG_USERCONFIG: directory }, "install");
-      expect(result.stderr).toContain(`The registry and auth settings in ${directory} are not applied.\n`);
+      expect(result.stderr).toContain(`ignoring registry and auth settings in ${directory}\n`);
       expect(result.stderr).not.toContain("error:");
       expect(result.exitCode).toBe(0);
     });
@@ -2594,13 +2594,13 @@ describe(".npmrc diagnostics", () => {
 
   it("warns about an unknown option name without printing its value", async () => {
     const stderr = await stderrOf(`registry=https://example.com/\n//example.com/:_authtoken=SECRETTOKEN\n`);
-    expect(stderr).toContain("_authtoken is not a known .npmrc option");
+    expect(stderr).toContain("ignoring unknown .npmrc option _authtoken");
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 
   it("names the file and line of an unknown option", async () => {
     const stderr = await stderrOf(`registry=https://example.com/\n\n//example.com/:_authtoken=SECRETTOKEN\n`);
-    expect(stderr).toMatch(/_authtoken is not a known .npmrc option[^\n]*\n\s+at \S+[\\/]\.npmrc:3:/);
+    expect(stderr).toMatch(/ignoring unknown .npmrc option _authtoken[^\n]*\n\s+at \S+[\\/]\.npmrc:3:/);
     expect(stderr).not.toContain("SECRETTOKEN");
   });
 
@@ -4109,7 +4109,7 @@ registry = { url = "https://${host}/", token = "https-only" }
     const { stderr, exitCode } = await install(String(dir));
 
     expect(registry.requests).toEqual([{ path: manifestPath, auth: null }]);
-    expect(stderr).toContain("_authtoken is not a known .npmrc option");
+    expect(stderr).toContain("ignoring unknown .npmrc option _authtoken");
     expect(stderr).not.toContain("typo-token");
     expect(exitCode).toBe(1);
   });
@@ -5287,17 +5287,20 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     }
   }
 
+  /** `message`: the end of "ignoring settings in <path>". */
   const files: [name: string, path: string, message: string][] = [
-    ["./.npmrc", "project/.npmrc", "project/.npmrc are not applied."],
-    ["~/.npmrc", "home/.npmrc", "home/.npmrc are not applied."],
-    ["./bunfig.toml", "project/bunfig.toml", "project/bunfig.toml are not applied."],
-    ["~/.bunfig.toml", "home/.bunfig.toml", "home/.bunfig.toml are not applied."],
-    ["$XDG_CONFIG_HOME/.bunfig.toml", "xdg/.bunfig.toml", "xdg/.bunfig.toml are not applied."],
+    ["./.npmrc", "project/.npmrc", "project/.npmrc\n"],
+    ["~/.npmrc", "home/.npmrc", "home/.npmrc\n"],
+    ["./bunfig.toml", "project/bunfig.toml", "project/bunfig.toml\n"],
+    ["~/.bunfig.toml", "home/.bunfig.toml", "home/.bunfig.toml\n"],
+    ["$XDG_CONFIG_HOME/.bunfig.toml", "xdg/.bunfig.toml", "xdg/.bunfig.toml\n"],
   ];
+
+  const ignoring = /^ignoring (registry and auth )?settings in /m;
 
   /** The end of the stderr of a command that installs, or publishes. */
   const refusal = (path: string, verb = "install") =>
-    `error: cannot read config file, refusing to ${verb} packages\n` + `    at <dir>/${path}\n`;
+    `error: cannot read ${basename(path)}, refusing to ${verb} packages\n` + `    at <dir>/${path}\n`;
   const withoutDir = (stderr: string) => stderr.replace(/(?<= at )\S+\/(?=(project|home|xdg)\/)/, "<dir>/");
 
   /** `prepare` for a file that is there and cannot be read. */
@@ -5322,7 +5325,8 @@ describe.skipIf(isWindows)("unreadable config files", () => {
       path.startsWith("xdg"),
     );
     expect(stderr).toContain("warn: EISDIR");
-    expect(stderr).toContain(`${basename(path)} are not applied.\n`);
+    expect(stderr).toMatch(ignoring);
+    expect(stderr).toContain(`${basename(path)}\n`);
     expect(stderr).not.toContain("error:");
     expect(stdout).toContain("1 package installed");
     expect(exitCode).toBe(0);
@@ -5384,7 +5388,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
 
   test.each(["pm bin", "pm cache"])("bun %s installs nothing, so it only warns", async cmd => {
     const { stderr, exitCode } = await run(cmd.split(" "), unreadableBunfig);
-    expect(stderr).toContain("project/bunfig.toml are not applied.");
+    expect(stderr).toMatch(/^ignoring settings in \S+project\/bunfig\.toml$/m);
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
   });
@@ -5400,7 +5404,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     const { stdout, stderr, exitCode } = await run(cmd.split(" "), runnable);
     expect(stderr.split("\n")).toEqual([
       expect.stringContaining("warn: EACCES"),
-      expect.stringContaining("bunfig.toml are not applied."),
+      expect.stringMatching(/^ignoring settings in \S+bunfig\.toml$/),
       "",
     ]);
     expect(stdout).toBe("ran\n");
@@ -5414,6 +5418,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
   test.each(files)("%s has mode 000", async (_, path, message) => {
     const { stderr, exitCode } = await run(["install"], mode000(path), path.startsWith("xdg"));
     expect(stderr).toContain("warn: EACCES");
+    expect(stderr).toMatch(ignoring);
     expect(stderr).toContain(message);
     expect(withoutDir(stderr)).toEndWith(refusal(path));
     expect(exitCode).toBe(1);
@@ -5423,7 +5428,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     const { stderr, exitCode } = await run(["install"], mode000("home/ci.npmrc"), false, undefined, {
       NPM_CONFIG_USERCONFIG: "../home/ci.npmrc",
     });
-    expect(stderr).toContain("home/ci.npmrc are not applied.\n");
+    expect(stderr).toMatch(/^ignoring registry and auth settings in \S+home\/ci\.npmrc$/m);
     expect(withoutDir(stderr)).toEndWith(refusal("home/ci.npmrc"));
     expect(exitCode).toBe(1);
   });

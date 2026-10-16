@@ -225,10 +225,10 @@ describe("bun install --cpu and --os flags", () => {
 
   // A negated unknown name is just as much of a typo as a plain one.
   it.each([
-    ["--cpu", "invalid-cpu", "Invalid CPU architecture: 'invalid-cpu'"],
-    ["--cpu", "!invalid-cpu", "Invalid CPU architecture: '!invalid-cpu'"],
-    ["--os", "invalid-os", "Invalid operating system: 'invalid-os'"],
-    ["--os", "!invalid-os", "Invalid operating system: '!invalid-os'"],
+    ["--cpu", "invalid-cpu", "invalid CPU architecture: 'invalid-cpu'"],
+    ["--cpu", "!invalid-cpu", "invalid CPU architecture: '!invalid-cpu'"],
+    ["--os", "invalid-os", "invalid operating system: 'invalid-os'"],
+    ["--os", "!invalid-os", "invalid operating system: '!invalid-os'"],
   ])("should error on %s %s", async (flag, value, message) => {
     await writeFile(
       join(package_dir, "package.json"),

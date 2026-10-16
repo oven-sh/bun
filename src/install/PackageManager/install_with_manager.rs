@@ -649,23 +649,6 @@ pub fn install_with_manager(
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
     print_kept_patched(manager);
 
-    match core::mem::take(&mut manager.deprecated_transitive) {
-        0 => {}
-        count => manager.log_mut().add_warning_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "{} deprecated transitive {} (--verbose to list)",
-                count,
-                if count == 1 {
-                    "dependency"
-                } else {
-                    "dependencies"
-                },
-            ),
-        ),
-    }
-
     let had_errors_before_cleaning_lockfile = manager.log_mut().has_errors();
     manager
         .log_mut()
@@ -2589,7 +2572,7 @@ fn converts_binary_lockfile_to_text(
 #[cold]
 #[inline(never)]
 fn note_migrated_lockfile_not_saved(manager: &PackageManager, source: &str) {
-    if manager.options.log_level.is_silent() {
+    if !manager.options.log_level.is_verbose() {
         return;
     }
     Output::flush();

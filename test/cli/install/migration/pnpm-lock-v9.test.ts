@@ -1025,7 +1025,7 @@ importers:
       const { stderr, exitCode } = await migrate(String(dir));
 
       expect(stderr).toContain(
-        'warn: skipped patch "is-positive@3.1.0" from pnpm-lock.yaml: not in patchedDependencies of package.json or pnpm-workspace.yaml',
+        'warn: skipping patch "is-positive@3.1.0" from pnpm-lock.yaml: not in patchedDependencies of package.json or pnpm-workspace.yaml',
       );
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
@@ -2744,7 +2744,7 @@ ${snapshots}`;
 
       const { stderr, exitCode } = await migrate(packageDir);
 
-      expect(stderr).not.toContain("skipped peer");
+      expect(stderr).not.toContain("skipping peer");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
@@ -2950,7 +2950,7 @@ snapshots:
       const { stderr, exitCode } = await migrate(packageDir);
 
       expect(stderr).toContain(
-        'warn: skipped peer "no-deps" of workspace "packages/project-1": not recorded in pnpm-lock.yaml (bun install will resolve it)',
+        'warn: skipping peer "no-deps" of workspace "packages/project-1": not in pnpm-lock.yaml, resolving it',
       );
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
@@ -3025,7 +3025,7 @@ snapshots:
       const { stderr, exitCode } = await migrate(packageDir);
 
       expect(stderr).toContain(
-        'warn: skipped peer "has-peer" of the root package: not recorded in pnpm-lock.yaml (bun install will resolve it)',
+        'warn: skipping peer "has-peer" of the root package: not in pnpm-lock.yaml, resolving it',
       );
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);

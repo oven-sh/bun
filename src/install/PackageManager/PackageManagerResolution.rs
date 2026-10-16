@@ -207,16 +207,13 @@ impl PackageManager {
                                 ),
                             );
                         } else if is_default {
-                            Output::err_generic(
-                                "<b>{}@{}<r> is not in the catalog",
-                                (name, literal),
-                            );
+                            Output::err_generic("<b>{}@{}<r> not in catalog", (name, literal));
                             if can_add {
                                 bun_core::pretty_errorln!("  bun add --catalog {}", name);
                             }
                         } else {
                             Output::err_generic(
-                                "<b>{}@{}<r> is not in catalog \"{}\"",
+                                "<b>{}@{}<r> not in catalog \"{}\"",
                                 (name, literal, bstr::BStr::new(catalog_name)),
                             );
                             if can_add {

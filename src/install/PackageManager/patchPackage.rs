@@ -706,7 +706,7 @@ fn patch_applies(
     patch: &bun_ast::Source,
 ) -> bool {
     let mut log = bun_ast::Log::init();
-    let patchfile = crate::patch_install::parse_patch_source(patch, &mut log);
+    let patchfile = crate::patch_install::parse_patch_source(patch, &mut log, true);
     let _ = log.print(std::ptr::from_mut(Output::error_writer()));
     // An install only warns about the sections it skips, because older versions of Bun wrote patch
     // files that have them. A new patch must not have any.

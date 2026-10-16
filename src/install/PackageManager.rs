@@ -614,9 +614,6 @@ pub struct PackageManager {
     pub(crate) kept_patched: Vec<PackageID>,
     pub kept_patched_text: Vec<u8>,
 
-    // Newly resolved deprecated versions no package.json of the project names: one summary line.
-    pub(crate) deprecated_transitive: u32,
-
     // `Some` while `bun install` resolves. A "no such package" or "no such version" message about a
     // dependency that dedupe may still drop is kept here until `log_held` decides whether to log
     // it.
@@ -933,7 +930,10 @@ impl PackageManager {
         log.add_error_fmt(
             Some(&bun_ast::Source::init_path_string(path, b"")),
             bun_ast::Loc::EMPTY,
-            format_args!("cannot read config file, refusing to {verb} packages"),
+            format_args!(
+                "cannot read {}, refusing to {verb} packages",
+                bstr::BStr::new(bun_paths::basename(path)),
+            ),
         );
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         Global::crash();
@@ -1778,7 +1778,6 @@ fn allocate_package_manager(
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
-        wr!(deprecated_transitive, 0);
         wr!(held_messages, None);
         wr!(manifest_failures, HashMap::default());
         wr!(look_ahead, LookAhead::default());

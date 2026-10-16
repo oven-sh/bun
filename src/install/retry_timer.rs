@@ -51,6 +51,8 @@ pub(crate) fn retry(
         enqueue::enqueue_network_task(manager, task);
         return Duration::ZERO;
     }
+    // A host that never answers costs minutes per attempt, so that is said at the first retry.
+    let timed_out = matches!(response.fail, Some(bun_http::Error::Timeout));
     // An outage hits many requests at once. `--verbose` has a line for each retry of each request.
     let (queue, log_level) = (&mut manager.retry_queue, manager.options.log_level);
     let line = if asked && attempt > queue.announced_asked {
@@ -59,7 +61,11 @@ pub(crate) fn retry(
             "registry asked to wait {}s before retrying",
             wait.as_secs()
         ))
-    } else if !asked && !queue.announced && wait >= ANNOUNCED_WAIT && !log_level.is_verbose() {
+    } else if !asked
+        && !queue.announced
+        && (wait >= ANNOUNCED_WAIT || timed_out)
+        && !log_level.is_verbose()
+    {
         queue.announced = true;
         Some("registry requests failed, retrying".to_owned())
     } else {

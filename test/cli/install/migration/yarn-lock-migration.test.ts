@@ -3526,7 +3526,7 @@ test("dependencies with no entry in yarn.lock are reported", async () => {
   ]);
   const masked = await migrate(String(url));
   expect(masked.stderr).toContain(
-    'warn: yarn.lock has no entry for "direct@http://***@localhost:1/direct-1.0.0.tgz?token=***"',
+    'warn: yarn.lock missing "direct@http://***@localhost:1/direct-1.0.0.tgz?token=***"',
   );
   expect(masked.stderr).not.toContain("s3cret");
   expect(masked.stderr).not.toContain(token);

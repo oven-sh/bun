@@ -1939,7 +1939,7 @@ describe("package-lock.json migration fixes", () => {
       'warn: skipping "y@^1.0.0" from package-lock.json: no entry for this dependency of "node_modules/x"',
     );
     // a range can be a tarball URL with credentials
-    expect(stderr).toContain('warn: skipped "z@http://***@localhost:1/z-1.0.0.tgz" from package-lock.json');
+    expect(stderr).toContain('warn: skipping "z@http://***@localhost:1/z-1.0.0.tgz" from package-lock.json');
     expect(stderr).not.toContain("s3cret");
     expect(lock.packages.x[2]).toStrictEqual({});
     expect(exitCode).toBe(0);
@@ -1964,7 +1964,7 @@ describe("package-lock.json migration fixes", () => {
     });
 
     const { stderr, exitCode, lock } = await migrate(dir);
-    expect(stderr).toContain('skipped "y@catalog:"');
+    expect(stderr).toContain('skipping "y@catalog:"');
     expect(stderr).toContain('skipped "z@ftp://example.invalid/z.tgz"');
     expect(lock.packages.x[2]).toStrictEqual({});
     expect(exitCode).toBe(0);

@@ -1194,13 +1194,13 @@ catalogs:
       name: "a dependency with no entry",
       manifest: { dependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1" } },
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
-      error: () => `error: yarn.lock has no entry for "a-dep@^1.0.1", a dependency of "berry-reject"`,
+      error: () => `error: yarn.lock missing "a-dep@^1.0.1", a dependency of "berry-reject"`,
     },
     {
       name: "a resolutions rule whose target has no entry",
       manifest: { dependencies: { "no-deps": "^1.0.0" }, resolutions: { "no-deps": "2.0.0" } },
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
-      error: () => `error: yarn.lock has no entry for "no-deps@^1.0.0", a dependency of "berry-reject"`,
+      error: () => `error: yarn.lock missing "no-deps@^1.0.0", a dependency of "berry-reject"`,
     },
     {
       name: "a protocol bun does not have",
@@ -1641,7 +1641,7 @@ catalogs:
             `  pkg-a: "npm:^1.0.0"`,
           ],
         }),
-      error: () => `error: yarn.lock has no entry for "pkg-a@^1.0.0", a dependency of "pkg-b"`,
+      error: () => `error: yarn.lock missing "pkg-a@^1.0.0", a dependency of "pkg-b"`,
     },
     {
       name: "a devDependencies range (yarn installs it) the dependencies range (bun installs it) does not accept",
@@ -1682,7 +1682,7 @@ catalogs:
     });
 
     const { stderr, exitCode } = await run(dir, "install");
-    expect(stderr).toContain(`error: yarn.lock has no entry for "a-dep@^1.0.1", a dependency of "berry-reject"`);
+    expect(stderr).toContain(`error: yarn.lock missing "a-dep@^1.0.1", a dependency of "berry-reject"`);
     expect(stderr).toContain("InvalidYarnBerryLockfile: failed to migrate lockfile: 'yarn.lock'");
     expect(stderr).not.toContain("migrated lockfile from yarn.lock");
     // resolved fresh: the newest 1.x, not the 1.0.0 yarn.lock named
@@ -1724,7 +1724,7 @@ catalogs:
 
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
     expect(stderr).toContain(
-      `error: yarn.lock has no entry for "direct@http://***@localhost:1/direct-1.0.0.tgz", a dependency of "berry-reject"`,
+      `error: yarn.lock missing "direct@http://***@localhost:1/direct-1.0.0.tgz", a dependency of "berry-reject"`,
     );
     expect(stderr).not.toContain("s3cret");
     expect(exitCode).toBe(1);

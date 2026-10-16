@@ -1809,7 +1809,7 @@ describe("the trusted set", () => {
       expect((await bun(ctx, ["install"])).exitCode).toBe(0);
 
       const trust = await bun(ctx, ["pm", "trust", "lifecycle-postinstall", "--frozen-lockfile"]);
-      expect(trust.err).toContain("error: the lockfile is frozen");
+      expect(trust.err).toContain("error: lockfile is frozen");
       expect(await textOf(packageDirOf(ctx, linker, "lifecycle-postinstall"), "postinstall.txt")).toBeNull();
       expect(await recorded(ctx)).toEqual({ "package.json": null, "bun.lock": null });
       expect(trust.exitCode).toBe(1);

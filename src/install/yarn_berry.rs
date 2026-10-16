@@ -1354,7 +1354,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 _ => {
                     bail!(
                         log,
-                        "yarn.lock has no entry for \"{}@{}\", a dependency of \"{}\"",
+                        "yarn.lock missing \"{}@{}\", a dependency of \"{}\"",
                         shown(name),
                         shown(original_literal),
                         shown(owner_name),

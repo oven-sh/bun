@@ -373,7 +373,7 @@ const hostile: Hostile[] = [
   {
     title: "a package one byte shorter than its records",
     packages: [record(PACKAGE, evil, 0, evilBody, { size: BigInt(evilBody.length - 1) })],
-    error: /malformed checksum record|runs past the end/,
+    error: /malformed checksum record|runs past end/,
   },
   {
     title: "a package one byte longer than its records",
@@ -393,7 +393,7 @@ const hostile: Hostile[] = [
   inPackage("a file of 2^64-1 bytes", [record(FILE, "a", 0o644, "x", { size: U64_MAX })], "truncated"),
   inPackage("a file of 2^63 bytes", [record(FILE, "a", 0o644, "x", { size: 1n << 63n })], "truncated"),
   inPackage("a file of 1 TB", [record(FILE, "a", 0o644, "x", { size: 1n << 40n })], "truncated"),
-  inPackage("a file that swallows the checksum", [record(FILE, "a", 0o644, "x", { size: 30n })], "runs past the end"),
+  inPackage("a file that swallows the checksum", [record(FILE, "a", 0o644, "x", { size: 30n })], "runs past end"),
   inPackage("a path of 2^32-1 bytes", [record(FILE, "a", 0o644, "x", { pathLen: 0xffff_ffff })], "path is too long"),
   inPackage(
     "a path that swallows the rest",
@@ -421,18 +421,18 @@ const hostile: Hostile[] = [
   {
     title: "a byte after the end",
     pack: Buffer.concat([packOf(pkg(evil)), Buffer.from([0])]),
-    error: "bytes after the end",
+    error: "trailing bytes after pack",
   },
-  { title: "a package after the end", pack: Buffer.concat([packOf(), pkg(evil), end()]), error: "bytes after the end" },
+  { title: "a package after the end", pack: Buffer.concat([packOf(), pkg(evil), end()]), error: "trailing bytes after pack" },
   {
     title: "an end record with a path",
     pack: Buffer.concat([MAGIC, pkg(evil), record(END, "a")]),
-    error: "bytes after the end",
+    error: "trailing bytes after pack",
   },
   {
     title: "an end record with contents",
     pack: Buffer.concat([MAGIC, pkg(evil), record(END, "", 0, "a")]),
-    error: "after the end",
+    error: "trailing bytes after pack",
   },
   {
     title: "an end record with a mode",

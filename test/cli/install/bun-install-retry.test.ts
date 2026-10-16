@@ -616,7 +616,7 @@ describe.concurrent("backoff", () => {
     let err = "";
     for await (const chunk of proc.stderr.pipeThrough(new TextDecoderStream())) {
       err += chunk;
-      if (err.includes("next attempt\n")) break;
+      if (err.includes("before retrying\n")) break;
     }
     expect(err).toContain("warn: registry asked to wait 60s before retrying\n");
     expect(registry.at.manifest).toHaveLength(1);
@@ -630,7 +630,7 @@ describe.concurrent("backoff", () => {
     { retryAfter: "soon", backoff: "1", wait: /^1ms$/ },
     { retryAfter: "Wed, 21 Oct 2096 07:28:00 GMT", backoff: "1", wait: /^1ms$/ },
     { retryAfter: "3600", backoff: "0", wait: /^0ms$/ },
-    { retryAfter: null, backoff: "nonsense", wait: /^(2[0-9][0-9]|300)ms$/ },
+    { retryAfter: null, backoff: "nonsense", wait: /^([45][0-9]|60)ms$/ },
   ])("Retry-After %j", async ({ retryAfter, backoff, wait }) => {
     using registry = flakyRegistry((_, hit) => (hit === 1 ? busy(503, retryAfter) : undefined));
     using dir = project(registry.url);

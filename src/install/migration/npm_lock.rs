@@ -159,6 +159,7 @@ struct Migrator<'a> {
     /// configured registry nor the default one.
     unverifiable: Vec<u32>,
     silent: bool,
+    verbose: bool,
     /// `npm-shrinkwrap.json` or `package-lock.json`, for warnings.
     lockfile_name: &'static str,
 }
@@ -202,6 +203,7 @@ pub(super) fn migrate_packages(
     index.reserve(entry_count);
 
     let silent = manager.options.log_level.is_silent();
+    let verbose = manager.options.log_level.is_verbose();
     let mut migrator = Migrator {
         this,
         manager,
@@ -219,6 +221,7 @@ pub(super) fn migrate_packages(
         patched: String::new(),
         unverifiable: Vec::new(),
         silent,
+        verbose,
         lockfile_name,
     };
 
@@ -875,7 +878,7 @@ impl<'a> Migrator<'a> {
                         INVALID_PACKAGE_ID
                     }
                     None => {
-                        if !has_entry && !self.silent {
+                        if !has_entry && self.verbose {
                             bun_core::warn!(
                                 "skipping \"{}@{}\" from package-lock.json: no entry for this dependency of \"{}\"",
                                 bun_core::fmt::for_terminal(bstr::BStr::new(name)),
@@ -938,7 +941,7 @@ impl<'a> Migrator<'a> {
                 .copied()
                 .filter(|&t| !self.link_entries.is_set(t as usize));
             let Some(t) = target else {
-                if !self.silent {
+                if self.verbose {
                     bun_core::warn!(
                         "workspace \"{}\" ({}) not in {}, resolving from package.json",
                         bun_core::fmt::escape_control_chars(&ws.name),
@@ -1060,7 +1063,7 @@ impl<'a> Migrator<'a> {
 
     /// The edge is dropped: the install resolves it from its declarer's `file:` spec.
     fn skip_copied_folder(&mut self, t: u32, name: &[u8]) {
-        if !self.silent && !self.shadowed.is_set(t as usize) {
+        if self.verbose && !self.shadowed.is_set(t as usize) {
             bun_core::warn!(
                 "skipping \"{}\" from {}: folder copied by npm (--install-links)",
                 bun_core::fmt::escape_control_chars(name),
@@ -1098,7 +1101,7 @@ impl<'a> Migrator<'a> {
     }
 
     fn warn_unreachable(&self) {
-        if self.silent {
+        if !self.verbose {
             return;
         }
         let mut count: usize = 0;

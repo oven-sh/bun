@@ -2638,13 +2638,13 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     const files = { ...project, "app/bunfig.toml": "[install.security\n", "app/src/index.js": `import "no-deps";\n` };
     const result = await run(files, { cwd: "app/src" });
     expect(result.stderr).toContain(unreadable);
-    expect(result.stderr).toMatch(/[\\/]bunfig\.toml" cannot be read or parsed/);
+    expect(result.stderr).toMatch(/cannot read or parse "\S+[\\/]bunfig\.toml"/);
     expect({ ...result, stderr: "" }).toEqual({ stdout: "", stderr: "", exitCode: 1, requests: [] });
   });
 
   test.serial.skipIf(isWindows)("the project's bunfig.toml cannot be read", async () => {
     const result = await run({ "app/bunfig.toml": UNREADABLE, "app/index.js": requireIt });
-    expect(result.stderr).toContain("bunfig.toml are not applied.");
+    expect(result.stderr).toMatch(/^ignoring settings in \S+bunfig\.toml$/m);
     expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
   });
 

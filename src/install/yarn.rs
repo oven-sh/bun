@@ -617,7 +617,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     // An entry whose resolution cannot be built keeps `INVALID_PACKAGE_ID`. Its specs are then
     // treated as if yarn.lock had no entry for them.
     let mut yarn_entry_to_package_id = vec![install::INVALID_PACKAGE_ID; yarn_lock.entries.len()];
-    let silent = manager.options.log_level.is_silent();
+    let verbose = manager.options.log_level.is_verbose();
 
     for (entry, package_id) in yarn_lock.entries.iter().zip(&mut yarn_entry_to_package_id) {
         let is_direct_url_dep = entry.has_direct_url_spec();
@@ -740,7 +740,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         };
 
         if resolution.tag == crate::resolution::Tag::Uninitialized {
-            if !silent {
+            if verbose {
                 let reason: Cow<str> = if entry.version.is_empty() {
                     "missing \"version\" field".into()
                 } else if !Semver::Version::parse_utf8(entry.version).valid {

@@ -1231,7 +1231,7 @@ describe.concurrent("errors", () => {
 
     const { err, exitCode } = await failingInstall(packageDir);
     expect(err).toContain(
-      'error: no-deps@catalog:tools is not in catalog "tools"\n  bun add --catalog=tools no-deps\n',
+      'error: no-deps@catalog:tools not in catalog "tools"\n  bun add --catalog=tools no-deps\n',
     );
     expect(err).toContain("error: left-pad@catalog:default not in catalog\n  bun add --catalog left-pad\n");
     expect(err).not.toContain("there is no catalog named");
@@ -2505,8 +2505,8 @@ describe("bun add --catalog advice for a failed catalog: dependency", () => {
       expect(await run(String(dir), ["install"])).toEqual({
         err: [
           "error: lib@catalog: not in catalog",
-          'error: mono@catalog:tools is not in catalog "tools"',
-          'error: no-deps@catalog:tools is not in catalog "tools"',
+          'error: mono@catalog:tools not in catalog "tools"',
+          'error: no-deps@catalog:tools not in catalog "tools"',
           "  bun add --catalog=tools no-deps",
         ].join("\n"),
         exitCode: 1,

@@ -319,31 +319,31 @@ describe.concurrent("redact", async () => {
       // underscore. These rows pin that the warning prints and the value does not.
       title: "quoted _authToken key",
       npmrc: '"//registry.npmjs.org/:_authtoken"=npm_notarealtokenvalue',
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "npm_notarealtokenvalue",
     },
     {
       title: "quoted _auth key",
       npmrc: 'registry=https://registry.example.com/api/\n"//registry.example.com/:_auth_"=does-not-decode',
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "does-not-decode",
     },
     {
       title: "quoted password key",
       npmrc: '"//registry.npmjs.org/:password"=SUPERSECRETVALUE',
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "SUPERSECRETVALUE",
     },
     {
       title: "misspelt option without the underscore",
       npmrc: "//registry.npmjs.org/:authToken=npm_notarealtokenvalue",
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "npm_notarealtokenvalue",
     },
     {
       title: "misspelt _authToken key",
       npmrc: "//registry.npmjs.org/:_authtoken=npm_notarealtokenvalue",
-      expected: "is not a known .npmrc option",
+      expected: "ignoring unknown .npmrc option",
       secret: "npm_notarealtokenvalue",
     },
     // Lines that are not `//host/…:option=value` never reach the unknown-option

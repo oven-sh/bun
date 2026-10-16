@@ -944,6 +944,9 @@ fn warn_latest_names_no_version(
     manifest: &Npm::PackageManifest,
     instead: Npm::FindResult,
 ) {
+    if !this.options.log_level.is_verbose() {
+        return;
+    }
     this.log_mut().add_warning_fmt(
         None,
         bun_ast::Loc::EMPTY,
@@ -2568,6 +2571,9 @@ fn warn_unmet_peer_dependency(
     version: &dependency::Version,
     err: crate::Error,
 ) {
+    if !this.options.log_level.is_verbose() {
+        return;
+    }
     let literal = bstr::BStr::new(this.lockfile.str(&version.literal));
     let name = bstr::BStr::new(this.lockfile.str(&name));
     if err == crate::Error::TooRecentVersion {
@@ -3034,7 +3040,7 @@ pub(crate) struct ResolvedPackageResult {
     pub task: Option<ResolvedPackageTask>,
 }
 
-/// Once per version. What a package.json of the project names gets a line; the rest is counted.
+/// Once per version. A version that no package.json of the project names needs `--verbose`.
 #[cold]
 fn warn_deprecated(
     this: &mut PackageManager,
@@ -3044,7 +3050,6 @@ fn warn_deprecated(
 ) {
     if !this.lockfile.is_workspace_dependency(dependency_id) && !this.options.log_level.is_verbose()
     {
-        this.deprecated_transitive += 1;
         return;
     }
     this.log_mut().add_warning_fmt(
@@ -3255,6 +3260,7 @@ fn get_or_put_resolved_package_with_find_result(
     let package = Package::from_npm(
         &mut this.lockfile,
         log,
+        this.options.log_level,
         manifest,
         find_result.version,
         find_result.package,

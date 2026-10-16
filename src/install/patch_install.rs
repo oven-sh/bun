@@ -104,6 +104,8 @@ pub struct ApplyPatch {
     pub(crate) install_context: Option<InstallContext>,
     // dependency_id: ?struct = null,
     pub(crate) logger: Log,
+    /// `--verbose`: older versions of Bun wrote patch files with sections that an install skips.
+    pub(crate) warn_skipped: bool,
 }
 
 pub struct InstallContext {
@@ -136,6 +138,7 @@ fn resolve_patchfile_path<'a>(
 pub(crate) fn parse_patch_source<'a>(
     source: &'a Source,
     log: &mut Log,
+    warn_skipped: bool,
 ) -> Option<bun_patch::PatchFile<'a>> {
     let at = |offset: usize| Range {
         loc: Loc {
@@ -154,7 +157,7 @@ pub(crate) fn parse_patch_source<'a>(
             return None;
         }
     };
-    for section in &patchfile.skipped {
+    for section in patchfile.skipped.iter().filter(|_| warn_skipped) {
         let subject = match section.path.map(bun_core::fmt::escape_control_chars) {
             Some(path) => path.to_string(),
             None => "non-patch text".to_owned(),
@@ -477,7 +480,7 @@ impl PatchTask {
                 }
             };
         let source = Source::init_path_string_owned(&patchfile_path[..], patchfile_txt);
-        let Some(patchfile) = parse_patch_source(&source, log) else {
+        let Some(patchfile) = parse_patch_source(&source, log, patch.warn_skipped) else {
             return Ok(());
         };
 
@@ -798,6 +801,7 @@ impl PatchTask {
                 patchfilepath,
                 pkgname: pkg_name,
                 logger: Log::init(),
+                warn_skipped: pkg_manager.options.log_level.is_verbose(),
                 cache_dir_subpath,
                 cache_dir_subpath_without_patch_hash,
                 task_id: None,

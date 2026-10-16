@@ -455,6 +455,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     }
 
     let silent = manager.options.log_level.is_silent();
+    let verbose = manager.options.log_level.is_verbose();
 
     if lockfile_version_num >= 10.0 && !silent {
         bun_core::warn!(
@@ -544,7 +545,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let Some((path, config_key)) = found else {
                 if !silent {
                     bun_core::warn!(
-                        "skipped patch \"{}\" from pnpm-lock.yaml: not in patchedDependencies of package.json or pnpm-workspace.yaml",
+                        "skipping patch \"{}\" from pnpm-lock.yaml: not in patchedDependencies of package.json or pnpm-workspace.yaml",
                         for_terminal(BStr::new(key_str))
                     );
                 }
@@ -973,6 +974,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         && !silent
                     {
                         match url {
+                            Some(_) if !verbose => {}
                             Some(url) => bun_core::warn!(
                                 "fetching pnpm registry \"{}\" packages from {}; add it to bunfig.toml or .npmrc if it needs authentication",
                                 escape_control_chars(registry_name),
@@ -1540,6 +1542,7 @@ fn parse_append_importer_dependencies(
 ) -> Result<(), MigratePnpmLockfileError> {
     let manifest_peers = declared_peers(manifest, false)?;
     let silent = manager.options.log_level.is_silent();
+    let verbose = manager.options.log_level.is_verbose();
 
     let off = lockfile.buffers.dependencies.len();
 
@@ -1624,9 +1627,9 @@ fn parse_append_importer_dependencies(
 
     for (peer_name, decl) in manifest_peers.iter() {
         let peer_name: &[u8] = peer_name;
-        if !decl.optional && !importer_versions.contains(peer_name) && !silent {
+        if !decl.optional && !importer_versions.contains(peer_name) && verbose {
             bun_core::warn!(
-                "skipped peer \"{}\" of {}: not recorded in pnpm-lock.yaml (bun install will resolve it)",
+                "skipping peer \"{}\" of {}: not in pnpm-lock.yaml, resolving it",
                 escape_control_chars(peer_name),
                 ImporterName(importer_path)
             );
@@ -1637,7 +1640,7 @@ fn parse_append_importer_dependencies(
         }
     }
 
-    if exclude_links_from_lockfile && !silent {
+    if exclude_links_from_lockfile && verbose {
         for (group_name, _) in DEPENDENCY_GROUPS {
             for (key, value) in props(&manifest.get(group_name).unwrap_or_default()) {
                 if let (Some(name_str), Some(spec)) = (as_str(key), as_str(value))
@@ -1754,7 +1757,7 @@ fn update_package_json_after_migration(
     patches: &FoundPatches,
 ) -> Result<(), AllocError> {
     let bump = bun_alloc::Arena::new();
-    let silent = manager.options.log_level.is_silent();
+    let verbose = manager.options.log_level.is_verbose();
 
     let Some(root_pkg_json) = root_package_json(manager, log) else {
         return Ok(());
@@ -1848,7 +1851,7 @@ fn update_package_json_after_migration(
                 let map = ws_root.get_object(field.as_bytes())?;
                 let mut skipped = 0;
                 let strings = string_entries(contents, &map, field == "catalogs", &mut skipped);
-                if skipped > 0 && !silent {
+                if skipped > 0 && verbose {
                     bun_core::warn!(
                         "skipping non-string entries of \"{}\" in pnpm-workspace.yaml ({})",
                         field,

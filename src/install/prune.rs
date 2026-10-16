@@ -346,7 +346,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     if !plan.linked_folders.is_empty() {
         if !quiet {
             for folder in plan.sorted_linked_folders() {
-                Output::err_generic("{} is a symlink, nothing pruned", (native_path(folder),));
+                Output::err_generic("cannot prune symlink {}", (native_path(folder),));
             }
             bun_core::note!("to prune this project, remove the link and run 'bun install'");
         }
@@ -1812,13 +1812,10 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
 fn remove_planned(mut plan: Plan, layout: Layout, manager: &PackageManager) {
     if !plan.linked_folders.is_empty() {
         if (!plan.removals.is_empty() || plan.left_linked_folder)
-            && manager.options.log_level != LogLevel::Silent
+            && manager.options.log_level.is_verbose()
         {
             for folder in plan.sorted_linked_folders() {
-                bun_core::warn!(
-                    "{} is a symlink, stale copies in node_modules not removed",
-                    native_path(folder)
-                );
+                bun_core::warn!("cannot prune symlink {}", native_path(folder));
             }
             bun_core::note!("remove the link and run 'bun install', then 'bun prune'");
         }
@@ -2117,12 +2114,12 @@ impl LinkedNodeModules {
     /// `folders` are the symlinked `node_modules` folders, relative to the project root, that a
     /// switch to the other linker would have cleared if they were real directories.
     pub(crate) fn warn_not_cleared(log_level: LogLevel, folders: &[Box<[u8]>]) {
-        if log_level == LogLevel::Silent || folders.is_empty() {
+        if !log_level.is_verbose() || folders.is_empty() {
             return;
         }
         for folder in folders {
             bun_core::warn!(
-                "{} is a symlink, packages from another linker not removed",
+                "cannot clear symlink {}, packages from another linker remain",
                 native_path(folder)
             );
         }

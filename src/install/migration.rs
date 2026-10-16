@@ -571,12 +571,11 @@ pub(crate) fn warn_unlocked_dependencies(
     lockfile_name: &str,
     dropped: &[Dependency],
 ) {
-    let log_level = manager.options.log_level;
-    if log_level.is_silent() {
+    if !manager.options.log_level.is_verbose() {
         return;
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let unlocked = || {
+    let unlocked = {
         let unbound = (lockfile.buffers.dependencies.iter())
             .zip(lockfile.buffers.resolutions.iter())
             .filter(|(_, resolution)| **resolution == crate::INVALID_PACKAGE_ID)
@@ -590,26 +589,13 @@ pub(crate) fn warn_unlocked_dependencies(
                 && lockfile.workspace_paths.get(&dep.name_hash).is_none()
         })
     };
-    let count = unlocked().count();
-    for dep in unlocked().take(if log_level.is_verbose() { count } else { 1 }) {
-        let name = bun_core::fmt::for_terminal(bstr::BStr::new(dep.name.slice(buf)));
-        let range = bun_core::fmt::for_terminal(bstr::BStr::new(dep.version.literal.slice(buf)));
-        if count == 1 || log_level.is_verbose() {
-            bun_core::warn!(
-                "{} missing \"{}@{}\", resolving it",
-                lockfile_name,
-                name,
-                range
-            );
-        } else {
-            bun_core::warn!(
-                "{} missing \"{}@{}\" and {} more (--verbose to list), resolving them",
-                lockfile_name,
-                name,
-                range,
-                count - 1
-            );
-        }
+    for dep in unlocked {
+        bun_core::warn!(
+            "{} missing \"{}@{}\", resolving it",
+            lockfile_name,
+            bun_core::fmt::for_terminal(bstr::BStr::new(dep.name.slice(buf))),
+            bun_core::fmt::for_terminal(bstr::BStr::new(dep.version.literal.slice(buf))),
+        );
     }
 }
 

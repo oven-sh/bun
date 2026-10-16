@@ -553,6 +553,7 @@ impl Package<u64> {
     pub(crate) fn from_npm(
         lockfile: &mut Lockfile,
         log: &mut bun_ast::Log,
+        log_level: crate::LogLevel,
         manifest: &Npm::PackageManifest,
         version: SemverVersion,
         package_version_ptr: &Npm::PackageVersion,
@@ -665,17 +666,19 @@ impl Package<u64> {
                     if key.slice(&manifest.string_buf).is_empty()
                         || dependency::nameless_npm_alias(declared).is_some()
                     {
-                        log.add_warning_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "skipping unnamed dependency of {}@{} (\"{}\" in \"{}\")",
-                                bun_core::fmt::escape_control_chars(manifest.name()),
-                                version.fmt(&manifest.string_buf),
-                                bun_core::fmt::escape_control_chars(declared),
-                                bstr::BStr::new(group.prop),
-                            ),
-                        );
+                        if log_level.is_verbose() {
+                            log.add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "skipping unnamed dependency of {}@{} (\"{}\" in \"{}\")",
+                                    bun_core::fmt::escape_control_chars(manifest.name()),
+                                    version.fmt(&manifest.string_buf),
+                                    bun_core::fmt::escape_control_chars(declared),
+                                    bstr::BStr::new(group.prop),
+                                ),
+                            );
+                        }
                         continue 'list;
                     }
 

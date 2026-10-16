@@ -44,7 +44,7 @@ pub(crate) struct Expansion {
     /// The atom is an assignment value (`A=v`, `export A=v`), so
     /// command-substitution output is not field split (POSIX 2.9.1).
     pub(crate) assign_ctx: bool,
-    /// Set when a `""`/`''` literal (or a quoted `$(...)` whose output was only NUL bytes)
+    /// Set when a `""`/`''` literal (or a quoted `$(...)` whose output held a NUL byte)
     /// was seen so an *empty* expansion is still pushed as an argv word.
     /// Without this, `$unset` and `""` are indistinguishable in
     /// [`ExpansionOut`] (both → `buf=[], bounds=[]`) and Cmd would push an

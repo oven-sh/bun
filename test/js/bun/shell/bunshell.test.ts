@@ -1547,9 +1547,9 @@ describe("deno_task", () => {
 
       // A debug build aborted on these two words ("interior NUL would truncate
       // the C view"). `bun exec` runs them in a child process.
-      TestBuilder.command`${BUN} exec ${`echo hi > "$(echo -e 'f\\0zz')"; touch t1; [[ -f $(echo -e 't1\\0zzz') ]] && echo yes || echo no`}`
+      TestBuilder.command`${BUN} exec ${`echo hi > "$(echo -e 'f\\0zz')"; touch t1zzz; [[ -f $(echo -e 't1\\0zzz') ]] && echo yes || echo no`}`
         .ensureTempDir()
-        .stdout("no\n")
+        .stdout("yes\n")
         .fileEquals("fzz", "hi\n")
         .doesNotExist("f")
         .runAsTest("redirect target and file test, through bun exec");

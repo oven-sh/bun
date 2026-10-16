@@ -1547,9 +1547,10 @@ pub(crate) fn move_node_modules_aside(
 /// Whether a linker created the `node_modules` entry `name`. No package name begins with a dot, so
 /// a dot entry that no package manager creates belongs to another tool (`.vite`).
 fn is_a_linkers(name: &[u8]) -> bool {
-    const OF_A_PACKAGE_MANAGER: [&[u8]; 6] = [
+    const OF_A_PACKAGE_MANAGER: [&[u8]; 7] = [
         b".bin",
         b".bun",
+        b".bun-pending-scripts",
         b".modules.yaml",
         b".package-lock.json",
         b".yarn-integrity",

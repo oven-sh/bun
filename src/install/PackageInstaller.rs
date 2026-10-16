@@ -2705,12 +2705,6 @@ impl<'a> PackageInstaller<'a> {
         resolution: &Resolution,
         record_trust: bool,
     ) {
-        if self.lockfile().is_folder_inside_declarer(dependency_id)
-            || self.lockfile().is_member_outside(package_id)
-        {
-            return;
-        }
-
         // SAFETY: `buffers.string_bytes` is append-only and never freed
         // for the lifetime of this `PackageInstaller`.
         let string_buf_ptr =
@@ -2719,6 +2713,14 @@ impl<'a> PackageInstaller<'a> {
 
         let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
         let (alias, alias_hash) = (dep.name, dep.name_hash);
+
+        if self.lockfile().is_folder_inside_declarer(dependency_id)
+            || self.lockfile().is_member_outside(package_id)
+        {
+            self.forget_pending_scripts(alias.slice(string_buf));
+            return;
+        }
+
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
 
         let mut folder_path = AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();

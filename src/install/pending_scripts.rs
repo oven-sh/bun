@@ -5,7 +5,7 @@ use bun_sys::{self as sys, Fd, File};
 
 /// From the project's root, which is the cwd of an install. So are the paths in the file.
 const PATH: &ZStr = bun_core::zstr!("node_modules/.bun-pending-scripts");
-/// Far more than the records of one install. What is past it is not read.
+/// Far more than the records of one install. A longer file is not read, and stays as it is.
 const MAX_BYTES: usize = 1 << 20;
 
 struct Unfinished {
@@ -61,8 +61,12 @@ impl PendingScripts {
                 return;
             }
         };
+        if size > MAX_BYTES {
+            self.writes = false;
+            return;
+        }
         // By offset: on Windows `read_to_end` reads at the cursor, which `O::APPEND` moved.
-        let mut bytes = vec![0u8; size.min(MAX_BYTES)];
+        let mut bytes = vec![0u8; size];
         let read = file.pread_all(&mut bytes, 0).and_then(|len| {
             let (stale, whole) = parse(&bytes[..len]);
             // A dead install did not end its last line: what that line names was not placed yet.

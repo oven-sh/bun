@@ -62,6 +62,8 @@ const db = Database.open(join(import.meta.dir, "src", "northwind.sqlite"));
   const like = mem.prepare("SELECT * FROM narrow WHERE name LIKE ?");
   const join = mem.prepare("SELECT * FROM narrow JOIN wide ON wide.id = narrow.id LIMIT ?");
   const selfJoin = mem.prepare("SELECT * FROM narrow a JOIN narrow b ON b.id = a.id LIMIT ?");
+  const oneRow = mem.prepare("SELECT * FROM narrow WHERE id = 500 LIMIT ?");
+
   const write = mem.prepare("UPDATE counter SET n = n + 1");
   const upsert = mem.prepare("INSERT OR REPLACE INTO setting VALUES ('theme', ?) RETURNING *");
 
@@ -69,8 +71,9 @@ const db = Database.open(join(import.meta.dir, "src", "northwind.sqlite"));
   bench("as(Class).get(): WHERE id = ?", () => asRow.get(500));
   bench("query().as(Class).get(): WHERE id = ?", () => mem.query("SELECT * FROM narrow WHERE id = ?").as(Row).get(500));
   bench("get(): LIMIT ?, 4 columns", () => limitNarrow.get(1));
+  bench("get(): one row, LIMIT ?, the same limit on each call", () => oneRow.get(1));
   let limit = 0;
-  bench("get(): LIMIT ?, 4 columns, another limit on each call", () => limitNarrow.get((limit++ & 7) + 1));
+  bench("get(): one row, LIMIT ?, another limit on each call", () => oneRow.get((limit++ & 7) + 1));
   bench("get(): LIMIT ?, 20 columns", () => limitWide.get(1));
   bench("get(): LIMIT ?, 8 long column names", () => limitLongNames.get(1));
   bench("get(): LIMIT ?, 4 column names that are not ASCII", () => limitNonAscii.get(1));

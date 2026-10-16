@@ -68,7 +68,7 @@ describe("as", () => {
     );
   });
 
-  it("applies to the next call of this statement only", () => {
+  it("applies to this statement only", () => {
     using db = new Database(":memory:");
     db.run("CREATE TABLE t (a INT); INSERT INTO t VALUES (1), (2)");
     class A {}
@@ -2667,7 +2667,7 @@ it("decodes non-UTF-8 column names leniently instead of dropping the column", ()
   expect(q.columnNames).toEqual(["X\uFFFDa", "Y\uFFFDb"]);
   expect(row).toEqual({ "X\uFFFDa": 1, "Y\uFFFDb": 2 });
 
-  // SQLite re-prepares this statement on each bind, and each time its names are compared with the recorded names.
+  // SQLite re-prepares this statement on each bind. The second run records the names and the third one compares them.
   const rebound = db.prepare("SELECT * FROM t WHERE 'x' LIKE ?");
   expect([rebound.get("x"), rebound.get("x"), rebound.all("x")]).toEqual([row, row, [row]]);
   rebound.finalize();
@@ -2769,7 +2769,8 @@ describe("prepared statements refresh cached column names after a schema change"
   });
 
   it("schema change made by a second connection to the same file", () => {
-    const file = tmpbase + `sqlite-reprepare-${Date.now()}-${(Math.random() * 1e9) | 0}.db`;
+    using dir = tempDir("sqlite-reprepare", {});
+    const file = path.join(String(dir), "app.db");
     using a = new Database(file, { create: true });
     a.run("CREATE TABLE t (a INT)");
     a.run("INSERT INTO t VALUES (1)");
@@ -2785,7 +2786,8 @@ describe("prepared statements refresh cached column names after a schema change"
 
   it("schema change made by another process", async () => {
     // https://github.com/oven-sh/bun/issues/1332
-    const file = tmpbase + `sqlite-xproc-${Date.now()}-${(Math.random() * 1e9) | 0}.db`;
+    using dir = tempDir("sqlite-xproc", {});
+    const file = path.join(String(dir), "app.db");
     using db = new Database(file, { create: true });
     db.run("PRAGMA journal_mode = wal");
     db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
@@ -2953,7 +2955,8 @@ describe("prepared statements refresh cached column names after a schema change"
     expect(() => q.declaredTypes).toThrow("Statement must be executed before accessing declaredTypes");
   });
 
-  // A bind makes SQLite re-prepare the statement when its plan depends on the parameter: LIKE ? always, LIMIT ? from SQLite 3.47, OFFSET ? never.
+  // A bind makes SQLite re-prepare the statement when its plan reads the parameter. With the default build options
+  // that is LIKE ? on each bind, LIMIT ? from SQLite 3.47, and not OFFSET ?.
   it.each([
     ["LIKE ?", "SELECT * FROM t WHERE b LIKE ?", "b%"],
     ["LIMIT ?", "SELECT * FROM t LIMIT ?", 1],
@@ -3065,7 +3068,7 @@ describe("prepared statements refresh cached column names after a schema change"
     expect(q.get(...params)).toEqual({ "è": 1, "日本語": 2, "": 3, "ÿ": 4 });
   });
 
-  // JSFinalObject::maxInlineCapacity is 62: below it the rows share one Structure, above it each row is built by name.
+  // Up to JSFinalObject::maxInlineCapacity (62) columns the rows share one Structure. Above it each row is built by name.
   it.each(statementKinds)("the column count crosses the inline capacity, %s", (_name, where, params) => {
     using db = new Database(":memory:");
     const names = Array.from({ length: 60 }, (_, i) => `c${i}`);

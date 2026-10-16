@@ -146,6 +146,36 @@ describe.concurrent("the text that an edit does not touch stays as it is", () =>
     expect(exitCode).toBe(0);
   });
 
+  test("bun patch --commit adds patchedDependencies", async () => {
+    const dir = await project();
+    expect((await run(dir, "install")).exitCode).toBe(0);
+    expect((await run(dir, "patch", "no-deps")).exitCode).toBe(0);
+    expect(await read(dir)).toBe(PACKAGE_JSON);
+    await Bun.write(join(dir, "node_modules", "no-deps", "patched.js"), "// patched\n");
+    const { stderr, exitCode } = await run(dir, "patch", "--commit", "node_modules/no-deps");
+    expect(stderr).not.toContain("error:");
+    expect(await read(dir)).toBe(
+      replaced(
+        `  },\r\n  /* before`,
+        `  },\r\n  "patchedDependencies": {\r\n    "no-deps@1.1.0": "patches/no-deps@1.1.0.patch"\r\n  },\r\n  /* before`,
+      ),
+    );
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  test("bun pm trust adds trustedDependencies", async () => {
+    // `bun pm trust` reads package.json as strict JSON: no comment here.
+    const packageJson = `{\r\n\t"name": "app",\r\n\r\n\t"dependencies": { "lifecycle-postinstall": "1.0.0" }\r\n}\r\n`;
+    const dir = await project(packageJson);
+    expect((await run(dir, "install")).exitCode).toBe(0);
+    const { stderr, exitCode } = await run(dir, "pm", "trust", "lifecycle-postinstall");
+    expect(stderr).not.toContain("error:");
+    expect(await read(dir)).toBe(
+      `{\r\n\t"name": "app",\r\n\r\n\t"dependencies": { "lifecycle-postinstall": "1.0.0" },\r\n\t"trustedDependencies": [\r\n\t\t"lifecycle-postinstall"\r\n\t]\r\n}\r\n`,
+    );
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
   test("a second run of the same command does not write the file", async () => {
     const dir = await project();
     expect((await run(dir, "add", "./local")).exitCode).toBe(0);

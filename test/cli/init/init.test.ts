@@ -321,6 +321,25 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
   }, 30_000);
 
+  test("bun init keeps the comments and the indentation of an existing package.json", async () => {
+    await using temp = tempDir("bun-init-keeps-text", {
+      "package.json": `{\n\t// what this is\n\t"name": "x", /* keep */\n\t"scripts": {\n\t\t"check": "echo mine" // mine\n\t}\n}\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+    expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(
+      `{\n\t// what this is\n\t"name": "x", /* keep */\n\t"scripts": {\n\t\t"check": "echo mine", // mine\n\t\t"typecheck": "bun --check"\n\t},\n\t"module": "index.ts",\n\t"type": "module",\n\t"private": true,\n\t"devDependencies": {\n\t\t"@types/bun": "latest"\n\t},\n\t"peerDependencies": {\n\t\t"typescript": "^7"\n\t}\n}\n`,
+    );
+  }, 30_000);
+
   test("bun init writes a typecheck script that is the type checker where `bun check` is a script", async () => {
     await using temp = tempDir("bun-init-check-script", {
       "package.json": JSON.stringify({ name: "x", scripts: { check: "echo mine" } }),

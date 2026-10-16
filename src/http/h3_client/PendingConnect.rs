@@ -135,7 +135,12 @@ impl PendingConnect {
         // `session_mut` centralises the backref upgrade.
         let s = session_mut(session);
         s.closed = true;
-        if let Some(ctx) = super::client_context::ClientContext::get() {
+        // `ClientContext::connect` unregisters the session before calling this
+        // on its error path and still holds the context borrowed, so only
+        // borrow the context when there is something to unregister.
+        if s.registry_index != u32::MAX
+            && let Some(ctx) = super::client_context::ClientContext::get()
+        {
             super::client_context::ClientContext::as_mut(ctx).unregister(s);
         }
         while !s.pending.is_empty() {

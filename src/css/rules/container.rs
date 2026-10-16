@@ -150,6 +150,7 @@ impl QueryCondition for StyleQuery {
         // The arena gets re-threaded as part of the crate-wide `'bump`
         // lifetime work (see css_parser.rs).
         let opts = css::ParserOptions::default(None);
+        // A `url()` here resolves like one in a declaration (esbuild keeps it raw, then the query stops matching).
         let feature = StyleQuery::Feature(Box::new(Property::parse(property_id, input, &opts)?));
         let _ = input.try_parse(css::css_parser::parse_important);
         Ok(feature)

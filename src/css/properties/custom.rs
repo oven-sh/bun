@@ -607,7 +607,7 @@ impl TokenList {
                             }
                         }
                     }
-                    if strings::eql(*f, b"url") {
+                    if strings::eql(*f, b"url") && !input.flags.at_rule_prelude_tokens() {
                         input.reset(&state);
                         tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
                         last_is_delim = false;
@@ -656,7 +656,7 @@ impl TokenList {
                     last_is_whitespace = false;
                     continue;
                 }
-                Token::UnquotedUrl(_) => {
+                Token::UnquotedUrl(_) if !input.flags.at_rule_prelude_tokens() => {
                     input.reset(&state);
                     tokens.push(TokenOrValue::Url(ext::url_parse(input)?));
                     last_is_delim = false;

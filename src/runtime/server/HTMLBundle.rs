@@ -363,8 +363,7 @@ impl Route {
         self.server.get().expect("server set").on_request_complete();
     }
 
-    /// Reports the failure on stderr in every mode. Only the HTTP response
-    /// hides the reason in production, see `resume_pending_responses`.
+    /// Production hides the reason in the response only, see `resume_pending_responses`.
     fn set_build_error(&self, log: Log) {
         // `Log::print` takes the process-global writer as a `*mut io::Writer` through `IntoLogWrite`.
         let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();

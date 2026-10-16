@@ -1635,25 +1635,59 @@ describe("Bun.Image", () => {
         expect(pngPlte(last).entries).toEqual(pngPlte(first).entries);
       });
 
-      // The table's hash is fixed: the top bits of key * 0x9E3779B1. Every
-      // colour below hashes to the same few slots at every table size, so
+      // The table's hash is fixed: the top bits of key * 0x9E3779B1 give
+      // the slot. `withHash(x)` is the colour whose product is x.
+      const withHash = (() => {
+        // 0x9E3779B1 * inverse == 1 (mod 2^32)
+        let inverse = 1;
+        for (let i = 0; i < 5; i++) inverse = Math.imul(inverse, 2 - Math.imul(0x9e3779b1, inverse));
+        return (x: number): Rgba => {
+          const key = Math.imul(x, inverse);
+          return [key & 255, (key >> 8) & 255, (key >> 16) & 255, key >>> 24];
+        };
+      })();
+
+      // Every colour below has the same few slots at every table size, so
       // each one walks past all the others: about 2 billion slots for this
       // image. Probes may pass 4 slots per pixel in all. Past that budget
       // the colours are counted by sorting.
       test("colours that collide in the table do not stall the encode", async () => {
-        // 0x9E3779B1 * inverse == 1 (mod 2^32)
-        let inverse = 1;
-        for (let i = 0; i < 5; i++) inverse = Math.imul(inverse, 2 - Math.imul(0x9e3779b1, inverse));
-        expect(Math.imul(0x9e3779b1, inverse) >>> 0).toBe(1);
+        const [r, g, b, a] = withHash(1);
+        expect(Math.imul(0x9e3779b1, r | (g << 8) | (b << 16) | (a << 24)) >>> 0).toBe(1);
         const [w, h] = [512, 256];
-        const src = makePng(w, h, (x, y) => {
-          // Two pixels per colour: 65,536 colours, as many as the table takes.
-          const key = Math.imul(0x5a5a0000 | ((y * w + x) >> 1), inverse);
-          return [key & 255, (key >> 8) & 255, (key >> 16) & 255, key >>> 24];
-        });
+        // Two pixels per colour: 65,536 colours, as many as the table takes.
+        const src = makePng(w, h, (x, y) => withHash(0x5a5a0000 | ((y * w + x) >> 1)));
         const out = await new Bun.Image(src).png({ palette: true, colors: 64 }).bytes();
         expect(pngPlte(out).entries).toHaveLength(64);
         expect(await new Bun.Image(out).metadata()).toEqual({ width: w, height: h, format: "png" });
+      });
+
+      // `first` has the last slot. 300 more colours with that slot follow
+      // it round to slots 0, 1, 2 and so on. The last pixels are new colours
+      // that make the table grow. The colours move in slot order, so `first`
+      // is now behind the 300. The count stayed within the probe budget.
+      // The pixels do not: every `first` walks the chain. Past the budget
+      // each run is searched in the palette, with the same answer.
+      test("pixels are written as a nearest entry after their probes pass the budget", async () => {
+        const [w, h] = [256, 160];
+        const [chain, fill] = [300, 211];
+        const alternating = w * h - chain - fill;
+        const [first, other] = [withHash(0xffffc000), withHash(0x40000000)];
+        const rgba = new Uint8Array(w * h * 4);
+        for (let i = 0; i < w * h; i++) {
+          const afterChain = i - alternating - chain;
+          const colour =
+            i < alternating
+              ? [first, other][i % 2]
+              : afterChain < 0
+                ? withHash(0xffffc000 | (i - alternating + 1))
+                : withHash((afterChain + 1) * 0x01000000 + 0x00800000);
+          rgba.set(colour, i * 4);
+        }
+        const out = await new Bun.Image(pngFromRgba(w, h, rgba)).png({ palette: true, colors: 16 }).bytes();
+        const palette = pngPlte(out).entries;
+        expect(palette).toHaveLength(16);
+        expect(countNotNearest(rgba, palette, (await decode(out)).data)).toBe(0);
       });
     });
 

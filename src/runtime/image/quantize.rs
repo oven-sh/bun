@@ -490,7 +490,9 @@ fn cut(bins: &[Bin], ch: usize, total: &Moments) -> Option<u8> {
             left_sq += l * l;
             right_sq += r * r;
         }
-        let score = left_sq / u128::from(left.n) + right_sq / u128::from(total.n - left.n);
+        // 32 fraction bits (< 2^115 in all): whole units tie in a box of a few pixels.
+        let score =
+            (left_sq << 32) / u128::from(left.n) + (right_sq << 32) / u128::from(total.n - left.n);
         if best.is_none_or(|(s, _)| score > s) {
             best = Some((score, u8::try_from(value + 1).expect("int cast")));
         }

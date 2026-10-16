@@ -62,7 +62,11 @@ impl ColorScheme {
             count += 1;
         }
 
-        (count != 0).then_some((res, has_custom_ident))
+        // `only` needs a scheme beside it.
+        if count == 0 || (res == ColorScheme::ONLY && !has_custom_ident) {
+            return None;
+        }
+        Some((res, has_custom_ident))
     }
 
     // A value with a `<custom-ident>` stays `Property::Unparsed`: parcel-bundler/lightningcss#1152
@@ -108,9 +112,6 @@ impl ColorScheme {
         }
 
         if self.contains(ColorScheme::ONLY) {
-            if !self.intersects(ColorScheme::LIGHT | ColorScheme::DARK) {
-                return dest.write_str("only");
-            }
             dest.write_str(" only")?;
         }
 

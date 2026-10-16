@@ -7851,6 +7851,7 @@ describe("css tests", () => {
     // No scheme to select, or a value that browsers reject: no variables.
     for (const value of [
       "foo bar",
+      "only",
       "only foo",
       "light normal",
       "light only dark",

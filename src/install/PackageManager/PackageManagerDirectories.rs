@@ -1168,7 +1168,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 cached_tarball_folder_name(manager, integrity, resolution, patch_hash);
             if cache_dir_subpath.is_empty() {
                 Output::err_generic(
-                    "the lockfile does not record an integrity for <b>{}@{}<r>, run <cyan>bun install<r> first",
+                    "the lockfile has no integrity hash for <b>{}@{}<r>, run <cyan>bun install<r> first",
                     (
                         bun_fmt::s(name),
                         bun_fmt::for_terminal(resolution.fmt(

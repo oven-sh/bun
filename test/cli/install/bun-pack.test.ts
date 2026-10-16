@@ -1340,7 +1340,7 @@ test.concurrent.skipIf(!isLinux)("a file that gets shorter while it is read fail
   await truncate(bundle, 1024);
 
   const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(err).toBe('error: file got shorter while it was packed: "bundle.js"\n');
+  expect(err).toBe('error: file shrank while it was being packed: "bundle.js"\n');
   expect(await sortedNames(dir)).toEqual(["bundle.js", "package.json"]);
   expect(exitCode).toBe(1);
 });

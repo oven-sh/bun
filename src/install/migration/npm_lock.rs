@@ -257,7 +257,7 @@ pub(super) fn migrate_packages(
                 entry.map_or(bun_ast::Loc::EMPTY, |&j| {
                     packages_properties[j as usize].key_loc
                 }),
-                format_args!("no integrity, and the configured registry has none for this version"),
+                format_args!("this entry has no integrity hash, and the configured registry has none for this version either"),
             );
             return Err(Error::InvalidNPMLockfile);
         }
@@ -275,7 +275,7 @@ pub(super) fn migrate_packages(
             Some(source),
             entry.key_loc,
             format_args!(
-                "no integrity: downloaded from the configured registry, not from {}{}",
+                "this entry has no integrity hash, so it is downloaded from the configured registry instead of {}{}",
                 bun_core::fmt::for_terminal(bstr::BStr::new(url)),
                 more,
             ),
@@ -288,7 +288,7 @@ pub(super) fn migrate_packages(
             migrator.patched,
             lockfile_name,
         );
-        bun_core::note!("bun patch \\<pkg\\>");
+        bun_core::note!("recreate them with bun patch \\<pkg\\>");
     }
 
     #[cfg(debug_assertions)]
@@ -1125,7 +1125,7 @@ impl<'a> Migrator<'a> {
             let _ = write!(list, " and {} more", count - 5);
         }
         bun_core::warn!(
-            "skipped {} {} {} not depended on by any package: {}",
+            "skipped {} {} {} that no package depends on: {}",
             count,
             self.lockfile_name,
             if count == 1 { "entry" } else { "entries" },

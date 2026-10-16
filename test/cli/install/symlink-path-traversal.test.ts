@@ -1988,7 +1988,7 @@ describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", (
     "other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
   };
   const NOT_CLEARED = (folder: string) =>
-    `warn: ${folder} is a symlink, so what another linker installed there was not removed\n` +
+    `warn: ${folder} is a symlink, so the packages that another linker installed there were not removed\n` +
     "note: remove the link and run 'bun install'";
 
   async function plant(root: string, files = MINE) {

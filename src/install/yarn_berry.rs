@@ -300,7 +300,7 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
                 let Some(in_catalog) = catalogs.get(group).and_then(|g| g.get(&**name)) else {
                     bail!(
                         log,
-                        "packageExtensions \"{}\" in .yarnrc.yml adds \"{}@{}\", and the catalog has no \"{}\"",
+                        "packageExtensions \"{}\" in .yarnrc.yml adds \"{}@{}\", but the catalog has no \"{}\"",
                         shown(&extension.key),
                         shown(name),
                         shown(range),
@@ -1339,7 +1339,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                         if !accepted {
                             bail!(
                                 log,
-                                "\"{}\" is in several dependency groups of \"{}\"; yarn installs the range \"{}\" for all of them, and \"{}\" does not accept what yarn.lock pins for it",
+                                "\"{}\" is in several dependency groups of \"{}\". yarn uses the range \"{}\" for all of them, but the version in yarn.lock does not satisfy \"{}\"",
                                 shown(name),
                                 shown(owner_name),
                                 shown(literal),
@@ -1390,7 +1390,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             if !url.is_empty() && !lockfile::bun_lock::url_is_under_registry(url, &configured) {
                 bail!(
                     log,
-                    "yarn.lock fetches \"{}@{}\" from {}, which is not under the registry bun is configured with ({}); the integrity of a package comes from that registry",
+                    "yarn.lock fetches \"{}@{}\" from {}, which is not on the registry that bun is configured to use ({}), so bun cannot get its integrity hash",
                     shown(name),
                     res.fmt(string_bytes!(this), bun_core::fmt::PathSep::Posix),
                     shown(url),

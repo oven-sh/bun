@@ -2507,7 +2507,7 @@ fn add_archive_entry(
     // zeros, so a file that shrank has to be caught here.
     if (written as i64) < stat.st_size as i64 {
         Output::err_generic(
-            "file got shorter while it was packed: \"{}\"",
+            "file shrank while it was being packed: \"{}\"",
             format_args!("{}", bun_fmt::escape_control_chars(filename.as_bytes())),
         );
         Global::crash();

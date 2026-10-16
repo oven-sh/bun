@@ -948,7 +948,7 @@ fn warn_latest_names_no_version(
         None,
         bun_ast::Loc::EMPTY,
         format_args!(
-            "the \"latest\" tag of \"{}\" names no published version, using {}",
+            "the \"latest\" tag of \"{}\" points to a version that is not published, using {}",
             bun_fmt::escape_control_chars(manifest.name()),
             instead.version.fmt(&manifest.string_buf),
         ),

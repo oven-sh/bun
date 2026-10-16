@@ -166,15 +166,15 @@ pub(crate) fn parse_patch_source<'a>(
             Box::new([bun_ast::range_data(
                 None,
                 Range::NONE,
-                "make the patch again with bun patch, or delete these lines",
+                "recreate the patch with bun patch, or delete these lines",
             )]),
             format_args!(
-                "{} was left out: {}",
+                "{} was skipped: {}",
                 subject,
                 if section.is_binary {
-                    "the file is binary, and the patch does not have it"
+                    "the file is binary, and the patch does not include its content"
                 } else {
-                    "it has no change that bun can apply"
+                    "it contains no change that bun can apply"
                 },
             ),
         );
@@ -222,7 +222,7 @@ fn crash_on_missing_patch(
         }
         if let Some(committed) = committed {
             bun_core::note!(
-                "{} was written, and the install did not run",
+                "{} was written, but the install did not run",
                 bun_core::fmt::escape_control_chars(committed.as_bytes()),
             );
         }

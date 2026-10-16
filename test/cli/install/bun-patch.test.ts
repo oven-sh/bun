@@ -1220,7 +1220,7 @@ describe.concurrent("a step that fails leaves node_modules as it was", () => {
         dir,
         env,
         `error: GET ${emptyRegistry.url.href}no-deps/-/no-deps-1.0.0.tgz - 404\n` +
-          "error: no-deps is not in the cache, and getting it again failed\n",
+          "error: no-deps is not in the cache, and downloading it again failed\n",
         ...command.split(" ").slice(2),
         "no-deps",
       );
@@ -1747,7 +1747,7 @@ describe.concurrent("committing a package with every edit undone removes its pat
       await bunOk(dir, env, "patch", "no-deps@1.0.0");
       rmSync(join(dir, "node_modules", "no-deps", "added.js"));
       expect(await bunOk(dir, env, "patch", "--commit", "no-deps@1.0.0")).toContain(
-        "Removed the patch for no-deps@1.0.0 (another package uses patches/shared.patch)\n",
+        "Removed the patch for no-deps@1.0.0 (kept patches/shared.patch, which another package also uses)\n",
       );
       expect((await readPackageJson()).patchedDependencies).toEqual({ "no-deps@2.0.0": otherPath });
       expect(await readdirSorted(join(dir, "patches"))).toEqual(["shared.patch"]);
@@ -1860,7 +1860,9 @@ describe.concurrent("a package with install scripts", () => {
     expect(stdout).toContain(patchMessage("uses-what-bin", "node_modules/uses-what-bin"));
     expect(stdout.split("\n").filter(line => line.includes("scripts"))).toEqual(
       trusted
-        ? ["The install scripts of uses-what-bin have not run on this copy. They run again at bun patch --commit."]
+        ? [
+            "The install scripts of uses-what-bin have not run on this copy. They run again when you run bun patch --commit.",
+          ]
         : [],
     );
     expect(written()).toBe(false);
@@ -2068,7 +2070,7 @@ describe.concurrent("bun patch keeps the node_modules of the package", () => {
 // workspace with a directory, and read a folder that an installed package ships from the project root.
 describe.concurrent("a folder as the target", () => {
   const refusal = (name: string, what: string) =>
-    `error: cannot patch ${name}: it is ${what}, and bun install never applies a patch to one\n` +
+    `error: cannot patch ${name}: it is ${what}, which bun install never patches\n` +
     "note: edit the folder itself instead\n";
 
   // bundled-file@2.0.0 declares "bundled-file-dep": "file:vendor/bundled-file-dep" and ships that folder.
@@ -2187,7 +2189,7 @@ describe.concurrent("a folder as the target", () => {
 // `bun patch` used to delete the bundled copy and copy the registry's package in its place.
 describe.concurrent("a bundled dependency as the target", () => {
   const refusal = (name: string) =>
-    `error: cannot patch ${name}: bun does not install it, it ships inside the tarball of a package that bundles it\n` +
+    `error: cannot patch ${name}: it is a bundled dependency, which ships inside another package's tarball\n` +
     "note: patch the package that bundles it, and edit it in that package's node_modules\n";
 
   // A file that only the bundled copy has shows whether `bun patch` replaced the folder.
@@ -3100,7 +3102,7 @@ describe.concurrent("isolated linker with the global store", () => {
     expect(stdout).toContain(patchMessage("no-deps", "node_modules/no-deps"));
     // one-fixed-dep is in the store, where its link to no-deps cannot lead to the copy.
     expect(stdout).toContain(
-      "The packages that depend on no-deps load it from the global store. They see your changes after bun patch --commit.\n",
+      "The packages that depend on no-deps load it from the global store. They will see your changes after bun patch --commit.\n",
     );
     await Bun.write(join(dir, "node_modules", "no-deps", "index.js"), patched);
     await bunOk(dir, env, "install");
@@ -3150,7 +3152,7 @@ describe.concurrent("isolated linker with the global store", () => {
   const refusal = (folder: string, commit: boolean) =>
     `error: ${folder} resolves into the global store, which other projects share; refusing to patch through it\n` +
     (commit
-      ? "note: run bun patch on the package first, it makes the copy to edit\n"
+      ? "note: run bun patch on the package first. It creates the copy that you edit\n"
       : "note: set globalStore = false under [install] in bunfig.toml, run bun install and patch the package again\n");
 
   // None of these has a link of the project's own as its last part.
@@ -3569,7 +3571,7 @@ describe.concurrent("a patch file that is not there", () => {
       // The file of no-deps is still lost. That stops the install, not the commit.
       const first = await runBun(dir, env, "patch", "--commit", "basic-1");
       expect(first.stderr).toContain("error: Couldn't find patch file: 'patches/no-deps@1.0.0.patch'\n");
-      expect(first.stderr).toEndWith("note: patches/basic-1@1.0.0.patch was written, and the install did not run\n");
+      expect(first.stderr).toEndWith("note: patches/basic-1@1.0.0.patch was written, but the install did not run\n");
       expect(await state()).toEqual(bothPatched);
       expect(await readdirSorted(join(dir, "patches"))).toEqual(["basic-1@1.0.0.patch"]);
       expect(first.exitCode).toBe(1);

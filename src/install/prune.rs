@@ -2125,7 +2125,7 @@ impl LinkedNodeModules {
         }
         for folder in folders {
             bun_core::warn!(
-                "{} is a symlink, so what another linker installed there was not removed",
+                "{} is a symlink, so the packages that another linker installed there were not removed",
                 native_path(folder)
             );
         }

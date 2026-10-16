@@ -844,6 +844,25 @@ describe.concurrent("backoff", () => {
     });
   });
 
+  // With a wait, the first retry would come after a minute.
+  it("does not wait before it retries when nothing listens at the registry's address", async () => {
+    const closed = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+    await closed.stop(true);
+    using dir = project(closed.url.href);
+    const { err, exitCode } = await install(String(dir), { BUN_CONFIG_HTTP_RETRY_BACKOFF: "60000" });
+    // macOS refuses a closed loopback port in connect(2) itself, which has its own name.
+    expect(err).toMatch(/^error: (ConnectionRefused|FailedToOpenSocket) downloading package manifest bar$/m);
+    expect(exitCode).toBe(1);
+  });
+
+  it("says that it waits once the wait is long", async () => {
+    using registry = flakyRegistry((kind, hit) => (kind === "manifest" && hit === 1 ? busy(503) : undefined));
+    using dir = project(registry.url);
+    const { err, exitCode } = await install(String(dir), { BUN_CONFIG_HTTP_RETRY_BACKOFF: "1000" });
+    expect(err).toMatch(/^warn: a request to the registry failed\. Retry 1\/5 in \d+ms\.\.\.$/m);
+    expect(exitCode).toBe(0);
+  });
+
   // The next handshake would see the same certificate.
   it("does not retry a certificate it refuses", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("unreachable") });

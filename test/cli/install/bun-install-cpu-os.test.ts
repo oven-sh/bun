@@ -598,7 +598,7 @@ describe("bun install --cpu and --os flags", () => {
     (await readdirSorted(join(package_dir, "node_modules"))).filter(name => !name.startsWith("."));
 
   // A dependency the project requires does not go missing without a word. Optional ones stay quiet, and so do the
-  // dependencies of dependencies, which the project cannot do anything about (--verbose lists them).
+  // dependencies of dependencies, which the project cannot do anything about (run with --verbose to list them).
   it.each(["hoisted", "isolated"])(
     "warns about each direct required dependency left out for the target platform (%s linker)",
     async linker => {

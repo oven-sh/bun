@@ -2252,9 +2252,7 @@ require("child_process").execFileSync(process.env.BUN_EXE, ["install"], { cwd: p
       const env = { ...box.env, npm_config_registry: await unreachable() };
       expect(await box.run(["tool"], { env })).toMatchObject({
         stdout: ran,
-        stderr: expect.stringContaining(
-          "warn: Could not reach the registry. Using the installation of tool that bunx has.",
-        ),
+        stderr: expect.stringContaining("warn: Could not reach the registry. Using the cached copy of tool."),
         exitCode: 0,
       });
       expect(markers()).toEqual([true, true]);
@@ -2298,9 +2296,7 @@ require("child_process").execFileSync(process.env.BUN_EXE, ["install"], { cwd: p
       });
     });
 
-    const usesItsTree = expect.stringContaining(
-      "warn: Could not reach the registry. Using the installation of tool that bunx has.",
-    );
+    const usesItsTree = expect.stringContaining("warn: Could not reach the registry. Using the cached copy of tool.");
 
     // These say nothing about the package. There is a tree to run, so bunx does not wait for a second attempt.
     it.concurrent.each([500, 502, 503, 504, 429, 408])(

@@ -933,9 +933,7 @@ impl PackageManager {
         log.add_error_fmt(
             Some(&bun_ast::Source::init_path_string(path, b"")),
             bun_ast::Loc::EMPTY,
-            format_args!(
-                "This file cannot be read, and bun does not {verb} packages without its settings"
-            ),
+            format_args!("bun will not {verb} packages because it cannot read this file"),
         );
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         Global::crash();
@@ -2335,7 +2333,7 @@ fn exit_if_started_in_member_outside(
     };
     let real_path = bun_core::fmt::escape_control_chars(real_path);
     Output::err_generic(
-        "workspace \"{}\" is a link to \"{}\", which is outside the project, so nothing was changed",
+        "workspace \"{}\" is a symlink to \"{}\", which is outside the project, so nothing was changed",
         (bun_core::fmt::escape_control_chars(path), &real_path),
     );
     bun_core::note!(

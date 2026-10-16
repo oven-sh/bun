@@ -4569,7 +4569,7 @@ describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", (
           expect({ args, err }).toEqual({
             args,
             err:
-              `error: workspace "packages/w" is a link to "${real}", which is outside the project, so nothing was changed\n` +
+              `error: workspace "packages/w" is a symlink to "${real}", which is outside the project, so nothing was changed\n` +
               `note: run the command in "${real}" to use that folder as its own project\n`,
           });
           expect({ args, contents: contentsOf(ctx.packageDir) }).toEqual({ args, contents: before });

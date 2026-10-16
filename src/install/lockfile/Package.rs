@@ -669,7 +669,7 @@ impl Package<u64> {
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
-                                "Skipped a dependency of {}@{} that names no package (\"{}\" in \"{}\")",
+                                "Skipped a dependency of {}@{} that has no package name (\"{}\" in \"{}\")",
                                 bun_core::fmt::escape_control_chars(manifest.name()),
                                 version.fmt(&manifest.string_buf),
                                 bun_core::fmt::escape_control_chars(declared),
@@ -1746,7 +1746,7 @@ impl Package<u64> {
                     source,
                     key_loc,
                     format_args!(
-                        "Skipped a dependency that names no package (\"{}\" in \"{}\")",
+                        "Skipped a dependency that has no package name (\"{}\" in \"{}\")",
                         bun_core::fmt::escape_control_chars(version),
                         bstr::BStr::new(group.prop),
                     ),

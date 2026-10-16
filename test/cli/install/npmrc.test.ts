@@ -5297,8 +5297,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
 
   /** The end of the stderr of a command that installs, or publishes. */
   const refusal = (path: string, verb = "install") =>
-    `error: This file cannot be read, and bun does not ${verb} packages without its settings\n` +
-    `    at <dir>/${path}\n`;
+    `error: bun will not ${verb} packages because it cannot read this file\n` + `    at <dir>/${path}\n`;
   const withoutDir = (stderr: string) => stderr.replace(/(?<= at )\S+\/(?=(project|home|xdg)\/)/, "<dir>/");
 
   /** `prepare` for a file that is there and cannot be read. */

@@ -1468,7 +1468,7 @@ catalogs:
           ],
         }),
       error: () =>
-        `error: yarn.lock fetches "what-bin@1.0.0" from http://127.0.0.1:${testRegistry.port}/what-bin/-/what-bin-1.0.0.tgz, which is not under the registry bun is configured with (${testRegistry.registryUrl()}); the integrity of a package comes from that registry`,
+        `error: yarn.lock fetches "what-bin@1.0.0" from http://127.0.0.1:${testRegistry.port}/what-bin/-/what-bin-1.0.0.tgz, which is not on the registry that bun is configured to use (${testRegistry.registryUrl()}), so bun cannot get its integrity hash`,
     },
     {
       name: "an __archiveUrl on the registry .yarnrc.yml names, which is not bun's",
@@ -1648,7 +1648,7 @@ catalogs:
       manifest: { dependencies: { "no-deps": "^2.0.0" }, devDependencies: { "no-deps": "^1.0.0" } },
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
       error: () =>
-        `error: "no-deps" is in several dependency groups of "berry-reject"; yarn installs the range "^1.0.0" for all of them, and "^2.0.0" does not accept what yarn.lock pins for it`,
+        `error: "no-deps" is in several dependency groups of "berry-reject". yarn uses the range "^1.0.0" for all of them, but the version in yarn.lock does not satisfy "^2.0.0"`,
     },
   ];
   for (const { name, manifest, files, lock, error } of rejected) {

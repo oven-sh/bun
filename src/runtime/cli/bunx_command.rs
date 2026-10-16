@@ -1179,7 +1179,7 @@ impl BunxCommand {
                         // without a network connection would first wait for another failed attempt.
                         write_package_json(package_json);
                         bun_core::warn!(
-                            "Could not reach the registry. Using the installation of <b>{}<r> that bunx has.",
+                            "Could not reach the registry. Using the cached copy of <b>{}<r>.",
                             BStr::new(&update_request.name),
                         );
                     }

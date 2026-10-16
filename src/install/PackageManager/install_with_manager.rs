@@ -655,9 +655,13 @@ pub fn install_with_manager(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
-                "{} deprecated {} among the dependencies of dependencies (--verbose lists them)",
+                "{} transitive {} deprecated (run with --verbose to list them)",
                 count,
-                if count == 1 { "version" } else { "versions" },
+                if count == 1 {
+                    "dependency is"
+                } else {
+                    "dependencies are"
+                },
             ),
         ),
     }
@@ -2457,7 +2461,7 @@ fn reresolve_rows_outside_overrides(
                 "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
             );
             bun_core::note!(
-                "{} has {}, and {} in package.json asks for {}",
+                "{} has {}, but {} in package.json asks for {}",
                 lockfile_name,
                 bstr::BStr::new(&crate::dedupe::label(lockfile, first_package)),
                 field,

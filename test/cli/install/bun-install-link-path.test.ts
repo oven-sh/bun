@@ -493,9 +493,7 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
     expect((await bun(root, ["install"])).exitCode).toBe(0);
 
     const { err, exitCode } = await bun(root, ["patch", "dep"]);
-    expect(err).toContain(
-      "error: cannot patch dep: it is a link: dependency, and bun install never applies a patch to one",
-    );
+    expect(err).toContain("error: cannot patch dep: it is a link: dependency, which bun install never patches");
     expectLinkTo(join(root, "project", "node_modules", "dep"), join(root, "project", "vendor", "dep"));
     expect(exitCode).not.toBe(0);
   });

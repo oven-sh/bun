@@ -753,7 +753,7 @@ describe("bun pm cache unpack", () => {
 
     const { out, err, code } = await bun(box, ["pm", "cache", "unpack", box.at("some.pack")]);
 
-    expect(err).toContain("warn: left 2 incomplete cache entries as found");
+    expect(err).toContain("warn: did not touch 2 incomplete cache entries");
     expect(err).not.toContain("error:");
     expect(out).toContain("Unpacked 9 packages (2 new, 5 already cached, ");
     expect(untouched(snapshot(box.cache, true))).toEqual(before);
@@ -993,7 +993,7 @@ describe("bun pm cache pack", () => {
     rmSync(join(box.cache, partial, "package.json"));
 
     let r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
-    expect(r.err).toContain("warn: left out 2 packages the cache does not have");
+    expect(r.err).toContain("warn: skipped 2 packages that the cache does not have");
     expect(r.out).toContain(`Packed ${installedCount - 2} packages (`);
     expect(r.code).toBe(0);
 
@@ -1048,7 +1048,9 @@ describe("bun pm cache pack", () => {
       ]) {
         symlinkSync(target, join(entry, path));
         const r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
-        expect(r.err).toContain("error: bun pm cache pack failed: cache entry has a symlink that may lead out of it: ");
+        expect(r.err).toContain(
+          "error: bun pm cache pack failed: cache entry has a symlink that may point outside of it: ",
+        );
         expect(r.err).toContain(`/${path}"`);
         expect(r.out).toBe("");
         expect(r.code).toBe(1);

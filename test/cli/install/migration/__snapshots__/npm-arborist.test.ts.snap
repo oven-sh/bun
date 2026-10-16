@@ -3072,7 +3072,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures dep-missing-resolved 1`] = `
-"warn: skipped 1 package-lock.json entry not depended on by any package: "node_modules/tap/node_modules/completely-broken-witaf"
+"warn: skipped 1 package-lock.json entry that no package depends on: "node_modules/tap/node_modules/completely-broken-witaf"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -3663,7 +3663,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures edit-package-json--removed 1`] = `
-"warn: skipped 1 package-lock.json entry not depended on by any package: "node_modules/semver"
+"warn: skipped 1 package-lock.json entry that no package depends on: "node_modules/semver"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
@@ -3797,7 +3797,7 @@ bun install --frozen-lockfile exit code: 0
 exports[`package-lock.json migration fixes arborist fixtures external-link--root 1`] = `
 "warn: skipped "p" from package-lock.json: transitive folder dependency "../m/node_modules/p" is outside the project
 warn: skipped "b" from package-lock.json: transitive folder dependency "../a/node_modules/b" is outside the project
-warn: skipped 3 package-lock.json entries not depended on by any package: "../a", "../i", "../m"
+warn: skipped 3 package-lock.json entries that no package depends on: "../a", "../i", "../m"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -3908,7 +3908,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures minimist-git-metadep 1`] = `
-"warn: skipped 1 package-lock.json entry not depended on by any package: "node_modules/@isaacs/no-thing-here"
+"warn: skipped 1 package-lock.json entry that no package depends on: "node_modules/@isaacs/no-thing-here"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -4113,7 +4113,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures pnpm 1`] = `
-"warn: skipped 4 package-lock.json entries not depended on by any package: "node_modules/.pnpm/registry.npmjs.org/@scope/x/1.0.0", "node_modules/.pnpm/registry.npmjs.org/a/1.0.0", "node_modules/.pnpm/registry.npmjs.org/b/1.0.0", "node_modules/.pnpm/registry.npmjs.org/c/1.0.0"
+"warn: skipped 4 package-lock.json entries that no package depends on: "node_modules/.pnpm/registry.npmjs.org/@scope/x/1.0.0", "node_modules/.pnpm/registry.npmjs.org/a/1.0.0", "node_modules/.pnpm/registry.npmjs.org/b/1.0.0", "node_modules/.pnpm/registry.npmjs.org/c/1.0.0"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
@@ -4511,7 +4511,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures two-bundled-deps 1`] = `
-"warn: skipped 415 package-lock.json entries not depended on by any package: "node_modules/@babel/code-frame", "node_modules/@babel/generator", "node_modules/@babel/generator/node_modules/source-map", "node_modules/@babel/helper-function-name", "node_modules/@babel/helper-get-function-arity" and 410 more
+"warn: skipped 415 package-lock.json entries that no package depends on: "node_modules/@babel/code-frame", "node_modules/@babel/generator", "node_modules/@babel/generator/node_modules/source-map", "node_modules/@babel/helper-function-name", "node_modules/@babel/helper-get-function-arity" and 410 more
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
@@ -4661,7 +4661,7 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures workspaces-need-update 1`] = `
-"warn: skipped 4 package-lock.json entries not depended on by any package: "a", "b", "node_modules/once", "node_modules/wrappy"
+"warn: skipped 4 package-lock.json entries that no package depends on: "a", "b", "node_modules/once", "node_modules/wrappy"
 migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0

@@ -30,6 +30,9 @@ impl RetryQueue {
     }
 }
 
+/// A wait of this length or more is announced. The default backoff gets this long at the third retry.
+const ANNOUNCED_WAIT: Duration = Duration::from_millis(750);
+
 /// Returns the wait. `attempt` is 1 for the first retry.
 pub(crate) fn retry(
     manager: &mut PackageManager,
@@ -42,13 +45,24 @@ pub(crate) fn retry(
         enqueue::enqueue_network_task(manager, task);
         return Duration::ZERO;
     }
-    // Rate limits hit many requests at once: one line per wave.
-    if asked && manager.retry_queue.len() == 0 && manager.options.log_level != LogLevel::Silent {
-        Output::flush();
-        manager.progress.log(format_args!(
-            "warn: the registry asked to wait {}s before the next attempt\n",
-            wait.as_secs(),
-        ));
+    // An outage hits many requests at once, so a wait is announced once per wave. `--verbose` has a
+    // line for each request.
+    if manager.retry_queue.len() == 0 && manager.options.log_level != LogLevel::Silent {
+        if asked {
+            Output::flush();
+            manager.progress.log(format_args!(
+                "warn: the registry asked to wait {}s before the next attempt\n",
+                wait.as_secs(),
+            ));
+        } else if wait >= ANNOUNCED_WAIT && !manager.options.log_level.is_verbose() {
+            Output::flush();
+            manager.progress.log(format_args!(
+                "warn: a request to the registry failed. Retry {}/{} in {}ms...\n",
+                attempt,
+                manager.options.max_retry_count,
+                wait.as_millis(),
+            ));
+        }
     }
 
     let due = Instant::now() + wait;
@@ -85,8 +99,7 @@ impl PackageManager {
                         "the registry asked to wait {}s before the next attempt",
                         wait.as_secs(),
                     );
-                } else if wait >= Duration::from_millis(750) {
-                    // A long wait is announced. The default backoff gets this long at the third retry.
+                } else if wait >= ANNOUNCED_WAIT {
                     bun_core::warn!(
                         "the request to the registry failed. Retry {}/{} in {}ms...",
                         attempt,
@@ -114,6 +127,18 @@ fn wait_before(
         .unwrap_or(250);
     // Under auto-install the JS thread is blocked on this request.
     if base_ms == 0 || manager.options.runtime_auto_install {
+        return (Duration::ZERO, false);
+    }
+    // A busy server needs time, so waiting helps. Nothing listening at the address, or a name that
+    // does not resolve, mostly means being offline, and then the install should fail right away.
+    if matches!(
+        response.fail,
+        Some(
+            bun_http::Error::ConnectionRefused
+                | bun_http::Error::DNSResolveFailed
+                | bun_http::Error::FailedToOpenSocket
+        )
+    ) {
         return (Duration::ZERO, false);
     }
     let wait = backoff(base_ms, attempt);

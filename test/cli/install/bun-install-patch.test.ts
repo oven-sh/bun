@@ -557,8 +557,8 @@ new file mode 100644
   // Older versions of bun, and other tools, wrote these into patch files that install: a binary
   // change without its content, a copy or colors because of the user's git config. They did
   // nothing then, without a word. isEvenPatch() has 8 lines.
-  const binary = "was left out: the file is binary, and the patch does not have it";
-  const nothing = "was left out: it has no change that bun can apply";
+  const binary = "was skipped: the file is binary, and the patch does not include its content";
+  const nothing = "was skipped: it contains no change that bun can apply";
 
   /** What is printed about line `line` of `patch`: the line, a caret, the message and the place. */
   const diagnostic = (kind: "warn" | "error", patch: string, line: number, message: string) =>
@@ -620,7 +620,7 @@ new file mode 100644
         const { stderr, exitCode } = await runBun(dir, env, "install", `--linker=${linker}`);
         expect(stderr).toContain(
           diagnostic("warn", patch, line, message) +
-            "\n\nnote: make the patch again with bun patch, or delete these lines\n",
+            "\n\nnote: recreate the patch with bun patch, or delete these lines\n",
         );
         expect(stderr.match(/^(warn|error): /gm)).toEqual(["warn: "]);
         // The rest of the patch is applied.

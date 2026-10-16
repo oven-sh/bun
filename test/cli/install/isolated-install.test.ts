@@ -1086,13 +1086,13 @@ describe.skipIf(isWindows).each(["isolated", "hoisted"] as const)("links in a fi
     symlinkSync(join(String(outside), "secret.txt"), join(folder, "secret.txt"));
     const warnings = (err: string) => err.split("\n").filter(line => line.startsWith("warn:"));
     const leftOut = [
-      "warn: the link vendor/lib/secret.txt is not installed: it leads out of the project",
-      "warn: the link vendor/lib/shared is not installed: a link to a directory has to be relative and stay in the folder",
+      "warn: the link vendor/lib/secret.txt was skipped: it points outside the project",
+      "warn: the link vendor/lib/shared was skipped: a symlink to a directory must be relative and stay inside the folder",
     ];
 
     const first = await runBunInstall(installEnv(packageDir), packageDir, { allowWarnings: true });
     expect(warnings(first.err)).toEqual([
-      "warn: the link vendor/lib/gone is not installed: it leads nowhere",
+      "warn: the link vendor/lib/gone was skipped: its target does not exist",
       ...leftOut,
     ]);
     expect(await readdirSorted(copy)).toEqual(["package.json"]);

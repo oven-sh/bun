@@ -44,7 +44,8 @@ pub(crate) fn read_trusted_dependencies(pm: &mut PackageManager) -> Option<Trust
     }
 }
 
-const CANNOT_TRUST: &str = "cannot be trusted by name: declare it in your package.json";
+const CANNOT_TRUST: &str =
+    "cannot be trusted by name: add it as a dependency in your own package.json";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
@@ -414,7 +415,7 @@ impl TrustCommand {
 
         if pm.options.enable.frozen_lockfile() && !pm.options.dry_run {
             Output::err_generic(
-                "the lockfile is frozen, and bun pm trust records the packages in package.json and the lockfile",
+                "the lockfile is frozen, but bun pm trust has to update package.json and the lockfile",
                 (),
             );
             Global::crash();

@@ -3189,7 +3189,7 @@ describe.concurrent("yarn.lock entries the migration cannot build a resolution f
     const { stderr, exitCode } = await run(String(dir), registry.url.href, "install", "--lockfile-only");
 
     expect(stderr).toContain(brokenWarning);
-    expect(stderr).toContain('warn: yarn.lock has no entry for "broken@^1.0.0"; bun resolves it');
+    expect(stderr).toContain('warn: yarn.lock has no entry for "broken@^1.0.0", so bun resolved it itself');
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
@@ -3512,14 +3512,14 @@ test("dependencies with no entry in yarn.lock are reported", async () => {
   using stale = project({ a: "^1.0.0", b: "^1.0.0", c: "^1.0.0" }, ["a"]);
   const several = await migrate(String(stale));
   expect(several.stderr).toContain(
-    'warn: yarn.lock has no entry for "b@^1.0.0" and 1 more (--verbose lists them); bun resolves them',
+    'warn: yarn.lock has no entry for "b@^1.0.0" and 1 more (run with --verbose to list them), so bun resolved them itself',
   );
   expect(several.stderr).toContain("migrated lockfile from yarn.lock");
   expect(several.exitCode).toBe(0);
 
   const verbose = await migrate(String(stale), "--verbose");
-  expect(verbose.stderr).toContain('warn: yarn.lock has no entry for "b@^1.0.0"; bun resolves it');
-  expect(verbose.stderr).toContain('warn: yarn.lock has no entry for "c@^1.0.0"; bun resolves it');
+  expect(verbose.stderr).toContain('warn: yarn.lock has no entry for "b@^1.0.0", so bun resolved it itself');
+  expect(verbose.stderr).toContain('warn: yarn.lock has no entry for "c@^1.0.0", so bun resolved it itself');
 
   // a range can be a tarball URL with credentials
   const token = "npm_" + Buffer.alloc(36, "A").toString();

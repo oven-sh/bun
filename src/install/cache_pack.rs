@@ -491,7 +491,7 @@ fn pack_entry(
                         || !bun_libarchive::is_symlink_target_safe(rel, target, &mut join_buf)
                     {
                         return Err(refuse(
-                            "cache entry has a symlink that may lead out of it",
+                            "cache entry has a symlink that may point outside of it",
                             rel,
                         ));
                     }
@@ -604,7 +604,7 @@ impl Reader {
         if self.start == self.end {
             let n = sys::pread(self.file.handle(), &mut self.buf, self.pos as i64)?;
             if n == 0 {
-                return Err(self.refuse("the pack is cut short", b""));
+                return Err(self.refuse("the pack file is truncated", b""));
             }
             self.start = 0;
             self.end = n;
@@ -671,7 +671,7 @@ impl Reader {
         self.read_exact(&mut size)?;
         let size = u64::from_le_bytes(size);
         if size > self.len.saturating_sub(self.pos) {
-            return Err(self.refuse("the pack is cut short", &path[..path_len]));
+            return Err(self.refuse("the pack file is truncated", &path[..path_len]));
         }
         Ok(Header {
             kind,
@@ -1035,7 +1035,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
             }
             if summary.missing > 0 {
                 bun_core::pretty_errorln!(
-                    "<r><yellow>warn<r>: left out {} package{} the cache does not have (run <b>bun install<r> first)",
+                    "<r><yellow>warn<r>: skipped {} package{} that the cache does not have (run <b>bun install<r> first)",
                     summary.missing,
                     plural(summary.missing.into()),
                 );
@@ -1057,7 +1057,7 @@ pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
             }
             if summary.incomplete > 0 {
                 bun_core::pretty_errorln!(
-                    "<r><yellow>warn<r>: left {} incomplete cache entr{} as found; <b>bun install<r> downloads {} again",
+                    "<r><yellow>warn<r>: did not touch {} incomplete cache entr{}. <b>bun install<r> will download {} again",
                     summary.incomplete,
                     if summary.incomplete == 1 { "y" } else { "ies" },
                     if summary.incomplete == 1 { "it" } else { "them" },

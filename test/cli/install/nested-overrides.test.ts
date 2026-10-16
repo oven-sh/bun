@@ -2263,7 +2263,7 @@ one-range-dep@1.0.0:
 
       const frozen = await install(dir, "--frozen-lockfile");
       expect(diagnostics(frozen.err)).toContain(
-        `note: ${name} has no-deps@1.1.0, and overrides in package.json asks for 1.0.0`,
+        `note: ${name} has no-deps@1.1.0, but overrides in package.json asks for 1.0.0`,
       );
       expect(frozen.exitCode).toBe(1);
 

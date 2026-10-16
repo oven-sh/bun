@@ -2760,7 +2760,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
     registry.requests.length = 0;
     // The registry may have the version by now, so it is asked before another version stands in.
     expect(await install(String(dir))).toEqual({
-      messages: ['warn: the "latest" tag of "fresh-pkg" names no published version, using 1.0.1'],
+      messages: ['warn: the "latest" tag of "fresh-pkg" points to a version that is not published, using 1.0.1'],
       exitCode: 0,
       locked: "fresh-pkg@1.0.1",
     });

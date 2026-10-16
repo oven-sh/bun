@@ -1885,7 +1885,7 @@ describe("the trusted set", () => {
     const runsEnv = (ctx: TestCtx) => ({ SCRIPT_RUNS: join(ctx.packageDir, "runs.txt") });
     const runs = async (ctx: TestCtx) =>
       ((await textOf(ctx.packageDir, "runs.txt")) ?? "").split(/\s+/).filter(Boolean).sort();
-    const cannot = "cannot be trusted by name: declare it in your package.json";
+    const cannot = "cannot be trusted by name: add it as a dependency in your own package.json";
 
     test.concurrent.each([
       ["pm", "trust", "sharp", "--omit", "dev"],

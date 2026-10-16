@@ -118,7 +118,7 @@ test("install does not abort on an unresolved optional dependency with an empty 
   expect(await Bun.file(join(String(dir), "node_modules", "top", "package.json")).exists()).toBe(true);
   // The dependency is left out with a warning, and the registry is not asked for it.
   expect(stderr).toContain(
-    'warn: Skipped a dependency of top@1.0.0 that names no package ("1.0.0" in "optionalDependencies")',
+    'warn: Skipped a dependency of top@1.0.0 that has no package name ("1.0.0" in "optionalDependencies")',
   );
   expect(emptyNameManifestRequested).toBe(false);
   // Assert the exit code last for a more useful message if a behavioral check fails.

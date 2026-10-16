@@ -670,7 +670,9 @@ describe.concurrent("a package-lock.json entry of another host without an integr
     using dir = project(registry, "1.0.0", url);
 
     const { stderr, exitCode } = await install(dir);
-    expect(stderr).toContain(`warn: no integrity: downloaded from the configured registry, not from ${url}\n`);
+    expect(stderr).toContain(
+      `warn: this entry has no integrity hash, so it is downloaded from the configured registry instead of ${url}\n`,
+    );
     expect(stderr).toContain("package-lock.json:1:");
     expect(stderr).toContain("migrated lockfile from package-lock.json");
     expect(nodeModules(dir)).toEqual({ "a-dep": "1.0.1", "no-deps": "1.0.0" });
@@ -770,7 +772,8 @@ describe.concurrent("a package-lock.json entry of another host without an integr
   test("is not migrated when the registry does not have that version", async () => {
     using registry = localRegistry();
     using other = otherHost();
-    const refused = "error: no integrity, and the configured registry has none for this version\n";
+    const refused =
+      "error: this entry has no integrity hash, and the configured registry has none for this version either\n";
 
     using migrated = project(registry, "1.0.5", `${other.url}no-deps-1.0.5.tgz`);
     const migrate = await run(migrated, "pm", "migrate");
@@ -1677,7 +1680,9 @@ describe("package-lock.json migration fixes", () => {
     });
 
     const { stderr, exitCode, lock } = await migrate(dir);
-    expect(stderr).toContain('warn: skipped npm patches for "arg" from package-lock.json\nnote: bun patch <pkg>\n');
+    expect(stderr).toContain(
+      'warn: skipped npm patches for "arg" from package-lock.json\nnote: recreate them with bun patch <pkg>\n',
+    );
     expect(lock.overrides).toStrictEqual({ arg: "4.1.3" });
     expect(lock.packages.arg[0]).toBe("arg@4.1.3");
     expect(exitCode).toBe(0);
@@ -1754,9 +1759,7 @@ describe("package-lock.json migration fixes", () => {
     expect(stderr).toContain(
       'skipped "b" from package-lock.json: transitive folder dependency "../a/node_modules/b" is outside the project',
     );
-    expect(stderr).toContain(
-      'skipped 3 package-lock.json entries not depended on by any package: "../a", "../i", "../m"',
-    );
+    expect(stderr).toContain('skipped 3 package-lock.json entries that no package depends on: "../a", "../i", "../m"');
     const registry = (name: string) => `${OFFLINE_REGISTRY}${name}/-/${name}-1.0.0.tgz`;
     // Root-declared out-of-tree folders (j, o, o2) and registry entries under them (k) migrate; transitive out-of-tree folders (p, b) are skipped along with their edges and their own subtree (c).
     expect(
@@ -2250,7 +2253,7 @@ describe("package-lock.json migration fixes", () => {
     fs.rmSync(join(String(dir), "b"), { recursive: true });
 
     const { stderr, exitCode, lock } = await migrate(dir);
-    expect(stderr).toContain('skipped 1 package-lock.json entry not depended on by any package: "b"');
+    expect(stderr).toContain('skipped 1 package-lock.json entry that no package depends on: "b"');
     expect(exitCode).toBe(0);
     expect(lock.workspaces).toStrictEqual({
       "": { name: "workspace-simple" },
@@ -2964,7 +2967,9 @@ describe("package-lock.json migration fixes", () => {
       }),
     });
     const { stderr, lock } = await migrate(dir);
-    expect(stderr).toContain('warn: skipped npm patches for "x", "y" from package-lock.json\nnote: bun patch <pkg>\n');
+    expect(stderr).toContain(
+      'warn: skipped npm patches for "x", "y" from package-lock.json\nnote: recreate them with bun patch <pkg>\n',
+    );
     expect(firstsOf(lock.packages)).toStrictEqual(["x@1.0.0", "y@1.0.0"]);
     expect(lock.patchedDependencies).toBeUndefined();
     await frozen(dir);
@@ -3131,9 +3136,11 @@ describe("package-lock.json migration fixes", () => {
       });
       const { stderr, lock } = await migrate(dir);
       expect(stderr).toContain(
-        'warn: skipped 1 npm-shrinkwrap.json entry not depended on by any package: "node_modules/y"\n',
+        'warn: skipped 1 npm-shrinkwrap.json entry that no package depends on: "node_modules/y"\n',
       );
-      expect(stderr).toContain('warn: skipped npm patches for "x" from npm-shrinkwrap.json\nnote: bun patch <pkg>\n');
+      expect(stderr).toContain(
+        'warn: skipped npm patches for "x" from npm-shrinkwrap.json\nnote: recreate them with bun patch <pkg>\n',
+      );
       expect(stderr).not.toContain("package-lock.json");
       expect(firstsOf(lock.packages)).toStrictEqual(["x@1.0.0"]);
     });

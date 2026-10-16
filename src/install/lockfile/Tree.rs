@@ -874,7 +874,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             (bun_core::fmt::for_terminal(bstr::BStr::new(&cycle)),),
         );
         bun_core::note!(
-            "each of these needs the next one nested inside it, without end. \"overrides\" in package.json can keep a single version of one of them"
+            "each of these needs its own nested copy of the next one, which never ends. Use \"overrides\" in package.json to pin one of them to a single version"
         );
         bun_core::Global::crash();
     }

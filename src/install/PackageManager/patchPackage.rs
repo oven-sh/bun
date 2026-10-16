@@ -97,18 +97,19 @@ impl PatchCommitResult {
         let is_shared = (lockfile.patched_dependencies.iter()).any(|(key, other)| {
             *key != own_key && resolve_links(lockfile.str(&other.path)).ok() == real
         });
-        let outcome = if is_shared {
-            "another package uses"
+        let (outcome, why) = if is_shared {
+            ("kept", ", which another package also uses")
         } else if is_file_of_the_project(&path) && sys::unlink(&path).is_ok() {
-            "deleted"
+            ("deleted", "")
         } else {
-            "did not delete"
+            ("did not delete", "")
         };
         bun_core::pretty!(
-            "\nRemoved the patch for <b>{}<r> ({} {})\n",
+            "\nRemoved the patch for <b>{}<r> ({} {}{})\n",
             bun_fmt::for_terminal(bstr::BStr::new(&self.patch_key)),
             outcome,
             bun_fmt::escape_control_chars(&self.patchfile_path),
+            why,
         );
     }
 }
@@ -263,7 +264,7 @@ fn resolve_target(
 
     if !pkg.resolution.tag.can_enqueue_install_task() {
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: cannot patch <b>{}<r>: it is {}, and bun install never applies a patch to one",
+            "<r><red>error<r>: cannot patch <b>{}<r>: it is {}, which bun install never patches",
             bstr::BStr::new(lockfile.str(&pkg.name)),
             match pkg.resolution.tag {
                 ResolutionTag::Folder => "a file: folder",
@@ -292,7 +293,7 @@ fn resolve_target(
 
 fn crash_bundled(name: &[u8]) -> ! {
     bun_core::pretty_errorln!(
-        "<r><red>error<r>: cannot patch <b>{}<r>: bun does not install it, it ships inside the tarball of a package that bundles it",
+        "<r><red>error<r>: cannot patch <b>{}<r>: it is a bundled dependency, which ships inside another package's tarball",
         bstr::BStr::new(name),
     );
     bun_core::note!(
@@ -612,7 +613,7 @@ pub fn do_patch_commit(
         &bun_ast::Source::init_path_string(&patch_filename[..], &patchfile_contents[..]),
     ) {
         bun_core::note!(
-            "nothing was written: <b>{}<r>, package.json and the lockfile are as they were",
+            "nothing was changed: <b>{}<r>, package.json and the lockfile are untouched",
             bstr::BStr::new(&target.folder),
         );
         Global::crash();
@@ -1057,13 +1058,13 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     );
     if !is_loaded {
         bun_core::pretty!(
-            "\nThe packages that depend on <b>{}<r> load it from the global store. They see your changes after <cyan>bun patch --commit<r>.\n",
+            "\nThe packages that depend on <b>{}<r> load it from the global store. They will see your changes after <cyan>bun patch --commit<r>.\n",
             bstr::BStr::new(&pkg_name),
         );
     }
     if has_trusted_scripts(manager, &pkg, &pkg_name, &folder) {
         bun_core::pretty!(
-            "\nThe install scripts of <b>{}<r> have not run on this copy. They run again at <cyan>bun patch --commit<r>.\n",
+            "\nThe install scripts of <b>{}<r> have not run on this copy. They run again when you run <cyan>bun patch --commit<r>.\n",
             bstr::BStr::new(&pkg_name),
         );
     }
@@ -1124,7 +1125,7 @@ fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
             .log_mut()
             .print(std::ptr::from_mut(Output::error_writer()));
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: <b>{}<r> is not in the cache, and getting it again failed",
+            "<r><red>error<r>: <b>{}<r> is not in the cache, and downloading it again failed",
             bstr::BStr::new(&name),
         );
         Global::crash();
@@ -1277,7 +1278,9 @@ fn real_folder(cache_path: &[u8], folder: &[u8], replaces_folder: bool) -> Vec<u
             "set <b>globalStore = false<r> under <b>[install]<r> in bunfig.toml, run <cyan>bun install<r> and patch the package again"
         );
     } else {
-        bun_core::note!("run <cyan>bun patch<r> on the package first, it makes the copy to edit");
+        bun_core::note!(
+            "run <cyan>bun patch<r> on the package first. It creates the copy that you edit"
+        );
     }
     Global::crash();
 }

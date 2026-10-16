@@ -700,7 +700,7 @@ describe.concurrent("bun-install", () => {
           const fresh = await install(ctx);
           expect(fresh.err).not.toContain("error:");
           expect(fresh.warnings).toEqual([
-            `warn: Skipped a dependency of holder@1.0.0 that names no package ("${Object.values(declared)[0]}" in "${group}")`,
+            `warn: Skipped a dependency of holder@1.0.0 that has no package name ("${Object.values(declared)[0]}" in "${group}")`,
           ]);
           expect(urls.sort()).toEqual(["holder", "holder-1.0.0.tgz"]);
           expect(fresh.exitCode).toBe(0);
@@ -738,8 +738,8 @@ describe.concurrent("bun-install", () => {
         const { err, warnings, exitCode } = await install(ctx);
         expect(err).not.toContain("error:");
         expect(warnings.sort()).toEqual([
-          'warn: Skipped a dependency that names no package ("1.0.0" in "dependencies")',
-          'warn: Skipped a dependency that names no package ("npm:@1.0.0" in "dependencies")',
+          'warn: Skipped a dependency that has no package name ("1.0.0" in "dependencies")',
+          'warn: Skipped a dependency that has no package name ("npm:@1.0.0" in "dependencies")',
         ]);
         expect(urls).toEqual([]);
         expect(await exists(join(ctx.package_dir, "node_modules", "packed", "package.json"))).toBeTrue();
@@ -17201,7 +17201,7 @@ describe.concurrent("deprecated versions", () => {
     using registry = serveManifests(packages);
     using dir = project({ dependencies: { parent: "1.0.0" } });
     expect(await resolve(String(dir), registry)).toEqual([
-      "warn: 2 deprecated versions among the dependencies of dependencies (--verbose lists them)",
+      "warn: 2 transitive dependencies are deprecated (run with --verbose to list them)",
     ]);
 
     await rm(join(String(dir), "bun.lock"));
@@ -17221,7 +17221,7 @@ describe.concurrent("deprecated versions", () => {
       },
     );
     expect((await resolve(String(dir), registry)).sort()).toEqual([
-      "warn: 1 deprecated version among the dependencies of dependencies (--verbose lists them)",
+      "warn: 1 transitive dependency is deprecated (run with --verbose to list them)",
       "warn: deprecated old@1.1.0: use new",
     ]);
   });

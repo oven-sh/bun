@@ -596,14 +596,14 @@ pub(crate) fn warn_unlocked_dependencies(
         let range = bun_core::fmt::for_terminal(bstr::BStr::new(dep.version.literal.slice(buf)));
         if count == 1 || log_level.is_verbose() {
             bun_core::warn!(
-                "{} has no entry for \"{}@{}\"; bun resolves it",
+                "{} has no entry for \"{}@{}\", so bun resolved it itself",
                 lockfile_name,
                 name,
                 range
             );
         } else {
             bun_core::warn!(
-                "{} has no entry for \"{}@{}\" and {} more (--verbose lists them); bun resolves them",
+                "{} has no entry for \"{}@{}\" and {} more (run with --verbose to list them), so bun resolved them itself",
                 lockfile_name,
                 name,
                 range,

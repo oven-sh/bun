@@ -1066,7 +1066,9 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     expect(fromYarn.err).toContain(
       `warn: skipped "direct@${masked(nowhere)}" from yarn.lock: missing "resolved" field\n`,
     );
-    expect(fromYarn.err).toContain(`warn: yarn.lock has no entry for "direct@${masked(nowhere)}"; bun resolves it\n`);
+    expect(fromYarn.err).toContain(
+      `warn: yarn.lock has no entry for "direct@${masked(nowhere)}", so bun resolved it itself\n`,
+    );
     expectNoSecrets(fromYarn.out, fromYarn.err);
     expect(fromYarn.exitCode).toBe(0);
 

@@ -1270,7 +1270,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
       notes[name] = JSON.parse(stdout).notes;
     }
     const disagree = (name: string, field: string, registry: string, file: string) =>
-      `the registry and the package.json of ${name}@2.0.0 disagree on ${field}: ${registry} vs ${file} (bun install goes by the registry)`;
+      `the registry and the package.json of ${name}@2.0.0 disagree on ${field}: ${registry} vs ${file} (bun install uses the registry's value)`;
     expect(notes.respelled.filter(note => note.includes("disagree"))).toEqual([]);
     delete notes.respelled;
     expect(notes).toEqual({

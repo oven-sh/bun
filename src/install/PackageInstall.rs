@@ -641,7 +641,7 @@ fn lay_links_below(
                 if let Some(root) = root.get()
                     && let Err(why) = lay_link(root, rel.as_slice(), dir_len, src, dest)
                 {
-                    let text = [rel.as_slice(), &b" is not installed: "[..], why.as_bytes()];
+                    let text = [rel.as_slice(), &b" was skipped: "[..], why.as_bytes()];
                     left_out.push(text.concat().into_boxed_slice());
                 }
             }
@@ -679,7 +679,7 @@ impl FolderLink {
     /// parent directory, and `rel[dir_len..]` is its name there.
     fn of(paths: &RealPaths, rel: &[u8], dir_len: usize, src: &Dir) -> FolderLink {
         use path::resolve_path::{join_abs_string_buf_z_checked, platform};
-        const NOWHERE: FolderLink = FolderLink::LeftOut("it leads nowhere");
+        const NOWHERE: FolderLink = FolderLink::LeftOut("its target does not exist");
         let root: &[u8] = &paths.folder;
 
         let mut link_buf = path::path_buffer_pool::get();
@@ -712,13 +712,13 @@ impl FolderLink {
         }
         if sys::kind_from_mode(target.st_mode as sys::Mode) != EntryKind::File {
             return FolderLink::LeftOut(if cfg!(windows) {
-                "it leads to a directory"
+                "it points to a directory"
             } else {
-                "a link to a directory has to be relative and stay in the folder"
+                "a symlink to a directory must be relative and stay inside the folder"
             });
         }
         if !in_folder && path_below(&paths.project, real).is_none() {
-            return FolderLink::LeftOut("it leads out of the project");
+            return FolderLink::LeftOut("it points outside the project");
         }
         FolderLink::File(real_z, Box::new(target))
     }
@@ -735,7 +735,7 @@ fn lay_link(
     let _ = dest.delete_tree(name.as_bytes());
     match FolderLink::of(root, rel, dir_len, src) {
         FolderLink::Link(text) => sys::symlinkat(&bun_core::ZBox::from_bytes(&text), dest, name)
-            .map_err(|_| "it could not be created"),
+            .map_err(|_| "the symlink could not be created"),
         FolderLink::File(real, target) => {
             #[cfg(not(windows))]
             {
@@ -765,7 +765,7 @@ fn lay_link(
                     let _ = sys::fchmod(to.handle(), target.st_mode as sys::Mode);
                     sys::copy_file(from.handle(), to.handle())
                 })
-                .map_err(|_| "it could not be copied")
+                .map_err(|_| "its target could not be copied")
         }
         FolderLink::LeftOut(why) => Err(why),
     }

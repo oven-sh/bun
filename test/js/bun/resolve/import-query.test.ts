@@ -371,7 +371,16 @@ test("a module that a Module._extensions hook compiles resolves from its own dir
       const load = Module._extensions[".js"];
       let compiled = 0;
       let copy = false;
+      let paths;
+      let read;
       Module._extensions[".js"] = (module, filename) => {
+        // A hook can read module.paths before the loader reads the file, and can assign it.
+        if (paths === "read") {
+          read = module;
+          module.paths;
+          return load(module, filename);
+        }
+        if (paths === "assign") module.paths = ["/assigned/node_modules", ...module.paths];
         const compile = module._compile;
         module._compile = function (code, file) {
           compiled++;
@@ -385,7 +394,19 @@ test("a module that a Module._extensions hook compiles resolves from its own dir
         const same = await require("./app/a.js?next=/../../decoy/x.js");
         copy = true;
         const copied = await require("./app/a.js?next=/../../decoy/y.js");
-        console.log(JSON.stringify({ compiled, same, copied }));
+        const result = { compiled, same, copied };
+        copy = false;
+        paths = "read";
+        result.pathsRead = await require("./app/a.js?next=/../../decoy/z.js");
+        paths = "assign";
+        result.pathsAssigned = await require("./app/a.js?next=/../../decoy/w.js");
+        // The loader can give a module its source again.
+        read.paths.push("/pushed/node_modules");
+        read.path = "/assigned";
+        read.loaded = false;
+        load(read, read.filename);
+        result.loadedAgain = { path: read.path, lastPath: read.paths.at(-1) };
+        console.log(JSON.stringify(result));
       })();
     `,
   });
@@ -399,7 +420,17 @@ test("a module that a Module._extensions hook compiles resolves from its own dir
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const expected = { required: "app", imported: "app", dirname: "app", modulePath: "app", paths0: "app" };
-  expect(JSON.parse(stdout.trim())).toEqual({ compiled: 3, same: expected, copied: expected });
+  expect(JSON.parse(stdout.trim())).toEqual({
+    compiled: 3,
+    same: expected,
+    copied: expected,
+    // The list that the hook read came from the whole key: the module derives its own list again.
+    pathsRead: expected,
+    // A list that the hook assigned stays, as for any other key.
+    pathsAssigned: { ...expected, paths0: "assigned" },
+    // What JS changed after the first load stays too.
+    loadedAgain: { path: "/assigned", lastPath: "/pushed/node_modules" },
+  });
   expect(exitCode).toBe(0);
 });
 

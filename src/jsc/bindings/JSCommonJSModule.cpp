@@ -639,7 +639,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::
         return JSValue::encode(jsUndefined());
     }
 
-    if (!thisObject->m_paths) {
+    if (!thisObject->paths()) {
         JSValue filename = thisObject->filenamePath(globalObject->vm());
         ASSERT(filename);
         auto filenameWtfStr = filename.toWTFString(globalObject);
@@ -647,11 +647,11 @@ JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::
         BunString filenameStr = Bun::toString(filenameWtfStr);
         JSValue paths = JSValue::decode(Resolver__nodeModulePathsJSValue(&filenameStr, globalObject, true));
         RETURN_IF_EXCEPTION(scope, {});
-        thisObject->m_paths.set(globalObject->vm(), thisObject, paths);
+        thisObject->setDerivedPaths(globalObject->vm(), paths);
         return JSValue::encode(paths);
     }
 
-    return JSValue::encode(thisObject->m_paths.get());
+    return JSValue::encode(thisObject->paths());
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setterChildren,
@@ -738,7 +738,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterPaths,
     if (!thisObject)
         return false;
 
-    thisObject->m_paths.set(globalObject->vm(), thisObject, JSValue::decode(value));
+    thisObject->setPaths(globalObject->vm(), JSValue::decode(value));
     return true;
 }
 
@@ -1009,9 +1009,18 @@ void JSCommonJSModule::setLoadedPath(JSC::VM& vm, const WTF::String& path)
     if (key->find([](char16_t character) { return character == '/' || character == '\\'; }, pathLength + 1) == WTF::notFound)
         return;
 
+    // The loader can give a module its source again: what JS changed since the first time stays.
+    if (m_filenamePathLength == pathLength)
+        return;
+
     m_filenamePathLength = pathLength;
     size_t index = path.reverseFind(PLATFORM_SEP);
     m_dirname.set(vm, this, index != WTF::notFound ? jsSubstringOfResolved(vm, filename, 0, index) : jsEmptyString(vm));
+    // A list that the getter derived before this is the whole key's.
+    if (m_pathsAreDerived) {
+        m_paths.clear();
+        m_pathsAreDerived = false;
+    }
 }
 
 JSValue JSCommonJSModule::loadedPath(JSC::VM& vm)

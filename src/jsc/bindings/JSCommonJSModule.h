@@ -52,8 +52,12 @@ private:
 public:
     // Initialized eagerly; can be overridden.
     mutable JSC::WriteBarrier<JSString> m_dirname;
-    // Initialized lazily; can be overridden.
+
+private:
+    // Initialized lazily through setDerivedPaths(), which setLoadedPath() can undo; overridden through setPaths().
     mutable JSC::WriteBarrier<Unknown> m_paths;
+
+public:
     // Children must always be tracked in case the script decides to access
     // `module.children`. In that case, all children may also need their
     // children fields to exist, recursively. To avoid allocating a *JSArray for
@@ -87,6 +91,8 @@ public:
     bool ignoreESModuleAnnotation { false };
 
 private:
+    // m_paths is the list that the getter derived from filenamePath(), not one that JS assigned.
+    bool m_pathsAreDerived { false };
     // Length of `<path>` in m_filename when that is the loader's key `<path>?<query>` with a separator in the query, else 0.
     uint32_t m_filenamePathLength { 0 };
     JSValue loadedPath(JSC::VM&);
@@ -153,6 +159,17 @@ public:
     JSValue filenamePath(JSC::VM& vm, JSValue filename) { return m_filenamePathLength && isFilename(filename) ? loadedPath(vm) : filename; }
     // The loader read this module from `path`.
     void setLoadedPath(JSC::VM&, const WTF::String& path);
+    JSValue paths() { return m_paths.get(); }
+    void setPaths(JSC::VM& vm, JSValue paths)
+    {
+        m_paths.set(vm, this, paths);
+        m_pathsAreDerived = false;
+    }
+    void setDerivedPaths(JSC::VM& vm, JSValue paths)
+    {
+        m_paths.set(vm, this, paths);
+        m_pathsAreDerived = true;
+    }
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
 

@@ -205,6 +205,10 @@ impl Resend {
     }
 }
 
+// One request is one block of the allocator's 3584-byte size class: a field that takes it
+// past that is paid for by every S3 request.
+const _: () = assert!(core::mem::size_of::<S3HttpSimpleTask>() <= 3584);
+
 bun_jsc::impl_abort_handle_owner!(S3HttpSimpleTask, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ its response has not
     // run); `http` is initialised before the task is armed.

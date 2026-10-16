@@ -3824,10 +3824,6 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
     /// When the inspector is enabled, we want to generate an inline sourcemap.
     /// And, for now, we also store it in `source_mappings` like normal.
     /// This is hideously expensive memory-wise...
-    ///
-    /// The module's path is not appended as a `//# sourceURL=` comment. The
-    /// source provider already has it as `sourceURL()`, and a line break in
-    /// the path ends the comment, so the rest of the path runs as code.
     fn on_source_map_chunk(
         &mut self,
         chunk: bun_sourcemap::Chunk,

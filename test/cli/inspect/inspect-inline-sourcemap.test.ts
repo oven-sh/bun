@@ -105,74 +105,114 @@ test("--inspect inline sourcemap sources[0] is a valid path under cwd", async ()
   expect(map.sourcesContent[0]).toBe(source);
 });
 
-// A Windows file name cannot contain LF or CR.
-test.concurrent.skipIf(isWindows).each([
-  ["LF", "\n"],
-  ["CR", "\r"],
-])("--inspect does not run the part of a module path after a %s as code", async (_, lineBreak) => {
-  // A line break ends a `//` comment. If the runtime writes the path into one,
-  // the rest of the file name is a statement that sets a global. It is one
-  // `var` statement, which has no completion value, so the function wrapper
-  // of the CommonJS module stays the result of its script.
-  const name = (id: string, ext: string) =>
-    `${id}${lineBreak}var x = (globalThis.${id} = 'ran'), y = { ${ext}: 1 }, z = y.${ext}`;
-  const esm = name("esm", "mjs");
-  const cjs = name("cjs", "cjs");
-  using dir = tempDir("inspect-path-line-break", {
-    [esm]: "export default 'esm';",
-    [cjs]: "module.exports = 'cjs';",
-    "main.mjs": `
-      import a from ${JSON.stringify("./" + esm)};
-      import { createRequire } from "node:module";
-      const b = createRequire(import.meta.url)(${JSON.stringify("./" + cjs)});
-      console.log(JSON.stringify({ loaded: [a, b], ran: { esm: globalThis.esm, cjs: globalThis.cjs } }));
-    `,
-  });
+// A line break ends a `//` comment. If the runtime writes a module's path into
+// one, the text after the line break is a statement that sets a global. It is
+// one `var` statement, which has no completion value, so the function wrapper
+// of a CommonJS module stays the result of its script.
+const nameWithCode = (id: string, lineBreak: string, ext: string) =>
+  `${id}${lineBreak}var x = (globalThis.${id} = 'ran'), y = { ${ext}: 1 }, z = y.${ext}`;
 
+async function runMain(cwd: string, ...args: string[]) {
   await using proc = spawn({
-    cmd: [bunExe(), "--inspect=127.0.0.1:0", "main.mjs"],
+    cmd: [bunExe(), ...args],
     env: bunEnv,
-    cwd: String(dir),
+    cwd,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, exitCode };
+}
 
-  expect({ stdout, exitCode }).toEqual({ stdout: '{"loaded":["esm","cjs"],"ran":{}}\n', exitCode: 0 });
+// A Windows file name cannot contain LF or CR.
+test.concurrent.skipIf(isWindows).each([
+  ["LF", "--inspect", "\n"],
+  ["CR", "--inspect", "\r"],
+  ["LF", "inspector.open()", "\n"],
+  ["CR", "inspector.open()", "\r"],
+])("%s in a module path does not run the rest of the path as code under %s", async (_, entryPoint, lineBreak) => {
+  const esm = nameWithCode("esm", lineBreak, "mjs");
+  const cjs = nameWithCode("cjs", lineBreak, "cjs");
+  using dir = tempDir("inspect-path-line-break", {
+    [esm]: "export default 'esm';",
+    [cjs]: "module.exports = 'cjs';",
+    "main.mjs": `
+      import inspector from "node:inspector";
+      import { createRequire } from "node:module";
+      const open = process.argv[2] === "open";
+      if (open) inspector.open(0, "127.0.0.1", false);
+      const { default: a } = await import(${JSON.stringify("./" + esm)});
+      const b = createRequire(import.meta.url)(${JSON.stringify("./" + cjs)});
+      console.log(JSON.stringify({ loaded: [a, b], ran: { esm: globalThis.esm, cjs: globalThis.cjs } }));
+      if (open) inspector.close();
+    `,
+  });
+
+  const args = entryPoint === "--inspect" ? ["--inspect=127.0.0.1:0", "main.mjs"] : ["main.mjs", "open"];
+  expect(await runMain(String(dir), ...args)).toEqual({ stdout: '{"loaded":["esm","cjs"],"ran":{}}\n', exitCode: 0 });
 });
 
+// A module that a plugin serves has no file, so these cases run on every platform.
+test.concurrent.each([
+  ["LF", "\n"],
+  ["CR", "\r"],
+])("%s in a plugin module id does not run the rest of the id as code under --inspect", async (_, lineBreak) => {
+  const viaModule = "virtual:" + nameWithCode("viaModule", lineBreak, "js");
+  const viaOnLoad = "ns:" + nameWithCode("viaOnLoad", lineBreak, "js");
+  using dir = tempDir("inspect-plugin-id-line-break", {
+    "main.mjs": `
+      Bun.plugin({
+        name: "module ids with a line break",
+        setup(build) {
+          build.module(${JSON.stringify(viaModule)}, () => ({ contents: "export default 'module';", loader: "js" }));
+          build.onResolve({ filter: /.*/, namespace: "ns" }, ({ path }) => ({ path, namespace: "ns" }));
+          build.onLoad({ filter: /.*/, namespace: "ns" }, () => ({ contents: "export default 'onLoad';", loader: "js" }));
+        },
+      });
+      const { default: a } = await import(${JSON.stringify(viaModule)});
+      const { default: b } = await import(${JSON.stringify(viaOnLoad)});
+      console.log(JSON.stringify({ loaded: [a, b], ran: { viaModule: globalThis.viaModule, viaOnLoad: globalThis.viaOnLoad } }));
+    `,
+  });
+
+  expect(await runMain(String(dir), "--inspect=127.0.0.1:0", "main.mjs")).toEqual({
+    stdout: '{"loaded":["module","onLoad"],"ran":{}}\n',
+    exitCode: 0,
+  });
+});
+
+// The non-ASCII names below have no space, quote or 0xA0 byte in UTF-8 (as in
+// `à` or `根`). JSC discards a `//# sourceURL=` value that has one, and these
+// tests would then pass with the comment back in place.
 test.concurrent("--inspect reports the path and position of a frame in a non-ASCII directory", async () => {
   using dir = tempDir("inspect-non-ascii-path", {
     "sub-é-中/target.mjs": "\nconsole.log(new Error('x').stack.split('\\n')[1]);\n",
   });
   const target = join("sub-é-中", "target.mjs");
 
-  await using proc = spawn({
-    cmd: [bunExe(), "--inspect=127.0.0.1:0", target],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
+  const { stdout, exitCode } = await runMain(String(dir), "--inspect=127.0.0.1:0", target);
   expect(stdout.trimEnd()).toEndWith(target + ":2:17");
   expect(exitCode).toBe(0);
 });
 
 // https://github.com/oven-sh/bun/issues/15035
-test.concurrent("--inspect-wait binds a breakpoint set by URL in a non-ASCII directory", async () => {
+// Not concurrent: when a test times out, bun:test kills its child processes only
+// if it runs alone, and this inspectee waits for a debugger.
+test.each([
+  ["directory", "script_español/index.js", "script_español[\\\\/]index\\.js$"],
+  ["file name", "ñ.ts", "[\\\\/]ñ\\.ts$"],
+])("--inspect-wait binds a breakpoint set by URL for a non-ASCII %s", async (_, file, urlRegex) => {
   using dir = tempDir("inspect-non-ascii-breakpoint", {
-    "script_español/index.js": 'console.log("1");\nconsole.log("2");\nconsole.log("3");\nprocess.exit(0);\n',
+    [file]: 'console.log("1");\nconsole.log("2");\nconsole.log("3");\nprocess.exit(0);\n',
   });
   const cwd = fs.realpathSync(String(dir));
 
-  await using session = await inspect(cwd, join("script_español", "index.js"));
+  await using session = await inspect(cwd, join(file));
   await Promise.all([session.send("Inspector.enable"), session.send("Debugger.enable")]);
   await session.send("Debugger.setBreakpointsActive", { active: true });
   // An editor sets its breakpoints before the script is parsed. `urlRegex` keeps
   // the test independent of how the platform spells the temporary directory.
-  await session.send("Debugger.setBreakpointByUrl", { urlRegex: "script_español[\\\\/]index\\.js$", lineNumber: 1 });
+  await session.send("Debugger.setBreakpointByUrl", { urlRegex, lineNumber: 1 });
   const paused = session.event("Debugger.paused");
   session.send("Inspector.initialized").catch(() => {});
 

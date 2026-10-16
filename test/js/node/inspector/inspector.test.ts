@@ -1071,6 +1071,72 @@ test("Debugger.scriptParsed reports isModule and scriptLanguage from JSC's scrip
   ]);
 });
 
+// https://github.com/oven-sh/bun/issues/15035
+// The fixture is its own CDP client. It sets the breakpoint after the module is
+// parsed, so the reply lists where the breakpoint resolved.
+const nonAsciiUrlFixture = `
+import inspector from "node:inspector";
+
+inspector.open(0, "127.0.0.1", false);
+const ws = new WebSocket(inspector.url());
+const pending = new Map();
+const scripts = [];
+let nextId = 1;
+ws.onmessage = event => {
+  const message = JSON.parse(event.data);
+  if (message.id) {
+    pending.get(message.id)(message);
+    pending.delete(message.id);
+  } else if (message.method === "Debugger.scriptParsed") {
+    scripts.push(message.params);
+  }
+};
+const send = (method, params) =>
+  new Promise(resolve => {
+    const id = nextId++;
+    pending.set(id, resolve);
+    ws.send(JSON.stringify({ id, method, params }));
+  });
+await new Promise(resolve => (ws.onopen = resolve));
+
+await send("Debugger.enable", {});
+const { url } = await import("./sub-é-中/target.mjs");
+const breakpoint = await send("Debugger.setBreakpointByUrl", { url, lineNumber: 0 });
+inspector.close();
+
+const script = scripts.find(script => script.url.endsWith("/target.mjs"));
+console.log(
+  JSON.stringify({
+    url,
+    scriptParsedUrl: script?.url,
+    breakpointLocations: breakpoint.result.locations.map(({ scriptId, lineNumber }) => ({
+      inTarget: scriptId === script?.scriptId,
+      lineNumber,
+    })),
+  }),
+);
+`;
+
+test("Debugger.scriptParsed gives the file URL of a module in a non-ASCII directory, and a breakpoint set by that URL resolves", async () => {
+  using dir = tempDir("inspector-non-ascii-url", {
+    "fixture.mjs": nonAsciiUrlFixture,
+    "sub-é-中/target.mjs": `export const url = import.meta.url;\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+
+  const { url, ...reported } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(url).toEndWith("/sub-%C3%A9-%E4%B8%AD/target.mjs");
+  expect(reported).toEqual({ scriptParsedUrl: url, breakpointLocations: [{ inTarget: true, lineNumber: 0 }] });
+});
+
 test("disconnect does not clobber a console method reassigned by user code", () => {
   const session = new inspector.Session();
   session.connect();

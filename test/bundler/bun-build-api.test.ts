@@ -967,32 +967,43 @@ describe("Bun.build", () => {
       // Every other object still takes the string overload.
       data[method]("text", { toString: () => "not a Blob" } as any);
       expect(data.get("text")).toBe("not a Blob");
+
+      // With a third argument, a value that holds no Blob is a TypeError.
+      for (const value of ["text", {}, 5, null, undefined, Symbol()]) {
+        for (const fileName of ["app.js", undefined]) {
+          const call = () => data[method]("rejected", value as any, fileName as any);
+          expect(call).toThrow(TypeError);
+          expect(call).toThrow("Expected argument to be a Blob.");
+        }
+      }
+      expect(data.has("rejected")).toBe(false);
     });
   });
 
-  test("the members of Blob.prototype that a BuildArtifact lacks", async () => {
+  test("a BuildArtifact has every member of Blob.prototype that is not listed here", async () => {
     using dir = tempDir("build-artifact-blob-members", { "index.js": "console.log(1);\n" });
     const {
       outputs: [output],
     } = await Bun.build({ entrypoints: [join(String(dir), "index.js")] });
 
-    // A method added to Blob.prototype needs an entry in JSBundler.classes.ts, or a place in this list.
-    const missing = Object.getOwnPropertyNames(Blob.prototype).filter(name => !(name in output));
-    expect(missing.sort()).toEqual([
+    // This list goes away with the delegates when BuildArtifact inherits from Blob (#16374).
+    const absent = [
       // Bun.file()
       "delete",
       "exists",
-      // An output never has a form type, so this could only reject.
-      "formData",
-      // File
-      "lastModified",
-      "name",
-      // Bun.file()
       "stat",
       "unlink",
       "write",
       "writer",
-    ]);
+      // File
+      "lastModified",
+      "name",
+      // An output never has a form type, so this could only reject.
+      "formData",
+    ];
+    const names = Object.getOwnPropertyNames(Blob.prototype);
+    expect(names.filter(name => !(name in output) && !absent.includes(name))).toEqual([]);
+    expect(absent.filter(name => name in output)).toEqual([]);
   });
 
   // test("BuildArtifact with assets", async () => {

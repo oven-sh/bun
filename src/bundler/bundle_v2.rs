@@ -2063,6 +2063,14 @@ pub mod bv2_impl {
         pub(crate) split_require: bool,
         pub(crate) all_exports_kinds: &'a [ExportsKind],
         pub(crate) all_targets: &'a [Target],
+        pub(crate) all_sources: &'a [bun_ast::Source],
+        pub(crate) all_ast_flags: &'a [crate::bundled_ast::Flags],
+        pub(crate) all_module_types: &'a [options::ModuleType],
+        pub(crate) all_parts: &'a [bun_ast::part::List<'a>],
+        pub(crate) all_symbols: &'a [bun_ast::symbol::List<'a>],
+        pub(crate) all_named_imports: &'a [bun_ast::ast_result::NamedImports],
+        pub(crate) all_named_exports: &'a [bun_ast::ast_result::NamedExports],
+        pub(crate) all_dynamic_import_aliases: &'a [bun_ast::ast_result::DynamicImportAliases],
         /// Files which are Server Component Boundaries
         pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
         pub(crate) scb_list: server_component_boundary::Slice<'a>,
@@ -2090,6 +2098,122 @@ pub mod bv2_impl {
 
     impl<'a> ReachableFileVisitor<'a> {
         const MAX_REDIRECTS: usize = 64;
+
+        fn redirect_fate(&self, file: Index) -> RedirectFate {
+            let mut file = file.get() as usize;
+            let mut only_require = true;
+            for _ in 0..=Self::MAX_REDIRECTS {
+                let Some(redirect_id) = get_redirect_id(self.redirects[file]) else {
+                    return if self.is_es_module(file) {
+                        RedirectFate::EsModule {
+                            es_module: file,
+                            only_require,
+                        }
+                    } else {
+                        RedirectFate::Redirect
+                    };
+                };
+                let record = &self.all_import_records[file].as_slice()[redirect_id as usize];
+                // A builtin, or a package that is not bundled.
+                if !record.source_index.is_valid() {
+                    return RedirectFate::Redirect;
+                }
+                only_require &= record.kind == ImportKind::Require;
+                file = record.source_index.get() as usize;
+            }
+            RedirectFate::Cycle
+        }
+
+        /// Whether `require()` of this file is its namespace object, as it is in node for an ES module,
+        /// and not the value of its default export.
+        fn is_es_module(&self, file: usize) -> bool {
+            self.all_exports_kinds[file] == ExportsKind::Esm
+                && !self.all_ast_flags[file]
+                    .contains(crate::bundled_ast::Flags::COMMONJS_LIFTED_TO_ESM)
+                && self.all_loaders[file].is_javascript_like()
+                // A polyfill of a node builtin stands for a CommonJS module.
+                && self.all_sources[file].path.namespace != b"node"
+                // `require()` returns a `module.exports` export in node. The bundled `require()` does
+                // not, so the module's own `default` is the nearer value.
+                && !self.all_named_exports[file].contains(b"module.exports")
+        }
+
+        /// Whether import record `record_index` of `importer` reads the same value from what `file`
+        /// requires as from `file` (see `RedirectFate`).
+        fn links_past(&self, importer: Index, record_index: usize, file: Index) -> bool {
+            let (es_module, only_require) = match self.redirect_fate(file) {
+                RedirectFate::Redirect => return true,
+                RedirectFate::Cycle => return false,
+                RedirectFate::EsModule {
+                    es_module,
+                    only_require,
+                } => (es_module, only_require),
+            };
+            let importer = importer.get() as usize;
+            let record = &self.all_import_records[importer].as_slice()[record_index];
+            use bun_ast::ImportRecordFlags as Flags;
+            let reads_the_same = match record.kind {
+                // Names only: no `default`, and no namespace object as a value.
+                ImportKind::Stmt => {
+                    !record.flags.contains(Flags::CONTAINS_DEFAULT_ALIAS)
+                        && (!record.flags.contains(Flags::CONTAINS_IMPORT_STAR)
+                            || self.is_unwrapped_require(importer, record_index)
+                            || self.reads_names_off_namespace(importer, record_index))
+                }
+                // Every use of the `import()` reads a name off it.
+                ImportKind::Dynamic => self.all_dynamic_import_aliases[importer]
+                    .get(&(record_index as u32))
+                    .is_some_and(|reads| {
+                        !reads
+                            .aliases
+                            .slice()
+                            .iter()
+                            .any(|alias| alias.slice() == b"default")
+                    }),
+                // `require()` returns the same object through `x`. The other kinds read no export.
+                _ => true,
+            };
+            // Outside node mode `__toESM` reads `default` off a module that sets `__esModule`, and the
+            // CommonJS view of an ES module sets it: `default` is the ES module's own, if it has one.
+            reads_the_same
+                || (only_require
+                    && self.all_module_types[importer] != options::ModuleType::Esm
+                    && self.all_named_exports[es_module].contains(b"default"))
+        }
+
+        /// A `require()` that the parser turned into `import * as`.
+        fn is_unwrapped_require(&self, importer: usize, record_index: usize) -> bool {
+            self.all_parts[importer].as_slice().iter().any(|part| {
+                part.tag == bun_ast::PartTag::ImportToConvertFromRequire
+                    && part.stmts.slice().iter().any(|stmt| {
+                        stmt.data.s_import().is_some_and(|import| {
+                            import.import_record_index as usize == record_index
+                        })
+                    })
+            })
+        }
+
+        /// `import * as ns` where `ns` is never a value itself and no read is `ns.default`.
+        fn reads_names_off_namespace(&self, importer: usize, record_index: usize) -> bool {
+            let named_imports = &self.all_named_imports[importer];
+            named_imports
+                .keys()
+                .iter()
+                .zip(named_imports.values())
+                .filter(|(_, import)| import.import_record_index as usize == record_index)
+                .all(|(ref_, import)| {
+                    if import.alias_is_star {
+                        !import.is_exported
+                            && self.all_symbols[importer].as_slice()[ref_.inner_index() as usize]
+                                .use_count_estimate
+                                == 0
+                    } else {
+                        !import
+                            .alias
+                            .is_some_and(|alias| alias.slice() == b"default")
+                    }
+                })
+        }
 
         // Find all files reachable from all entry points. This order should be
         // deterministic given that the entry point order is deterministic, since the
@@ -2173,7 +2297,6 @@ pub mod bv2_impl {
                 let is_css = self.all_loaders[source_index.get() as usize].is_css();
 
                 let import_record_list_id = source_index;
-                let mut has_redirect = false;
                 // when there are no import records, v index will be invalid
                 if (import_record_list_id.get() as usize) < self.all_import_records.len() {
                     let import_records_len = self.all_import_records
@@ -2185,10 +2308,12 @@ pub mod bv2_impl {
                             .as_mut_slice()[ir_idx];
                         let mut other_source = import_record.source_index;
                         if other_source.is_valid() {
-                            let mut redirect_count: usize = 0;
                             while let Some(redirect_id) =
                                 get_redirect_id(self.redirects[other_source.get() as usize])
                             {
+                                if !self.links_past(source_index, ir_idx, other_source) {
+                                    break;
+                                }
                                 let (other_src_idx, other_path) = {
                                     let other_import_records = self.all_import_records
                                         [other_source.get() as usize]
@@ -2201,20 +2326,17 @@ pub mod bv2_impl {
                                     [import_record_list_id.get() as usize]
                                     .as_mut_slice()[ir_idx];
                                 import_record.source_index = other_src_idx;
-                                import_record.path = other_path;
-                                other_source = other_src_idx;
-                                if redirect_count == Self::MAX_REDIRECTS {
-                                    import_record.path.is_disabled = true;
-                                    import_record.source_index = Index::INVALID;
-                                    break;
+                                // `require.resolve()` names the file it was given.
+                                if import_record.kind != ImportKind::RequireResolve {
+                                    import_record.path = other_path;
                                 }
+                                other_source = other_src_idx;
 
                                 // Handle redirects to a builtin or external module
                                 // https://github.com/oven-sh/bun/issues/3764
                                 if !other_source.is_valid() {
                                     break;
                                 }
-                                redirect_count += 1;
                             }
 
                             let import_record = &mut self.all_import_records
@@ -2246,7 +2368,11 @@ pub mod bv2_impl {
                                 was_dynamic_import = next_source.is_valid()
                                     && next_source != import_record_list_id
                                     && self.all_exports_kinds[next_source.get() as usize]
-                                        == ExportsKind::Esm;
+                                        == ExportsKind::Esm
+                                    // `module.exports = require(x)` only: the file is `x` as soon
+                                    // as it runs, so `x` is not a chunk of its own.
+                                    && get_redirect_id(self.redirects[source_index.get() as usize])
+                                        != Some(ir_idx as u32);
                                 if was_dynamic_import {
                                     import_record
                                         .flags
@@ -2259,30 +2385,12 @@ pub mod bv2_impl {
                             });
                         }
                     }
-
-                    // Redirects replace the source file with another file
-                    if let Some(redirect_id) =
-                        get_redirect_id(self.redirects[source_index.get() as usize])
-                    {
-                        let redirect_source_index = self.all_import_records
-                            [source_index.get() as usize]
-                            .as_slice()[redirect_id as usize]
-                            .source_index
-                            .get();
-                        self.stack.push(ReachFrame::Enter {
-                            source_index: Index::source(redirect_source_index),
-                            was_dynamic_import,
-                        });
-                        has_redirect = true;
-                    }
                 }
 
-                if !has_redirect {
-                    self.stack.push(ReachFrame::Leave {
-                        source_index,
-                        was_dynamic_import,
-                    });
-                }
+                self.stack.push(ReachFrame::Leave {
+                    source_index,
+                    was_dynamic_import,
+                });
 
                 self.stack[mark..].reverse();
             }
@@ -2363,6 +2471,14 @@ pub mod bv2_impl {
                 split_require: self.transpiler.options.split_require,
                 all_exports_kinds,
                 all_targets,
+                all_sources: self.graph.input_files.items_source(),
+                all_ast_flags: self.graph.ast.items_flags(),
+                all_module_types: self.graph.ast.items_module_type(),
+                all_parts: self.graph.ast.items_parts(),
+                all_symbols: self.graph.ast.items_symbols(),
+                all_named_imports: self.graph.ast.items_named_imports(),
+                all_named_exports: self.graph.ast.items_named_exports(),
+                all_dynamic_import_aliases: self.graph.ast.items_dynamic_import_aliases(),
                 scb_bitset,
                 scb_list,
                 additional_files_imported_by_js_and_inlined_in_css:
@@ -7399,26 +7515,11 @@ pub mod bv2_impl {
     #[derive(Clone, Copy)]
     pub struct PatchImportRecordsCtx<'a> {
         pub(crate) source_index: Index,
-        pub(crate) source_path: &'a [u8],
         pub(crate) loader: Loader,
         pub(crate) target: options::Target,
-        pub(crate) redirect_import_record_index: u32,
         /// See `only_selected_record`. `Some` also saves the source indices regardless
         /// of dev_server/loader: the barrel BFS follows them.
         pub(crate) only_records: Option<&'a [u32]>,
-    }
-
-    impl Default for PatchImportRecordsCtx<'_> {
-        fn default() -> Self {
-            Self {
-                source_index: Index::INVALID,
-                source_path: b"",
-                loader: Loader::File,
-                target: Target::Browser,
-                redirect_import_record_index: u32::MAX,
-                only_records: None,
-            }
-        }
     }
 
     impl<'a> BundleV2<'a> {
@@ -7460,7 +7561,7 @@ pub mod bv2_impl {
 
             // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
             // so borrowck sees it as disjoint from `self.graph.input_files` above.
-            let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
+            let path_to_source_index_map = &self.graph.build_graphs[ctx.target];
             for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
                 if !only_selected_record(ctx.only_records, i) {
                     continue;
@@ -7470,12 +7571,6 @@ pub mod bv2_impl {
                         || input_file_loaders[source_index as usize].is_css()
                     {
                         record.source_index.0 = source_index;
-                    }
-
-                    if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
-                        if compare == i as u32 {
-                            let _ = path_to_source_index_map.put(ctx.source_path, source_index); // OOM-only Result
-                        }
                     }
                 }
             }
@@ -7783,10 +7878,8 @@ pub mod bv2_impl {
                         &mut import_records,
                         PatchImportRecordsCtx {
                             source_index: Index::init(result_source_index as IndexInt),
-                            source_path: source_path_text,
                             loader: result.loader,
                             target: result.ast.target,
-                            redirect_import_record_index: result.ast.redirect_import_record_index,
                             only_records: None,
                         },
                     );
@@ -8356,6 +8449,28 @@ pub mod bv2_impl {
             return None;
         }
         Some(id)
+    }
+
+    /// What a file that is only `module.exports = require(x)` is to an import of it.
+    ///
+    /// `require()` of the file returns what `require(x)` returns, so `x` can stand for the file. For a
+    /// CommonJS `x` every import reads the same value from `x`. For an ES module `x`, `module.exports` is
+    /// the CommonJS view of `x`: an import reads the export names of `x` from it, but its `default` and
+    /// its namespace object are not those of `x`.
+    enum RedirectFate {
+        /// `x` stands for the file in every import.
+        Redirect,
+        /// `x` is the ES module `es_module`: it stands for the file in the imports that
+        /// `ReachableFileVisitor::links_past` accepts. `only_require`: every file on the way to it calls
+        /// `require()`. A `require("react")` that the parser made an import assigns the namespace object
+        /// itself, which sets no `__esModule`.
+        EsModule {
+            es_module: usize,
+            only_require: bool,
+        },
+        /// The chain does not end within `MAX_REDIRECTS` files, as when the files require each other:
+        /// each file stays a module.
+        Cycle,
     }
 
     #[derive(Clone, Copy, Default)]

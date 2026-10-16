@@ -223,6 +223,410 @@ describe("bundler", () => {
     outdir: "/out",
     run: { file: "/user.mjs", stdout: "bar bar" },
   });
+  // `module.exports = require("./esm.mjs")` where the target is an ES module. `require()` and an import that reads
+  // only export names read the same values from `esm.mjs` and still link past the file. A default import and the
+  // namespace object read `module.exports`, which is the CommonJS view of `esm.mjs`, so the file stays a module.
+  const esModule = /* js */ `
+    export const version = "1.2.3";
+    export function add(a, b) { return a + b; }
+    export default { version: "the default object" };
+  `;
+  const esModuleWithoutDefault = esModule.replace(/export default.*/, "");
+  const esModuleBehindRequire = {
+    "/index.cjs": `module.exports = require("./esm.mjs");`,
+    "/esm.mjs": esModule,
+  };
+  const readDefault = (from: string) => /* js */ `
+    import lib from "${from}";
+    console.log(lib.version, typeof lib.add);
+  `;
+  itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleCLI", {
+    files: { "/app.mjs": readDefault("./index.cjs"), ...esModuleBehindRequire },
+    backend: "cli",
+    cjs2esm: { unhandled: ["/index.cjs"] },
+    run: { stdout: "1.2.3 function" },
+  });
+  // The default import reads what it reads through `const esm = require(...); module.exports = esm`, a file that
+  // is never linked past. Outside node mode (`app.js`) that is the default of `esm.mjs` itself, if it has one:
+  // only there does the import still link past the one-line file.
+  for (const [spelling, shim] of [
+    ["", esModuleBehindRequire["/index.cjs"]],
+    ["Control", `const esm = require("./esm.mjs"); module.exports = esm;`],
+  ]) {
+    for (const [importer, target, stdout] of [
+      ["/app.mjs", esModule, "1.2.3 function"],
+      ["/app.mjs", esModuleWithoutDefault, "1.2.3 function"],
+      ["/app.js", esModule, "the default object undefined"],
+      ["/app.js", esModuleWithoutDefault, "1.2.3 function"],
+    ]) {
+      const name = `${spelling}${target === esModule ? "" : "WithoutDefault"}${importer === "/app.js" ? "FromPlainJs" : ""}`;
+      const linksPast = spelling === "" && importer === "/app.js" && target === esModule;
+      itBundled(`cjs2esm/ModuleExportsEqualsRequireESModule${name}`, {
+        files: { [importer]: readDefault("./index.cjs"), "/index.cjs": shim, "/esm.mjs": target },
+        cjs2esm: linksPast || { unhandled: ["/index.cjs"] },
+        run: { stdout },
+      });
+    }
+  }
+  itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleEveryImportForm", {
+    files: {
+      "/app.mjs": /* js */ `
+        import lib, { version } from "./index.cjs";
+        import { default as named } from "./index.cjs";
+        import * as ns from "./index.cjs";
+        import * as value from "./index.cjs";
+        const dynamic = await import("./index.cjs");
+        const namespaceObject = value;
+        console.log(lib.version, typeof lib.add, version);
+        console.log(named === lib, ns.default === lib, namespaceObject.default === lib, dynamic.default === lib);
+        console.log(ns.version, namespaceObject.version, dynamic.version);
+      `,
+      ...esModuleBehindRequire,
+    },
+    run: { stdout: "1.2.3 function 1.2.3\ntrue true true true\n1.2.3 1.2.3 1.2.3" },
+  });
+  itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleNamesOnly", {
+    files: {
+      "/app.mjs": /* js */ `
+        import { version, add } from "./index.cjs";
+        import * as ns from "./index.cjs";
+        const { version: dynamicVersion } = await import("./index.cjs");
+        console.log(version, add(1, 2), ns.version, ns.add(1, 2), dynamicVersion);
+      `,
+      ...esModuleBehindRequire,
+    },
+    cjs2esm: true,
+    run: { stdout: "1.2.3 3 1.2.3 3 1.2.3" },
+  });
+  itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleRequireOnly", {
+    files: {
+      "/app.cjs": /* js */ `
+        const lib = require("./index.cjs");
+        console.log(lib.version, typeof lib.add, lib.default.version);
+      `,
+      ...esModuleBehindRequire,
+    },
+    cjs2esm: { unhandled: ["/app.cjs"] },
+    run: { stdout: "1.2.3 function the default object" },
+  });
+  itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleRequireAndImport", {
+    files: {
+      "/app.mjs": /* js */ `
+        import lib from "./index.cjs";
+        import { required } from "./user.cjs";
+        console.log(lib.version, required.version, required.default.version, required === lib);
+      `,
+      "/user.cjs": `exports.required = require("./index.cjs");`,
+      ...esModuleBehindRequire,
+    },
+    run: { stdout: "1.2.3 1.2.3 the default object true" },
+  });
+  // `export *` re-exports the names of `esm.mjs`, with or without the file in between.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleReExport", {
+    files: {
+      "/entry.mjs": /* js */ `
+        export { default } from "./index.cjs";
+        export * from "./index.cjs";
+        export * as ns from "./index.cjs";
+      `,
+      ...esModuleBehindRequire,
+      "/user.mjs": /* js */ `
+        const entry = await import("./out.js");
+        console.log(Object.keys(entry).join(), entry.default.version, typeof entry.default.add);
+        console.log(entry.ns.default === entry.default);
+      `,
+    },
+    run: { file: "/user.mjs", stdout: "add,default,ns,version 1.2.3 function\ntrue" },
+  });
+  for (const splitting of [false, true]) {
+    itBundled(`cjs2esm/ModuleExportsEqualsRequireESModuleDynamicImport${splitting ? "Splitting" : ""}`, {
+      files: {
+        "/app.mjs": /* js */ `
+          const ns = await import("./index.cjs");
+          console.log(ns.default.version, ns.version);
+        `,
+        ...esModuleBehindRequire,
+      },
+      outdir: "/out",
+      outputPaths: ["/out/app.js"],
+      splitting,
+      run: { file: "/out/app.js", stdout: "1.2.3 1.2.3" },
+    });
+  }
+  // The file is what it requires as soon as it runs: that is not a chunk of its own.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleSplitRequire", {
+    files: { "/app.mjs": readDefault("./index.cjs"), ...esModuleBehindRequire },
+    target: "bun",
+    splitting: true,
+    outdir: "/out",
+    outputPaths: ["/out/app.js"],
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir)).toEqual(["app.js"]);
+    },
+    run: { file: "/out/app.js", stdout: "1.2.3 function" },
+  });
+  // The importer is resolved after the file is parsed.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleLateImporter", {
+    files: {
+      "/app.mjs": /* js */ `
+        import "./index.cjs";
+        import "./1.mjs";
+      `,
+      "/1.mjs": `import "./2.mjs";`,
+      "/2.mjs": `import "./3.mjs";`,
+      "/3.mjs": readDefault("./index.cjs"),
+      ...esModuleBehindRequire,
+    },
+    run: { stdout: "1.2.3 function" },
+  });
+  itBundled("cjs2esm/ModuleExportsEqualsRequireESModuleChain", {
+    files: {
+      "/app.mjs": readDefault("./chain.cjs"),
+      "/chain.cjs": `module.exports = require("./index.cjs");`,
+      ...esModuleBehindRequire,
+    },
+    cjs2esm: { unhandled: ["/chain.cjs"] },
+    run: { stdout: "1.2.3 function" },
+  });
+  itBundled("cjs2esm/ModuleExportsEqualsRequireCycle", {
+    files: {
+      "/app.mjs": /* js */ `
+        import a from "./a.cjs";
+        console.log(JSON.stringify(a));
+      `,
+      "/a.cjs": `module.exports = require("./b.cjs");`,
+      "/b.cjs": `module.exports = require("./a.cjs");`,
+    },
+    run: { stdout: "{}" },
+  });
+  itBundled("cjs2esm/ModuleExportsBasedOnNodeEnvESModule", {
+    files: {
+      "/app.mjs": readDefault("./index.cjs"),
+      "/index.cjs": /* js */ `
+        if (process.env.NODE_ENV === "production") {
+          module.exports = require("./esm.mjs");
+        } else {
+          module.exports = require("./esm.development.mjs");
+        }
+      `,
+      "/esm.mjs": esModule,
+      "/esm.development.mjs": `export const version = "FAILED";`,
+    },
+    minifySyntax: true,
+    env: { NODE_ENV: "production" },
+    run: { stdout: "1.2.3 function" },
+  });
+  // `require.resolve()` names the file, not what the file requires.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireResolve", {
+    files: {
+      "/app.js": /* js */ `
+        const path = require("node:path");
+        console.log(path.basename(require.resolve("./index.cjs")), path.basename(require.resolve("./commonjs.cjs")));
+      `,
+      "/commonjs.cjs": `module.exports = require("./library.cjs");`,
+      "/library.cjs": `exports.version = "1.2.3";`,
+      ...esModuleBehindRequire,
+    },
+    target: "bun",
+    run: { stdout: "index.cjs commonjs.cjs" },
+  });
+  // `require()` in a `react` file is an import in the bundle (see `ReactSpecificUnwrapping`), so `module.exports`
+  // is the namespace object itself. It sets no `__esModule`: a plain `.js` importer reads it as the default too.
+  for (const importer of ["/app.mjs", "/app.js"]) {
+    itBundled(`cjs2esm/ModuleExportsEqualsUnwrappedRequireESModule${importer === "/app.js" ? "FromPlainJs" : ""}`, {
+      files: {
+        [importer]: /* js */ `
+          import lib from "react";
+          import * as ns from "react";
+          const dynamic = await import("react");
+          console.log(lib.version, ns.default.version, dynamic.default.version, lib.default.version);
+        `,
+        "/node_modules/react/package.json": `{ "name": "react", "version": "18.0.0", "main": "index.js" }`,
+        "/node_modules/react/index.js": `module.exports = require("./esm.mjs");`,
+        "/node_modules/react/esm.mjs": esModule,
+      },
+      run: { stdout: "1.2.3 1.2.3 1.2.3 the default object" },
+    });
+  }
+  // A `require()` that became an import reads the `module.exports` of the file it names.
+  itBundled("cjs2esm/UnwrappedRequireOfModuleExportsEqualsRequireESModule", {
+    files: {
+      "/app.js": /* js */ `
+        const react = require("react");
+        console.log(react.version, typeof react.default);
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "18.0.0", "main": "index.js" }`,
+      "/node_modules/react/index.js": `module.exports = require("../../esm.mjs");`,
+      "/esm.mjs": esModuleWithoutDefault,
+    },
+    run: { stdout: "1.2.3 undefined" },
+  });
+  // `react-dom/index.js` becomes `export * from "./shim.cjs"`, which stands for its `require()`.
+  itBundled("cjs2esm/LiftedCommonJSOfModuleExportsEqualsRequireESModule", {
+    files: {
+      "/app.cjs": /* js */ `
+        const reactDom = require("react-dom");
+        console.log(typeof reactDom.default, reactDom.version, globalThis.sideEffect);
+      `,
+      "/node_modules/react-dom/package.json": `{ "name": "react-dom", "version": "19.0.0", "main": "index.js" }`,
+      "/node_modules/react-dom/index.js": /* js */ `
+        globalThis.sideEffect = "ran";
+        module.exports = require("./shim.cjs");
+      `,
+      "/node_modules/react-dom/shim.cjs": `module.exports = require("./impl.mjs");`,
+      "/node_modules/react-dom/impl.mjs": /* js */ `
+        export default function render() {}
+        export const version = "19.0.0";
+      `,
+    },
+    run: { stdout: "function 19.0.0 ran" },
+  });
+  // The shim requires the `module` build of the package until another file requires its `main` build: what the
+  // shim requires is known only when every file is parsed.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireDualPackage", {
+    files: {
+      "/app.mjs": /* js */ `
+        import lib from "react";
+        import { required } from "./other.cjs";
+        console.log(typeof lib, lib.kind, required.kind);
+      `,
+      "/other.cjs": `exports.required = require("dual");`,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "18.0.0", "main": "index.js" }`,
+      "/node_modules/react/index.js": `module.exports = require("dual");`,
+      "/node_modules/dual/package.json": `{ "name": "dual", "main": "./main.cjs", "module": "./module.mjs" }`,
+      "/node_modules/dual/main.cjs": `module.exports = function () {}; module.exports.kind = "cjs";`,
+      "/node_modules/dual/module.mjs": `export default function () {} export const kind = "esm";`,
+    },
+    run: { stdout: "function cjs cjs" },
+  });
+  // The named import asks the barrel for `A` through the file.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireBarrel", {
+    files: {
+      "/app.mjs": /* js */ `
+        import "./1.mjs";
+        import "react";
+      `,
+      "/1.mjs": `import "./2.mjs";`,
+      "/2.mjs": `import "./3.mjs";`,
+      "/3.mjs": /* js */ `
+        import { A } from "react";
+        console.log(A);
+      `,
+      "/node_modules/react/package.json": `{ "name": "react", "version": "18.0.0", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/react/index.js": `module.exports = require("./barrel.mjs");`,
+      "/node_modules/react/barrel.mjs": /* js */ `
+        export { A } from "./a.mjs";
+        export { B } from "./b.mjs";
+      `,
+      "/node_modules/react/a.mjs": `export const A = "A";`,
+      "/node_modules/react/b.mjs": `export const B = "B";`,
+    },
+    run: { stdout: "A" },
+  });
+  // A plugin resolves an entry point to the file after `app.mjs` imported it: the entry point is the file.
+  {
+    const imported = Promise.withResolvers<void>();
+    itBundled("cjs2esm/ModuleExportsEqualsRequireESModulePluginEntryPoint", {
+      files: {
+        "/app.mjs": `import "./index.cjs";`,
+        ...esModuleBehindRequire,
+        "/user.mjs": /* js */ `
+          const entry = await import("./out/virtual-entry.js");
+          console.log(Object.keys(entry).join(), entry.default.version, typeof entry.default.add);
+        `,
+      },
+      entryPoints: ["/app.mjs"],
+      entryPointsRaw: ["virtual-entry"],
+      outdir: "/out",
+      outputPaths: ["/out/app.js"],
+      plugins(builder) {
+        let index = "";
+        builder.onLoad({ filter: /index\.cjs$/ }, async args => {
+          index = args.path;
+          imported.resolve();
+          return { contents: await Bun.file(args.path).text(), loader: "js" };
+        });
+        builder.onResolve({ filter: /^virtual-entry$/ }, async () => {
+          await imported.promise;
+          return { path: index };
+        });
+      },
+      run: { file: "/user.mjs", stdout: "default 1.2.3 function" },
+    });
+  }
+  // An ES module with a "module.exports" export, a CommonJS module, a file that is not JavaScript and a polyfill of
+  // a node builtin stand for the file in every import, as before: the file adds no module of its own.
+  for (const { name, target, reads, stdout, files } of [
+    {
+      name: "ESModuleWithModuleExportsExport",
+      target: "./esm.mjs",
+      reads: "typeof lib, typeof ns.default",
+      stdout: "function function",
+      files: {
+        "/esm.mjs": /* js */ `
+          function jsTokens() {}
+          export default jsTokens;
+          export { jsTokens as "module.exports" };
+        `,
+      },
+    },
+    {
+      name: "LiftedCommonJS",
+      target: "react",
+      reads: "lib.version, ns.version",
+      stdout: "18.0.0 18.0.0",
+      files: {
+        "/node_modules/react/package.json": `{ "name": "react", "version": "18.0.0", "main": "index.js" }`,
+        "/node_modules/react/index.js": `exports.version = "18.0.0";`,
+      },
+    },
+    {
+      name: "JSON",
+      target: "./target.json",
+      reads: "lib.version, ns.version",
+      stdout: "1.2.3 1.2.3",
+      files: { "/target.json": `{ "version": "1.2.3" }` },
+    },
+    { name: "BrowserPolyfill", target: "events", reads: "typeof lib, typeof ns.default", stdout: "function function" },
+  ]) {
+    itBundled(`cjs2esm/ModuleExportsEqualsRequire${name}`, {
+      files: {
+        "/app.mjs": /* js */ `
+          import lib, * as ns from "./index.cjs";
+          console.log(${reads});
+        `,
+        "/index.cjs": `module.exports = require("${target}");`,
+        ...files,
+      },
+      cjs2esm: true,
+      run: { stdout },
+    });
+  }
+  // A file that is not JavaScript is not an ES module: the import is still of `page.html`, which has no default
+  // export in a browser build.
+  itBundled("cjs2esm/ModuleExportsEqualsRequireHTML", {
+    files: {
+      "/app.mjs": readDefault("./index.cjs"),
+      "/index.cjs": `module.exports = require("./page.html");`,
+      "/page.html": `<!DOCTYPE html><html><body></body></html>`,
+    },
+    outdir: "/out",
+    bundleErrors: {
+      "/app.mjs": [`No matching export in "page.html" for import "default"`],
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsEqualsRequireExternal", {
+    files: {
+      "/app.mjs": readDefault("./index.cjs"),
+      "/index.cjs": `module.exports = require("esm-package");`,
+    },
+    external: ["esm-package"],
+    target: "bun",
+    cjs2esm: true,
+    onAfterBundle(api) {
+      api.expectFile("out.js").toContain(`import lib from "esm-package"`);
+    },
+  });
   itBundled("cjs2esm/ModuleExportsBasedOnNodeEnvProduction", {
     files: {
       "/entry.js": /* js */ `

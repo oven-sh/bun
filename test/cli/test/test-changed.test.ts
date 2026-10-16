@@ -393,6 +393,35 @@ describe.concurrent("bun test --changed", () => {
     expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "relative.test.ts"]);
     expect(exitCode).toBe(0);
   });
+
+  // `shim.cjs` is only `module.exports = require("./lib.cjs")`. `late.test.ts` reaches it through a chain of
+  // files, long after the import in `direct.test.ts` put it in the graph, and depends on it as well.
+  test("a file that only re-exports with require() selects every test that imports it", async () => {
+    const hops = 200;
+    const chain = Object.fromEntries(
+      Array.from({ length: hops }, (_, i) => [
+        `src/${i + 1}.ts`,
+        i + 1 < hops
+          ? `export * from "./${i + 2}";\n`
+          : `import shim from "./shim.cjs";\nexport const value = shim.value;\n`,
+      ]),
+    );
+    using dir = tempDir("test-changed-reexport", {
+      "package.json": JSON.stringify({ name: "reexport", type: "module" }),
+      "src/shim.cjs": `module.exports = require("./lib.cjs");\n`,
+      "src/lib.cjs": `exports.value = 1;\n`,
+      "direct.test.ts": `import { test, expect } from "bun:test";\nimport shim from "./src/shim.cjs";\ntest("direct", () => expect(shim.value).toBe(1));\n`,
+      ...chain,
+      "late.test.ts": `import { test, expect } from "bun:test";\nconst load = () => import("./src/1");\ntest("late", () => expect(load).toBeFunction());\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "src", "shim.cjs"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    const testNames = ["direct.test.ts", "late.test.ts"];
+    expect(ranFiles(stderr, testNames)).toEqual(testNames);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // On Windows, `bun test --watch` runs as a parent watcher-manager that

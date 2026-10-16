@@ -7652,6 +7652,20 @@ describe("css tests", () => {
     minify_test(".foo { color: rgb(from rgb(from #0008 r g b) r g b) }", ".foo{color:#0008}");
   });
 
+  describe("lightness above the range of lab(), lch(), oklab() and oklch()", () => {
+    // https://www.w3.org/TR/css-color-4/#specifying-lab-lch
+    // The lightness is clamped at both ends when the color is parsed, in a relative color too.
+    minify_test(".a { color: lab(150% 20 30) }", ".a{color:lab(100% 20 30)}");
+    minify_test(".a { color: lch(150% 30 40) }", ".a{color:lch(100% 30 40)}");
+    minify_test(".a { color: oklab(150% 0.1 0.1) }", ".a{color:oklab(100% .1 .1)}");
+    minify_test(".a { color: oklch(150% 0.1 40) }", ".a{color:oklch(100% .1 40)}");
+    minify_test(".a { color: lab(100% 20 30) }", ".a{color:lab(100% 20 30)}");
+    minify_test(".a { color: lab(-10% 20 30) }", ".a{color:lab(0% 20 30)}");
+    minify_test(".a { color: lab(from lab(50% 20 30) calc(l * 3) a b) }", ".a{color:lab(100% 20 30)}");
+    minify_test(".a { color: oklch(from oklch(50% 0.1 40) calc(l * 3) c h) }", ".a{color:oklch(100% .1 40)}");
+    minify_test(".a { color: color-mix(in lab, lab(150% 0 0), black) }", ".a{color:lab(50% 0 0)}");
+  });
+
   describe("relative color with a channel outside its range", () => {
     // https://drafts.csswg.org/css-color-5/#relative-colors
     // A relative rgb(), hsl() or hwb() color is not clamped: a browser computes `color(srgb 1.18 .4 .6)` for the first row.

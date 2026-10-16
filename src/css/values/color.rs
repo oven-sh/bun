@@ -1327,8 +1327,8 @@ where
     // https://www.w3.org/TR/css-color-4/#funcdef-lab
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
-            // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
-            let l = p.parse_percentage(i)?.clamp(0.0, f32::MAX);
+            // The lightness is clamped when it is parsed: https://www.w3.org/TR/css-color-4/#specifying-lab-lch
+            let l = p.parse_percentage(i)?.clamp(0.0, 1.0);
             let a = p.parse_number(i)?;
             let b = p.parse_number(i)?;
             let alpha = parse_alpha(i, p)?;
@@ -1354,7 +1354,7 @@ pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> +
                 }
             }
 
-            let l = p.parse_percentage(i)?.clamp(0.0, f32::MAX);
+            let l = p.parse_percentage(i)?.clamp(0.0, 1.0);
             let c = p.parse_number(i)?.clamp(0.0, f32::MAX);
             let h = parse_angle_or_number(i, p)?;
             let alpha = parse_alpha(i, p)?;

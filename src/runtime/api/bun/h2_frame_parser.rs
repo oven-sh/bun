@@ -423,6 +423,19 @@ impl FrameHeader {
     }
 }
 
+/// The origin and the value of an ALTSVC frame, at most `MAX_ALTSVC_LENGTH` bytes together.
+#[derive(Clone, Copy)]
+pub(crate) struct AltSvcPayload<'a> {
+    origin: &'a [u8],
+    value: &'a [u8],
+}
+
+impl<'a> AltSvcPayload<'a> {
+    pub(crate) fn new(origin: &'a [u8], value: &'a [u8]) -> Option<Self> {
+        (origin.len() + value.len() <= MAX_ALTSVC_LENGTH).then_some(Self { origin, value })
+    }
+}
+
 /// The seven standard SETTINGS parameters (RFC 9113 §6.5.2). The wire form is produced by
 /// `write_settings_payload`, which only emits the entries JS set explicitly.
 #[derive(Clone, Copy)]
@@ -2264,17 +2277,11 @@ impl H2FrameParser {
         }
     }
 
-    /// Writes nothing and returns `false` when the origin and the value exceed `MAX_ALTSVC_LENGTH`.
-    #[must_use]
-    pub(crate) fn send_alt_svc(
-        &self,
-        stream_identifier: u32,
-        origin_str: &[u8],
-        alt: &[u8],
-    ) -> bool {
-        if origin_str.len() + alt.len() > MAX_ALTSVC_LENGTH {
-            return false;
-        }
+    pub(crate) fn send_alt_svc(&self, stream_identifier: u32, payload: AltSvcPayload<'_>) {
+        let AltSvcPayload {
+            origin: origin_str,
+            value: alt,
+        } = payload;
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_ALTSVC stream {} origin {} alt {}",
@@ -2286,7 +2293,7 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 2];
         let mut stream = FixedBufferStream::new(&mut buffer);
 
-        // Both lengths are at most MAX_ALTSVC_LENGTH, so the casts keep every bit.
+        // `AltSvcPayload::new` bounds both lengths, so the casts keep every bit.
         let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_ALTSVC as u8,
             flags: 0,
@@ -2302,7 +2309,6 @@ impl H2FrameParser {
         if !alt.is_empty() {
             let _ = self.write(alt);
         }
-        true
     }
 
     pub(crate) fn send_ping(&self, ack: bool, payload: &[u8]) {
@@ -4972,26 +4978,26 @@ impl H2FrameParser {
             }
             stream_id = stream_id_js.to_u32();
         }
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3233-L3239
+        let origin_bytes = origin_view.as_ref().map(header_value_bytes);
+        let value_bytes = value_view.as_ref().map(header_value_bytes);
+        let Some(payload) = AltSvcPayload::new(
+            origin_bytes.as_deref().unwrap_or_default(),
+            value_bytes.as_deref().unwrap_or_default(),
+        ) else {
+            let exception = global_object.to_type_error(
+                bun_jsc::ErrorCode::HTTP2_ALTSVC_LENGTH,
+                format_args!("HTTP/2 ALTSVC frames are limited to {MAX_ALTSVC_LENGTH} bytes"),
+            );
+            return Err(global_object.throw_value(exception));
+        };
         if stream_id > 0 {
             // dont error but dont send frame to invalid stream id
             if this.streams.get().get(&stream_id).is_none() {
                 return Ok(JSValue::UNDEFINED);
             }
         }
-        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3233-L3239
-        let origin_bytes = origin_view.as_ref().map(header_value_bytes);
-        let value_bytes = value_view.as_ref().map(header_value_bytes);
-        if !this.send_alt_svc(
-            stream_id,
-            origin_bytes.as_deref().unwrap_or_default(),
-            value_bytes.as_deref().unwrap_or_default(),
-        ) {
-            let exception = global_object.to_type_error(
-                bun_jsc::ErrorCode::HTTP2_ALTSVC_LENGTH,
-                format_args!("HTTP/2 ALTSVC frames are limited to 16382 bytes"),
-            );
-            return Err(global_object.throw_value(exception));
-        }
+        this.send_alt_svc(stream_id, payload);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -6122,6 +6128,9 @@ impl H2FrameParser {
         let promised_id = promised_id_arg.to_u32();
         if promised_id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
+        }
+        if parent_id == 0 || parent_id > MAX_STREAM_ID || promised_id == 0 {
+            return Err(global_object.throw(format_args!("Invalid stream id")));
         }
         let Some(headers_obj) = headers_arg.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));

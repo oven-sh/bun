@@ -939,8 +939,8 @@ pub mod fs {
         /// Port of `RealFS.adjustUlimit` — always try to max out how many
         /// files we can keep open. Returns 0 when the limit cannot be read:
         /// `need_to_close_files` is then always true and no fd stays cached.
-        /// `--watch`/`--hot` register an imported module through its cached
-        /// fd, so they then only see the entry point.
+        /// kqueue watches an imported module through that fd, so on macOS and
+        /// FreeBSD `--watch`/`--hot` then watch no imported module.
         pub(crate) fn adjust_ulimit() -> usize {
             #[cfg(not(unix))]
             {

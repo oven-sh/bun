@@ -2043,7 +2043,7 @@ impl WindowsNamedPipeListeningContext {
 }
 
 /// `us_dispatch_server_name` for a socket adopted into TLS, which has no listen
-/// socket. Only the fd-adopt path registers this, not the duplex wrap.
+/// socket. The TLS engine of a stream or a pipe asks `us_dispatch_wrapper_server_name`.
 ///
 /// # Safety
 /// `socket` is the live us_socket_t processing this ClientHello and `hostname`
@@ -2055,6 +2055,46 @@ pub(crate) extern "C" fn us_dispatch_socket_server_name(
     abort_handshake: *mut core::ffi::c_int,
 ) -> *mut uws_sys::SslCtx {
     dispatch_server_name(socket, hostname, abort_handshake).cast()
+}
+
+/// `us_dispatch_socket_server_name` for the `SSL` of a TLS engine that runs over
+/// a stream or a named pipe: no us_socket_t drives it. `TLSSocket::on_open`
+/// stored its socket on the `SSL` when it armed the engine.
+///
+/// # Safety
+/// `ssl` is the live `SSL` processing this ClientHello and `hostname` is
+/// NUL-terminated for the call. JS-thread only.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn us_dispatch_wrapper_server_name(
+    ssl: *mut boring_sys::SSL,
+    hostname: *const core::ffi::c_char,
+    abort_handshake: *mut core::ffi::c_int,
+) -> *mut uws_sys::SslCtx {
+    if ssl.is_null() || hostname.is_null() {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: `ssl` is live per the fn contract.
+    let socket = unsafe { boring_sys::SSL_get_ex_data(ssl, 0) }.cast::<TLSSocket>();
+    if socket.is_null() {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: ex_data slot 0 holds the `*mut TLSSocket` that `on_open` stored;
+    // the reference taken here keeps it across the callback, which can close it.
+    let tls = unsafe { bun_ptr::ThisPtr::new(socket) };
+    let _guard = bun_ptr::RefPtr::from_this(tls);
+    let ctx: *mut uws_sys::SslCtx =
+        dispatch_socket_server_name(tls, hostname, abort_handshake).cast();
+    // A socket that the callback closed has no handshake to continue.
+    if tls.socket.get().is_detached() {
+        if !ctx.is_null() {
+            // SAFETY: `decode_sni_result` returned an owned reference.
+            unsafe { boring_sys::SSL_CTX_free(ctx) };
+        }
+        // SAFETY: live out-parameter for the duration of this dispatch.
+        unsafe { *abort_handshake = 1 };
+        return core::ptr::null_mut();
+    }
+    ctx
 }
 
 /// Shared decoding of what the JS SNI handler returned. See
@@ -2134,6 +2174,16 @@ fn dispatch_server_name(
         Some(tls) => tls,
         None => return core::ptr::null_mut(),
     };
+    dispatch_socket_server_name(tls, hostname, abort_handshake)
+}
+
+/// The JS half of the SNI dispatch, for the socket that either TLS engine
+/// found. The contract is `us_dispatch_server_name`'s.
+fn dispatch_socket_server_name(
+    tls: bun_ptr::ThisPtr<TLSSocket>,
+    hostname: *const core::ffi::c_char,
+    abort_handshake: *mut core::ffi::c_int,
+) -> *mut c_void {
     // An idle socket can drop its Handlers while the us_socket_t lives on;
     // `get_handlers()` would panic. Same guard as `select_alpn_callback`.
     if !tls.has_handlers() {

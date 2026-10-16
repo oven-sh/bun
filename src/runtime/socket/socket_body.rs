@@ -1568,6 +1568,23 @@ impl<const SSL: bool> NewSocket<SSL> {
                             ptr::null_mut(),
                         );
                     }
+                    // A `us_socket_t` has its SNI resolver from its listener or
+                    // from `upgrade_tls_impl`. The TLS engine of a stream or a
+                    // pipe has no `us_socket_t`: it asks
+                    // `us_dispatch_wrapper_server_name`, which reads `this` from
+                    // the SSL like the ALPN selector does.
+                    if this.acts_as_tls_server()
+                        && !this.get_handlers().on_server_name().is_empty()
+                        && !matches!(this.socket.get().socket, uws::InternalSocket::Connected(_))
+                    {
+                        let ssl_ref = boringssl_sys::SSL::opaque_ref(ssl_ptr);
+                        tls_socket_functions::ffi::SSL_set_ex_data(
+                            ssl_ref,
+                            0,
+                            this_ptr.cast::<c_void>(),
+                        );
+                        tls_socket_functions::ffi::us_ssl_wrapper_arm_server_name(ssl_ref);
+                    }
                     // A rejecting client must refuse a bad chain DURING the
                     // handshake, like node observably does (its post-verify
                     // destroy cancels the queued Finished; test-tls-close-error).
@@ -3794,7 +3811,8 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // A server-side adopted socket has no listen socket to hang an
         // SNICallback off, so the resolver goes on the SSL itself. Must run
-        // before the handshake is driven.
+        // before the handshake is driven. `on_open` arms the TLS engine of a
+        // stream, which has no us_socket_t.
         if is_server && !tls.get_handlers().on_server_name().is_empty() {
             bun_opaque::opaque_deref_mut(new_raw.as_ptr()).on_server_name();
         }

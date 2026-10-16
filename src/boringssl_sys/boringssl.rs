@@ -742,6 +742,7 @@ pub const SSL_ERROR_WANT_READ: c_int = 2;
 pub const SSL_ERROR_WANT_WRITE: c_int = 3;
 pub const SSL_ERROR_SYSCALL: c_int = 5;
 pub const SSL_ERROR_ZERO_RETURN: c_int = 6;
+pub const SSL_ERROR_PENDING_CERTIFICATE: c_int = 12;
 pub const SSL_ERROR_WANT_RENEGOTIATE: c_int = 19;
 
 pub const SSL_VERIFY_NONE: c_int = 0x00;

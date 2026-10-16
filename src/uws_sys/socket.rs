@@ -550,19 +550,21 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// Resume a handshake suspended by an asynchronous SNICallback. The ctx
-    /// reference is consumed (freed here when the socket is no longer a real
-    /// connected socket).
+    /// reference is consumed on every path.
     pub fn sni_resolve(&self, ctx: *mut crate::SslCtx, error: bool) {
-        match self.socket {
-            InternalSocket::Connected(s) => sock(s).sni_resolve(ctx, error),
-            _ => {
+        on_socket!(self.socket;
+            connected s => s.sni_resolve(ctx, error),
+            // The engine of a stream or a pipe continues the handshake, or ends the connection, on its next pass.
+            duplex d => if wrapper_sni_resolve(d.ssl(), ctx, error) { d.flush() },
+            pipe p => if wrapper_sni_resolve(p.ssl(), ctx, error) { p.flush() },
+            else => {
                 // The socket is gone; release the reference the caller handed us.
                 if !ctx.is_null() {
                     // SAFETY: the caller passed an owned SSL_CTX reference.
                     unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
                 }
-            }
-        }
+            },
+        )
     }
 
     // ── TLS ─────────────────────────────────────────────────────────────────
@@ -903,11 +905,23 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 }
 
+/// `us_socket_t::sni_resolve` for the `SSL` of a stream or pipe TLS engine, which has no `us_socket_t`: that `SSL`
+/// carries the state. True when a handshake waited for this answer.
+fn wrapper_sni_resolve(
+    ssl: Option<*mut bun_boringssl_sys::SSL>,
+    ctx: *mut SslCtx,
+    error: bool,
+) -> bool {
+    let ssl = ssl.unwrap_or(core::ptr::null_mut());
+    // SAFETY: `ssl` is null or the engine's live `SSL`; the callee takes the reference of `ctx`, which may be null.
+    unsafe { sock_c::us_ssl_wrapper_sni_resolve(ssl, ctx, c_int::from(error)) != 0 }
+}
+
 /// Residual raw FFI: `adopt` takes a raw `*mut SocketGroup` from a caller
 /// that already holds it as raw, and `SocketGroup` is a sized `#[repr(C)]`
 /// mirror (not an opaque ZST), so `opaque_deref_mut` can't help.
 mod sock_c {
-    use super::{SocketGroup, us_socket_t};
+    use super::{SocketGroup, SslCtx, us_socket_t};
     unsafe extern "C" {
         pub(super) fn us_socket_adopt(
             s: *mut us_socket_t,
@@ -916,6 +930,11 @@ mod sock_c {
             old_ext_size: i32,
             ext_size: i32,
         ) -> *mut us_socket_t;
+        pub(super) fn us_ssl_wrapper_sni_resolve(
+            ssl: *mut bun_boringssl_sys::SSL,
+            ctx: *mut SslCtx,
+            error: core::ffi::c_int,
+        ) -> core::ffi::c_int;
     }
 }
 

@@ -168,15 +168,15 @@ pub mod ssl_wrapper {
             BIO, BIO_CTRL_FLUSH, BIO_METHOD, BIO_TYPE_SOURCE_SINK, BIO_clear_retry_flags,
             BIO_get_data, BIO_get_new_index, BIO_meth_new, BIO_meth_set_ctrl, BIO_meth_set_read,
             BIO_meth_set_write, BIO_new, BIO_set_data, BIO_set_init, BIO_set_retry_read,
-            ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX, SSL_ERROR_SSL, SSL_ERROR_SYSCALL,
-            SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE, SSL_ERROR_WANT_WRITE,
-            SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION, SSL_SESSION_free,
-            SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_do_handshake,
-            SSL_free, SSL_get_error, SSL_get_shutdown, SSL_get_verify_result, SSL_is_init_finished,
-            SSL_new, SSL_pending, SSL_read, SSL_renegotiate, SSL_set_accept_state, SSL_set_bio,
-            SSL_set_connect_state, SSL_set_renegotiate_mode, SSL_set_session_id_context,
-            SSL_set_verify, SSL_shutdown, SSL_write, X509_STORE_CTX, ssl_renegotiate_explicit,
-            ssl_renegotiate_never,
+            ERR_clear_error, OwnedSslCtx, SSL, SSL_CTX, SSL_ERROR_PENDING_CERTIFICATE,
+            SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
+            SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_SESSION,
+            SSL_SESSION_free, SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSL_VERIFY_NONE, SSL_VERIFY_PEER,
+            SSL_do_handshake, SSL_free, SSL_get_error, SSL_get_shutdown, SSL_get_verify_result,
+            SSL_is_init_finished, SSL_new, SSL_pending, SSL_read, SSL_renegotiate,
+            SSL_set_accept_state, SSL_set_bio, SSL_set_connect_state, SSL_set_renegotiate_mode,
+            SSL_set_session_id_context, SSL_set_verify, SSL_shutdown, SSL_write, X509_STORE_CTX,
+            ssl_renegotiate_explicit, ssl_renegotiate_never,
         };
     }
 
@@ -308,11 +308,16 @@ pub mod ssl_wrapper {
     /// `US_SSL_FATAL_ERROR_REASON_MAX` in openssl.c.
     const FATAL_ERROR_REASON_MAX: usize = 256;
 
+    /// `US_SNI_ERROR` in openssl.c: the owner's SNICallback refused the connection.
+    const SNI_REFUSED: u8 = 3;
+
     /// What BoringSSL's callbacks read and write. The `SSL` points at it: see `us_ssl_set_wrapper`.
     struct CallbackState {
         inline_reject: Cell<bool>,
         verify_failed: Cell<bool>,
         identity_checked: Cell<bool>,
+        /// Where the SNICallback of a server `SSL` stands, as a `US_SNI_*` value. openssl.c's `us_select_cert_cb` keeps it here.
+        sni: Cell<u8>,
         /// `SSLWrapper::<T>::server_identity`, which finds its wrapper from this field's address.
         server_identity: Option<
             unsafe fn(&CallbackState, &mut boring_sys::SSL) -> bun_boringssl::ServerIdentity,
@@ -359,6 +364,14 @@ pub mod ssl_wrapper {
         traffic: Cell<Traffic>,
         ciphertext: Ciphertext,
     }
+
+    // A server's SNI state sits in padding: no owner pays bytes for it, the client tunnels of fetch and WebSocket included.
+    #[cfg(target_pointer_width = "64")]
+    const _: () = assert!(
+        core::mem::size_of::<CallbackState>() == 104
+            && core::mem::size_of::<Handlers<*mut ()>>() == 72
+            && core::mem::size_of::<Inner<*mut ()>>() == 296
+    );
 
     /// Re-entrancy state of [`SSLWrapper::handle_traffic`].
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -592,6 +605,7 @@ pub mod ssl_wrapper {
                     inline_reject: Cell::new(false),
                     verify_failed: Cell::new(false),
                     identity_checked: Cell::new(false),
+                    sni: Cell::new(0),
                     server_identity: handlers
                         .server_identity
                         .is_some()
@@ -1120,6 +1134,22 @@ pub mod ssl_wrapper {
                 // as far as I know these are the only errors we want to handle
                 if err != boring_sys::SSL_ERROR_WANT_READ && err != boring_sys::SSL_ERROR_WANT_WRITE
                 {
+                    // openssl.c's `us_select_cert_cb` suspended the handshake for the owner's SNICallback.
+                    if err == boring_sys::SSL_ERROR_PENDING_CERTIFICATE {
+                        if self.callbacks.sni.get() != SNI_REFUSED {
+                            // No answer yet: `us_ssl_wrapper_sni_resolve` and the pass after it continue the handshake.
+                            self.flags
+                                .set_handshake_state(HandshakeState::HandshakePending);
+                            return true;
+                        }
+                        // The callback refused the connection, which ends with nothing written: no alert was queued.
+                        self.flags.set_fatal_error(true);
+                        self.flags
+                            .set_handshake_state(HandshakeState::HandshakeCompleted);
+                        self.trigger_handshake_callback(HandshakeOutcome::Aborted);
+                        self.trigger_close_callback();
+                        return false;
+                    }
                     self.flags.set_fatal_error(is_fatal);
 
                     self.flags
@@ -1193,6 +1223,12 @@ pub mod ssl_wrapper {
                     if err != boring_sys::SSL_ERROR_WANT_READ
                         && err != boring_sys::SSL_ERROR_WANT_WRITE
                     {
+                        // The handshake is suspended (see `update_handshake_state`) and BoringSSL reads nothing
+                        // until it continues: what the peer sent behind its ClientHello stays queued for that pass.
+                        if err == boring_sys::SSL_ERROR_PENDING_CERTIFICATE {
+                            boring_sys::ERR_clear_error();
+                            return false;
+                        }
                         let mut is_fatal = err == boring_sys::SSL_ERROR_SSL
                             || err == boring_sys::SSL_ERROR_SYSCALL;
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {
@@ -1506,6 +1542,19 @@ pub mod ssl_wrapper {
         // SAFETY: `out` is writable for the `len` bytes the measuring call reported.
         unsafe { i2d_SSL_SESSION(session.as_ptr(), &raw mut out) };
         state.sessions.borrow_mut().push_back(bytes);
+    }
+
+    /// openssl.c's select-certificate callback, for an `SSL` that no `us_socket_t` drives: the `US_SNI_*` state it keeps here.
+    #[unsafe(no_mangle)]
+    extern "C" fn us_ssl_wrapper_sni_state(state: *const CallbackState) -> c_int {
+        // SAFETY: openssl.c passes the pointer that `us_ssl_set_wrapper` stored on the live `SSL`.
+        c_int::from(unsafe { &*state }.sni.get())
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn us_ssl_wrapper_set_sni_state(state: *const CallbackState, sni: c_int) {
+        // SAFETY: as in `us_ssl_wrapper_sni_state`.
+        unsafe { &*state }.sni.set(sni as u8);
     }
 
     /// openssl.c's keylog callback, for an `SSL` that no `us_socket_t` drives.

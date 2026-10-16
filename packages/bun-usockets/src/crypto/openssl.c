@@ -180,12 +180,15 @@ static pthread_once_t us_ex_idx_once = PTHREAD_ONCE_INIT;
 #define US_RENEG_LIMIT(p)  ((uint32_t)((uint64_t)(uintptr_t)(p) >> 32))
 #define US_RENEG_WINDOW(p) ((uint32_t)((uint64_t)(uintptr_t)(p)))
 
-/* us_socket_t::ssl_sni_pending: an async SNICallback has the handshake suspended. */
+/* us_socket_t::ssl_sni_pending: an async SNICallback has the handshake suspended.
+ * An SSLWrapper (src/uws/lib.rs) keeps the state of its own SSL in the same values. */
 enum {
   US_SNI_NONE = 0,
   US_SNI_WAITING = 1,
   US_SNI_RESOLVED = 2,
   US_SNI_ERROR = 3,
+  /* SSLWrapper only: its owner has an SNICallback that no ClientHello has asked yet. */
+  US_SNI_ARMED = 4,
 };
 
 struct us_ssl_pending_event_t {
@@ -250,6 +253,9 @@ extern int us_ssl_wrapper_server_identity(void *wrapper, SSL *ssl);
 extern int us_ssl_wrapper_identity_checked(void *wrapper);
 extern void us_ssl_wrapper_new_session(void *wrapper, SSL_SESSION *session);
 extern void us_ssl_wrapper_keylog(void *wrapper, const char *line, size_t length);
+/* The US_SNI_* state of the wrapper's SSL. */
+extern int us_ssl_wrapper_sni_state(void *wrapper);
+extern void us_ssl_wrapper_set_sni_state(void *wrapper, int state);
 
 static inline void *us_ssl_wrapper(const SSL *ssl) {
   return us_ssl_wrapper_ex_idx >= 0 ? SSL_get_ex_data(ssl, us_ssl_wrapper_ex_idx) : NULL;
@@ -3256,15 +3262,48 @@ static size_t us_client_hello_servername(const SSL_CLIENT_HELLO *hello, char *ou
   return 0;
 }
 
+/* us_select_cert_cb for the SSL of an SSLWrapper, which no us_socket_t drives. The wrapper keeps the state that
+ * ssl_sni_pending is on a socket. A refusal suspends the handshake like a pending answer does, and the wrapper
+ * then ends the connection with nothing written: ssl_select_cert_error would queue an alert.
+ * Like on a socket, the resolver also runs for a ClientHello that resumes a session (node's does not): the
+ * context has to be selected before BoringSSL decides whether to resume. */
+static enum ssl_select_cert_result_t us_wrapper_select_cert(const SSL_CLIENT_HELLO *hello, void *wrapper) {
+  switch (us_ssl_wrapper_sni_state(wrapper)) {
+    case US_SNI_ARMED: break;
+    case US_SNI_WAITING:
+    case US_SNI_ERROR: return ssl_select_cert_retry;
+    default: return ssl_select_cert_success;
+  }
+  char hostname[256];
+  int abort_handshake = 0;
+  SSL_CTX *ctx = NULL;
+  if (us_client_hello_servername(hello, hostname, sizeof(hostname))) {
+    ctx = us_dispatch_wrapper_server_name(hello->ssl, hostname, &abort_handshake);
+  }
+  if (abort_handshake) {
+    us_ssl_wrapper_set_sni_state(wrapper, abort_handshake == 2 ? US_SNI_WAITING : US_SNI_ERROR);
+    return ssl_select_cert_retry;
+  }
+  us_ssl_wrapper_set_sni_state(wrapper, US_SNI_NONE);
+  if (ctx) {
+    us_ssl_apply_selected_ctx(hello->ssl, ctx);
+    SSL_CTX_free(ctx);
+  }
+  return ssl_select_cert_success;
+}
+
 /* The async-capable certificate selector. Registered (instead of relying on
- * sni_cb alone) on listener contexts that have a dynamic JS resolver, so an
- * SNICallback that cannot answer synchronously suspends the handshake
- * (ssl_select_cert_retry -> SSL_ERROR_PENDING_CERTIFICATE) instead of falling
- * through to the default context. us_socket_sni_resolve() resumes it. */
+ * sni_cb alone) on contexts whose listener, socket or SSLWrapper has a dynamic
+ * JS resolver, so an SNICallback that cannot answer synchronously suspends the
+ * handshake (ssl_select_cert_retry -> SSL_ERROR_PENDING_CERTIFICATE) instead of
+ * falling through to the default context. us_socket_sni_resolve() resumes it. */
 static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello) {
   SSL *ssl = hello->ssl;
   struct us_socket_t *s = ssl ? us_ssl_socket(ssl) : NULL;
-  if (!s) return ssl_select_cert_success;
+  if (!s) {
+    void *wrapper = ssl ? us_ssl_wrapper(ssl) : NULL;
+    return wrapper ? us_wrapper_select_cert(hello, wrapper) : ssl_select_cert_success;
+  }
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
   struct us_server_names_t *names = rare ? rare->server_names : NULL;
 
@@ -3474,9 +3513,37 @@ void us_socket_on_server_name(struct us_socket_t *s) {
   /* Only the early select-certificate stage supports retry, which an async
    * SNICallback needs. The CTX is a memoized SecureContext possibly shared
    * with a listener, and this install is permanent, so us_select_cert_cb must
-   * stay a no-op on any SSL carrying neither resolver. */
+   * stay a no-op on any SSL whose socket or SSLWrapper carries no resolver. */
   SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
   if (ctx) SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+}
+
+/* us_socket_on_server_name for the SSL of an SSLWrapper: us_dispatch_wrapper_server_name answers its ClientHello.
+ * The install goes on the SSL_CTX the SSL has now, so call it again after SSL_set_SSL_CTX. A wrapper whose
+ * handshake waits for an answer keeps waiting. */
+void us_ssl_wrapper_arm_server_name(SSL *ssl) {
+  void *wrapper = us_ssl_wrapper(ssl);
+  if (!wrapper) return;
+  if (us_ssl_wrapper_sni_state(wrapper) == US_SNI_NONE) us_ssl_wrapper_set_sni_state(wrapper, US_SNI_ARMED);
+  SSL_CTX_set_select_certificate_cb(SSL_get_SSL_CTX(ssl), us_select_cert_cb);
+}
+
+/* us_socket_sni_resolve for the SSL of an SSLWrapper. Consumes the reference of `ctx`. Returns 1 when a handshake
+ * waited for this answer: the owner then drives the wrapper, which continues that handshake or ends the connection. */
+int us_ssl_wrapper_sni_resolve(SSL *ssl, SSL_CTX *ctx, int error) {
+  void *wrapper = ssl ? us_ssl_wrapper(ssl) : NULL;
+  int waiting = wrapper && us_ssl_wrapper_sni_state(wrapper) == US_SNI_WAITING;
+  if (waiting) {
+    if (error) {
+      us_ssl_wrapper_set_sni_state(wrapper, US_SNI_ERROR);
+    } else {
+      /* BoringSSL allows the switch while the select-certificate callback has the handshake paused. */
+      if (ctx) us_ssl_apply_selected_ctx(ssl, ctx);
+      us_ssl_wrapper_set_sni_state(wrapper, US_SNI_NONE);
+    }
+  }
+  if (ctx) SSL_CTX_free(ctx);
+  return waiting;
 }
 
 void *us_socket_server_name_userdata(struct us_socket_t *s) {

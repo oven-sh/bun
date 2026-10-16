@@ -177,6 +177,10 @@ pub(super) mod ffi {
             out_len: &mut c_uint,
         );
         pub(crate) safe fn SSL_get_ex_data(ssl: &SSL, idx: c_int) -> *mut c_void;
+        /// usockets' openssl.c: makes the TLS engine of a stream or a pipe ask
+        /// `us_dispatch_wrapper_server_name` for its ClientHello. The callback goes on
+        /// the `SSL_CTX` that `ssl` has now. No-op for the `SSL` of a `us_socket_t`.
+        pub(crate) safe fn us_ssl_wrapper_arm_server_name(ssl: &SSL);
         /// Save/restore the per-loop BIO routing state around in-handshake JS
         /// callbacks (defined in usockets' openssl.c). The caller's snapshot
         /// array must have exactly `us_internal_ssl_loop_state_slots()`

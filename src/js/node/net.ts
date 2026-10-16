@@ -1097,21 +1097,23 @@ function toSNIError(err) {
 }
 
 // Applies one SNICallback resolution to the dispatch state. Node assigns
-// `sni_context = context.context || context`: both the SecureContext wrapper
-// and a raw native context are accepted, null/undefined falls through to the
-// default context, and anything else is an invalid SNI context that drops the
-// connection before the handshake completes.
+// `sni_context = context.context || context` for a truthy answer: both the
+// SecureContext wrapper and a raw native context are accepted. A falsy answer
+// and a primitive select the default context, and any other object is an
+// invalid SNI context that drops the connection before the handshake completes.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L226-L228
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1604-L1622
 function consumeSNIResult(state, err, context) {
   if (err) {
     state.failed = toSNIError(err);
     return;
   }
-  if (context == null) return;
-  const innerContext = typeof context === "object" ? context.context : undefined;
-  if (innerContext) {
-    state.selected = innerContext;
-  } else if (state.server?.[kNativeSecureContextCtor] && context instanceof state.server[kNativeSecureContextCtor]) {
-    state.selected = context;
+  if (!context) return;
+  const candidate = context.context || context;
+  if (typeof candidate !== "object" && typeof candidate !== "function") return;
+  const NativeSecureContext = state.server?.[kNativeSecureContextCtor];
+  if (NativeSecureContext && candidate instanceof NativeSecureContext) {
+    state.selected = candidate;
   } else {
     state.failed = new Error("Invalid SNI context");
   }

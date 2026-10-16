@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use crate::matcher::{Dots, Shape};
+use crate::matcher::{Below, Dots, Shape, Token};
 use bun_alloc::AllocError;
 use bun_collections::AutoBitSet;
 use bun_core::Error;
@@ -247,6 +247,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub(crate) pattern_components: Vec<Component>,
     /// `Shape::of` each component's pattern, so matching an entry doesn't parse the groups again.
     component_shapes: Vec<Shape>,
+    /// Set if the last component is a `SyntaxHint::Tail`.
+    tail: Option<Box<Tail>>,
     pub matched_paths: MatchedMap,
 
     pub(crate) dot: bool,
@@ -330,6 +332,8 @@ pub struct Directory<A: Accessor> {
     /// Active component indices. Multiple indices mean one readdir
     /// evaluates all of them instead of revisiting the directory.
     pub(crate) active: ComponentSet,
+    /// If the tail is active: how many bytes at the end of the path are below the directory that the tail starts in.
+    pub(crate) below_tail_len: u32,
 
     pub(crate) iter_closed: bool,
     pub(crate) at_cwd: bool,
@@ -351,6 +355,8 @@ pub struct Iterator<'a, A: Accessor, const SENTINEL: bool> {
     pub(crate) walker: &'a mut GlobWalker<A, SENTINEL>,
     pub(crate) iter_state: IterState<A>,
     pub(crate) cwd_fd: A::Handle,
+    /// The path of an entry below the directory that the tail starts in. One buffer for every entry.
+    tail_path: Vec<u8>,
     /// This is to make sure in debug/tests that we are closing file descriptors
     /// We should only have max 2 open at a time. One for the cwd, and one for the
     /// directory being iterated on.
@@ -372,6 +378,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             walker,
             iter_state: IterState::GetNext,
             cwd_fd: A::Handle::EMPTY,
+            tail_path: Vec::new(),
             #[cfg(debug_assertions)]
             fds_open: 0,
             #[cfg(windows)]
@@ -583,6 +590,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         };
 
         let mut had_dot_dot = false;
+        let below_tail_len = work_item.below_tail_len;
         // Single-index sets (the initial WorkItem) may point to Dot/DotBack
         // or collapsible `**` runs. Multi-index sets only arise mid-traversal
         // after `**/X` boundaries and are already past any Dots.
@@ -735,6 +743,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             iter: iterator,
             path: dir_path_buf,
             dir_path_len,
+            below_tail_len: match self.walker.has_tail(&active) {
+                true => below_tail_len,
+                false => NOT_BELOW_TAIL,
+            },
             active,
             iter_closed: false,
             at_cwd,
@@ -754,7 +766,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         match comp.syntax_hint {
             // `*` and `**` match everything; a filter gains nothing and for `**`
             // would incorrectly hide subdirectories we need to recurse into.
-            SyntaxHint::Single | SyntaxHint::Double | SyntaxHint::Dot | SyntaxHint::DotBack => {
+            SyntaxHint::Single
+            | SyntaxHint::Double
+            | SyntaxHint::Dot
+            | SyntaxHint::DotBack
+            | SyntaxHint::Tail => {
                 return None;
             }
             _ => {}
@@ -888,6 +904,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     symlink_full_path_len - entry_start,
                                 )
                             };
+                            // SAFETY: the bytes before the entry name, in the same initialized region.
+                            let link_dir: &[u8] =
+                                unsafe { core::slice::from_raw_parts(scratch_ptr, entry_start) };
+                            let below_tail = work_item.below_tail_len;
 
                             self.iter_state = IterState::GetNext;
                             let maybe_dir_fd: Option<A::Handle> =
@@ -904,6 +924,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         }
                                         if !self.walker.only_files
                                             && self.walker.eval_file(&active, entry_name)
+                                            && self.walker.tail_takes(
+                                                &mut self.tail_path,
+                                                link_dir,
+                                                below_tail,
+                                                entry_name,
+                                            )
                                         {
                                             match self.walker.prepare_matched_path_symlink(
                                                 symlink_full_path_z.as_bytes(),
@@ -922,7 +948,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
                             let Some(dir_fd) = maybe_dir_fd else {
                                 // Symlink target is a file
-                                if self.walker.eval_file(&active, entry_name) {
+                                if self.walker.eval_file(&active, entry_name)
+                                    && self.walker.tail_takes(
+                                        &mut self.tail_path,
+                                        link_dir,
+                                        below_tail,
+                                        entry_name,
+                                    )
+                                {
                                     match self.walker.prepare_matched_path_symlink(
                                         symlink_full_path_z.as_bytes(),
                                     )? {
@@ -934,7 +967,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             };
 
                             let mut add_dir: bool = false;
-                            let child = self.walker.eval_dir(&active, entry_name, &mut add_dir);
+                            let child = self.walker.eval_dir_entry(
+                                &mut self.tail_path,
+                                &active,
+                                link_dir,
+                                below_tail,
+                                entry_name,
+                                &mut add_dir,
+                            );
                             let mut followed_link: Option<FollowedLink> = None;
                             let descend = child.count() != 0
                                 && if self.walker.followed_links.is_empty() {
@@ -971,7 +1011,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         child,
                                         WorkItemKind::Directory,
                                         dir_fd,
-                                    ),
+                                    )
+                                    .below_tail(below_tail, entry_name),
                                     followed_link,
                                 );
                             } else {
@@ -1038,7 +1079,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     let dir_fd = dir.fd;
                     match entry.kind() {
                         bun_sys::FileKind::File => {
-                            if self.walker.eval_file(&active, entry_name) {
+                            if self.walker.eval_file(&active, entry_name)
+                                && self.walker.tail_takes(
+                                    &mut self.tail_path,
+                                    dir_dir_path,
+                                    dir.below_tail_len,
+                                    entry_name,
+                                )
+                            {
                                 match self.walker.prepare_matched_path(entry_name, dir_dir_path)? {
                                     Some(prepared) => return Ok(Ok(Some(prepared))),
                                     None => continue,
@@ -1048,7 +1096,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         }
                         bun_sys::FileKind::Directory => {
                             let mut add_dir: bool = false;
-                            let child = self.walker.eval_dir(&active, entry_name, &mut add_dir);
+                            let child = self.walker.eval_dir_entry(
+                                &mut self.tail_path,
+                                &active,
+                                dir_dir_path,
+                                dir.below_tail_len,
+                                entry_name,
+                                &mut add_dir,
+                            );
                             if child.count() != 0 {
                                 let mut followed_link: Option<FollowedLink> = None;
                                 if self.walker.should_descend_resolved_dir(
@@ -1062,7 +1117,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                             subdir_entry_name,
                                             child,
                                             WorkItemKind::Directory,
-                                        ),
+                                        )
+                                        .below_tail(dir.below_tail_len, entry_name),
                                         followed_link,
                                     );
                                 }
@@ -1091,11 +1147,20 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 let subset = self.walker.eval_literal_subset(&active, entry_name);
                                 (subset.count() != 0).then_some(subset)
                             };
+                            let follow_active = follow_active.filter(|_| {
+                                self.walker.tail_follows(
+                                    &mut self.tail_path,
+                                    dir_dir_path,
+                                    dir.below_tail_len,
+                                    entry_name,
+                                )
+                            });
 
                             if let Some(follow_active) = follow_active {
                                 self.walker.push_symlink_work_item(
                                     dir_dir_path,
                                     entry_name,
+                                    dir.below_tail_len,
                                     follow_active,
                                 )?;
                                 continue;
@@ -1105,7 +1170,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 continue;
                             }
 
-                            if self.walker.eval_file(&active, entry_name) {
+                            if self.walker.eval_file(&active, entry_name)
+                                && self.walker.tail_takes(
+                                    &mut self.tail_path,
+                                    dir_dir_path,
+                                    dir.below_tail_len,
+                                    entry_name,
+                                )
+                            {
                                 match self.walker.prepare_matched_path(entry_name, dir_dir_path)? {
                                     Some(prepared_path) => {
                                         return Ok(Ok(Some(prepared_path)));
@@ -1131,7 +1203,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
                             match real_kind {
                                 bun_sys::FileKind::File => {
-                                    if self.walker.eval_file(&active, entry_name) {
+                                    if self.walker.eval_file(&active, entry_name)
+                                        && self.walker.tail_takes(
+                                            &mut self.tail_path,
+                                            dir_dir_path,
+                                            dir.below_tail_len,
+                                            entry_name,
+                                        )
+                                    {
                                         match self
                                             .walker
                                             .prepare_matched_path(entry_name, dir_dir_path)?
@@ -1147,8 +1226,14 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                     // `lstatat` never reports a symlinked directory as
                                     // `Directory`, so no followed-link check is needed here.
                                     let mut add_dir: bool = false;
-                                    let child =
-                                        self.walker.eval_dir(&active, entry_name, &mut add_dir);
+                                    let child = self.walker.eval_dir_entry(
+                                        &mut self.tail_path,
+                                        &active,
+                                        dir_dir_path,
+                                        dir.below_tail_len,
+                                        entry_name,
+                                        &mut add_dir,
+                                    );
                                     if child.count() != 0 {
                                         let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
                                         let subdir_entry_name = self.walker.join(subdir_parts)?;
@@ -1157,7 +1242,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                                 subdir_entry_name,
                                                 child,
                                                 WorkItemKind::Directory,
-                                            ),
+                                            )
+                                            .below_tail(dir.below_tail_len, entry_name),
                                             None,
                                         );
                                     }
@@ -1183,14 +1269,30 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                                 .eval_literal_subset(&active, entry_name);
                                             (subset.count() != 0).then_some(subset)
                                         };
+                                    let follow_active = follow_active.filter(|_| {
+                                        self.walker.tail_follows(
+                                            &mut self.tail_path,
+                                            dir_dir_path,
+                                            dir.below_tail_len,
+                                            entry_name,
+                                        )
+                                    });
                                     if let Some(follow_active) = follow_active {
                                         self.walker.push_symlink_work_item(
                                             dir_dir_path,
                                             entry_name,
+                                            dir.below_tail_len,
                                             follow_active,
                                         )?;
                                     } else if !self.walker.only_files {
-                                        if self.walker.eval_file(&active, entry_name) {
+                                        if self.walker.eval_file(&active, entry_name)
+                                            && self.walker.tail_takes(
+                                                &mut self.tail_path,
+                                                dir_dir_path,
+                                                dir.below_tail_len,
+                                                entry_name,
+                                            )
+                                        {
                                             match self
                                                 .walker
                                                 .prepare_matched_path(entry_name, dir_dir_path)?
@@ -1276,6 +1378,8 @@ pub struct WorkItem<A: Accessor> {
     pub(crate) active: ComponentSet,
     pub(crate) kind: WorkItemKind,
     pub(crate) entry_start: u32,
+    /// `Directory::below_tail_len` of this directory, if the tail is active in it. For a symlink: that of its directory.
+    pub(crate) below_tail_len: u32,
     pub(crate) fd: Option<A::Handle>,
     /// `followed_links.len()` when this item was pushed: the length of its
     /// followed-link ancestor chain, restored by truncation when it is popped.
@@ -1298,6 +1402,7 @@ impl<A: Accessor> WorkItem<A> {
             active,
             kind,
             entry_start: 0,
+            below_tail_len: 0,
             fd: None,
             followed_links_len: 0,
             followed_link: None,
@@ -1322,7 +1427,20 @@ impl<A: Accessor> WorkItem<A> {
             ..Self::new(path, active, WorkItemKind::Symlink)
         }
     }
+
+    /// For the entry `name` of a directory that has `parent` as its `below_tail_len`.
+    #[inline]
+    fn below_tail(mut self, parent: u32, name: &[u8]) -> Self {
+        if parent != NOT_BELOW_TAIL {
+            let name_len = u32::try_from(name.len()).expect("int cast");
+            self.below_tail_len = parent + u32::from(parent != 0) + name_len;
+        }
+        self
+    }
 }
+
+/// `Directory::below_tail_len` of a directory in which the tail is not active.
+const NOT_BELOW_TAIL: u32 = u32::MAX;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -1341,6 +1459,8 @@ pub struct Component {
     pub(crate) syntax_hint: SyntaxHint,
     pub(crate) trailing_sep: bool,
 }
+
+const _: () = assert!(size_of::<Component>() == 16);
 
 impl Default for Component {
     fn default() -> Self {
@@ -1376,6 +1496,8 @@ pub enum SyntaxHint {
     Dot,
     /// ../
     DotBack,
+    /// The rest of a pattern, from the first path segment in which a group crosses a separator. See `Tail`.
+    Tail,
 }
 
 impl SyntaxHint {
@@ -1425,7 +1547,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 SyntaxHint::Double => log!("  **"),
                 SyntaxHint::Dot => log!("  ."),
                 SyntaxHint::DotBack => log!("  ../"),
-                SyntaxHint::Literal | SyntaxHint::WildcardFilepath | SyntaxHint::None => log!(
+                SyntaxHint::Literal
+                | SyntaxHint::WildcardFilepath
+                | SyntaxHint::None
+                | SyntaxHint::Tail => log!(
                     "  hint={} component_str={}",
                     <&'static str>::from(cmp.syntax_hint),
                     bstr::BStr::new(cmp.pattern_slice(pattern))
@@ -1460,6 +1585,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             end_byte_of_basename_excluding_special_syntax: 0,
             pattern_components: Vec::new(),
             component_shapes: Vec::new(),
+            tail: None,
             matched_paths: MatchedMap::default(),
             path_buf: bun_paths::path_buffer_pool::get(),
             workbuf: Vec::new(),
@@ -1469,9 +1595,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             _accessor: core::marker::PhantomData,
         };
 
-        Self::build_pattern_components(
+        this.tail = Self::build_pattern_components(
             &mut this.pattern_components,
-            &this.pattern,
+            &mut this.pattern,
             &mut this.end_byte_of_basename_excluding_special_syntax,
             &mut this.basename_excluding_special_syntax_component_idx,
         )?;
@@ -1735,6 +1861,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 *add = true;
                 return None;
             }
+            // The pattern can end where its tail starts. Then the directory that the tail starts in is a match.
+            *add = next_pattern.is_some_and(|next| next.syntax_hint == SyntaxHint::Tail)
+                && self
+                    .tail
+                    .as_deref()
+                    .is_some_and(|tail| tail.matches_its_directory);
             return Some(1);
         }
 
@@ -1781,6 +1913,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         if !self.dot
             && Self::starts_with_dot(filepath)
             && !Self::starts_with_dot(pattern_component.pattern_slice(&self.pattern))
+            && pattern_component.syntax_hint != SyntaxHint::Tail
         {
             return false;
         }
@@ -1789,7 +1922,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         }
 
         match pattern_component.syntax_hint {
-            SyntaxHint::Double | SyntaxHint::Single => true,
+            // A tail decides with the whole path: see `eval_below_tail`.
+            SyntaxHint::Double | SyntaxHint::Single | SyntaxHint::Tail => true,
             SyntaxHint::WildcardFilepath => {
                 match_wildcard_filepath(pattern_component.pattern_slice(&self.pattern), filepath)
             }
@@ -1907,6 +2041,105 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         false
     }
 
+    /// Returns true if `set` has the tail. Then it has no other component.
+    #[inline]
+    fn has_tail(&self, set: &ComponentSet) -> bool {
+        self.tail.is_some() && set.is_set(self.pattern_components.len() - 1)
+    }
+
+    /// After `eval_file` took the entry `name`: below a tail, the tail decides.
+    #[inline]
+    fn tail_takes(
+        &self,
+        path: &mut Vec<u8>,
+        dir_path: &[u8],
+        below_tail_len: u32,
+        name: &[u8],
+    ) -> bool {
+        below_tail_len == NOT_BELOW_TAIL
+            || self
+                .eval_below_tail(path, dir_path, below_tail_len, name, false)
+                .0
+    }
+
+    /// Below a tail, a link is followed only if it is a match, or a path below it can be one.
+    #[inline]
+    fn tail_follows(
+        &self,
+        path: &mut Vec<u8>,
+        dir_path: &[u8],
+        below_tail_len: u32,
+        name: &[u8],
+    ) -> bool {
+        if below_tail_len == NOT_BELOW_TAIL {
+            return true;
+        }
+        let (matches, descends) = self.eval_below_tail(path, dir_path, below_tail_len, name, true);
+        matches || descends
+    }
+
+    /// `eval_dir` for the directory `name`. Below a tail, the tail decides.
+    #[inline]
+    fn eval_dir_entry(
+        &self,
+        path: &mut Vec<u8>,
+        active: &ComponentSet,
+        dir_path: &[u8],
+        below_tail_len: u32,
+        name: &[u8],
+        add: &mut bool,
+    ) -> ComponentSet {
+        if below_tail_len == NOT_BELOW_TAIL {
+            return self.eval_dir(active, name, add);
+        }
+        let (matches, descends) = self.eval_below_tail(path, dir_path, below_tail_len, name, true);
+        *add = matches;
+        match descends {
+            true => active.clone().expect("OOM: ComponentSet::clone"),
+            false => self.make_set(),
+        }
+    }
+
+    /// For the entry `name` of `dir_path`, a directory in which the tail is active: returns if the tail matches it and, for a directory, if a path below it can match. `path` is a buffer.
+    #[cold]
+    #[inline(never)]
+    fn eval_below_tail(
+        &self,
+        path: &mut Vec<u8>,
+        dir_path: &[u8],
+        below_tail_len: u32,
+        name: &[u8],
+        is_dir: bool,
+    ) -> (bool, bool) {
+        let Some(tail) = self.tail.as_deref() else {
+            return (false, false);
+        };
+        if (self.is_ignored)(name) {
+            return (false, false);
+        }
+        // The directory of a link ends with a separator.
+        let dir = match dir_path.split_last() {
+            Some((last, before)) if bun_core::path_sep::is_sep_native(*last) => before,
+            _ => dir_path,
+        };
+        debug_assert!(below_tail_len as usize <= dir.len());
+        path.clear();
+        path.extend_from_slice(&dir[dir.len().saturating_sub(below_tail_len as usize)..]);
+        if !path.is_empty() {
+            path.push(b'/');
+        }
+        path.extend_from_slice(name);
+        let dots = if self.dot { Dots::Match } else { Dots::Hide };
+        let matches = tail.matches(path, dots);
+        if !is_dir {
+            return (matches, false);
+        }
+        path.push(b'/');
+        // A directory also matches with a separator after it, if the pattern can end with one.
+        let matches = matches || tail.ends_with_separator && tail.matches(path, dots);
+        (matches, tail.may_match_below(path, dots))
+    }
+
     /// Subset of `active` whose components are non-wildcard literals that
     /// match `entry_name`. Used to descend into a symlinked directory that the
     /// pattern names explicitly even when `follow_symlinks` is off.
@@ -1918,6 +2151,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             let may_follow = match comp.syntax_hint {
                 SyntaxHint::Literal => true,
                 SyntaxHint::Double => false,
+                // As for a `**`: a tail that can go through any number of directories does not go through a link.
+                SyntaxHint::Tail => {
+                    self.follow_matched_symlinks
+                        && self.tail.as_deref().is_some_and(|tail| !tail.is_unbounded)
+                }
                 _ => self.follow_matched_symlinks,
             };
             if may_follow && self.match_pattern_impl(comp, entry_name) {
@@ -1997,20 +2235,21 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Ok(bun_join::<SENTINEL>(subdir_parts))
     }
 
+    /// `below_tail_len` is that of the link's directory.
     fn push_symlink_work_item(
         &mut self,
         dir_path: &[u8],
         entry_name: &[u8],
+        below_tail_len: u32,
         active: ComponentSet,
     ) -> Result<(), AllocError> {
         let subdir_entry_name = self.join(&[dir_path, entry_name])?;
         let joined = work_item_logical_path(&subdir_entry_name);
         let entry_start: u32 =
             u32::try_from(joined.len() - strings::basename(joined).len()).unwrap();
-        self.push_work_item(
-            WorkItem::new_symlink(subdir_entry_name, active, entry_start),
-            None,
-        );
+        let mut item = WorkItem::new_symlink(subdir_entry_name, active, entry_start);
+        item.below_tail_len = below_tail_len;
+        self.push_work_item(item, None);
         Ok(())
     }
 
@@ -2181,16 +2420,18 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Some(component)
     }
 
+    /// Makes one component for each path segment of `pattern`. Returns the tail, if the pattern has one.
     fn build_pattern_components(
         pattern_components: &mut Vec<Component>,
-        pattern: &[u8],
+        whole_pattern: &mut Box<[u8]>,
         end_byte_of_basename_excluding_special_syntax: &mut u32,
         basename_excluding_special_syntax_component_idx: &mut u32,
-    ) -> Result<(), AllocError> {
+    ) -> Result<Option<Box<Tail>>, AllocError> {
+        let pattern: &[u8] = whole_pattern;
         let mut start_byte: u32 = 0;
         let pattern_len: u32 = u32::try_from(pattern.len()).expect("int cast");
 
-        let mut prev_is_backslash = false;
+        let mut brackets = Brackets::default();
         let mut saw_special = false;
         let mut i: u32 = 0;
         let mut width: u32 = 0;
@@ -2198,7 +2439,24 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             let c = pattern[i as usize];
             width = u32::from(strings::wtf8_byte_sequence_length(c));
 
-            if bun_core::path_sep::is_sep_native(c) {
+            let is_separator = bun_core::path_sep::is_sep_native(c);
+            // A separator or a `**` inside a group or a class ends no component: the tokens of the matcher say where the segments are.
+            if (is_separator || (c == b'*' && pattern.get(i as usize + 1) == Some(&b'*')))
+                && brackets.may_be_open()
+            {
+                let (tail, rewritten) = Self::build_components_from_tokens(
+                    pattern_components,
+                    pattern,
+                    end_byte_of_basename_excluding_special_syntax,
+                    basename_excluding_special_syntax_component_idx,
+                );
+                if let Some(rewritten) = rewritten {
+                    *whole_pattern = rewritten;
+                }
+                return Ok(tail);
+            }
+
+            if is_separator {
                 let mut end_byte = i;
                 // is last char
                 if (i + width) as usize == pattern.len() {
@@ -2215,15 +2473,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                     pattern_components.push(component);
                 }
                 start_byte = i + width;
-            } else if c == b'\\' {
-                if prev_is_backslash {
-                    prev_is_backslash = false;
-                    i += 1;
-                    continue;
-                }
-                prev_is_backslash = true;
+            } else if matches!(c, b'\\' | b'[' | b']' | b'{' | b'}' | b'(' | b')') {
+                brackets.read(pattern, i, c);
             }
-            // TODO: Support other escaping glob syntax
             i += 1;
         }
         debug_assert!(i == 0 || i as usize == pattern.len());
@@ -2247,8 +2499,309 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             *end_byte_of_basename_excluding_special_syntax = (i + width).min(pattern_len);
         }
 
-        Ok(())
+        Ok(None)
     }
+
+    /// Splits `pattern` again from its start, with the tokens of the matcher. Also returns the pattern as the matcher reads it, if that is not as written.
+    #[cold]
+    #[inline(never)]
+    fn build_components_from_tokens(
+        pattern_components: &mut Vec<Component>,
+        written: &[u8],
+        end_byte_of_basename_excluding_special_syntax: &mut u32,
+        basename_excluding_special_syntax_component_idx: &mut u32,
+    ) -> (Option<Box<Tail>>, Option<Box<[u8]>>) {
+        pattern_components.clear();
+        *end_byte_of_basename_excluding_special_syntax = 0;
+        *basename_excluding_special_syntax_component_idx = 0;
+        // For the walker a `\` is a separator on Windows. For the matcher it is an escape.
+        let rewritten: Option<Box<[u8]>> = (cfg!(windows) && written.contains(&b'\\')).then(|| {
+            let slash = |byte: &u8| if *byte == b'\\' { b'/' } else { *byte };
+            written.iter().map(slash).collect()
+        });
+        let pattern = rewritten.as_deref().unwrap_or(written);
+        let pattern_len = u32::try_from(pattern.len()).expect("int cast");
+        let shape = Shape::of(pattern);
+        let mut saw_special = false;
+        let mut start_byte: u32 = 0;
+        // Without a `]` after it, no later `[` opens a class either. Asking again for each one is quadratic.
+        let mut has_unclosed_class = false;
+        let mut at = 0;
+        while at < pattern.len() {
+            let (token, end) = match has_unclosed_class && pattern[at] == b'[' {
+                true => (Token::Literal, at + 1),
+                false => crate::matcher::token_at(pattern, at, &shape),
+            };
+            has_unclosed_class |= token == Token::Literal && pattern[at] == b'[';
+            match token {
+                Token::Literal if pattern[at] == b'/' => {
+                    let end_byte = u32::try_from(end).expect("int cast");
+                    // The last component has the separator that ends the pattern.
+                    let is_last = end == pattern.len();
+                    let component_end = if is_last { end_byte } else { end_byte - 1 };
+                    if let Some(component) =
+                        Self::make_component(pattern, start_byte, component_end)
+                    {
+                        saw_special = saw_special || component.syntax_hint.is_special_syntax();
+                        if !saw_special {
+                            *basename_excluding_special_syntax_component_idx =
+                                u32::try_from(pattern_components.len()).expect("int cast");
+                            *end_byte_of_basename_excluding_special_syntax = end_byte;
+                        }
+                        pattern_components.push(component);
+                    }
+                    start_byte = end_byte;
+                }
+                Token::Group { first } if starts_tail(pattern, at, first, end, &shape) => {
+                    // The tail starts at the first `**`, which reads every directory below it anyway. Then no other component is active with the tail.
+                    let doubles = |it: &Component| it.syntax_hint == SyntaxHint::Double;
+                    if let Some(first_double) = pattern_components.iter().position(doubles) {
+                        start_byte = pattern_components[first_double].start;
+                        pattern_components.truncate(first_double);
+                    }
+                    pattern_components.push(Component {
+                        start: start_byte,
+                        len: pattern_len - start_byte,
+                        syntax_hint: SyntaxHint::Tail,
+                        ..Default::default()
+                    });
+                    let tail = Tail::new(&pattern[start_byte as usize..], start_byte != 0);
+                    return (Some(Box::new(tail)), rewritten);
+                }
+                _ => {}
+            }
+            at = end;
+        }
+        let last = Self::make_component(pattern, start_byte, pattern_len);
+        saw_special = saw_special || last.is_some_and(|it| it.syntax_hint.is_special_syntax());
+        if !saw_special {
+            *basename_excluding_special_syntax_component_idx =
+                u32::try_from(pattern_components.len()).expect("int cast");
+            *end_byte_of_basename_excluding_special_syntax = pattern_len;
+        }
+        pattern_components.extend(last);
+        (None, rewritten)
+    }
+}
+
+/// What `{`, `(` and `[` have opened before a byte of a pattern, as far as one look at each byte tells. It can say open when nothing is, and never the reverse.
+#[derive(Default)]
+struct Brackets {
+    /// One bit for each open group, the innermost lowest: 1 for `(`.
+    kinds: u64,
+    depth: u32,
+    /// Index of the first member of the open class, which a `]` can be. Zero if no class is open.
+    class_from: u32,
+    /// The byte before this index is escaped.
+    escaped_until: u32,
+    /// A closer did not fit its opener, or `kinds` is full. From then on every byte may be in a group.
+    is_unsure: bool,
+    /// No `]` is left, so a `[` is plain text.
+    has_no_class_end: bool,
+}
+
+impl Brackets {
+    #[inline(always)]
+    fn may_be_open(&self) -> bool {
+        self.depth != 0 || self.class_from != 0 || self.is_unsure
+    }
+
+    /// `c`, the byte at `at`, is one of `\`, `[`, `]`, `{`, `}`, `(`, `)`.
+    fn read(&mut self, pattern: &[u8], at: u32, c: u8) {
+        if at < self.escaped_until {
+            return;
+        }
+        if c == b'\\' {
+            self.escaped_until = at + 2;
+        } else if self.class_from != 0 {
+            // The first member of a class can be a `]`.
+            if c == b']' && at != self.class_from {
+                self.class_from = 0;
+            }
+        } else if c == b'[' {
+            if self.has_no_class_end {
+                return;
+            }
+            let after = &pattern[at as usize + 1..];
+            match strings::index_of_char(after, b']') {
+                Some(_) => self.class_from = at + 1 + u32::from(matches!(after[0], b'^' | b'!')),
+                None => self.has_no_class_end = true,
+            }
+        } else if c == b'{' || (c == b'(' && Self::is_after_group_prefix(pattern, at)) {
+            self.is_unsure |= self.depth >= u64::BITS;
+            self.kinds = (self.kinds << 1) | u64::from(c == b'(');
+            self.depth += 1;
+        } else if (c == b'}' || c == b')') && self.depth != 0 {
+            if self.kinds & 1 == u64::from(c == b')') {
+                self.kinds >>= 1;
+                self.depth -= 1;
+            } else {
+                self.is_unsure = true;
+            }
+        }
+    }
+
+    fn is_after_group_prefix(pattern: &[u8], at: u32) -> bool {
+        at != 0 && matches!(pattern[at as usize - 1], b'?' | b'*' | b'+' | b'@' | b'!')
+    }
+}
+
+/// What a pattern says from the first path segment in which a group crosses a separator. No set of components says that, so the matcher reads it, against the path of each entry below the directory that the tail starts in.
+struct Tail {
+    /// The pattern from that segment on, with `/` for every separator.
+    pattern: Box<[u8]>,
+    shape: Shape,
+    /// Says which directories can have a match below them, if the matcher can say that of the pattern.
+    below: Option<Below>,
+    /// The pattern can end with a separator, so a directory can match with one after its name.
+    ends_with_separator: bool,
+    /// The pattern can end with the separator before the tail, so the directory that the tail starts in is a match.
+    matches_its_directory: bool,
+    /// A `**` or a group that repeats across separators is in it, so it can go through any number of directories.
+    is_unbounded: bool,
+}
+
+impl Tail {
+    /// `text` is a pattern from where a path segment starts. `is_after_separator` is false if it is the whole pattern.
+    fn new(text: &[u8], is_after_separator: bool) -> Tail {
+        let mut pattern = Vec::with_capacity(text.len() + 1);
+        // Only a `!` that starts a whole pattern negates, but the matcher reads this part as one.
+        let bangs = if is_after_separator {
+            crate::matcher::negations(text)
+        } else {
+            0
+        };
+        for _ in 0..bangs {
+            pattern.extend_from_slice(b"\\!");
+        }
+        pattern.extend_from_slice(&text[bangs..]);
+        let shape = Shape::of(&pattern);
+        let is_negated = crate::matcher::negations(&pattern) != 0;
+        // If every part of the tail can match nothing, the separator before it ends the pattern.
+        let whole = [
+            if is_after_separator {
+                &b"/"[..]
+            } else {
+                &b""[..]
+            },
+            &pattern[..],
+        ]
+        .concat();
+        let ends_with_separator =
+            !is_negated && ends_with_separator(&whole, 0..whole.len(), &Shape::of(&whole), 0);
+        let matches_nothing = ends_with_separator
+            && (crate::matcher::match_prepared::<{ cfg!(windows) }>(
+                &pattern,
+                &shape,
+                b"",
+                Dots::Match,
+            ))
+            .matches();
+        Tail {
+            below: Below::of(&pattern, &shape),
+            ends_with_separator,
+            matches_its_directory: is_after_separator && matches_nothing,
+            is_unbounded: is_unbounded(&pattern, &shape),
+            pattern: pattern.into_boxed_slice(),
+            shape,
+        }
+    }
+
+    /// Returns true if the tail matches `path`, a path from the directory that the tail starts in.
+    fn matches(&self, path: &[u8], dots: Dots) -> bool {
+        (crate::matcher::match_prepared::<{ cfg!(windows) }>(
+            &self.pattern,
+            &self.shape,
+            path,
+            dots,
+        ))
+        .matches()
+    }
+
+    /// Returns false only if no path below the directory `path` matches. `path` ends with a separator.
+    fn may_match_below(&self, path: &[u8], dots: Dots) -> bool {
+        (self.below.as_ref())
+            .is_none_or(|below| below.may_match::<{ cfg!(windows) }>(&self.pattern, path, dots))
+    }
+}
+
+/// Returns true if the group at `at` starts a tail: one of its alternatives has a separator or a `**`. `!(a/b)` matches in one path segment.
+fn starts_tail(pattern: &[u8], at: usize, first: usize, end: usize, shape: &Shape) -> bool {
+    pattern[at] != b'!'
+        && !shape.is_sequence_at(first)
+        && crosses_separator(pattern, first..end - 1, shape)
+}
+
+/// Returns true if `part` of `pattern`, the inside of a group, has a separator or a `**` at any depth.
+fn crosses_separator(pattern: &[u8], part: core::ops::Range<usize>, shape: &Shape) -> bool {
+    let mut at = part.start;
+    while at < part.end {
+        let (token, end) = crate::matcher::token_at(pattern, at, shape);
+        match token {
+            Token::Literal if pattern[at] == b'/' => return true,
+            Token::Globstar => return true,
+            // Go into it: its closer and the separators of its alternatives are literals here.
+            Token::Group { first } => at = first,
+            _ => at = end,
+        }
+    }
+    false
+}
+
+/// Returns true if `pattern` has a `**`, or a `+(..)` or `*(..)` that crosses a separator.
+fn is_unbounded(pattern: &[u8], shape: &Shape) -> bool {
+    let mut at = 0;
+    while at < pattern.len() {
+        let (token, end) = crate::matcher::token_at(pattern, at, shape);
+        match token {
+            Token::Globstar => return true,
+            Token::Group { first } => {
+                let repeats = matches!(pattern[at], b'+' | b'*');
+                if repeats && crosses_separator(pattern, first..end - 1, shape) {
+                    return true;
+                }
+                at = first;
+            }
+            _ => at = end,
+        }
+    }
+    false
+}
+
+/// Returns true if what `part` of `pattern` matches can end with a separator. It gives up on groups that are nested deep.
+fn ends_with_separator(
+    pattern: &[u8],
+    part: core::ops::Range<usize>,
+    shape: &Shape,
+    depth: u32,
+) -> bool {
+    // The last token of `part`, and the one before it if the last one can match nothing.
+    let mut tokens: Vec<(Token, usize)> = Vec::new();
+    let mut at = part.start;
+    while at < part.end {
+        let (token, end) = crate::matcher::token_at(pattern, at, shape);
+        tokens.push((token, at));
+        at = end;
+    }
+    for &(token, at) in tokens.iter().rev() {
+        let Token::Group { first } = token else {
+            return token == Token::Literal && pattern[at] == b'/';
+        };
+        if depth >= 64 || pattern[at] == b'!' || shape.is_sequence_at(first) {
+            return false;
+        }
+        let mut alternatives = shape.alternatives_at(first);
+        if alternatives.any(|it| ends_with_separator(pattern, it, shape, depth + 1)) {
+            return true;
+        }
+        // A group that can match nothing leaves the end to the token before it.
+        let can_be_empty = matches!(pattern[at], b'?' | b'*')
+            || shape.alternatives_at(first).any(|it| it.is_empty());
+        if !can_be_empty {
+            return false;
+        }
+    }
+    false
 }
 
 // Drop frees Vec/Box fields automatically.

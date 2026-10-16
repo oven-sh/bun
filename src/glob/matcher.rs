@@ -4773,6 +4773,7 @@ impl Program {
             first,
             is_windows,
             dots,
+            is_start_of_path: false,
         }
     }
 
@@ -4850,6 +4851,8 @@ struct On<'a> {
     is_windows: bool,
     /// `Dots::Match` unless the path has a closed segment.
     dots: Dots,
+    /// `path` is only the start of a path. See [`Below`].
+    is_start_of_path: bool,
 }
 
 impl On<'_> {
@@ -5145,7 +5148,8 @@ impl<S: Set> Walk<S> {
                         let any = on.pattern.len()
                             + 1
                             + (masks.nots_before + before(masks.nots)) as usize;
-                        if set[any / 64] & 1 << (any % 64) != 0 {
+                        // What follows the start of a path may keep the alternatives from matching, so there the `!(a)` stays.
+                        if !on.is_start_of_path && set[any / 64] & 1 << (any % 64) != 0 {
                             now ^= bit;
                             continue;
                         }
@@ -5636,5 +5640,51 @@ impl Cache {
             self.add_character(state, character, found.0);
         }
         Ok(found)
+    }
+}
+
+/// A pattern, prepared for asking which directories can have a match below them. A walk over a whole path starts from the node for the end of the pattern. This one starts from every node: whatever comes below the directory, the set for the index after its last separator is among them, and every step only adds nodes when its input has more.
+pub(crate) struct Below {
+    program: Program,
+    /// Every node.
+    all: SmallVec<[u64; 4]>,
+}
+
+impl Below {
+    /// `None` for a pattern that a walk does not decide: a negated one, and one that isn't regular.
+    pub(crate) fn of(glob: &[u8], shape: &Shape) -> Option<Below> {
+        let parsed = shape.parsed(glob);
+        if parsed.top > 0 || !parsed.is_regular {
+            return None;
+        }
+        let mut program = Program::new();
+        program.read(glob, parsed, 0);
+        let words = program.masks.len();
+        let last = program.masks[words - 1];
+        let nodes = glob.len() + 1 + (last.nots_before + last.nots.count_ones()) as usize;
+        let mut all: SmallVec<[u64; 4]> = SmallVec::from_elem(0, words);
+        for node in 0..nodes {
+            all[node / 64] |= 1 << (node % 64);
+        }
+        Some(Below { program, all })
+    }
+
+    /// Returns false only if no path that starts with `directory` matches. `directory` ends with a separator, or is empty.
+    pub(crate) fn may_match<const WINDOWS: bool>(
+        &self,
+        glob: &[u8],
+        directory: &[u8],
+        dots: Dots,
+    ) -> bool {
+        let dots = match dots != Dots::Match && has_closed_segment_on(directory, dots, WINDOWS) {
+            true => dots,
+            false => Dots::Match,
+        };
+        let on = On {
+            is_start_of_path: true,
+            ..self.program.on(glob, directory, 0, WINDOWS, dots)
+        };
+        on.go(Some((directory.len(), &self.all)), None)
+            .is_err_and(|it| it)
     }
 }

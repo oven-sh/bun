@@ -61,7 +61,8 @@ impl PackageManager {
         get_temporary_directory(self)
     }
 
-    /// A command ends here. Auto-install logs `why` and returns: the import that asked throws it.
+    /// Prints `why` and exits. Auto-install only logs `why`, and the import that needed the
+    /// directory then throws it.
     pub(crate) fn exit_or_log(&mut self, why: &DirectoryError) {
         if !self.options.runtime_auto_install {
             Output::err_generic("{}", (why,));
@@ -72,7 +73,8 @@ impl PackageManager {
     }
 }
 
-/// Why a directory the package manager needs is not there. `Display` is the line the user reads.
+/// Why a directory that the package manager needs could not be opened. `Display` gives the
+/// message that the user sees.
 #[derive(thiserror::Error, Debug)]
 pub enum DirectoryError {
     #[error("bun is unable to write files: {}", bun_fmt::s(.0.name()))]
@@ -127,7 +129,8 @@ pub fn get_cache_directory(this: &mut PackageManager) -> Fd {
     })
 }
 
-/// `Err` says why there is none. Auto-install asks first: once open, the above cannot fail.
+/// Like `get_cache_directory`, but returns the error instead of crashing. Auto-install calls this
+/// first, because `get_cache_directory` cannot fail once the directory is open.
 #[inline]
 pub fn try_get_cache_directory(this: &mut PackageManager) -> Result<Fd, DirectoryError> {
     // SAFETY: `&mut PackageManager` is exclusive over every field the raw
@@ -179,7 +182,8 @@ pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryD
     })
 }
 
-/// `Err` says why there is none. A failure is not remembered: the next call tries again.
+/// Like `get_temporary_directory`, but returns the error instead of crashing. A failure is not
+/// cached, so the next call tries again.
 pub fn try_get_temporary_directory(
     this: &mut PackageManager,
 ) -> Result<&'static TemporaryDirectory, DirectoryError> {
@@ -997,7 +1001,7 @@ pub fn global_link_dir(this: &mut PackageManager) -> Fd {
     })
 }
 
-/// `Err` says why there is none.
+/// Like `global_link_dir`, but returns the error instead of exiting.
 pub fn try_global_link_dir(this: &mut PackageManager) -> Result<Fd, DirectoryError> {
     if let Some(d) = this.global_link_dir.as_ref() {
         return Ok(d.fd());
@@ -1011,7 +1015,8 @@ pub fn try_global_link_dir(this: &mut PackageManager) -> Result<Fd, DirectoryErr
     let link_dir = match global_dir.make_open_path(b"node_modules", Default::default()) {
         Ok(d) => d,
         Err(err) => {
-            // Kept open: a debug build prints the path of the descriptor.
+            // The error message prints this descriptor, and a debug build looks up its path, so
+            // the directory has to stay open.
             let global_dir = this.global_dir.insert(global_dir).fd();
             return Err(DirectoryError::OpenGlobalLink { global_dir, err });
         }

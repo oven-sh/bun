@@ -1243,6 +1243,36 @@ describe("every command that installs runs the scanner", () => {
     );
 
     it.concurrent(
+      "sends every package with the lockfile of another package manager",
+      async () => {
+        const result = await run(command.split(" "), async (_, dir) => {
+          const { registry } = Bun.TOML.parse(await Bun.file(join(dir, "bunfig.toml")).text()).install;
+          const entry = (name: string, version: string, rest = {}) => ({
+            [`node_modules/${name}`]: { version, resolved: `${registry}${name}-${version}.tgz`, ...rest },
+          });
+          rmSync(join(dir, "bun.lockb"));
+          await Bun.write(
+            join(dir, "package-lock.json"),
+            JSON.stringify({
+              name: "my-app",
+              version: "1.0.0",
+              lockfileVersion: 3,
+              requires: true,
+              packages: {
+                "": await Bun.file(join(dir, "package.json")).json(),
+                ...entry("bar", "0.0.2", { dependencies: { baz: ">=0.0.3" } }),
+                ...entry("baz", "0.0.5"),
+                ...entry("boba", "0.0.2"),
+              },
+            }),
+          );
+        });
+        expect(result).toEqual(stopped);
+      },
+      timeout,
+    );
+
+    it.concurrent(
       "sends what it names with both",
       async () => {
         expect(await run(command.split(" "))).toMatchObject({ scanned: named });

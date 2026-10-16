@@ -267,8 +267,8 @@ pub fn install_with_manager(
                     }
                 }
 
-                // They get their entries when the dependencies change. That they have none is no
-                // change: the lockfile of an older version stays valid, and as it is.
+                // A lockfile from an older Bun has no entries for these workspaces. They are added the
+                // next time the dependencies change. Until then that lockfile is valid as it is.
                 let left_out = core::mem::take(&mut manager.summary.members_left_out);
                 if manager.summary.changes_dependencies() {
                     manager.summary.add += left_out.len() as u32;
@@ -694,7 +694,7 @@ pub fn install_with_manager(
         let mut moved_by_overrides: Vec<PackageID> = Vec::new();
         let synced = super::package_json_write_back::edit_after_resolve(manager)?;
         if synced.links {
-            // Drops what the registry resolved for the rows that link a workspace now.
+            // Removes the registry packages that were resolved for rows that now link a workspace.
             manager.lockfile.mark_loaded_packages()?;
             clean_lockfile(manager, log_level)?;
             root = *manager.lockfile.packages.get(0);
@@ -717,6 +717,9 @@ pub fn install_with_manager(
         }
 
         if manager.options.security_scanner.is_some() {
+            // Another package manager's lockfile says nothing about what the scanner has seen.
+            let loaded_bun_lockfile = lockfile_before_clean.loaded_package_count > 0
+                && load_result.migrated_from().is_none();
             run_security_scanner(
                 manager,
                 ctx,
@@ -724,6 +727,7 @@ pub fn install_with_manager(
                 &lockfile_before_clean,
                 &named.moved,
                 moved_by_overrides,
+                loaded_bun_lockfile,
             );
         }
     }
@@ -846,7 +850,8 @@ pub fn install_with_manager(
         }
     }
 
-    // Every check that can refuse the run has passed. One with errors ends without saving.
+    // Every check that can stop the install has passed, so the patch file can be written. An
+    // install that logged errors stops here instead and writes nothing.
     if had_errors_before_cleaning_lockfile
         && matches!(
             manager.options.patch_features,
@@ -946,7 +951,7 @@ pub fn install_with_manager(
             let served = lockfile::tree::served_peers(&manager.lockfile);
             manager.warn_incorrect_peers(&served);
         }
-        // `bun install --filter` leaves the folders of the other members alone.
+        // `bun install --filter` must not touch the folders of the workspaces that it leaves out.
         removes_collapsed_copies = summary.fail == 0
             && (workspace_filters.is_empty() || manager.filtered_link_targets.is_some())
             && (had_any_diffs
@@ -1028,7 +1033,8 @@ pub fn install_with_manager(
     // Before root lifecycle scripts, which exit the process on failure.
     super::package_json_write_back::flush(manager)?;
 
-    // A failed save exits above, with bun.lock and package.json still naming these folders.
+    // These folders are removed only after the save. If the save fails, bun exits above, and
+    // bun.lock and package.json still refer to them.
     if removes_collapsed_copies && isolated {
         crate::prune::unlink_dropped_dependencies(manager, &lockfile_before_clean);
     } else if removes_collapsed_copies {
@@ -1036,8 +1042,8 @@ pub fn install_with_manager(
     }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;
-    // `skipped`: something of an earlier install is still there. The root's scripts lay what they
-    // like, and lay it again if they run after this.
+    // `skipped > 0` means that parts of an earlier install are still in place. Folders that the
+    // root's scripts created may be removed too, so this only runs if they run again afterwards.
     if !install_summary.places.is_empty()
         && install_summary.success > 0
         && install_summary.skipped > 0
@@ -1555,7 +1561,8 @@ fn warn_unsupported_platform(
     }
 }
 
-/// See `Lockfile::is_member_outside`.
+/// Prints a note that names the workspaces outside the project, whose dependencies and scripts
+/// were skipped. See `Lockfile::is_member_outside`.
 fn note_members_outside(manager: &PackageManager) {
     let lockfile: &Lockfile = &manager.lockfile;
     let pkgs = lockfile.packages.slice();
@@ -2077,7 +2084,8 @@ fn root_package_json_source(
         Default::default(),
     ) {
         WorkspacePackageJsonCacheResult::Entry(entry) => {
-            // `touch package.json && bun install` has no pins to lose.
+            // An empty package.json is refused only next to a lockfile, whose pinned versions
+            // would be lost. Without one, `touch package.json && bun install` works.
             if has_lockfile && entry.source.contents.is_empty() {
                 exit_on_empty_package_json(root_package_json_path.as_bytes());
             }
@@ -2293,9 +2301,9 @@ fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
     Ok(())
 }
 
-/// Resolves the deferred peers as far as that takes no request.
+/// Resolves the deferred peers without waiting. A peer that needs a download stays in the queue.
 fn resolve_peers_without_waiting(manager: &mut PackageManager) -> crate::Result<()> {
-    // An error ends the install, so the peers are not worth another round of requests and retries.
+    // An error ends the install, so the peers are not worth another round of requests.
     if manager.log_mut().has_errors() {
         return Ok(());
     }
@@ -2319,7 +2327,8 @@ fn clean_lockfile(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
 ) -> crate::Result<Box<Lockfile>> {
-    // The resolver leaves a registry package's row on a workspace an npm range; a load tags it.
+    // The resolver keeps a registry package's dependency on a workspace as an npm range. Loading
+    // a lockfile turns such a row into a workspace dependency, so the same is done here.
     (manager.lockfile).tag_workspace_links(manager.options.link_workspace_packages);
     let new_lockfile = {
         let mgr: *mut PackageManager = manager;
@@ -2349,7 +2358,8 @@ fn clean_lockfile(
     Ok(before_clean)
 }
 
-/// The rows bound to a version that the rule for them does not allow, each with that package.
+/// Returns the rows that resolve to a version that their `overrides` rule does not allow, each
+/// with the package it resolves to.
 #[inline(never)]
 fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
     let buf = lockfile.buffers.string_bytes.as_slice();
@@ -2371,7 +2381,7 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
                         version.try_npm().is_some_and(|npm| {
                             // Under another name the row follows an `npm:` alias, not the rule.
                             npm.name.slice(buf) == names[package_id as usize].slice(buf)
-                                // A range without a comparator takes `latest`, prerelease or not.
+                                // An empty range resolves to `latest`, even to a prerelease.
                                 && !npm.version.is_empty()
                                 && !npm.version.satisfies(
                                     resolutions[package_id as usize].npm().version,
@@ -2385,7 +2395,8 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
         .collect()
 }
 
-/// `frozen` names the lockfile that may not change. Returns the packages rows moved to.
+/// Resolves the rows in `outside` again and returns the packages that they now resolve to. If the
+/// lockfile is frozen, `frozen` is its file name, and this exits with an error instead.
 #[cold]
 #[inline(never)]
 fn reresolve_rows_outside_overrides(
@@ -2402,7 +2413,7 @@ fn reresolve_rows_outside_overrides(
     for &(row, _) in &outside {
         is_outside.set(row as usize);
     }
-    // The packages that a row with no rule against them holds.
+    // The packages that stay in the lockfile, because a row that no rule forbids resolves to them.
     let mut held = DynamicBitSet::init_empty(lockfile.packages.len()).unwrap_or_oom();
     for (row, &package_id) in lockfile.buffers.resolutions.iter().enumerate() {
         if !is_outside.is_set(row) && (package_id as usize) < held.bit_length() {
@@ -2411,11 +2422,13 @@ fn reresolve_rows_outside_overrides(
     }
     outside.retain(|&(row, package_id)| {
         let dependency = &dependencies[row as usize];
-        // A peer takes the version that is there. bun.lock binds an optional row that never resolved by name.
+        // A peer takes the version that is installed, and loading bun.lock binds an optional row
+        // that never resolved by its name. Both only move if their package does not stay anyway.
         if dependency.behavior.is_peer() || dependency.behavior.is_optional() {
             return !held.is_set(package_id as usize);
         }
-        // bun.lock has one version for a name in two groups, which only has to fit one of the ranges.
+        // If a package lists a name in two dependency groups, bun.lock records one version for
+        // both rows, and that version only has to fit one of the two ranges.
         !lockfile
             .get_parent_pkg_of_dependency(row)
             .is_some_and(|owner| {
@@ -2499,6 +2512,7 @@ fn run_security_scanner(
     before_clean: &Lockfile,
     moved: &[(DependencyID, PackageID)],
     mut seeds: Vec<PackageID>,
+    loaded_bun_lockfile: bool,
 ) {
     seeds.extend(moved_targets_after_clean(
         before_clean,
@@ -2510,7 +2524,7 @@ fn run_security_scanner(
         ctx,
         original_cwd,
         &seeds,
-        before_clean.loaded_package_count > 0,
+        loaded_bun_lockfile,
     ) {
         Err(err) => {
             let message = match err {

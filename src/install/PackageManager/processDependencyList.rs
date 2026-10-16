@@ -261,7 +261,8 @@ impl PackageManager {
 
     /// Adds the dependencies of the `file:` folders inside `package` to its own rows, because Node
     /// resolves what such a folder imports from the package's `node_modules`. `package` is parsed
-    /// but not appended yet, so its rows are the last in the buffer. `parse` returns a folder's rows.
+    /// but not appended yet, so its rows are the last in the buffer. `parse` returns a folder's
+    /// rows.
     fn adopt_contained_folders(
         &mut self,
         package: &mut Package,
@@ -318,7 +319,8 @@ impl PackageManager {
             let source = bun_ast::Source::init_path_string(path, &json[..]);
 
             for declared in parse(self, &source)? {
-                // One row for a name: the package's own, or that of the folder that came first.
+                // Each name is only added once. The package's own dependency wins, then the one of
+                // the folder that was read first.
                 if (self.lockfile.buffers.dependencies[off..].iter())
                     .any(|row| row.name_hash == declared.name_hash)
                 {
@@ -360,14 +362,15 @@ impl PackageManager {
         Ok(())
     }
 
-    /// `row` of the package.json in `base`, as the package.json of the package would declare it.
+    /// Returns `row`, a `file:` dependency that the package.json in the folder `base` declares,
+    /// with its path made relative to the package's root.
     fn rebase_contained_folder(
         &mut self,
         row: Dependency,
         base: &[u8],
     ) -> Result<Dependency, bun_alloc::AllocError> {
         let folder = (row.version.folder()).slice(self.lockfile.buffers.string_bytes.as_slice());
-        // The resolver refuses it as it is.
+        // An absolute path is left as it is, and the resolver rejects it.
         if bun_paths::is_absolute(folder) {
             return Ok(row);
         }

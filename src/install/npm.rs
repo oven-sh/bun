@@ -679,7 +679,8 @@ pub mod registry {
         NotFound,
     }
 
-    /// In seconds: what registry.npmjs.org sends, the most that is honoured, and the default.
+    /// How long a cached manifest stays fresh, in seconds. This is the `max-age` that
+    /// registry.npmjs.org sends, the default without one, and the longest one that is honored.
     const MAX_MANIFEST_AGE: u32 = 300;
 
     fn seconds_from_now(seconds: u32) -> u32 {
@@ -687,8 +688,8 @@ pub mod registry {
             .saturating_add(seconds)
     }
 
-    /// Such a cached manifest was written while the clock stood ahead.
-    /// `past` is a time that has gone by: what expires soon after it needs no look at the clock.
+    /// True for a cached manifest that was written while the system clock was set in the future.
+    /// `past` is any earlier time. It settles the usual case without reading the clock.
     pub(crate) fn expires_too_late(expiry: u32, past: u32) -> bool {
         expiry > past.saturating_add(MAX_MANIFEST_AGE)
             && expiry > seconds_from_now(MAX_MANIFEST_AGE)
@@ -752,7 +753,7 @@ pub mod registry {
             manifest_expiry(&response.headers),
             is_extended_manifest,
         )? {
-            // A cache that cannot be written does not keep the manifest from being used.
+            // If the cache cannot be written, the manifest is still used. It is just not saved.
             if package_manager.options.enable.manifest_cache()
                 && let Ok(temp_dir) = directories::try_get_temporary_directory(package_manager)
             {
@@ -924,7 +925,8 @@ pub struct PackageVersion {
     /// `"libc"` field in package.json; only in the full document, see `name_suggests_libc`.
     pub(crate) libc: Libc,
 
-    /// `hasInstallScript` field in registry API; from `scripts` where the document has those instead.
+    /// The `hasInstallScript` field of the registry API. It is derived from `scripts` when the
+    /// registry's document has those instead.
     pub(crate) has_install_script: bool,
     pub(crate) _padding_tail: [u8; 2],
 
@@ -1579,7 +1581,8 @@ pub mod package_manifest {
                 return Ok(None);
             };
 
-            // What cannot be used stays: another version of bun may have written it, and the next fetch replaces it.
+            // A file that cannot be used is not deleted. Another version of bun may have written
+            // it, and the next download of the manifest replaces it.
             Ok(Self::load_by_file(scope, &cache_file)
                 .ok()
                 .flatten()
@@ -1652,8 +1655,8 @@ pub mod package_manifest {
             let extern_strings_bin_entries = Self::read_array::<ExternalString>(&mut pkg_stream)?;
             let bundled_deps_buf = Self::read_array::<PackageNameHash>(&mut pkg_stream)?;
 
-            // A file in which a list of the package leaves its array counts as no file. The lists of
-            // a version wait for `PackageManifest::is_in_bounds`. A string out of bounds reads as "".
+            // The file is ignored if a list of the package points outside its array. A version's
+            // lists are checked later, by `is_in_bounds`. A string outside the buffer reads as "".
             let string = |s: &SemverString| s.is_within(string_buf);
             let package_versions = {
                 let bin_at = core::mem::offset_of!(PackageVersion, bin);
@@ -1721,8 +1724,8 @@ impl PackageManifest {
         external.slice(&self.string_buf)
     }
 
-    /// Do the lists of `version` lie in their arrays? Asked before `Package::from_npm` reads them:
-    /// reading a cached manifest costs nothing for the versions that nobody picks.
+    /// Whether every list of `version` points inside its array. This is checked right before
+    /// `Package::from_npm` reads the lists, so loading a manifest does not check unused versions.
     pub(crate) fn is_in_bounds(&self, version: &PackageVersion) -> bool {
         [
             &version.dependencies,
@@ -1862,7 +1865,8 @@ impl PackageManifest {
         if let Some((_, version)) = self.dist_tags().find(|(tag, _)| *tag == spec) {
             return self.find_by_version(version).ok_or(Error::DistTagNotFound);
         }
-        // What `bun add` installs: `*` is no range, and stands in for `latest` where the document has no such tag.
+        // Both pick the version that `bun add` would install. `latest` only gets here when the
+        // manifest has no such tag.
         if spec == b"*" || spec == b"latest" {
             return (self.find_any_version(None, None).unwrap()).ok_or(Error::NoMatchingVersion);
         }
@@ -2844,7 +2848,8 @@ impl PackageManifest {
                     .and_then(|o| o.get(b"scripts"))
                     .and_then(|scripts| scripts.as_object())
                 {
-                    // The full document has `scripts` instead; this is how the registry and npm derive the field.
+                    // The full manifest has `scripts` instead of the field. The registry and npm
+                    // derive the field from them in the same way.
                     package_version.has_install_script =
                         [&b"preinstall"[..], b"install", b"postinstall"]
                             .iter()

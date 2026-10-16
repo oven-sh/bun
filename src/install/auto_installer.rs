@@ -233,7 +233,8 @@ impl hooks::AutoInstaller for PackageManager {
         let links = self.options.link_workspace_packages;
         let member: Option<SemverString> = match version.tag {
             dependency::Tag::Workspace => self.lockfile.workspace_paths.get(&name_hash).copied(),
-            // A hoisted install puts every member in the root's node_modules, listed or not.
+            // A hoisted install links every workspace into the root's node_modules, whether or not
+            // a package.json lists it, so an import without a declared version finds it too.
             dependency::Tag::Uninitialized if links => {
                 self.lockfile.workspace_paths.get(&name_hash).copied()
             }
@@ -292,7 +293,8 @@ impl hooks::AutoInstaller for PackageManager {
         let r = resolution_from_hooks(resolution);
         let mut len =
             directories::path_for_resolution(self, package_id, &r, path_buf).map(|path| path.len());
-        // `Done` without a folder: the package is not for this platform.
+        // A package that is `Done` but has no folder was skipped because it is not for this
+        // platform, so it is not downloaded here either.
         if len.is_err()
             && r.tag == resolution::Tag::Npm
             && PackageManager::get_preinstall_state(self, package_id) != PreinstallState::Done
@@ -333,7 +335,8 @@ impl hooks::AutoInstaller for PackageManager {
         package_json_dir: Option<&[u8]>,
         behavior: hooks::Behavior,
     ) -> hooks::EnqueueResult {
-        // The manager reads a relative path from the cwd, where `bun install` has the project.
+        // The package manager resolves a relative tarball path against the working directory,
+        // which is the project only for `bun install`. Here the path is made absolute first.
         let mut absolute: Vec<u8> = Vec::new();
         let mut from_package_json_dir = None;
         if let Some(package_json_dir) = package_json_dir
@@ -450,8 +453,8 @@ unsafe fn __bun_resolver_init_package_manager(
     importer_dir: &[u8],
 ) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_resolver::Error> {
     // ABI: the resolver-side `extern "Rust"` declaration names its own
-    // `Error` (`Sys` carries the real errno name so resolve.test.ts sees
-    // `EACCES` not `Unexpected`). Keep
+    // `Error`, whose `Sys` variant carries the real errno name, so that an
+    // import fails with `EACCES` and not with `Unexpected`. Keep
     // both sides byte-identical or the `Result` layout diverges.
     //
     // Idempotent.

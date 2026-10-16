@@ -310,7 +310,8 @@ impl Drop for FinishPass<'_> {
                     node.set_estimated_total_items(manager.total_tasks as usize);
                 }
             }
-            // The bar draws the node that was activated last: not "Resolving" while there is nothing to fetch.
+            // The progress bar shows the node that was activated last, so the downloads node is
+            // only activated once there is something to download.
             if manager.total_tasks > 0 {
                 manager.downloads_node_mut().activate();
             }
@@ -358,7 +359,8 @@ impl Drop for ReturnNetworkTask {
     }
 }
 
-/// `resolve_waiters_of_appended_package`, then tells the runtime if one of its imports was resolved.
+/// `resolve_waiters_of_appended_package`, then tells the runtime if one of its imports was
+/// resolved.
 fn resolve_waiters_and_notify(
     cb: &ErasedCallbacks,
     manager: &mut PackageManager,
@@ -376,7 +378,8 @@ fn resolve_waiters_and_notify(
     result
 }
 
-/// Names and resolves the rows that waited for `task_id`. What a linker queued stays in the list.
+/// Resolves the dependencies that waited for `task_id` to `pkg`, and fills in the package's name
+/// where a dependency did not know it. Entries that a linker queued stay in the task's list.
 /// Sets `any_root` if an import of the runtime was resolved.
 pub(crate) fn resolve_waiters_of_appended_package(
     manager: &mut PackageManager,
@@ -1120,7 +1123,8 @@ fn run_tasks_erased(
                         task.task_id,
                         extract.name.slice(),
                         Some(extract.dependency_id),
-                        // The registry just offered this version: no status for its file says anything about another one.
+                        // The manifest just listed this version, so an error status for its tarball
+                        // counts as no answer: it says nothing about the package's other versions.
                         is_required,
                     );
 
@@ -1180,7 +1184,8 @@ fn run_tasks_erased(
         };
         manager.decrement_pending_tasks();
 
-        // What is wrong with a manifest is reported by the dependency that needs it, if there is one.
+        // What is wrong with a manifest is reported by the dependency that needs it, if there is
+        // one.
         let holds_log = task.tag == Task::Tag::PackageManifest
             && task.status == Task::Status::Fail
             && !cb.has_on_package_manifest_error;
@@ -1710,7 +1715,8 @@ fn run_tasks_erased(
 }
 
 /// `(failed, retry)`. `failed`: the connection died before a response or under a 2xx/3xx one.
-/// `blocking`: someone waits for this one request. No second try after a silence or a 501 (Not Implemented).
+/// `blocking`: the caller blocks on this one request, so it is not retried after a timeout or a
+/// 501 (Not Implemented).
 pub(crate) fn download_outcome(
     response: &http::HTTPClientResult<'static>,
     blocking: bool,
@@ -1728,7 +1734,7 @@ pub(crate) fn download_outcome(
         .as_ref()
         .map(|m| m.response.status_code)
         .or(proxy_status);
-    // The next attempt would end in the same way.
+    // Another attempt would fail in the same way.
     let is_final = matches!(
         response.fail,
         Some(
@@ -1903,7 +1909,8 @@ fn forget_failed_git_task(
     this.task_queue.remove(&task_id).unwrap_or_default()
 }
 
-/// `bunx` asks only once whether the copy it has is the latest: it runs the copy without an answer.
+/// How often a failed manifest request is retried. When `bunx` already has a copy of the tool, it
+/// only asks once whether that copy is the latest, and runs the copy if it gets no answer.
 fn manifest_retry_count(
     manager: &PackageManager,
     task_id: Task::Id,
@@ -1916,8 +1923,10 @@ fn manifest_retry_count(
     {
         return 0;
     }
-    // Best effort, no dependency waits for it (the bins of a migrated lockfile): offline it gives up at once.
-    // `FailedToOpenSocket`: `connect(2)` itself failed, as on macOS for a closed loopback port.
+    // No dependency waits for this manifest. It is only nice to have, for example for the bins of a
+    // migrated lockfile, so without a network connection it is given up at once.
+    // `FailedToOpenSocket` means that `connect(2)` itself failed, as it does on macOS for a closed
+    // loopback port.
     if matches!(
         fail,
         Some(
@@ -1933,15 +1942,17 @@ fn manifest_retry_count(
     manager.options.max_retry_count
 }
 
-/// A download for a request ran out of attempts, and none got an answer about the package.
+/// Set when a download for a package named on the command line ran out of attempts, and no attempt
+/// got an answer about the package.
 static REQUEST_GOT_NO_ANSWER: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 /// Tells `bunx` so (`EX_TEMPFAIL`): the `bun add` it spawned linked and saved nothing.
 pub const BUNX_REGISTRY_UNREACHABLE: u32 = 75;
 
-/// Whether `dir`, which has the root package.json, is the directory `bunx` spawned its `bun add` in.
-/// A command that only inherits the variable runs in another directory, and is a command like any other.
+/// Whether `dir`, the directory of the root package.json, is where `bunx` spawned its `bun add`. A
+/// command that merely inherits the environment variable runs in another directory and gets no
+/// special treatment.
 pub fn is_bunx_tree(dir: &[u8]) -> bool {
     let Some(tree) = bun_core::env_var::BUN_INTERNAL_BUNX_INSTALL.get() else {
         return false;
@@ -1953,7 +1964,7 @@ pub fn is_bunx_tree(dir: &[u8]) -> bool {
     if tree == dir {
         return true;
     }
-    // `dir` comes from `getcwd`, which follows the links in what `bunx` passed.
+    // `dir` comes from `getcwd`, which resolves the symlinks in the path that `bunx` passed.
     let mut real_tree = bun_paths::path_buffer_pool::get();
     let mut real_dir = bun_paths::path_buffer_pool::get();
     match (
@@ -1977,10 +1988,12 @@ pub(crate) fn failed_request_error() -> crate::Error {
     crate::Error::InstallFailed
 }
 
-/// The package.json of a tree of `bunx` while it is linked: a tree that still has it was not linked to the end.
+/// What the package.json in `bunx`'s install directory contains while packages are being linked. If
+/// `bunx` finds this content later, the install did not finish.
 pub const BUNX_UNFINISHED_PACKAGE_JSON: &[u8] = b"{}\n";
 
-/// Right before anything is linked. Until then the tree that `bunx` has stays as it is, so it needs all of the next one.
+/// Called right before anything is linked. Up to this point the copy that `bunx` already has is
+/// untouched and still usable, so an install with errors stops here.
 pub(crate) fn begin_linking_for_bunx(root_package_json_path: &bun_core::ZStr, had_errors: bool) {
     if !bun_paths::dirname(root_package_json_path.as_bytes()).is_some_and(is_bunx_tree) {
         return;
@@ -2007,7 +2020,8 @@ pub(crate) fn fail_update_requests(
     if this.subcommand == Subcommand::Remove {
         return;
     }
-    // Everything in the tree of `bunx` is there for its one request.
+    // Every package in `bunx`'s install directory is there for the one tool that it was asked to
+    // run.
     let for_bunx = unanswered && is_bunx_install();
     let lockfile = &*this.lockfile;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -2136,7 +2150,8 @@ pub fn generate_network_task_for_tarball<'a>(
         Err(why) => {
             this.exit_or_log(&why);
             this.mark_network_task_failed(task_id);
-            // No task will take the waiters: a later enqueue would think one was started.
+            // No task was started, so the entry is removed. Otherwise a later enqueue would wait
+            // for a task that never runs.
             let _ = this.task_queue.remove(&task_id);
             return Err(ForTarballError::AlreadyFailed);
         }
@@ -2238,7 +2253,8 @@ pub fn generate_network_task_for_tarball<'a>(
 impl PackageManager {
     pub fn drain_dependency_list(&mut self) {
         loop {
-            // Step 2. If there were cached dependencies, go through all of those but don't download the devDependencies for them.
+            // Step 2. If there were cached dependencies, go through all of those but don't download
+            // the devDependencies for them.
             flush_dependency_queue(self);
 
             if PackageManager::verbose_install() {

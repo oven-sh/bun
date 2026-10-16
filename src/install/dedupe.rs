@@ -84,7 +84,7 @@ impl<'a> Pass<'a> {
         let m = self.edge_count;
         self.required.copy_into(&mut self.chosen);
         self.covered.unmanaged.set_all(false);
-        // The uncovered edges that each candidate satisfies; `mark_covered` keeps it.
+        // `count[c]` is how many uncovered edges candidate `c` satisfies. `mark_covered` updates it.
         self.count.clear();
         self.count.resize(n, 0);
         for e in 0..m {
@@ -254,7 +254,8 @@ impl<'a> Pass<'a> {
                     }
                     Some(range) => {
                         let query = &range.npm().version;
-                        // The candidates are sorted: an exact version has its matches side by side.
+                        // The candidates are sorted, so the ones that an exact version can match
+                        // are next to each other.
                         let in_question = match query.get_exact_version() {
                             Some(exact) => {
                                 let exact = (exact.major, exact.minor, exact.patch);
@@ -296,7 +297,7 @@ impl<'a> Pass<'a> {
                 }
             }
 
-            // Every edge takes the version it has and no other.
+            // No edge of this group accepts a version other than the one it already has.
             if !can_move {
                 self.edges[g] = edges;
                 continue;
@@ -338,8 +339,8 @@ impl<'a> Pass<'a> {
                 if !self.movable.is_set(e) {
                     continue;
                 }
-                // `collapse_appended`: when a new package's dependency was resolved, it could only
-                // share the versions that the dependencies ahead of it in the queue had brought in.
+                // Only in `collapse_appended`. When this dependency of a new package was resolved, it
+                // could only share the versions that the dependencies resolved before it had added.
                 let placed_early = self.frozen_below.is_some_and(|below| owner >= below)
                     && !deps[dep_id as usize].behavior.is_peer();
                 let placement = if placed_early {

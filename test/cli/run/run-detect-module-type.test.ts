@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -105,8 +105,8 @@ function formats(stdout: string): Record<string, string> {
   );
 }
 
-// Not concurrent with the tests below: a Worker starts its own VM, which costs
-// about a second on a debug build when it has a CPU to itself.
+// Not concurrent with the tests below: a Worker starts its own VM, which is
+// slow on a debug build unless it has a CPU to itself.
 test("module format as a Worker's main module", async () => {
   using dir = tempDir("module-type-worker", {
     "esm/package.json": packageJson.module,
@@ -114,12 +114,11 @@ test("module format as a Worker's main module", async () => {
     "cjs/package.json": packageJson.commonjs,
     "cjs/hello.mjs": fixture("hello.mjs"),
     "workers.mjs": `
-      import { Worker } from "node:worker_threads";
       await Promise.all(["./esm/hello.cjs", "./cjs/hello.mjs"].map(file => {
         const worker = new Worker(new URL(file, import.meta.url));
         return new Promise((resolve, reject) => {
-          worker.on("exit", resolve);
-          worker.on("error", reject);
+          worker.addEventListener("close", resolve);
+          worker.addEventListener("error", reject);
         });
       }));
     `,
@@ -133,8 +132,14 @@ test("module format as a Worker's main module", async () => {
 describe.concurrent("module format follows the extension, then the nearest package.json", () => {
   for (const scope of Object.keys(packageJson) as Scope[]) {
     describe(`package.json ${packageJson[scope]}`, () => {
+      // The tests only read the fixtures, so a scope's tests share one directory.
+      let dir: ReturnType<typeof scopeDir>;
+      beforeAll(() => {
+        dir = scopeDir(scope);
+      });
+      afterAll(() => dir?.[Symbol.dispose]());
+
       test("as the entry point", async () => {
-        using dir = scopeDir(scope);
         const results = await Promise.all(fixtures.map(file => run(String(dir), file)));
         expect(formats(results.map(r => r.stdout).join(""))).toEqual(expected[scope]);
         expect(results.map(r => r.stderr)).toEqual(fixtures.map(() => ""));
@@ -142,7 +147,6 @@ describe.concurrent("module format follows the extension, then the nearest packa
       });
 
       test("via require()", async () => {
-        using dir = scopeDir(scope);
         const { stdout, stderr, exitCode } = await run(String(dir), "require-all.cjs");
         expect(formats(stdout)).toEqual(expected[scope]);
         expect(stderr).toBe("");
@@ -150,7 +154,6 @@ describe.concurrent("module format follows the extension, then the nearest packa
       });
 
       test("via an import statement", async () => {
-        using dir = scopeDir(scope);
         const { stdout, stderr, exitCode } = await run(String(dir), "static-import.mjs");
         expect(formats(stdout)).toEqual(expected[scope]);
         expect(stderr).toBe("");
@@ -158,7 +161,6 @@ describe.concurrent("module format follows the extension, then the nearest packa
       });
 
       test("via import()", async () => {
-        using dir = scopeDir(scope);
         const { stdout, stderr, exitCode } = await run(String(dir), "dynamic-import.mjs");
         expect(formats(stdout)).toEqual(expected[scope]);
         expect(stderr).toBe("");
@@ -166,7 +168,6 @@ describe.concurrent("module format follows the extension, then the nearest packa
       });
 
       test("via --require", async () => {
-        using dir = scopeDir(scope);
         const preloads = fixtures.flatMap(file => ["--require", `./${file}`]);
         const { stdout, stderr, exitCode } = await run(String(dir), ...preloads, "empty.mjs");
         expect(formats(stdout)).toEqual(expected[scope]);
@@ -178,7 +179,6 @@ describe.concurrent("module format follows the extension, then the nearest packa
         // The loader evaluates an onLoad plugin's source as an ES module
         // whatever the parser decides. A CommonJS wrapper from the path hint
         // would never be called, so that source gets no hint.
-        using dir = scopeDir(scope);
         const { stdout, stderr, exitCode } = await run(String(dir), "--preload", "./plugin.mjs", "static-import.mjs");
         expect(Object.keys(formats(stdout)).sort()).toEqual([...fixtures].sort());
         expect(stderr).toBe("");
@@ -200,10 +200,9 @@ describe.concurrent("the nearest package.json decides, with or without a name", 
       "src/hello.js": fixture("hello.js"),
       "src/import.mjs": `import "./hello.js";\n`,
     });
-    const entry = await run(String(dir), "src/hello.js");
-    expect(entry).toEqual({ stdout: "hello.js commonjs\n", stderr: "", exitCode: 0 });
-    const imported = await run(String(dir), "src/import.mjs");
-    expect(imported).toEqual({ stdout: "hello.js commonjs\n", stderr: "", exitCode: 0 });
+    const [entry, imported] = await Promise.all([run(String(dir), "src/hello.js"), run(String(dir), "src/import.mjs")]);
+    const commonjs = { stdout: "hello.js commonjs\n", stderr: "", exitCode: 0 };
+    expect({ entry, imported }).toEqual({ entry: commonjs, imported: commonjs });
   });
 
   test('a nameless {"type":"commonjs"} in a parent directory applies to the bundler', async () => {
@@ -257,13 +256,12 @@ test.concurrent("an empty file follows the same rule", async () => {
       console.log(JSON.stringify({ cjs, cts, js, mjs: Object.keys(require("./empty.mjs")) }));
     `,
   });
-  for (const entry of ["import.mjs", "dynamic-import.mjs", "require.cjs"]) {
-    expect(await run(String(dir), entry)).toEqual({
-      stdout: `{"cjs":{},"cts":{},"js":{},"mjs":[]}\n`,
-      stderr: "",
-      exitCode: 0,
-    });
-  }
+  const entries = ["import.mjs", "dynamic-import.mjs", "require.cjs"];
+  const results = await Promise.all(entries.map(entry => run(String(dir), entry)));
+  const empty = { stdout: `{"cjs":{},"cts":{},"js":{},"mjs":[]}\n`, stderr: "", exitCode: 0 };
+  expect(Object.fromEntries(entries.map((entry, i) => [entry, results[i]]))).toEqual(
+    Object.fromEntries(entries.map(entry => [entry, empty])),
+  );
 });
 
 describe.concurrent("JSX in a CommonJS module", () => {
@@ -278,9 +276,9 @@ describe.concurrent("JSX in a CommonJS module", () => {
       "main.cjs": `console.log(JSON.stringify(require("./component.jsx")()));\n`,
       "main.mjs": `import Component from "./component.jsx";\nconsole.log(JSON.stringify(Component()));\n`,
     });
-    const rendered = `{"type":"div","props":{"className":"x","children":"hi"}}\n`;
-    expect(await run(String(dir), "main.cjs")).toEqual({ stdout: rendered, stderr: "", exitCode: 0 });
-    expect(await run(String(dir), "main.mjs")).toEqual({ stdout: rendered, stderr: "", exitCode: 0 });
+    const [required, imported] = await Promise.all([run(String(dir), "main.cjs"), run(String(dir), "main.mjs")]);
+    const rendered = { stdout: `{"type":"div","props":{"className":"x","children":"hi"}}\n`, stderr: "", exitCode: 0 };
+    expect({ required, imported }).toEqual({ required: rendered, imported: rendered });
   });
 
   test('a .test.tsx file with Jest globals under {"type":"commonjs"}', async () => {
@@ -311,53 +309,15 @@ test.concurrent("a decorated class in a CommonJS module", async () => {
     "import.mjs": `import "./hello.ts";\nimport "./hello.tsx";\nimport "./hello.cts";\n`,
   });
   const all = { "hello.ts": "commonjs", "hello.tsx": "commonjs", "hello.cts": "commonjs" };
-  for (const file of Object.keys(all)) {
-    expect(await run(String(dir), file)).toEqual({ stdout: `${file} commonjs\n`, stderr: "", exitCode: 0 });
-  }
-  const imported = await run(String(dir), "import.mjs");
+  const files = Object.keys(all);
+  const [imported, ...entries] = await Promise.all([
+    run(String(dir), "import.mjs"),
+    ...files.map(file => run(String(dir), file)),
+  ]);
+  expect(Object.fromEntries(files.map((file, i) => [file, entries[i]]))).toEqual(
+    Object.fromEntries(files.map(file => [file, { stdout: `${file} commonjs\n`, stderr: "", exitCode: 0 }])),
+  );
   expect({ ...imported, stdout: formats(imported.stdout) }).toEqual({ stdout: all, stderr: "", exitCode: 0 });
-});
-
-describe.concurrent('package.json "type" does not apply to', () => {
-  // "type" governs .js and its TypeScript and JSX forms. These entries have no
-  // such extension, so their contents decide, whatever the package.json says.
-  const detect = `console.log(eval("typeof module") === "undefined" ? "module" : "commonjs");`;
-  const usesRequire = `require("node:os");\n${detect}`;
-
-  async function inEveryScope(files: Record<string, string>, args: string[], stdin?: string) {
-    const result: Record<string, unknown> = {};
-    for (const scope of Object.keys(packageJson) as Scope[]) {
-      using dir = tempDir(`module-type-no-ext-${scope}`, { "package.json": packageJson[scope], ...files });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), ...args],
-        cwd: String(dir),
-        env: bunEnv,
-        stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      result[scope] = { stdout, stderr, exitCode };
-    }
-    return result;
-  }
-  const everyScope = (stdout: string) => {
-    const one = { stdout, stderr: "", exitCode: 0 };
-    return { commonjs: one, module: one, untyped: one };
-  };
-
-  test("bun -e", async () => {
-    expect(await inEveryScope({}, ["-e", detect])).toEqual(everyScope("module\n"));
-  });
-
-  test("a script on stdin", async () => {
-    expect(await inEveryScope({}, ["run", "-"], detect)).toEqual(everyScope("module\n"));
-  });
-
-  test("a script with no extension", async () => {
-    expect(await inEveryScope({ "cli": detect }, ["cli"])).toEqual(everyScope("module\n"));
-    expect(await inEveryScope({ "cli": usesRequire }, ["cli"])).toEqual(everyScope("commonjs\n"));
-  });
 });
 
 test("the transpiler cache keys on the module type, not only the file contents", async () => {
@@ -393,4 +353,52 @@ test("the transpiler cache keys on the module type, not only the file contents",
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: `hello.js ${format}\n`, stderr: "", exitCode: 0 });
   }
+});
+
+describe.concurrent('package.json "type" does not apply to', () => {
+  // "type" governs .js and its TypeScript and JSX forms. These entries have no
+  // such extension, so their contents decide, whatever the package.json says.
+  const detect = `console.log(eval("typeof module") === "undefined" ? "module" : "commonjs");`;
+  const usesRequire = `require("node:os");\n${detect}`;
+
+  async function inEveryScope(files: Record<string, string>, args: string[], stdin?: string) {
+    const scopes = Object.keys(packageJson) as Scope[];
+    const results = await Promise.all(
+      scopes.map(async scope => {
+        using dir = tempDir(`module-type-no-ext-${scope}`, { "package.json": packageJson[scope], ...files });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: bunEnv,
+          stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }),
+    );
+    return Object.fromEntries(scopes.map((scope, i) => [scope, results[i]]));
+  }
+  const everyScope = (stdout: string) => {
+    const one = { stdout, stderr: "", exitCode: 0 };
+    return { commonjs: one, module: one, untyped: one };
+  };
+
+  test("bun -e", async () => {
+    expect(await inEveryScope({}, ["-e", detect])).toEqual(everyScope("module\n"));
+  });
+
+  test("a script on stdin", async () => {
+    expect(await inEveryScope({}, ["run", "-"], detect)).toEqual(everyScope("module\n"));
+  });
+
+  test("a script with no extension", async () => {
+    const [ambiguous, withRequire] = await Promise.all([
+      inEveryScope({ "cli": detect }, ["cli"]),
+      inEveryScope({ "cli": usesRequire }, ["cli"]),
+    ]);
+    expect(ambiguous).toEqual(everyScope("module\n"));
+    expect(withRequire).toEqual(everyScope("commonjs\n"));
+  });
 });

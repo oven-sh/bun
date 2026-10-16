@@ -232,6 +232,40 @@ describe.concurrent("the nearest package.json decides, with or without a name", 
   });
 });
 
+test.concurrent("an empty file follows the same rule", async () => {
+  // The parser does not run for an empty file, so the loader picks the format.
+  using dir = tempDir("module-type-empty", {
+    "package.json": packageJson.commonjs,
+    "empty.cjs": "",
+    "blank.cts": "\n",
+    "empty.js": "",
+    "empty.mjs": "",
+    "import.mjs": `
+      import cjs from "./empty.cjs";
+      import cts from "./blank.cts";
+      import js from "./empty.js";
+      import * as mjs from "./empty.mjs";
+      console.log(JSON.stringify({ cjs, cts, js, mjs: Object.keys(mjs) }));
+    `,
+    "dynamic-import.mjs": `
+      const load = async file => (await import(file)).default;
+      const [cjs, cts, js] = await Promise.all(["./empty.cjs", "./blank.cts", "./empty.js"].map(load));
+      console.log(JSON.stringify({ cjs, cts, js, mjs: Object.keys(await import("./empty.mjs")) }));
+    `,
+    "require.cjs": `
+      const [cjs, cts, js] = ["./empty.cjs", "./blank.cts", "./empty.js"].map(file => require(file));
+      console.log(JSON.stringify({ cjs, cts, js, mjs: Object.keys(require("./empty.mjs")) }));
+    `,
+  });
+  for (const entry of ["import.mjs", "dynamic-import.mjs", "require.cjs"]) {
+    expect(await run(String(dir), entry)).toEqual({
+      stdout: `{"cjs":{},"cts":{},"js":{},"mjs":[]}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  }
+});
+
 describe.concurrent("JSX in a CommonJS module", () => {
   // The parser adds `import { jsxDEV } from "react/jsx-dev-runtime"` to a file
   // that uses JSX. Inside the CommonJS function wrapper that has to be a

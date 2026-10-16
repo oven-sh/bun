@@ -10,7 +10,7 @@ use std::borrow::Cow;
 use bun_alloc::Arena;
 use bun_collections::StringArrayHashMap;
 use bun_core::Output;
-use bun_core::{ZBox, ZStr, strings};
+use bun_core::{Utf8Bytes, ZBox, ZStr, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_options_types::schema as bun_schema;
 use bun_paths::PathBuffer;
@@ -313,14 +313,14 @@ impl Framework {
             is_built_in_react: true,
             server_components: Some(ServerComponents::new(
                 true,
-                Cow::Borrowed(b"react-server-dom-bun/server"),
+                Utf8Bytes::Borrowed(b"react-server-dom-bun/server"),
             )),
             react_fast_refresh: Some(ReactFastRefresh::default()),
             file_system_router_types: vec![FileSystemRouterType {
-                root: Cow::Borrowed(b"pages"),
-                prefix: Cow::Borrowed(b"/"),
-                entry_client: Some(Cow::Borrowed(b"bun-framework-react/client.tsx")),
-                entry_server: Cow::Borrowed(b"bun-framework-react/server.tsx"),
+                root: Utf8Bytes::Borrowed(b"pages"),
+                prefix: Utf8Bytes::Borrowed(b"/"),
+                entry_client: Some(Utf8Bytes::Borrowed(b"bun-framework-react/client.tsx")),
+                entry_server: Utf8Bytes::Borrowed(b"bun-framework-react/server.tsx"),
                 ignore_underscores: true,
                 ignore_dirs: literals(&[b"node_modules", b".git"]),
                 extensions: literals(&[b".tsx", b".jsx"]),
@@ -352,7 +352,7 @@ impl Framework {
             fw.react_fast_refresh = Some(ReactFastRefresh { import_source: rfr });
         } else if resolve_or_null(resolver, b"react").is_some() {
             fw.react_fast_refresh = Some(ReactFastRefresh {
-                import_source: Cow::Borrowed(b"react-refresh/runtime/index.js"),
+                import_source: Utf8Bytes::Borrowed(b"react-refresh/runtime/index.js"),
             });
             bun_core::handle_oom(fw.built_in_modules.put(
                 b"react-refresh/runtime/index.js",
@@ -431,7 +431,7 @@ impl Framework {
             let str = prop.to_bun_string(global)?;
 
             Some(ReactFastRefresh {
-                import_source: Cow::Owned(str.into_utf8().into_vec()),
+                import_source: str.into_utf8(),
             })
         };
         let server_components: Option<ServerComponents> = 'sc: {
@@ -469,7 +469,7 @@ impl Framework {
                 )));
             };
             let Some(server_runtime_import) =
-                get_optional_string(sc, global, b"serverRuntimeImportSource")?
+                sc.get_optional_slice(global, b"serverRuntimeImportSource")?
             else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Missing 'framework.serverComponents.serverRuntimeImportSource'"
@@ -478,7 +478,7 @@ impl Framework {
             let mut server_components =
                 ServerComponents::new(separate_ssr_graph, server_runtime_import);
             if let Some(name) =
-                get_optional_string(sc, global, b"serverRegisterClientReferenceExport")?
+                sc.get_optional_slice(global, b"serverRegisterClientReferenceExport")?
             {
                 server_components.server_register_client_reference = name;
             }
@@ -514,10 +514,10 @@ impl Framework {
                 };
 
                 let value: BuiltInModule =
-                    if let Some(str) = get_optional_string(file, global, b"path")? {
-                        BuiltInModule::Import(str)
-                    } else if let Some(str) = get_optional_string(file, global, b"code")? {
-                        BuiltInModule::Code(str)
+                    if let Some(str) = file.get_optional_slice(global, b"path")? {
+                        BuiltInModule::Import(Cow::Owned(str.into_vec()))
+                    } else if let Some(str) = file.get_optional_slice(global, b"code")? {
+                        BuiltInModule::Code(Cow::Owned(str.into_vec()))
                     } else {
                         return Err(global.throw_invalid_arguments(format_args!(
                             "'builtInModules[{}]' needs either 'path' or 'code'",
@@ -551,7 +551,7 @@ impl Framework {
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;
             while let Some(fsr_opts) = it.next()? {
-                let root = match get_optional_string(fsr_opts, global, b"root")? {
+                let root = match fsr_opts.get_optional_slice(global, b"root")? {
                     Some(r) => r,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -561,7 +561,7 @@ impl Framework {
                     }
                 };
                 let server_entry_point =
-                    match get_optional_string(fsr_opts, global, b"serverEntryPoint")? {
+                    match fsr_opts.get_optional_slice(global, b"serverEntryPoint")? {
                         Some(s) => s,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -571,9 +571,10 @@ impl Framework {
                         }
                     };
                 let client_entry_point =
-                    get_optional_string(fsr_opts, global, b"clientEntryPoint")?;
-                let prefix = get_optional_string(fsr_opts, global, b"prefix")?
-                    .unwrap_or(Cow::Borrowed(b"/"));
+                    fsr_opts.get_optional_slice(global, b"clientEntryPoint")?;
+                let prefix = fsr_opts
+                    .get_optional_slice(global, b"prefix")?
+                    .unwrap_or(Utf8Bytes::Borrowed(b"/"));
                 let ignore_underscores = fsr_opts
                     .get_boolean_strict(global, "ignoreUnderscores")?
                     .unwrap_or(false);
@@ -620,11 +621,11 @@ impl Framework {
                                     )));
                                 }
 
-                                extensions.push(Cow::Owned(if slice[0] == b'.' {
-                                    slice.into_vec()
+                                extensions.push(if slice[0] == b'.' {
+                                    slice
                                 } else {
-                                    [b".", slice.slice()].concat()
-                                }));
+                                    Utf8Bytes::Owned([b".", slice.slice()].concat())
+                                });
                             }
                             break 'exts extensions;
                         }
@@ -645,7 +646,7 @@ impl Framework {
                             let mut it_2 = array.array_iterator(global)?;
                             let mut dirs = Vec::with_capacity(len as usize);
                             while let Some(array_item) = it_2.next()? {
-                                dirs.push(Cow::Owned(array_item.to_utf8(global)?.into_vec()));
+                                dirs.push(array_item.to_utf8(global)?);
                             }
                             break 'exts dirs;
                         }
@@ -842,12 +843,12 @@ impl Framework {
     }
 }
 
-fn literals(list: &[&'static [u8]]) -> Vec<Cow<'static, [u8]>> {
-    list.iter().copied().map(Cow::Borrowed).collect()
+fn literals(list: &[&'static [u8]]) -> Vec<Utf8Bytes<'static>> {
+    list.iter().copied().map(Utf8Bytes::Borrowed).collect()
 }
 
 #[inline]
-fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Utf8Bytes<'static>> {
     match super::resolve_path(r, path) {
         Ok(resolved) => Some(resolved),
         Err(_) => {
@@ -862,16 +863,6 @@ fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Cow<'s
 #[inline]
 fn style_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<framework_router::Style> {
     framework_router::Style::from_js(value, global)
-}
-
-fn get_optional_string(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &[u8],
-) -> JsResult<Option<Cow<'static, [u8]>>> {
-    Ok(target
-        .get_optional_slice(global, property)?
-        .map(|slice| Cow::Owned(slice.into_vec())))
 }
 
 // Note: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`

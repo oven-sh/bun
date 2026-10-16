@@ -9,7 +9,8 @@
 //! tracing) live in `DevServer.rs` and the other `#[path]` submodules below.
 
 use core::ptr::NonNull;
-use std::borrow::Cow;
+
+use bun_core::Utf8Bytes;
 
 // ─── Submodule bodies ────────────────────────────────────────────────────────
 // `bake_body.rs` carries `UserOptions`, the Framework/BuildConfigSubset `from_js`
@@ -77,50 +78,50 @@ impl Mode {
 
 /// `bake.Framework.ServerComponents`.
 ///
-/// Here and in the types below, `Cow::Borrowed` is a literal or a path the resolver interned.
+/// Here and below, `Borrowed` is a literal or a path the resolver interned, `Shared` a JS string.
 pub(crate) struct ServerComponents {
     pub(crate) separate_ssr_graph: bool,
     /// REQUIRED — `fromJS` throws if `serverRuntimeImportSource` is absent.
-    pub(crate) server_runtime_import: Cow<'static, [u8]>,
-    pub(crate) server_register_client_reference: Cow<'static, [u8]>,
-    pub(crate) server_register_server_reference: Cow<'static, [u8]>,
-    pub(crate) client_register_server_reference: Cow<'static, [u8]>,
+    pub(crate) server_runtime_import: Utf8Bytes<'static>,
+    pub(crate) server_register_client_reference: Utf8Bytes<'static>,
+    pub(crate) server_register_server_reference: Utf8Bytes<'static>,
+    pub(crate) client_register_server_reference: Utf8Bytes<'static>,
 }
 
 impl ServerComponents {
-    pub(crate) fn new(separate_ssr_graph: bool, server_runtime_import: Cow<'static, [u8]>) -> Self {
+    pub(crate) fn new(separate_ssr_graph: bool, server_runtime_import: Utf8Bytes<'static>) -> Self {
         Self {
             separate_ssr_graph,
             server_runtime_import,
-            server_register_client_reference: Cow::Borrowed(b"registerClientReference"),
-            server_register_server_reference: Cow::Borrowed(b"registerServerReference"),
-            client_register_server_reference: Cow::Borrowed(b"registerServerReference"),
+            server_register_client_reference: Utf8Bytes::Borrowed(b"registerClientReference"),
+            server_register_server_reference: Utf8Bytes::Borrowed(b"registerServerReference"),
+            client_register_server_reference: Utf8Bytes::Borrowed(b"registerServerReference"),
         }
     }
 }
 
 pub(crate) struct ReactFastRefresh {
-    pub(crate) import_source: Cow<'static, [u8]>,
+    pub(crate) import_source: Utf8Bytes<'static>,
 }
 
 impl Default for ReactFastRefresh {
     fn default() -> Self {
         Self {
-            import_source: Cow::Borrowed(b"react-refresh/runtime"),
+            import_source: Utf8Bytes::Borrowed(b"react-refresh/runtime"),
         }
     }
 }
 
 pub(crate) struct FileSystemRouterType {
-    pub(crate) root: Cow<'static, [u8]>,
-    pub(crate) prefix: Cow<'static, [u8]>,
-    pub(crate) entry_client: Option<Cow<'static, [u8]>>,
+    pub(crate) root: Utf8Bytes<'static>,
+    pub(crate) prefix: Utf8Bytes<'static>,
+    pub(crate) entry_client: Option<Utf8Bytes<'static>>,
     /// REQUIRED — `fromJS` throws if missing; `Framework.resolve`
     /// dereferences unconditionally.
-    pub(crate) entry_server: Cow<'static, [u8]>,
+    pub(crate) entry_server: Utf8Bytes<'static>,
     pub(crate) ignore_underscores: bool,
-    pub(crate) ignore_dirs: Vec<Cow<'static, [u8]>>,
-    pub(crate) extensions: Vec<Cow<'static, [u8]>>,
+    pub(crate) ignore_dirs: Vec<Utf8Bytes<'static>>,
+    pub(crate) extensions: Vec<Utf8Bytes<'static>>,
     pub(crate) style: framework_router::Style,
     pub(crate) allow_layouts: bool,
 }
@@ -141,7 +142,7 @@ pub(crate) struct Framework {
 fn resolve_path(
     r: &mut bun_resolver::Resolver,
     path: &[u8],
-) -> Result<Cow<'static, [u8]>, bun_resolver::Error> {
+) -> Result<Utf8Bytes<'static>, bun_resolver::Error> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     let result = r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt)?;
     // No path: disabled, by a "browser" map for example.
@@ -151,8 +152,8 @@ fn resolve_path(
         .text;
     // `text` is typed `'static`, but is `path` for an external or `data:` result.
     Ok(match bun_resolver::fs::as_interned_path(text) {
-        Some(interned) => Cow::Borrowed(interned),
-        None => Cow::Owned(text.to_vec()),
+        Some(interned) => Utf8Bytes::Borrowed(interned),
+        None => Utf8Bytes::Owned(text.to_vec()),
     })
 }
 
@@ -227,7 +228,7 @@ impl Framework {
         }
         for fsr in self.file_system_router_types.iter_mut() {
             let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-            fsr.root = Cow::Owned(
+            fsr.root = Utf8Bytes::Owned(
                 bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
                     top_level_dir,
                     &fsr.root,
@@ -261,13 +262,13 @@ impl Framework {
     fn resolve_helper(
         built_in_modules: &bun_collections::StringArrayHashMap<BuiltInModule>,
         r: &mut bun_resolver::Resolver,
-        path: &mut Cow<'static, [u8]>,
+        path: &mut Utf8Bytes<'static>,
         had_errors: &mut bool,
         desc: &[u8],
     ) {
         if let Some(module) = built_in_modules.get(path) {
             if let BuiltInModule::Import(p) = module {
-                path.clone_from(p);
+                *path = Utf8Bytes::Owned(p.to_vec());
             }
             return;
         }

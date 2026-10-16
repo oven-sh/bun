@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -365,6 +365,26 @@ export default function Docs() {
       .env(bunEnv)
       .throws(false);
     expect(stderr.toString()).toContain("Multiple pages matching the same route pattern is ambiguous");
+  });
+
+  test('a framework entry point that a "browser" map disables is reported', async () => {
+    using dir = tempDir("bake-production-disabled-entry", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./client.ts": false } }),
+      "client.ts": `export {};`,
+      "server.ts": `export function render() { return new Response("ok"); }`,
+      "routes/index.ts": `export default () => new Response("ok");`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain("Failed to resolve './client.ts' for framework (client side entrypoint)");
+    expect(exitCode).toBe(1);
   });
 
   test("handles build with no pages directory without crashing", async () => {

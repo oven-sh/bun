@@ -18,7 +18,7 @@ use crate::webcore::{
 };
 use ::bstr::BStr;
 use bun_collections::HashMap;
-use bun_core::{EncodedSlice, String as BunString, strings};
+use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, strings};
 use bun_core::{Output, fmt as bun_fmt};
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
@@ -791,8 +791,6 @@ impl AnyRoute {
 
         if argument.is_object() {
             if let Some(dir) = argument.get_optional_slice(global, b"dir")? {
-                let relative_root = dir.slice();
-
                 if !strings::ends_with(path, b"/*") {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "To mount a directory, make sure the path ends in `/*`"
@@ -821,12 +819,8 @@ impl AnyRoute {
                     let stat_cache = argument
                         .get_boolean_loose(global, b"statCache")?
                         .unwrap_or(true);
-                    let route = super::DirectoryRoute::create(
-                        global,
-                        relative_root,
-                        url_prefix,
-                        stat_cache,
-                    )?;
+                    let route =
+                        super::DirectoryRoute::create(global, &dir, url_prefix, stat_cache)?;
                     return Ok(Some(AnyRoute::Directory(route)));
                 }
 
@@ -835,35 +829,28 @@ impl AnyRoute {
                 // Style impls Drop; `?` drops it on the error path.
 
                 // trim the /*
-                // NOTE: `FileSystemRouterType` fields are `Cow<'static,[u8]>`.
-                // Rather
-                // than erasing a lifetime through a raw-pointer round-trip
-                // (banned per PORTING.md), copy the prefix bytes here — the
-                // route table is built once at server startup, so the extra
-                // allocation is cold.
-                use std::borrow::Cow;
-                let prefix: Cow<'static, [u8]> = if path.len() == 2 {
-                    Cow::Borrowed(b"/")
+                let prefix = if path.len() == 2 {
+                    Utf8Bytes::Borrowed(b"/")
                 } else {
-                    Cow::Owned(path[..path.len() - 2].to_vec())
+                    Utf8Bytes::Owned(path[..path.len() - 2].to_vec())
                 };
                 init_ctx
                     .framework_router_list
                     .push(bake::FileSystemRouterType {
-                        root: Cow::Owned(relative_root.to_vec()),
+                        root: dir,
                         style,
                         prefix,
                         // TODO: customizable framework option.
-                        entry_client: Some(Cow::Borrowed(b"bun-framework-react/client.tsx")),
-                        entry_server: Cow::Borrowed(b"bun-framework-react/server.tsx"),
+                        entry_client: Some(Utf8Bytes::Borrowed(b"bun-framework-react/client.tsx")),
+                        entry_server: Utf8Bytes::Borrowed(b"bun-framework-react/server.tsx"),
                         ignore_underscores: true,
                         ignore_dirs: vec![
-                            Cow::Borrowed(b"node_modules".as_slice()),
-                            Cow::Borrowed(b".git".as_slice()),
+                            Utf8Bytes::Borrowed(b"node_modules".as_slice()),
+                            Utf8Bytes::Borrowed(b".git".as_slice()),
                         ],
                         extensions: vec![
-                            Cow::Borrowed(b".tsx".as_slice()),
-                            Cow::Borrowed(b".jsx".as_slice()),
+                            Utf8Bytes::Borrowed(b".tsx".as_slice()),
+                            Utf8Bytes::Borrowed(b".jsx".as_slice()),
                         ],
                         allow_layouts: true,
                     });

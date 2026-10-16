@@ -1,8 +1,9 @@
 use crate::shell::ExitCode;
-use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, Impl, Kind};
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, OutputNeedsIOSafeGuard};
+use crate::shell::io::CmdOut;
 use crate::shell::io_writer::{ChildPtr, WriterTag};
-use crate::shell::states::cmd::Exec;
+use crate::shell::states::cmd::{Cmd, Exec};
 use crate::shell::yield_::Yield;
 
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
@@ -77,7 +78,7 @@ impl Yes {
             });
         }
 
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stdout.needs_io() {
             Self::state_mut(interp, cmd).state = State::WaitingIo;
             return Self::enqueue_chunk(interp, cmd, safeguard);
         }
@@ -94,10 +95,7 @@ impl Yes {
         let err = {
             let cmd_node = interp.as_cmd_mut(cmd);
             let shell = cmd_node.base.shell;
-            let Exec::Builtin(me) = &mut cmd_node.exec else {
-                unreachable!()
-            };
-            let (stdout, yes) = Self::split_stdout_state(me);
+            let (stdout, yes) = Self::split_stdout_state(cmd_node);
             let chunk = &yes.buffer[..yes.buffer_used];
             let mut err = None;
             for _ in 0..4 {
@@ -139,9 +137,9 @@ impl Yes {
         safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
-        // `stdout` and `impl_` are disjoint fields of `Builtin` — split-borrow
-        // so the tiled buffer is enqueued zero-copy.
-        let (stdout, yes) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
+        // `stdout` and the builtin are disjoint fields of the `Cmd` —
+        // split-borrow so the tiled buffer is enqueued zero-copy.
+        let (stdout, yes) = Self::split_stdout_state(interp.as_cmd_mut(cmd));
         stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
     }
 
@@ -168,18 +166,21 @@ impl Yes {
         if Self::state_mut(interp, cmd).state == State::WaitingWriteErr {
             return Builtin::done(interp, cmd, 1);
         }
-        debug_assert!(Builtin::of(interp, cmd).stdout.needs_io().is_some());
+        debug_assert!(interp.as_cmd(cmd).io.stdout.needs_io().is_some());
         Self::enqueue_chunk(interp, cmd, OutputNeedsIOSafeGuard::OutputNeedsIo)
     }
 
-    /// Split-borrow `&mut Builtin` into `(&mut stdout, &mut Yes)`; the fields
+    /// Split-borrow `&mut Cmd` into `(&mut stdout, &mut Yes)`; the fields
     /// are disjoint so this is a sound reborrow without `unsafe`.
     #[inline]
-    fn split_stdout_state(me: &mut Builtin) -> (&mut BuiltinIO, &mut Yes) {
+    fn split_stdout_state(cmd: &mut Cmd) -> (&mut CmdOut, &mut Yes) {
+        let Exec::Builtin(me) = &mut cmd.exec else {
+            unreachable!()
+        };
         let Impl::Yes(yes) = &mut me.impl_ else {
             unreachable!()
         };
-        (&mut me.stdout, &mut **yes)
+        (&mut cmd.io.stdout, &mut **yes)
     }
 }
 

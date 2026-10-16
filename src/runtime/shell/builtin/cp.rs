@@ -337,13 +337,15 @@ impl OutputTaskVTable for Cp {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
             // Stash so on_io_writer_chunk can route to the OutputTask state
             // machine and reclaim the box (stopgap for missing WriterTag).
             Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
             return Some(
-                Builtin::of_mut(interp, cmd)
+                interp
+                    .as_cmd(cmd)
+                    .io
                     .stderr
                     .enqueue(childptr, errbuf, safeguard),
             );
@@ -365,12 +367,14 @@ impl OutputTaskVTable for Cp {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stdout.needs_io() {
             Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
             let buf = output.slice().to_vec();
             return Some(
-                Builtin::of_mut(interp, cmd)
+                interp
+                    .as_cmd(cmd)
+                    .io
                     .stdout
                     .enqueue(childptr, &buf, safeguard),
             );

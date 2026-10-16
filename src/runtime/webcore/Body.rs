@@ -685,29 +685,6 @@ impl From<AnyBlob> for Value {
 }
 
 impl Value {
-    /// Downcast a `JSValue` to the `Body.Value` it owns, if any.
-    ///
-    /// `Body.Value` is not itself a JS class — it lives inside a `Request` or
-    /// `Response` wrapper — so the generic `JSValue::as_::<T: JsClass>()` path
-    /// cannot be used. Instead, try both wrapper classes and return the inner
-    /// body pointer.
-    ///
-    /// Returns a raw pointer; the storage is owned
-    /// by the JSC heap cell and outlives the call only as long as `value` is
-    /// kept alive by the caller.
-    pub(crate) fn from_request_or_response(value: JSValue) -> Option<*mut Value> {
-        if value.is_empty_or_undefined_or_null() {
-            return None;
-        }
-        if let Some(req) = value.as_class_ref::<crate::webcore::Request>() {
-            return Some(std::ptr::from_mut::<Value>(req.get_body_value()));
-        }
-        if let Some(res) = value.as_class_ref::<crate::webcore::Response>() {
-            return Some(std::ptr::from_mut::<Value>(res.get_body_value()));
-        }
-        None
-    }
-
     pub(crate) fn was_string(&self) -> bool {
         match self {
             Value::InternalBlob(blob) => blob.was_string,

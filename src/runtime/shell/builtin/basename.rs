@@ -34,11 +34,13 @@ impl Basename {
         };
 
         Self::state_mut(interp, cmd).state = State::Done;
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stdout.needs_io() {
             Self::state_mut(interp, cmd).buf = buf;
             let owned = Self::state_mut(interp, cmd).buf.clone();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
+            return interp
+                .as_cmd(cmd)
+                .io
                 .stdout
                 .enqueue(child, &owned, safeguard);
         }

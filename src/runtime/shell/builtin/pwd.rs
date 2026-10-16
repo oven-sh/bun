@@ -29,14 +29,12 @@ impl Pwd {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         if !Builtin::of(interp, cmd).args_slice().is_empty() {
             let msg: &[u8] = b"pwd: too many arguments\n";
-            if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+            if let Some(safeguard) = interp.as_cmd(cmd).io.stderr.needs_io() {
                 Self::state_mut(interp, cmd).state = State::WaitingIo {
                     kind: WaitKind::Stderr,
                 };
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                return Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(child, msg, safeguard);
+                return interp.as_cmd(cmd).io.stderr.enqueue(child, msg, safeguard);
             }
             let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, msg);
             return Builtin::done(interp, cmd, 1);
@@ -47,14 +45,12 @@ impl Pwd {
             v.push(b'\n');
             v
         };
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+        if let Some(safeguard) = interp.as_cmd(cmd).io.stdout.needs_io() {
             Self::state_mut(interp, cmd).state = State::WaitingIo {
                 kind: WaitKind::Stdout,
             };
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stdout
-                .enqueue(child, &cwd, safeguard);
+            return interp.as_cmd(cmd).io.stdout.enqueue(child, &cwd, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &cwd);
         Self::state_mut(interp, cmd).state = State::Done;

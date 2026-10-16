@@ -1,13 +1,17 @@
 //! A shell primarily runs commands, so this is the main state node.
 //!
 //! Execution proceeds: expand assigns → expand redirect → expand argv atoms
-//! → resolve to builtin or spawn subprocess → await exit.
+//! → apply the redirect → resolve to builtin or spawn subprocess → await exit.
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
-use crate::shell::interpreter::{CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
-use crate::shell::io::{IO, OutKind as IoOutKind};
+use crate::shell::interpreter::{
+    Interpreter, Node, NodeId, ShellExecEnv, StateKind, is_pollable_from_mode, log, shell_openat,
+};
+use crate::shell::io::{ArrayBufSink, CmdIO, CmdIn, CmdOut, IO, JsObject, OutFd};
+use crate::shell::io_reader::IOReader;
+use crate::shell::io_writer::{self, IOWriter};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
 use crate::shell::states::base::Base;
@@ -15,19 +19,27 @@ use crate::shell::states::expansion::Expansion;
 use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
+use crate::webcore::blob::store::Data as StoreData;
+use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_collections::VecExt;
+use bun_jsc::PinnedArrayBuffer;
 
 pub(crate) struct Cmd {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Cmd>,
-    pub(crate) io: IO,
+    /// As inherited until `apply_redirect`, then with the redirect applied.
+    pub(crate) io: CmdIO,
     pub(crate) state: CmdState,
     pub args: Vec<Vec<u8>>,
     pub(crate) redirection_file: Vec<u8>,
-    pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
+    /// `apply_redirect` gave the command the stderr in `io`.
+    stderr_redirected: bool,
 }
+
+// `Node` is as large as its largest state, and this is it.
+const _: () = assert!(size_of::<Cmd>() <= 176);
 
 #[derive(Default, strum::IntoStaticStr)]
 pub enum CmdState {
@@ -51,6 +63,71 @@ pub(crate) enum Exec {
     None,
     Builtin(Box<Builtin>),
     Subproc(Box<SubprocExec>),
+}
+
+/// Who uses the streams of a command.
+#[derive(Clone, Copy)]
+enum ExecForm {
+    /// A builtin: this process reads and writes the streams.
+    Builtin,
+    /// A child process gets the streams, or the command has no name.
+    Spawn,
+}
+
+/// The streams that a redirect gives a command. `None`: as inherited.
+#[derive(Default)]
+struct Redirected {
+    stdin: Option<CmdIn>,
+    stdout: Option<CmdOut>,
+    stderr: Option<CmdOut>,
+}
+
+impl Redirected {
+    /// `out` is the target of `>`, `2>` or `&>`.
+    fn set_out(&mut self, streams: (bool, bool), out: CmdOut) {
+        match streams {
+            (true, true) => {
+                self.stderr = Some(out.dup());
+                self.stdout = Some(out);
+            }
+            (true, false) => self.stdout = Some(out),
+            (false, true) => self.stderr = Some(out),
+            (false, false) => {}
+        }
+    }
+}
+
+/// Why a redirect was not performed.
+enum RedirectError {
+    /// A JS error is thrown.
+    Thrown,
+    /// The message for the stderr that the command inherits.
+    Message(Vec<u8>),
+}
+
+impl RedirectError {
+    /// `target` did not open.
+    fn open(e: &bun_sys::Error, target: &[u8]) -> RedirectError {
+        use std::io::Write as _;
+        let mut message = Vec::new();
+        let _ = write!(
+            &mut message,
+            "bun: {}: {}",
+            e.to_shell_system_error().message,
+            bstr::BStr::new(target)
+        );
+        RedirectError::Message(message)
+    }
+}
+
+/// Whether a redirect to a target is for stdout and for stderr.
+///
+/// A target after `2>&1` or `1>&2` comes from the parser reading the next
+/// word as one. Each exec form keeps what it did with it: a child gets both
+/// streams on the target, a builtin gets only the stream that the flags name.
+fn out_streams(flags: ast::RedirectFlags, form: ExecForm) -> (bool, bool) {
+    let both = matches!(form, ExecForm::Spawn) && flags.duplicate_out();
+    (flags.stdout() || both, flags.stderr() || both)
 }
 
 impl Cmd {
@@ -164,15 +241,12 @@ impl BufferedIoClosed {
     ///
     /// `readable` is the subprocess's `stdout`/`stderr` `Readable`; if it was
     /// a pipe its buffered bytes are taken (ownership moves into
-    /// `state.Closed`) and, if the shell-side IO is `.pipe` and the AST
-    /// redirect didn't send this stream elsewhere, also tee'd into the
-    /// command-substitution aggregate buffer.
+    /// `state.Closed`) and also copied to `capture`, the buffer that holds
+    /// the captured output of the stream (`CmdOut::capture_buf`).
     fn close_out(
         slot: &mut Option<BufferedIoState>,
         readable: &mut Readable,
-        io_is_pipe: bool,
-        redirects_elsewhere: bool,
-        shell_buf: *mut Vec<u8>,
+        capture: Option<*mut Vec<u8>>,
     ) {
         let Some(state) = slot.as_mut() else { return };
         let Readable::Pipe(pipe) = readable else {
@@ -181,14 +255,12 @@ impl BufferedIoClosed {
             *state = BufferedIoState::Closed(Vec::<u8>::default());
             return;
         };
-        // If the shell state is piped (inside a cmd substitution) aggregate
-        // the output of this command.
-        if io_is_pipe && !redirects_elsewhere && !shell_buf.is_null() {
+        if let Some(capture) = capture {
             let the_slice = pipe.slice();
-            // SAFETY: `shell_buf` points into `ShellExecEnv::_buffered_*`,
-            // which the owning Cmd's `base.shell` keeps live for the duration
-            // of the command. Single-threaded.
-            unsafe { (*shell_buf).append_slice(the_slice) };
+            // SAFETY: `capture` points into `ShellExecEnv::_buffered_*`,
+            // which the owning Cmd's `base.shell` (or an env above it) keeps
+            // live for the duration of the command. Single-threaded.
+            unsafe { (*capture).append_slice(the_slice) };
         }
         // SAFETY: `Arc<PipeReader>` interior mutability — the shell is
         // single-threaded and this is the same pattern `subproc::on_close_io`
@@ -209,13 +281,13 @@ impl Cmd {
         interp.alloc_node(Node::Cmd(Cmd {
             base: Base::new(parent, shell),
             node: bun_ptr::BackRef::new(node),
-            io,
+            io: io.into(),
             state: CmdState::Idle,
             args: Vec::new(),
             redirection_file: Vec::new(),
-            redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
+            stderr_redirected: false,
         }))
     }
 
@@ -302,15 +374,19 @@ impl Cmd {
     }
 
     /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: throw on write failure, otherwise finish the Cmd
-    /// with exit code 1.
+    /// `WaitingWriteErr`: finish the Cmd with exit code 1. A write to the
+    /// inherited stderr that failed is thrown. A write to the stderr that the
+    /// redirect gave the command is not: like the output of a builtin, the
+    /// message is lost and the script goes on.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(err) = e {
+        if let Some(err) = e
+            && !interp.as_cmd(this).stderr_redirected
+        {
             interp.throw(crate::shell::ShellErr::from_system(err));
             return Yield::Failed(this);
         }
@@ -402,8 +478,7 @@ impl Cmd {
                 CmdState::ExpandingRedirect { ref mut idx } => {
                     *idx += 1;
                     // Zero words or >1 word (glob/brace split) leave the buffer
-                    // empty so the ambiguous-redirect check in
-                    // `Builtin::init_redirections` / `init_subproc_redirections` fires.
+                    // empty so the ambiguous-redirect check in `apply_redirect` fires.
                     let mut buf = if out.bounds.is_empty() {
                         out.buf
                     } else {
@@ -421,8 +496,8 @@ impl Cmd {
         Yield::Next(this)
     }
 
-    /// Resolves argv[0] to a builtin or falls through to subprocess spawn
-    /// (still gated).
+    /// Applies the redirect, then resolves argv[0] to a builtin or falls
+    /// through to subprocess spawn (still gated).
     fn transition_to_exec(interp: &Interpreter, this: NodeId) -> Yield {
         // NUL-terminate every arg so builtins can borrow them as `*const c_char`.
         for a in &mut interp.as_cmd_mut(this).args {
@@ -431,30 +506,39 @@ impl Cmd {
             }
         }
 
-        // Empty/null argv[0] → exit
-        // with the exit code from a sole command-substitution (stashed by
-        // `child_done` from `Expansion::out_exit_code`), else 0.
-        let first_arg: Vec<u8> = {
+        let me = interp.as_cmd(this);
+        let node = me.node;
+        // Empty/null argv[0] → no command name.
+        let first_arg: Option<Vec<u8>> = match me.args.first() {
+            // strip the trailing NUL we just added
+            Some(a) if a.len() > 1 => Some(a[..a.len() - 1].to_vec()),
+            _ => None,
+        };
+        let builtin = first_arg.as_deref().and_then(BuiltinKind::from_argv0);
+
+        // The redirect comes before the search for the command (POSIX 2.9.1).
+        // So every exit below has the redirected streams, and a redirect that
+        // fails is the only thing the command reports.
+        let form = match builtin {
+            Some(_) => ExecForm::Builtin,
+            None => ExecForm::Spawn,
+        };
+        if let Some(y) = Self::apply_redirect(interp, this, node.get(), form) {
+            return y;
+        }
+
+        let Some(first_arg) = first_arg else {
+            // Exit with the exit code from a sole command-substitution
+            // (stashed by `child_done` from `Expansion::out_exit_code`), else 0.
             let me = interp.as_cmd(this);
-            match me.args.first() {
-                Some(a) if a.len() > 1 => {
-                    // strip the trailing NUL we just added
-                    a[..a.len() - 1].to_vec()
-                }
-                _ => {
-                    let exit = me.exit_code.unwrap_or(0);
-                    let parent = me.base.parent;
-                    return interp.child_done(parent, this, exit);
-                }
-            }
+            let exit = me.exit_code.unwrap_or(0);
+            let parent = me.base.parent;
+            return interp.child_done(parent, this, exit);
         };
 
-        if let Some(kind) = BuiltinKind::from_argv0(&first_arg) {
+        if let Some(kind) = builtin {
             log!("Cmd {} exec builtin={:?}", this, kind);
-            if let Some(y) = Builtin::init(interp, this, kind) {
-                return y;
-            }
-            debug_assert!(matches!(interp.as_cmd(this).exec, Exec::Builtin(_)));
+            Builtin::init(interp, this, kind);
             return Builtin::start(interp, this);
         }
 
@@ -539,33 +623,23 @@ impl Cmd {
         resolved.push(0);
         interp.as_cmd_mut(this).args[0] = resolved;
 
-        // Convert shell IO → subprocess stdio.
+        // Convert the command's streams → subprocess stdio.
         let mut shellio = ShellIO::default();
-        interp
+        if interp
             .as_cmd(this)
             .io
-            .to_subproc_stdio(&mut spawn_args.stdio, &mut shellio);
-
-        // Apply file/jsbuf/`2>&1` redirects on
-        // top of the IO-derived stdio.
-        match Self::init_subproc_redirections(
-            interp,
-            this,
-            &mut spawn_args.stdio,
-            &mut spawn_args.redirect_stdout,
-            &mut spawn_args.redirect_stderr,
-        ) {
-            Ok(None) => {}
-            Ok(Some(y)) => {
-                drop(spawn_args);
-                drop(arena);
-                return y;
-            }
-            Err(_) => {
-                drop(spawn_args);
-                drop(arena);
-                return Yield::Failed(this);
-            }
+            .to_subproc_stdio(
+                interp,
+                &mut spawn_args.stdio,
+                &mut shellio,
+                &mut spawn_args.redirect_stdout,
+                &mut spawn_args.redirect_stderr,
+            )
+            .is_err()
+        {
+            drop(spawn_args);
+            drop(arena);
+            return Yield::Failed(this);
         }
 
         // Stage the exec slot *before* spawning so PipeReader / process-exit
@@ -682,182 +756,292 @@ impl Cmd {
         Yield::suspended()
     }
 
-    /// Applies the AST
-    /// redirect (`> file`, `< ${blob}`, `2>&1`, …) onto the subprocess stdio
-    /// triple. Returns `Ok(Some(yield))` when the redirect failed and a
-    /// failing-error write was queued; `Err` when a JS exception was raised.
-    fn init_subproc_redirections(
+    /// Performs the redirect of the command (`> file`, `< ${blob}`, `2>&1`, …)
+    /// on its `io`. Every user of the streams comes after it: a builtin, the
+    /// spawn of a child process, and the shell's message about a command that
+    /// does not start.
+    ///
+    /// `Some`: the redirect failed. `io` is as inherited, and the yield
+    /// finishes the command: the message is queued on the inherited stderr,
+    /// or a JS error is thrown.
+    fn apply_redirect(
         interp: &Interpreter,
         this: NodeId,
-        stdio: &mut [Stdio; 3],
-        redirect_stdout: &mut Option<crate::jsc::PinnedArrayBuffer>,
-        redirect_stderr: &mut Option<crate::jsc::PinnedArrayBuffer>,
-    ) -> crate::jsc::JsResult<Option<Yield>> {
-        const STDIN_NO: usize = 0;
-        const STDOUT_NO: usize = 1;
-        const STDERR_NO: usize = 2;
-
-        let node: &ast::Cmd = interp.as_cmd(this).ast_node();
+        node: &ast::Cmd,
+        form: ExecForm,
+    ) -> Option<Yield> {
         let flags = node.redirect;
-
-        let Some(redirect) = &node.redirect_file else {
-            if flags.duplicate_out() {
+        let redirected = match &node.redirect_file {
+            None if !flags.duplicate_out() => return None,
+            None => {
+                let io = &interp.as_cmd(this).io;
+                let mut redirected = Redirected::default();
+                // The lexer keeps the stream that both become: `2>&1` is
+                // `STDOUT`, `1>&2` is `STDERR`.
                 if flags.stdout() {
-                    stdio[STDERR_NO] = Stdio::Dup2(crate::api::bun_spawn::stdio::Dup2 {
-                        out: StdioKind::Stderr,
-                        to: StdioKind::Stdout,
-                    });
+                    redirected.stderr = Some(io.stdout.dup());
                 }
                 if flags.stderr() {
-                    stdio[STDOUT_NO] = Stdio::Dup2(crate::api::bun_spawn::stdio::Dup2 {
-                        out: StdioKind::Stdout,
-                        to: StdioKind::Stderr,
-                    });
+                    redirected.stdout = Some(io.stderr.dup());
                 }
+                Ok(redirected)
             }
-            return Ok(None);
-        };
-
-        match redirect {
-            ast::Redirect::JsBuf(val) => {
-                // Safe accessor — single `unsafe` deref lives in
-                // `Interpreter::global_this_ref`.
-                let global = interp
-                    .global_this_ref()
-                    .expect("JS values not allowed in this context");
-                let idx = val.idx as usize;
-                if idx >= interp.jsobjs.len() {
-                    return Err(global.throw(format_args!("Invalid JS object reference in shell")));
-                }
-                let jsval = interp.jsobjs[idx];
-
-                if let Some(buf) = jsval.as_array_buffer(global) {
-                    if flags.stdin() {
-                        let bytes = buf.byte_slice();
-                        // An empty buffer delivers EOF immediately; `Stdio::Ignore`
-                        // matches what `Stdio::extract`/`extract_blob` already do.
-                        stdio[STDIN_NO] = if bytes.is_empty() {
-                            Stdio::Ignore
-                        } else {
-                            Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(bytes.to_vec()))
-                        };
-                    }
-                    let mut redirect_out =
-                        |fd: usize, slot: &mut Option<crate::jsc::PinnedArrayBuffer>| {
-                            let Some(buf) = crate::jsc::PinnedArrayBuffer::root(global, jsval)
-                            else {
-                                return Err(global.throw_out_of_memory());
-                            };
-                            stdio[fd] = Stdio::Pipe;
-                            *slot = Some(buf);
-                            Ok(())
-                        };
-                    if flags.duplicate_out() || flags.stdout() {
-                        redirect_out(STDOUT_NO, redirect_stdout)?;
-                    }
-                    if flags.duplicate_out() || flags.stderr() {
-                        redirect_out(STDERR_NO, redirect_stderr)?;
-                    }
-                } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
-                    let blob = blob_ref.dupe();
-                    if flags.stdin() {
-                        stdio[STDIN_NO].extract_blob(
-                            global,
-                            crate::webcore::blob::Any::Blob(blob),
-                            STDIN_NO as i32,
-                        )?;
-                    } else if flags.stdout() {
-                        stdio[STDOUT_NO].extract_blob(
-                            global,
-                            crate::webcore::blob::Any::Blob(blob),
-                            STDOUT_NO as i32,
-                        )?;
-                    } else if flags.stderr() {
-                        stdio[STDERR_NO].extract_blob(
-                            global,
-                            crate::webcore::blob::Any::Blob(blob),
-                            STDERR_NO as i32,
-                        )?;
-                    }
-                } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
-                    panic!("TODO SHELL READABLE STREAM");
-                } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
-                    // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
-                    // `get_body_value` is `&self`.
-                    let req = unsafe { &*req };
-                    req.get_body_value().to_blob_if_possible();
-                    if flags.stdin() {
-                        let b = req.get_body_value().use_as_any_blob();
-                        stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;
-                    }
-                    if flags.stdout() {
-                        let b = req.get_body_value().use_as_any_blob();
-                        stdio[STDOUT_NO].extract_blob(global, b, STDOUT_NO as i32)?;
-                    }
-                    if flags.stderr() {
-                        let b = req.get_body_value().use_as_any_blob();
-                        stdio[STDERR_NO].extract_blob(global, b, STDERR_NO as i32)?;
-                    }
-                } else {
-                    return Err(global.throw(format_args!(
-                        "Unknown JS value used in shell: {}",
-                        jsval.fmt_string(global)
-                    )));
-                }
-            }
-            ast::Redirect::Atom(_) => {
-                if interp.as_cmd(this).redirection_file.is_empty() {
-                    let argv0 = interp
-                        .as_cmd(this)
-                        .args
-                        .first()
-                        .map(|a| &a[..a.len().saturating_sub(1)])
-                        .unwrap_or(b"<unknown>")
-                        .to_vec();
-                    return Ok(Some(Builtin::cmd_write_failing_error(
+            Some(ast::Redirect::Atom(_)) => {
+                // `child_done` NUL-terminated the one word the target expanded to.
+                let path = core::mem::take(&mut interp.as_cmd_mut(this).redirection_file);
+                match path.len().checked_sub(1) {
+                    Some(len) => Self::redirect_to_path(
                         interp,
                         this,
-                        format_args!(
-                            "bun: ambiguous redirect: at `{}`\n",
-                            bstr::BStr::new(&argv0)
-                        ),
-                    )));
+                        form,
+                        bun_core::ZStr::from_buf(&path, len),
+                    ),
+                    None => Err(Self::ambiguous_redirect(interp, this)),
                 }
-                let path_buf: Vec<u8> = {
-                    let raw = &interp.as_cmd(this).redirection_file;
-                    let len = raw.len().saturating_sub(1);
-                    let mut v = raw[..len].to_vec();
-                    v.push(0);
-                    v
-                };
-                let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
-                log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
-                let cwd_fd = interp.as_cmd(this).base.shell().cwd_fd;
-                let redirfd = match crate::shell::interpreter::shell_openat(
-                    cwd_fd,
-                    path,
-                    flags.to_flags(),
-                    0o666,
-                ) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        let sys_err = e.to_shell_system_error();
-                        return Ok(Some(Builtin::cmd_write_failing_error(
-                            interp,
-                            this,
-                            format_args!(
-                                "bun: {}: {}",
-                                sys_err.message,
-                                bstr::BStr::new(path.as_bytes())
-                            ),
-                        )));
+            }
+            Some(ast::Redirect::JsBuf(js)) => {
+                Self::redirect_to_js_object(interp, this, form, js.idx)
+            }
+        };
+        let redirected = match redirected {
+            Ok(redirected) => redirected,
+            Err(RedirectError::Thrown) => return Some(Yield::Failed(this)),
+            Err(RedirectError::Message(message)) => {
+                return Some(Builtin::cmd_write_failing_error(
+                    interp,
+                    this,
+                    format_args!("{}", bstr::BStr::new(&message)),
+                ));
+            }
+        };
+        let me = interp.as_cmd_mut(this);
+        if let Some(stdin) = redirected.stdin {
+            me.io.stdin = stdin;
+        }
+        if let Some(stdout) = redirected.stdout {
+            me.io.stdout = stdout;
+        }
+        if let Some(stderr) = redirected.stderr {
+            me.io.stderr = stderr;
+            me.stderr_redirected = true;
+        }
+        None
+    }
+
+    /// The target of the redirect expanded to no word, or to more than one.
+    fn ambiguous_redirect(interp: &Interpreter, this: NodeId) -> RedirectError {
+        use std::io::Write as _;
+        let mut message = Vec::new();
+        let _ = match interp.as_cmd(this).args.first() {
+            // NUL-terminated by `transition_to_exec`.
+            Some(argv0) => writeln!(
+                &mut message,
+                "bun: ambiguous redirect: at `{}`",
+                bstr::BStr::new(&argv0[..argv0.len() - 1])
+            ),
+            None => writeln!(&mut message, "bun: ambiguous redirect"),
+        };
+        RedirectError::Message(message)
+    }
+
+    /// The redirect names a file by its path: open it. A builtin reads it
+    /// through an `IOReader` and writes it through an `IOWriter`. A child
+    /// process gets the fd.
+    fn redirect_to_path(
+        interp: &Interpreter,
+        this: NodeId,
+        form: ExecForm,
+        path: &bun_core::ZStr,
+    ) -> Result<Redirected, RedirectError> {
+        let me = interp.as_cmd(this);
+        let flags = me.ast_node().redirect;
+        let cwd_fd = me.base.shell().cwd_fd;
+        let streams = out_streams(flags, form);
+        let mut redirected = Redirected::default();
+        let opened = match form {
+            ExecForm::Builtin if flags.stdin() => {
+                shell_openat(cwd_fd, path, flags.to_flags(), 0o666).map(|fd| {
+                    let reader = IOReader::init(fd, interp.event_loop);
+                    reader.set_interp(interp.as_ctx_ptr());
+                    redirected.stdin = Some(CmdIn::Fd(reader));
+                })
+            }
+            ExecForm::Builtin => Self::open_writer(interp, cwd_fd, &path, flags.to_flags())
+                .map(|out| redirected.set_out(streams, out)),
+            ExecForm::Spawn => shell_openat(cwd_fd, path, flags.to_flags(), 0o666).map(|fd| {
+                let file = bun_sys::File::from_fd(fd);
+                if flags.stdin() {
+                    redirected.stdin = Some(CmdIn::File(file));
+                } else {
+                    redirected.set_out(streams, CmdOut::File(file));
+                }
+            }),
+        };
+        match opened {
+            Ok(()) => Ok(redirected),
+            Err(e) => Err(RedirectError::open(&e, path.as_bytes())),
+        }
+    }
+
+    /// Opens `target`, a path or an fd, for a builtin to write to.
+    fn open_writer<P: bun_io::open_for_writing_mod::OpenForWritingInput>(
+        interp: &Interpreter,
+        cwd_fd: bun_sys::Fd,
+        target: &P,
+        flags: i32,
+    ) -> bun_sys::Result<CmdOut> {
+        let mut pollable = false;
+        let mut is_socket = false;
+        let mut is_nonblocking = false;
+        let fd = bun_io::open_for_writing_impl(
+            cwd_fd,
+            target,
+            flags,
+            0o666,
+            &mut pollable,
+            &mut is_socket,
+            false,
+            &mut is_nonblocking,
+            (),
+            |_| {},
+            is_pollable_from_mode,
+            shell_openat,
+        )?;
+        #[cfg(windows)]
+        let fd = {
+            use bun_sys::FdExt as _;
+            fd.make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)?
+        };
+        // Honor the `pollable` computed by `open_for_writing_impl` on
+        // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
+        // takes the pollable path; Windows keeps the async writer.
+        let writer = IOWriter::init(
+            fd,
+            io_writer::Flags {
+                pollable: if cfg!(windows) { true } else { pollable },
+                nonblock: is_nonblocking,
+                is_socket,
+                ..Default::default()
+            },
+            interp.event_loop,
+        );
+        writer.set_interp(interp.as_ctx_ptr());
+        Ok(CmdOut::Fd(OutFd {
+            writer,
+            captured: None,
+        }))
+    }
+
+    /// The redirect names a JS object: `> ${object}` or `< ${object}`.
+    fn redirect_to_js_object(
+        interp: &Interpreter,
+        this: NodeId,
+        form: ExecForm,
+        idx: u32,
+    ) -> Result<Redirected, RedirectError> {
+        let Some((global, value)) = interp.js_object(idx) else {
+            interp.throw(crate::shell::ShellErr::Custom(
+                b"Invalid JS object reference in shell"
+                    .to_vec()
+                    .into_boxed_slice(),
+            ));
+            return Err(RedirectError::Thrown);
+        };
+        let Some(object) = JsObject::from_value(value) else {
+            let _ = global.throw(format_args!(
+                "Unknown JS value used in shell: {}",
+                value.fmt_string(global)
+            ));
+            return Err(RedirectError::Thrown);
+        };
+        let flags = interp.as_cmd(this).ast_node().redirect;
+        let streams = out_streams(flags, form);
+        let mut redirected = Redirected::default();
+        // `None` is out of memory.
+        let pin = || {
+            let buf = PinnedArrayBuffer::root(global, value);
+            if buf.is_none() {
+                let _ = global.throw_out_of_memory();
+            }
+            buf.ok_or(RedirectError::Thrown)
+        };
+
+        if flags.stdin() {
+            redirected.stdin = Some(match (form, object) {
+                // The spawn reads the object.
+                (ExecForm::Spawn, _) => CmdIn::Js(idx),
+                (ExecForm::Builtin, JsObject::ArrayBuffer(_)) => CmdIn::ArrayBuf(Box::new(pin()?)),
+                (ExecForm::Builtin, JsObject::Blob(blob)) => CmdIn::Blob(Box::new(blob.dupe())),
+                (ExecForm::Builtin, JsObject::Response(response)) => {
+                    CmdIn::Blob(Box::new(response.get_body_value().use_()))
+                }
+            });
+            return Ok(redirected);
+        }
+
+        // Output to a Blob, or to the body of a Response, goes to the file it is.
+        let file = match object {
+            JsObject::ArrayBuffer(_) => {
+                match form {
+                    ExecForm::Spawn => redirected.set_out(streams, CmdOut::JsBuf(idx)),
+                    ExecForm::Builtin => {
+                        // Each stream pins the buffer for itself and has its own offset.
+                        if streams.0 {
+                            let sink = ArrayBufSink { buf: pin()?, i: 0 };
+                            redirected.stdout = Some(CmdOut::ArrayBuf(Box::new(sink)));
+                        }
+                        if streams.1 {
+                            let sink = ArrayBufSink { buf: pin()?, i: 0 };
+                            redirected.stderr = Some(CmdOut::ArrayBuf(Box::new(sink)));
+                        }
                     }
+                }
+                return Ok(redirected);
+            }
+            JsObject::Blob(blob) => blob_file(blob),
+            JsObject::Response(response) => {
+                let body = response.get_body_value();
+                body.to_blob_if_possible();
+                match body.use_as_any_blob() {
+                    crate::webcore::blob::Any::Blob(blob) => blob_file(&blob),
+                    _ => None,
+                }
+            }
+        };
+        match file {
+            Some(BlobFile::Fd(fd)) => {
+                let out = match form {
+                    // The builtin writes to a copy of the fd. The caller keeps its own.
+                    ExecForm::Builtin => {
+                        let cwd_fd = interp.as_cmd(this).base.shell().cwd_fd;
+                        let target = bun_io::PathOrFileDescriptor::Fd(fd);
+                        match Self::open_writer(interp, cwd_fd, &target, flags.to_flags()) {
+                            Ok(out) => out,
+                            Err(e) => return Err(RedirectError::open(&e, b"Bun.file(fd)")),
+                        }
+                    }
+                    ExecForm::Spawn => CmdOut::BorrowedFd(fd),
                 };
-                interp.as_cmd_mut(this).redirection_fd = Some(CowFd::init(redirfd));
-                set_stdio_from_redirect(stdio, flags, redirfd);
+                redirected.set_out(streams, out);
+                Ok(redirected)
+            }
+            Some(BlobFile::Path(mut path)) => {
+                let len = path.len();
+                path.push(0);
+                Self::redirect_to_path(interp, this, form, bun_core::ZStr::from_buf(&path, len))
+            }
+            None => {
+                let _ = match form {
+                    ExecForm::Builtin => global.throw(format_args!(
+                        "Cannot redirect stdout/stderr to an immutable blob. Expected a file"
+                    )),
+                    ExecForm::Spawn => global.throw_invalid_arguments(format_args!(
+                        "Blobs are immutable, and cannot be used for stdout/stderr"
+                    )),
+                };
+                Err(RedirectError::Thrown)
             }
         }
-        Ok(None)
     }
 
     /// Called by `Builtin::done` / subprocess exit handler.
@@ -878,14 +1062,13 @@ impl Cmd {
     pub(crate) fn deinit_from_finalizer(interp: &Interpreter, this: NodeId) {
         {
             let me = interp.as_cmd_mut(this);
-            match &mut me.exec {
-                Exec::Builtin(b) => b.defuse_array_buf_pins(),
-                Exec::Subproc(sub) if !sub.child.is_null() => {
-                    // SAFETY: `child` is the live heap::alloc'd subprocess;
-                    // the call only writes its own fields.
-                    unsafe { ShellSubprocess::defuse_array_buffer_unpins(sub.child) };
-                }
-                _ => {}
+            me.io.defuse_array_buf_pins();
+            if let Exec::Subproc(sub) = &me.exec
+                && !sub.child.is_null()
+            {
+                // SAFETY: `child` is the live heap::alloc'd subprocess;
+                // the call only writes its own fields.
+                unsafe { ShellSubprocess::defuse_array_buffer_unpins(sub.child) };
             }
         }
         Self::deinit(interp, this);
@@ -911,10 +1094,6 @@ impl Cmd {
             let me = interp.as_cmd_mut(this);
             me.args.clear();
             me.redirection_file.clear();
-            if let Some(fd) = me.redirection_fd.take() {
-                // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
-                CowFd::deref(fd);
-            }
             core::mem::take(&mut me.exec)
         };
         // `me`'s borrow ended above: the teardown below re-enters this Cmd
@@ -989,9 +1168,39 @@ impl Cmd {
         kind: OutKind,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        match kind {
-            OutKind::Stdout => self.buffered_output_close_stdout(err),
-            OutKind::Stderr => self.buffered_output_close_stderr(err),
+        debug_assert!(matches!(self.exec, Exec::Subproc(_)));
+        log!(
+            "cmd close buffered {}",
+            match kind {
+                OutKind::Stdout => "stdout",
+                OutKind::Stderr => "stderr",
+            }
+        );
+        if let Some(e) = err {
+            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+        }
+        if let Exec::Subproc(sub) = &mut self.exec {
+            // Raw deref keeps the borrow disjoint from `sub.buffered_closed` below.
+            // SAFETY: `child` is the live subprocess owned by this Cmd.
+            let child = unsafe { &mut *sub.child };
+            let (out, slot, readable, stdio) = match kind {
+                OutKind::Stdout => (
+                    &self.io.stdout,
+                    &mut sub.buffered_closed.stdout,
+                    &mut child.stdout,
+                    StdioKind::Stdout,
+                ),
+                OutKind::Stderr => (
+                    &self.io.stderr,
+                    &mut sub.buffered_closed.stderr,
+                    &mut child.stderr,
+                    StdioKind::Stderr,
+                ),
+            };
+            // The stream the command has says where its output is captured:
+            // the JS-side buffer, or the buffer of the shell env.
+            BufferedIoClosed::close_out(slot, readable, out.capture_buf(self.base.shell_mut()));
+            child.close_io(stdio);
         }
         self.finish_if_done()
     }
@@ -1023,76 +1232,6 @@ impl Cmd {
             return Yield::suspended();
         }
         Yield::Next(this_id)
-    }
-
-    fn buffered_output_close_stdout(&mut self, err: Option<bun_sys::SystemError>) {
-        debug_assert!(matches!(self.exec, Exec::Subproc(_)));
-        log!("cmd close buffered stdout");
-        if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
-        }
-        let redirect = self.ast_node().redirect;
-        let Exec::Subproc(sub) = &mut self.exec else {
-            return;
-        };
-        // Raw deref keeps the borrow disjoint from `sub.buffered_closed` below.
-        // SAFETY: `child` is the live subprocess owned by this Cmd.
-        let child = unsafe { &mut *sub.child };
-        // Tee into the JS-side captured buffer if stdout is an fd with a
-        // `captured` slot and the redirect didn't send stdout elsewhere.
-        if let IoOutKind::Fd(fd) = &self.io.stdout {
-            // SAFETY: single-threaded; the captured `Vec<u8>` lives in the
-            // owning `ShellExecEnv` and no other borrow of it is live here.
-            if let Some(captured) = unsafe { fd.captured_mut() } {
-                if !redirect.redirects_elsewhere(ast::IoKind::Stdout) {
-                    if let Readable::Pipe(pipe) = &child.stdout {
-                        captured.append_slice(pipe.slice());
-                    }
-                }
-            }
-        }
-        BufferedIoClosed::close_out(
-            &mut sub.buffered_closed.stdout,
-            &mut child.stdout,
-            matches!(self.io.stdout, IoOutKind::Pipe),
-            redirect.redirects_elsewhere(ast::IoKind::Stdout),
-            self.base.shell_mut().buffered_stdout(),
-        );
-        child.close_io(StdioKind::Stdout);
-    }
-
-    fn buffered_output_close_stderr(&mut self, err: Option<bun_sys::SystemError>) {
-        debug_assert!(matches!(self.exec, Exec::Subproc(_)));
-        log!("cmd close buffered stderr");
-        if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
-        }
-        let redirect = self.ast_node().redirect;
-        let Exec::Subproc(sub) = &mut self.exec else {
-            return;
-        };
-        // Raw deref keeps the borrow disjoint from `sub.buffered_closed` below.
-        // SAFETY: `child` is the live subprocess owned by this Cmd.
-        let child = unsafe { &mut *sub.child };
-        if let IoOutKind::Fd(fd) = &self.io.stderr {
-            // SAFETY: single-threaded; the captured `Vec<u8>` lives in the
-            // owning `ShellExecEnv` and no other borrow of it is live here.
-            if let Some(captured) = unsafe { fd.captured_mut() } {
-                if !redirect.redirects_elsewhere(ast::IoKind::Stderr) {
-                    if let Readable::Pipe(pipe) = &child.stderr {
-                        captured.append_slice(pipe.slice());
-                    }
-                }
-            }
-        }
-        BufferedIoClosed::close_out(
-            &mut sub.buffered_closed.stderr,
-            &mut child.stderr,
-            matches!(self.io.stderr, IoOutKind::Pipe),
-            redirect.redirects_elsewhere(ast::IoKind::Stderr),
-            self.base.shell_mut().buffered_stderr(),
-        );
-        child.close_io(StdioKind::Stderr);
     }
 }
 
@@ -1129,19 +1268,19 @@ fn is_assignment_word(atom: &ast::Atom) -> bool {
             .all(|&b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-fn set_stdio_from_redirect(stdio: &mut [Stdio; 3], flags: ast::RedirectFlags, fd: bun_sys::Fd) {
-    if flags.stdin() {
-        stdio[0] = Stdio::Fd(fd);
-    }
-    if flags.duplicate_out() {
-        stdio[1] = Stdio::Fd(fd);
-        stdio[2] = Stdio::Fd(fd);
-    } else {
-        if flags.stdout() {
-            stdio[1] = Stdio::Fd(fd);
-        }
-        if flags.stderr() {
-            stdio[2] = Stdio::Fd(fd);
-        }
-    }
+/// The file that a Blob is: `Bun.file(fd)`, or a path.
+enum BlobFile {
+    Fd(bun_sys::Fd),
+    Path(Vec<u8>),
+}
+
+/// `None`: the Blob holds its bytes in memory.
+fn blob_file(blob: &crate::webcore::Blob) -> Option<BlobFile> {
+    let StoreData::File(file) = &blob.store()?.data else {
+        return None;
+    };
+    Some(match &file.pathlike {
+        PathOrFileDescriptor::Fd(fd) => BlobFile::Fd(*fd),
+        PathOrFileDescriptor::Path(path) => BlobFile::Path(path.slice().to_vec()),
+    })
 }

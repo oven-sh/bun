@@ -1347,7 +1347,7 @@ mod draft {
                     || *item.registry_url == registry.key[..registry.key.len() - 1]
             }) {
                 log.add_error_opts(
-                    b"empty _auth value, no credentials set",
+                    b"ignoring empty _auth value",
                     bun_ast::AddErrorOptions {
                         source: Some(&sources[item.source_idx as usize]),
                         loc: item.loc,

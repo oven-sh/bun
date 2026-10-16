@@ -311,7 +311,7 @@ describe.concurrent("redact", async () => {
     {
       title: "_auth zero length",
       npmrc: "//registry.npmjs.org/:_auth=",
-      expected: "no credentials set",
+      expected: "ignoring empty _auth value",
     },
     {
       // The unknown-option warning names the option but never echoes the line, so no

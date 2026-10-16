@@ -17,7 +17,8 @@ pub(crate) struct RetryQueue {
     waiting: Vec<(Instant, *mut NetworkTask)>,
     /// Without `--verbose`, one line stands for every retry of the install.
     announced: bool,
-    /// The highest attempt for which a wait that the registry asked for was announced.
+    /// The highest attempt for which a wait that the registry asked for was announced, since the
+    /// queue was last empty.
     announced_asked: u16,
 }
 
@@ -51,10 +52,15 @@ pub(crate) fn retry(
         enqueue::enqueue_network_task(manager, task);
         return Duration::ZERO;
     }
-    // A host that never answers costs minutes per attempt, so that is said at the first retry.
+    // A host that never answers costs minutes per attempt, so that is said at the first retry, also
+    // with `--verbose`, whose lines are only printed once everything is resolved.
     let timed_out = matches!(response.fail, Some(bun_http::Error::Timeout));
     // An outage hits many requests at once. `--verbose` has a line for each retry of each request.
     let (queue, log_level) = (&mut manager.retry_queue, manager.options.log_level);
+    // The requests of a later wave start at the first attempt again.
+    if queue.len() == 0 {
+        queue.announced_asked = 0;
+    }
     let line = if asked && attempt > queue.announced_asked {
         queue.announced_asked = attempt;
         Some(format!(
@@ -63,8 +69,7 @@ pub(crate) fn retry(
         ))
     } else if !asked
         && !queue.announced
-        && (wait >= ANNOUNCED_WAIT || timed_out)
-        && !log_level.is_verbose()
+        && (timed_out || (wait >= ANNOUNCED_WAIT && !log_level.is_verbose()))
     {
         queue.announced = true;
         Some("registry requests failed, retrying".to_owned())

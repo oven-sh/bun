@@ -1487,7 +1487,7 @@ describe.concurrent("bun run", () => {
     }
 
     const blocked = await run(ownBun("blocked"), "run", "v");
-    expect(blocked.stderr).toContain("warn: could not create the node alias for bun in ");
+    expect(blocked.stderr).toContain("warn: failed to create node alias in ");
     expect(blocked.stderr).toContain("command not found: node");
     expect(blocked).toMatchObject({ stdout: "", exitCode: 1 });
   });

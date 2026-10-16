@@ -93,6 +93,13 @@ describe.concurrent("a retry after a timeout is announced at once", () => {
     });
   }, 60_000);
 
+  // The lines of --verbose about each request are only printed once everything is resolved.
+  test("also with --verbose", async () => {
+    await using silent = await silentServer();
+    const { messages } = await install(`http://127.0.0.1:${silent.port}/`, { "any-pkg": "1.0.0" }, "--verbose");
+    expect(messages[0]).toBe("warn: registry requests failed, retrying");
+  }, 60_000);
+
   test("not with --silent", async () => {
     await using silent = await silentServer();
     const { messages } = await install(`http://127.0.0.1:${silent.port}/`, { "any-pkg": "1.0.0" }, "--silent");

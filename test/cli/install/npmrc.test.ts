@@ -686,7 +686,7 @@ ${Object.keys(opts)
       dotEnv: { SECRET_AUTH: "" },
     },
     (stdout: string, stderr: string, exitCode: number) => {
-      expect(stderr).toContain("no credentials set");
+      expect(stderr).toContain("ignoring empty _auth value");
       // The empty `_auth` is dropped, so the request carries no credentials and the registry refuses it.
       expect(stderr).toContain("error: @needs-auth/test-pkg@1.0.0 failed to resolve");
       expect(exitCode).toBe(1);
@@ -716,7 +716,7 @@ ${Object.keys(opts)
 
       const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(exitCode).toBe(0);
-      return stderr.includes("no credentials set");
+      return stderr.includes("ignoring empty _auth value");
     }
 
     test("a home line is diagnosed against a registry the project declares", async () => {
@@ -1128,7 +1128,7 @@ registry=https://:TOK@somehost.com/
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("no credentials set");
+    expect(stderr).toContain("ignoring empty _auth value");
     expect(exitCode).toBe(0);
   });
 
@@ -5469,7 +5469,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
       lock("project");
     });
     expect(stderr).toContain("package.json");
-    expect(stderr).not.toContain("not applied");
+    expect(stderr).not.toContain("ignoring");
     expect(exitCode).toBe(1);
   });
 

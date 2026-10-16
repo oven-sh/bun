@@ -585,6 +585,17 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("announces the Retry-After of the tarball after that of the manifest", async () => {
+    using registry = flakyRegistry((_, hit) => (hit === 1 ? busy(429, "1") : undefined));
+    using dir = project(registry.url);
+    const { lines, exitCode } = await install(String(dir));
+    expect(lines.filter(line => line.includes("asked to wait"))).toEqual([
+      "warn: registry asked to wait 1s before retrying",
+      "warn: registry asked to wait 1s before retrying",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   it.each([
     ["manifest", 429],
     ["tarball", 503],

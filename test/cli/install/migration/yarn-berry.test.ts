@@ -836,7 +836,7 @@ describe("yarn berry migration", () => {
 
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
-    expect(stderr).not.toContain("is migrated as");
+    expect(stderr).not.toContain("migrating ");
     expect(stderr).not.toContain("error:");
     expect((await Bun.file(join(dir, "package.json")).json()).dependencies).toEqual({
       bare: "link:./bare",

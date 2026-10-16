@@ -850,8 +850,9 @@ describe.concurrent("package.json indentation", async () => {
 
     const rootPackageJson = await file(packageJson).text();
 
+    // The lines that are there stay as they are. The new member is indented like the first one.
     expect(rootPackageJson).toBe(
-      `{\n     "name": "foo",\n     "workspaces": ["packages/*"],\n     "dependencies": {\n          "no-deps": "^2.0.0"\n     }\n}`,
+      `\n{\n\n     "name": "foo",\n"workspaces": ["packages/*"],\n     "dependencies": {\n          "no-deps": "^2.0.0"\n     }\n}`,
     );
 
     // now add to workspace. it should keep tab indentation
@@ -872,7 +873,9 @@ describe.concurrent("package.json indentation", async () => {
 
     expect(await file(packageJson).text()).toBe(rootPackageJson);
     const workspacePackageJson = await file(join(packageDir, "packages", "bar", "package.json")).text();
-    expect(workspacePackageJson).toBe(`{\n\t"name": "bar",\n\t"dependencies": {\n\t\t"no-deps": "^2.0.0"\n\t}\n}`);
+    expect(workspacePackageJson).toBe(
+      `\n{\n\n\t"name": "bar",\n\t"dependencies": {\n\t\t"no-deps": "^2.0.0"\n\t},\n}`,
+    );
   });
 
   test("install maintains indentation", async () => {
@@ -890,7 +893,7 @@ describe.concurrent("package.json indentation", async () => {
     expect(err).not.toContain("error:");
     expect(out).toContain("installed no-deps@2.0.0");
     expect(exitCode).toBe(0);
-    expect(await file(packageJson).text()).toBe(`{\n  "dependencies": {\n    "no-deps": "^2.0.0"\n  }\n}\n`);
+    expect(await file(packageJson).text()).toBe(`{\n  "dependencies": {\n    "no-deps": "^2.0.0"\n  }\n  }\n`);
   });
 });
 

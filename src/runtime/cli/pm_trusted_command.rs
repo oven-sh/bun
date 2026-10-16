@@ -12,8 +12,8 @@ use bun_install::lockfile::{
     tree,
 };
 use bun_install::package_manager_real::{
-    PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, package_json_write_back,
-    update_lockfile_if_needed,
+    PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, package_json_text,
+    package_json_write_back, update_lockfile_if_needed,
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
@@ -665,28 +665,18 @@ impl TrustCommand {
             }
         }
 
-        let mut buffer_writer = bun_js_printer::BufferWriter::init();
-        buffer_writer.buffer.list.reserve(
-            (package_json_contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()),
-        );
-        buffer_writer.append_newline = !package_json_contents.is_empty()
-            && package_json_contents[package_json_contents.len() - 1] == b'\n';
-        let mut package_json_writer = bun_js_printer::BufferPrinter::init(buffer_writer);
-
-        if let Err(err) = bun_js_printer::print_json(
-            &mut package_json_writer,
+        let new_package_json_contents = match package_json_text::print(
+            &package_json_contents,
             package_json,
-            &package_json_source,
-            bun_js_printer::PrintJsonOptions {
-                mangled_props: None,
-                ..Default::default()
-            },
+            bun_parsers::json::guess_indentation(&package_json_contents),
         ) {
-            Output::err_generic("failed to print package.json: {s}", (err.name(),));
-            Global::crash();
-        }
-
-        let new_package_json_contents = package_json_writer.ctx.written_without_trailing_zero();
+            Ok(contents) => contents,
+            Err(err) => {
+                Output::err_generic("failed to print package.json: {s}", (err.name(),));
+                Global::crash();
+            }
+        };
+        let new_package_json_contents = new_package_json_contents.as_slice();
 
         root_file
             .pwrite_all(new_package_json_contents, 0)

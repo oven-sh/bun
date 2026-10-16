@@ -23,13 +23,13 @@ use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
 use bun_install::package_manager_real::package_json_editor::{
     catalog_object_of, updated_version_literal,
 };
+use bun_install::package_manager_real::package_json_text;
 use bun_install::update_scope::selects;
 use bun_install::{
     CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,
     PackageManager, WorkspacePackageJsonCacheEntry, resolution,
 };
 use bun_install_types::DependencyGroup;
-use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter, PrintJsonOptions};
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_semver::{self as semver, SlicedString};
@@ -213,30 +213,17 @@ impl UpdateInteractiveCommand {
         package_json: &mut WorkspacePackageJsonCacheEntry,
         package_json_path: &[u8],
     ) -> crate::Result<()> {
-        let mut buffer_writer = BufferWriter::init();
-        buffer_writer
-            .buffer
-            .list
-            .reserve(package_json.source.contents.len() + 1);
-        buffer_writer.append_newline = package_json.source.contents.last() == Some(&b'\n');
-        let mut package_json_writer = BufferPrinter::init(buffer_writer);
-
-        if let Err(err) = js_printer::print_json(
-            &mut package_json_writer,
+        let new_package_json_source = match package_json_text::print(
+            &package_json.source.contents,
             package_json.root,
-            &package_json.source,
-            PrintJsonOptions {
-                indent: package_json.indentation,
-                mangled_props: None,
-                ..Default::default()
-            },
+            package_json.indentation,
         ) {
-            Output::err_generic("Failed to serialize package.json: {s}", (err.name(),));
-            return Err(err.into());
-        }
-
-        let new_package_json_source: Box<[u8]> =
-            Box::from(package_json_writer.ctx.written_without_trailing_zero());
+            Ok(contents) => contents,
+            Err(err) => {
+                Output::err_generic("Failed to serialize package.json: {s}", (err.name(),));
+                return Err(err.into());
+            }
+        };
 
         let mut path_zbuf = bun_paths::path_buffer_pool::get();
         let path_z = path::resolve_path::z(package_json_path, &mut path_zbuf);
@@ -253,7 +240,7 @@ impl UpdateInteractiveCommand {
         // The install reads this cache entry, not the file. The cached `root` still borrows the old contents.
         let old = core::mem::replace(
             &mut package_json.source.contents,
-            Cow::Owned(new_package_json_source.into_vec()),
+            Cow::Owned(new_package_json_source),
         );
         package_json.stale_contents.push(old);
         Ok(())

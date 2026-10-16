@@ -19,9 +19,7 @@ use super::add_remove_with_filter::{
 };
 use super::options::Do;
 use super::package_json_editor::{self as PackageJSONEditor, Declared, EditOptions};
-use super::update_package_json_and_install::print_package_json_into_cache_entry;
 use super::workspace_manifests::same_row;
-use super::workspace_package_json_cache::{GetJSONOptions, GetResult, WorkspacePackageJSONCache};
 use super::{PackageManager, Subcommand, UpdateRequest};
 
 /// A package.json whose cache entry was re-printed; `target.name_hash == None` is the root.
@@ -595,24 +593,8 @@ fn sync_lockfile(
 
 fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {
     let printed: &[u8] = &fetch_entry(manager, target).source.contents;
-    let mut file = WorkspacePackageJSONCache::default();
-    let GetResult::Entry(on_disk) = file.get_with_path(
-        &mut bun_ast::Log::init(),
-        &target.package_json_path,
-        GetJSONOptions {
-            init_reset_store: false,
-            guess_indentation: true,
-        },
-    ) else {
-        return false;
-    };
-    if *on_disk.source.contents == *printed {
-        return true;
-    }
-    // Printed as it is, the file can differ from itself: that alone is nothing to write.
-    let root = on_disk.root;
-    print_package_json_into_cache_entry(on_disk, root);
-    *on_disk.source.contents == *printed
+    bun_sys::File::read_from(bun_sys::Fd::cwd(), &target.package_json_path)
+        .is_ok_and(|on_disk| *on_disk == *printed)
 }
 
 /// Phase 2 (after bun.lock is saved): add `trustedDependencies` learned during the install and write every edited entry whose bytes differ from disk.

@@ -627,6 +627,7 @@ new file mode 100644
         expect((await file(dir, "node_modules", "is-even", "index.js").text()).includes("is-even patched")).toBe(
           line > 1,
         );
+        expect(await file(dir, "node_modules", "is-even", "img.bin").exists()).toBe(false);
         expect(exitCode).toBe(0);
       });
     },

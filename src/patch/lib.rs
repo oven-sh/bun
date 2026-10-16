@@ -908,6 +908,8 @@ fn patch_file_second_pass<'a>(
                         hash: file.before_hash,
                     })));
             }
+            // The patch does not have the content, and an empty file is not what it asks for.
+            PatchFilePartKind::FileCreation if file.is_binary => {}
             PatchFilePartKind::FileCreation => {
                 let path = file
                     .to_path

@@ -3161,10 +3161,15 @@ fn init_with_runtime_once(
     let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
     let start_dir_trimmed = without_trailing_slash_windows_path(start_dir);
     // A folder nearer to the importing file overrides the ones above it, as for .npmrc. So the
-    // folders below the start directory are kept apart: they override `bun_install`.
+    // folders below the start directory are kept apart: they override `bun_install`. If the start
+    // directory is not one of the project's folders, all of them do.
     let mut root_bunfig: Option<Box<Api::BunInstall>> = None;
     let mut nearer_bunfig: Option<Box<Api::BunInstall>> = None;
-    let mut merged = &mut root_bunfig;
+    let mut merged = if settings_dirs.contains(&start_dir_trimmed) {
+        &mut root_bunfig
+    } else {
+        &mut nearer_bunfig
+    };
     for &dir in &settings_dirs {
         if dir == start_dir_trimmed {
             merged = &mut nearer_bunfig;

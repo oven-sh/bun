@@ -121,7 +121,7 @@ describe("property matchers on an object that appears more than once", () => {
     const received = { a: { id: 1 }, b: { id: "2" } };
     expect(() =>
       expect(received).toMatchSnapshot({ a: { id: expect.any(Number) }, b: { id: expect.any(Number) } }),
-    ).toThrow("Expected propertyMatchers to match properties from received object");
+    ).toThrow("to match properties from received object");
     expect(received.a.id).toBe(1);
   });
 

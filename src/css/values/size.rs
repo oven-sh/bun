@@ -76,8 +76,7 @@ where
 
     #[inline]
     pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // Note: compares lhs.a against rhs.b only (not a/a && b/b).
-        lhs.a == rhs.b
+        lhs.a == rhs.a && lhs.b == rhs.b
     }
 }
 

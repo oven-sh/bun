@@ -198,7 +198,8 @@ macro_rules! property_helper {
 
         // Otherwise, update the value and add the prefix.
         if let Some(existing) = &mut $self.$prop {
-            *existing = ($val.deep_clone($bump), $vp);
+            existing.0 = $val.deep_clone($bump);
+            existing.1.insert($vp);
         } else {
             $self.$prop = Some(($val.deep_clone($bump), $vp));
             $self.has_any = true;

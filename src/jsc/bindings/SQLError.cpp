@@ -56,7 +56,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__SQLError__crea
     auto* error = ErrorInstance::create(vm, structure, message, JSValue());
     // Filled now, so that a later fill cannot overwrite the server's `line` and `column`.
     error->setErrorInfoForEmbedderError({}, {}, String(emptyString()));
-    error->setStackPropertyAlreadyMaterialized();
+    error->setStackPropertyProvidedByCapturedStackTrace();
     error->materializeErrorInfoIfNeeded(vm);
     // The position of no source. The caller writes the server's `line` and `column`, if any.
     error->putDirect(vm, vm.propertyNames->line, jsUndefined(), static_cast<unsigned>(PropertyAttribute::DontEnum));

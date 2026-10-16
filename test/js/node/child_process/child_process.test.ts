@@ -189,12 +189,14 @@ describe("ChildProcess stdio properties", () => {
     // This file is strict mode: a getter-only accessor makes this throw.
     Object.assign(proc, replacements);
     expect(keys.map(key => proc[key])).toEqual(keys.map(key => replacements[key]));
+    // Like node, an assigned stream is an own enumerable property.
+    expect(Object.keys(proc)).toEqual(expect.arrayContaining(["stdin", "stdout", "stderr", "stdio"]));
     proc.connected = false;
     expect(proc.connected).toBe(false);
   });
 
   it("spawn() replaces a stream assigned before it", async () => {
-    const proc = new ChildProcess();
+    using proc = new ChildProcess();
     const placeholder = new PassThrough();
     proc.stdout = placeholder;
     // @ts-ignore
@@ -206,7 +208,7 @@ describe("ChildProcess stdio properties", () => {
   });
 
   it("an IPC spawn() and disconnect() replace a connected value assigned before them", async () => {
-    const proc = new ChildProcess();
+    using proc = new ChildProcess();
     proc.connected = false;
     // @ts-ignore
     proc.spawn({
@@ -214,6 +216,7 @@ describe("ChildProcess stdio properties", () => {
       args: [bunExe(), "-e", "process.on('message', () => {})"],
       stdio: ["ignore", "ignore", "ignore", "ipc"],
     });
+    const exited = once(proc, "exit");
     expect(proc.connected).toBe(true);
     proc.connected = true;
     const disconnected = once(proc, "disconnect");
@@ -221,7 +224,7 @@ describe("ChildProcess stdio properties", () => {
     expect(proc.connected).toBe(false);
     await disconnected;
     proc.kill();
-    await once(proc, "exit");
+    await exited;
   });
 });
 

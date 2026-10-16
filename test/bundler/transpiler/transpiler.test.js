@@ -6399,8 +6399,9 @@ describe("same-target destructuring with an unstable target", () => {
 });
 
 // The depth limit follows the build, the platform and the thread, so each child searches for it.
-describe.concurrent("a deeply nested define value", () => {
+describe.concurrent("a define value", () => {
   const nested = depth => Buffer.alloc(depth, "[").toString() + "1" + Buffer.alloc(depth, "]").toString();
+  const shallow = '{"a":[1,"two"]}';
   const searchSource = `
     ${deepestAcceptedSource}
     const nested = ${nested};
@@ -6413,13 +6414,19 @@ describe.concurrent("a deeply nested define value", () => {
         return false;
       }
     };
+    // The deepest value that loads, then a second define read next to it after a GC.
+    const limitAndReadBack = async () => {
+      const limit = await deepestAccepted(transpilerLoads);
+      const transpiler = new Bun.Transpiler({ define: { DEEPX: nested(limit), SHALLOW: ${JSON.stringify(shallow)} } });
+      Bun.gc(true);
+      return "limit " + limit + " " + transpiler.transformSync("console.log(SHALLOW.a[1]);").trim();
+    };
   `;
   const workerMain = `
     const worker = new Worker("./worker.js");
     worker.onerror = event => { console.log("error: " + event.message); worker.terminate(); };
     worker.onmessage = event => { console.log(event.data); worker.terminate(); };
   `;
-  const shallow = '{"a":[1,"two"]}';
   const bunfig = defines =>
     "[define]\n" +
     Object.entries(defines)
@@ -6448,7 +6455,7 @@ describe.concurrent("a deeply nested define value", () => {
   async function measure(args, files) {
     const result = await run(args, files, noLeakCheck);
     expect({ ...result, stdout: result.stdout.replace(/\d+/, "N") }).toEqual({
-      stdout: "limit N\n",
+      stdout: 'limit N console.log({ a: [1, "two"] }.a[1]);\n',
       stderr: "",
       exitCode: 0,
       signalCode: null,
@@ -6458,26 +6465,23 @@ describe.concurrent("a deeply nested define value", () => {
 
   let mainThreadLimit, workerLimit;
   const measureMainThreadLimit = () =>
-    (mainThreadLimit ??= measure([
-      "-e",
-      `${searchSource} console.log("limit " + (await deepestAccepted(transpilerLoads)));`,
-    ]));
+    (mainThreadLimit ??= measure(["-e", `${searchSource} console.log(await limitAndReadBack());`]));
   const measureWorkerLimit = () =>
     (workerLimit ??= measure(["main.js"], {
-      "worker.js": `${searchSource} postMessage("limit " + (await deepestAccepted(transpilerLoads)));`,
+      "worker.js": `${searchSource} postMessage(await limitAndReadBack());`,
       "main.js": workerMain,
     }));
 
-  it("loads in new Bun.Transpiler() up to the limit of the parser", async () => {
+  it("that is deeply nested loads in new Bun.Transpiler()", async () => {
     expect(await measureMainThreadLimit()).toBeGreaterThanOrEqual(64);
   });
 
-  it("loads in new Bun.Transpiler() in a Worker up to the limit of the parser", async () => {
+  it("that is deeply nested loads in new Bun.Transpiler() in a Worker", async () => {
     expect(await measureWorkerLimit()).toBeGreaterThanOrEqual(64);
   });
 
   // 3/4 of the limit is longer than the 32K command line of Windows. bunfig.toml covers it.
-  it.skipIf(isWindows)("loads from --define", async () => {
+  it.skipIf(isWindows)("that is deeply nested loads from --define", async () => {
     const depth = ((await measureMainThreadLimit()) * 3) >> 2;
     const files = { "entry.js": `console.log(JSON.stringify(SHALLOW));` };
     expect(
@@ -6485,7 +6489,7 @@ describe.concurrent("a deeply nested define value", () => {
     ).toEqual({ stdout: shallow + "\n", stderr: "", exitCode: 0, signalCode: null });
   });
 
-  it("loads from bunfig.toml [define]", async () => {
+  it("that is deeply nested loads from bunfig.toml [define]", async () => {
     const depth = ((await measureMainThreadLimit()) * 3) >> 2;
     const files = {
       "bunfig.toml": bunfig({ DEEPX: nested(depth), SHALLOW: shallow }),
@@ -6499,8 +6503,8 @@ describe.concurrent("a deeply nested define value", () => {
     });
   });
 
-  it("loads again in a Worker of a process that has it", async () => {
-    const depth = ((await measureWorkerLimit()) * 3) >> 2;
+  it("that is deeply nested loads again in a Worker of a process that has it", async () => {
+    const depth = (Math.min(await measureMainThreadLimit(), await measureWorkerLimit()) * 3) >> 2;
     const files = {
       "bunfig.toml": bunfig({ DEEPX: nested(depth), SHALLOW: shallow }),
       "worker.js": `postMessage(JSON.stringify(SHALLOW));`,
@@ -6514,7 +6518,7 @@ describe.concurrent("a deeply nested define value", () => {
     });
   });
 
-  it("fails with the error of the parser past its limit", async () => {
+  it("that is nested past the limit fails with the error of the parser", async () => {
     const depth = (await measureMainThreadLimit()) * 4;
     const files = {
       "bunfig.toml": bunfig({ DEEPX: nested(depth) }),
@@ -6540,9 +6544,12 @@ describe.concurrent("a deeply nested define value", () => {
       construct(10);
       const before = process.memoryUsage.rss();
       construct(100);
-      console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+      const deltaMiB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+      const printed = new Bun.Transpiler({ define }).transformSync("console.log(LIST_HEAVY.key149[0]);");
+      if (!printed.includes('key149: ["value149", 149, { n: 149 }]')) throw new Error("the define is not whole: " + printed);
+      console.log(JSON.stringify({ deltaMiB }));
     `;
-    // 100 transpilers that leak this define grow RSS by 11 MiB. Freed, the growth is under 2 MiB.
+    // 100 transpilers that leak this define grow RSS by 12 to 15 MiB. Freed, the growth is under 3 MiB.
     await expectRssDeltaBelow(["--smol", "-e", script], { release: 6, debug: 6 });
   });
 

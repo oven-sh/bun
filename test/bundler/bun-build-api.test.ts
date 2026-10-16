@@ -6,6 +6,7 @@ import {
   bunExe,
   bunRun,
   deepestAcceptedSource,
+  expectRssDeltaBelow,
   isASAN,
   isDebug,
   isWindows,
@@ -1092,6 +1093,27 @@ describe("Bun.build", () => {
       exitCode: 0,
       signalCode: null,
     });
+  });
+
+  test.concurrent("a define value is freed with its build", async () => {
+    using dir = tempDir("build-api-define-leak", { "in.js": `console.log(1);` });
+    const script = `
+      const entries = {};
+      for (let i = 0; i < 3000; i++) entries["key" + i] = ["value" + i, i, { n: i }];
+      const define = { LIST_HEAVY: JSON.stringify(entries) };
+      const build = async count => {
+        for (let i = 0; i < count; i++) {
+          await Bun.build({ entrypoints: [${JSON.stringify(join(String(dir), "in.js"))}], define, throw: true });
+          Bun.gc(true);
+        }
+      };
+      await build(5);
+      const before = process.memoryUsage.rss();
+      await build(10);
+      console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    `;
+    // 10 builds that leak this define grow RSS by 8.5 to 12 MiB. Freed, the growth is under 3 MiB.
+    await expectRssDeltaBelow(["--smol", "-e", script], { release: 6, debug: 6 });
   });
 
   test.concurrent("warnings do not fail a build", async () => {

@@ -382,6 +382,8 @@ fn heap_alloc(layout: Layout) -> *mut u8 {
 //   `mi_realloc` would be unsound. The old block is abandoned (same leak
 //   semantics as `deallocate` — and under a state it, like every other block,
 //   is reclaimed when the owner resets the state).
+// - A `Vec` from `vec_with_capacity_in_arena` starts with a block of the
+//   caller's `MimallocArena`: a `mi_heap_malloc[_aligned]` block head too.
 // - `allocate_zeroed` is `mi_*zalloc` (skips the redundant `memset` mimalloc
 //   would otherwise need over already-zero OS pages); same lifetime as
 //   `allocate`.
@@ -519,7 +521,8 @@ impl AstAlloc {
         v
     }
 
-    /// An empty `AstVec` whose first buffer is a block of `arena`. A grow moves it to `AstAlloc`.
+    /// An empty `AstVec` whose first buffer is a block of `arena`. `arena` must outlive the vec.
+    /// A grow that does not fit the block moves the buffer to `AstAlloc`.
     #[inline]
     pub fn vec_with_capacity_in_arena<T>(cap: usize, arena: &MimallocArena) -> AstVec<T> {
         if cap == 0 || core::mem::size_of::<T>() == 0 {

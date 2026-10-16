@@ -38,8 +38,11 @@ describe("AbortController GC", () => {
           BUN_JSC_verifyGC: "1",
           BUN_JSC_collectContinuously: "1",
           // `bun -e` sets numberOfGCMarkers=1 for one-shot startup, which
-          // serializes marking and hides the race. Restore parallel marking.
+          // serializes marking and hides the race. Restore parallel marking, and
+          // from the start of each collection: a heap this small never shows the
+          // helpers enough work for them to join on their own.
           BUN_JSC_numberOfGCMarkers: "8",
+          BUN_JSC_minimumBytesMarkedForParallelMarking: "0",
         },
         stdout: "pipe",
         stderr: "pipe",
@@ -135,8 +138,10 @@ describe("AbortController GC", () => {
       env: {
         ...bunEnv,
         // `bun -e` defaults to a single GC marker; the weak-handle visit has to happen on
-        // the parallel marker threads to reach the cross-thread mutation.
+        // the parallel marker threads to reach the cross-thread mutation, so they join every
+        // collection from its start.
         BUN_JSC_numberOfGCMarkers: "8",
+        BUN_JSC_minimumBytesMarkedForParallelMarking: "0",
       },
       stdout: "pipe",
       stderr: "pipe",

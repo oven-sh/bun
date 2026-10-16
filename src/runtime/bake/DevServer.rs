@@ -895,7 +895,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     }
 
     if !dev.frontend_only {
-        dev.init_server_runtime();
+        dev.init_server_runtime()?;
     }
 
     // Initialize FrameworkRouter
@@ -1189,7 +1189,7 @@ impl Drop for DevServer {
 // re-exports from memory_cost module already declared at top
 
 impl DevServer {
-    fn init_server_runtime(&mut self) {
+    fn init_server_runtime(&mut self) -> JsResult<()> {
         let runtime = BunString::create_static_external(
             crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server)
                 .code
@@ -1210,6 +1210,13 @@ impl DevServer {
                 .unwrap_or(false),
         ) {
             Ok(v) => v,
+            // Nothing says that what the dev server bundles is static code.
+            Err(err)
+                if bun_core::code_generation_from_strings()
+                    == bun_core::CodeGenerationFromStrings::Strict =>
+            {
+                return Err(err);
+            }
             Err(err) => {
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
                 // `print_error_like_object_to_console` needs `&mut VM`, so cast
@@ -1245,6 +1252,7 @@ impl DevServer {
 
         fetch_function.ensure_still_alive();
         register_update.ensure_still_alive();
+        Ok(())
     }
 
     /// Deferred one tick so that the server can be up faster

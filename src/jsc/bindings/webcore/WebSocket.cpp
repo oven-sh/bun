@@ -1092,16 +1092,16 @@ WebSocket::HandshakeResult WebSocket::didReceiveHandshakeResponse(uint16_t statu
     }
     for (size_t i = 0; i < headers.size(); i++) {
         rawHeaders->putDirectIndex(globalObject, i * 2,
-            JSC::jsString(vm, WTF::String(headers[i].name.span())));
+            JSC::jsString(vm, WTF::String(byteCast<Latin1Character>(headers[i].name.span()))));
         RETURN_IF_EXCEPTION(scope, {});
         rawHeaders->putDirectIndex(globalObject, i * 2 + 1,
-            JSC::jsString(vm, WTF::String(headers[i].value.span())));
+            JSC::jsString(vm, WTF::String(byteCast<Latin1Character>(headers[i].value.span()))));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::jsNumber(statusCode));
-    arguments.append(JSC::jsString(vm, WTF::String({ statusMessage.data(), statusMessage.size() })));
+    arguments.append(JSC::jsString(vm, WTF::String(byteCast<Latin1Character>(statusMessage))));
     arguments.append(rawHeaders);
     if (isWsMode()) {
         arguments.append(JSC::jsBoolean(isUpgrade));

@@ -422,7 +422,7 @@ fn has_comment_around_first_argument_for_oxfmt<'a>(
     second: Expr<'a>,
     f: &Formatter<'a>,
 ) -> bool {
-    let between = Span::new(first.span().end, second.span().start);
+    let between = first.span().between(second.span());
     !comments_of_expression(first, f).leading.is_empty()
         || (f.comments().comments_in_span(between).iter()).any(|comment| {
             comment.has_newline_after() || comment.prev_token_end() <= first.outer_span().end

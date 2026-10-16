@@ -222,11 +222,10 @@ fn recorded_nodes_without_import_attribute_braces<'a>(
         let first = attributes.entries().first();
         following_node = first.map(|first| NodeOrName::Node(Node::Prop(first)));
     }
-    // `import a from "a" with { /* comment */ type: "json" }`
+    // `import a from "a" with { /* comment */ type: "json" }`, `import a from "a" with { /* comment */ }`
     if let Some(Node::Expr(braces)) = enclosing_node
-        && let Some(first) = braces.as_object().and_then(|attributes| attributes.first())
-        && first.is_import_attribute()
-        && let Node::Stmt(statement) = first.parent()
+        && braces.as_object().is_some()
+        && let Some(Node::Stmt(statement)) = braces.owner_of_import_attributes()
     {
         enclosing_node = Some(Node::Stmt(statement));
         preceding_node = preceding_node.or_else(|| {

@@ -946,13 +946,40 @@ impl ShellRmTask {
                         need_to_wait_out: &mut waiting,
                     },
                 };
-                self.remove_entry_file(dir_task, path, is_absolute, &mut buf, &mut vtable)?;
+                let removed =
+                    self.remove_entry_file(dir_task, path, is_absolute, &mut buf, &mut vtable);
+                #[cfg(windows)]
+                let removed = removed.or_else(|e| self.missing_if_name_rejected(dir_task, path, e));
+                removed?;
             }
             EntryKindHint::Dir => {
                 self.remove_entry_dir(dir_task, is_absolute, &mut buf, &mut waiting)?;
             }
         }
         Ok(waiting)
+    }
+
+    /// `unlinkat` reports EINVAL for a name NT rejects, also when the file exists (#13523).
+    #[cfg(windows)]
+    fn missing_if_name_rejected(
+        &self,
+        dir_task: *mut DirTask,
+        path: &ZStr,
+        e: bun_sys::Error,
+    ) -> bun_sys::Maybe<()> {
+        // SAFETY: `dir_task` is live; `remove_entry_file` failed before any hand-off.
+        let is_operand = unsafe { (*dir_task).parent_task.is_null() };
+        debug_assert!(is_operand, "a listed entry exists, whatever its name");
+        // `shell_lstatat` stops at MAX_PATH. The unlink does not.
+        let missing = e.get_errno() == E::EINVAL
+            && bun_sys::lstatat(self.cwd, path).is_err_and(|err| err.get_errno() == E::ENOENT);
+        if !missing {
+            return Err(e);
+        }
+        if self.opts.force {
+            return self.verbose_deleted(dir_task, path.as_bytes());
+        }
+        Err(bun_sys::Error::from_code(E::ENOENT, e.syscall).with_path(path.as_bytes()))
     }
 
     /// `need_to_wait_out` is left `true` only when the hand-off in this

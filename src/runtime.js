@@ -103,8 +103,20 @@ export var __toCommonJS = from => {
 /*__PURE__*/
 var __moduleCache;
 
-// When you do know the module is CJS
-export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+// When you do know the module is CJS. A module whose evaluation threw is evaluated again on the next load.
+// No `catch`: a rethrow becomes the reported throw site. The handler is its own arrow so the cached call stays small.
+export var __commonJS = (cb, mod) => () => (
+  mod ||
+    (() => {
+      try {
+        cb((mod = { exports: {} }).exports, mod);
+        var done = 1;
+      } finally {
+        done || (mod = 0);
+      }
+    })(),
+  mod.exports
+);
 
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {

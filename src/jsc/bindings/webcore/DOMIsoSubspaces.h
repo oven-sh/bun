@@ -2,6 +2,7 @@
 #pragma once
 
 #include "root.h"
+#include "GeneratedBindings+Counts.h"
 
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
@@ -76,6 +77,7 @@ public:
     IsoSubspace* m_subspaceForWasmStreamingCompiler { nullptr };
     IsoSubspace* m_subspaceForJSWebView { nullptr };
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
+    IsoSubspace* m_subspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /*-- BUN --*/
 
     IsoSubspace* m_subspaceForFetchHeaders { nullptr };

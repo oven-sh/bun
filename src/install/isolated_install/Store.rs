@@ -237,25 +237,10 @@ impl<T: Copy> OrderedArraySet<T> {
         ctx: &impl OrderedArraySetCtx<T>,
     ) -> Result<(), AllocError> {
         // allocator param dropped — global mimalloc
-        for i in 0..self.list.len() {
-            let existing = self.list[i];
-            if ctx.eql(new, existing) {
-                return Ok(());
-            }
-
-            let order = ctx.order(new, existing);
-
-            if order == Ordering::Equal {
-                return Ok(());
-            }
-
-            if order == Ordering::Less {
-                self.list.insert(i, new);
-                return Ok(());
-            }
+        let found = (self.list).binary_search_by(|&existing| ctx.order(existing, new));
+        if let Err(i) = found {
+            self.list.insert(i, new);
         }
-
-        self.list.push(new);
         Ok(())
     }
 }

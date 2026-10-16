@@ -1,8 +1,16 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { existsSync, readdirSync, statSync, symlinkSync, utimesSync } from "fs";
+import { chmodSync, existsSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { join, relative } from "path";
 import { createTestContext, destroyTestContext, dummyAfterAll, dummyBeforeAll } from "./dummy.registry";
 
@@ -526,6 +534,64 @@ for (const linker of ["hoisted", "isolated"] as const) {
       expect(exitCode).toBe(0);
     });
   }
+
+  it.concurrent(`bun remove -g gives a bin name back to the global package that lost it (${linker})`, async () => {
+    const serve = (name: string) => ({
+      [`${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", bin: { serve: "cli.js" } }),
+      [`${name}/cli.js`]: "#!/usr/bin/env node\n",
+    });
+    using dir = tempDir(`bun-remove-global-same-bin-${linker}`, {
+      ...serve("first"),
+      ...serve("second"),
+      ...localBin("what-bin"),
+    });
+    const bunInstall = join(String(dir), "global");
+    const globalDir = join(bunInstall, "install", "global");
+    const globalBin = join(bunInstall, "bin");
+    const globalEnv = { BUN_INSTALL: bunInstall, BUN_INSTALL_GLOBAL_DIR: globalDir, BUN_INSTALL_BIN: globalBin };
+    const runGlobal = (...args: string[]) => runWithEnv(globalEnv, String(dir), ...args, "-g", "--linker", linker);
+    const serveOf = (name: string) => join("..", "install", "global", "node_modules", name, "cli.js");
+
+    for (const name of ["first", "second", "what-bin"]) {
+      const { stderr, exitCode } = await runGlobal("add", join(String(dir), name));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    expect(join(globalBin, "serve")).toBeValidBin(serveOf("second"));
+
+    // As long as both are installed, the one named last keeps the name.
+    for (const [name, bins, owner] of [
+      ["what-bin", ["serve"], "second"],
+      ["second", ["serve"], "first"],
+      ["first", [], ""],
+    ] as const) {
+      const { stderr, exitCode } = await runGlobal("remove", name);
+      expect(stderr).not.toContain("error:");
+      expect(readdirSync(globalBin).sort()).toStrictEqual(binFiles(...bins));
+      if (owner) expect(join(globalBin, "serve")).toBeValidBin(serveOf(owner));
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  it.concurrent(`bun add -g links the bin that another global package lost (${linker})`, async () => {
+    using dir = tempDir(`bun-add-global-lost-bin-${linker}`, { ...localBin("what-bin"), ...localBin("other-bin") });
+    const bunInstall = join(String(dir), "global");
+    const globalDir = join(bunInstall, "install", "global");
+    const globalBin = join(bunInstall, "bin");
+    const globalEnv = { BUN_INSTALL: bunInstall, BUN_INSTALL_GLOBAL_DIR: globalDir, BUN_INSTALL_BIN: globalBin };
+    const runGlobal = (...args: string[]) => runWithEnv(globalEnv, String(dir), ...args, "-g", "--linker", linker);
+
+    for (const name of ["what-bin", "other-bin"]) {
+      const { stderr, exitCode } = await runGlobal("add", join(String(dir), name));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      if (name === "what-bin") for (const entry of readdirSync(globalBin)) rmSync(join(globalBin, entry));
+    }
+    expect(readdirSync(globalBin).sort()).toStrictEqual(binFiles("other-bin", "what-bin"));
+    expect(join(globalBin, "what-bin")).toBeValidBin(
+      join("..", "install", "global", "node_modules", "what-bin", "cli.js"),
+    );
+  });
 }
 
 // https://github.com/oven-sh/bun/issues/9351, https://github.com/oven-sh/bun/issues/7215
@@ -658,6 +724,37 @@ it.concurrent("bun r is an alias of bun remove", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+it.serial.skipIf(isWindows)("bun remove that cannot save bun.lock leaves node_modules as it was", async () => {
+  const pkg = JSON.stringify({ name: "root", dependencies: { foo: "file:./foo", bar: "file:./bar" } });
+  using dir = tempDir("bun-remove-lockfile-not-saved", { ...local("foo"), ...local("bar"), "package.json": pkg });
+  expect(await run(String(dir), "install")).toMatchObject({ exitCode: 0 });
+  const lockfile = await file(join(String(dir), "bun.lock")).text();
+
+  using unprivileged = unprivilegedSpawnOptions(String(dir));
+  // bun.lock is replaced by a temporary file created next to it.
+  chmodSync(String(dir), 0o555);
+  try {
+    await using proc = spawn({
+      cmd: [bunExe(), "remove", "foo"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("failed to create temporary file to save lockfile");
+    expect(existsSync(join(String(dir), "node_modules", "foo", "package.json"))).toBe(true);
+    expect(await file(join(String(dir), "package.json")).text()).toBe(pkg);
+    expect(await file(join(String(dir), "bun.lock")).text()).toBe(lockfile);
+    expect(exitCode).toBe(1);
+  } finally {
+    chmodSync(String(dir), 0o755);
+  }
+});
+
 it.concurrent("bun remove -r is rejected and leaves package.json untouched", async () => {
   const pkg = JSON.stringify({ name: "root", dependencies: { foo: "file:./foo" } });
   using dir = tempDir("bun-remove-dash-r", { ...local("foo"), "package.json": pkg });
@@ -774,6 +871,41 @@ for (const linker of ["hoisted", "isolated"] as const) {
     const { stderr, exitCode } = await remove(String(dir), "react");
     expect(stderr).not.toContain("error:");
     expect(existsSync(react)).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
+  // The hoisted linker has `b` at the top for `a`. The isolated linker has it there for the project only.
+  it.concurrent(`bun remove of a package that another dependency still needs (${linker})`, async () => {
+    await using registry = serveAnyPackage({ a: { dependencies: { b: "1.0.0" } } });
+    using dir = tempDir(`bun-remove-still-needed-${linker}`, {
+      "bunfig.toml": `[install]\nregistry = "${registry.url}"\nlinker = "${linker}"\n`,
+      "package.json": JSON.stringify({ name: "app", dependencies: { a: "1.0.0", b: "1.0.0" } }),
+    });
+    expect(await run(String(dir), "install")).toMatchObject({ exitCode: 0 });
+
+    const { stderr, exitCode } = await remove(String(dir), "b");
+    expect(stderr).not.toContain("error:");
+    expect(existsSync(join(String(dir), "node_modules", "a"))).toBe(true);
+    expect(existsSync(join(String(dir), "node_modules", "b"))).toBe(linker === "hoisted");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent(`bun remove in a workspace takes the package out of node_modules (${linker})`, async () => {
+    await using registry = serveAnyPackage();
+    using dir = tempDir(`bun-remove-in-workspace-${linker}`, {
+      "bunfig.toml": `[install]\nregistry = "${registry.url}"\nlinker = "${linker}"\n`,
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "packages/w/package.json": JSON.stringify({ name: "w", dependencies: { b: "1.0.0", c: "1.0.0" } }),
+    });
+    const workspace = join(String(dir), "packages", "w");
+    // Where `import` in packages/w looks.
+    const found = (name: string) => [workspace, String(dir)].some(from => existsSync(join(from, "node_modules", name)));
+    expect(await run(String(dir), "install")).toMatchObject({ exitCode: 0 });
+    expect([found("b"), found("c")]).toEqual([true, true]);
+
+    const { stderr, exitCode } = await remove(workspace, "b");
+    expect(stderr).not.toContain("error:");
+    expect([found("b"), found("c")]).toEqual([false, true]);
     expect(exitCode).toBe(0);
   });
 }

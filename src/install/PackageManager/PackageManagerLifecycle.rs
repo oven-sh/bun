@@ -338,6 +338,9 @@ impl PackageManager {
         // `cwd` out so the PATH builder can borrow it independently.
         let cwd_owned: Vec<u8> = list.cwd.as_bytes().to_vec();
         let cwd: &[u8] = &cwd_owned;
+        if cwd.len() + "/node_modules/.bin".len() >= bun_paths::MAX_PATH_BYTES {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+        }
         let this_transpiler = self.configure_env_for_scripts(ctx)?;
 
         let env_loader = this_transpiler.env_mut();
@@ -488,6 +491,38 @@ fn put_npm_package_env(
     Ok(())
 }
 
+/// Rewrites the `node_modules/.bin` entries of `PATH` to their real paths. A script's `cwd` is a
+/// real path too, so `append_path_without_ancestor_bins` can then compare the two.
+pub(crate) fn resolve_bin_dirs_in_path(
+    env: &mut bun_dotenv::Loader,
+) -> Result<(), bun_alloc::AllocError> {
+    let bin = bun_paths::path_literal!("/node_modules/.bin").as_bytes();
+    // On Windows, an entry may be written with either `\` or `/`.
+    let spellings: [&[u8]; 2] = [bin, b"/node_modules/.bin"];
+    let Some(inherited) = env.get(b"PATH") else {
+        return Ok(());
+    };
+    let mut real_dir = bun_paths::path_buffer_pool::get();
+    let mut path: Vec<u8> = Vec::with_capacity(inherited.len());
+    for (i, entry) in strings::split(inherited, &[bun_paths::DELIMITER]).enumerate() {
+        if i > 0 {
+            path.push(bun_paths::DELIMITER);
+        }
+        let trimmed = strings::without_trailing_slash(entry);
+        if let Some(dir) = (spellings.iter())
+            .find_map(|bin| trimmed.strip_suffix(*bin))
+            .filter(|dir| bun_paths::is_absolute(dir))
+            && let Ok(dir) = Syscall::realpath(&ZBox::from_bytes(dir), &mut real_dir)
+        {
+            path.extend_from_slice(dir);
+            path.extend_from_slice(bin);
+        } else {
+            path.extend_from_slice(entry);
+        }
+    }
+    env.map.put(b"PATH", &path)
+}
+
 /// Without the `node_modules/.bin` of `cwd` and its ancestors that a `bun run` above put in front.
 fn append_path_without_ancestor_bins(
     path: &mut EnvPath,
@@ -517,15 +552,27 @@ fn add_package_to_set(
     if handle_oom(set.get_or_put(package_id)).found_existing {
         return;
     }
+    let mut visited = vec![false; lockfile.packages.len()];
+    visited[package_id as usize] = true;
     let mut stack: Vec<PackageID> = vec![package_id];
     while let Some(current) = stack.pop() {
         let rows = lockfile.packages.items_dependencies()[current as usize];
         for dep_id in rows.begin()..rows.end() {
             let dep_package_id = lockfile.buffers.resolutions[dep_id as usize];
-            if dep_package_id != invalid_package_id
-                && !handle_oom(set.get_or_put(dep_package_id)).found_existing
-            {
+            if dep_package_id == invalid_package_id {
+                continue;
+            }
+            if !core::mem::replace(&mut visited[dep_package_id as usize], true) {
                 stack.push(dep_package_id);
+            }
+            // `--trust` saves these packages by name in `trustedDependencies`. A package that a
+            // name cannot trust is left out, so that this install runs the same scripts as later
+            // installs. What it depends on is still visited.
+            if lockfile.can_trust_by_name(
+                lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name),
+                &lockfile.packages.items_resolution()[dep_package_id as usize],
+            ) {
+                let _ = handle_oom(set.get_or_put(dep_package_id));
             }
         }
     }

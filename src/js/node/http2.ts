@@ -2064,14 +2064,12 @@ enum StreamState {
   Delivered = 1 << 8, // 100000000 = 256
   // A request made before 'connect' stays corked until it has an id, like node's until kInit.
   CorkedUntilId = 1 << 9, // 1000000000 = 512
-  // The write in flight did not leave (queued, refused, or no id yet): _destroy settles it.
-  UnsentWrite = 1 << 10, // 10000000000 = 1024
   // bunHTTP2StreamFinal holds the callback of a queued END_STREAM frame, for completeQueuedFinal.
-  FinalQueued = 1 << 11, // 100000000000 = 2048
+  FinalQueued = 1 << 10, // 10000000000 = 1024
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
-// not leave a frame to report. The Writable callback is completed on a later turn instead, so
+// not queue a frame: the bytes can still wait in the session's buffer. The write completes on a later turn, so
 // write() never settles synchronously — node's Http2Stream writes also only complete after the
 // session flushes to the socket, which is what makes write() return false past the
 // highWaterMark and 'drain' fire afterwards. streamWriteDone completes a chunk that was queued.
@@ -2261,46 +2259,41 @@ function streamOnResume(this: Http2Stream) {
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
-  setImmediate(rstClosedPendingStreamNT, session, this, code);
+  setImmediate(rstClosedStreamNT, session, this, code);
 }
-function rstClosedPendingStreamNT(session: Http2Session, stream: Http2Stream, code: number) {
+function rstClosedStreamNT(session: Http2Session, stream: Http2Stream, code: number) {
   const id = stream.id;
   // A request that the session rejected gets 'ready' and no id.
   if (typeof id !== "number") return;
   session[bunHTTP2Native]?.rstStream(id, code);
   completeQueuedFinal(stream);
-  // close(0) waits for a 'finish' that the dropped body never gives: _destroy settles the write.
-  if (
-    code === NGHTTP2_NO_ERROR &&
-    !stream.destroyed &&
-    (stream[bunHTTP2StreamStatus] & StreamState.UnsentWrite) !== 0
-  ) {
-    stream.destroy();
-  }
+  // close(0) waits for a 'finish' that the dropped body never gives: _destroy completes the write.
+  if (code === NGHTTP2_NO_ERROR && !stream.destroyed && stream._writableState.writing) stream.destroy();
 }
 function rstDestroyedStreamNT(session: Http2Session, stream: Http2Stream, id: number, rstCode: number) {
   session[bunHTTP2Native]?.rstStream(id, rstCode);
   completeQueuedFinal(stream);
 }
-// native.writeStream() queued the chunk, or refused it (`false`: the stream cannot send).
-function writeNotFlushed(stream: Http2Stream, status: number | false, callback: () => void) {
-  if (status === false && (stream[bunHTTP2StreamStatus] & StreamState.EndStreamSent) !== 0) {
-    // The response ended on its HEADERS frame (HEAD, 204, 304): it finishes without the chunk.
-    callback();
-    return;
-  }
-  stream[bunHTTP2StreamStatus] |= StreamState.UnsentWrite;
+// The one completer of the write in flight: the flushed tick, streamWriteDone and _destroy all call it.
+function completeWrite(stream: Http2Stream, error?: Error | null) {
+  const state = stream._writableState;
+  // `writing` is the record of the write in flight, so a second caller does nothing.
+  if (state.writing) state.onwrite(error);
+}
+// native.writeStream() refused the chunk (`false`), or the stream has no session: it cannot send.
+function writeRefused(stream: Http2Stream) {
+  // The response ended on its HEADERS frame (HEAD, 204, 304): it finishes without the chunk.
+  if ((stream[bunHTTP2StreamStatus] & StreamState.EndStreamSent) !== 0) completeWrite(stream);
 }
 // 'ready' listeners of a write that waited for the stream id (Http2Stream._write, _writev).
 function writeOnReady(this: Http2Stream, chunk, encoding, callback) {
-  this[bunHTTP2StreamStatus] &= ~StreamState.UnsentWrite;
-  this._write(chunk, encoding, callback);
+  // https://github.com/nodejs/node/blob/v26.11.1/lib/internal/http2/core.js#L2336-L2343
+  if (!this.destroyed) this._write(chunk, encoding, callback);
 }
 function writevOnReady(this: Http2Stream, data, callback) {
-  this[bunHTTP2StreamStatus] &= ~StreamState.UnsentWrite;
-  this._writev(data, callback);
+  if (!this.destroyed) this._writev(data, callback);
 }
-// The END_STREAM frame left the queue or a reset dropped it: no body was left, so it finishes.
+// The END_STREAM frame left the queue, or a reset of this side dropped it: no body was left, so it finishes.
 function completeQueuedFinal(stream: Http2Stream) {
   const status = stream[bunHTTP2StreamStatus];
   if ((status & StreamState.FinalQueued) === 0) return;
@@ -2312,14 +2305,7 @@ function completeQueuedFinal(stream: Http2Stream) {
 // Native names the writers of a queued write once its last frame has left the queue.
 function streamWriteDone(_session: Http2Session, stream: Http2Stream, writers: number) {
   if (typeof stream !== "object") return;
-  if (writers & StreamWriter.Stream) {
-    const status = stream[bunHTTP2StreamStatus];
-    // _destroy settles the write itself when the stream is destroyed before this report.
-    if ((status & StreamState.UnsentWrite) !== 0) {
-      stream[bunHTTP2StreamStatus] = status & ~StreamState.UnsentWrite;
-      stream._writableState.onwrite();
-    }
-  }
+  if (writers & StreamWriter.Stream) completeWrite(stream);
   if (writers & StreamWriter.FileSink) stream[kFileResponseSink]._writableState.onwrite();
   if (writers & StreamWriter.Final) completeQueuedFinal(stream);
 }
@@ -2378,6 +2364,8 @@ interface Http2StreamReadableState {
 interface Http2StreamWritableState {
   ending: boolean;
   destroyed: boolean;
+  sync: boolean;
+  writing: boolean;
   onwrite(error?: Error | null): void;
 }
 type DuplexStream = import("node:stream").Duplex;
@@ -2666,7 +2654,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
       } else if (this.writableFinished || code) {
-        setImmediate(rstNextTick.bind(session, this.#id, code));
+        setImmediate(rstClosedStreamNT, session, this, code);
       } else {
         this.once("finish", rstNextTick.bind(session, this.#id, code));
       }
@@ -2776,11 +2764,12 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         onServerStreamErrorChannel.publish({ stream: this, error: err });
       }
     }
-    const status = this[bunHTTP2StreamStatus];
+    const state = this._writableState;
     // https://github.com/nodejs/node/blob/v26.11.1/lib/internal/http2/core.js#L2573-L2580
-    if ((status & (StreamState.UnsentWrite | StreamState.CorkedUntilId)) === StreamState.UnsentWrite) {
-      this[bunHTTP2StreamStatus] = status & ~StreamState.UnsentWrite;
-      this._writableState.onwrite(err);
+    if (state.writing && (this[bunHTTP2StreamStatus] & StreamState.CorkedUntilId) === 0) {
+      // Inside _write the Writable defers this callback, and the writes behind it would fail first.
+      if (state.sync) process.nextTick(completeWrite, this, err);
+      else completeWrite(this, err);
     }
     callback(err);
   }
@@ -2960,7 +2949,6 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   _writev(data, callback) {
     if (this.pending) {
       // Not submitted yet (queued behind the peer's concurrency limit): wait for the id.
-      this[bunHTTP2StreamStatus] |= StreamState.UnsentWrite;
       this.once("ready", writevOnReady.bind(this, data, callback));
       return;
     }
@@ -3005,8 +2993,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, batchLength);
         const status = native.writeStream(this.#id, chunk, undefined, endStream, StreamWriter.Stream);
-        if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
-        else writeNotFlushed(this, status, callback);
+        if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](completeWrite, this);
+        else if (status === false) writeRefused(this);
         if (endStream) {
           this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
           if ((status & ~kWriteFlushedWithoutCallback) === 5) onEndStreamSettled(this);
@@ -3017,12 +3005,11 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         return;
       }
     }
-    writeNotFlushed(this, false, callback);
+    writeRefused(this);
   }
   _write(chunk, encoding, callback) {
     if (this.pending) {
       // Not submitted yet (queued behind the peer's concurrency limit): wait for the id.
-      this[bunHTTP2StreamStatus] |= StreamState.UnsentWrite;
       this.once("ready", writeOnReady.bind(this, chunk, encoding, callback));
       return;
     }
@@ -3046,8 +3033,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, chunk.length);
         const status = native.writeStream(this.#id, wireChunk, wireEncoding, endStream, StreamWriter.Stream);
-        if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
-        else writeNotFlushed(this, status, callback);
+        if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](completeWrite, this);
+        else if (status === false) writeRefused(this);
         if (endStream) {
           this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
           if ((status & ~kWriteFlushedWithoutCallback) === 5) onEndStreamSettled(this);
@@ -3058,7 +3045,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         return;
       }
     }
-    writeNotFlushed(this, false, callback);
+    writeRefused(this);
   }
 
   [EventEmitter.captureRejectionSymbol](err, event, ...args) {
@@ -3890,7 +3877,6 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
       pushToStream(stream, null);
     }
     if (destroy) {
-      completeQueuedFinal(stream);
       // node marks the stream closed (and publishes the close diagnostics channel) from inside
       // _destroy, so the publish observes destroyed === true; don't pre-mark it here.
       stream.destroy(error_instance, stream.rstCode);
@@ -4180,8 +4166,8 @@ class ServerHttp2Session extends Http2Session {
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
-      // if writable and not closed emit aborted
-      if (old_state != 5 && old_state != 7) {
+      // https://github.com/nodejs/node/blob/v26.11.1/lib/internal/http2/core.js#L2081-L2089
+      if (old_state != 5 && old_state != 7 && !stream._writableState.ending) {
         stream[kAborted] = true;
         stream.emit("aborted");
       }
@@ -5187,8 +5173,7 @@ class ClientHttp2Session extends Http2Session {
     aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) => {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
-      // if writable and not closed emit aborted
-      if (old_state != 5 && old_state != 7) {
+      if (old_state != 5 && old_state != 7 && !stream._writableState.ending) {
         stream[kAborted] = true;
         stream.emit("aborted");
       }

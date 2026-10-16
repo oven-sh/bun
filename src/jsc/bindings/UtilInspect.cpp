@@ -10,25 +10,6 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/IdentifierInlines.h"
-#include "JavaScriptCore/ArrayPrototype.h"
-#include "JavaScriptCore/BigIntObject.h"
-#include "JavaScriptCore/BigIntPrototype.h"
-#include "JavaScriptCore/BooleanObject.h"
-#include "JavaScriptCore/BooleanPrototype.h"
-#include "JavaScriptCore/DatePrototype.h"
-#include "JavaScriptCore/FunctionPrototype.h"
-#include "JavaScriptCore/JSMapInlines.h"
-#include "JavaScriptCore/JSSetInlines.h"
-#include "JavaScriptCore/NumberObject.h"
-#include "JavaScriptCore/NumberPrototype.h"
-#include "JavaScriptCore/ObjectPrototype.h"
-#include "JavaScriptCore/RegExpObject.h"
-#include "JavaScriptCore/RegExpPrototype.h"
-#include "JavaScriptCore/StringObject.h"
-#include "JavaScriptCore/StringPrototype.h"
-#include "JavaScriptCore/SymbolObject.h"
-#include "JavaScriptCore/SymbolPrototype.h"
-#include "BunString.h"
 
 namespace Bun {
 
@@ -137,132 +118,42 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * g
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys)));
 }
 
-// The prototypes that own `toString` or `Symbol.toPrimitive` among the names Node counts as built-in.
-// Error.prototype is left out: String(error) is `name: message`, and `%s` keeps that line where Node prints the stack.
-static bool isPrototypeWithGenericToString(JSObject* object)
-{
-    const ClassInfo* info = object->classInfo();
-    return info == ObjectPrototype::info() || info == FunctionPrototype::info() || info == ArrayPrototype::info()
-        || info == DatePrototype::info() || info == RegExpPrototype::info() || info == StringPrototype::info()
-        || info == NumberPrototype::info() || info == BooleanPrototype::info() || info == SymbolPrototype::info()
-        || info == BigIntPrototype::info();
-}
-
-// The kinds of object that `%s` inspects. The formatter prints each other kind through code of
-// the object (the `length` of an arguments object, the iterator of a Map subclass, the getters
-// of an Event), uses it up (an iterator) or prints many lines (a Response).
-static bool isInspectedKind(JSObject* object)
-{
-    switch (object->type()) {
-    case ObjectType:
-    case FinalObjectType:
-    case ArrayType:
-    case DerivedArrayType:
-    case JSDateType:
-    case JSPromiseType:
-    case ArrayBufferType:
-    case DataViewType:
-    case StringObjectType:
-    case DerivedStringObjectType:
-    case NumberObjectType:
-    case BooleanObjectType:
-    case RegExpObjectType:
-        return true;
-    case JSMapType: {
-        auto* map = uncheckedDowncast<JSMap>(object);
-        return map->structure() == map->realm()->mapStructure() && map->isIteratorProtocolFastAndNonObservable();
-    }
-    case JSSetType: {
-        auto* set = uncheckedDowncast<JSSet>(object);
-        return set->structure() == set->realm()->setStructure() && set->isIteratorProtocolFastAndNonObservable();
-    }
-    default:
-        return false;
-    }
-}
-
-// Whether `%s` inspects `object`. Otherwise it prints String(object).
-//
-// This is the rule of Node's util.format (`hasBuiltInToString`, lib/internal/util/inspect.js):
-// an object converts when `toString` or `Symbol.toPrimitive` is its own, or comes from a
-// prototype that is not a built-in one. Any other object is inspected, with these limits:
-// - String(object) stays for a kind that isInspectedKind leaves out, for a React element,
-//   and for an object with a custom inspect function, which `%s` does not call.
-// - An object with no conversion at all is inspected in every case, because String(object) throws.
-//
-// Runs no user code. An accessor, or a Proxy on the prototype chain, counts as the object's own
-// conversion: String(object) then runs that code once. Pass the target of a Proxy.
-extern "C" bool Bun__isInspectedByStringSpecifier(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
+// Whether String(object) throws before it runs any code of the object: ToPrimitive finds no
+// Symbol.toPrimitive, toString or valueOf to call. The valueOf of Object.prototype returns the
+// object, so it counts as none. Where an accessor or a Proxy on the prototype chain decides,
+// the answer is false: String(object) then runs that code, as it did before.
+extern "C" bool Bun__hasNoStringConversion(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* object = JSValue::decode(encodedValue).getObject();
     ASSERT(object);
 
-    enum class Property : uint8_t {
-        Missing,
-        NotCallable,
+    enum class Method : uint8_t {
+        None,
         Callable,
-        // An accessor, or an object that cannot answer without running code.
         Unknown,
     };
-    enum class Search : uint8_t {
-        // As in a read of the property, the first object of the prototype chain that has it decides.
-        PrototypeChain,
-        OwnOnly,
-    };
-    auto find = [&](PropertyName name, Search search, JSObject*& holder) {
-        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        bool found = search == Search::OwnOnly ? object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot) : object->getPropertySlot(globalObject, name, slot);
-        scope.assertNoExceptionExceptTermination();
-        if (!found)
-            return slot.isTaintedByOpaqueObject() ? Property::Unknown : Property::Missing;
-        if (!slot.isValue())
-            return Property::Unknown;
-        holder = slot.slotBase();
-        return slot.getValue(globalObject, name).isCallable() ? Property::Callable : Property::NotCallable;
-    };
-
+    JSValue function;
     JSObject* holder = nullptr;
-    bool hasConversion = false;
-    for (PropertyName name : { PropertyName(vm.propertyNames->toString), PropertyName(vm.propertyNames->toPrimitiveSymbol) }) {
-        Property conversion = find(name, Search::PrototypeChain, holder);
-        if (conversion == Property::Unknown)
-            return false;
-        if (conversion == Property::Callable) {
-            if (holder == object || !isPrototypeWithGenericToString(holder))
-                return false;
-            hasConversion = true;
-        }
-    }
-    if (!hasConversion)
-        return true;
+    auto method = [&](PropertyName name) {
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool found = object->getPropertySlot(globalObject, name, slot);
+        scope.assertNoExceptionExceptTermination();
+        // A Proxy, and a module namespace object for a name that it exports, answer "not found" with the slot set.
+        if (!found)
+            return slot.isTaintedByOpaqueObject() && !slot.isUnset() ? Method::Unknown : Method::None;
+        if (!slot.isValue())
+            return Method::Unknown;
+        function = slot.getValue(globalObject, name);
+        holder = slot.slotBase();
+        return function.isCallable() ? Method::Callable : Method::None;
+    };
 
-    if (!isInspectedKind(object))
+    if (method(vm.propertyNames->toString) != Method::None || method(vm.propertyNames->toPrimitiveSymbol) != Method::None)
         return false;
-    auto& builtinNames = WebCore::clientData(vm)->builtinNames();
-    if (find(builtinNames.$$typeofPublicName(), Search::OwnOnly, holder) != Property::Missing)
-        return false;
-    Property customInspect = find(builtinNames.inspectCustomPublicName(), Search::PrototypeChain, holder);
-    return customInspect == Property::Missing || customInspect == Property::NotCallable;
-}
-
-// The primitive inside a String, Number, Boolean, Symbol or BigInt object. Any other value as it is.
-extern "C" JSC::EncodedJSValue Bun__wrappedPrimitive(JSC::EncodedJSValue encodedValue)
-{
-    JSValue value = JSValue::decode(encodedValue);
-    // JSWrapperObject has no ClassInfo of its own, so a downcast to it accepts any object.
-    if (value.inherits<NumberObject>() || value.inherits<StringObject>() || value.inherits<BooleanObject>() || value.inherits<SymbolObject>() || value.inherits<BigIntObject>())
-        return JSValue::encode(uncheckedDowncast<JSWrapperObject>(value)->internalValue());
-    return encodedValue;
-}
-
-// `/source/flags` of a RegExp, from its internal slots.
-extern "C" BunString Bun__regExpSource(JSC::EncodedJSValue encodedValue)
-{
-    if (auto* object = dynamicDowncast<RegExpObject>(JSValue::decode(encodedValue)))
-        return Bun::toStringRef(object->regExp()->toSourceString());
-    return BunStringEmpty;
+    Method valueOf = method(vm.propertyNames->valueOf);
+    return valueOf == Method::None || (valueOf == Method::Callable && function.asCell() == holder->realm()->objectProtoValueOfFunction());
 }
 
 }

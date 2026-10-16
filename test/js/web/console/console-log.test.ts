@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { describe, expect, it, jest } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
@@ -175,10 +175,11 @@ describe.concurrent("console %s", () => {
   it.each([
     ["NO_COLOR", bunEnv],
     ["FORCE_COLOR", { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" }],
-  ])("prints a Symbol, -0, a BigInt and an object with no string conversion of its own (%s)", async (_, env) => {
+  ])("prints a Symbol, and an object that String() cannot convert (%s)", async (_, env) => {
     const { stdout, exitCode } = await run(
       `
       import util from "node:util";
+      import * as namespace from "data:text/javascript,export const a = 1;";
       const revocable = Proxy.revocable({}, {});
       revocable.revoke();
       const values = [
@@ -186,21 +187,11 @@ describe.concurrent("console %s", () => {
         /(?<year>[0-9]{4})-(?<month>[0-9]{2})/.exec("2026-10").groups,
         util.parseArgs({ args: ["--port", "80"], options: { port: { type: "string" } } }).values,
         Object.groupBy([1, 2, 3], n => (n % 2 ? "odd" : "even")),
-        [Symbol("in array")],
+        Object.assign(Object.create(null), { nested: { a: 1 }, list: [2], text: "it's" }),
         JSON.parse('{"toString":1}'),
+        Object.setPrototypeOf([1, "two"], null),
+        namespace,
         revocable.proxy,
-        { a: 1, nested: { b: 2 }, list: [3], text: "it's" },
-        [1, "two"],
-        new Proxy([1], {}),
-        new (class Point { x = 1 })(),
-        [new RangeError("boom"), new TypeError("bad")],
-        -0,
-        42n,
-        new Date(1700000000000),
-        new Map([["key", { a: 1 }]]),
-        new Set(["a"]),
-        Promise.resolve(1),
-        new ArrayBuffer(2),
       ];
       for (const value of values) console.log("v %s", value);
     `,
@@ -213,132 +204,74 @@ describe.concurrent("console %s", () => {
           'v [Object: null prototype] { year: "2026", month: "10" }',
           'v [Object: null prototype] { port: "80" }',
           "v [Object: null prototype] { odd: [Array ...], even: [Array ...] }",
-          "v [ Symbol(in array) ]",
+          `v [Object: null prototype] { nested: [Object ...], list: [Array ...], text: "it's" }`,
           "v { toString: 1 }",
-          "v <Revoked Proxy>",
-          `v { a: 1, nested: [Object ...], list: [Array ...], text: "it's" }`,
           'v [ 1, "two" ]',
-          "v [ 1 ]",
-          "v Point { x: 1 }",
-          "v [ [RangeError: boom], [TypeError: bad] ]",
-          "v -0",
-          "v 42n",
-          "v 2023-11-14T22:13:20.000Z",
-          'v Map(1) { "key": [Object ...] }',
-          'v Set(1) { "a" }',
-          "v Promise { <resolved> }",
-          "v ArrayBuffer(2) [ 0, 0 ]",
+          "v Module { a: 1 }",
+          "v <Revoked Proxy>",
         ].join("\n") + "\n",
       exitCode: 0,
     });
   });
 
-  it("keeps String(value) for a value with a conversion of its own, and runs it once", async () => {
+  it("prints String(value) for every value that String() converts, and runs the same code", async () => {
     const { stdout, exitCode } = await run(`
       import util from "node:util";
+      const log = [];
+      const counted = (name, text) => ({ toString() { log.push(name); return text; } });
       class Money { toString() { return "$12.34"; } }
-      const order = [];
-      const counted = name => ({ toString() { order.push(name); return name; } });
-      console.log("%s|%s|%s|%s|%s|%s|%s", "a string", 42, 1.5, true, null, undefined, function named() {});
-      console.log("%s|%s|%s", new URL("http://example.com/a"), Buffer.from("ab"), new Uint8Array([1, 2]));
-      console.log("%s|%s|%s", new Money(), new Proxy(new Money(), {}), { [Symbol.toPrimitive]() { return "primitive"; } });
-      console.log("%s|%s", new RangeError("boom"), new DOMException("gone", "AbortError"));
-      console.log("%s %s", counted("first"), counted("second"));
-      console.log(order.join(","));
+      const trapped = () => new Proxy({}, {
+        get(target, key) { log.push("get " + String(key)); return key === "toString" ? () => "from the trap" : undefined; },
+      });
+      const values = () => [
+        "a string", 42, 1.5, -0, 42n, true, null, undefined, Symbol("id"), function named() {}, class Named {},
+        { a: 1 }, [1, 2], [[1, 2], [3, 4]], [new URL("http://a/"), new URL("http://b/")],
+        new Date(1700000000000), new Map([[1, 2]]), new Set([1]), new (class Point { x = 1 })(), process.env,
+        new URL("http://example.com/a"), Buffer.from("ab"), new Uint8Array([1, 2]), new ArrayBuffer(2),
+        new RangeError("boom"), new DOMException("gone", "AbortError"), [new RangeError("in an array")],
+        /re/g, new Number(-0), new Boolean(false), Object(10n),
+        new Money(), { [Symbol.toPrimitive]() { return "primitive"; } },
+        Object.assign(Object.create(null), { valueOf: () => "from valueOf" }),
+        { get toString() { log.push("getter"); return () => "from a getter"; } },
+        counted("first", "1st"), counted("second", "2nd"),
+        trapped(), Object.create(trapped()), new Proxy(new Money(), {}), new Proxy(function target() {}, {}),
+        { [util.inspect.custom]() { log.push("custom inspect"); return "custom"; } },
+        (function () { return arguments; })(1, 2), new Set([1, 2]).values(), new Response("body"), new Event("type"),
+        new ReadableStream(), Promise.resolve(1), { $$typeof: Symbol.for("react.element"), type: "div", props: {} },
+      ];
+      const expected = values().map(value => String(value));
+      const expectedLog = log.splice(0);
+      // Without the fix this line throws, so the test fails before it compares anything.
+      console.log("%s", Symbol("start"));
+      for (const value of values()) console.log("<%s>", value);
+      // The string printer has its own text for a String object.
+      console.log("<%s>", new String("text"));
+      console.log(JSON.stringify({ expected, sameCode: JSON.stringify(log) === JSON.stringify(expectedLog), calls: log.length }));
+    `);
+    const lines = stdout.trimEnd().split("\n");
+    const { expected, sameCode, calls } = JSON.parse(lines.pop()!);
+    expect(lines.join("\n")).toBe(
+      ["Symbol(start)", ...expected.map((text: string) => `<${text}>`), '<[String: "text"]>'].join("\n"),
+    );
+    expect({ sameCode, calls, exitCode }).toEqual({ sameCode: true, calls: 7, exitCode: 0 });
+  });
+
+  it("passes on what a conversion throws, and reads an object that has none without running its code", async () => {
+    const { stdout, exitCode } = await run(`
+      let calls = 0;
       try {
         console.log("%s", { toString() { throw new Error("from toString"); } });
       } catch (e) {
         console.log("caught " + e.message);
       }
-      // The first line of this test fails without the fix. The lines above print the same text.
-      console.log("%s", Symbol("the next call works"));
-    `);
-    expect({ stdout, exitCode }).toEqual({
-      stdout:
-        [
-          "a string|42|1.5|true|null|undefined|function named() {}",
-          "http://example.com/a|ab|1,2",
-          "$12.34|$12.34|primitive",
-          "RangeError: boom|AbortError: gone",
-          "first second",
-          "first,second",
-          "caught from toString",
-          "Symbol(the next call works)",
-        ].join("\n") + "\n",
-      exitCode: 0,
-    });
-  });
-
-  it("keeps String(value) for an object that the formatter would run or use up to print", async () => {
-    const { stdout, exitCode } = await run(`
-      import util from "node:util";
-      let calls = 0;
-      const hooked = () => ({ [util.inspect.custom]() { calls++; return "hook"; } });
-      class EndlessMap extends Map {
-        *[Symbol.iterator]() { for (;;) { calls++; yield [1, 2]; } }
-      }
-      const iterator = new Set([1, 2]).values();
-      const args = (function () { return arguments; })(1, 2);
-      console.log("%s|%s|%s", hooked(), new Proxy(hooked(), {}), new ReadableStream());
-      console.log("%s|%s|%s|%s", new EndlessMap(), iterator, args, new Response("body"));
-      console.log("%s|%s", new Event("type"), { $$typeof: Symbol.for("react.element"), type: "div", props: {} });
-      // Inside a value that is inspected, a custom inspect function is not called.
-      console.log("%s|%s", [hooked(), new Proxy(hooked(), {})], new Map([[1, new Proxy(hooked(), {})]]));
-      console.log("calls: %s, left in the iterator: %s", calls, [...iterator].length);
-    `);
-    expect({ stdout, exitCode }).toEqual({
-      stdout:
-        [
-          "[object Object]|[object Object]|[object ReadableStream]",
-          "[object Map]|[object Set Iterator]|[object Arguments]|[object Response]",
-          "[object Event]|[object Object]",
-          "[ [Object ...], [Object ...] ]|Map(1) { 1: [Object ...] }",
-          "calls: 0, left in the iterator: 2",
-        ].join("\n") + "\n",
-      exitCode: 0,
-    });
-  });
-
-  it("reads a wrapper object, a RegExp and a Proxy target without running code", async () => {
-    const { stdout, exitCode } = await run(`
-      const calls = [];
-      const spy = (owner, key) => {
-        const original = owner[key];
-        owner[key] = function (...args) {
-          calls.push(String(key));
-          return Reflect.apply(original, this, args);
-        };
-      };
-      spy(Array.prototype, "join");
-      spy(Array.prototype, "toString");
-      spy(Object.prototype, "toString");
-      spy(String.prototype, "toString");
-      spy(Number.prototype, "toString");
-      spy(Boolean.prototype, "toString");
-      spy(RegExp.prototype, "toString");
-      const trap = name => () => { calls.push("trap " + name); throw new Error("trap " + name); };
-      const traps = Object.fromEntries(Reflect.ownKeys(Reflect).map(name => [name, trap(name)]));
-      const withoutPrototype = value => Object.setPrototypeOf(value, null);
-      const accessors = Object.create(null, {
-        constructor: { get() { calls.push("constructor"); return Object; }, enumerable: false },
+      const record = Object.create(null, {
+        secret: { get() { calls++; return 1; }, enumerable: true },
+        constructor: { get() { calls++; return Object; }, enumerable: false },
       });
-      console.log("%s|%s|%s|%s|%s", [1, 2], { a: 1 }, new Proxy({ b: 2 }, traps), accessors, Object(Symbol("wrapped")));
-      console.log("%s|%s|%s|%s|%s", new String("text"), new Number(-0), new Boolean(false), Object(10n), /re/g);
-      console.log("%s|%s|%s|%s", ...[new String("text"), new Number(1), new Boolean(true), /re/g].map(withoutPrototype));
-      let deep = { c: 3 };
-      for (let i = 0; i < 100_000; i++) deep = new Proxy(deep, traps);
-      console.log("%s|%s", deep, [deep]);
-      console.log("calls: %s", calls.length);
+      console.log("%s, calls: %s", record, calls);
     `);
     expect({ stdout, exitCode }).toEqual({
-      stdout:
-        [
-          "[ 1, 2 ]|{ a: 1 }|{ b: 2 }|[Object: null prototype] {}|Symbol(wrapped)",
-          '[String: "text"]|-0|false|10n|/re/g',
-          '[String: "text"]|1|true|/re/g',
-          "{ c: 3 }|[ [Object ...] ]",
-          "calls: 0",
-        ].join("\n") + "\n",
+      stdout: "caught from toString\n[Object: null prototype] { secret: [Getter] }, calls: 0\n",
       exitCode: 0,
     });
   });
@@ -346,24 +279,22 @@ describe.concurrent("console %s", () => {
   it("prints the same text from every console method", async () => {
     const { stdout, stderr, exitCode } = await run(`
       import vm from "node:vm";
-      const values = () => [Symbol("id"), /(?<year>[0-9]{4})/.exec("2026").groups, [Symbol("a")], { a: 1 }, -0, 42n];
-      const format = name => "<" + name + ": %s %s %s %s %s %s>";
+      const values = () => [Symbol("id"), /(?<year>[0-9]{4})/.exec("2026").groups];
+      const format = name => "<" + name + ": %s %s>";
       for (const name of ["log", "info", "debug", "warn", "error", "trace", "dirxml", "group", "groupCollapsed"]) {
         console[name](format(name), ...values());
         if (name.startsWith("group")) console.groupEnd();
       }
-      console.table("<table: %s>", [Symbol("a")]);
-      console.log(0, format("second argument"), ...values());
       Reflect.apply(console.log, undefined, [format("Reflect.apply"), ...values()]);
       require("node:console").log(format("node:console"), ...values());
-      vm.runInNewContext("console.log(format, ...values)", { console, format: format("vm"), values: values() });
+      vm.runInNewContext("console.log(format, Symbol('id'), /(?<year>[0-9]{4})/.exec('2026').groups)", { console, format: format("vm") });
       const source = "const values = " + values + "; console.log(" + JSON.stringify(format("worker")) + ", ...values()); postMessage(0);";
       const worker = new Worker(URL.createObjectURL(new Blob([source])));
       await new Promise(resolve => (worker.onmessage = resolve));
       worker.terminate();
     `);
     const printed = [...(stdout + stderr).matchAll(/<([\w:. ]+): (.*)>/g)].map(([, name, text]) => [name, text]);
-    const text = 'Symbol(id) [Object: null prototype] { year: "2026" } [ Symbol(a) ] { a: 1 } -0 42n';
+    const text = 'Symbol(id) [Object: null prototype] { year: "2026" }';
     const names = [
       "log",
       "info",
@@ -374,62 +305,47 @@ describe.concurrent("console %s", () => {
       "dirxml",
       "group",
       "groupCollapsed",
-      "second argument",
       "Reflect.apply",
       "node:console",
       "vm",
       "worker",
     ];
-    expect(printed.sort()).toEqual([...names.map(name => [name, text]), ["table", "[ Symbol(a) ]"]].sort());
+    expect(printed.sort()).toEqual(names.map(name => [name, text]).sort());
     expect(exitCode).toBe(0);
   });
 
-  it("inspects on one line, one level deep, and leaves the arguments after it alone", async () => {
+  it("prints on one line, one level deep, loads no module, and leaves the arguments after it alone", async () => {
     const { stdout, exitCode } = await run(`
-      console.group("%s", Symbol("label"));
-      console.log("%s then %o and", { a: { b: 1 }, c: [[1]] }, { d: 1 }, "a string", { e: 1 });
-      console.log("%s", Array.from({ length: 102 }, (_, i) => i % 10));
-      console.groupEnd();
-      console.log("%s | %O", new Map([["key", { f: 1 }]]), { g: 1 });
-    `);
-    expect({ stdout, exitCode }).toEqual({
-      stdout:
-        [
-          "Symbol(label)",
-          "  { a: [Object ...], c: [Array ...] } then {",
-          "    d: 1,",
-          "  } and a string {",
-          "    e: 1,",
-          "  }",
-          "  [ " + Array.from({ length: 100 }, (_, i) => i % 10).join(", ") + ", ... 2 more items ]",
-          'Map(1) { "key": [Object ...] } | {',
-          "  g: 1,",
-          "}",
-        ].join("\n") + "\n",
-      exitCode: 0,
-    });
-  });
-
-  it("loads no module, and console.error keeps its color after the value", async () => {
-    const { stdout, stderr, exitCode } = await run(
-      `
       import { heapStats } from "bun:jsc";
       const functionExecutables = () => {
         Bun.gc(true);
         return heapStats().objectTypeCounts.FunctionExecutable ?? 0;
       };
+      const record = () => Object.assign(Object.create(null), { a: { b: 1 }, c: [[1]] });
       console.log("warm %s", "up");
       functionExecutables();
       const before = functionExecutables();
-      console.log("%s %s %s", { a: 1 }, [Symbol("s")], new Map([[1, 2]]));
+      console.group("%s", Symbol("label"));
+      console.log("%s then %o and", record(), { d: 1 }, "a string", { e: 1 });
+      console.groupEnd();
+      console.log("%s | %O", record(), { g: 1 });
       console.log("new functions: %s", functionExecutables() - before);
-      console.error("before %s after", /re/g);
-    `,
-      { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
-    );
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "warm up\n{ a: 1 } [ Symbol(s) ] Map(1) { 1: 2 }\nnew functions: 0\n",
-      stderr: "\x1b[0m\x1b[31mbefore /re/g after\x1b[0m\n",
+    `);
+    expect({ stdout, exitCode }).toEqual({
+      stdout:
+        [
+          "warm up",
+          "Symbol(label)",
+          "  [Object: null prototype] { a: [Object ...], c: [Array ...] } then {",
+          "    d: 1,",
+          "  } and a string {",
+          "    e: 1,",
+          "  }",
+          "[Object: null prototype] { a: [Object ...], c: [Array ...] } | {",
+          "  g: 1,",
+          "}",
+          "new functions: 0",
+        ].join("\n") + "\n",
       exitCode: 0,
     });
   });
@@ -451,13 +367,8 @@ describe.concurrent("console %s", () => {
   });
 });
 
-// The printer of an error's properties turns custom inspect functions off.
-it("does not call a custom inspect function for the property of an error", () => {
-  const custom = jest.fn(() => "custom");
-  const hooked = { [Symbol.for("nodejs.util.inspect.custom")]: custom };
-  const searchParams = new URLSearchParams("a=1");
-  searchParams.toJSON = () => hooked;
-  const error = Object.assign(new Error("boom"), { hooked, proxy: new Proxy(hooked, {}), searchParams });
-  Bun.inspect(error);
-  expect(custom).not.toHaveBeenCalled();
+it("an object past the depth has one space before it on one line", () => {
+  expect(Bun.inspect({ a: { b: 1 }, z: 1 }, { compact: true, depth: 0 })).toBe("{ a: [Object ...], z: 1 }");
+  expect(Bun.inspect([{ b: 1 }, { c: 2 }], { compact: true, depth: 0 })).toBe("[ [Object ...], [Object ...] ]");
+  expect(Bun.inspect(new Map([["k", { b: 1 }]]), { compact: true, depth: 0 })).toBe('Map(1) { "k": [Object ...] }');
 });

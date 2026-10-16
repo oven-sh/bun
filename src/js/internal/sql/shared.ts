@@ -611,6 +611,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> exte
   readonly closedAtOnce?: boolean;
 
   readonly supportsReservedConnections: boolean;
+  /** `query.describe()` resolves with the parameter types and the columns of a statement, without running it. */
+  readonly supportsDescribe: boolean;
   /** `true`: `onConnected` was still queued and will never run. */
   cancelConnect(onConnected: OnConnected<Connection>): boolean;
   /** Throws `connectionClosedError()` unless the connection is open. */

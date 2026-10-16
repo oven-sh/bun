@@ -15,7 +15,8 @@ const {
   tryOtherPassword,
 } = require("internal/sql/pool");
 const {
-  symbols: { _results, _handle, _copy },
+  SQLQueryFlags,
+  symbols: { _results, _handle, _copy, _flags },
 } = require("internal/sql/query");
 
 const { PostgresError } = require("internal/sql/errors");
@@ -192,7 +193,8 @@ function getArrayType(typeNameOrID: number | ArrayType | undefined): ArrayType |
 initPostgres(
   function onResolvePostgresQuery(query, result, commandTag, count, is_last, statement) {
     if (is_last) {
-      query.resolve(query[_results]);
+      // `result` of a describe() is the description of the statement
+      query.resolve(query[_flags] & SQLQueryFlags.describe ? result : query[_results]);
       return;
     }
     $assert(result instanceof SQLResultArray, "Invalid result array");
@@ -240,6 +242,7 @@ class PostgresAdapter extends BaseSQLAdapter<
   $ZigGeneratedClasses.PostgresSQLQuery
 > {
   readonly createNativeConnection = createPostgresConnection;
+  readonly supportsDescribe = true;
   protected readonly createNativeQuery = createPostgresQuery;
   readonly ErrorClass = PostgresError;
   readonly codePrefix = "ERR_POSTGRES_";

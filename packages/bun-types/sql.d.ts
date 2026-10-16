@@ -1023,6 +1023,22 @@ declare module "bun" {
        * It has no effect after `execute()` on SQLite, which has run the query.
        */
       values(): Query<T>;
+
+      /**
+       * PostgreSQL only. Asks the server for the parameter types and the
+       * columns of the statement, without running it. Resolves with the same
+       * object as {@link ResultStatement result.statement}. `columns` is `[]`
+       * for a statement that returns no rows.
+       *
+       * Call it before the query starts. MySQL and SQLite reject it.
+       *
+       * @example
+       * ```ts
+       * const { types, columns } = await sql`SELECT id FROM users WHERE id = ${1}`.describe();
+       * // types: [23], columns: [{ name: "id", type: 23, table: 16388, number: 1 }]
+       * ```
+       */
+      describe(): Promise<ResultStatement>;
     }
 
     /**

@@ -80,6 +80,32 @@ impl ImportWatcher {
             ImportWatcher::None => Ok(bun_watcher::FdOwnership::Caller),
         }
     }
+
+    /// Watch a module the runtime loaded. `read_fd` is what the parse wrote
+    /// through `ParseOptions::file_fd_ptr`: `None` when the source did not
+    /// come from a file read, else the descriptor of that read, which is not
+    /// valid when the reader closed it. The answer says who owns that
+    /// descriptor now.
+    pub fn add_module(
+        &mut self,
+        read_fd: Option<Fd>,
+        path: &[u8],
+        hash: bun_watcher::HashType,
+        is_node_override: bool,
+        package_json: Option<&'static bun_watcher::PackageJSON>,
+    ) -> bun_watcher::FdOwnership {
+        let Some(fd) = read_fd else {
+            return bun_watcher::FdOwnership::Caller;
+        };
+        if is_node_override
+            || !bun_paths::is_absolute(path)
+            || strings::contains(path, b"node_modules")
+        {
+            return bun_watcher::FdOwnership::Caller;
+        }
+        self.add_file::<true>(fd, path, hash, Fd::INVALID, package_json)
+            .unwrap_or(bun_watcher::FdOwnership::Caller)
+    }
 }
 
 pub type HotReloader = NewHotReloader<VirtualMachine, EventLoop, false>;
@@ -1160,32 +1186,27 @@ where
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {
                                                 if *hash == file_hash {
-                                                    if file_descriptors[entry_id].is_valid() {
-                                                        if prev_entry_id != entry_id {
-                                                            record_changed_path(
-                                                                path_string.as_bytes(),
-                                                            );
-                                                            current_task.append(hashes[entry_id]);
-                                                            if self.verbose {
-                                                                Self::debug(format_args!(
-                                                                    "Removing file: {}",
-                                                                    bstr::BStr::new(
-                                                                        path_string.as_bytes()
-                                                                    )
-                                                                ));
-                                                            }
-                                                            // SAFETY: see the
-                                                            // File-arm call
-                                                            // above.
-                                                            unsafe {
-                                                                (*ctx).remove_at_index::<false>(
-                                                                    bun_watcher::Kind::File,
-                                                                    entry_id as u16,
-                                                                    0,
-                                                                    &[],
+                                                    if prev_entry_id != entry_id {
+                                                        record_changed_path(path_string.as_bytes());
+                                                        current_task.append(hashes[entry_id]);
+                                                        if self.verbose {
+                                                            Self::debug(format_args!(
+                                                                "Removing file: {}",
+                                                                bstr::BStr::new(
+                                                                    path_string.as_bytes()
                                                                 )
-                                                            };
+                                                            ));
                                                         }
+                                                        // SAFETY: see the
+                                                        // File-arm call above.
+                                                        unsafe {
+                                                            (*ctx).remove_at_index::<false>(
+                                                                bun_watcher::Kind::File,
+                                                                entry_id as u16,
+                                                                0,
+                                                                &[],
+                                                            )
+                                                        };
                                                     }
 
                                                     prev_entry_id = entry_id;

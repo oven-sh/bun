@@ -1528,10 +1528,11 @@ describe("package-lock.json migration fixes", () => {
   });
 
   // The migration takes the committish of package-lock.json for the tag of the
-  // package. The download asks for all of it: the part after the last `-` is
-  // the commit only in a tag that comes from the root directory of a tarball.
-  test.concurrent("github dependency that package-lock.json pins by a tag is requested by that tag", async () => {
-    const tag = "v2.0.1-beta";
+  // package. The part after the last `-` is the commit only in a tag that
+  // GitHub made for the root directory of a tarball, so the install that
+  // migrates asks for all of this one, although its end looks like a commit.
+  test.concurrent("the install that migrates package-lock.json asks for a github tag as it is written", async () => {
+    const tag = "release-20240115";
     const tgz = githubTarball("User-repo-0123456", {
       "package.json": JSON.stringify({ name: "tagged", version: "2.0.1" }),
     });

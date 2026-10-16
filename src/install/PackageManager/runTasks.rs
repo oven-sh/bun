@@ -2259,12 +2259,15 @@ impl PackageManager {
         let buf = self.lockfile.buffers.string_bytes.as_slice();
         let committish = repository.committish.slice(buf);
         let commit = repository.resolved_commit(buf);
-        let git_ref = if commit.is_empty()
+        let is_sha = |hex: &[u8]| hex.len() >= 7 && hex.iter().all(u8::is_ascii_hexdigit);
+        // GitHub ends the name in `resolved` with 7 digits of the commit. A dependency has no
+        // name there yet, and another host can name the root of its tarball after anything.
+        let git_ref = if !is_sha(commit)
             // A lockfile migrated from npm or pnpm has the committish itself in `resolved`.
             || repository.resolved.eql(repository.committish, buf, buf)
-            // The 7 digits in `resolved` can be ambiguous on GitHub (404): keep a longer sha.
+            // GitHub answers 404 for 7 digits that two objects share: keep a longer sha.
             || (committish.len() > commit.len()
-                && committish.iter().all(u8::is_ascii_hexdigit)
+                && is_sha(committish)
                 && committish[..commit.len()].eq_ignore_ascii_case(commit))
         {
             committish

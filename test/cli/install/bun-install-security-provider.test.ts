@@ -1028,8 +1028,12 @@ describe("Dependencies that do not come from a registry", () => {
   });
 
   // bun.lockb keeps the ref of package.json beside the commit that it pins. The download asked
-  // for that ref, which is not the URL that the scanner got.
-  it.concurrent("gets the URL that a github package pinned by bun.lockb is downloaded from", async () => {
+  // for that ref, and the scanner got the 7 digits of the commit: two URLs for one package.
+  const fullSha = "abc1234" + Buffer.alloc(33, "0").toString();
+  it.concurrent.each([
+    ["a branch", "main", "abc1234"],
+    ["a full sha", fullSha, fullSha],
+  ])("gets the URL that a github package on %s is downloaded from when bun.lockb pins it", async (_, ref, asked) => {
     const repoTarball = await githubTarball("user-repo-abc1234", depFiles);
     const requests: string[] = [];
     await using github = Bun.serve({
@@ -1044,7 +1048,7 @@ describe("Dependencies that do not come from a registry", () => {
       "package.json": JSON.stringify({
         name: "my-app",
         version: "1.0.0",
-        dependencies: { dep: "github:user/repo#main" },
+        dependencies: { dep: `github:user/repo#${ref}` },
       }),
       "bunfig.toml": `[install]\nsaveTextLockfile = false\n\n[install.security]\nscanner = "./scanner.ts"\n`,
       "scanner.ts": `export const scanner = {
@@ -1079,9 +1083,9 @@ describe("Dependencies that do not come from a registry", () => {
     expect(packages).toEqual([
       {
         name: "dep",
-        requestedRange: "github:user/repo#main",
+        requestedRange: `github:user/repo#${ref}`,
         version: "github:user/repo#abc1234",
-        tarball: `${githubUrl}/repos/user/repo/tarball/abc1234`,
+        tarball: `${githubUrl}/repos/user/repo/tarball/${asked}`,
       },
     ]);
     expect(requests).toEqual(packages.map(pkg => pkg.tarball));

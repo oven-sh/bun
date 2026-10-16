@@ -616,10 +616,12 @@ async function serveGithub() {
         ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`file-${i}.js`, indexJs(`file-${i}`)])),
       }),
     },
+    // `heads.leaf` starts at bbbbbbb. The two commits that a test moves it to sort above and below it.
     leaf: {
       bbbbbbb: leaf,
       [leafSha]: leaf,
       ccccccc: await tarballOf("testowner-leaf-ccccccc", packageFiles("gh-leaf", "gh-leaf-moved")),
+      "0000000": await tarballOf("testowner-leaf-0000000", packageFiles("gh-leaf", "gh-leaf-moved")),
     },
   } as Record<string, Record<string, Uint8Array>>;
   const heads: Record<string, string> = { testrepo: "aaaaaaa", leaf: "bbbbbbb" };
@@ -636,7 +638,7 @@ async function serveGithub() {
       const [, repo, ref] = match;
       downloads.push(`${repo}#${ref}`);
       if (unresolvable.has(`${repo}#${ref}`)) return new Response("not found", { status: 404 });
-      return new Response(tarballs[repo][ref] ?? tarballs[repo][heads[repo]]);
+      return new Response(tarballs[repo][ref] ?? tarballs[repo][ref.toLowerCase()] ?? tarballs[repo][heads[repo]]);
     },
   });
   const leafRow = (commit: string) => [
@@ -646,6 +648,7 @@ async function serveGithub() {
     integrityOf(tarballs.leaf[commit]),
   ];
   return {
+    tarballs,
     heads,
     downloads,
     unresolvable,
@@ -929,12 +932,22 @@ for (const lockfile of ["bun.lock", "bun.lockb"] as const) {
 }
 
 // The other spellings of a dependency. No ref stands for the default branch,
-// which moves like any other. A full sha cannot move, and the 7 digits that the
-// lockfile has of the commit are not always enough for GitHub, so the download
-// keeps the sha of package.json.
+// which moves like any other, and a branch can be deleted. A sha in
+// package.json that is longer than the 7 digits the lockfile has of the commit
+// is kept: GitHub answers 404 for 7 digits that another object of the
+// repository starts with, which `unresolvable` stands for.
 test.concurrent.each([
   ["without a ref", "github:testowner/leaf", "leaf#bbbbbbb", []],
+  ["on a branch that was deleted", "github:testowner/leaf#main", "leaf#bbbbbbb", ["leaf#main"]],
+  ["on a tag that is made of digits", "github:testowner/leaf#20240115", "leaf#bbbbbbb", []],
+  ["on a ref that starts with the digits of its commit", "github:testowner/leaf#bbbbbbb_next", "leaf#bbbbbbb", []],
   ["written as a full sha", `github:testowner/leaf#${leafSha}`, `leaf#${leafSha}`, ["leaf#bbbbbbb"]],
+  [
+    "written as a full sha in upper case",
+    `github:testowner/leaf#${leafSha.toUpperCase()}`,
+    `leaf#${leafSha.toUpperCase()}`,
+    ["leaf#bbbbbbb"],
+  ],
 ])(
   "asks for what bun.lockb pins for a github: dependency %s",
   async (_, spec, download, unresolvable) => {
@@ -961,38 +974,159 @@ test.concurrent.each([
   30_000,
 );
 
+// For a branch or a tag the lockfile has nothing but those 7 digits. Where GitHub
+// cannot resolve them the install fails, as it always did from bun.lock. With
+// bun.lockb it used to ask for the ref, which installed while the ref had not
+// moved. It does not wait for ever, and it does not take the branch.
+const leafNotFound = (url: string) => `error: GET ${url} - 404`;
+test.concurrent.each([
+  ["the hoisted linker", ["install", "--frozen-lockfile", "--linker=hoisted"], leafNotFound],
+  [
+    "the isolated linker",
+    ["install", "--frozen-lockfile", "--linker=isolated"],
+    () => "error: failed to download gh-leaf@github:testowner/leaf#bbbbbbb: 404 Not Found",
+  ],
+  ["bun pm fetch", ["pm", "fetch", "--frozen-lockfile"], leafNotFound],
+])(
+  "%s fails when GitHub cannot resolve the commit that bun.lockb pins for a branch",
+  async (_, command, error) => {
+    using dir = tempDir("github-lockb-unresolvable", {});
+    const root = String(dir);
+    await using github = await serveGithub();
+    const project = writeProject(root, { a: "github:testowner/leaf#main" });
+    writeFileSync(join(project, "bunfig.toml"), binaryLockfile);
+
+    const warm = await runInstall(project, join(root, "cache-warm"), github.env);
+    expect(warm.stderr).toContain("Saved lockfile");
+    expect(warm.exitCode).toBe(0);
+
+    rmSync(join(project, "node_modules"), { recursive: true });
+    github.unresolvable.add("leaf#bbbbbbb");
+    github.downloads.length = 0;
+    const { stderr, exitCode } = await runBun(project, join(root, "cache-cold"), github.env, ...command);
+    expect(github.downloads).toEqual(["leaf#bbbbbbb"]);
+    expect(diagnostics(stderr)).toEqual([error(`${github.env.GITHUB_API_URL}/repos/testowner/leaf/tarball/bbbbbbb`)]);
+    expect(await installedVersionOf(project, "a")).toBeNull();
+    expect(exitCode).toBe(1);
+  },
+  30_000,
+);
+
+// Another host behind GITHUB_API_URL can name the root of its tarball after
+// anything: Gitea names it after the repository. No part of such a name is a
+// commit, so the download keeps the ref of package.json.
+test.concurrent(
+  "asks for the ref when the tarball that bun.lockb pins is not named after a commit",
+  async () => {
+    using dir = tempDir("github-lockb-root", {});
+    const root = String(dir);
+    const tarball = await tarballOf("my-lib", packageFiles("my-lib", "my-lib"));
+    const requests: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(new URL(req.url).pathname);
+        return new Response(tarball);
+      },
+    });
+    const env = { GITHUB_API_URL: `http://localhost:${server.port}` };
+    const project = writeProject(root, { "my-lib": "github:testowner/my-lib#v1" });
+    writeFileSync(join(project, "bunfig.toml"), binaryLockfile);
+
+    const warm = await runInstall(project, join(root, "cache-warm"), env);
+    expect(warm.stderr).toContain("Saved lockfile");
+    expect(warm.exitCode).toBe(0);
+
+    rmSync(join(project, "node_modules"), { recursive: true });
+    requests.length = 0;
+    const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), env, "--frozen-lockfile");
+    expect(stderr).toBe("");
+    expect(requests).toEqual(["/repos/testowner/my-lib/tarball/v1"]);
+    expect(await installedVersionOf(project, "my-lib")).toBe("my-lib");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
 // Nothing compares the tarball with the lockfile under --no-verify, or when the
 // lockfile has no integrity for the package: Bun 1.3.9 and older saved none for
 // `github:` packages. The commit that the branch had moved to was installed,
 // and cached, under the name of the pinned one.
-test.concurrent.each(["--no-verify", "a bun.lockb from Bun 1.3.9"])(
-  "installs the github: commits that bun.lockb pins with %s",
-  async unverified => {
-    using dir = tempDir("github-lockb-unverified", {});
+for (const linker of ["hoisted", "isolated"] as const) {
+  test.concurrent.each(["--no-verify", "a bun.lockb from Bun 1.3.9"])(
+    `${linker} linker installs the github: commits that bun.lockb pins with %s`,
+    async unverified => {
+      using dir = tempDir(`github-lockb-${linker}-unverified`, {});
+      const root = String(dir);
+      await using github = await serveGithub();
+      const project = writeProject(root, { a: "github:testowner/testrepo#main" });
+      writeFileSync(join(project, "bunfig.toml"), binaryLockfile);
+      // the hoisted linker puts gh-leaf in the root node_modules
+      const leaf = linker === "isolated" ? ghLeafOfGhDep : "gh-leaf";
+      const args = [`--linker=${linker}`];
+      if (unverified === "--no-verify") {
+        const warm = await runInstall(project, join(root, "cache-warm"), github.env, ...args);
+        expect(warm.stderr).toContain("Saved lockfile");
+        expect(warm.exitCode).toBe(0);
+        rmSync(join(project, "node_modules"), { recursive: true });
+        args.push("--no-verify", "--frozen-lockfile");
+      } else {
+        // saved for this package.json while the fixture was at its first commits
+        copyFileSync(join(import.meta.dir, "fixtures", "github-branch-1.3.9.lockb"), join(project, "bun.lockb"));
+      }
+
+      github.heads.leaf = "ccccccc";
+      github.downloads.length = 0;
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), github.env, ...args);
+      expect(diagnostics(stderr)).toEqual([]);
+      expect(github.downloads.sort()).toEqual(["leaf#bbbbbbb", "testrepo#aaaaaaa"]);
+      if (linker === "isolated") expectOneStoreEntry(project, ["a"]);
+      expect(await installedVersions(project, ["a", leaf])).toEqual({ a: "gh-dep", [leaf]: "gh-leaf" });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+}
+
+// Bun 1.3.10 and later give a row without integrity the sha512 of what they
+// download for it. After the branch had moved that was the new commit, so the
+// lockfile names one commit and has the hash of another. An install from it
+// fails, and `bun update` writes a row that agrees with itself.
+test.concurrent(
+  "fails for a bun.lockb row that has the integrity of another commit until bun update resolves it again",
+  async () => {
+    using dir = tempDir("github-lockb-restamped", {});
     const root = String(dir);
     await using github = await serveGithub();
     const project = writeProject(root, { a: "github:testowner/testrepo#main" });
     writeFileSync(join(project, "bunfig.toml"), binaryLockfile);
-    const args = ["--linker=isolated"];
-    if (unverified === "--no-verify") {
-      const warm = await runInstall(project, join(root, "cache-warm"), github.env, ...args);
-      expect(warm.stderr).toContain("Saved lockfile");
-      expect(warm.exitCode).toBe(0);
-      rmSync(join(project, "node_modules"), { recursive: true });
-      args.push("--no-verify");
-    } else {
-      // saved for this package.json while the fixture was at its first commits
-      copyFileSync(join(import.meta.dir, "fixtures", "github-branch-1.3.9.lockb"), join(project, "bun.lockb"));
-    }
+    copyFileSync(join(import.meta.dir, "fixtures", "github-branch-1.3.9.lockb"), join(project, "bun.lockb"));
 
+    // what those versions downloaded for the pinned row: the commit that the branch had moved to
     github.heads.leaf = "ccccccc";
+    const pinned = github.tarballs.leaf.bbbbbbb;
+    github.tarballs.leaf.bbbbbbb = github.tarballs.leaf.ccccccc;
+    const stamped = await runInstall(project, join(root, "cache-stamped"), github.env);
+    expect(stamped.stderr).toContain("Saved lockfile");
+    expect(stamped.exitCode).toBe(0);
+    github.tarballs.leaf.bbbbbbb = pinned;
+
+    rmSync(join(project, "node_modules"), { recursive: true });
+    const frozen = await runInstall(project, join(root, "cache-frozen"), github.env, "--frozen-lockfile");
+    expect(diagnostics(frozen.stderr)).toContain("error: Integrity check failed for tarball: gh-leaf");
+    expect(frozen.exitCode).toBe(1);
+
+    const updated = await runBun(project, join(root, "cache-updated"), github.env, "update");
+    expect(diagnostics(updated.stderr)).toEqual([]);
+    expect(updated.exitCode).toBe(0);
+
+    rmSync(join(project, "node_modules"), { recursive: true });
     github.downloads.length = 0;
-    const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), github.env, ...args);
-    expect(diagnostics(stderr)).toEqual([]);
-    expect(github.downloads.sort()).toEqual(["leaf#bbbbbbb", "testrepo#aaaaaaa"]);
-    expectOneStoreEntry(project, ["a"]);
-    expect(await installedVersions(project, ["a", ghLeafOfGhDep])).toEqual({ a: "gh-dep", [ghLeafOfGhDep]: "gh-leaf" });
-    expect(exitCode).toBe(0);
+    const repaired = await runInstall(project, join(root, "cache-repaired"), github.env, "--frozen-lockfile");
+    expect(repaired.stderr).toBe("");
+    expect(github.downloads.sort()).toEqual(["leaf#ccccccc", "testrepo#aaaaaaa"]);
+    expect(await installedVersionOf(project, "gh-leaf")).toBe("gh-leaf-moved");
+    expect(repaired.exitCode).toBe(0);
   },
   30_000,
 );
@@ -1042,6 +1176,41 @@ for (const linker of ["hoisted", "isolated"] as const) {
       expect(diagnostics(stderr)).toEqual([]);
       expect(github.downloads.sort()).toEqual([...downloads]);
       expect(await installedVersions(project, Object.keys(installed))).toEqual(installed);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  // The branch can also move to a commit that sorts below the pinned one. With
+  // bun.lockb a dependency that is resolved again then stays on the pinned
+  // commit, which is another defect and not the subject here: these cases ask
+  // that the command ends and that every dependency is installed.
+  test.concurrent.each([
+    ["bun add", ["add", `b@${moved}`], { a: moved }, ["a", "b"]],
+    ["bun update <name>", ["update", "b"], { a: moved, b: moved }, ["a", "b"]],
+    ["bun update", ["update"], { a: moved }, ["a"]],
+  ] as const)(
+    `${linker} linker: %s installs every package when the branch moved to a commit that sorts below the pinned one`,
+    async (_, command, dependencies, names) => {
+      using dir = tempDir(`github-lockb-${linker}-resolve-below`, {});
+      const root = String(dir);
+      await using github = await serveGithub();
+      const project = writeProject(root, dependencies);
+      writeFileSync(join(project, "bunfig.toml"), `${binaryLockfile}linker = "${linker}"\n`);
+
+      const warm = await runInstall(project, join(root, "cache-warm"), github.env);
+      expect(warm.stderr).toContain("Saved lockfile");
+      expect(warm.exitCode).toBe(0);
+
+      rmSync(join(project, "node_modules"), { recursive: true });
+      github.heads.leaf = "0000000";
+      github.downloads.length = 0;
+      const { stderr, exitCode } = await runBun(project, join(root, "cache-cold"), github.env, ...command);
+      expect(diagnostics(stderr)).toEqual([]);
+      expect(github.downloads).toContain("leaf#main");
+      expect(await installedVersions(project, [...names])).toEqual(
+        Object.fromEntries(names.map(name => [name, expect.any(String)])),
+      );
       expect(exitCode).toBe(0);
     },
     30_000,

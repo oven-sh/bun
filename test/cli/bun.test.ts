@@ -344,6 +344,42 @@ describe("bun", () => {
       expect(exitCode).toBe(1);
     });
 
+    test.concurrent("for an unknown $SHELL, the note names a command that writes a completion script", async () => {
+      // `bin/bun` puts the executable on PATH under the name the note uses. An empty home keeps the
+      // bunx symlink fallbacks out of the real home directory.
+      using dir = tempDir("completions-unknown-shell", { bin: {}, home: {} });
+      fs.symlinkSync(bunExe(), join(String(dir), "bin", "bun"));
+
+      async function run(cmd: string[]) {
+        await using proc = Bun.spawn({
+          cmd,
+          env: {
+            ...bunEnv,
+            PATH: join(String(dir), "bin"),
+            HOME: join(String(dir), "home"),
+            BUN_INSTALL: undefined,
+            SHELL: "/bin/dash",
+          },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }
+
+      const unknown = await run([bunExe(), "completions"]);
+      expect(unknown.stdout).toBe("");
+      expect(unknown.stderr).toContain("Unknown or unsupported shell");
+      const command = unknown.stderr.match(/^note: To manually output completions, run '(.+)'$/m)?.[1];
+      expect(command).toBe("SHELL=bash bun completions > file");
+      expect(unknown.exitCode).toBe(1);
+
+      // Run the command the way a user pastes it.
+      expect(await run(["/bin/sh", "-c", command!])).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      expect(fs.readFileSync(join(String(dir), "file"), "utf8")).toMatch(/^complete -F \S+ bun$/m);
+    });
+
     // IS_BUN_AUTO_UPDATE is what `bun upgrade` sets: the file is installed although stdout is a pipe.
     async function installCompletions(args: string[], env: Record<string, string | undefined>) {
       await using proc = Bun.spawn({

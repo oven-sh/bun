@@ -225,7 +225,9 @@ impl InstallCompletionsCommand {
                         "Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash.",
                         format_args!(""),
                     );
-                    note!("To manually output completions, run 'bun getcompletes'");
+                    note!(
+                        "To manually output completions, run 'SHELL=bash bun completions \\> file'"
+                    );
                     Global::exit(fail_exit_code);
                 }
                 Shell::Pwsh => {

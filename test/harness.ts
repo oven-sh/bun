@@ -2528,9 +2528,16 @@ export const removedDirReaddir = {
   get available(): boolean {
     return isLinux && !!(which("cc") || which("clang") || which("gcc"));
   },
-  /** Compiles the shim the first time it is called. */
+  /**
+   * Compiles the shim the first time it is called. Call it from `beforeAll`
+   * with a timeout: a C compiler on a busy machine can take several seconds.
+   */
+  compile(): string {
+    return compileFixture(join(import.meta.dir, "fixtures", "removed-dir-readdir-shim.c"), { flags: ["-ldl"] });
+  },
+  /** The env to spawn bun with: the shim is preloaded and writes to `log`. */
   env(log: string): NodeJS.Dict<string> {
-    const shim = compileFixture(join(import.meta.dir, "fixtures", "removed-dir-readdir-shim.c"), { flags: ["-ldl"] });
+    const shim = this.compile();
     return {
       ...bunEnv,
       LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,

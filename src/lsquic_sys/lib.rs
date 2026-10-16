@@ -44,6 +44,11 @@ pub const LSCONN_ST_RESET: c_int = 5;
 pub const LSCONN_ST_ERROR: c_int = 7;
 pub const LSCONN_ST_VERNEG_FAILURE: c_int = 10;
 
+/// `enum lsquic_dg_status`, the `status` of `NqVtable::on_datagram_status`.
+pub const LSQ_DG_ACKED: c_int = 0;
+pub const LSQ_DG_LOST: c_int = 1;
+pub const LSQ_DG_UNSENT: c_int = 2;
+
 pub const N_LSQVER: c_int = 8;
 
 pub const LSQUIC_GLOBAL_CLIENT: c_int = 1;
@@ -81,8 +86,7 @@ pub struct NqVtable {
     pub on_dg_write:
         unsafe extern "C" fn(conn_ctx: *mut c_void, buf: *mut c_void, buf_sz: usize) -> isize,
     pub on_datagram: unsafe extern "C" fn(conn_ctx: *mut c_void, buf: *const c_void, sz: usize),
-    pub on_datagram_status:
-        unsafe extern "C" fn(conn_ctx: *mut c_void, count: c_uint, acked: c_int),
+    pub on_datagram_status: unsafe extern "C" fn(conn_ctx: *mut c_void, id: u64, status: c_int),
     pub on_early_data_failed: unsafe extern "C" fn(conn_ctx: *mut c_void),
     pub on_path_switch: unsafe extern "C" fn(
         conn_ctx: *mut c_void,
@@ -460,6 +464,14 @@ impl Conn {
         }
         // SAFETY: `self.0` is a live conn (constructor contract).
         unsafe { lsquic_conn_use_preferred_address(self.0, on as c_int) }
+    }
+    /// Only valid inside `on_dg_write`: the id `on_datagram_status` reports the frame under.
+    pub fn set_datagram_id(&self, id: u64) {
+        unsafe extern "C" {
+            fn lsquic_conn_set_datagram_id(c: *mut lsquic_conn, id: u64);
+        }
+        // SAFETY: `self.0` is a live conn (constructor contract).
+        unsafe { lsquic_conn_set_datagram_id(self.0, id) }
     }
     pub fn datagram_early(&self) -> bool {
         unsafe extern "C" {

@@ -1340,6 +1340,7 @@ pub struct Component {
 
     pub(crate) syntax_hint: SyntaxHint,
     pub(crate) trailing_sep: bool,
+    dot_rule: DotRule,
 }
 
 impl Default for Component {
@@ -1350,6 +1351,7 @@ impl Default for Component {
             index: 0,
             syntax_hint: SyntaxHint::None,
             trailing_sep: false,
+            dot_rule: DotRule::Hidden,
         }
     }
 }
@@ -1382,6 +1384,38 @@ impl SyntaxHint {
     fn is_special_syntax(self) -> bool {
         !matches!(self, SyntaxHint::Literal)
     }
+}
+
+/// What a segment does with a dotfile when `dot` is off. Set once per scan.
+#[derive(Clone, Copy)]
+enum DotRule {
+    /// Nothing in the segment spells out a leading `.`.
+    Hidden,
+    /// The segment starts with a literal `.`.
+    Leading,
+    /// An alternative of a group may spell out the `.`.
+    Branch,
+}
+
+impl DotRule {
+    fn of(syntax_hint: SyntaxHint, segment: &[u8]) -> DotRule {
+        match segment.first() {
+            Some(b'.') => DotRule::Leading,
+            Some(b'!') => DotRule::Hidden,
+            _ if syntax_hint == SyntaxHint::None && crate::matcher::may_match_hidden(segment) => {
+                DotRule::Branch
+            }
+            _ => DotRule::Hidden,
+        }
+    }
+}
+
+/// The [`DotRule::Branch`] name test, kept out of the generic walker.
+#[cold]
+#[inline(never)]
+fn matches_dotfile(pattern: &[u8], shape: &Shape, name: &[u8], is_ignored: IgnoreFilterFn) -> bool {
+    crate::matcher::match_prepared::<{ cfg!(windows) }>(pattern, shape, name, Dots::Hide).matches()
+        && !is_ignored(name)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1477,8 +1511,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         )?;
         for (index, component) in this.pattern_components.iter_mut().enumerate() {
             component.index = index as u32;
-            this.component_shapes
-                .push(Shape::of(component.pattern_slice(&this.pattern)));
+            let segment = component.pattern_slice(&this.pattern);
+            if !this.dot {
+                component.dot_rule = DotRule::of(component.syntax_hint, segment);
+            }
+            this.component_shapes.push(Shape::of(segment));
         }
 
         // copy arena after all allocations are successful
@@ -1778,11 +1815,19 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         log!("matchPatternImpl: {}", bstr::BStr::new(filepath));
         // A pattern segment that itself starts with a literal `.` opts into
         // matching dotfiles for that segment, regardless of the `dot` flag.
-        if !self.dot
-            && Self::starts_with_dot(filepath)
-            && !Self::starts_with_dot(pattern_component.pattern_slice(&self.pattern))
-        {
-            return false;
+        if !self.dot && Self::starts_with_dot(filepath) {
+            match pattern_component.dot_rule {
+                DotRule::Hidden => return false,
+                DotRule::Leading => {}
+                DotRule::Branch => {
+                    return matches_dotfile(
+                        pattern_component.pattern_slice(&self.pattern),
+                        &self.component_shapes[pattern_component.index as usize],
+                        filepath,
+                        self.is_ignored,
+                    );
+                }
+            }
         }
         if (self.is_ignored)(filepath) {
             return false;

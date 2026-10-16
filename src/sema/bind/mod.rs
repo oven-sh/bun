@@ -684,6 +684,16 @@ impl PatParent {
         }
     }
 
+    /// Whether the variable declaration or the parameter has a type annotation.
+    #[inline]
+    pub fn has_type_annotation(self, hir: &File) -> bool {
+        match self {
+            PatParent::Var(d) => hir[d].ty.is_some(),
+            PatParent::Param(p) => hir[p].ty.is_some(),
+            _ => false,
+        }
+    }
+
     /// `hasDotDotDotToken` of the binding element.
     #[inline]
     pub fn has_dot_dot_dot_token(self, hir: &File) -> bool {
@@ -1561,6 +1571,11 @@ impl Bound<'_> {
             ModuleInstanceState::Instantiated => true,
             ModuleInstanceState::ConstEnumOnly => preserve_const_enums,
         }
+    }
+
+    /// Whether the file has a `typeof x` type.
+    pub(crate) fn has_type_queries(&self) -> bool {
+        !self.type_query_operands.is_empty()
     }
 
     /// `IsInTypeQuery`: the type of `e` is queried, but `e` is not read.

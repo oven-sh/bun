@@ -12,117 +12,36 @@ fn is_identifier(e: Expr<'_>, names: &[&[u8]]) -> bool {
     matches!(e.kind(), ExprKind::Ident(_)) && names.contains(&e.text())
 }
 
-/// Whether a block comment with exactly `language` in it, like ` GraphQL `, is right before `start`, with nothing
-/// but other comments between. `is_statement`: a statement starts at `start`, and empty statements before it are
-/// nothing either.
-fn follows_language_comment(
-    start: u32,
-    is_statement: bool,
-    language: &[u8],
-    f: &Formatter<'_>,
-) -> bool {
-    let source = f.source_text();
-    let unprinted = f.comments().comments_before(start);
-    let (mut position, mut has_empty_statement) = (start, false);
-    let mut comments = unprinted
-        .iter()
-        .rev()
-        .chain(f.comments().printed_comments().iter().rev());
-    while let Some(comment) = comments.next() {
-        if comment.span.end > position {
-            return false;
-        }
-        let between = source.text_for(&Span::after(comment.span, position));
-        if !bun_core::strings::is_all_js_whitespace(between) {
-            if !is_statement
-                || !bun_core::strings::split(between, b";")
-                    .all(bun_core::strings::is_all_js_whitespace)
-            {
-                return false;
-            }
-            has_empty_statement = true;
-        }
-        position = comment.span.start;
-        if !comment.is_block() || source.text_for(&comment.content_span()) != language {
-            continue;
-        }
-        if !has_empty_statement {
-            return true;
-        }
-        // Behind a statement on the same line, it trails that. So do the comments before it.
-        let mut first = comment;
-        for previous in comments {
-            if first.preceded_by_newline()
-                || !bun_core::strings::is_all_js_whitespace(
-                    source.text_for(&previous.span.between(first.span)),
-                )
-            {
-                break;
-            }
-            first = previous;
-        }
-        return first.preceded_by_newline()
-            || matches!(
-                bun_core::strings::trim_js_whitespace(
-                    source.text_for(&Span::before(0, first.span))
-                ),
-                [] | [.., b'{']
-            );
-    }
-    false
+/// The nodes whose leading comments can name the language of the template `e`: the template itself, and an expression
+/// statement or an `as const` directly around it.
+fn nodes_with_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> [Option<AstNodes<'a>>; 2] {
+    let parent_counts = match parent {
+        AstNodes::ExpressionStatement(_) => true,
+        AstNodes::TSAsExpression(cast) => matches!(cast.kind(), ExprKind::AsConst(_)),
+        _ => false,
+    };
+    [Some(e.as_ast_nodes()), parent_counts.then_some(parent)]
 }
 
-/// Whether the comment leads `e`. A comment leads the outermost of the nodes that start behind it, and
-/// parentheses are not nodes.
-fn is_led_by_language_comment<'a>(
-    e: Expr<'a>,
-    parent: AstNodes<'a>,
-    language: &[u8],
-    f: &Formatter<'a>,
-) -> bool {
-    let outer_start = e.outer_span().start;
-    (e.is_parenthesized() && follows_language_comment(e.span().start, false, language, f))
-        || (parent.span().start != outer_start
-            && follows_language_comment(outer_start, false, language, f))
-}
-
-/// Whether a comment is before `e`, with nothing but white space, `(`, `;` and comments between. No other comment says what
-/// language the template `e` is in.
+/// Whether a comment could name the language of the template `e`. A quick check before the embedded languages are tried.
 pub(crate) fn is_behind_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    let start = e.span().start;
-    let comments = f.comments();
-    let nearest = comments
-        .comments_before(start)
-        .last()
-        .or_else(|| comments.printed_comments().last());
-    nearest.is_some_and(|comment| {
-        comment.span.end > start
-            || f.source_text()
-                .text_for(&Span::after(comment.span, start))
-                .iter()
-                .all(|byte| matches!(byte, b'(' | b';' | 0x80..) || byte.is_ascii_whitespace())
-    })
+    (nodes_with_language_comment(e, e.ast_parent())
+        .into_iter()
+        .flatten())
+    .any(|node| !f.comments().of_node(node).leading.is_empty())
 }
 
-/// Prettier's `hasLanguageComment`. `language`: what is between the `/*` and the `*/`.
+/// Prettier's `hasLanguageComment`: `/* GraphQL */ `..``. `language` is the text between the `/*` and the `*/`.
 pub(crate) fn has_language_comment<'a>(
     e: Expr<'a>,
     parent: AstNodes<'a>,
     language: &[u8],
     f: &Formatter<'a>,
 ) -> bool {
-    is_behind_comment(e, f)
-        && (is_led_by_language_comment(e, parent, language, f)
-            || match parent {
-                AstNodes::ExpressionStatement(_) => {
-                    follows_language_comment(parent.span().start, true, language, f)
-                }
-                AstNodes::TSAsExpression(cast) => {
-                    matches!(cast.kind(), ExprKind::AsConst(_))
-                        && is_led_by_language_comment(cast, parent.parent(), language, f)
-                }
-                _ => false,
-            })
+    (nodes_with_language_comment(e, parent).into_iter().flatten()).any(|node| {
+        (f.comments().of_node(node).leading.iter())
+            .any(|comment| comment.is_block() && comment.content() == language)
+    })
 }
 
 /// Prettier's `isEmbedGraphQL`. `e`: a template.

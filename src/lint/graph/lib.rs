@@ -17,9 +17,10 @@
 //! resolved as Node.js resolves them, after `paths`: [`AsRequire::as_import`].
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
 
 use bun_core::strings;
-use bun_glob::{BunGlobWalker, Options as GlobOptions, Pattern};
+use bun_glob::{BunGlobWalker, Pattern};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
@@ -51,6 +52,9 @@ pub struct Store {
     session: Session,
     disk: OnceLock<Disk>,
     cwd: Vec<u8>,
+    /// A tsconfig.json that nothing names is the nearest to the file, as for TypeScript, and not that of `cwd`, as for
+    /// eslint-import-resolver-typescript.
+    is_by_file: bool,
 }
 
 impl Store {
@@ -60,6 +64,15 @@ impl Store {
             session: Session::new(),
             disk: OnceLock::new(),
             cwd: from_native(cwd),
+            is_by_file: false,
+        }
+    }
+
+    /// For a run without a configuration of ESLint or oxlint: see `is_by_file`.
+    pub fn by_file(self) -> Store {
+        Store {
+            is_by_file: true,
+            ..self
         }
     }
 
@@ -226,7 +239,10 @@ impl Scope {
             if !strings::contains_any(last, b".*?") {
                 path.extend_from_slice(b"/**/*");
             }
-            (Pattern::new(&path, GlobOptions::BUN), path.ends_with(b"*"))
+            (
+                Pattern::new(&bun_glob::pattern::of_fast_glob(&path)),
+                path.ends_with(b"*"),
+            )
         };
         let patterns = |written: &[Vec<u8>]| written.iter().map(pattern).collect::<Vec<_>>();
         let written = &project.written;
@@ -467,10 +483,17 @@ impl<'h> Graph<'h> {
             }
             left.iter().count() + a.count() + right.iter().count() + b.count()
         };
-        listed.sort_by_key(distance);
+        bun_lint::utils::sort::sort_by_key(&mut listed, distance);
         listed.dedup();
         let is_for_it = |it: &Vec<u8>| self.scopes_of(it).last().is_some_and(|own| own.has(from));
         let chosen = match listed.len() {
+            0 if self.store.is_by_file => {
+                let mut above = bun_lint::paths::ancestors(directory);
+                above
+                    .find_map(|it| self.config_in(it))
+                    .into_iter()
+                    .collect()
+            }
             0 => self.config_in(&self.store.cwd).into_iter().collect(),
             1 => listed,
             _ => match listed.iter().position(is_for_it) {

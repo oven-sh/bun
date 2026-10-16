@@ -1,13 +1,13 @@
-//! `.gitignore` and the files in its format. ESLint does not read them. oxlint does, so they count
-//! where an `.oxlintrc.json` is the configuration, and where there is none. Prettier reads those of
+//! `.gitignore` and other files in its format. ESLint doesn't read them. oxlint does, so they apply
+//! when the config is an `.oxlintrc.json` and when there's no config. Prettier only reads the ones in
 //! the working directory.
 //!
-//! Here is which files there are, and which directory their lines belong to. What a line matches is
-//! said by [`bun_glob::ignore`].
+//! This module finds the files and tracks which directory each file's lines belong to.
+//! [`bun_lint::ignore`] decides what a line matches.
 
 use crate::{fs, paths};
 use bun_core::strings;
-use bun_glob::ignore::{IgnoreOptions, IgnoreRules, IgnoreSyntax, Verdict};
+use bun_lint::ignore::{IgnoreOptions, IgnoreRules, Verdict};
 use bun_sema::util::FxHashSet;
 use std::sync::Arc;
 
@@ -39,14 +39,14 @@ pub(crate) type Chain = Option<Arc<Ignores>>;
 
 /// As oxlint and oxfmt read the lines, with the crate `ignore`: `{a,b}` is `a` or `b`.
 const OF_OXC: IgnoreOptions = IgnoreOptions {
-    syntax: IgnoreSyntax::Globset,
+    has_braces: true,
     ignores_case: false,
 };
 
 /// As Prettier reads them, with the package `ignore`: the braces are taken as they are, and
 /// `readme.md` is `README.md` too.
 const OF_PRETTIER: IgnoreOptions = IgnoreOptions {
-    syntax: IgnoreSyntax::Npm705,
+    has_braces: false,
     ignores_case: true,
 };
 
@@ -89,7 +89,7 @@ pub(crate) fn with_lines<'l>(
 /// The first of `lines` that oxlint and oxfmt do not take.
 pub(crate) fn refused_line<'l>(lines: impl IntoIterator<Item = &'l [u8]>) -> Option<Box<[u8]>> {
     let rules = IgnoreRules::from_lines(lines, OF_OXC);
-    rules.refused().first().map(|it| it.line.clone())
+    rules.refused().first().cloned()
 }
 
 /// `chain` and `file`, whose lines are relative to `directory`.
@@ -126,7 +126,8 @@ fn common_directory(dot_git: Vec<u8>, kind: fs::Kind) -> Option<Vec<u8>> {
     })
 }
 
-fn is_root(directory: &[u8]) -> bool {
+/// True if `directory` is the top of a Git or Jujutsu repository.
+pub(crate) fn is_root(directory: &[u8]) -> bool {
     [&b".git"[..], b".jj"]
         .iter()
         .any(|name| bun_sys::exists(&paths::join(directory, name)))
@@ -315,7 +316,7 @@ pub(crate) fn is_ignored(chain: &Chain, path: &[u8], is_directory: bool) -> bool
     decide(chain, path, is_directory, is_in_search).unwrap_or(false)
 }
 
-/// The same for what a search of `bun format` comes to. There oxfmt hands the crate `ignore` a path that is not in the directory
+/// The same for what a search of `bun fmt` comes to. There oxfmt hands the crate `ignore` a path that is not in the directory
 /// of the file as it is: a pattern without a `/` finds the name. About an argument that is not in the directory it does not ask.
 pub(crate) fn is_ignored_in_search(chain: &Chain, path: &[u8], is_directory: bool) -> bool {
     let is_in_search = true;

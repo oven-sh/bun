@@ -1256,7 +1256,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
           let evaluated, ran;
           try { evaluated = eval("1 + 1"); } catch (e) { evaluated = e.name; }
           try { ran = test_napi_run_script(() => {}, "5 * (1 + 2)"); } catch (e) { ran = e.name + ": " + e.message; }
-          console.log(JSON.stringify({ evaluated, ran }));
+          // A script acts before any of its code runs: its declarations, and an assignment of JSON, which is not compiled.
+          try { test_napi_run_script(() => {}, "var declared;"); } catch {}
+          try { test_napi_run_script(() => {}, 'assigned = {"a":1}'); } catch {}
+          console.log(JSON.stringify({ evaluated, ran, declared: "declared" in globalThis, assigned: "assigned" in globalThis }));
         `,
       });
       await using proc = spawn({
@@ -1274,7 +1277,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         runScriptWith(await nodeExeMatchingAbi(), "--disallow-code-generation-from-strings"),
         runScriptWith(bunExe(), "--disallow-code-generation-from-strings"),
       ]);
-      expect(bun).toEqual({ stdout: JSON.stringify({ evaluated: "EvalError", ran: 15 }), stderr: "", exitCode: 0 });
+      expect(bun).toEqual({
+        stdout: JSON.stringify({ evaluated: "EvalError", ran: 15, declared: true, assigned: true }),
+        stderr: "",
+        exitCode: 0,
+      });
       expect(bun).toEqual(node);
     });
     it("throws with --disallow-code-generation-from-strings=strict", async () => {
@@ -1282,6 +1289,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         stdout: JSON.stringify({
           evaluated: "EvalError",
           ran: "EvalError: Code generation from strings disallowed for this context",
+          declared: false,
+          assigned: false,
         }),
         stderr: "",
         exitCode: 0,

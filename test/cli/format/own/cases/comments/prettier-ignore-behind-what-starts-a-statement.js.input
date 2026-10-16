@@ -1,0 +1,11 @@
+({} // prettier-ignore
+.a);
+
+(function () {} // prettier-ignore
+.a);
+
+x = () => ({} // prettier-ignore
+.a);
+
+(class {} // prettier-ignore
+.a);

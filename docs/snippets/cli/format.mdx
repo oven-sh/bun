@@ -1,0 +1,109 @@
+# CLI Usage
+
+```bash
+bun fmt [flags] [files, directories, or globs]
+```
+
+### Modes
+
+<ParamField path="-c, --check" type="boolean">
+  Write nothing. Exit with code 1 if a file needs formatting
+</ParamField>
+
+<ParamField path="-l, --list-different" type="boolean">
+  Like <code>--check</code>, but print only the file names
+</ParamField>
+
+<ParamField path="--stdin-filepath" type="string">
+  Format standard input as this file and print the result
+</ParamField>
+
+<ParamField path="--init" type="boolean">
+  Add a <code>[fmt]</code> section to <code>bunfig.toml</code>
+</ParamField>
+
+<ParamField path="--doctor" type="boolean">
+  Show what Bun does with your Prettier or oxfmt config, and which packages you can remove
+</ParamField>
+
+### Files
+
+<ParamField path="--staged" type="boolean">
+  Format only the files staged in Git, and stage them again
+</ParamField>
+
+<ParamField path="--changed" type="string">
+  Format only the files that differ from a Git ref. Defaults to the default branch
+</ParamField>
+
+<ParamField path="--ignore-pattern" type="string">
+  Skip files that match this glob. Can be repeated
+</ParamField>
+
+### Options
+
+<ParamField path="--print-width" type="number" default="80">
+  Wrap lines at this column
+</ParamField>
+
+<ParamField path="--tab-width" type="number" default="2">
+  Spaces per indentation level
+</ParamField>
+
+<ParamField path="--use-tabs" type="boolean">
+  Indent with tabs
+</ParamField>
+
+<ParamField path="--no-semi" type="boolean">
+  Only print semicolons where they are needed
+</ParamField>
+
+<ParamField path="--single-quote" type="boolean">
+  Use single quotes
+</ParamField>
+
+<ParamField path="--trailing-comma" type="string" default="all">
+  <code>all</code>, <code>es5</code>, or <code>none</code>
+</ParamField>
+
+<ParamField path="--sort-imports" type="boolean">
+  Sort and group imports
+</ParamField>
+
+<ParamField path="--sort-tailwindcss" type="boolean">
+  Sort Tailwind CSS classes
+</ParamField>
+
+<ParamField path="--sort-package-json" type="boolean">
+  Sort the keys of <code>package.json</code>
+</ParamField>
+
+<ParamField path="--jsdoc" type="boolean">
+  Format JSDoc comments
+</ParamField>
+
+<ParamField path="--svelte" type="boolean">
+  Format Svelte components. This is the default without a Prettier or oxfmt config
+</ParamField>
+
+<ParamField path="--no-svelte" type="boolean">
+  Do not format Svelte components
+</ParamField>
+
+<ParamField path="--no-editorconfig" type="boolean">
+  Do not read <code>.editorconfig</code>
+</ParamField>
+
+All of [Prettier's options](https://prettier.io/docs/options) are flags too.
+
+### Output
+
+<ParamField path="--log-level" type="string" default="log">
+  <code>silent</code>, <code>error</code>, <code>warn</code>, <code>log</code>, or <code>debug</code>
+</ParamField>
+
+<ParamField path="--threads" type="number">
+  Number of threads. Defaults to one per CPU core
+</ParamField>
+
+`bun fmt` also accepts the flags of Prettier and oxfmt. Run `bun fmt --help --all` to see them.

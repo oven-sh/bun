@@ -1554,6 +1554,54 @@ differential("the errors of the projects of a build", async () => {
   expect(different).toEqual({});
 });
 
+// More projects than are built at once: the small ones are each checked by one thread, many at a time, and a large one by
+// all of them. A project reads what the ones it references have emitted, so the order still matters.
+differential("a build of many small projects and a large one", async () => {
+  const files: Record<string, string> = {};
+  const names: string[] = [];
+  const options = { composite: true, emitDeclarationOnly: true, outDir: "out", rootDir: "src", strict: true };
+  for (let layer = 0; layer < 3; layer++) {
+    for (let i = 0; i < 8; i++) {
+      const name = `p${layer}_${i}`;
+      names.push(name);
+      const below = layer === 0 ? [] : [`p${layer - 1}_${i}`, `p${layer - 1}_${(i + 1) % 8}`];
+      files[`${name}/tsconfig.json`] = JSON.stringify({
+        compilerOptions: { ...options, lib: ["es2020"], skipLibCheck: true, types: [] },
+        include: ["src"],
+        references: below.map(it => ({ path: `../${it}` })),
+      });
+      const imports = below.map((it, k) => `import { value as v${k} } from "../../${it}/src/index";\n`).join("");
+      // Every third project has an error of its own, and every project above the first layer one that needs the
+      // declarations of what it references.
+      files[`${name}/src/index.ts`] =
+        imports +
+        `export const value: ${i % 3 === 0 ? "number" : "string"} = "${name}";\n` +
+        below.map((_, k) => `export const fromBelow${k}: boolean = v${k};\n`).join("");
+      files[`${name}/src/other.ts`] = `import { value } from "./index";\nexport const length: number = value.length;\n`;
+    }
+  }
+  names.push("large");
+  files["large/tsconfig.json"] = JSON.stringify({
+    compilerOptions: { ...options, lib: ["es2020"], skipLibCheck: true, types: [] },
+    include: ["src"],
+    references: [{ path: "../p2_0" }],
+  });
+  for (let i = 0; i < 70; i++) {
+    files[`large/src/f${i}.ts`] =
+      (i === 0 ? `import { value } from "../../p2_0/src/index";\nexport const top: boolean = value;\n` : "") +
+      `export const f${i}: ${i % 10 === 0 ? "number" : "string"} = "${i}";\n`;
+  }
+  files["tsconfig.json"] = JSON.stringify({ files: [], references: names.map(it => ({ path: `./${it}` })) });
+  using dir = tempDir("bun-check-differential", files);
+  const root = String(dir);
+  // In this order: `tsc -b` writes files.
+  const ours = await linesOf([bunExe(), "check", "-b"], root, root);
+  const oneThread = await linesOf([bunExe(), "check", "-b", "--threads=1"], root, root);
+  const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], root, root);
+  expect(theirs.length).toBeGreaterThan(30);
+  expect({ ours, oneThread }).toEqual({ ours: theirs, oneThread: theirs });
+});
+
 // A referenced project emits its own sources. Every other file that a project imports is a file of that project.
 differential("what a project with references imports, and whether it may", async () => {
   // What `src/a.ts` imports.

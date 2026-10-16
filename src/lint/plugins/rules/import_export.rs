@@ -7,7 +7,8 @@ use bun_lint::rule::Plugin;
 use bun_lint_oxlint::hash_order::HashOrder;
 use bun_lint_oxlint::import::export_declaration_span;
 use bun_lint_oxlint::module_record::{
-    ExportEntry, ExportExportName, Loaded, ModuleRecord, get_loaded_module, in_hash_order, is_waiting_for_modules,
+    ExportEntry, ExportExportName, Loaded, ModuleRecord, get_loaded_module, in_hash_order,
+    is_waiting_for_modules,
 };
 use bun_lint_oxlint::text::find_next_token_within;
 use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
@@ -17,8 +18,10 @@ use std::hash::Hasher;
 /// Forbid any invalid exports, i.e. re-export of the same name.
 pub struct Export;
 
-const NO_NAMED_EXPORTS: Message = Message::new("", "No named exports found in module '{{module_name}}'.");
-const OXLINT_NO_NAMED_EXPORT: Message = Message::new("", "No named exports found in module '{{module_name}}'");
+const NO_NAMED_EXPORTS: Message =
+    Message::new("", "No named exports found in module '{{module_name}}'.");
+const OXLINT_NO_NAMED_EXPORT: Message =
+    Message::new("", "No named exports found in module '{{module_name}}'");
 const MULTIPLE_DEFAULT_EXPORTS: Message = Message::new("", "Multiple default exports.");
 const MULTIPLE_EXPORTS: Message = Message::new("", "Multiple exports of name '{{name}}'.");
 
@@ -27,7 +30,11 @@ const DEFAULT: &[u8] = b"default";
 /// `rootProgram`, where a `TSModuleDeclaration` is known by its start.
 const ROOT_PROGRAM: u32 = u32::MAX;
 
-const EXPORTS: [StmtTag; 3] = [StmtTag::ExportDefault, StmtTag::ExportNamed, StmtTag::ExportStar];
+const EXPORTS: [StmtTag; 3] = [
+    StmtTag::ExportDefault,
+    StmtTag::ExportNamed,
+    StmtTag::ExportStar,
+];
 
 /// What `export` can be before.
 const DECLARATIONS: [StmtTag; 8] = [
@@ -83,13 +90,17 @@ struct Named<'a> {
 
 /// `new Set(Array.from(nodes, (node) => node.parent.type))`
 fn types_of(nodes: &[Place]) -> u8 {
-    nodes.iter().fold(0, |types, node| types | node.parent.bit())
+    nodes
+        .iter()
+        .fold(0, |types, node| types | node.parent.bit())
 }
 
 /// After `removeTypescriptFunctionOverloads`: there is no `TSDeclareFunction`.
 fn is_typescript_namespace_merging(nodes: &[Place]) -> bool {
     let (types, namespace) = (types_of(nodes), ParentType::TsModuleDeclaration.bit());
-    let no_namespace_nodes = nodes.iter().filter(|node| node.parent != ParentType::TsModuleDeclaration);
+    let no_namespace_nodes = nodes
+        .iter()
+        .filter(|node| node.parent != ParentType::TsModuleDeclaration);
     let is_with_class_or_enum = types == (namespace | ParentType::ClassDeclaration.bit())
         || types == (namespace | ParentType::TsEnumDeclaration.bit());
     types == namespace
@@ -124,17 +135,30 @@ struct Exports<'a, 'c> {
 }
 
 impl<'a> Exports<'a, '_> {
-    fn add_named(&mut self, name: &'a [u8], at: Span, parent_type: ParentType, parent: u32, is_type: bool) {
+    fn add_named(
+        &mut self,
+        name: &'a [u8],
+        at: Span,
+        parent_type: ParentType,
+        parent: u32,
+        is_type: bool,
+    ) {
         let next = self.named.len();
         let place = *self.places.entry((parent, is_type, name)).or_insert(next);
         if place == next {
-            self.named.push(Named { name, nodes: SmallVec::new() });
+            self.named.push(Named {
+                name,
+                nodes: SmallVec::new(),
+            });
         }
         // A `Set`: an `export *` can bring a name twice.
         if let Some(Named { nodes, .. }) = self.named.get_mut(place)
             && nodes.last().is_none_or(|last| last.at != at)
         {
-            nodes.push(Place { at, parent: parent_type });
+            nodes.push(Place {
+                at,
+                parent: parent_type,
+            });
         }
     }
 
@@ -147,12 +171,22 @@ impl<'a> Exports<'a, '_> {
             StmtKind::ExportNamed(export) => {
                 for specifier in export.items() {
                     let exported = specifier.exported();
-                    self.add_named(exported.bytes(), exported.span(), ParentType::ExportSpecifier, parent, false);
+                    self.add_named(
+                        exported.bytes(),
+                        exported.span(),
+                        ParentType::ExportSpecifier,
+                        parent,
+                        false,
+                    );
                 }
                 return;
             }
             // The `Literal` of `export * as "a" from "m"` has no `name`: it is taken for `export * from "m"`.
-            StmtKind::ExportStar { spec: Some(source), alias, .. } if alias.is_none_or(Ident::is_string) => {
+            StmtKind::ExportStar {
+                spec: Some(source),
+                alias,
+                ..
+            } if alias.is_none_or(Ident::is_string) => {
                 if let Some(at) = node.module_specifier_span() {
                     self.export_all(node.span(), (source.bytes(), at), parent);
                 }
@@ -160,15 +194,29 @@ impl<'a> Exports<'a, '_> {
             }
             kind if node.is_default_export() => {
                 let is_overload = matches!(kind, StmtKind::Fn(it) if !it.has_body());
-                let parent_type = if is_overload { ParentType::TsDeclareFunction } else { ParentType::Other };
-                return self.add_named(DEFAULT, export_declaration_span(node), parent_type, parent, false);
+                let parent_type = if is_overload {
+                    ParentType::TsDeclareFunction
+                } else {
+                    ParentType::Other
+                };
+                return self.add_named(
+                    DEFAULT,
+                    export_declaration_span(node),
+                    parent_type,
+                    parent,
+                    false,
+                );
             }
             StmtKind::Var(declarations) => {
                 for declaration in declarations {
                     let id = declaration.pat().span();
                     recursive_pattern_capture(declaration.pat(), &mut |v| {
                         // typescript-eslint has the annotation as a part of the `Identifier`.
-                        let at = if v.span() == id { declaration.binding_span() } else { v.span() };
+                        let at = if v.span() == id {
+                            declaration.binding_span()
+                        } else {
+                            v.span()
+                        };
                         if let Some(name) = v.as_ident() {
                             self.add_named(name.bytes(), at, ParentType::Other, parent, false);
                         }
@@ -176,14 +224,24 @@ impl<'a> Exports<'a, '_> {
                 }
                 return;
             }
-            StmtKind::Fn(it) if it.has_body() => (it.name(), ParentType::FunctionDeclaration, false),
+            StmtKind::Fn(it) if it.has_body() => {
+                (it.name(), ParentType::FunctionDeclaration, false)
+            }
             StmtKind::Fn(it) => (it.name(), ParentType::TsDeclareFunction, false),
             StmtKind::Class(it) => (it.name(), ParentType::ClassDeclaration, false),
             StmtKind::Enum(it) => (Some(it.name()), ParentType::TsEnumDeclaration, false),
             StmtKind::Module(it) => match it.name() {
-                ModuleName::Ident(id) if it.nested().is_none() => (Some(id), ParentType::TsModuleDeclaration, false),
+                ModuleName::Ident(id) if it.nested().is_none() => {
+                    (Some(id), ParentType::TsModuleDeclaration, false)
+                }
                 ModuleName::Global => {
-                    return self.add_named(b"global", it.name_span(), ParentType::TsModuleDeclaration, parent, false);
+                    return self.add_named(
+                        b"global",
+                        it.name_span(),
+                        ParentType::TsModuleDeclaration,
+                        parent,
+                        false,
+                    );
                 }
                 // A `TSQualifiedName` and a `Literal` have no `name`.
                 _ => return,
@@ -201,32 +259,50 @@ impl<'a> Exports<'a, '_> {
     /// oxlint goes by its record of the file, which is about the top level.
     fn add_module_record(&mut self, module_record: &ModuleRecord<'a>) {
         let file = self.cx.file();
-        for export_entry in module_record.local_export_entries.iter().chain(&module_record.indirect_export_entries) {
+        for export_entry in module_record
+            .local_export_entries
+            .iter()
+            .chain(&module_record.indirect_export_entries)
+        {
             let (name, at) = match export_entry.export_name {
                 ExportExportName::Name(name) => (name.name.bytes(), name.span),
                 ExportExportName::Default(span) => (DEFAULT, span),
                 ExportExportName::Null => continue,
             };
             let is_specifier = is_named_export_specifier(export_entry, file);
-            let parent_type = if is_specifier { ParentType::ExportSpecifier } else { ParentType::Other };
+            let parent_type = if is_specifier {
+                ParentType::ExportSpecifier
+            } else {
+                ParentType::Other
+            };
             self.add_named(name, at, parent_type, ROOT_PROGRAM, export_entry.is_type);
         }
-        for star_export_entry in module_record.star_export_entries.iter().filter(|it| !it.is_type) {
+        for star_export_entry in module_record
+            .star_export_entries
+            .iter()
+            .filter(|it| !it.is_type)
+        {
             if let Some(module_request) = star_export_entry.module_request {
                 let source = (module_request.name.bytes(), module_request.span);
                 self.export_all(star_export_entry.span, source, ROOT_PROGRAM);
             }
         }
         // The parser comes to them in the order of the source.
-        let mut exported_bindings: Vec<(Name<'a>, Span)> =
-            module_record.exported_bindings.iter().map(|(name, span)| (*name, *span)).collect();
+        let mut exported_bindings: Vec<(Name<'a>, Span)> = module_record
+            .exported_bindings
+            .iter()
+            .map(|(name, span)| (*name, *span))
+            .collect();
         utils::sort::sort_unstable_by_key(&mut exported_bindings, |it| it.1.start);
+        let order: Vec<usize> = self.order.iter().collect();
         for (name, span) in in_hash_order(exported_bindings) {
-            let all = self.order.iter().filter_map(|at| self.all_export_names.get(at));
+            let all = order.iter().filter_map(|at| self.all_export_names.get(*at));
             let mut spans = all.filter(|it| it.1.contains(name.bytes())).map(|it| it.0);
             if let Some(first) = spans.next() {
                 let report = self.cx.report(first, MULTIPLE_EXPORTS).data("name", name);
-                spans.fold(report, |report, it| report.label(it, "")).label(span, "");
+                spans
+                    .fold(report, |report, it| report.label(it, ""))
+                    .label(span, "");
             }
         }
     }
@@ -244,16 +320,22 @@ impl<'a> Exports<'a, '_> {
             if any {
                 let mut hasher = FxHasher::default();
                 hasher.write_u64((u64::from(node.end) << 32) | u64::from(node.start));
-                self.order.insert(hasher.finish(), self.all_export_names.len());
+                self.order
+                    .insert(hasher.finish(), self.all_export_names.len());
                 self.all_export_names.push((node, names));
             }
         } else {
-            let Some((maps, remote_exports)) = self.maps.and_then(|maps| Some((maps, maps.get(source.0)?))) else {
+            let Some((maps, remote_exports)) =
+                self.maps.and_then(|maps| Some((maps, maps.get(source.0)?)))
+            else {
                 return;
             };
             if remote_exports.has_errors() {
                 let errors = remote_exports.errors_text();
-                cx.report(source.1, PARSE_ERRORS).data("source", source.0).data("errors", errors).on_exit(false);
+                cx.report(source.1, PARSE_ERRORS)
+                    .data("source", source.0)
+                    .data("errors", errors)
+                    .on_exit(false);
                 return;
             }
             maps.for_each(remote_exports, &mut |_, name| {
@@ -265,8 +347,14 @@ impl<'a> Exports<'a, '_> {
         }
         if !any {
             // oxlint ends it without a full stop.
-            let message = if self.is_oxlint { OXLINT_NO_NAMED_EXPORT } else { NO_NAMED_EXPORTS };
-            cx.report(source.1, message).data("module_name", source.0).on_exit(false);
+            let message = if self.is_oxlint {
+                OXLINT_NO_NAMED_EXPORT
+            } else {
+                NO_NAMED_EXPORTS
+            };
+            cx.report(source.1, message)
+                .data("module_name", source.0)
+                .on_exit(false);
         }
     }
 
@@ -282,19 +370,27 @@ impl<'a> Exports<'a, '_> {
             };
             if is_oxlint {
                 // oxlint says it once, and only if one of them is in braces.
-                if nodes.iter().any(|node| node.parent == ParentType::ExportSpecifier) {
-                    cx.report(first.at, MULTIPLE_EXPORTS).data("name", name).labels_with(|labels| {
-                        for node in rest {
-                            labels.push(node.at, "");
-                        }
-                    });
+                if nodes
+                    .iter()
+                    .any(|node| node.parent == ParentType::ExportSpecifier)
+                {
+                    cx.report(first.at, MULTIPLE_EXPORTS)
+                        .data("name", name)
+                        .labels_with(|labels| {
+                            for node in rest {
+                                labels.push(node.at, "");
+                            }
+                        });
                 }
                 continue;
             }
             if is_typescript_namespace_merging(nodes) {
                 continue;
             }
-            for node in nodes.iter().filter(|node| !node.should_skip_typescript_namespace(nodes)) {
+            for node in nodes
+                .iter()
+                .filter(|node| !node.should_skip_typescript_namespace(nodes))
+            {
                 if name == DEFAULT {
                     cx.report(node.at, MULTIPLE_DEFAULT_EXPORTS);
                 } else {
@@ -306,7 +402,9 @@ impl<'a> Exports<'a, '_> {
 }
 
 impl Rule for Export {
-    const META: Meta = Meta::plugin(Plugin::Import, "export", Kind::Problem).needs_modules().reports_at_the_end();
+    const META: Meta = Meta::plugin(Plugin::Import, "export", Kind::Problem)
+        .needs_modules()
+        .reports_at_the_end();
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -322,7 +420,11 @@ impl Rule for Export {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let (cx, file) = (&*cx, cx.file());
         let is_oxlint = file.language().is_oxlint;
-        let maps = if !is_oxlint && file.has_stmts([StmtTag::ExportStar]) { ExportMaps::of(file) } else { None };
+        let maps = if !is_oxlint && file.has_stmts([StmtTag::ExportStar]) {
+            ExportMaps::of(file)
+        } else {
+            None
+        };
         let mut exports = Exports {
             cx,
             is_oxlint,
@@ -337,9 +439,13 @@ impl Rule for Export {
             exports.add_module_record(&ModuleRecord::new(file));
         } else {
             // typescript-eslint lets them be in any block.
-            let declarations = DECLARATIONS.into_iter().flat_map(|tag| file.stmts_of_kind(tag));
+            let declarations = DECLARATIONS
+                .into_iter()
+                .flat_map(|tag| file.stmts_of_kind(tag));
             let exports_of_kind = EXPORTS.into_iter().flat_map(|tag| file.stmts_of_kind(tag));
-            let mut nodes: Vec<Stmt> = exports_of_kind.chain(declarations.filter(|it| it.is_exported())).collect();
+            let mut nodes: Vec<Stmt> = exports_of_kind
+                .chain(declarations.filter(|it| it.is_exported()))
+                .collect();
             utils::sort::sort_unstable_by_key(&mut nodes, |it| it.span().start);
             for node in nodes {
                 exports.add_exports_of(node, get_parent(node));
@@ -353,11 +459,19 @@ impl Rule for Export {
 fn is_named_export_specifier<'a>(export_entry: &ExportEntry<'a>, file: &'a File<'a>) -> bool {
     // What is made of an `import` and an `export { a }` has the place of the import, which can come later.
     export_entry.statement_span.start > export_entry.span.start
-        || find_next_token_within(file, Span::before(export_entry.statement_span.start, export_entry.span), b"{").is_some()
+        || find_next_token_within(
+            file,
+            Span::before(export_entry.statement_span.start, export_entry.span),
+            b"{",
+        )
+        .is_some()
 }
 
 /// The names that `module` exports, with those that it gets by `export *`. Nothing of what is in `visited`, or in a `node_modules`.
-fn walk_exported_recursive<'m>(module: Loaded<'m>, visited: &mut FxHashSet<ModuleId>) -> FxHashSet<&'m [u8]> {
+fn walk_exported_recursive<'m>(
+    module: Loaded<'m>,
+    visited: &mut FxHashSet<ModuleId>,
+) -> FxHashSet<&'m [u8]> {
     let mut result = FxHashSet::default();
     let mut pending = vec![module];
     while let Some(at) = pending.pop() {
@@ -366,7 +480,12 @@ fn walk_exported_recursive<'m>(module: Loaded<'m>, visited: &mut FxHashSet<Modul
             continue;
         }
         result.extend(at.record.exported_bindings.iter().map(|it| &**it));
-        pending.extend(at.record.star_export_entries.iter().filter_map(|it| at.get_loaded_module(it)));
+        pending.extend(
+            at.record
+                .star_export_entries
+                .iter()
+                .filter_map(|it| at.get_loaded_module(it)),
+        );
     }
     result
 }

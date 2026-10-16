@@ -53,22 +53,8 @@ impl<'a> SourceText<'a> {
         self.text.get(position as usize).copied()
     }
 
-    pub(crate) fn next_non_whitespace_byte_is(self, position: u32, expected: u8) -> bool {
-        let mut rest = self.from(position).trim_ascii_start();
-        while rest.first().is_some_and(|b| !b.is_ascii()) {
-            match js_whitespace_len(rest) {
-                0 => break,
-                len => rest = rest[len..].trim_ascii_start(),
-            }
-        }
-        rest.first() == Some(&expected)
-    }
-
-    pub(crate) fn contains_byte(self, span: Span, byte: u8) -> bool {
-        bun_core::strings::contains_char(self.text_for(&span), byte)
-    }
-
-    /// White space that is not ASCII counts as a space, U+2028 and U+2029 as `\n`.
+    /// White space that is not ASCII counts as a space, and so does the vertical tab, which `u8::is_ascii_whitespace` does not
+    /// know. U+2028 and U+2029 count as `\n`.
     pub(crate) fn all_bytes(self, span: Span, predicate: impl Fn(u8) -> bool) -> bool {
         let mut rest = self.text_for(&span);
         while let Some(at) = rest.iter().position(|&b| !predicate(b)) {
@@ -78,7 +64,7 @@ impl<'a> SourceText<'a> {
                 _ => b'\n',
             };
             let len = js_whitespace_len(rest);
-            if len < 2 || !predicate(stands_for) {
+            if (len < 2 && rest[0] != 0x0B) || !predicate(stands_for) {
                 return false;
             }
             rest = &rest[len..];
@@ -105,6 +91,11 @@ impl<'a> SourceText<'a> {
     pub(crate) fn lines_after(self, end: u32) -> usize {
         let (mut rest, mut count) = (self.from(end), 0);
         loop {
+            // What there is between most nodes.
+            while let [first @ (b' ' | b'\t' | b'\n'), after @ ..] = rest {
+                count += usize::from(*first == b'\n');
+                rest = after;
+            }
             match (js_line_break_len(rest), js_whitespace_len(rest)) {
                 (0, 0) if rest.is_empty() => return 0,
                 (0, 0) => return count,

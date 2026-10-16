@@ -27,11 +27,16 @@ impl<'a> FormatDecorators<'a> {
         Self::new(member.decorators(), member.as_ast_nodes())
     }
 
+    /// `@a export class B {}`, as opposed to `export @a class B {}`.
+    fn are_before_export(&self) -> bool {
+        (self.decorators.first()).is_some_and(|first| first.span().end <= self.parent.span().start)
+    }
+
     /// Whether one of them is followed by a line break in the source.
     fn should_expand(&self, f: &Formatter<'a>) -> bool {
-        self.decorators.iter().any(|it| {
+        (self.decorators.iter()).any(|it| {
             f.source_text()
-                .has_line_terminator_after(FormatDecorator(*it).span().end)
+                .has_line_terminator_after(it.outer_span().end)
         })
     }
 }
@@ -69,6 +74,12 @@ impl<'a> Format<'a> for FormatDecorators<'a> {
             }
             AstNodes::FormalParameter(_) | AstNodes::FormalParameterRest(_) => {
                 write!(f, self.should_expand(f).then_some(expand_parent()));
+            }
+            // Prettier's `printDecoratorsBeforeExport`
+            AstNodes::ExportNamedDeclaration(_) | AstNodes::ExportDefaultDeclaration(_)
+                if self.are_before_export() =>
+            {
+                write!(f, expand_parent());
             }
             AstNodes::ExportNamedDeclaration(_) | AstNodes::ExportDefaultDeclaration(_) => {
                 write!(f, hard_line_break());
@@ -110,32 +121,27 @@ impl<'a> Format<'a> for FormatDecorator<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let expression = self.0;
         let node = AstNodes::Decorator(expression);
-        format_node(
-            self.span(),
-            || node.parent(),
-            f,
-            |f| {
-                // `@a`, `@a.b`, `@a.b()` are written as they are. Anything else is in parentheses.
-                let needs_parentheses = match expression.as_ast_nodes() {
-                    AstNodes::IdentifierReference(_) => false,
-                    AstNodes::CallExpression(call) => !call
-                        .callee()
-                        .is_some_and(is_identifier_or_static_member_only),
-                    AstNodes::StaticMemberExpression(member) => !member
-                        .object()
-                        .is_some_and(is_identifier_or_static_member_only),
-                    _ => true,
-                };
-                write!(
-                    f,
-                    [
-                        "@",
-                        needs_parentheses.then_some("("),
-                        expression,
-                        needs_parentheses.then_some(")")
-                    ]
-                );
-            },
-        );
+        format_node(node, f, |f| {
+            // `@a`, `@a.b`, `@a.b()` are written as they are. Anything else is in parentheses.
+            let needs_parentheses = match expression.as_ast_nodes() {
+                AstNodes::IdentifierReference(_) => false,
+                AstNodes::CallExpression(call) => !call
+                    .callee()
+                    .is_some_and(is_identifier_or_static_member_only),
+                AstNodes::StaticMemberExpression(member) => !member
+                    .object()
+                    .is_some_and(is_identifier_or_static_member_only),
+                _ => true,
+            };
+            write!(
+                f,
+                [
+                    "@",
+                    needs_parentheses.then_some("("),
+                    expression,
+                    needs_parentheses.then_some(")")
+                ]
+            );
+        });
     }
 }

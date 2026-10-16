@@ -206,7 +206,8 @@ pub enum ObjectLiteralCheck {
     ForAssignmentDeclaration,
     /// `checkExpressionCached`, for `getContextualThisParameterType`, where the parent has left no `links.resolvedType`.
     ForThis,
-    /// The same for the `this` parameter of this member. `checkSignatureDeclaration` requests its type while the literal is checked.
+    /// The same for the `this` parameter of this member, or for a type query of `this` in its signature: both are resolved
+    /// while the literal is checked.
     ForThisParameter(FnId),
 }
 

@@ -58,10 +58,17 @@ impl Eqeqeq {
         let is_oxlint = cx.language().is_oxlint;
         // oxlint sees nothing in parentheses.
         let is_seen = |it: Expr<'a>| !(is_oxlint && it.is_parenthesized());
-        let is_null = [left, right].into_iter().any(|it| it.tag() == ExprTag::Null && is_seen(it));
-        let is_typeof = [left, right].into_iter().any(|it| is_typeof(it) && is_seen(it));
-        let literal_type: fn(Expr<'a>) -> Option<&'static str> =
-            if is_oxlint { literal_type_of_oxlint } else { literal_type };
+        let is_null = [left, right]
+            .into_iter()
+            .any(|it| it.tag() == ExprTag::Null && is_seen(it));
+        let is_typeof = [left, right]
+            .into_iter()
+            .any(|it| is_typeof(it) && is_seen(it));
+        let literal_type: fn(Expr<'a>) -> Option<&'static str> = if is_oxlint {
+            literal_type_of_oxlint
+        } else {
+            literal_type
+        };
         let are_literals_of_same_type =
             literal_type(left).is_some() && literal_type(left) == literal_type(right);
         let expected = match op {
@@ -91,6 +98,7 @@ impl Eqeqeq {
         let is_whole = is_oxlint && !matches!(op, BinOp::EqEq | BinOp::NotEq);
         let report = cx
             .report(if is_whole { e.span() } else { operator }, UNEXPECTED)
+            .called_with(e)
             .data("expectedOperator", expected)
             .data("actualOperator", actual);
         if is_whole {
@@ -98,7 +106,10 @@ impl Eqeqeq {
         }
         // oxlint replaces all that is between the operands.
         let change = |fixer: Fixer<'a>| match is_oxlint {
-            true => fixer.replace(left.outer_span().between(right.outer_span()), [" ", expected, " "].concat()),
+            true => fixer.replace(
+                left.outer_span().between(right.outer_span()),
+                [" ", expected, " "].concat(),
+            ),
             false => fixer.replace(operator, expected),
         };
         // The change is safe if both sides are known to have the same type.

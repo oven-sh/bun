@@ -4,17 +4,18 @@
 //! for everything in it that the configuration has `files` for. Directories are listed on all
 //! threads, one level of the tree at a time, and one that the configuration ignores is not entered.
 
-use crate::configs::{Flavor, Loaded, Loader};
+use crate::configs::{Flavor, Loaded, Loader, inherit_frameworks, read_frameworks};
 use crate::embedded::Framework;
 use crate::gitignore::{self, Files};
 use crate::run::{Environment, Fatal, Pool};
 use crate::{Linter, fs, paths};
 use bun_core::strings;
-use bun_glob::{Options, Pattern};
+use bun_lint::glob::{Minimatch, MinimatchOptions};
 use bun_lint::js_plugin::{Host, Route};
 use bun_lint::linter::config::{Dotfiles, Seen};
 use bun_lint::linter::{FileConfig, ResolvedConfig};
 use bun_lint::modules::Listed;
+use bun_lint::rule::Frameworks;
 use bun_threading::Guarded;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -67,15 +68,23 @@ impl Target {
 enum Matcher {
     /// `**`
     Everything,
-    /// `new Minimatch(pattern, { dot: true })`
-    Pattern(Pattern),
+    Pattern(Minimatch),
 }
 
 impl Matcher {
     fn new(relative: &[u8]) -> Matcher {
         match relative {
             b"**" => Matcher::Everything,
-            relative => Matcher::Pattern(Pattern::new(relative, Options::MINIMATCH_DOT)),
+            relative => {
+                let dot = true;
+                Matcher::Pattern(Minimatch::with(
+                    relative,
+                    MinimatchOptions {
+                        dot,
+                        ..MinimatchOptions::default()
+                    },
+                ))
+            }
         }
     }
 
@@ -153,6 +162,8 @@ struct Directory {
     /// `inherited` ignores it. It is only read for the configuration files of oxlint in it and below it, each of which is asked
     /// alone about what it is nearest to.
     is_hidden: bool,
+    /// [`Loader::detect_frameworks`] of the parent directory, or of the directory itself if it's the search root.
+    frameworks: Frameworks,
 }
 
 fn no_files_found(pattern: &[u8]) -> Fatal {
@@ -189,8 +200,8 @@ fn thrown_by_eslint_8(error: &bun_sys::Error, path: &[u8]) -> Option<Fatal> {
 /// ESLint's `assertConfigurationExists`, for the file at `path`.
 fn config_file_missing(path: &[u8]) -> Fatal {
     let path = paths::to_native(path.to_vec());
-    let rest: &[u8] = b" has no eslint.config.* in its directory or above it.";
-    Fatal([b"Could not find config file. ", &path[..], rest].concat())
+    let start: &[u8] = b"Could not find config file.\n  No eslint.config.* was found next to ";
+    Fatal([start, &path[..], b" or in a parent directory."].concat())
 }
 
 fn all_files_ignored(pattern: &[u8]) -> Fatal {
@@ -277,6 +288,7 @@ fn search(
                 relative: Vec::new(),
                 seen: None,
                 ignores,
+                frameworks: loader.detect_frameworks(&inherited, &search.base_path),
                 inherited,
                 is_hidden,
             });
@@ -326,6 +338,17 @@ fn search(
                 return;
             }
             let is_hidden = directory.is_hidden && Arc::ptr_eq(&own, &directory.inherited);
+            // The listing already tells us whether there's a package.json, so most directories inherit the answer.
+            let has_package = || entries.iter().any(|it| it.name == b"package.json");
+            let detects = !directory.relative.is_empty() && own.flavor == Flavor::BuiltIn;
+            let decides = detects && has_package();
+            let own_frameworks = decides.then(|| read_frameworks(&directory.path)).flatten();
+            let is_repository_root = detects
+                && entries
+                    .iter()
+                    .any(|it| matches!(&it.name[..], b".git" | b".jj"));
+            let frameworks =
+                inherit_frameworks(directory.frameworks, own_frameworks, is_repository_root);
             let reads_ignore_files = loader.reads_ignore_files(&own);
             let mut ignores = directory.ignores.clone();
             if reads_ignore_files && !loader.reads_ignore_files(&directory.inherited) {
@@ -343,7 +366,8 @@ fn search(
                 Some(seen) if Arc::ptr_eq(&own, &directory.inherited) => seen,
                 _ => &own.config.see(&directory.path),
             };
-            let mut within = own.config.within(&directory.path, seen);
+            let within = own.config.within(&directory.path, seen);
+            let mut within = within.with_frameworks(frameworks);
             for mut entry in entries {
                 let path = paths::join(&directory.path, &entry.name);
                 let (mut real, mut is_loop) = (None, false);
@@ -414,6 +438,7 @@ fn search(
                             inherited: Arc::clone(&own),
                             ignores: ignores.clone(),
                             is_hidden,
+                            frameworks,
                         });
                     }
                     continue;
@@ -568,9 +593,9 @@ pub(crate) fn find_files(
                 if loader.lacks_file_of_eslint(&loaded) {
                     return Err(config_file_missing(&path));
                 }
-                let status = match loader.ignores_named_file(&pattern, &loaded) {
+                let status = match loader.ignores_named_file(&pattern, &path, &loaded) {
                     true => Status::Ignored,
-                    false => loaded.config.get(loader.linter.registry(), &path).into(),
+                    false => loader.config_of(&loaded, &path).into(),
                 };
                 found.push(Target {
                     path,

@@ -119,7 +119,7 @@ fn add_identifiers<'a>(config: Config, symbol: Symbol<'a>, into: &mut Vec<(Decla
 }
 
 fn report<'a, R: Rule>(cx: &Cx<'a, R>, name: &'a [u8], declarations: &[(DeclarationType, Span)]) {
-    let Some((&(first, _), extra_declarations)) = declarations.split_first() else {
+    let Some((&(first, first_span), extra_declarations)) = declarations.split_first() else {
         return;
     };
     let detail = match first {
@@ -131,7 +131,11 @@ fn report<'a, R: Rule>(cx: &Cx<'a, R>, name: &'a [u8], declarations: &[(Declarat
     let is_before = is_oxlint && first != DeclarationType::Builtin;
     for (&(_, previous), &(declaration_type, span)) in declarations.iter().zip(extra_declarations) {
         let message = if declaration_type == first { REDECLARED } else { detail };
-        cx.report(if is_before { previous } else { span }, message).data("id", name).labels_with(|labels| {
+        let report = cx.report(if is_before { previous } else { span }, message).data("id", name).hint_with(|| {
+            let line = cx.line_of(first_span.start);
+            (first != DeclarationType::Builtin).then(|| format!("It is first declared on line {line}."))
+        });
+        report.labels_with(|labels| {
             if is_before {
                 labels.first(format!("'{}' is already defined.", bstr::BStr::new(name)));
                 labels.push(span, "It can not be redeclared here.");
@@ -229,7 +233,7 @@ pub fn check_globals_in_comments<'a, R: Rule>(config: Config, cx: &Cx<'a, R>) {
 }
 
 impl Rule for NoRedeclare {
-    const META: Meta = Meta::eslint("no-redeclare", Kind::Suggestion).recommended();
+    const META: Meta = Meta::eslint("no-redeclare", Kind::Suggestion).recommended().hints();
     const ON: On = On::new().symbols().finish();
     type State<'a> = bool;
 

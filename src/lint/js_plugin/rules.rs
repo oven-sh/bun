@@ -1,8 +1,9 @@
 //! What is known here of a plugin, and what a configuration makes of its rules.
 
+use super::scopes::ConfiguredGlobals;
 use crate::language::{Global, LanguageOptions, SourceType};
 use crate::linter::globals::config_globals_in_order;
-use crate::linter::write_json;
+use crate::linter::{write_json, write_json_with};
 use crate::options::Json;
 use crate::rule::Kind;
 use std::sync::Arc;
@@ -50,6 +51,13 @@ pub struct Rule {
 pub struct Plugin {
     /// The prefix of its rules.
     pub name: Box<[u8]>,
+    /// `{ module, export }`: the file that it is in, as Node.js writes the path, and where in what that exports. `None` for one
+    /// that was found in a configuration.
+    pub location: Option<Json>,
+    /// `meta.name@meta.version`, as ESLint prints a plugin.
+    pub id: Option<Box<[u8]>>,
+    /// It has nothing of what a plugin has: no `meta`, no `rules`.
+    pub has_nothing: bool,
     /// Sorted by [`Rule::id`].
     pub rules: Vec<Arc<Rule>>,
 }
@@ -85,35 +93,12 @@ pub struct Configured {
 
 /// [`write_json`] that keeps an infinite number, which default options have: as a number too large for a double.
 fn write_option(out: &mut Vec<u8>, value: &Json) {
-    match value {
-        Json::Number(value) if value.is_infinite() => {
-            out.extend_from_slice(if *value > 0.0 { b"1e999" } else { b"-1e999" });
-        }
-        Json::Number(value) if value.is_nan() => out.extend_from_slice(b"{\"$number\":\"NaN\"}"),
-        Json::Array(items) => {
-            out.push(b'[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(b',');
-                }
-                write_option(out, item);
-            }
-            out.push(b']');
-        }
-        Json::Object(entries) => {
-            out.push(b'{');
-            for (i, (key, value)) in entries.iter().enumerate() {
-                if i > 0 {
-                    out.push(b',');
-                }
-                write_json(out, &Json::String(key.clone()));
-                out.push(b':');
-                write_option(out, value);
-            }
-            out.push(b'}');
-        }
-        _ => write_json(out, value),
-    }
+    write_json_with(out, value, |out, number| match number {
+        f64::INFINITY => out.extend_from_slice(b"1e999"),
+        f64::NEG_INFINITY => out.extend_from_slice(b"-1e999"),
+        _ if number.is_nan() => out.extend_from_slice(b"{\"$number\":\"NaN\"}"),
+        _ => write_json(out, &Json::Number(number)),
+    });
 }
 
 impl Configured {
@@ -145,8 +130,10 @@ impl Configured {
 #[derive(Debug)]
 pub struct FileSettings {
     pub(super) id: u32,
-    /// `{ settings, languageOptions, globals, libs, freezes, isLegacy, parser }`
+    /// `{ settings, languageOptions, globals, freezes, isLegacy, parser }`
     pub(super) json: Box<[u8]>,
+    /// ESLint's `configGlobals`, or what oxlint defines, in the order of the keys of `globals` in `json`.
+    pub(super) globals: ConfiguredGlobals,
     /// JSON: `[{ config, index }, ..]`, the objects of a configuration file that the settings are merged of, if there is
     /// something in them that JSON cannot say, like a function. A realm takes them from there.
     pub(super) sources: Option<Box<[u8]>>,
@@ -180,7 +167,12 @@ impl FileSettings {
         });
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let string = |text: &[u8]| Json::String(text.to_vec());
-        let globals = language.globals.iter().map(|(name, setting)| {
+        // oxlint only has what `globals` itself says there.
+        let written = match language.is_oxlint {
+            true => &language.own_globals,
+            false => &language.globals,
+        };
+        let globals = written.iter().map(|(name, setting)| {
             let setting: &[u8] = match setting {
                 Global::Readonly => b"readonly",
                 Global::Writable => b"writable",
@@ -193,7 +185,7 @@ impl FileSettings {
             SourceType::Script => b"script",
             SourceType::CommonJs => b"commonjs",
         };
-        let language_options = Json::Object(vec![
+        let mut language_options = vec![
             (
                 b"ecmaVersion".to_vec(),
                 Json::Number(f64::from(language.ecma_version)),
@@ -207,7 +199,13 @@ impl FileSettings {
                     options => options.clone(),
                 },
             ),
-        ]);
+        ];
+        if language.is_oxlint {
+            let envs = language.envs.iter();
+            let envs = envs.map(|it| (it.to_vec(), Json::Bool(true)));
+            language_options.push((b"env".to_vec(), Json::Object(envs.collect())));
+        }
+        let language_options = Json::Object(language_options);
         let settings = match &*language.settings {
             Json::Null => Json::Object(Vec::new()),
             // A key that begins with `$` is this program's own.
@@ -225,22 +223,25 @@ impl FileSettings {
                 Global::Off => b"off",
             }
         };
-        let all_globals = config_globals_in_order(language).into_iter();
-        let all_globals = all_globals
-            .map(|(name, setting)| (name.into_owned(), string(setting_name(setting))))
+        let globals = match language.is_oxlint {
+            true => {
+                ConfiguredGlobals::new(language.globals_of_oxlint_plugins(), std::iter::empty())
+            }
+            false => {
+                let globals = config_globals_in_order(language)
+                    .into_iter()
+                    .map(|(name, setting)| (name.into_owned().into(), setting));
+                ConfiguredGlobals::new(globals.collect(), language.lib_variables())
+            }
+        };
+        let all_globals = globals
+            .iter()
+            .map(|(name, setting)| (name.to_vec(), string(setting_name(*setting))))
             .collect();
-        // 1: a type, 2: a value.
-        let libs = language.lib_variables().map(|(name, is_type, is_value)| {
-            (
-                name.to_vec(),
-                Json::Number(f64::from(u8::from(is_type) | (u8::from(is_value) << 1))),
-            )
-        });
         let all = Json::Object(vec![
             (b"settings".to_vec(), settings),
             (b"languageOptions".to_vec(), language_options),
             (b"globals".to_vec(), Json::Object(all_globals)),
-            (b"libs".to_vec(), Json::Object(libs.collect())),
             (b"freezes".to_vec(), Json::Bool(language.is_oxlint)),
             (
                 b"isLegacy".to_vec(),
@@ -253,6 +254,7 @@ impl FileSettings {
         Arc::new(FileSettings {
             id,
             json: json.into(),
+            globals,
             sources,
         })
     }

@@ -127,7 +127,8 @@ const entries = [];
 const rangeOf = new Map();
 for (const [list, items] of lists) {
   rangeOf.set(list, [entries.length, items.length]);
-  entries.push(...items.map(([name, flags]) => (idOf.get(name) << 2) | flags).sort((a, b) => a - b));
+  const ofList = items.map(([name, flags]) => (idOf.get(name) << 2) | flags);
+  entries.push(...(list.startsWith("lib:") ? ofList : ofList.sort((a, b) => a - b)));
 }
 if (entries.length >= 1 << 16) throw new Error("too many entries");
 
@@ -177,7 +178,7 @@ pub(super) static NAME_ENDS: &[u16] = &[
 ${rows(ends)}
 ];
 
-/// The lists, one after the other, each sorted: the index of a name \`<< 2\`, and flags. For an
+/// The lists, one after the other, each sorted but for a library, which has its own order: the index of a name \`<< 2\`, and flags. For an
 /// environment and a version of ECMAScript, 1: writable. For a library, 1: a type, 2: a value. For
 /// the changes to an environment, 1: writable, 2: it is not in it.
 #[rustfmt::skip]

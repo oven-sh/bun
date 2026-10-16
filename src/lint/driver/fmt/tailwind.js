@@ -1,5 +1,5 @@
 // Prints where Tailwind CSS puts the classes that it is asked about. The question is read from standard input:
-// { groups: [{ root, config, stylesheet, classes }] }. `root`: the directory of the package.
+// { groups: [{ root, config, stylesheet, isBundled, classes }] }. `root`: the directory of the package.
 //
 // Where it puts a class does not depend on what else it is asked about. The numbers that it answers with do.
 //
@@ -104,19 +104,43 @@ async function loadV3(root, config) {
     });
 }
 
+/** The Tailwind CSS that prettier-plugin-tailwindcss, which is in `root`, brings along. It sorts, and does not say where it puts a class. */
+async function loadBundled(root, config, stylesheet) {
+  const from = root.slice(0, root.lastIndexOf("node_modules"));
+  const { createSorter } = await import(
+    pathToFileURL(Bun.resolveSync("prettier-plugin-tailwindcss/sorter", from)).href
+  );
+  // No package is found from there, so it takes its own.
+  const where = { base: "/", filepath: "/a", configPath: config ?? undefined, stylesheetPath: stylesheet ?? undefined };
+  const sort = (await createSorter(where)).sortClassLists;
+  return classes => {
+    // Of a class that it knows it leaves one of two.
+    const isKnown = sort(classes.map(it => [it, it])).map(it => it.length === 1);
+    const [known] = sort([classes.filter((_, index) => isKnown[index])]);
+    // Two that stay as they are either way are in the same place.
+    const swapped = sort(known.slice(1).map((it, index) => [it, known[index]]));
+    let order = 0;
+    const orders = new Map(known.map((it, index) => [it, index > 0 && swapped[index - 1][0] !== it ? ++order : order]));
+    return classes.map(it => [it, orders.get(it) ?? null]);
+  };
+}
+
 const loaded = new Map();
-function orderFor({ root, config, stylesheet }) {
+function orderFor({ root, config, stylesheet, isBundled }) {
   const isV4 = fs.existsSync(join(root, "theme.css"));
   if (stylesheet) config = null;
-  if (isV4 ? config : stylesheet) {
+  if (!isBundled && (isV4 ? config : stylesheet)) {
     const [option, major] = isV4 ? ["config", 3] : ["stylesheet", 4];
-    throw new Error(`\`${option}\` is for Tailwind CSS ${major}, and ${root} is another.`);
+    throw new Error(`\`${option}\` only works with Tailwind CSS ${major}, and ${root} is another version`);
   }
   const key = JSON.stringify([root, config, stylesheet]);
   if (!loaded.has(key)) {
     const load = async () => {
+      if (isBundled) return loadBundled(root, config, stylesheet);
       if (!isV4) return loadV3(root, config);
-      const tailwind = await import(pathToFileURL(Bun.resolveSync("tailwindcss", dirname(dirname(root)))).href);
+      const at = root.lastIndexOf("node_modules");
+      const name = root.slice(at + "node_modules/".length);
+      const tailwind = await import(pathToFileURL(Bun.resolveSync(name, root.slice(0, at))).href);
       return loadV4(tailwind, stylesheet ?? join(root, "theme.css"));
     };
     loaded.set(key, load());

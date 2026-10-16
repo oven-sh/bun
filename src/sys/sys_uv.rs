@@ -387,6 +387,13 @@ pub fn rename(from: &ZStr, to: &ZStr) -> Result<()> {
         rc.int()
     );
     if let Some(errno) = rc.errno() {
+        // MoveFileExW refuses to replace a destination that has open handles, which is where
+        // Node stops with EPERM.
+        if errno == E::PERM
+            && crate::windows::rename_file_posix(from.as_bytes(), to.as_bytes()).is_ok()
+        {
+            return Result::Ok(());
+        }
         // which one goes in the .path field?
         Result::Err(Error::new(errno, Tag::rename))
     } else {

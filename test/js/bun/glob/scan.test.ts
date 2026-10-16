@@ -1333,9 +1333,14 @@ describe("a group that crosses a path separator", () => {
     ["a/+(a/)x.js", ["a/a/x.js"]],
     ["src/*(b/|c/)index.ts", ["src/b/c/index.ts", "src/index.ts"]],
     ["**/+(a/)x.js", ["a/a/x.js", "a/x.js"]],
-    // `!(..)` matches in one path segment, so the `/` in it is never met.
+    // `!(a/b)` takes one name. It leaves out the paths that `a/b` and the rest of the pattern match.
     ["!(a/b)/index.ts", ["src/index.ts"]],
     ["src/!(b/c)/index.ts", ["src/a/index.ts"]],
+    [
+      "!(src/a)/**/index.ts",
+      ["packages/app/src/index.ts", "packages/lib/index.ts", "src/b/c/index.ts", "src/index.ts"],
+    ],
+    ["!(a/a)/**/*.js", ["a/x.js"]],
   ];
 
   describe.each(["scanSync", "scan"] as const)("%s", method => {
@@ -1394,6 +1399,39 @@ describe("a group that crosses a path separator", () => {
     const expected = [`${cwd}/src/a/index.ts`, `${cwd}/src/b/c/index.ts`];
     expect(scan(`${cwd}/src/{a,b/c}/index.ts`, String(dir))).toEqual(expected);
     expect(scan(`${cwd}/{src/a,src/b/c}/*.ts`, String(dir))).toEqual(expected);
+  });
+
+  // As in a shell: `{/a,b}/x` is `/a/x` and `b/x`. The absolute one is not below the cwd, so it is a walk of its own.
+  test("an alternative that is an absolute path", () => {
+    const files = ["one/a/x.js", "two/b/y.js", "two/b/y/z1", "two/b/y/y/z2", "cwd/rel/z.js", "top.js"];
+    using dir = tree("glob-scan-group-absolute", files);
+    const root = String(dir).replaceAll("\\", "/");
+    const cwd = path.join(String(dir), "cwd");
+    const [x, y] = [`${root}/one/a/x.js`, `${root}/two/b/y.js`];
+    expect(scan(`{${root}/one/a,${root}/two/b}/*.js`, cwd)).toEqual([x, y]);
+    expect(scan(`@(${root}/one/a|${root}/two/b)/*.js`, cwd)).toEqual([x, y]);
+    expect(scan(`{${root}/one,${root}/two}/**/*.js`, cwd)).toEqual([x, y]);
+    expect(scan(`{${root}/one/a,rel}/*.js`, cwd)).toEqual([x, "rel/z.js"]);
+    expect(scan(`{${root}/one/a,rel}/*.js`, cwd, { absolute: true })).toEqual([`${root}/cwd/rel/z.js`, x]);
+    expect(scan(`{${root}/one/a/x.js,rel/z.js}`, cwd)).toEqual([x, "rel/z.js"]);
+    expect(scan(`{${root}/one/a/x,${root}/two/b/y}.js`, cwd)).toEqual([x, y]);
+    expect(scan(`{${root}/one,rel}`, cwd, { onlyFiles: false })).toEqual([`${root}/one`, "rel"]);
+    // The walk of a directory goes into the directories of the other alternatives that are inside it.
+    expect(scan(`{${root},${root}/one/a,${root}/one/a}/**/x.js`, cwd)).toEqual([x]);
+    // A group that repeats, below the directory of an alternative.
+    expect(scan(`{${root}/two/b,rel}/+(y/)z*`, cwd)).toEqual([`${root}/two/b/y/y/z2`, `${root}/two/b/y/z1`]);
+    // Only an alternative of plain text names a directory to start in.
+    expect(scan(`{${root}/one/*,rel}/*.js`, cwd)).toEqual(["rel/z.js"]);
+  });
+
+  test("an absolute alternative whose directory is not there matches nothing", () => {
+    using dir = tree("glob-scan-group-absolute", ["two/b/y.js", "top.js"]);
+    const root = String(dir).replaceAll("\\", "/");
+    const y = `${root}/two/b/y.js`;
+    expect(scan(`{${root}/missing,${root}/top.js,${root}/two/b}/*.js`, String(dir))).toEqual([y]);
+    // No alternative is below the cwd, so a cwd that does not exist is not an error.
+    expect(scan(`{${root}/missing,${root}/two/b}/*.js`, path.join(String(dir), "missing"))).toEqual([y]);
+    expect(scan(`{${root}/missing/a,${root}/missing/b}/*.js`, String(dir))).toEqual([]);
   });
 
   test("a class or an escape is read before a group", () => {
@@ -1532,10 +1570,38 @@ describe("a group that crosses a path separator", () => {
     expect(scan(nested, cwd, { onlyFiles: false })).toEqual(["a/b"]);
   });
 
+  // One pass over the pattern makes the components. A pass for each bracket would not finish these in the time of a test.
+  test.each([
+    ["[", 100_000, "", []],
+    ["[", 100_000, "/x", []],
+    ["[", 100_000, "{a/x,b}", []],
+    ["{**/,**/}", 10_000, "x", ["a/a/x", "a/x", "x"]],
+    ["a{/,/}", 10_000, "x", []],
+    ["{a/,b}", 10_000, "x", []],
+  ] as [string, number, string, string[]][])("%j %d times, then %j", (repeated, count, end, expected) => {
+    using dir = tree("glob-scan-group-repeated", ["x", "a/x", "a/a/x"]);
+    expect(scan(repeated.repeat(count) + end, String(dir))).toEqual(expected);
+  });
+
+  test("a group in a group, many times", () => {
+    using dir = tree("glob-scan-group-nested", ["za", "x/ya"]);
+    const depth = 20_000;
+    expect(scan("{x/y,z}" + "+(".repeat(depth) + "a" + ")".repeat(depth), String(dir))).toEqual(["x/ya", "za"]);
+    expect(scan("{" + "[".repeat(depth) + "/x,za}", String(dir))).toEqual(["za"]);
+  });
+
   test.skipIf(!isDebug)("a directory is read only if a path below it can match", async () => {
     using dir = tree("glob-scan-group-reads", files);
     const script = `for (const pattern of JSON.parse(process.argv[1])) { console.log("PATTERN"); [...new Bun.Glob(pattern).scanSync({ cwd: process.argv[2] })]; }`;
-    const patterns = ["src/{a,b/c}/index.ts", "{packages/app/src,src}/index.ts", "+(a/)x.js", "{src/**,svc/**}"];
+    const root = String(dir).replaceAll("\\", "/");
+    const patterns = [
+      "src/{a,b/c}/index.ts",
+      "{packages/app/src,src}/index.ts",
+      "+(a/)x.js",
+      "{src/**,svc/**}",
+      // Every alternative is absolute: the cwd is not read.
+      `{${root}/src/a,${root}/src/b/c,${root}/missing}/*.ts`,
+    ];
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script, JSON.stringify(patterns), String(dir)],
       env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: undefined, BUN_DEBUG_Glob: "1" },
@@ -1547,13 +1613,16 @@ describe("a group that crosses a path separator", () => {
       .split("PATTERN")
       .slice(1)
       .map(log =>
-        [...log.matchAll(/Transition\(dirpath=([^,]*),/g)].map(match => match[1].replaceAll("\\", "/") || ".").sort(),
+        [...log.matchAll(/Transition\(dirpath=([^,]*),/g)]
+          .map(match => match[1].replaceAll("\\", "/").replace(`${root}/`, "/") || ".")
+          .sort(),
       );
     expect(reads).toEqual([
       [".", "src", "src/a", "src/b", "src/b/c"],
       [".", "packages", "packages/app", "packages/app/src", "src"],
       [".", "a", "a/a"],
       [".", "src", "src/a", "src/b", "src/b/c", "svc", "svc/src"],
+      ["/src/a", "/src/b/c"],
     ]);
     expect(exitCode).toBe(0);
   });
@@ -1561,6 +1630,9 @@ describe("a group that crosses a path separator", () => {
   // Seeded, so a failure names its pattern. The scan lists the entries of the tree that match() accepts.
   test.each([{ dot: false }, { dot: true }])("patterns from a seed list what match() accepts, with %j", ({ dot }) => {
     const all = [...files, ".h/x.js", "a/.h/x.js", "src/b/.env"];
+    const directories = [...new Set(all.flatMap(file => file.split("/").map((_, i, parts) => parts.slice(0, i).join("/"))))]
+      .filter(directory => directory !== "")
+      .sort();
     using dir = tree("glob-scan-group-seeded", all);
     const cwd = String(dir);
     // With `dot: false`, a name that starts with `.` is only for a pattern that writes the `.` out. No wildcard of these patterns does.
@@ -1587,9 +1659,22 @@ describe("a group that crosses a path separator", () => {
       const pattern = [...segments.slice(0, from), group, ...segments.slice(to)].join("/");
       if (!alternatives.some(alternative => /\/|\*\*/.test(alternative))) continue;
       const glob = new Glob(pattern);
-      const expected = all.filter(file => glob.match(file) && (dot || !isHidden(file))).sort();
+      const isListed = (entry: string) => dot || !isHidden(entry);
+      const expected = all.filter(file => glob.match(file) && isListed(file)).sort();
       expect({ pattern, listed: scan(pattern, cwd, { dot }) }).toEqual({ pattern, listed: expected });
       listedSome += Number(expected.length > 0);
+      // A directory is listed if match() accepts its path. It can be listed if match() accepts the path with a separator after it.
+      const withDirectories = scan(pattern, cwd, { dot, onlyFiles: false });
+      const atLeast = [...all, ...directories].filter(entry => glob.match(entry) && isListed(entry));
+      const atMost = directories.filter(entry => glob.match(`${entry}/`) && isListed(entry)).concat(atLeast);
+      expect({ pattern, missing: atLeast.filter(entry => !withDirectories.includes(entry)) }).toEqual({
+        pattern,
+        missing: [],
+      });
+      expect({ pattern, extra: withDirectories.filter(entry => !atMost.includes(entry)) }).toEqual({
+        pattern,
+        extra: [],
+      });
     }
     expect(listedSome).toBeGreaterThan(100);
   });

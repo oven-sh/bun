@@ -401,6 +401,15 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             };
 
             if !is_absolute {
+                if self.walker.push_absolute_roots() {
+                    // Nothing is below the cwd, so the cwd is not opened. `openat` starts from the root directory.
+                    let root = dupe_z(self.walker.filesystem_root());
+                    if let Ok(fd) = A::open(ZStr::from_slice_with_nul(&root[..]))? {
+                        self.cwd_fd = fd;
+                        self.bump_open_fds();
+                    }
+                    return Ok(Ok(()));
+                }
                 break 'brk WorkItem::new(
                     self.walker.cwd.clone(),
                     self.walker.single_set(0),
@@ -416,11 +425,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 self.walker.basename_excluding_special_syntax_component_idx;
 
             if path_without_special_syntax.is_empty() {
-                path_without_special_syntax = if !IS_WINDOWS {
-                    b"/"
-                } else {
-                    resolve_path::windows_filesystem_root(&self.walker.cwd)
-                };
+                path_without_special_syntax = self.walker.filesystem_root();
             } else {
                 // Skip the components associated with the literal path
                 starting_component_idx += 1;
@@ -591,6 +596,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
         let mut had_dot_dot = false;
         let below_tail_len = work_item.below_tail_len;
+        let is_absolute_root = work_item.is_absolute_root;
         // Single-index sets (the initial WorkItem) may point to Dot/DotBack
         // or collapsible `**` runs. Multi-index sets only arise mid-traversal
         // after `**/X` boundaries and are already past any Dots.
@@ -651,6 +657,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             }
 
             match A::openat(self.cwd_fd, dir_path)? {
+                Err(err)
+                    if is_absolute_root && matches!(err.get_errno(), E::ENOENT | E::ENOTDIR) =>
+                {
+                    self.iter_state = IterState::GetNext;
+                    return Ok(Ok(()));
+                }
                 Err(err) => {
                     return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
                 }
@@ -823,7 +835,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     // exact followed-link ancestor chain of this work item.
                     self.walker
                         .followed_links
-                        .truncate(work_item.followed_links_len);
+                        .truncate(work_item.followed_links_len as usize);
                     if let Some(link) = work_item.followed_link.take() {
                         self.walker.followed_links.push(link);
                     }
@@ -1380,10 +1392,12 @@ pub struct WorkItem<A: Accessor> {
     pub(crate) entry_start: u32,
     /// `Directory::below_tail_len` of this directory, if the tail is active in it. For a symlink: that of its directory.
     pub(crate) below_tail_len: u32,
+    /// The walk of an absolute alternative starts here. If the directory is not there, the alternative matches nothing.
+    pub(crate) is_absolute_root: bool,
     pub(crate) fd: Option<A::Handle>,
     /// `followed_links.len()` when this item was pushed: the length of its
     /// followed-link ancestor chain, restored by truncation when it is popped.
-    followed_links_len: usize,
+    followed_links_len: u32,
     /// The followed link this item descends into, pushed onto `followed_links`
     /// (after the truncation above) when it is popped.
     followed_link: Option<FollowedLink>,
@@ -1403,6 +1417,7 @@ impl<A: Accessor> WorkItem<A> {
             kind,
             entry_start: 0,
             below_tail_len: 0,
+            is_absolute_root: false,
             fd: None,
             followed_links_len: 0,
             followed_link: None,
@@ -1431,9 +1446,11 @@ impl<A: Accessor> WorkItem<A> {
     /// For the entry `name` of a directory that has `parent` as its `below_tail_len`.
     #[inline]
     fn below_tail(mut self, parent: u32, name: &[u8]) -> Self {
-        if parent != NOT_BELOW_TAIL {
+        if parent < WHOLE_PATH {
             let name_len = u32::try_from(name.len()).expect("int cast");
             self.below_tail_len = parent + u32::from(parent != 0) + name_len;
+        } else if parent == WHOLE_PATH {
+            self.below_tail_len = WHOLE_PATH;
         }
         self
     }
@@ -1441,6 +1458,8 @@ impl<A: Accessor> WorkItem<A> {
 
 /// `Directory::below_tail_len` of a directory in which the tail is not active.
 const NOT_BELOW_TAIL: u32 = u32::MAX;
+/// `Directory::below_tail_len` of a directory below an absolute alternative: the tail is for the whole path.
+const WHOLE_PATH: u32 = u32::MAX - 1;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -2042,6 +2061,31 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     }
 
     /// Returns true if `set` has the tail. Then it has no other component.
+    /// The root directory, which on Windows is the one of the drive of the cwd.
+    fn filesystem_root(&self) -> &[u8] {
+        if !IS_WINDOWS {
+            b"/"
+        } else {
+            resolve_path::windows_filesystem_root(&self.cwd)
+        }
+    }
+
+    /// Queues a walk for each directory that absolute alternatives start in. Returns true if that leaves nothing for the cwd.
+    fn push_absolute_roots(&mut self) -> bool {
+        let mut index = 0;
+        while let Some(root) = (self.tail.as_deref()).and_then(|it| it.absolute_roots.get(index)) {
+            // The tail is the last component.
+            let tail_index = u32::try_from(self.pattern_components.len() - 1).expect("int cast");
+            let active = self.single_set(tail_index);
+            let mut item = WorkItem::new(root.clone(), active, WorkItemKind::Directory);
+            item.below_tail_len = WHOLE_PATH;
+            item.is_absolute_root = true;
+            self.push_work_item(item, None);
+            index += 1;
+        }
+        self.tail.as_deref().is_some_and(|tail| !tail.has_relative)
+    }
+
     #[inline]
     fn has_tail(&self, set: &ComponentSet) -> bool {
         self.tail.is_some() && set.is_set(self.pattern_components.len() - 1)
@@ -2122,10 +2166,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             Some((last, before)) if bun_core::path_sep::is_sep_native(*last) => before,
             _ => dir_path,
         };
-        debug_assert!(below_tail_len as usize <= dir.len());
+        debug_assert!(below_tail_len as usize <= dir.len() || below_tail_len == WHOLE_PATH);
         path.clear();
         path.extend_from_slice(&dir[dir.len().saturating_sub(below_tail_len as usize)..]);
-        if !path.is_empty() {
+        // The root directory is empty here, and its entries are absolute paths.
+        if !path.is_empty() || below_tail_len == WHOLE_PATH {
             path.push(b'/');
         }
         path.extend_from_slice(name);
@@ -2256,7 +2301,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// Single push site: snapshots the followed-link ancestor chain (and the
     /// link `item` itself descends into) so the pop site can restore it.
     fn push_work_item(&mut self, mut item: WorkItem<A>, followed_link: Option<FollowedLink>) {
-        item.followed_links_len = self.followed_links.len();
+        item.followed_links_len = u32::try_from(self.followed_links.len()).expect("int cast");
         item.followed_link = followed_link;
         self.workbuf.push(item);
     }
@@ -2522,17 +2567,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let pattern = rewritten.as_deref().unwrap_or(written);
         let pattern_len = u32::try_from(pattern.len()).expect("int cast");
         let shape = Shape::of(pattern);
+        let tokens = Tokens::new(pattern, &shape);
         let mut saw_special = false;
         let mut start_byte: u32 = 0;
-        // Without a `]` after it, no later `[` opens a class either. Asking again for each one is quadratic.
-        let mut has_unclosed_class = false;
         let mut at = 0;
         while at < pattern.len() {
-            let (token, end) = match has_unclosed_class && pattern[at] == b'[' {
-                true => (Token::Literal, at + 1),
-                false => crate::matcher::token_at(pattern, at, &shape),
-            };
-            has_unclosed_class |= token == Token::Literal && pattern[at] == b'[';
+            let (token, end) = tokens.at(at);
             match token {
                 Token::Literal if pattern[at] == b'/' => {
                     let end_byte = u32::try_from(end).expect("int cast");
@@ -2552,7 +2592,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                     }
                     start_byte = end_byte;
                 }
-                Token::Group { first } if starts_tail(pattern, at, first, end, &shape) => {
+                Token::Group { first } if starts_tail(&tokens, first, end) => {
                     // The tail starts at the first `**`, which reads every directory below it anyway. Then no other component is active with the tail.
                     let doubles = |it: &Component| it.syntax_hint == SyntaxHint::Double;
                     if let Some(first_double) = pattern_components.iter().position(doubles) {
@@ -2659,6 +2699,10 @@ struct Tail {
     matches_its_directory: bool,
     /// A `**` or a group that repeats across separators is in it, so it can go through any number of directories.
     is_unbounded: bool,
+    /// The directories that absolute alternatives start in, as `/a/x` and `/b` in `{/a/x,/b}/*.js`. Each is a walk of its own.
+    absolute_roots: Box<[Box<[u8]>]>,
+    /// Some alternative is a path below the cwd.
+    has_relative: bool,
 }
 
 impl Tail {
@@ -2676,6 +2720,7 @@ impl Tail {
         }
         pattern.extend_from_slice(&text[bangs..]);
         let shape = Shape::of(&pattern);
+        let tokens = Tokens::new(&pattern, &shape);
         let is_negated = crate::matcher::negations(&pattern) != 0;
         // If every part of the tail can match nothing, the separator before it ends the pattern.
         let whole = [
@@ -2687,8 +2732,9 @@ impl Tail {
             &pattern[..],
         ]
         .concat();
-        let ends_with_separator =
-            !is_negated && ends_with_separator(&whole, 0..whole.len(), &Shape::of(&whole), 0);
+        let whole_shape = Shape::of(&whole);
+        let ends_with_separator = !is_negated
+            && ends_with_separator(&Tokens::new(&whole, &whole_shape), 0..whole.len(), 0);
         let matches_nothing = ends_with_separator
             && (crate::matcher::match_prepared::<{ cfg!(windows) }>(
                 &pattern,
@@ -2697,11 +2743,17 @@ impl Tail {
                 Dots::Match,
             ))
             .matches();
+        let (absolute_roots, has_relative) = match is_after_separator {
+            true => (Box::default(), true),
+            false => absolute_roots(&tokens),
+        };
         Tail {
             below: Below::of(&pattern, &shape),
             ends_with_separator,
             matches_its_directory: is_after_separator && matches_nothing,
-            is_unbounded: is_unbounded(&pattern, &shape),
+            is_unbounded: is_unbounded(&tokens),
+            absolute_roots,
+            has_relative,
             pattern: pattern.into_boxed_slice(),
             shape,
         }
@@ -2725,20 +2777,48 @@ impl Tail {
     }
 }
 
-/// Returns true if the group at `at` starts a tail: one of its alternatives has a separator or a `**`. `!(a/b)` matches in one path segment.
-fn starts_tail(pattern: &[u8], at: usize, first: usize, end: usize, shape: &Shape) -> bool {
-    pattern[at] != b'!'
-        && !shape.is_sequence_at(first)
-        && crosses_separator(pattern, first..end - 1, shape)
+/// The tokens of a pattern, as the matcher reads them.
+struct Tokens<'a> {
+    pattern: &'a [u8],
+    shape: &'a Shape,
+    /// The first `[` that no `]` closes. The matcher reads to the end of the pattern to find that out, and no `[` after it is closed either.
+    no_class_from: core::cell::Cell<usize>,
 }
 
-/// Returns true if `part` of `pattern`, the inside of a group, has a separator or a `**` at any depth.
-fn crosses_separator(pattern: &[u8], part: core::ops::Range<usize>, shape: &Shape) -> bool {
+impl<'a> Tokens<'a> {
+    fn new(pattern: &'a [u8], shape: &'a Shape) -> Tokens<'a> {
+        Tokens {
+            pattern,
+            shape,
+            no_class_from: core::cell::Cell::new(usize::MAX),
+        }
+    }
+
+    /// Returns the token that starts at `at` and the index after it.
+    fn at(&self, at: usize) -> (Token, usize) {
+        if self.pattern[at] == b'[' && at >= self.no_class_from.get() {
+            return (Token::Literal, at + 1);
+        }
+        let (token, end) = crate::matcher::token_at(self.pattern, at, self.shape);
+        if token == Token::Literal && self.pattern[at] == b'[' {
+            self.no_class_from.set(at);
+        }
+        (token, end)
+    }
+}
+
+/// Returns true if the group from `first` to `end` starts a tail: one of its alternatives has a separator or a `**`.
+fn starts_tail(tokens: &Tokens, first: usize, end: usize) -> bool {
+    !tokens.shape.is_sequence_at(first) && crosses_separator(tokens, first..end - 1)
+}
+
+/// Returns true if `part`, the inside of a group, has a separator or a `**` at any depth.
+fn crosses_separator(tokens: &Tokens, part: core::ops::Range<usize>) -> bool {
     let mut at = part.start;
     while at < part.end {
-        let (token, end) = crate::matcher::token_at(pattern, at, shape);
+        let (token, end) = tokens.at(at);
         match token {
-            Token::Literal if pattern[at] == b'/' => return true,
+            Token::Literal if tokens.pattern[at] == b'/' => return true,
             Token::Globstar => return true,
             // Go into it: its closer and the separators of its alternatives are literals here.
             Token::Group { first } => at = first,
@@ -2748,17 +2828,19 @@ fn crosses_separator(pattern: &[u8], part: core::ops::Range<usize>, shape: &Shap
     false
 }
 
-/// Returns true if `pattern` has a `**`, or a `+(..)` or `*(..)` that crosses a separator.
-fn is_unbounded(pattern: &[u8], shape: &Shape) -> bool {
+/// Returns true if the pattern has a `**`, or a `+(..)` or `*(..)` that crosses a separator.
+fn is_unbounded(tokens: &Tokens) -> bool {
+    // The end of the outermost open group that repeats.
+    let mut repeats_until = 0;
     let mut at = 0;
-    while at < pattern.len() {
-        let (token, end) = crate::matcher::token_at(pattern, at, shape);
+    while at < tokens.pattern.len() {
+        let (token, end) = tokens.at(at);
         match token {
             Token::Globstar => return true,
+            Token::Literal if tokens.pattern[at] == b'/' && at < repeats_until => return true,
             Token::Group { first } => {
-                let repeats = matches!(pattern[at], b'+' | b'*');
-                if repeats && crosses_separator(pattern, first..end - 1, shape) {
-                    return true;
+                if matches!(tokens.pattern[at], b'+' | b'*') {
+                    repeats_until = repeats_until.max(end);
                 }
                 at = first;
             }
@@ -2768,22 +2850,18 @@ fn is_unbounded(pattern: &[u8], shape: &Shape) -> bool {
     false
 }
 
-/// Returns true if what `part` of `pattern` matches can end with a separator. It gives up on groups that are nested deep.
-fn ends_with_separator(
-    pattern: &[u8],
-    part: core::ops::Range<usize>,
-    shape: &Shape,
-    depth: u32,
-) -> bool {
+/// Returns true if what `part` of the pattern matches can end with a separator. It gives up on groups that are nested deep.
+fn ends_with_separator(tokens: &Tokens, part: core::ops::Range<usize>, depth: u32) -> bool {
+    let (pattern, shape) = (tokens.pattern, tokens.shape);
     // The last token of `part`, and the one before it if the last one can match nothing.
-    let mut tokens: Vec<(Token, usize)> = Vec::new();
+    let mut found: Vec<(Token, usize)> = Vec::new();
     let mut at = part.start;
     while at < part.end {
-        let (token, end) = crate::matcher::token_at(pattern, at, shape);
-        tokens.push((token, at));
+        let (token, end) = tokens.at(at);
+        found.push((token, at));
         at = end;
     }
-    for &(token, at) in tokens.iter().rev() {
+    for &(token, at) in found.iter().rev() {
         let Token::Group { first } = token else {
             return token == Token::Literal && pattern[at] == b'/';
         };
@@ -2791,7 +2869,7 @@ fn ends_with_separator(
             return false;
         }
         let mut alternatives = shape.alternatives_at(first);
-        if alternatives.any(|it| ends_with_separator(pattern, it, shape, depth + 1)) {
+        if alternatives.any(|it| ends_with_separator(tokens, it, depth + 1)) {
             return true;
         }
         // A group that can match nothing leaves the end to the token before it.
@@ -2802,6 +2880,53 @@ fn ends_with_separator(
         }
     }
     false
+}
+
+/// Returns the directories that the absolute alternatives of a pattern start in, and whether an alternative is left for the cwd. Only a group of plain text that starts the pattern has them.
+fn absolute_roots(tokens: &Tokens) -> (Box<[Box<[u8]>]>, bool) {
+    let pattern = tokens.pattern;
+    let none = (Box::default(), true);
+    if !matches!(pattern.first(), Some(b'{' | b'@')) {
+        return none;
+    }
+    let (Token::Group { first }, end) = tokens.at(0) else {
+        return none;
+    };
+    let is_text = (first..end - 1).all(|at| tokens.at(at).0 == Token::Literal);
+    if !is_text || tokens.shape.is_sequence_at(first) {
+        return none;
+    }
+    // With a separator after the group, an alternative names a directory. Without one, its last name is only the start of a name.
+    let names_directory = pattern.get(end) == Some(&b'/');
+    let mut roots: Vec<&[u8]> = Vec::new();
+    let mut has_relative = false;
+    for alternative in (tokens.shape.alternatives_at(first)).map(|it| &pattern[it]) {
+        let is_absolute = bun_paths::is_absolute(alternative)
+            || (cfg!(windows) && bun_paths::is_absolute_posix(alternative));
+        if !is_absolute {
+            has_relative = true;
+        } else if names_directory {
+            roots.push(alternative);
+        } else {
+            let cut = strings::last_index_of_char(alternative, b'/').unwrap_or(0);
+            // The root directory and the one of a drive end with the separator.
+            let is_root = cut == 0 || (cfg!(windows) && alternative[cut - 1] == b':');
+            roots.push(&alternative[..cut + usize::from(is_root)]);
+        }
+    }
+    // A `/` sorts first, so what is inside a directory comes right after it. The walk of the directory goes there too.
+    let key = |path: &&[u8]| {
+        (path
+            .iter()
+            .map(|byte| if *byte == b'/' { 0 } else { *byte }))
+        .collect::<Vec<u8>>()
+    };
+    roots.sort_by_cached_key(key);
+    roots.dedup_by(|next, kept| {
+        (next.strip_prefix(&**kept))
+            .is_some_and(|rest| rest.first().is_none_or(|it| *it == b'/') || kept.ends_with(b"/"))
+    });
+    (roots.into_iter().map(Box::from).collect(), has_relative)
 }
 
 // Drop frees Vec/Box fields automatically.

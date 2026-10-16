@@ -6,6 +6,7 @@ const normalPattern = "*.ts";
 const recursivePattern = "**/*.ts";
 const nodeModulesPattern = "**/node_modules/**/*.js";
 const multiLevelPattern = "node_modules/*/lib/*.js";
+const crossingGroupPattern = "{node_modules/*/lib,src}/*.js";
 
 const benchFdir = false;
 const cwd = undefined;
@@ -134,6 +135,17 @@ group({ name: `sync multi-level pattern="${multiLevelPattern}"`, summary: true }
   if (benchFdir)
     bench("fdir", () => {
       const entries = new fdir().withFullPaths().glob(multiLevelPattern).crawl(process.cwd()).sync();
+    });
+});
+
+group({ name: `sync crossing-group pattern="${crossingGroupPattern}"`, summary: true }, () => {
+  bench("fast-glob", () => {
+    const entries = fg.globSync([crossingGroupPattern], fgOpts);
+  });
+
+  if (Glob)
+    bench("Bun.Glob", () => {
+      const entries = [...new Glob(crossingGroupPattern).scanSync(bunOpts)];
     });
 });
 

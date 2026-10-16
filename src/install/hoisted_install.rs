@@ -422,6 +422,7 @@ pub(crate) fn install_hoisted_packages(
                 progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
+                workspaces_seen: Vec::new(),
                 summary: &mut summary,
                 successfully_installed: Bitset::init_empty(pkg_len)?,
                 command_ctx: ctx,

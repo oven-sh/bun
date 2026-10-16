@@ -61,6 +61,8 @@ pub struct PackageInstaller<'a> {
 
     pub(crate) skip_verify_installed_version_number: bool,
     pub(crate) skip_delete: bool,
+    /// For `set_outlived_root`: each workspace, and whether it had a `node_modules` at the start.
+    pub(crate) workspaces_seen: Vec<(PackageID, bool)>,
     pub(crate) root_node_modules_folder: Dir,
     /// Taken for the first package that is linked: an install with nothing to link takes none.
     pub(crate) staging_lock: Option<package_install::StagingLock>,
@@ -1449,22 +1451,34 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    /// When this install creates the project's `node_modules`, `skip_delete` is on: there is nothing
-    /// to delete before a package is linked. The `node_modules` of a workspace can still exist, with
-    /// older packages in it, and there the delete is not skipped. That is decided here, once for each
-    /// tree and before any of its packages is linked, because afterwards the folder always exists.
-    /// `path` is the tree's `node_modules`, relative to the working directory.
+    /// When this install creates the project's `node_modules`, every package is linked without a look
+    /// at what is on disk. The `node_modules` of a workspace can still be there from an earlier
+    /// install, and its packages are then treated as in a warm install: kept if they are the right
+    /// version, and deleted before they are replaced.
+    ///
+    /// That is decided here, before any package of the workspace is linked, because afterwards the
+    /// folder always exists. `path` is the tree's `node_modules`, relative to the working directory.
     pub(crate) fn set_outlived_root(&mut self, tree_id: lockfile::tree::Id, path: &ZStr) {
         let lockfile = self.lockfile();
-        let parent = lockfile.buffers.trees.as_slice()[tree_id as usize].parent;
-        if !self.skip_delete || parent == lockfile::tree::INVALID_ID {
+        let tree = lockfile.buffers.trees.as_slice()[tree_id as usize];
+        if !self.skip_delete || tree.parent == lockfile::tree::INVALID_ID {
             return;
         }
-        self.trees[tree_id as usize].outlived_root = if lockfile.is_importer_tree_id(tree_id) {
-            bun_sys::directory_exists_at(Fd::cwd(), path).unwrap_or(true)
+        let outlived = if lockfile.is_importer_tree_id(tree_id) {
+            // A workspace that is depended on under two names has two trees for one folder.
+            let workspace = lockfile.buffers.resolutions[tree.dependency_id as usize];
+            match (self.workspaces_seen.iter()).find(|seen| seen.0 == workspace) {
+                Some(seen) => seen.1,
+                None => {
+                    let exists = bun_sys::directory_exists_at(Fd::cwd(), path).unwrap_or(true);
+                    self.workspaces_seen.push((workspace, exists));
+                    exists
+                }
+            }
         } else {
-            self.trees[parent as usize].outlived_root
+            self.trees[tree.parent as usize].outlived_root
         };
+        self.trees[tree_id as usize].outlived_root = outlived;
     }
 
     /// Trees are visited in id order, so the parent's `replaced` is complete.
@@ -1939,9 +1953,11 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        let verifying = needs_verify && !self.skip_verify_installed_version_number;
-        let inside_replaced_folder =
-            self.trees[self.current_tree_id as usize].inside_replaced_folder;
+        let tree = &self.trees[self.current_tree_id as usize];
+        let (inside_replaced_folder, outlived_root) =
+            (tree.inside_replaced_folder, tree.outlived_root);
+        let verifying =
+            needs_verify && (!self.skip_verify_installed_version_number || outlived_root);
         let needs_install = !verifying
             || remove_patch
             || inside_replaced_folder
@@ -2143,8 +2159,7 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
             let destination_dir = Dir::borrow(&destination_fd);
-            let skip_delete =
-                self.skip_delete && !self.trees[self.node_modules.tree_id as usize].outlived_root;
+            let skip_delete = self.skip_delete && !outlived_root;
 
             let install_result: package_install::InstallResult = match resolution.tag {
                 resolution::Tag::Symlink | resolution::Tag::Workspace => {

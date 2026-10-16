@@ -5201,23 +5201,21 @@ describe("the git and github dependencies that bun.lock has already resolved", (
 
 // The project's `node_modules` can be gone while a workspace still has its own.
 test("a package in the older node_modules of a workspace is replaced, not added to", async () => {
+  const app = (version: string) =>
+    JSON.stringify({ name: "app", version: "1.0.0", dependencies: { dep: `file:../../dep-${version}.tgz` } });
   using dir = tempDir("workspace-older-node-modules", {
     "package.json": JSON.stringify({
       name: "root",
       workspaces: ["packages/*"],
       dependencies: { dep: "file:./dep-1.0.0.tgz" },
     }),
-    "packages/app/package.json": JSON.stringify({
-      name: "app",
-      version: "1.0.0",
-      dependencies: { dep: "file:../../dep-2.0.0.tgz" },
-    }),
+    "packages/app/package.json": app("2.0.0"),
   });
   const cwd = String(dir);
-  for (const version of ["1.0.0", "2.0.0"]) {
+  for (const version of ["1.0.0", "2.0.0", "3.0.0"]) {
     await Bun.Archive.write(
       join(cwd, `dep-${version}.tgz`),
-      { "package/package.json": JSON.stringify({ name: "dep", version }), "package/index.js": "" },
+      { "package/package.json": JSON.stringify({ name: "dep", version }), [`package/only-in-${version}.js`]: "" },
       { compress: "gzip" },
     );
   }
@@ -5236,9 +5234,10 @@ test("a package in the older node_modules of a workspace is replaced, not added 
   const installed = join(cwd, "packages", "app", "node_modules", "dep");
 
   await install();
-  await write(join(installed, "of-an-older-version.js"), "");
+  expect(await readdirSorted(installed)).toEqual([".bun-tag", "only-in-2.0.0.js", "package.json"]);
+
+  await write(join(cwd, "packages", "app", "package.json"), app("3.0.0"));
   await rm(join(cwd, "node_modules"), { recursive: true });
   await install();
-
-  expect(await readdirSorted(installed)).toEqual([".bun-tag", "index.js", "package.json"]);
+  expect(await readdirSorted(installed)).toEqual([".bun-tag", "only-in-3.0.0.js", "package.json"]);
 });

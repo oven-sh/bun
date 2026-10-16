@@ -996,7 +996,7 @@ fn spawn_maybe_sync(
         }
     }
 
-    // A watcher manager does not forward fd 3 and up (#42925).
+    // A watcher manager does not forward fd 3 and up.
     #[cfg(windows)]
     if bun_sys::windows::is_watcher_child()
         && extra_fds

@@ -65,7 +65,7 @@ pub(crate) fn run_as_coordinator(
     if Output::enable_ansi_colors_stderr() {
         let _ = env.map.put(b"FORCE_COLOR", b"1");
     }
-    // A watcher manager does not forward fd 3, the worker's channel (#42925).
+    // A watcher manager does not forward fd 3, the worker's channel.
     #[cfg(windows)]
     let mark_workers = bun_sys::windows::is_watcher_child();
     #[cfg(windows)]

@@ -438,7 +438,7 @@ it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
 // survive too, so the reloaded image re-attaches to a live socket instead
 // of a closed one and the parent keeps receiving 'message' events.
 // Skipped on Windows: the watcher manager does not forward the IPC pipe to
-// the process it spawns, so no message arrives at all (#42925).
+// the process it spawns, so no message arrives at all.
 it.skipIf(isWindows)(
   "IPC to the parent survives a --watch reload",
   async () => {

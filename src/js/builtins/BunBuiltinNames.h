@@ -22,7 +22,6 @@ using namespace JSC;
 
 // Keep this list sorted.
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
-    macro($$typeof) \
     macro(AbortSignal) \
     macro(Buffer) \
     macro(FastBuffer) \
@@ -38,12 +37,7 @@ using namespace JSC;
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
-    macro(_debugInfo) \
-    macro(_debugStack) \
-    macro(_debugTask) \
     macro(_events) \
-    macro(_owner) \
-    macro(_store) \
     macro(abort) \
     macro(addAbortAlgorithmToSignal) \
     macro(arrayBuffer) \
@@ -114,7 +108,6 @@ using namespace JSC;
     macro(join) \
     macro(json) \
     macro(kResistStopPropagation) \
-    macro(key) \
     macro(lazy) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
@@ -138,6 +131,7 @@ using namespace JSC;
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \
+    macro(onEndCallbacks) \
     macro(originalColumn) \
     macro(originalLine) \
     macro(overridableRequire) \
@@ -155,7 +149,6 @@ using namespace JSC;
     macro(preventCancel) \
     macro(preventClose) \
     macro(processBindingConstants) \
-    macro(props) \
     macro(pull) \
     macro(rawHeaders) \
     macro(read) \
@@ -193,7 +186,6 @@ using namespace JSC;
     macro(type) \
     macro(updateRef) \
     macro(url) \
-    macro(validated) \
     macro(vmErrorDecorated) \
     macro(warning) \
     macro(webStreamClosedPromise) \

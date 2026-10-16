@@ -182,6 +182,67 @@ impl CommentTracker {
         true
     }
 
+    /// For a node that [`CommentTracker::update_only_last_pending_comments`] returns false for. It is not empty. `comments`: all
+    /// comments of the file so far.
+    #[inline(never)]
+    fn update_all_pending_comments(&mut self, finished: Candidate, comments: &mut [Comment]) {
+        let Candidate { node, start, end } = finished;
+        self.last_finished = (node, self.undo_log.len());
+        let CommentTracker {
+            pending, undo_log, ..
+        } = self;
+
+        // `pending` is in source order: comments before the node, inside it, and after it.
+        let after_node = match pending.last() {
+            Some(last) if last.start >= end => {
+                pending.partition_point(|comment| comment.start < end)
+            }
+            _ => pending.len(),
+        };
+        // The preceding node of a later comment ends at least as late as that of an earlier one. So if the node is not
+        // better for one comment, it is not better for the comments after it. Without this, a long list in which every
+        // element has a comment would take quadratic time, because its elements are finished after the whole list.
+        for comment in pending.get_mut(after_node..).unwrap_or_default() {
+            if !finished.is_better_preceding_node_than(comment.preceding) {
+                break;
+            }
+            undo_log.push(*comment);
+            comment.preceding = finished;
+        }
+
+        let mut index = after_node;
+        while index > 0 && pending[index - 1].start >= start {
+            index -= 1;
+        }
+        if index < after_node {
+            // A candidate outside the enclosing node is not one of its children.
+            let child_or_none = |candidate: Candidate| match candidate.is_inside(start, end) {
+                true => candidate.node,
+                false => NodeOrName::None,
+            };
+            let mut following = Candidate::default();
+            for comment in pending.drain(index..after_node).rev() {
+                undo_log.push(comment);
+                if !comment.following.is_none() {
+                    following = comment.following;
+                }
+                let ids = comment.first_id as usize..(comment.first_id + comment.count) as usize;
+                for resolved in comments.get_mut(ids).unwrap_or_default() {
+                    resolved.enclosing_node = node;
+                    resolved.preceding_node = child_or_none(comment.preceding);
+                    resolved.following_node = child_or_none(following);
+                }
+            }
+        }
+
+        if let Some(comment) = index.checked_sub(1).and_then(|last| pending.get_mut(last))
+            && finished.is_better_following_node_than(comment.following)
+        {
+            undo_log.push(*comment);
+            comment.following = finished;
+        }
+    }
+
     /// Forgets the comments from `first_id` on. They are added again when the next node is finished.
     fn forget_comments_from(&mut self, first_id: u32) {
         let kept = (self.pending).partition_point(|comments| comments.first_id < first_id);
@@ -630,61 +691,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return self.update_max_relevant_node_start();
         }
         if start < end {
-            self.comments.last_finished = (node, self.comments.undo_log.len());
-            let CommentTracker {
-                pending, undo_log, ..
-            } = &mut self.comments;
-
-            // `pending` is in source order: comments before the node, inside it, and after it.
-            let after_node = match pending.last() {
-                Some(last) if last.start >= end => {
-                    pending.partition_point(|comment| comment.start < end)
-                }
-                _ => pending.len(),
-            };
-            // The preceding node of a later comment ends at least as late as that of an earlier one. So if the node is not
-            // better for one comment, it is not better for the comments after it. Without this, a long list in which every
-            // element has a comment would take quadratic time, because its elements are finished after the whole list.
-            for comment in pending.get_mut(after_node..).unwrap_or_default() {
-                if !finished.is_better_preceding_node_than(comment.preceding) {
-                    break;
-                }
-                undo_log.push(*comment);
-                comment.preceding = finished;
-            }
-
-            let mut index = after_node;
-            while index > 0 && pending[index - 1].start >= start {
-                index -= 1;
-            }
-            if index < after_node {
-                // A candidate outside the enclosing node is not one of its children.
-                let child_or_none = |candidate: Candidate| match candidate.is_inside(start, end) {
-                    true => candidate.node,
-                    false => NodeOrName::None,
-                };
-                let mut following = Candidate::default();
-                for comment in pending.drain(index..after_node).rev() {
-                    undo_log.push(comment);
-                    if !comment.following.is_none() {
-                        following = comment.following;
-                    }
-                    let ids =
-                        comment.first_id as usize..(comment.first_id + comment.count) as usize;
-                    for resolved in self.lx.comments.get_mut(ids).unwrap_or_default() {
-                        resolved.enclosing_node = node;
-                        resolved.preceding_node = child_or_none(comment.preceding);
-                        resolved.following_node = child_or_none(following);
-                    }
-                }
-            }
-
-            if let Some(comment) = index.checked_sub(1).and_then(|last| pending.get_mut(last))
-                && finished.is_better_following_node_than(comment.following)
-            {
-                undo_log.push(*comment);
-                comment.following = finished;
-            }
+            (self.comments).update_all_pending_comments(finished, &mut self.lx.comments);
         }
         self.update_max_relevant_node_start();
     }

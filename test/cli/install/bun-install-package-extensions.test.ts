@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync, symlinkSync } from "fs";
 import { realpath, rm } from "fs/promises";
 import { bunEnv, bunExe } from "harness";
 import { basename, dirname, join } from "path";
@@ -236,10 +236,33 @@ describe.each(["hoisted", "isolated"] as const)("packageExtensions (%s)", linker
     await app.expectFrozenRefusal({ dependencies: pinned });
     await app.install({ dependencies: pinned }, true);
     expect(await app.lockText()).toBe(without);
-    // (The hoisted linker leaves what is no longer in the lockfile in node_modules.)
-    if (linker === "isolated") {
-      expect(await app.resolvedFrom("a-dep", "1.0.4", "peer-no-deps")).toBeUndefined();
-    }
+    expect(await app.resolvedFrom("a-dep", "1.0.4", "peer-no-deps")).toBeUndefined();
+  });
+
+  test.concurrent.each([
+    ["one dependency", ["no-deps"]],
+    ["two dependencies", ["left-pad", "no-deps"]],
+  ])("a-dep cannot load what a removed key added: %s", async (_, added) => {
+    const app = await project(linker);
+    const dependencies = { "a-dep": "1.0.5" };
+    const loadable = async () => {
+      const { out } = await bun(
+        app.dir,
+        "-e",
+        `const from = require("fs").realpathSync("node_modules/a-dep");
+        const loads = name => { try { return !!Bun.resolveSync(name + "/package.json", from); } catch { return false; } };
+        console.log(JSON.stringify(${JSON.stringify(added)}.filter(loads)));`,
+      );
+      return JSON.parse(out);
+    };
+
+    const rows = Object.fromEntries(added.map(name => [name, "1.0.0"]));
+    await app.install({ dependencies, packageExtensions: { "a-dep": { dependencies: rows } } }, true);
+    expect(await loadable()).toEqual(added);
+
+    await app.install({ dependencies }, true);
+    expect(await app.locked()).toEqual(["a-dep@1.0.5"]);
+    expect(await loadable()).toEqual([]);
   });
 
   // bun.lock says which rows were added, so a row the package declares is not taken for one.
@@ -348,6 +371,25 @@ describe.each(["hoisted", "isolated"] as const)("packageExtensions (%s)", linker
     const frozen = await bun(app.dir, "install", "--frozen-lockfile");
     expect(frozen.err).not.toContain("error:");
     expect(frozen.exitCode).toBe(0);
+  });
+
+  test.concurrent.each([
+    ["no-deps", ["a-dep@1.0.1", "no-deps@1.1.0"], { "no-deps@1.1.0": { dependencies: ["a-dep"] } }],
+    ["no-deps@2", ["no-deps@1.1.0"], undefined],
+  ])("%s: a version that bun.lock does not list has no record", async (key, locked, records) => {
+    const app = await project(linker);
+    // The peer resolves to 2.0.0, which is not installed next to the 1.1.0 of the other row.
+    const manifest = {
+      devDependencies: { "no-deps": "^1.0.0" },
+      peerDependencies: { "no-deps": "latest" },
+      packageExtensions: { [key]: { dependencies: { "a-dep": "1.0.1" } } },
+    };
+
+    await app.install(manifest, true);
+    expect(await app.locked()).toEqual(locked);
+    expect((await app.lock()).packageExtensions).toEqual(records);
+    await app.install(manifest, false, "--frozen-lockfile");
+    await app.install(manifest, false);
   });
 
   test.concurrent("bun.lockb records what was added as well", async () => {
@@ -467,5 +509,34 @@ test.concurrent("only the root package.json is read", async () => {
   const { err, exitCode } = await bun(packageDir, "install");
   expect(err).not.toContain("error:");
   expect(await file(join(packageDir, "bun.lock")).text()).not.toContain("no-deps");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("what no key adds any more is unlinked from the extended package only", async () => {
+  const root = { name: "app", workspaces: ["packages/*"], dependencies: { "a-dep": "1.0.5" } };
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({
+        ...root,
+        packageExtensions: { "a-dep": { dependencies: { "no-deps": "1.0.0" } } },
+      }),
+      "packages/member/package.json": JSON.stringify({ name: "member" }),
+      "mine/package.json": JSON.stringify({ name: "no-deps", version: "9.9.9" }),
+    },
+  });
+  const added = join(packageDir, "node_modules", ".bun", "a-dep@1.0.5", "node_modules", "no-deps");
+  const own = [packageDir, join(packageDir, "packages", "member")].map(dir => join(dir, "node_modules", "no-deps"));
+  expect(await bun(packageDir, "install")).toMatchObject({ exitCode: 0 });
+  for (const link of own) {
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(join(packageDir, "mine"), link, "junction");
+  }
+  expect([added, ...own].map(link => existsSync(link))).toEqual([true, true, true]);
+
+  await write(packageJson, JSON.stringify(root));
+  const { err, exitCode } = await bun(packageDir, "install");
+  expect(err).not.toContain("error:");
+  expect([added, ...own].map(link => existsSync(link))).toEqual([false, true, true]);
   expect(exitCode).toBe(0);
 });

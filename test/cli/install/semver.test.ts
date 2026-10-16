@@ -1345,6 +1345,82 @@ describe("Bun.semver.satisfies()", () => {
     ]);
   });
 
+  test("build metadata behind a major alone is not a second range", () => {
+    // Every expectation is node-semver 7.8's answer for the same input. "2+1" used to be "2 || 1" and "2+x" any version.
+    testSatisfiesTable([
+      ["2.5.0", "2+1", true],
+      ["1.5.0", "2+1", false],
+      ["3.5.0", "3+0", true],
+      ["0.5.0", "3+0", false],
+      ["2.5.0", "2+x", true],
+      ["1.5.0", "2+x", false],
+      ["3.5.0", "2+X", false],
+      ["1.5.0", "2+1.5.0", false],
+      ["2.5.0", "2+-", true],
+      ["2.5.0", "2+build", true],
+      ["3.5.0", "2+build", false],
+      ["2.5.0", "v2+1", true],
+      ["1.5.0", "=2+1", false],
+      ["3.5.0", "^2+x", false],
+      ["1.5.0", "~2+x", false],
+      ["1.5.0", ">=2+x", false],
+      ["3.5.0", ">=2+x", true],
+      ["2.5.0", ">2+1", false],
+      ["1.5.0", "<2+1", true],
+      ["2.5.0", "<2+1", false],
+      ["2.5.0", "<=2+1", true],
+      // next to other comparators
+      ["2.1.0", "2+1 <2.4", true],
+      ["2.5.0", "2+1 <2.4", false],
+      ["1.5.0", "2+1 <2.4", false],
+      ["3.5.0", "2+1 - 3", true],
+      ["1.5.0", "2+1 - 3", false],
+      ["3.5.0", "1 - 2+3", false],
+      ["3.5.0", "2+1||3", true],
+      ["1.5.0", "2+1 || 3", false],
+    ]);
+  });
+
+  test("a comparator that means >=0.0.0 does not shut out a prerelease of 0.0.0", () => {
+    // Every expectation is node-semver 7.8's answer for the same input: it reads such a comparator as any version.
+    testSatisfiesTable([
+      ...[
+        "*",
+        "x",
+        "^x",
+        "~x",
+        "~>*",
+        "0.x",
+        "0",
+        "0.0.x",
+        "0.0",
+        ">=0",
+        ">=0.0.0",
+        "^0",
+        "~0",
+        "~>0",
+        "^0.0",
+        "~0.0",
+      ].flatMap((any): [string, string, boolean][] => [
+        ["0.0.0-b", `>=0.0.0-a ${any}`, true],
+        ["0.0.0-b", `${any} >=0.0.0-b`, true],
+        ["0.0.0-b", `<0.0.0-c ${any}`, true],
+        ["0.0.0-b", `>=0.0.0-c ${any}`, false],
+        ["0.0.1-b", `>=0.0.0-a ${any}`, false],
+        ["0.0.0-b", any, false],
+      ]),
+      ["0.0.0-b", ">=0.0.0-a ^0.0.0", true],
+      ["0.0.0-b", ">=0.0.0-a ~0.0.0", true],
+      ["0.0.0-b", "0.0.0 - 0.0.0-c", true],
+      ["0.0.0-d", "0.0.0 - 0.0.0-c", false],
+      ["0.0.0-b", ">=0.0.0-a >0.0.0", false],
+      ["0.0.0-b", ">=0.0.0-a 0.0.0", false],
+      ["0.0.0-b", ">=0.0.0-a >=0.0.1", false],
+      ["1.0.0-b", ">=1.0.0-a 1.x", false],
+      ["1.0.0-b", ">=1.0.0-b *", true],
+    ]);
+  });
+
   test("spaces between < or > and = do not split the operator", () => {
     // Every expectation is node-semver 7's answer for the same input. "< =1" used to be "<1".
     testSatisfiesTable([
@@ -1641,6 +1717,39 @@ function manifestRegistry(versions: string[], requested: string[] = []) {
     },
   });
 }
+
+test.concurrent("bun install does not read build metadata behind a major alone as a second range", async () => {
+  // "latest" is 1.5.0, which used to be installed for both.
+  const packages = {
+    "digit-after-plus": { declared: "2+1", resolved: "2.5.0" },
+    "x-after-plus": { declared: "^2+x", resolved: "2.5.0" },
+  };
+  await using registry = manifestRegistry(["0.5.0", "2.5.0", "3.5.0", "1.5.0"]);
+  using dir = tempDir("semver-build-behind-major", {
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: Object.fromEntries(Object.entries(packages).map(([name, { declared }]) => [name, declared])),
+    }),
+    "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.url}"\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  const lockfile = Bun.JSONC.parse(await Bun.file(join(String(dir), "bun.lock")).text()) as {
+    packages: Record<string, [string, ...unknown[]]>;
+  };
+  expect(Object.fromEntries(Object.keys(packages).map(name => [name, lockfile.packages[name]?.[0]]))).toEqual(
+    Object.fromEntries(Object.entries(packages).map(([name, { resolved }]) => [name, `${name}@${resolved}`])),
+  );
+  expect(exitCode).toBe(0);
+});
 
 describe.concurrent("a number above u64::MAX in the package manager", () => {
   test("bun install does not resolve a dependency range that has one", async () => {

@@ -11,7 +11,7 @@ use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
 
 use crate::dependency::{self, TagExt as _};
-use crate::repository::{Repository, RepositoryExt as _};
+use crate::repository::{Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::versioned_url::VersionedURLType;
 
 pub type Resolution = ResolutionType<u64>;
@@ -274,11 +274,18 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
                 return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
             };
             let committish = &tar_committish[tar_end + 1..];
+            if !is_safe_resolved_tag(committish) {
+                return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
+            }
+            let committish = string_buf.append(committish)?;
 
             return Ok(Resolution::init(TaggedValue::Github(Repository {
                 owner: string_buf.append(user)?,
                 repo: string_buf.append(repo)?,
-                committish: string_buf.append(committish)?,
+                committish,
+                // `resolved` names the cache folder. As in the package-lock.json migration, it is
+                // the full commit hash.
+                resolved: committish,
                 ..Default::default()
             })));
         }

@@ -316,10 +316,20 @@ where
         // per the contract on `ParseOptions::short_aliases`.
         if full_arg.starts_with(b"-") && full_arg != b"-" && full_arg != b"--" {
             for (from, to) in self.short_aliases {
-                if full_arg == *from {
+                let value_is_next_arg = from
+                    .strip_prefix(full_arg)
+                    .and_then(|rest| rest.strip_prefix(b"="))
+                    .is_some_and(|value| self.iter.remain().first() == Some(&value));
+                if value_is_next_arg {
+                    let _ = self.iter.next();
+                }
+                if value_is_next_arg || full_arg == *from {
                     full_arg = to;
                     break;
                 }
+            }
+            if full_arg.is_empty() {
+                return self.parse_next_arg();
             }
         }
         if full_arg == b"--" || full_arg == b"-" {
@@ -915,6 +925,59 @@ mod tests {
             (0, None),
             (1, Some(b"--q=1")),
             (1, Some(b"--aa")),
+        ];
+        assert_eq!(expected, &seen[..]);
+    }
+
+    #[test]
+    fn short_aliases() {
+        let params: [clap::Param<u8>; 2] = [
+            clap::Param {
+                id: 0,
+                names: clap::Names {
+                    long: Some(b"aa"),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            clap::Param {
+                id: 1,
+                takes_value: clap::Values::Many,
+                ..Default::default()
+            },
+        ];
+        let args: &[&[u8]] = &[
+            b"--b", b"x", b"--c=1", b"--c", b"1", b"--c", b"2", b"--d", b"--e=1", b"--e", b"1",
+            b"--", b"--b",
+        ];
+        let mut iter = args::SliceIterator { remain: args };
+        let mut c = StreamingClap::<u8, args::SliceIterator> {
+            short_aliases: &[
+                (b"--b", b"--aa"),
+                (b"--c=1", b"--aa"),
+                (b"--d", b""),
+                (b"--e=1", b""),
+            ],
+            unknown_long_flags_are_positional: true,
+            unknown_long_flags_are_errors: false,
+            params: &params,
+            iter: &mut iter,
+            state: State::Normal,
+            positional: None,
+            diagnostic: None,
+        };
+        let mut seen: Vec<(u8, Option<&[u8]>)> = Vec::new();
+        while let Some(arg) = c.next().expect("unreachable") {
+            seen.push((arg.param.id, arg.value));
+        }
+        let expected: &[(u8, Option<&[u8]>)] = &[
+            (0, None),
+            (1, Some(b"x")),
+            (0, None),
+            (0, None),
+            (1, Some(b"--c")),
+            (1, Some(b"2")),
+            (1, Some(b"--b")),
         ];
         assert_eq!(expected, &seen[..]);
     }

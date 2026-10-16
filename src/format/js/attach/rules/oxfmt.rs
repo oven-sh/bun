@@ -126,6 +126,7 @@ impl<'a> Rules<'_, 'a, '_> {
         ignored_node: &mut Option<Owner<'a>>,
     ) -> Option<Attachment<'a>> {
         self.handle_closure_type_cast_comments_for_oxfmt()
+            .or_else(|| self.handle_comment_before_type_annotation_of_member_for_oxfmt())
             .or_else(|| self.handle_comment_in_array_pattern_of_holes_for_oxfmt(ignored_node))
             .or_else(|| self.handle_comment_before_body_for_oxfmt())
             .or_else(|| self.handle_comment_in_parentheses_of_super_class_for_oxfmt())
@@ -292,7 +293,7 @@ impl<'a> Rules<'_, 'a, '_> {
         if comment.has_newline_before() || !self.prev_token_ends_with(b';') {
             return None;
         }
-        let empty_statements = Span::new(self.cx.span_of(preceding_node).end, comment.span().start);
+        let empty_statements = self.cx.span_of(preceding_node).between(comment.span());
         let text = self
             .cx
             .file
@@ -383,12 +384,16 @@ impl<'a> Rules<'_, 'a, '_> {
             .then(|| Attachment::leading(Owner::Name(name.span().start)))
     }
 
-    /// For oxfmt a comment after `from` leads the source. For Prettier this one trails `a`.
+    /// For oxfmt a comment after `from`, or between the `}` and `from`, leads the source. For Prettier these trail `a`.
     ///
     /// ```js
     /// import { a } from // comment
     /// "b";
+    /// import { a } from /* comment */ "b"; // from `import { a } /* comment */ from "b"`
     /// ```
+    ///
+    /// One between a name and `from` trails the name, also from a line of its own, where it leads the source for Prettier:
+    /// `import a⏎// comment⏎from "b"` is `import a from "b";⏎// comment`.
     ///
     /// Not in `export * as a from // comment⏎"b";`, which is `export * as a from "b"; // comment` for both.
     fn handle_comment_before_module_source_for_oxfmt(
@@ -396,8 +401,20 @@ impl<'a> Rules<'_, 'a, '_> {
         statement: Stmt<'a>,
     ) -> Option<Attachment<'a>> {
         let source = Owner::Name(statement.module_specifier_span()?.start);
-        (self.following_node == Some(source) && self.is_directly_before(source))
-            .then(|| Attachment::leading(source))
+        if self.following_node != Some(source) {
+            return None;
+        }
+        if self.is_directly_before(source) {
+            return Some(Attachment::leading(source));
+        }
+        // Between the last specifier and the source there is a `}`, a `from`, or both.
+        if !self.next_token_starts_with(b'f') {
+            return None;
+        }
+        match self.prev_token_ends_with(b'}') {
+            true => Some(Attachment::leading(source)),
+            false => self.preceding_node.map(Attachment::trailing),
+        }
     }
 
     /// Like Prettier's `handleModuleSpecifiersComments`, but a `prettier-ignore` comment in a specifier applies to nothing:
@@ -757,6 +774,42 @@ impl<'a> Rules<'_, 'a, '_> {
             .filter(|it| matches!(it, Owner::Node(N::TSTypeAnnotation(_))))?;
         self.prev_token_ends_with(b')')
             .then(|| Attachment::leading(return_type))
+    }
+
+    /// `interface A { b? /* comment */ : C }`. oxfmt prints `b?/* comment */ : C`: the comment leads the type annotation. So does one
+    /// on a line of its own before the `?`, or before the `]` of `[b]: C`. For Prettier it trails `b`, and for oxfmt too if it ends
+    /// the line of `b`, or a comment after it does: `b /* 1 */ // 2⏎: C` is `b /* 1 */: C; // 2`.
+    fn handle_comment_before_type_annotation_of_member_for_oxfmt(&self) -> Option<Attachment<'a>> {
+        let Owner::Node(
+            N::PropertyDefinition(member)
+            | N::AccessorProperty(member)
+            | N::TSPropertySignature(member),
+        ) = self.enclosing_node?
+        else {
+            return None;
+        };
+        // oxfmt has no Flow, and the printer of a member of an object type of Flow writes no comments of a type annotation.
+        if self.cx.file.is_flow() {
+            return None;
+        }
+        let ty = member.ty()?;
+        let type_annotation = Owner::Node(N::TSTypeAnnotation(ty));
+        let comment = self.context.comment;
+        // For Prettier the type annotation of a signature has no comments, so there the type is the following node.
+        let is_between_key_and_colon = [type_annotation, self.cx.owner_of_type(ty)]
+            .contains(&self.following_node?)
+            && comment.span().end <= self.cx.start_of(type_annotation);
+        if !is_between_key_and_colon
+            || !(self.is_directly_before(type_annotation) || self.context.text_position == OwnLine)
+        {
+            return None;
+        }
+        let last_on_line =
+            (self.cx.comments_between_same_tokens(comment)).first_that_ends_line_of_prev_token;
+        match last_on_line.is_some_and(|last| comment.id() <= last) {
+            true => self.preceding_node.map(Attachment::trailing),
+            false => Some(Attachment::leading(type_annotation)),
+        }
     }
 
     /// `interface A { b(c) /* comment */ ⏎; }`. oxfmt prints `b(c) /* comment */;`: the comment trails the signature. For Prettier it

@@ -513,10 +513,7 @@ export function hideFromStackTrace(block: CallableFunction) {
 
 export type DirectoryTree = {
   [name: string]:
-    | string
-    | Buffer
-    | DirectoryTree
-    | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
+    string | Buffer | DirectoryTree | ((opts: { root: string }) => Bun.MaybePromise<string | Buffer | DirectoryTree>);
 };
 
 export async function makeTree(base: string, tree: DirectoryTree) {
@@ -1776,6 +1773,14 @@ export async function pack(cwd: string, env: NodeJS.Dict<string>, ...args: strin
   return { out, err };
 }
 
+/** Writes `<packageDir>/node_modules/.bin/<name>`: a command that prints `says`. */
+export function writeBinCommand(packageDir: string, name: string, says: string) {
+  const bin = join(packageDir, "node_modules", ".bin");
+  fs.mkdirSync(bin, { recursive: true });
+  if (isWindows) fs.writeFileSync(join(bin, `${name}.cmd`), `@echo ${says}\r\n`);
+  else fs.writeFileSync(join(bin, name), `#!/bin/sh\necho ${says}\n`, { mode: 0o755 });
+}
+
 // If you need to modify, clone it
 export const expiredTls = Object.freeze({
   cert: "-----BEGIN CERTIFICATE-----\nMIIDXTCCAkWgAwIBAgIJAKLdQVPy90jjMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV\nBAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX\naWRnaXRzIFB0eSBMdGQwHhcNMTkwMjAzMTQ0OTM1WhcNMjAwMjAzMTQ0OTM1WjBF\nMQswCQYDVQQGEwJBVTETMBEGA1UECAwKU29tZS1TdGF0ZTEhMB8GA1UECgwYSW50\nZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB\nCgKCAQEA7i7IIEdICTiSTVx+ma6xHxOtcbd6wGW3nkxlCkJ1UuV8NmY5ovMsGnGD\nhJJtUQ2j5ig5BcJUf3tezqCNW4tKnSOgSISfEAKvpn2BPvaFq3yx2Yjz0ruvcGKp\nDMZBXmB/AAtGyN/UFXzkrcfppmLHJTaBYGG6KnmU43gPkSDy4iw46CJFUOupc51A\nFIz7RsE7mbT1plCM8e75gfqaZSn2k+Wmy+8n1HGyYHhVISRVvPqkS7gVLSVEdTea\nUtKP1Vx/818/HDWk3oIvDVWI9CFH73elNxBkMH5zArSNIBTehdnehyAevjY4RaC/\nkK8rslO3e4EtJ9SnA4swOjCiqAIQEwIDAQABo1AwTjAdBgNVHQ4EFgQUv5rc9Smm\n9c4YnNf3hR49t4rH4yswHwYDVR0jBBgwFoAUv5rc9Smm9c4YnNf3hR49t4rH4ysw\nDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEATcL9CAAXg0u//eYUAlQa\nL+l8yKHS1rsq1sdmx7pvsmfZ2g8ONQGfSF3TkzkI2OOnCBokeqAYuyT8awfdNUtE\nEHOihv4ZzhK2YZVuy0fHX2d4cCFeQpdxno7aN6B37qtsLIRZxkD8PU60Dfu9ea5F\nDDynnD0TUabna6a0iGn77yD8GPhjaJMOz3gMYjQFqsKL252isDVHEDbpVxIzxPmN\nw1+WK8zRNdunAcHikeoKCuAPvlZ83gDQHp07dYdbuZvHwGj0nfxBLc9qt90XsBtC\n4IYR7c/bcLMmKXYf0qoQ4OzngsnPI5M+v9QEHvYWaKVwFY4CTcSNJEwfXw+BAeO5\nOA==\n-----END CERTIFICATE-----",
@@ -2504,3 +2509,58 @@ export const dtUnknownReaddir = {
     return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
   },
 };
+
+/**
+ * Hexadecimal, octal and binary integers as text, each with its exact value. Most lie between two
+ * doubles: 600 from a fixed seed, then ties, neighbours of ties and the edge of `Infinity`.
+ */
+export function integersThatNeedRounding(): [string, bigint][] {
+  // prefix, digits to draw from, longest
+  const prefixes: [string, string, number][] = [
+    ["0x", "0123456789abcdefABCDEF", 40],
+    ["0X", "0123456789abcdef", 40],
+    ["0o", "01234567", 50],
+    ["0b", "01", 140],
+  ];
+  const cases: [string, bigint][] = [];
+  const add = (prefix: string, digits: string) =>
+    cases.push([prefix + digits, BigInt(prefix.toLowerCase() + digits.replaceAll("_", ""))]);
+  let state = 12345;
+  const random = (below: number) => {
+    state = (state + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) % below;
+  };
+  for (let i = 0; i < 600; i++) {
+    const [prefix, alphabet, longest] = prefixes[random(prefixes.length)];
+    let digits = "";
+    for (let length = 1 + random(longest); length > 0; length--) digits += alphabet[random(alphabet.length)];
+    add(prefix, digits);
+  }
+  const edges = [
+    // halfway between two doubles, and one off either side of halfway
+    2n ** 53n + 1n,
+    2n ** 53n + 3n,
+    2n ** 64n + 2n ** 11n,
+    2n ** 64n + 2n ** 11n + 1n,
+    2n ** 64n + 3n * 2n ** 11n,
+    2n ** 200n + 2n ** 147n - 1n,
+    2n ** 200n + 2n ** 147n,
+    2n ** 200n + 2n ** 147n + 1n,
+    // the largest values that are finite, and the first that are not
+    2n ** 1024n - 2n ** 970n - 1n,
+    2n ** 1024n - 2n ** 970n,
+    2n ** 1024n,
+    2n ** 5000n,
+    0n,
+    2n ** 64n - 1n,
+  ];
+  for (const [prefix, alphabet] of prefixes) {
+    const radix = new Set(alphabet.toLowerCase()).size;
+    for (const edge of edges) add(prefix, edge.toString(radix));
+  }
+  add("0x", Buffer.alloc(100, "0").toString() + "b3c8bf81fdf2247");
+  add("0x", "b3c8_bf81_fdf2_247");
+  return cases;
+}

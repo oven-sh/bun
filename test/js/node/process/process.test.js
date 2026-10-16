@@ -3,7 +3,7 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -1682,6 +1682,51 @@ describe.concurrent(() => {
 
   it("process.constrainedMemory()", () => {
     expect(process.constrainedMemory() >= 0).toBe(true);
+  });
+
+  // In a mount namespace of its own, `sys` is /sys/fs/cgroup and `cgroup` is /proc/self/cgroup.
+  const inMadeUpCgroup = `
+    mount --bind "$1/sys" /sys/fs/cgroup &&
+    mount --bind "$1/cgroup" /proc/$$/cgroup &&
+    exec "$2" -e "console.log(navigator.hardwareConcurrency, process.constrainedMemory())"
+  `;
+  const unshare = ["unshare", "--user", "--map-root-user", "--mount", "--propagation", "private"];
+  // Not in every container.
+  const canMount = () => {
+    if (!isLinux || !which("unshare")) return false;
+    using dir = tempDir("process-cgroup", { "cgroup": "", "sys/a": "" });
+    const script = inMadeUpCgroup.replace(/exec .*/, "true");
+    return spawnSync({ cmd: [...unshare, "sh", "-c", script, "sh", String(dir)] }).exitCode === 0;
+  };
+  const GiB = 1024 ** 3;
+  const v2 = group => ({
+    [`sys/${group}cpu.max`]: "100000 100000\n",
+    [`sys/${group}memory.max`]: `${GiB}\n`,
+    [`sys/${group}memory.high`]: "max\n",
+  });
+  const v1 = {
+    "sys/cpu/a/cpu.cfs_quota_us": "100000\n",
+    "sys/cpu/a/cpu.cfs_period_us": "100000\n",
+    "sys/memory/a/memory.limit_in_bytes": `${GiB}\n`,
+    "sys/memory/a/memory.soft_limit_in_bytes": "9223372036854771712\n",
+  };
+  it.skipIf(!canMount()).each([
+    ["cgroup v2", "0::/\n", v2("")],
+    ["cgroup v2, in a group", "0::/a/b\n", { ...v2("a/"), "sys/a/b/cpu.max": "max 100000\n" }],
+    ["cgroup v1", "5:cpu,cpuacct:/a\n4:memory:/a\n1:name=systemd:/a\n", v1],
+    ["cgroup v1, and cgroup v2 without controllers", "5:cpu,cpuacct:/a\n4:memory:/a\n0::/a\n", v1],
+    ["cgroup v1 with memory and cpu in one hierarchy, and cgroup v2", "3:cpu,cpuacct,memory:/a\n0::/a\n", v1],
+    // The kernel lists cgroup v1 first.
+    ["cgroup v2, and a cgroup v1 hierarchy without controllers", "1:name=systemd:/\n0::/a\n", v2("a/")],
+  ])("the limits of %s are seen", async (_, cgroup, files) => {
+    using dir = tempDir("process-cgroup", { cgroup, ...files });
+    await using proc = Bun.spawn({
+      cmd: [...unshare, "sh", "-c", inMadeUpCgroup, "sh", String(dir), bunExe()],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `1 ${GiB}\n`, stderr: "", exitCode: 0 });
   });
 
   it("process.report", () => {

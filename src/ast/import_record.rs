@@ -107,6 +107,11 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// Set by `HTMLScanner` on the record of a `<link rel="stylesheet">`
+        /// that the document applies unconditionally. Each such record is one
+        /// occurrence of its sheet in the page's CSS order.
+        const HTML_STYLESHEET = 1 << 19;
     }
 }
 

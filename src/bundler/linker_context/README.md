@@ -778,6 +778,7 @@ The renamed symbols are then used during final code generation to produce output
 - Orders CSS imports within JS chunks
 - Handles CSS dependency resolution
 - Manages CSS-in-JS import patterns
+- Lists a stylesheet that JavaScript imports once, where the walk first reaches it. Lists a stylesheet of an HTML file once per `<link rel="stylesheet">` that the document applies (`ImportRecordFlags::HTML_STYLESHEET`), at the position of each link. `findImportedFilesInCSSOrder.rs` then keeps the rules of a file at its last entry and its `@layer` names at its first
 
 #### `findImportedFilesInCSSOrder.rs`
 

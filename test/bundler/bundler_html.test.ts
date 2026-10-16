@@ -1,4 +1,6 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -303,6 +305,183 @@ h1 {
       expect(cssBundle).toContain("font-family");
     },
   });
+
+  // The order of the stylesheets in a page's CSS file. A browser applies every
+  // <link rel="stylesheet"> of the document in tree order, so a sheet that is
+  // linked more than once has its rules at the last link and its @layer names
+  // at the first. A sheet that only JavaScript imports stays where the module
+  // walk first reaches it.
+  {
+    const stylesheet = (name: string, attributes = "") => `<link rel="stylesheet"${attributes} href="./${name}.css">`;
+    const preload = (name: string) => `<link rel="preload" as="style" href="./${name}.css">`;
+    const script = (name: string) => `<script type="module" src="./${name}.js"></script>`;
+    const page = (head: string) => `<!doctype html><html><head>${head}</head><body><p class="x">text</p></body></html>`;
+
+    // Each sheet holds one rule with its own colour, so the colours of a CSS
+    // file, in order, name the sheets it holds.
+    const sheets: Record<string, string> = {
+      "a": `.x { color: #aa0001 }`,
+      "b": `.x { color: #bb0002 }`,
+      "c": `.x { color: #cc0003 }`,
+      "imports-a-1": `@import "./a.css"; .x { color: #dd0004 }`,
+      "imports-a-2": `@import "./a.css"; .x { color: #ee0005 }`,
+      "layer-one": `@layer one { .x { color: #110006 } }`,
+      "layer-two": `@layer two { .x { color: #220007 } }`,
+    };
+    const scripts: Record<string, string> = {
+      "import-a": `import "./a.css";`,
+      "import-c": `import "./c.css";`,
+      "import-a-b": `import "./a.css"; import "./b.css";`,
+      "import-b-a": `import "./b.css"; import "./a.css";`,
+      "import-a-b-a": `import "./a.css"; import "./b.css"; import "./a.css";`,
+    };
+    const sheetOfColor = Object.fromEntries(
+      Object.entries(sheets).map(([name, css]) => [css.match(/#[0-9a-f]{6}/)![0], name]),
+    );
+    /** The sheets of a CSS file in order. An `@layer` statement is listed as written. */
+    const sheetOrder = (css: string) =>
+      (css.match(/@layer [\w-]+;|#[0-9a-f]{6}/g) ?? []).map(token => sheetOfColor[token] ?? token);
+    const sourceFiles = (pages: Record<string, string>, dir = "") => ({
+      ...pages,
+      ...Object.fromEntries(Object.entries(sheets).map(([name, css]) => [`${dir}/${name}.css`, css])),
+      ...Object.fromEntries(Object.entries(scripts).map(([name, js]) => [`${dir}/${name}.js`, js])),
+    });
+
+    const a = stylesheet("a");
+    const b = stylesheet("b");
+    const cases: { name: string; head: string; order: string[] }[] = [
+      // A sheet that the page links more than once, or preloads before it links it.
+      { name: "link-a-b-a", head: a + b + a, order: ["b", "a"] },
+      {
+        name: "link-layers",
+        head: stylesheet("layer-one") + stylesheet("layer-two") + stylesheet("layer-one"),
+        order: ["@layer one;", "layer-two", "layer-one"],
+      },
+      { name: "preload-a-link-b-a", head: preload("a") + b + a, order: ["b", "a"] },
+      { name: "preload-b-link-a-b", head: preload("b") + a + b, order: ["a", "b"] },
+      {
+        name: "link-a-b-all-media-a",
+        head: a + b + stylesheet("a", ` media=" ALL " type="TEXT/CSS"`),
+        order: ["b", "a"],
+      },
+      { name: "link-a-b-empty-media-a", head: a + b + stylesheet("a", ` media="" type=""`), order: ["b", "a"] },
+      // Only the second link to a.css is one that the document applies.
+      { name: "print-a-link-b-a", head: stylesheet("a", ` media="print"`) + b + a, order: ["b", "a"] },
+      { name: "template-a-link-b-a", head: `<template>${a}</template>` + b + a, order: ["b", "a"] },
+      { name: "template-then-link-a-b-a", head: `<template></template>` + a + b + a, order: ["b", "a"] },
+      // A script reaches a.css before the page links it. The link decides.
+      { name: "script-a-link-b-a", head: script("import-a") + b + a, order: ["b", "a"] },
+      { name: "script-a-b-link-a", head: script("import-a-b") + a, order: ["b", "a"] },
+
+      // Pages that link each sheet once.
+      { name: "link-a-b", head: a + b, order: ["a", "b"] },
+      { name: "link-b-a", head: b + a, order: ["b", "a"] },
+      {
+        name: "link-imports-a-twice",
+        head: stylesheet("imports-a-1") + b + stylesheet("imports-a-2"),
+        order: ["imports-a-1", "b", "a", "imports-a-2"],
+      },
+      // A preload applies nothing, so it is not a second position for a sheet.
+      { name: "link-a-b-preload-a", head: a + b + preload("a"), order: ["a", "b"] },
+      { name: "preload-a", head: preload("a"), order: ["a"] },
+      {
+        name: "stylesheet-as-style-a-link-b",
+        head: `<link rel="stylesheet" as="style" href="./a.css">` + b,
+        order: ["a", "b"],
+      },
+      // The second link to a.css is one that the document does not apply.
+      { name: "link-a-b-disabled-a", head: a + b + stylesheet("a", " disabled"), order: ["a", "b"] },
+      { name: "link-a-b-print-a", head: a + b + stylesheet("a", ` media="print"`), order: ["a", "b"] },
+      { name: "link-a-b-titled-a", head: a + b + stylesheet("a", ` title="alternate"`), order: ["a", "b"] },
+      { name: "link-a-b-text-plain-a", head: a + b + stylesheet("a", ` type="text/plain"`), order: ["a", "b"] },
+      { name: "link-a-b-template-a", head: a + b + `<template>${a}</template>`, order: ["a", "b"] },
+      // A sheet that a script imports after the page links it, or that the page does not link.
+      { name: "link-a-script-b-a", head: a + script("import-b-a"), order: ["a", "b"] },
+      { name: "link-a-b-script-a", head: a + b + script("import-a"), order: ["a", "b"] },
+      { name: "link-a-script-c-link-b", head: a + script("import-c") + b, order: ["a", "c", "b"] },
+      { name: "script-a-b-a", head: script("import-a-b-a"), order: ["a", "b"] },
+      // A stylesheet link to a file that is not CSS is walked like a script.
+      { name: "link-to-script-c-link-b", head: `<link rel="stylesheet" href="./import-c.js">` + b, order: ["c", "b"] },
+    ];
+
+    for (const backend of ["cli", "api"] as const) {
+      itBundled(`html/stylesheet-link-order-${backend}`, {
+        backend,
+        outdir: "out/",
+        files: sourceFiles(Object.fromEntries(cases.map(({ name, head }) => [`/${name}.html`, page(head)]))),
+        entryPoints: cases.map(({ name }) => `/${name}.html`),
+        onAfterBundle(api) {
+          const cssFileOf: Record<string, string> = {};
+          const orderOf: Record<string, string[]> = {};
+          for (const { name } of cases) {
+            const hrefs = [...api.readFile(`out/${name}.html`).matchAll(/href="([^"]+\.css)"/g)].map(match => match[1]);
+            expect(hrefs).toHaveLength(1);
+            cssFileOf[name] = hrefs[0];
+            orderOf[name] = sheetOrder(api.readFile(`out/${hrefs[0]}`));
+          }
+          expect(orderOf).toEqual(Object.fromEntries(cases.map(({ name, order }) => [name, order])));
+          // Pages share a CSS file when they hold the same sheets in the same order.
+          expect(cssFileOf["link-a-b-a"]).toBe(cssFileOf["link-b-a"]);
+          expect(cssFileOf["link-a-b-a"]).not.toBe(cssFileOf["link-a-b"]);
+        },
+      });
+    }
+
+    // A page that JavaScript imports is walked like a page that is an entry point.
+    const importedPage = sourceFiles({ "/in/page.html": page(a + b + a) }, "/in");
+    itBundled("html/stylesheet-link-order-page-imported-by-js", {
+      outdir: "out/",
+      target: "browser",
+      files: { ...importedPage, "/in/entry.js": `import "./page.html"; console.log("entry");` },
+      entryPoints: ["/in/entry.js"],
+      onAfterBundle(api) {
+        expect(sheetOrder(api.readFile("out/entry.css"))).toEqual(["b", "a"]);
+      },
+    });
+    itBundled("html/stylesheet-link-order-page-imported-by-js-and-entry-point", {
+      outdir: "out/",
+      target: "browser",
+      files: { ...importedPage, "/in/entry.js": `import "./page.html"; console.log("entry");` },
+      entryPointsRaw: ["in/page.html", "in/entry.js"],
+      onAfterBundle(api) {
+        const cssFiles = readdirSync(api.outdir).filter(file => file.endsWith(".css"));
+        expect(cssFiles).toHaveLength(1);
+        expect(api.readFile("out/page.html")).toContain(`href="./${cssFiles[0]}"`);
+        expect(sheetOrder(api.readFile(`out/${cssFiles[0]}`))).toEqual(["b", "a"]);
+      },
+    });
+    itBundled("html/stylesheet-link-order-page-imported-by-server", {
+      outdir: "out/",
+      target: "bun",
+      files: { ...importedPage, "/in/server.js": `import page from "./page.html"; console.log(page.index);` },
+      entryPoints: ["/in/server.js"],
+      onAfterBundle(api) {
+        const cssFiles = readdirSync(api.outdir).filter(file => file.endsWith(".css"));
+        expect(cssFiles).toHaveLength(1);
+        expect(sheetOrder(api.readFile(`out/${cssFiles[0]}`))).toEqual(["b", "a"]);
+      },
+    });
+
+    // `bun build --compile --target=browser` inlines the page's CSS file as a <style>.
+    test("html/stylesheet-link-order-standalone", async () => {
+      using dir = tempDir("html-stylesheet-link-order-standalone", {
+        "index.html": page(a + b + a),
+        "a.css": sheets.a,
+        "b.css": sheets.b,
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        compile: true,
+        target: "browser",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.outputs.length).toBe(1);
+      const html = await result.outputs[0].text();
+      expect(sheetOrder(html.slice(html.indexOf("<style>"), html.indexOf("</style>")))).toEqual(["b", "a"]);
+    });
+  }
 
   // Test multiple HTML entry points
   itBundled("html/multiple-entries", {

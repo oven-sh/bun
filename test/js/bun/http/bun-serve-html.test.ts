@@ -1219,6 +1219,34 @@ test("serve html with JSX runtime in production mode", async () => {
   expect(js).toContain(`("h1",{children:"Hello from JSX"})`);
 });
 
+for (const development of [false, { hmr: false }] as const) {
+  test(`a stylesheet linked twice is served at its last link with development: ${JSON.stringify(development)}`, async () => {
+    using dir = tempDir("html-stylesheet-linked-twice", {
+      "index.html": /*html*/ `<!DOCTYPE html>
+<html>
+<head>
+<link rel="stylesheet" href="./a.css">
+<link rel="stylesheet" href="./b.css">
+<link rel="stylesheet" href="./a.css">
+</head>
+<body><p class="x">text</p></body>
+</html>`,
+      "a.css": /*css*/ `.x { color: #aa0001 }`,
+      "b.css": /*css*/ `.x { color: #bb0002 }`,
+    });
+    const { default: html } = await import(join(String(dir), "index.html"));
+
+    using server = Bun.serve({ port: 0, development, routes: { "/": html } });
+
+    const page = await (await fetch(server.url)).text();
+    const hrefs = [...page.matchAll(/href="([^"]+\.css)"/g)].map(match => match[1]);
+    expect(hrefs).toHaveLength(1);
+    const css = await (await fetch(new URL(hrefs[0], server.url))).text();
+    // A browser applies a.css, b.css, a.css, so the a.css rule is the last one.
+    expect(css.match(/#[0-9a-f]{6}/g)).toEqual(["#bb0002", "#aa0001"]);
+  });
+}
+
 test("you can have HTML imports apply to only specific methods outside of the dev server", async () => {
   const dir = join(import.meta.dir, "jsx-runtime");
   const { default: html } = await import(join(dir, "index.html"));

@@ -1,5 +1,7 @@
+use core::cell::Cell;
 use core::marker::PhantomData;
 use std::borrow::Cow;
+use std::rc::Rc;
 
 use crate::Error;
 use crate::bun_fs as fs;
@@ -55,6 +57,10 @@ pub(crate) struct HTMLScanner<'a> {
     pub import_records: Vec<ImportRecord>,
     pub log: &'a mut Log,
     pub source: &'a Source,
+    /// How many `<template>` elements are open. Shared with their end-tag
+    /// handlers, which outlive the `&mut self` of `on_template_tag`. `None`
+    /// until the first `<template>`.
+    template_depth: Option<Rc<Cell<u32>>>,
 }
 
 impl<'a> HTMLScanner<'a> {
@@ -63,12 +69,44 @@ impl<'a> HTMLScanner<'a> {
             import_records: Vec::new(),
             log,
             source,
+            template_depth: None,
         }
     }
 }
 
+/// Whether the document applies this `<link rel="stylesheet">` whenever it
+/// loads: not `disabled`, not part of a named (`title`) style sheet set,
+/// `media` matches every medium, and `type` is CSS. The element matched
+/// `STYLESHEET_LINK_SELECTOR`, so it has `rel` and `href`.
+fn is_applied_stylesheet_link(element: &Element<'_, '_>) -> bool {
+    let attributes = element.attributes();
+    // Two attributes are `rel` and `href`: nothing to test, and `Attribute::name` allocates.
+    attributes.len() == 2
+        || attributes
+            .iter()
+            .all(|attribute| match attribute.name().as_str() {
+                "disabled" | "title" => false,
+                "media" => {
+                    let media = attribute.value();
+                    let media = media.trim_ascii();
+                    media.is_empty() || media.eq_ignore_ascii_case("all")
+                }
+                "type" => {
+                    let mime_type = attribute.value();
+                    let mime_type = mime_type.trim_ascii();
+                    mime_type.is_empty() || mime_type.eq_ignore_ascii_case("text/css")
+                }
+                _ => true,
+            })
+}
+
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(
+        &mut self,
+        input_path: &[u8],
+        kind: ImportKind,
+        flags: ImportRecordFlags,
+    ) -> Result<(), Error> {
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
@@ -115,7 +153,7 @@ impl<'a> HTMLScanner<'a> {
             loader: None,
             source_index: AstIndex::default(),
             original_path: b"",
-            flags: ImportRecordFlags::default(),
+            flags,
         };
 
         self.import_records.push(record);
@@ -136,13 +174,39 @@ impl<'a> HTMLScanner<'a> {
 
     fn on_tag(
         &mut self,
-        _element: &mut Element<'_, '_>,
+        element: &mut Element<'_, '_>,
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
+        mut flags: ImportRecordFlags,
     ) {
         let _ = url_attribute;
-        let _ = self.create_import_record(path, kind);
+        // A link inside a `<template>` is not part of the document.
+        if flags.contains(ImportRecordFlags::HTML_STYLESHEET)
+            && (self
+                .template_depth
+                .as_ref()
+                .is_some_and(|depth| depth.get() > 0)
+                || !is_applied_stylesheet_link(element))
+        {
+            flags.remove(ImportRecordFlags::HTML_STYLESHEET);
+        }
+        let _ = self.create_import_record(path, kind, flags);
+    }
+
+    fn on_template_tag(&mut self, element: &mut Element<'_, '_>) {
+        let Some(end_tag_handlers) = element.end_tag_handlers() else {
+            return;
+        };
+        let depth = Rc::clone(
+            self.template_depth
+                .get_or_insert_with(|| Rc::new(Cell::new(0))),
+        );
+        depth.set(depth.get() + 1);
+        end_tag_handlers.push(Box::new(move |_| {
+            depth.set(depth.get() - 1);
+            Ok(())
+        }));
     }
 
     pub(crate) fn scan(&mut self, input: &[u8]) -> Result<(), Error> {
@@ -165,15 +229,26 @@ type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;
 
 /// Trait capturing the methods `HTMLProcessor` calls on `T`.
 pub(crate) trait HTMLProcessorHandler {
+    /// Whether `run` calls `on_template_tag` for each `<template>` start tag.
+    const VISIT_TEMPLATE_TAGS: bool = false;
+
+    /// `flags` is what the matched `TAG_HANDLERS` row says about the record of
+    /// this tag: `HTML_STYLESHEET` for `STYLESHEET_LINK_SELECTOR`, else empty.
     fn on_tag(
         &mut self,
         element: &mut Element<'_, '_>,
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
+        flags: ImportRecordFlags,
     );
     fn on_write_html(&mut self, bytes: &[u8]);
     fn on_html_parse_error(&mut self, message: &[u8]);
+
+    // Only required when VISIT_TEMPLATE_TAGS == true.
+    fn on_template_tag(&mut self, _element: &mut Element<'_, '_>) {
+        unreachable!()
+    }
 
     // Only required when VISIT_DOCUMENT_TAGS == true; `run` only calls
     // these when visiting document tags, so the defaults are never
@@ -190,14 +265,20 @@ pub(crate) trait HTMLProcessorHandler {
 }
 
 impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
+    const VISIT_TEMPLATE_TAGS: bool = true;
+
     fn on_tag(
         &mut self,
         element: &mut Element<'_, '_>,
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
+        flags: ImportRecordFlags,
     ) {
-        HTMLScanner::on_tag(self, element, path, url_attribute, kind)
+        HTMLScanner::on_tag(self, element, path, url_attribute, kind, flags)
+    }
+    fn on_template_tag(&mut self, element: &mut Element<'_, '_>) {
+        HTMLScanner::on_template_tag(self, element)
     }
     fn on_write_html(&mut self, bytes: &[u8]) {
         HTMLScanner::on_write_html(self, bytes)
@@ -229,11 +310,14 @@ impl TagHandler {
     }
 }
 
+/// The `TAG_HANDLERS` row whose records can get `ImportRecordFlags::HTML_STYLESHEET`.
+const STYLESHEET_LINK_SELECTOR: &str = "link[rel='stylesheet'][href]";
+
 const TAG_HANDLERS: [TagHandler; 16] = [
     // Module scripts with src
     TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets
-    TagHandler::new("link[rel='stylesheet'][href]", "href", ImportKind::At),
+    TagHandler::new(STYLESHEET_LINK_SELECTOR, "href", ImportKind::At),
     // CSS Assets
     TagHandler::new("link[as='style'][href]", "href", ImportKind::At),
     // Font files
@@ -320,6 +404,11 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         let mut element_content_handlers = Vec::with_capacity(SELECTOR_CAP);
 
         for tag_info in TAG_HANDLERS {
+            let flags = if tag_info.selector == STYLESHEET_LINK_SELECTOR {
+                ImportRecordFlags::HTML_STYLESHEET
+            } else {
+                ImportRecordFlags::empty()
+            };
             let on_element: lol_html::ElementHandler<'_> = Box::new(
                 move |element: &mut Element<'_, '_>| -> lol_html::HandlerResult {
                     if !tag_info.url_attribute.is_empty()
@@ -339,6 +428,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                                     value.as_bytes(),
                                     tag_info.url_attribute.as_bytes(),
                                     tag_info.kind,
+                                    flags,
                                 );
                             }
                         }
@@ -347,6 +437,17 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                 },
             );
             element_content_handlers.push(element_entry(tag_info.selector, on_element)?);
+        }
+
+        if T::VISIT_TEMPLATE_TAGS {
+            let on_element: lol_html::ElementHandler<'_> = Box::new(
+                move |element: &mut Element<'_, '_>| -> lol_html::HandlerResult {
+                    // SAFETY: see `on_tag` above.
+                    unsafe { (*this_ptr).on_template_tag(element) };
+                    Ok(())
+                },
+            );
+            element_content_handlers.push(element_entry("template", on_element)?);
         }
 
         if VISIT_DOCUMENT_TAGS {

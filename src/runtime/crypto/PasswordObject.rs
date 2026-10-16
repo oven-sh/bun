@@ -79,7 +79,7 @@ impl AlgorithmValue {
                 "string",
             ));
         };
-        let invalid = |message| invalid_arguments(heap, message);
+        let invalid = |message: &str| heap.invalid_arguments(format_args!("{message}"));
 
         let algorithm = Algorithm::from_label(heap, "hash", label)?;
         if let Algorithm::Bcrypt = algorithm {
@@ -124,10 +124,6 @@ impl AlgorithmValue {
             Algorithm::Bcrypt => unreachable!(),
         })
     }
-}
-
-fn invalid_arguments<'a>(heap: &JsHeap<'a>, message: &str) -> bindgen::Error<'a> {
-    heap.error_with_code(ErrorCode::INVALID_ARG_TYPE, format_args!("{message}"))
 }
 
 fn invalid_argument_type<'a>(
@@ -430,8 +426,9 @@ impl PasswordOp for VerifyOp {
     }
 }
 
-/// `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>`
-fn password_error_code(err: &HashError) -> Vec<u8> {
+/// Build the JS `Error` instance for a failed hash/verify, with `code` set
+/// to `PASSWORD_<SCREAMING_SNAKE_ERROR_NAME>`.
+fn password_error_instance(err: &HashError, verb: &str, g: &JSGlobalObject) -> JSValue {
     let mut error_code: Vec<u8> = Vec::new();
     write!(
         &mut error_code,
@@ -441,43 +438,21 @@ fn password_error_code(err: &HashError) -> Vec<u8> {
         }
     )
     .expect("unreachable"); // bun.handleOom
-    error_code
-}
-
-struct PasswordErrorMessage<'a> {
-    err: &'a HashError,
-    verb: &'static str,
-}
-
-impl fmt::Display for PasswordErrorMessage<'_> {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { err, verb } = self;
-        write!(
-            writer,
-            "Password {verb} failed with error \"{}\"",
-            err.name()
-        )
-    }
-}
-
-/// What a failed `hash` or `verify` rejects with.
-fn password_error_instance(err: &HashError, verb: &'static str, g: &JSGlobalObject) -> JSValue {
-    let instance = g.create_error_instance(format_args!("{}", PasswordErrorMessage { err, verb }));
-    let code = EncodedSlice::latin1(&password_error_code(err)).to_js(g);
-    instance.put(g, b"code", code);
+    let instance = g.create_error_instance(format_args!(
+        "Password {verb} failed with error \"{}\"",
+        err.name()
+    ));
+    instance.put(g, b"code", EncodedSlice::latin1(&error_code).to_js(g));
     instance
 }
 
-/// What a failed `hashSync` or `verifySync` throws.
-fn password_error<'a>(
-    heap: &JsHeap<'a>,
-    err: &HashError,
-    verb: &'static str,
-) -> bindgen::Error<'a> {
-    heap.error_with_custom_code(
-        &password_error_code(err),
-        format_args!("{}", PasswordErrorMessage { err, verb }),
-    )
+fn password_error<'a>(heap: &JsHeap<'a>, err: &HashError, verb: &str) -> bindgen::Error<'a> {
+    // SAFETY: it makes an `Error` and a string, and defines `code`.
+    let global = unsafe { heap.global() };
+    bindgen::Error::from_value(JsLocal::new(
+        heap,
+        password_error_instance(err, verb, global),
+    ))
 }
 
 /// `Bun.password.hash/verify` off the JS thread: the op and the password are
@@ -577,7 +552,7 @@ pub(crate) fn hash<'a>(
 
     let password = copy_of(cx, "hash", "password", password)?;
     if password.is_empty() {
-        return Err(invalid_arguments(&cx.heap, EMPTY_PASSWORD));
+        return Err(cx.heap.invalid_arguments(format_args!("{EMPTY_PASSWORD}")));
     }
 
     Ok(schedule(
@@ -594,7 +569,7 @@ pub(crate) fn hash_sync<'a>(
 ) -> bindgen::Result<'a, Box<[u8]>> {
     let algorithm = AlgorithmValue::from_argument(heap, algorithm)?;
     if password.is_empty() {
-        return Err(invalid_arguments(heap, EMPTY_PASSWORD));
+        return Err(heap.invalid_arguments(format_args!("{EMPTY_PASSWORD}")));
     }
     PasswordObject::hash(password, algorithm)
         .map_err(|err| password_error(heap, &err, HashOp::ERR_VERB))

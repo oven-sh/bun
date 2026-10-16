@@ -267,22 +267,24 @@ pub(crate) fn random_uuid_v5<'a>(
 
     let uuid = UUID5::init(&namespace, name);
 
-    if encoding == Encoding::Hex {
-        let (str, bytes) = BunString::create_uninitialized_latin1(36);
-        uuid.print(
-            (&mut bytes[0..36])
-                .try_into()
-                .expect("infallible: size matches"),
-        );
-        return bindgen::to_js::string(heap, str);
+    match encoding {
+        Encoding::Hex => {
+            let (str, bytes) = BunString::create_uninitialized_latin1(36);
+            uuid.print(
+                (&mut bytes[0..36])
+                    .try_into()
+                    .expect("infallible: size matches"),
+            );
+            bindgen::to_js::string(heap, str)
+        }
+        Encoding::Buffer => Ok(heap
+            .create_buffer_from_box(Box::from(uuid.bytes))?
+            .as_value()),
+        encoding => bindgen::to_js::string(
+            heap,
+            crate::webcore::encoding::to_bun_string(&uuid.bytes, encoding),
+        ),
     }
-
-    // SAFETY: it makes a string or a `Buffer`.
-    let global = unsafe { heap.global() };
-    Ok(JsLocal::new(
-        heap,
-        encoding.encode_with_max_size(global, 32, &uuid.bytes)?,
-    ))
 }
 
 #[unsafe(no_mangle)]

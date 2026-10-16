@@ -635,14 +635,23 @@ describe("sync compression argument handling", () => {
 
   it("a numeric option is converted to a number, and then treated as that number is", () => {
     const input = "hello hello hello";
-    const beyond32Bits = [2 ** 32 + 1, "4294967297", { valueOf: () => 2 ** 32 + 1 }, "Infinity"];
+    const beyond32Bits = [
+      2 ** 32 + 1,
+      "4294967297",
+      4294967297n,
+      2n ** 64n + 1n,
+      { valueOf: () => 2 ** 32 + 1 },
+      "Infinity",
+    ];
     for (const [compress, outOfRange] of [
       [gzipSync, "Zlib error: Invalid argument"],
       [deflateSync, "Zlib error: Invalid argument"],
       [zstdCompressSync, "Compression level must be between 1 and 22"],
     ] as [(data: string, options: any) => Uint8Array, string][]) {
       const expected = compress(input, { level: 1 });
-      for (const level of ["1", 1n, [1], { valueOf: () => 1 }]) expect(compress(input, { level })).toEqual(expected);
+      for (const level of ["1", 1n, Object(1n), [1], { valueOf: () => 1 }, { valueOf: () => 1n }]) {
+        expect(compress(input, { level })).toEqual(expected);
+      }
       for (const level of beyond32Bits) expect(() => compress(input, { level })).toThrow(outOfRange);
     }
     for (const [decompress, compressed, bits] of [
@@ -654,6 +663,18 @@ describe("sync compression argument handling", () => {
       }
       for (const windowBits of beyond32Bits) {
         expect(() => decompress(compressed, { windowBits })).toThrow("Zlib error: Invalid argument");
+      }
+    }
+  });
+
+  it("zstdCompress and zstdCompressSync take the same levels", async () => {
+    const input = "hello hello hello";
+    for (const level of [undefined, 1, 22, "1", 1n, Object(1n), { valueOf: () => 1 }]) {
+      expect(await zstdCompress(input, { level } as any)).toEqual(zstdCompressSync(input, { level } as any));
+    }
+    for (const level of [0, 23, NaN, 2 ** 32 + 1, "4294967297", 4294967297n, { valueOf: () => 2 ** 32 + 1 }]) {
+      for (const compress of [zstdCompress, zstdCompressSync]) {
+        expect(() => compress(input, { level } as any)).toThrow("Compression level must be between 1 and 22");
       }
     }
   });

@@ -41,12 +41,14 @@ void JSStringOrBufferView::readBuffer(JSGlobalObject& globalObject, JSValue argu
         Blob__getInMemoryBytes(uncheckedDowncast<WebCore::JSBlob>(argument)->wrapped(), &data, &length);
         m_buffer = { data, length };
     }
-    if (isShared) {
-        if (!m_copy.tryAppend(m_buffer)) [[unlikely]] {
+    if (isShared && !m_buffer.empty()) {
+        m_copy = MallocSpan<uint8_t>::tryMalloc(m_buffer.size());
+        if (!m_copy) [[unlikely]] {
             auto scope = DECLARE_THROW_SCOPE(getVM(&globalObject));
             throwOutOfMemoryError(&globalObject, scope);
             return;
         }
+        memcpySpan(m_copy.mutableSpan(), m_buffer);
         m_buffer = m_copy.span();
     }
     // A Rust slice has no null data.

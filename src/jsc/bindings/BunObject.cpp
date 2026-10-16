@@ -1032,8 +1032,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     write                                          BunObject_callback_write                                            DontDelete|Function 1
     zstdCompressSync                               Bun::Bindgen::Generated::BunObject::jsZstdCompressSync             DontDelete|Function 1
     zstdDecompressSync                             Bun::Bindgen::Generated::BunObject::jsZstdDecompressSync           DontDelete|Function 1
-    zstdCompress                                 BunObject_callback_zstdCompress                                    DontDelete|Function 1
-    zstdDecompress                                 BunObject_callback_zstdDecompress                                    DontDelete|Function 1
+    zstdCompress                                 Bun::Bindgen::Generated::BunObject::jsZstdCompress                 DontDelete|Function 1
+    zstdDecompress                                 Bun::Bindgen::Generated::BunObject::jsZstdDecompress                 DontDelete|Function 1
 @end
 */
 

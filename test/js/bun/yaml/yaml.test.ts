@@ -1125,6 +1125,15 @@ folded: >
         });
       });
 
+      describe("a key that cannot be converted to a string", () => {
+        test("throws what the conversion throws", () => {
+          expect(() => YAML.parse("? {toString: x}\n: 1\n")).toThrow(new TypeError("No default value"));
+          expect(() => YAML.parse("a: 1\n? [b, {toString: x, valueOf: y}]\n: 2\n")).toThrow(
+            new TypeError("No default value"),
+          );
+        });
+      });
+
       describe("compact collection as key", () => {
         test("compact sequence", () => {
           expect(YAML.parse("? - a\n: v\n")).toEqual({ a: "v" });

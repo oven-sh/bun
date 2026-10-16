@@ -1114,6 +1114,10 @@ pub(crate) fn parse<'a>(cx: &mut JsScope<'a>, input: JsLocal<'a>) -> JsResult<JS
 
         MarkedArgumentBuffer::run(&mut ctx, ParserCtx::run);
 
+        // What `run` leaves when it threw.
+        if ctx.result.is_empty() {
+            return Err(JsError::Thrown);
+        }
         Ok(ctx.result)
     })
 }

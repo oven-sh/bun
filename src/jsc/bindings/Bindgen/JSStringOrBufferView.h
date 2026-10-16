@@ -1,7 +1,7 @@
 #pragma once
 #include "root.h"
 #include "Bindgen/JSStringUTF8View.h"
-#include <wtf/Vector.h>
+#include <wtf/MallocSpan.h>
 
 namespace Bun::Bindgen {
 
@@ -45,7 +45,8 @@ private:
 
     JSStringUTF8View m_string;
     std::span<const uint8_t> m_buffer;
-    WTF::Vector<uint8_t> m_copy;
+    // Not a Vector, which holds less than a buffer can.
+    WTF::MallocSpan<uint8_t> m_copy;
     bool m_isBuffer { false };
 };
 

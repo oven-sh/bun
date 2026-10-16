@@ -1751,27 +1751,31 @@ describe("stringify memory", () => {
 // The JSON5 lexer records every source position as an i32, so an input of
 // 2**31 bytes or more used to abort the process with
 // `panic: int cast: TryFromIntError(PosOverflow)` instead of throwing. It is
-// rejected before parsing, so the Uint8Array below is virtual pages that are
-// never read. The runtime accepts a TypedArray here (the binding takes a
-// Blob, Buffer or string); the declared `string` type is narrower.
-test("parse rejects an input of 2**31 bytes or more instead of panicking", () => {
-  let input: Uint8Array;
-  try {
-    input = new Uint8Array(2 ** 31 + 2);
-  } catch {
-    // The 2 GiB reservation itself can fail on a memory-pressured runner;
-    // there is nothing to test then.
-    return;
-  }
-  let err: any;
-  try {
-    JSON5.parse(input as unknown as string);
-  } catch (e) {
-    err = e;
-  }
-  expect(err?.constructor?.name).toBe("RangeError");
-  expect(err?.code).toBe("ERR_OUT_OF_RANGE");
-  expect(err?.message).toBe(
-    'The value of "input.byteLength" is out of range. It must be <= 2147483647. Received 2147483650',
-  );
-});
+// rejected before parsing, so the ArrayBuffer below is virtual pages that are
+// never read; the bytes of the SharedArrayBuffer are copied first. The runtime
+// accepts a buffer here (the binding takes a Blob, Buffer or string); the
+// declared `string` type is narrower.
+test.each(["ArrayBuffer", "SharedArrayBuffer"] as const)(
+  "parse rejects a %s of 2**31 bytes or more instead of panicking",
+  kind => {
+    let input: ArrayBuffer | SharedArrayBuffer;
+    try {
+      input = new globalThis[kind](2 ** 31 + 2);
+    } catch {
+      // The 2 GiB reservation itself can fail on a memory-pressured runner;
+      // there is nothing to test then.
+      return;
+    }
+    let err: any;
+    try {
+      JSON5.parse(input as unknown as string);
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.constructor?.name).toBe("RangeError");
+    expect(err?.code).toBe("ERR_OUT_OF_RANGE");
+    expect(err?.message).toBe(
+      'The value of "input.byteLength" is out of range. It must be <= 2147483647. Received 2147483650',
+    );
+  },
+);

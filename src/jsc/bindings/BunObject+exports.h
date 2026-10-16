@@ -53,8 +53,6 @@
     macro(spawnSync) \
     macro(udpSocket) \
     macro(write) \
-    macro(zstdCompress) \
-    macro(zstdDecompress) \
 
 #define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) BUN_DECLARE_HOST_FUNCTION(BunObject_callback_##name);
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);

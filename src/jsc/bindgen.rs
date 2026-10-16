@@ -122,14 +122,10 @@ impl<'a> JsHeap<'a> {
         Error::unthrown(code.fmt(self.global_object(), args))
     }
 
-    /// As [`error`](Self::error), with a `code` that is not one of [`ErrorCode`]'s. It is ASCII.
+    /// What [`JSGlobalObject::throw_invalid_arguments`] throws.
     #[cold]
-    pub fn error_with_custom_code(&self, code: &[u8], args: core::fmt::Arguments<'_>) -> Error<'a> {
-        let global = self.global_object();
-        let instance = global.create_error_instance(args);
-        let code = crate::EncodedSliceJsc::to_js(&bun_core::EncodedSlice::latin1(code), global);
-        instance.put(global, b"code", code);
-        Error::unthrown(instance)
+    pub fn invalid_arguments(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
+        self.error_with_code(ErrorCode::INVALID_ARG_TYPE, args)
     }
 }
 

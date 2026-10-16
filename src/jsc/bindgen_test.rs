@@ -261,9 +261,6 @@ pub(crate) fn fail<'a>(
             crate::ErrorCode::INVALID_ARG_VALUE,
             format_args!("an error with a code"),
         ),
-        TestFailure::CustomCode => {
-            heap.error_with_custom_code(b"CUSTOM_CODE", format_args!("an error with its own code"))
-        }
         TestFailure::OutOfMemory => bun_alloc::AllocError.into(),
         TestFailure::Syscall => {
             bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::open).into_error(heap)

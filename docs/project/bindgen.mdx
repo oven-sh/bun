@@ -126,15 +126,14 @@ Throwing tells the debugger, which can run code, so after a throw the body retur
 reading what it borrowed.
 
 ```rust
-// SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are strings, and its properties are
+// SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
 // defined and not set.
 let global = unsafe { heap.global() };
 ```
 
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
-`heap.range_error(..)`, `heap.error_with_code(ErrorCode::INVALID_ARG_TYPE, ..)`,
-`heap.error_with_custom_code(b"PASSWORD_INVALID_ENCODING", ..)` or
+`heap.range_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)` or
 `bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any type that
 implements `bindgen::IntoError` (`bun_sys::Error`, `SystemError`, `JsError` and a `Box` of
 one do), which lets a `capability: "none"` function fail too.

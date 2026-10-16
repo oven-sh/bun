@@ -38,7 +38,7 @@ pub(crate) fn stringify<'a>(
 }
 
 pub(crate) fn parse<'a>(heap: &JsHeap<'a>, input: WithValue<'a, &'a [u8]>) -> JsResult<JSValue> {
-    // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are strings, and its properties are
+    // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
     // defined and not set.
     let global = unsafe { heap.global() };
     super::with_text_format_source(

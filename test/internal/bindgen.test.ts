@@ -1203,9 +1203,6 @@ describe("errors", () => {
     expect(() => bindgen.fail("code")).toThrow(
       expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_VALUE", message: "an error with a code" }),
     );
-    expect(() => bindgen.fail("customCode")).toThrow(
-      expect.objectContaining({ name: "Error", code: "CUSTOM_CODE", message: "an error with its own code" }),
-    );
     expect(() => bindgen.fail("syscall")).toThrow(expect.objectContaining({ code: "ENOENT", syscall: "open" }));
     expect(() => bindgen.fail("outOfMemory")).toThrow(
       expect.objectContaining({ name: "RangeError", message: "Out of memory" }),

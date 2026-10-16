@@ -261,8 +261,6 @@ pub(crate) mod bun_object {
         BunObject_callback_spawnSync => super::static_adapters::subprocess_spawn_sync,
         BunObject_callback_udpSocket => super::static_adapters::udp_socket,
         BunObject_callback_write => crate::webcore::blob::write_file,
-        BunObject_callback_zstdCompress => JSZstd::compress,
-        BunObject_callback_zstdDecompress => JSZstd::decompress,
     }
     // `createParsedShellScript` / `createShellInterpreter` go through the same
     // `to_js_host_call` thunk as the macro-generated callbacks (their bodies
@@ -1843,10 +1841,6 @@ extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
     let _ = vm.uncaught_exception(global_object, err, false);
 }
 
-fn invalid_arguments<'a>(heap: &JsHeap<'a>, args: core::fmt::Arguments<'_>) -> bindgen::Error<'a> {
-    heap.error_with_code(jsc::ErrorCode::INVALID_ARG_TYPE, args)
-}
-
 #[allow(non_snake_case)]
 pub(crate) mod JSZlib {
     use super::*;
@@ -1876,10 +1870,9 @@ pub(crate) mod JSZlib {
             match name {
                 None | Some(b"" | b"zlib") => Ok(Library::Zlib),
                 Some(b"libdeflate") => Ok(Library::Libdeflate),
-                Some(_) => Err(invalid_arguments(
-                    heap,
-                    format_args!("Expected library to be one of 'zlib' or 'libdeflate'"),
-                )),
+                Some(_) => Err(heap.invalid_arguments(format_args!(
+                    "Expected library to be one of 'zlib' or 'libdeflate'"
+                ))),
             }
         }
     }
@@ -2062,14 +2055,11 @@ pub(crate) mod JSZlib {
                 if !(bun_libdeflate::MIN_COMPRESSION_LEVEL..=bun_libdeflate::MAX_COMPRESSION_LEVEL)
                     .contains(&level)
                 {
-                    return Err(invalid_arguments(
-                        heap,
-                        format_args!(
-                            "Compression level must be between {} and {} for libdeflate",
-                            bun_libdeflate::MIN_COMPRESSION_LEVEL,
-                            bun_libdeflate::MAX_COMPRESSION_LEVEL,
-                        ),
-                    ));
+                    return Err(heap.invalid_arguments(format_args!(
+                        "Compression level must be between {} and {} for libdeflate",
+                        bun_libdeflate::MIN_COMPRESSION_LEVEL,
+                        bun_libdeflate::MAX_COMPRESSION_LEVEL,
+                    )));
                 }
                 let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level) else {
                     return Err(bun_alloc::AllocError.into());
@@ -2101,75 +2091,17 @@ pub(crate) mod JSZstd {
     use super::*;
     use bun_jsc::bindgen::IntoError as _;
 
-    const DEFAULT_LEVEL: i32 = 3;
-    const LEVEL_OUT_OF_RANGE: &str = "Compression level must be between 1 and 22";
-
-    fn is_level(value: i32) -> bool {
-        (1..=22).contains(&value)
-    }
-
-    fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
-        if let Some(option_obj) = options_val {
-            if let Some(level_val) = option_obj.get(global_this, "level")? {
-                let value = level_val.coerce::<i32>(global_this)?;
-
-                if !is_level(value) {
-                    return Err(
-                        global_this.throw_invalid_arguments(format_args!("{LEVEL_OUT_OF_RANGE}"))
-                    );
-                }
-
-                return Ok(value);
-            }
-        }
-
-        Ok(DEFAULT_LEVEL)
-    }
-
-    /// `(arguments[0] ?? undefined, arguments[1] if object)`. Throws if `arguments[1]` is present but neither an object
-    /// nor `undefined`.
-    #[inline]
-    fn parse_compress_args(
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<(JSValue, Option<JSValue>)> {
-        let arguments = callframe.arguments();
-        let buffer_value: JSValue = if arguments.len() > 0 {
-            arguments[0]
-        } else {
-            JSValue::UNDEFINED
-        };
-        let options_val: Option<JSValue> = if arguments.len() > 1 && arguments[1].is_object() {
-            Some(arguments[1])
-        } else if arguments.len() > 1 && !arguments[1].is_undefined() {
+    fn level_of<'a>(
+        heap: &JsHeap<'a>,
+        options: ZstdCompressionOptions,
+    ) -> bindgen::Result<'a, i32> {
+        let level = options.level.map_or(3, |level| level as i32);
+        if !(1..=22).contains(&level) {
             return Err(
-                global.throw_invalid_arguments(format_args!("Expected options to be an object"))
+                heap.invalid_arguments(format_args!("Compression level must be between 1 and 22"))
             );
-        } else {
-            None
-        };
-        Ok((buffer_value, options_val))
-    }
-
-    #[inline]
-    fn get_options_async(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<(
-        node::ThreadIsolated<node::StringOrBuffer<'static>>,
-        Option<JSValue>,
-        i32,
-    )> {
-        let (buffer_value, options_val) = parse_compress_args(global_this, callframe)?;
-
-        let level = get_level(global_this, options_val)?;
-
-        if let Some(buffer) = node::StringOrBuffer::from_js_async(global_this, buffer_value)? {
-            return Ok((buffer, options_val, level));
         }
-
-        Err(global_this
-            .throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
+        Ok(level)
     }
 
     /// Error of a `Bun.zstd*` call: thrown by the sync functions, rejected by [`ZstdJob`].
@@ -2182,18 +2114,23 @@ pub(crate) mod JSZstd {
         Decompression(bun_zstd::ZstdError),
     }
 
+    /// The message of the `ERR_ZSTD`.
+    impl core::fmt::Display for Failure {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self {
+                Failure::OutOfMemory => f.write_str("Out of memory"),
+                Failure::Compression(message) => write!(f, "{}", bstr::BStr::new(message)),
+                Failure::Decompression(err) => write!(f, "Decompression failed: {err}"),
+            }
+        }
+    }
+
     impl<'a> bindgen::IntoError<'a> for Failure {
+        #[cold]
         fn into_error(self, heap: &JsHeap<'a>) -> bindgen::Error<'a> {
             match self {
                 Failure::OutOfMemory => bun_alloc::AllocError.into(),
-                Failure::Compression(message) => heap.error_with_code(
-                    jsc::ErrorCode::ZSTD,
-                    format_args!("{}", bstr::BStr::new(message)),
-                ),
-                Failure::Decompression(err) => heap.error_with_code(
-                    jsc::ErrorCode::ZSTD,
-                    format_args!("Decompression failed: {}", err),
-                ),
+                failure => heap.error_with_code(jsc::ErrorCode::ZSTD, format_args!("{failure}")),
             }
         }
     }
@@ -2202,17 +2139,8 @@ pub(crate) mod JSZstd {
         fn to_js(self, global_this: &JSGlobalObject) -> JSValue {
             match self {
                 Failure::OutOfMemory => global_this.create_out_of_memory_error(),
-                Failure::Compression(message) => global_this
-                    .err(
-                        jsc::ErrCode::ZSTD,
-                        format_args!("{}", bstr::BStr::new(message)),
-                    )
-                    .to_js(),
-                Failure::Decompression(err) => global_this
-                    .err(
-                        jsc::ErrCode::ZSTD,
-                        format_args!("Decompression failed: {}", err),
-                    )
+                failure => global_this
+                    .err(jsc::ErrCode::ZSTD, format_args!("{failure}"))
                     .to_js(),
             }
         }
@@ -2261,13 +2189,7 @@ pub(crate) mod JSZstd {
         data: &[u8],
         options: ZstdCompressionOptions,
     ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
-        let level = options.level.map_or(DEFAULT_LEVEL, |level| level as i32);
-        if !is_level(level) {
-            return Err(invalid_arguments(
-                heap,
-                format_args!("{LEVEL_OUT_OF_RANGE}"),
-            ));
-        }
+        let level = level_of(heap, options)?;
         let output = compress_to_box(data, level).map_err(|failure| failure.into_error(heap))?;
         heap.create_buffer_from_box(output)
     }
@@ -2329,16 +2251,21 @@ pub(crate) mod JSZstd {
         }
     }
 
-    fn create_job(
-        cx: &bun_jsc::JsThread<'_>,
-        buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
+    fn schedule<'a>(
+        cx: &mut JsScope<'a>,
+        data: JsLocal<'a>,
         is_compress: bool,
         level: i32,
-    ) -> JSValue {
+    ) -> bindgen::Result<'a, JSValue> {
+        let Some(buffer) = node::StringOrBuffer::from_js_async(cx.global(), data.to_js())? else {
+            return Err(cx
+                .heap
+                .invalid_arguments(format_args!("Expected buffer to be a string or buffer")));
+        };
         let promise = jsc::JSPromiseStrong::init(cx.global());
         let promise_value = promise.value();
         jsc::Job::<ZstdJob>::schedule(
-            cx,
+            &cx.js_thread(),
             ZstdJob {
                 buffer,
                 is_compress,
@@ -2347,27 +2274,25 @@ pub(crate) mod JSZstd {
             },
             promise,
         );
-        promise_value
+        Ok(promise_value)
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn compress(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let cx = global_this.js_thread_of_caller(callframe);
-        let (buffer, _, level) = get_options_async(global_this, callframe)?;
-        Ok(create_job(&cx, buffer, true, level))
+    pub(crate) fn compress<'a>(
+        cx: &mut JsScope<'a>,
+        data: JsLocal<'a>,
+        options: ZstdCompressionOptions,
+    ) -> bindgen::Result<'a, JSValue> {
+        let level = level_of(&cx.heap, options)?;
+        schedule(cx, data, true, level)
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn decompress(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let cx = global_this.js_thread_of_caller(callframe);
-        let (buffer, _, _) = get_options_async(global_this, callframe)?;
-        Ok(create_job(&cx, buffer, false, 0)) // level is ignored for decompression
+    pub(crate) fn decompress<'a>(
+        cx: &mut JsScope<'a>,
+        data: JsLocal<'a>,
+        options: ZstdCompressionOptions,
+    ) -> bindgen::Result<'a, JSValue> {
+        level_of(&cx.heap, options)?;
+        schedule(cx, data, false, 0)
     }
 }
 

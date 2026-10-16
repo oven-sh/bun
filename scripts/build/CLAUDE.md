@@ -148,7 +148,8 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 1. Windows: re-exec inside VS dev shell if `VSINSTALLDIR` unset (provides PATH/INCLUDE/LIB for nested cmake).
 2. Parse CLI: `--profile=<name>`, `--<field>=<value>` overrides, `--target=<ninja-target>`, `-j`/`-v`/`-k` passthrough, bare positionals = exec args for built binary.
-3. Resolve `PartialConfig` from profile + overrides (or `--config-file` for ninja's self-reconfigure).
+3. Drop from `process.env` every variable `env.ts` does not list (see "Gotchas"). The caller's own environment is kept only for the built binary, if there are exec args.
+4. Resolve `PartialConfig` from profile + overrides (or `--config-file` for ninja's self-reconfigure).
 
 ### Phase 1 — Configure (`configure.ts::configure`)
 
@@ -239,6 +240,7 @@ It is configured by `configureCodegen()`, not `configure()`, and resolves a `Cod
 | `shell.ts`                     | `quote()`/`slash()` — shell escaping for ninja commands                                                                                                                 |
 | `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                                                                                                        |
 | `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                                                                                                           |
+| `env.ts`                       | The caller's variables the build sees: `inheritedVariables`, `restrictEnvironment()`, `edgeEnvironment()`                                                               |
 | `download.ts`                  | `downloadWithRetry()`, archive extraction                                                                                                                               |
 | `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                                                                           |
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                                                                 |
@@ -299,6 +301,10 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 **cmd.exe quoting is partial.** `shell.ts` quote() handles spaces/special chars but NOT `%VAR%` expansion, `^` escape, `&|>` redirection. If an arg contains those, switch to powershell.
 
 **A tool is named by path, so ninja cannot see it replaced.** An LLVM upgrade behind a stable path (scoop's `current`, a Homebrew `opt/` symlink) leaves every command line unchanged, and the new binary's packaged mtime is usually older than the objects, so naming the binary as an input does not help. Configure writes `<buildDir>/toolchain-identity/<tool>.txt` (`tools.ts` `writeToolIdentities`) with what `cc`, `cxx`, `hostCc`, `nasm` and `ld` report for `--version` (for an llvm.org build: the release and the exact commit, the same on every machine), and an edge takes the file of each tool it runs as an implicit input (`toolIdentityFile(cfg, tool)`): a replaced compiler recompiles, a replaced linker only relinks. The Rust units get the same from the rustc version and commit in their hash. A new edge that runs one of those tools should name its file too. Not covered: a toolchain rebuilt in place at the same version and commit (`bun run clean`), and nested cmake builds, whose own build directory keeps the old compiler's objects.
+
+**The build does not see your environment.** `env.ts` lists the caller's variables that configure and the edges see; `CFLAGS`, `RUSTFLAGS`, `CPATH`, `CC` and everything else exported in a shell are dropped, because tools act on them without any command saying so. A new knob read with `process.env.X` has to be added to that list (a source lint says so); a variable one edge needs goes in its command or manifest instead, where ninja sees it change.
+
+**An edge's `PATH` is not yours either.** It is your `PATH` cut down to the directories configure found a tool in. A program an edge runs by name (in a rule's shell command, from a script with no `Config`, or looked up by another tool, as `tar` does `gzip` and clang does `ld`) has to be in `namedPrograms` (`tools.ts`): configure then fails if it is missing, and keeps its directory.
 
 **`rm -rf build/` doesn't clear the cache locally.** `cfg.cacheDir` is machine-shared at `$BUN_INSTALL/build-cache` for non-CI builds (ccache, tarballs, prebuilt WebKit); `$BUN_BUILD_CACHE_DIR` puts it somewhere else, in CI too (`--cacheDir` still wins for one build). Everything there is content-addressed or version-stamped, so a stale entry can't be hit — don't reach for `bun run clean cache` as a debugging step. If a build misbehaves, the bug is in the inputs or the graph, not the cache; nuking it just costs you a cold rebuild. CI keeps `<buildDir>/cache` so `rm -rf build/` is still a full reset there.
 

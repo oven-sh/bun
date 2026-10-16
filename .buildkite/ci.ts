@@ -626,11 +626,6 @@ function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandS
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     timeout_in_minutes: 60,
-    env: {
-      // ASAN runtime settings — unrelated to build config, affects the
-      // linked binary's startup during the smoke test.
-      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
-    },
     command: [...nasmSetup, getBuildCommand(platform, options)],
   };
 }

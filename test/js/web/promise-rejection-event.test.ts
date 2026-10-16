@@ -258,7 +258,7 @@ describe("unhandledrejection on the main thread", () => {
   });
 
   test.concurrent.each(["none", "warn", "warn-with-error-code", "throw"])(
-    "--unhandled-rejections=%s honours preventDefault()",
+    "--unhandled-rejections=%s runs the web listener, then the process listener",
     async mode => {
       const { stdout, exitCode } = await run(
         `
@@ -272,6 +272,87 @@ describe("unhandledrejection on the main thread", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // The web listener alone. preventDefault() is the only thing that marks the rejection handled.
+  test.concurrent.each([
+    ["none", true, "", 0],
+    ["none", false, "", 0],
+    ["warn", true, "UnhandledPromiseRejectionWarning", 0],
+    ["warn", false, "UnhandledPromiseRejectionWarning", 0],
+    ["warn-with-error-code", true, "", 0],
+    ["warn-with-error-code", false, "UnhandledPromiseRejectionWarning", 1],
+    ["throw", true, "", 0],
+    ["throw", false, "error: x", 1],
+  ] as const)(
+    "--unhandled-rejections=%s, preventDefault() %p: stderr %p, exit %i",
+    async (mode, prevent, stderrContains, expectedExit) => {
+      const { stdout, stderr, exitCode } = await run(
+        `
+        addEventListener("unhandledrejection", e => { console.log("web"); if (${prevent}) e.preventDefault(); });
+        Promise.reject(new Error("x"));
+      `,
+        [`--unhandled-rejections=${mode}`],
+      );
+      expect(stdout).toBe("web\n");
+      if (stderrContains === "") expect(stderr).toBe("");
+      else expect(stderr).toContain(stderrContains);
+      expect(exitCode).toBe(expectedExit);
+    },
+  );
+
+  test.concurrent("under bun test neither the web listener nor the process listener runs", async () => {
+    using dir = tempDir("pre-bun-test", {
+      "a.test.ts": `
+        import { test } from "bun:test";
+        addEventListener("unhandledrejection", e => { console.log("web ran"); e.preventDefault(); });
+        process.on("unhandledRejection", () => console.log("process ran"));
+        Promise.reject(new Error("between tests"));
+        test("passes", () => {});
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "a.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).not.toContain("web ran");
+    expect(stdout).not.toContain("process ran");
+    expect(stderr).toContain("between tests");
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe("rejectionhandled on the main thread", () => {
+  const lateHandler = `
+    const keepAlive = setInterval(() => {}, 1000);
+    const order = [];
+    addEventListener("unhandledrejection", e => e.preventDefault());
+    addEventListener("rejectionhandled", e => order.push("web:" + (e.promise === p)));
+    process.on("rejectionHandled", promise => {
+      order.push("process:" + (promise === p));
+      console.log(order.join(","));
+      clearInterval(keepAlive);
+    });
+    const p = Promise.reject(new Error("boom"));
+    setTimeout(() => p.catch(() => {}), 0);
+  `;
+
+  test.concurrent("the process listener runs after the web listener", async () => {
+    const { stdout, stderr, exitCode } = await run(lateHandler);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("web:true,process:true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--unhandled-rejections=warn still prints PromiseRejectionHandledWarning", async () => {
+    const { stdout, stderr, exitCode } = await run(lateHandler, ["--unhandled-rejections=warn"]);
+    expect(stdout).toBe("web:true,process:true\n");
+    expect(stderr).toContain("PromiseRejectionHandledWarning");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("unhandledrejection in a Worker", () => {
@@ -313,6 +394,38 @@ describe("unhandledrejection in a Worker", () => {
         "[main] worker closed, code 0",
         "",
       ].join("\n"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("self.onrejectionhandled fires when a handler attaches later", async () => {
+    using dir = tempDir("pre-worker-handled", {
+      "worker.js": `
+        self.onunhandledrejection = e => e.preventDefault();
+        self.onrejectionhandled = e => {
+          postMessage({ ctor: e.constructor.name, type: e.type, samePromise: e.promise === p, reason: e.reason.message });
+        };
+        const p = Promise.reject(new Error("late"));
+        setTimeout(() => p.catch(() => {}), 0);
+      `,
+      "main.js": `
+        const w = new Worker(new URL("./worker.js", import.meta.url).href);
+        w.onmessage = e => console.log(JSON.stringify(e.data));
+        w.addEventListener("close", e => console.log("closed", e.code));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      JSON.stringify({ ctor: "PromiseRejectionEvent", type: "rejectionhandled", samePromise: true, reason: "late" }) +
+        "\nclosed 0\n",
     );
     expect(exitCode).toBe(0);
   });

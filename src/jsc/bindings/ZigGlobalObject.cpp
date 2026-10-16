@@ -1275,89 +1275,30 @@ static Zig::GlobalObject* globalObjectForEventHandler(JSC::JSGlobalObject* lexic
     return defaultGlobalObject(lexicalGlobalObject);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(globalOnMessage,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    Zig::GlobalObject* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
-    return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().messageEvent, thisObject->world()));
-}
-
-JSC_DEFINE_CUSTOM_GETTER(globalOnError,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    Zig::GlobalObject* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
-    return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().errorEvent, thisObject->world()));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setGlobalOnMessage,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue encodedValue, JSC::PropertyName property))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    JSValue value = JSValue::decode(encodedValue);
-    auto* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
-    setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().messageEvent, value, *thisObject);
-    vm.writeBarrier(thisObject, value);
-    ensureStillAliveHere(value);
-    return true;
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setGlobalOnError,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue encodedValue, JSC::PropertyName property))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    JSValue value = JSValue::decode(encodedValue);
-    auto* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
-    setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().errorEvent, value, *thisObject);
-    vm.writeBarrier(thisObject, value);
-    ensureStillAliveHere(value);
-    return true;
-}
-
-JSC_DEFINE_CUSTOM_GETTER(globalOnUnhandledRejection,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    Zig::GlobalObject* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
-    return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().unhandledrejectionEvent, thisObject->world()));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setGlobalOnUnhandledRejection,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue encodedValue, JSC::PropertyName property))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    JSValue value = JSValue::decode(encodedValue);
-    auto* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
-    setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().unhandledrejectionEvent, value, *thisObject);
-    vm.writeBarrier(thisObject, value);
-    ensureStillAliveHere(value);
-    return true;
-}
-
-JSC_DEFINE_CUSTOM_GETTER(globalOnRejectionHandled,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    Zig::GlobalObject* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
-    return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().rejectionhandledEvent, thisObject->world()));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(setGlobalOnRejectionHandled,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue encodedValue, JSC::PropertyName property))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    JSValue value = JSValue::decode(encodedValue);
-    auto* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
-    setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().rejectionhandledEvent, value, *thisObject);
-    vm.writeBarrier(thisObject, value);
-    ensureStillAliveHere(value);
-    return true;
-}
+// The on* event handler attributes of the global scope (onmessage, onerror, ...). Each one maps to
+// the listener slot of one event name on the global event target.
+#define BUN_DEFINE_GLOBAL_EVENT_HANDLER_ATTRIBUTE(getterName, setterName, eventName)                                                     \
+    JSC_DEFINE_CUSTOM_GETTER(getterName, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))  \
+    {                                                                                                                                    \
+        Zig::GlobalObject* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);                                     \
+        return JSValue::encode(eventHandlerAttribute(thisObject->eventTarget(), eventNames().eventName, thisObject->world()));           \
+    }                                                                                                                                    \
+    JSC_DEFINE_CUSTOM_SETTER(setterName,                                                                                                 \
+        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName)) \
+    {                                                                                                                                    \
+        auto& vm = JSC::getVM(lexicalGlobalObject);                                                                                      \
+        JSValue value = JSValue::decode(encodedValue);                                                                                   \
+        auto* thisObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);                                                  \
+        setEventHandlerAttribute<JSEventListener>(thisObject->eventTarget(), eventNames().eventName, value, *thisObject);                \
+        vm.writeBarrier(thisObject, value);                                                                                              \
+        ensureStillAliveHere(value);                                                                                                     \
+        return true;                                                                                                                     \
+    }
+BUN_DEFINE_GLOBAL_EVENT_HANDLER_ATTRIBUTE(globalOnMessage, setGlobalOnMessage, messageEvent)
+BUN_DEFINE_GLOBAL_EVENT_HANDLER_ATTRIBUTE(globalOnError, setGlobalOnError, errorEvent)
+BUN_DEFINE_GLOBAL_EVENT_HANDLER_ATTRIBUTE(globalOnUnhandledRejection, setGlobalOnUnhandledRejection, unhandledrejectionEvent)
+BUN_DEFINE_GLOBAL_EVENT_HANDLER_ATTRIBUTE(globalOnRejectionHandled, setGlobalOnRejectionHandled, rejectionhandledEvent)
+#undef BUN_DEFINE_GLOBAL_EVENT_HANDLER_ATTRIBUTE
 
 WebCore::EventTarget& GlobalObject::eventTarget()
 {

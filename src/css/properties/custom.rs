@@ -827,6 +827,31 @@ impl TokenList {
         res
     }
 
+    /// Whether a browser with no relative colors drops this value at parse time: it holds one, and no `var()` or `env()`.
+    pub(crate) fn needs_relative_colors(&self) -> bool {
+        let mut relative_color = false;
+        self.has_no_substitution(&mut relative_color) && relative_color
+    }
+
+    /// Whether the list holds no `var()` and no `env()`, at any depth. Sets `relative_color` when it passes a relative color.
+    fn has_no_substitution(&self, relative_color: &mut bool) -> bool {
+        self.v.iter().all(|token| match token {
+            TokenOrValue::Function(f) => {
+                *relative_color |= f.is_relative_color();
+                f.arguments.has_no_substitution(relative_color)
+            }
+            TokenOrValue::Var(_) | TokenOrValue::Env(_) => false,
+            TokenOrValue::UnresolvedColor(UnresolvedColor::LightDark { light, dark }) => {
+                light.has_no_substitution(relative_color)
+                    && dark.has_no_substitution(relative_color)
+            }
+            TokenOrValue::UnresolvedColor(
+                UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. },
+            ) => alpha.has_no_substitution(relative_color),
+            _ => true,
+        })
+    }
+
     pub(crate) fn get_necessary_fallbacks(
         &self,
         targets: &css::targets::Targets,
@@ -838,7 +863,7 @@ impl TokenList {
                     fallbacks.insert(color.get_possible_fallbacks(targets));
                 }
                 TokenOrValue::Function(f) => {
-                    fallbacks.insert(f.arguments.get_necessary_fallbacks(targets));
+                    fallbacks.insert(f.get_necessary_fallbacks(targets));
                 }
                 TokenOrValue::Var(v) => {
                     if let Some(fallback) = &v.fallback {
@@ -965,7 +990,14 @@ impl UnresolvedColor {
                 dest.write_char(b')')
             }
             UnresolvedColor::LightDark { light, dark } => {
-                if !dest.targets.is_compatible(css::compat::Feature::LightDark) {
+                // The `var()` fallback form would make a browser with no relative colors keep a declaration that it cannot compute.
+                let as_written = || {
+                    let mut relative_color = false;
+                    light.has_no_substitution(&mut relative_color)
+                        && dark.has_no_substitution(&mut relative_color)
+                        && relative_color
+                };
+                if !dest.targets.is_compatible(css::compat::Feature::LightDark) && !as_written() {
                     dest.write_str("var(--buncss-light")?;
                     dest.delim(b',', false)?;
                     light.to_css(dest, is_custom_property)?;
@@ -1368,7 +1400,32 @@ impl Function {
 
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
+    /// Whether this is a relative color, as `rgb(from …)`.
+    fn is_relative_color(&self) -> bool {
+        const NAMES: &[&[u8]] = &[
+            b"rgb", b"rgba", b"hsl", b"hsla", b"hwb", b"lab", b"lch", b"oklab", b"oklch", b"color",
+        ];
+        let first = self.arguments.v.iter().find(|token| !token.is_whitespace());
+        matches!(first, Some(TokenOrValue::Token(Token::Ident(ident))) if strings::eql_case_insensitive_ascii(ident, b"from", true))
+            && strings::eql_any_case_insensitive_ascii(self.name.v(), NAMES)
+    }
+
+    /// A relative color with no `var()` or `env()` takes no fallback: its `@supports` copy would win over a later declaration.
+    fn takes_no_fallback(&self) -> bool {
+        self.is_relative_color() && self.arguments.has_no_substitution(&mut false)
+    }
+
+    fn get_necessary_fallbacks(&self, targets: &css::targets::Targets) -> ColorFallbackKind {
+        if self.takes_no_fallback() {
+            return ColorFallbackKind::empty();
+        }
+        self.arguments.get_necessary_fallbacks(targets)
+    }
+
     fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+        if self.takes_no_fallback() {
+            return self.deep_clone(bump);
+        }
         Function {
             name: self.name,
             arguments: self.arguments.get_fallback(bump, kind),

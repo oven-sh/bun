@@ -2,7 +2,9 @@ use crate::css_parser as css;
 
 use css::css_rules::media::MediaRule;
 
+use crate::generics::DeepClone;
 use css::css_properties::custom::UnparsedProperty;
+use css::css_values::color::ColorFallbackKind;
 use css::media_query::{MediaCondition, MediaFeature, MediaFeatureId, MediaList, MediaQuery};
 
 use bun_alloc::{Arena as Bump, ArenaPtr};
@@ -12,6 +14,8 @@ pub struct SupportsEntry {
     pub(crate) condition: css::SupportsCondition,
     pub(crate) declarations: Vec<css::Property>,
     pub(crate) important_declarations: Vec<css::Property>,
+    /// Each (property, important) pair that the lists hold, once. A follow is tested against this, so the test stays linear.
+    properties: Vec<(css::PropertyId, bool)>,
 }
 
 // No explicit deinit — all fields own their storage and drop automatically.
@@ -276,6 +280,7 @@ impl<'a> PropertyHandlerContext<'a> {
             return;
         }
 
+        let key = (property.property_id(), self.is_important);
         let found = 'brk: {
             for supp in self.supports.iter_mut() {
                 if condition.eql(&supp.condition) {
@@ -286,6 +291,9 @@ impl<'a> PropertyHandlerContext<'a> {
         };
 
         if let Some(entry) = found {
+            if !entry.properties.contains(&key) {
+                entry.properties.push(key);
+            }
             if self.is_important {
                 entry.important_declarations.push(property);
             } else {
@@ -303,25 +311,71 @@ impl<'a> PropertyHandlerContext<'a> {
                 condition,
                 declarations,
                 important_declarations,
+                properties: vec![key],
             });
         }
     }
 
+    /// A later declaration follows an earlier one of its property into each `@supports` rule, or the earlier one wins there.
+    pub(crate) fn follow_earlier_declarations(
+        &mut self,
+        property_id: css::PropertyId,
+        mut follower: impl FnMut(&css::SupportsCondition) -> Option<css::Property>,
+    ) {
+        // Merged rules are minified again without this context, while the entries of another rule are staged.
+        if self.context != DeclarationContext::StyleRule {
+            return;
+        }
+        let key = (property_id, self.is_important);
+        for entry in self.supports.iter_mut() {
+            if entry.properties.contains(&key)
+                && let Some(property) = follower(&entry.condition)
+            {
+                if key.1 {
+                    entry.important_declarations.push(property);
+                } else {
+                    entry.declarations.push(property);
+                }
+            }
+        }
+    }
+
+    /// Returns false for a value that needs relative colors: a browser with none drops it, so it is no fallback.
     pub(crate) fn add_unparsed_fallbacks(
         &mut self,
         bump: &bun_alloc::Arena,
         unparsed: &mut UnparsedProperty,
-    ) {
+    ) -> bool {
+        let is_fallback = !unparsed.value.needs_relative_colors();
         if self.context != DeclarationContext::StyleRule
             && self.context != DeclarationContext::StyleAttribute
         {
-            return;
+            return is_fallback;
         }
 
         let fallbacks = unparsed.value.get_fallbacks(bump, &self.targets);
         // `SmallList`
         // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
-        for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {
+        let fallbacks = fallbacks.to_owned_slice().into_vec();
+        let property_id = unparsed.property_id;
+        let lowest = &unparsed.value;
+        self.follow_earlier_declarations(property_id, |condition| {
+            // The rule of a fallback of this declaration gets that fallback below.
+            if fallbacks.iter().any(|f| f.0.eql(condition)) {
+                return None;
+            }
+            // The lab() rule, printed last for `bun build` targets, takes the highest fallback. The display-p3 rule takes the lowest, for a browser with no lab().
+            let p3 = ColorFallbackKind::P3.supports_condition();
+            let value = match fallbacks.last() {
+                Some(highest) if !condition.eql(&p3) => &highest.1,
+                _ => lowest,
+            };
+            Some(css::Property::Unparsed(UnparsedProperty {
+                property_id,
+                value: value.deep_clone(bump),
+            }))
+        });
+        for condition_and_fallback in fallbacks {
             self.add_conditional_property(
                 condition_and_fallback.0,
                 css::Property::Unparsed(UnparsedProperty {
@@ -331,5 +385,6 @@ impl<'a> PropertyHandlerContext<'a> {
                 }),
             );
         }
+        is_fallback
     }
 }

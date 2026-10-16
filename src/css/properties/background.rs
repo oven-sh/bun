@@ -787,8 +787,10 @@ impl BackgroundHandler {
                     self.flush(dest, context);
                     let arena = dest.bump();
                     let mut unparsed = val.deep_clone(arena);
-                    context.add_unparsed_fallbacks(arena, &mut unparsed);
-                    if let Some(prop) = BackgroundProperty::try_from_property_id(val.property_id) {
+                    let is_fallback = context.add_unparsed_fallbacks(arena, &mut unparsed);
+                    if let Some(prop) = BackgroundProperty::try_from_property_id(val.property_id)
+                        && is_fallback
+                    {
                         self.flushed_properties.insert(prop);
                     }
 

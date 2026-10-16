@@ -435,6 +435,13 @@ impl<'bump> DeclarationHandler<'bump> {
         property: &css::Property,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
+        // An unparsed declaration follows in `add_unparsed_fallbacks`, with its own fallbacks.
+        if !context.supports.is_empty() && !matches!(property, css::Property::Unparsed(_)) {
+            let arena = self.decls.bump();
+            context.follow_earlier_declarations(property.property_id(), |_| {
+                Some(property.deep_clone(arena))
+            });
+        }
         // return this.background.handleProperty(property, &this.decls, context);
         self.background
             .handle_property(property, &mut self.decls, context)

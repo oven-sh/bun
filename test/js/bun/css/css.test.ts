@@ -8014,19 +8014,12 @@ describe("css tests", () => {
       ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b / var(--a)) }",
       ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b/var(--a))}",
     );
-    // Under targets without lab(), the origin literal gets the fallback tiers any unresolved
-    // value containing it gets; the relative color itself is still left alone in each tier.
+    // Under targets without lab(), the declaration is the same: a relative color takes no color fallback.
     prefix_test(
       ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b) }",
       indoc`
         .foo {
-          color: rgb(from #fff r g b);
-        }
-
-        @supports (color: lab(0% 0 0)) {
-          .foo {
-            color: rgb(from lab(100% 104.3 -50.9) r g b);
-          }
+          color: rgb(from lab(100% 104.3 -50.9) r g b);
         }
       `,
       {
@@ -8425,16 +8418,176 @@ describe("css tests", () => {
             print(".a { color: rgb(from #336699 r g b / calc(alpha * var(--o))); }"),
             print(".a { color: hsl(from #336699 h s l / calc(alpha * var(--o))); }"),
             print(".a { color: rgb(from light-dark(#336699, #996633) r g b / calc(alpha * var(--o))); }"),
-            // An origin outside sRGB gets the fallback of any color in an unparsed value.
-            print(".a { color: rgb(from lab(40% 56.6 39) r g b / calc(alpha * var(--o))); }"),
           ]).toEqual([
             ".a {\n  color: rgb(from #369 r g b / calc(alpha * var(--o)));\n}\n",
             ".a {\n  color: hsl(from #369 h s l / calc(alpha * var(--o)));\n}\n",
             ".a {\n  color: rgb(from var(--buncss-light, #369) var(--buncss-dark, #963) r g b / calc(alpha * var(--o)));\n}\n",
-            ".a {\n  color: rgb(from #b32323 r g b / calc(alpha * var(--o)));\n}\n\n@supports (color: lab(0% 0 0)) {\n  .a {\n    color: rgb(from lab(40% 56.6 39) r g b / calc(alpha * var(--o)));\n  }\n}\n",
           ]);
         });
       }
+    });
+
+    // A relative color with no `var()` folded to a static color, or is one that the parser leaves for the browser.
+    // As tokens it takes no color fallback: that changes the origin, and puts a copy in an `@supports` rule,
+    // which wins over a declaration that comes later.
+    describe("relative color with no var() that stays as tokens takes no color fallback", () => {
+      const print = (css: string) => cssInternals.minifyTest(css, "", { chrome: 90 << 16 });
+      const asWritten = [
+        ".a{color:rgb(from color(display-p3 0 1 0) r g b)}",
+        ".a{color:RGB(FROM color(display-p3 0 1 0) r g b)}",
+        ".a{color:hsl(from lab(90% -100 100) h s l)}",
+        ".a{background:linear-gradient(rgb(from color(display-p3 0 1 0) r g b),red)}",
+        ".a{color:var(--x,rgb(from color(display-p3 0 1 0) r g b))}",
+      ];
+      for (const css of asWritten) {
+        test(css, () => {
+          expect(print(css)).toBe(css);
+        });
+      }
+
+      test("a later declaration wins", () => {
+        expect(print(".a{color:rgb(from color(display-p3 0 1 0) r g b);color:var(--c)}")).toBe(".a{color:var(--c)}");
+      });
+
+      test("a relative color with var() takes its fallback as before", () => {
+        expect(print(".a{color:oklch(from color(display-p3 0 1 0) l c var(--h))}")).toBe(
+          ".a{color:oklch(from #00f942 l c var(--h))}@supports (color:color(display-p3 0 0 0)){.a{color:oklch(from color(display-p3 0 1 0) l c var(--h))}}",
+        );
+      });
+
+      // The `@supports` rule of an earlier declaration comes after the style rule. A later declaration of the property follows it there.
+      test("an earlier declaration with a fallback does not win", () => {
+        expect([
+          print(".a{color:var(--c,lab(60% 10 10));color:rgb(from color(display-p3 0 1 0) r g b)}"),
+          print(".a{color:var(--c,lab(60% 10 10));color:var(--x)}"),
+          print(".a{color:var(--c,lab(60% 10 10))!important;color:var(--x)}"),
+          // The display-p3 rule is read by a browser with no lab(), so the declaration follows with its lowest fallback.
+          print(".a{color:var(--x,color(display-p3 1 0 0));color:var(--y,lab(20% 10 10))}"),
+          // The rule of another property takes no copy. A copy would win over the last declaration.
+          print(".a{background:var(--b,lab(60% 10 10));color:rgb(from color(display-p3 0 1 0) r g b);color:#010203}"),
+          // A typed declaration follows too.
+          print(".a{color:var(--c,lab(60% 10 10));color:red}"),
+          print(".a{color:var(--c,lab(60% 10 10))!important;color:red!important}"),
+          print(".a{text-shadow:0 0 4px var(--c,lab(60% 10 10));text-shadow:0 0 4px red}"),
+          print(".a{background-color:var(--c,lab(60% 10 10));background-color:red}"),
+          print(".a{border:1px solid var(--c,lab(60% 10 10));border:2px dashed red}"),
+          print(".a{box-shadow:0 0 4px var(--c,lab(60% 10 10));box-shadow:0 0 4px red}"),
+          // A relative color that folds is a typed declaration.
+          print(".a{background-color:var(--u,lab(60% 10 10));background-color:oklch(from lch(50% 50 30) 0.8 c h)}"),
+          // The rule of another property takes no typed copy.
+          print(".a{background-color:var(--c,lab(60% 10 10));color:red}"),
+        ]).toEqual([
+          ".a{color:var(--c,#a78a7f);color:rgb(from color(display-p3 0 1 0) r g b)}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10));color:rgb(from color(display-p3 0 1 0) r g b)}}",
+          ".a{color:var(--x)}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10));color:var(--x)}}",
+          ".a{color:var(--x);color:var(--c,#a78a7f)!important}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10))!important}}",
+          ".a{color:var(--y,#412b22)}@supports (color:color(display-p3 0 0 0)){.a{color:var(--x,color(display-p3 1 0 0));color:var(--y,#412b22)}}@supports (color:lab(0% 0 0)){.a{color:var(--y,lab(20% 10 10))}}",
+          ".a{background:var(--b,#a78a7f);color:#010203}@supports (color:lab(0% 0 0)){.a{background:var(--b,lab(60% 10 10))}}",
+          ".a{color:red}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10));color:red}}",
+          ".a{color:red!important}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10))!important;color:red!important}}",
+          ".a{text-shadow:0 0 4px red}@supports (color:lab(0% 0 0)){.a{text-shadow:0 0 4px var(--c,lab(60% 10 10));text-shadow:0 0 4px red}}",
+          ".a{background-color:var(--c,#a78a7f);background-color:red}@supports (color:lab(0% 0 0)){.a{background-color:var(--c,lab(60% 10 10));background-color:red}}",
+          ".a{border:1px solid var(--c,#a78a7f);border:2px dashed red}@supports (color:lab(0% 0 0)){.a{border:1px solid var(--c,lab(60% 10 10));border:2px dashed red}}",
+          ".a{box-shadow:0 0 4px var(--c,#a78a7f);box-shadow:0 0 4px red}@supports (color:lab(0% 0 0)){.a{box-shadow:0 0 4px var(--c,lab(60% 10 10));box-shadow:0 0 4px red}}",
+          ".a{background-color:var(--u,#a78a7f);background-color:oklch(80% .138006 25.0171)}@supports (color:lab(0% 0 0)){.a{background-color:var(--u,lab(60% 10 10));background-color:oklch(80% .138006 25.0171)}}",
+          ".a{background-color:var(--c,#a78a7f);color:red}@supports (color:lab(0% 0 0)){.a{background-color:var(--c,lab(60% 10 10))}}",
+        ]);
+      });
+
+      // A browser that reads lab() reads display-p3, and the lab() rule is printed last.
+      test("a declaration follows into the lab() rule with its display-p3 fallback", () => {
+        const targets = { chrome: 87 << 16, safari: 14 << 16 };
+        const css = ".a{color:var(--v1,lab(61% 10 10));color:var(--v2,color(display-p3 1 0 0.2))}";
+        expect(cssInternals.minifyTest(css, "", targets)).toEndWith(
+          "@supports (color:lab(0% 0 0)){.a{color:var(--v1,lab(61% 10 10));color:var(--v2,color(display-p3 1 0 .2))}}",
+        );
+      });
+
+      // Rules that merge are minified again as one block. The `@supports` rule that is staged then is of a later rule.
+      test("a declaration of a merged rule does not follow into the rule of a later rule", () => {
+        expect([
+          print(".a{color:red}.a{color:var(--c,lab(60% 10 10))}"),
+          print(".a{color:red}.a{color:blue}.b{color:var(--c,lab(60% 10 10))}"),
+          print(".a{background-color:red}.a{background-color:blue}.b{background-color:var(--c,lab(60% 10 10))}"),
+        ]).toEqual([
+          ".a{color:var(--c,#a78a7f)}@supports (color:lab(0% 0 0)){.a{color:var(--c,lab(60% 10 10))}}",
+          ".a{color:#00f}.b{color:var(--c,#a78a7f)}@supports (color:lab(0% 0 0)){.b{color:var(--c,lab(60% 10 10))}}",
+          ".a{background-color:#00f}.b{background-color:var(--c,#a78a7f)}@supports (color:lab(0% 0 0)){.b{background-color:var(--c,lab(60% 10 10))}}",
+        ]);
+      });
+
+      // A browser with no relative colors drops a value that needs them when it parses it.
+      // The declaration before it, and an earlier rule of the selector, stay as its fallback.
+      test("the declaration before a relative color stays", () => {
+        expect([
+          print(".a{color:red;color:rgb(from color(display-p3 0 1 0) r g b)}"),
+          print(".a{color:#369}.b{margin:0}.a{color:rgb(from color(display-p3 0 1 0) r g b)}"),
+          // With `var()` a browser keeps the declaration until it computes it, so the earlier one is never used.
+          print(".a{color:red;color:rgb(from var(--c) r g b)}"),
+          print(".a{color:#369}.b{margin:0}.a{color:rgb(from var(--c) r g b)}"),
+        ]).toEqual([
+          ".a{color:red;color:rgb(from color(display-p3 0 1 0) r g b)}",
+          ".a{color:#369}.b{margin:0}.a{color:rgb(from color(display-p3 0 1 0) r g b)}",
+          ".a{color:rgb(from var(--c)r g b)}",
+          ".b{margin:0}.a{color:rgb(from var(--c)r g b)}",
+        ]);
+      });
+
+      // A browser with no relative colors drops the relative color, so it is no fallback for the color after it.
+      test("a color after a relative color takes its own fallback", () => {
+        expect([
+          print(".a{color:rgb(from color(display-p3 0 1 0) r g b);color:lab(50% 10 10)}"),
+          print(".a{color:red;color:rgb(from color(display-p3 0 1 0) r g b);color:lab(50% 10 10)}"),
+          print(".a{background-color:rgb(from color(display-p3 0 1 0) r g b);background-color:lab(50% 10 10)}"),
+          print(".a{border-color:rgb(from color(display-p3 0 1 0) r g b);border-color:lab(50% 10 10)}"),
+          print(".a{box-shadow:0 0 4px rgb(from color(display-p3 0 1 0) r g b);box-shadow:0 0 4px lab(50% 10 10)}"),
+          // After a declaration with `var()`, the color takes none, as before.
+          print(".a{color:var(--x);color:lab(50% 10 10)}"),
+        ]).toEqual([
+          ".a{color:rgb(from color(display-p3 0 1 0) r g b);color:#8c7166;color:lab(50% 10 10)}",
+          ".a{color:red;color:rgb(from color(display-p3 0 1 0) r g b);color:lab(50% 10 10)}",
+          ".a{background-color:rgb(from color(display-p3 0 1 0) r g b);background-color:#8c7166;background-color:lab(50% 10 10)}",
+          ".a{border-color:rgb(from color(display-p3 0 1 0) r g b);border-color:#8c7166;border-color:lab(50% 10 10)}",
+          ".a{box-shadow:0 0 4px rgb(from color(display-p3 0 1 0) r g b);box-shadow:0 0 4px #8c7166;box-shadow:0 0 4px lab(50% 10 10)}",
+          ".a{color:var(--x);color:lab(50% 10 10)}",
+        ]);
+      });
+
+      // The color comes after its own fallbacks. Where each target reads it, it has none and replaces the relative color.
+      test("a color after a relative color follows its fallbacks for each set of targets", () => {
+        const css = ".a{color:rgb(from color(display-p3 0 1 0) r g b);color:oklch(70% 0.2 150)}";
+        expect([
+          cssInternals.minifyTest(css, "", { safari: 14 << 16 }),
+          cssInternals.minifyTest(css, "", { safari: 15 << 16 }),
+          cssInternals.minifyTest(css, "", { chrome: 111 << 16 }),
+        ]).toEqual([
+          ".a{color:rgb(from color(display-p3 0 1 0) r g b);color:color(display-p3 .317813 .736696 .379141);color:lab(67.6722% -60.9446 40.8552)}",
+          ".a{color:lab(67.6722% -60.9446 40.8552)}",
+          ".a{color:oklch(70% .2 150)}",
+        ]);
+      });
+
+      // The `var()` of the light-dark() fallback makes a browser keep a declaration that it cannot compute.
+      test("light-dark() around a relative color stays as written", () => {
+        expect([
+          print(".a{color:red;color:light-dark(rgb(from color(display-p3 0 1 0) r g b),blue)}"),
+          print(".a{color:red;color:light-dark(rgb(from var(--c) r g b),blue)}"),
+        ]).toEqual([
+          ".a{color:red;color:light-dark(rgb(from color(display-p3 0 1 0) r g b),blue)}",
+          ".a{color:var(--buncss-light,rgb(from var(--c)r g b))var(--buncss-dark,blue)}",
+        ]);
+      });
+
+      test("other colors and other functions take their fallback as before", () => {
+        expect([
+          print(".a{background:linear-gradient(rgb(from color(display-p3 1 0 0) r g b),color(display-p3 0 1 0))}"),
+          print(".a{color:color-mix(in srgb,color(display-p3 0 1 0),var(--x))}"),
+          print(".a{color:f(from color(display-p3 0 1 0))}"),
+        ]).toEqual([
+          ".a{background:linear-gradient(rgb(from color(display-p3 1 0 0) r g b),#00f942)}@supports (color:color(display-p3 0 0 0)){.a{background:linear-gradient(rgb(from color(display-p3 1 0 0) r g b),color(display-p3 0 1 0))}}",
+          ".a{color:color-mix(in srgb,#00f942,var(--x))}@supports (color:color(display-p3 0 0 0)){.a{color:color-mix(in srgb,color(display-p3 0 1 0),var(--x))}}",
+          ".a{color:f(from #00f942)}@supports (color:color(display-p3 0 0 0)){.a{color:f(from color(display-p3 0 1 0))}}",
+        ]);
+      });
     });
 
     // A value that is kept as tokens is printed token by token. Two tokens that

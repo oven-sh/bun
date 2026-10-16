@@ -461,6 +461,7 @@ impl<R> StyleRule<R> {
 
     /// Returns whether this rule is a duplicate of another rule.
     /// This means it has the same selectors and properties.
+    /// `other` is the earlier rule. It stays when a browser with no relative colors needs it as the fallback of a declaration of this rule.
     #[inline]
     pub(crate) fn is_duplicate(&self, other: &Self) -> bool {
         self.declarations.len() == other.declarations.len()
@@ -477,7 +478,7 @@ impl<R> StyleRule<R> {
                     .zip(&other.declarations.declarations[..len])
                 {
                     // `PropertyId`'s `PartialEq` is a tag+prefix compare.
-                    if a.property_id() != b.property_id() {
+                    if a.property_id() != b.property_id() || needs_relative_colors(a) {
                         break 'brk false;
                     }
                 }
@@ -490,13 +491,18 @@ impl<R> StyleRule<R> {
                     .iter()
                     .zip(&other.declarations.important_declarations[..len])
                 {
-                    if a.property_id() != b.property_id() {
+                    if a.property_id() != b.property_id() || needs_relative_colors(a) {
                         break 'brk false;
                     }
                 }
                 true
             }
     }
+}
+
+fn needs_relative_colors(property: &css::css_properties::Property) -> bool {
+    use css::css_properties::Property;
+    matches!(property, Property::Unparsed(unparsed) if unparsed.value.needs_relative_colors())
 }
 
 // ─── deep_clone ───────────────────────────────────────────────────────────

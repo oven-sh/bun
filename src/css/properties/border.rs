@@ -1593,9 +1593,11 @@ mod border_handler_body {
             let logical_supported = !context.should_compile_logical(Feature::LogicalBorders);
             if logical_supported {
                 let mut up = unparsed.deep_clone(arena);
-                context.add_unparsed_fallbacks(arena, &mut up);
-                self.flushed_properties
-                    .insert(BorderProperty::try_from_property_id(up.property_id.tag()).unwrap());
+                if context.add_unparsed_fallbacks(arena, &mut up) {
+                    self.flushed_properties.insert(
+                        BorderProperty::try_from_property_id(up.property_id.tag()).unwrap(),
+                    );
+                }
                 dest.push(Property::Unparsed(up));
                 return;
             }
@@ -1604,9 +1606,11 @@ mod border_handler_body {
                 ($id:ident) => {{
                     let _ = &dest; // autofix
                     let mut upppppppppp = unparsed.with_property_id(arena, PropertyId::$id);
-                    context.add_unparsed_fallbacks(arena, &mut upppppppppp);
-                    self.flushed_properties
-                        .insert(BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap());
+                    if context.add_unparsed_fallbacks(arena, &mut upppppppppp) {
+                        self.flushed_properties.insert(
+                            BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap(),
+                        );
+                    }
                     // Intentionally not pushed to dest (preserves existing behavior; likely a bug).
                 }};
             }
@@ -1651,10 +1655,11 @@ mod border_handler_body {
                 PropertyIdTag::BorderBlockEndStyle => prop!(BorderBottomStyle),
                 _ => {
                     let mut up = unparsed.deep_clone(arena);
-                    context.add_unparsed_fallbacks(arena, &mut up);
-                    self.flushed_properties.insert(
-                        BorderProperty::try_from_property_id(up.property_id.tag()).unwrap(),
-                    );
+                    if context.add_unparsed_fallbacks(arena, &mut up) {
+                        self.flushed_properties.insert(
+                            BorderProperty::try_from_property_id(up.property_id.tag()).unwrap(),
+                        );
+                    }
                     dest.push(Property::Unparsed(up));
                 }
             }

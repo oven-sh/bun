@@ -2228,8 +2228,7 @@ impl Config {
             reader: Reader {
                 registry,
                 base_path: paths::absolute(options.root),
-                prefers_typescript_rules: false,
-                has_every_rule: false,
+                semantics: Semantics::Legacy,
                 objects: Vec::new(),
                 notes: Vec::new(),
                 advice: Vec::new(),
@@ -2305,11 +2304,7 @@ impl Config {
         Ok(Config {
             lints_all_named_files: !options.ignore,
             dot_patterns: Some(dot_patterns),
-            ..legacy.reader.finish(Semantics {
-                keeps_options: true,
-                accepts_all_plugins: true,
-                is_legacy: true,
-            })
+            ..legacy.reader.finish()
         })
     }
 }

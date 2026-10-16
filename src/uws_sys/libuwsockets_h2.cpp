@@ -6,6 +6,7 @@
 
 // clang-format off
 #include "_libusockets.h"
+#include "StreamWebSocketParser.h"
 
 #include <bun-uws/src/Http2App.h>
 #include <string_view>
@@ -19,6 +20,45 @@ using uWS::Http2ResponseData;
 
 static inline std::string_view h2sv(const char* p, size_t n) { return p ? std::string_view { p, n } : std::string_view {}; }
 
+struct H2WebSocketTransport {
+    using Response = Http2Response;
+
+    static bool isWritable(Response* r) { return !r->dead && !r->localClosed; }
+    static size_t bufferedAmount(Response* r) { return r->getBufferedAmount(); }
+    static size_t backpressureMemory(Response* r) { return r->data.backpressure.totalLength(); }
+    /* A payload split from its frame header costs one extra DATA frame header;
+     * sendAllowance() includes the connection output high-water mark. */
+    static size_t frameBudget(size_t frameLength, size_t payloadLength)
+    {
+        return frameLength + (payloadLength >= 16 * 1024 ? uWS::http2::FRAME_HEADER_SIZE : 0);
+    }
+    static bool canWriteWithinBackpressure(Response* r, size_t budget, size_t maxBackpressure)
+    {
+        return r->canWriteWithinBackpressure(budget, maxBackpressure);
+    }
+    static bool write(Response* r, std::string_view data) { return r->write(data); }
+    static bool tryWriteFrame(Response* r, std::string_view header, std::string_view payload)
+    {
+        return r->tryWriteWebSocketFrame(header, payload);
+    }
+    static void cancel(Response* r)
+    {
+        if (!r->dead) r->close(uWS::http2::ERR_CANCEL);
+    }
+    static void writeHeader(Response* r, std::string_view name, std::string_view value) { r->writeHeader(name, value); }
+    static uWS::StreamTopicTree* topics(Response* r) { return r->conn && r->conn->ctx ? r->conn->ctx->topicTree : nullptr; }
+    static void scheduleTopicDrain(Response* r)
+    {
+        if (r->conn && r->conn->ctx) r->conn->ctx->scheduleDeferredDrain();
+    }
+    static uWS::LoopData* loopData(Response* r)
+    {
+        return (uWS::LoopData*)us_loop_ext(us_socket_group_loop(us_socket_group(r->conn->s)));
+    }
+};
+
+using H2WebSocketParser = Bun::StreamWebSocketParser<H2WebSocketTransport>;
+
 extern "C" {
 
 #pragma clang attribute push(__attribute__((always_inline)), apply_to = function)
@@ -27,24 +67,110 @@ typedef struct uws_app_s uws_app_t;
 typedef struct uws_h2_app_s uws_h2_app_t;
 typedef struct uws_h2_res_s uws_h2_res_t;
 typedef struct uws_h3_req_s uws_h3_req_t;
+typedef struct uws_h2_ws_parser_s uws_h2_ws_parser_t;
 
 typedef void (*uws_h2_method_handler)(uws_h2_res_t*, uws_h3_req_t*, void*);
 
-/* ───── app ───── */
-
-uws_h2_app_t* uws_h2_create_app(int ssl, uws_app_t* parent, bool allow_http1, unsigned int idle_timeout_s)
+uws_h2_ws_parser_t* uws_h2_ws_parser_create(uws_h2_res_t* response, size_t max_payload_length,
+    size_t max_backpressure, bool close_on_backpressure_limit, uint16_t compression,
+    const char* extension_offer, size_t extension_offer_length, void* user,
+    bool (*fragment_handler)(void*, const char*, size_t, unsigned int, int, bool),
+    void (*fail_handler)(void*, int))
 {
-    if (ssl) {
-        return (uws_h2_app_t*)H2App::create((uWS::TemplatedApp<true>*)parent, allow_http1, idle_timeout_s);
+    if (!response || !fragment_handler || !fail_handler) return nullptr;
+    H2WebSocketParser* parser = new H2WebSocketParser((Http2Response*)response, max_payload_length, max_backpressure,
+        close_on_backpressure_limit, user, fragment_handler, fail_handler);
+    parser->negotiateCompression(compression, h2sv(extension_offer, extension_offer_length));
+    if (!((Http2Response*)response)->upgradeToWebSocket()) {
+        delete parser;
+        return nullptr;
     }
-    return (uws_h2_app_t*)H2App::create((uWS::TemplatedApp<false>*)parent, allow_http1, idle_timeout_s);
+    return (uws_h2_ws_parser_t*)parser;
 }
 
-void uws_h2_app_destroy(uws_h2_app_t* app) { delete (H2App*)app; }
+void uws_h2_ws_parser_consume(uws_h2_ws_parser_t* parser, const char* data, size_t length)
+{
+    if (parser) ((H2WebSocketParser*)parser)->consume(data, length);
+}
+
+void uws_h2_ws_parser_destroy(uws_h2_ws_parser_t* parser)
+{
+    delete (H2WebSocketParser*)parser;
+}
+
+uint32_t uws_h2_ws_send(uws_h2_ws_parser_t* parser, const char* data, size_t length,
+    int op_code, bool compress, bool fin, size_t max_backpressure, bool* limit_exceeded)
+{
+    if (!parser || !limit_exceeded) return 2;
+    return ((H2WebSocketParser*)parser)->send(data, length, op_code, compress, fin, max_backpressure, limit_exceeded);
+}
+
+size_t uws_h2_ws_parser_memory_cost(uws_h2_ws_parser_t* parser)
+{
+    return parser ? ((H2WebSocketParser*)parser)->memoryCost() : 0;
+}
+
+bool uws_h2_ws_subscribe(uws_h2_ws_parser_t* parser, const char* topic, size_t length)
+{
+    return parser && ((H2WebSocketParser*)parser)->subscribe(h2sv(topic, length));
+}
+
+bool uws_h2_ws_unsubscribe(uws_h2_ws_parser_t* parser, const char* topic, size_t length)
+{
+    return parser && ((H2WebSocketParser*)parser)->unsubscribe(h2sv(topic, length));
+}
+
+bool uws_h2_ws_is_subscribed(uws_h2_ws_parser_t* parser, const char* topic, size_t length)
+{
+    return parser && ((H2WebSocketParser*)parser)->isSubscribed(h2sv(topic, length));
+}
+
+uint32_t uws_h2_ws_publish(uws_h2_ws_parser_t* parser, const char* topic, size_t topic_length,
+    const char* data, size_t data_length, int op_code, bool compress)
+{
+    return parser ? ((H2WebSocketParser*)parser)->publish(h2sv(topic, topic_length), h2sv(data, data_length), op_code, compress) : 2;
+}
+
+void uws_h2_ws_get_topics(uws_h2_ws_parser_t* parser, void (*callback)(void*, const char*, size_t), void* user)
+{
+    if (!parser || !callback) return;
+    ((H2WebSocketParser*)parser)->iterateTopics([&](std::string_view topic) { callback(user, topic.data(), topic.size()); });
+}
+
+void uws_h2_ws_unsubscribe_all(uws_h2_ws_parser_t* parser)
+{
+    if (parser) ((H2WebSocketParser*)parser)->unsubscribeAll();
+}
+
+/* ───── app ───── */
+
+uws_h2_app_t* uws_h2_create_app(int ssl, uws_app_t* parent, bool allow_http1, unsigned int idle_timeout_s, bool enable_connect_protocol)
+{
+    if (ssl) {
+        return (uws_h2_app_t*)H2App::create((uWS::TemplatedApp<true>*)parent, allow_http1, idle_timeout_s, enable_connect_protocol);
+    }
+    return (uws_h2_app_t*)H2App::create((uWS::TemplatedApp<false>*)parent, allow_http1, idle_timeout_s, enable_connect_protocol);
+}
+
+void uws_h2_app_destroy(uws_h2_app_t* app)
+{
+    if (app) ((H2App*)app)->destroy();
+}
 void uws_h2_app_on_schedule_drain(uws_h2_app_t* app, void (*cb)(void*, void*), void* user) { ((H2App*)app)->onScheduleDrain((void (*)(void*, uWS::Http2Context*))cb, user); }
 bool uws_h2_app_drain(uws_h2_app_t* app) { return ((H2App*)app)->drain(); }
+void uws_h2_app_cancel_drain(uws_h2_app_t* app) { ((H2App*)app)->cancelDrain(); }
 void uws_h2_app_close(uws_h2_app_t* app) { ((H2App*)app)->close(); }
 void uws_h2_app_clear_routes(uws_h2_app_t* app) { ((H2App*)app)->clearRoutes(); }
+uint32_t uws_h2_app_publish(uws_h2_app_t* app, const char* topic, size_t topic_length,
+    const char* data, size_t data_length, int op_code, bool compress)
+{
+    return app ? ((H2App*)app)->publish(h2sv(topic, topic_length), h2sv(data, data_length), op_code, compress) : 2;
+}
+
+unsigned int uws_h2_app_num_subscribers(uws_h2_app_t* app, const char* topic, size_t topic_length)
+{
+    return app ? ((H2App*)app)->numSubscribers(h2sv(topic, topic_length)) : 0;
+}
 
 #define H2_ROUTE(name, method)                                                                         \
     void uws_h2_app_##name(uws_h2_app_t* app, const char* pattern, size_t pattern_len,                 \
@@ -91,7 +217,24 @@ bool uws_h2_res_is_closed(uws_h2_res_t* res) { return ((Http2Response*)res)->dea
 bool uws_h2_res_request_body_ended(uws_h2_res_t* res)
 {
     Http2Response* r = (Http2Response*)res;
-    return r->remoteClosed || r->declaredContentLength == 0;
+    /* Content-Length describes an ordinary request body, not the bytes in an
+     * RFC 8441 tunnel.  Only END_STREAM makes an Extended CONNECT one-way. */
+    return r->remoteClosed || (!r->websocketConnect && r->declaredContentLength == 0);
+}
+
+bool uws_h2_res_is_connect_request(uws_h2_res_t* res)
+{
+    return ((Http2Response*)res)->isConnectRequest();
+}
+
+bool uws_h2_res_is_websocket_connect(uws_h2_res_t* res)
+{
+    return ((Http2Response*)res)->isWebSocketConnectRequest();
+}
+
+bool uws_h2_res_upgrade_websocket(uws_h2_res_t* res)
+{
+    return ((Http2Response*)res)->upgradeToWebSocket();
 }
 
 /* Server-side failure after the response started (a body stream errored,
@@ -101,6 +244,13 @@ void uws_h2_res_force_close(uws_h2_res_t* res)
     Http2Response* r = (Http2Response*)res;
     r->clearOnWritableAndAborted();
     r->close(uWS::http2::ERR_INTERNAL_ERROR);
+}
+
+void uws_h2_res_cancel(uws_h2_res_t* res)
+{
+    Http2Response* r = (Http2Response*)res;
+    r->clearOnWritableAndAborted();
+    r->close(uWS::http2::ERR_CANCEL);
 }
 
 bool uws_h2_res_try_end(uws_h2_res_t* res, const char* bytes, size_t len, size_t total_len, bool close)
@@ -159,9 +309,16 @@ bool uws_h2_res_write(uws_h2_res_t* res, const char* data, size_t* length)
 
 bool uws_h2_res_has_responded(uws_h2_res_t* res) { return ((Http2Response*)res)->hasResponded(); }
 size_t uws_h2_res_get_buffered_amount(uws_h2_res_t* res) { return ((Http2Response*)res)->getBufferedAmount(); }
-
 void uws_h2_res_reset_timeout(uws_h2_res_t* res) { ((Http2Response*)res)->resetTimeout(); }
 void uws_h2_res_timeout(uws_h2_res_t* res, uint8_t seconds) { ((Http2Response*)res)->setTimeout(seconds); }
+void uws_h2_res_websocket_timeout(uws_h2_res_t* res, uint16_t seconds) { ((Http2Response*)res)->setWebSocketTimeout(seconds); }
+void uws_h2_res_websocket_timeout_config(uws_h2_res_t* res, uint16_t seconds, bool refresh_on_write)
+{
+    auto* response = (Http2Response*)res;
+    response->setWebSocketTimeoutRefreshOnWrite(refresh_on_write);
+    response->setWebSocketTimeout(seconds);
+}
+void uws_h2_res_websocket_timeout_refresh_on_write(uws_h2_res_t* res, bool enabled) { ((Http2Response*)res)->setWebSocketTimeoutRefreshOnWrite(enabled); }
 void uws_h2_res_end_sendfile(uws_h2_res_t* res, uint64_t, bool close)
 {
     ((Http2Response*)res)->sendTerminatingChunk(close);

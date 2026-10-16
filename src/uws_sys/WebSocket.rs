@@ -3,6 +3,7 @@ use core::marker::PhantomData;
 
 use crate as uws;
 use crate::app::uws_app_t;
+use crate::stream_websocket::WebSocket as StreamWebSocket;
 use crate::thunk;
 use crate::{Opcode, Request, SendStatus, WebSocketUpgradeContext, uws_res};
 
@@ -26,19 +27,49 @@ impl RawWebSocket {
 // AnyWebSocket
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Runs `$body` with `$ws` bound to the stream WebSocket pointer and wraps
+/// the result in `Some`; `None` for the uSockets-backed HTTP/1 variants.
+/// Every stream transport instantiates the same generic core, so `$body`
+/// type-checks once per variant.
+macro_rules! with_stream {
+    ($self:expr, |$ws:ident| $body:expr) => {
+        match $self {
+            AnyWebSocket::H2($ws) => Some($body),
+            AnyWebSocket::Ssl(_) | AnyWebSocket::Tcp(_) => None,
+        }
+    };
+}
+
 #[derive(Clone, Copy)]
 pub enum AnyWebSocket {
     Ssl(*mut RawWebSocket),
     Tcp(*mut RawWebSocket),
+    H2(*mut uws::h2::WebSocket),
 }
 
 impl AnyWebSocket {
     #[inline]
-    pub fn raw(self) -> *mut RawWebSocket {
-        match self {
-            AnyWebSocket::Ssl(p) => p,
-            AnyWebSocket::Tcp(p) => p,
+    pub fn raw(self) -> *mut c_void {
+        if let Some(p) = with_stream!(self, |ws| ws.cast::<c_void>()) {
+            return p;
         }
+        let (AnyWebSocket::Ssl(p) | AnyWebSocket::Tcp(p)) = self else {
+            unreachable!("stream WebSockets returned above")
+        };
+        p.cast()
+    }
+
+    /// Carried on a multiplexed request stream (Extended CONNECT) rather
+    /// than a uSockets connection.
+    #[inline]
+    pub fn is_stream(self) -> bool {
+        with_stream!(self, |_ws| ()).is_some()
+    }
+
+    /// Subscribed topics of a stream WebSocket; `None` for HTTP/1, whose
+    /// topics live in the uWS WebSocket data.
+    pub fn stream_topics(self) -> Option<Vec<Vec<u8>>> {
+        with_stream!(self, |ws| StreamWebSocket::topics(ws))
     }
 
     /// Raw user-data pointer cast to `*mut T` (NULL if unset).
@@ -55,7 +86,10 @@ impl AnyWebSocket {
     /// requires the caller's "user data was set to a `*mut T`" guarantee.
     #[inline]
     pub(crate) fn as_ptr<T>(self) -> *mut T {
-        let (ssl, ws) = self.split();
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::user_data(ws).cast::<T>()) {
+            return result;
+        }
+        let (ssl, ws) = self.h1_parts();
         c::uws_ws_get_user_data(ssl, ws).cast::<T>()
     }
 
@@ -66,10 +100,11 @@ impl AnyWebSocket {
     /// non-null for a live `AnyWebSocket`. The unbounded lifetime is harmless
     /// for the same reason: there are no bytes for it to claim validity over.
     #[inline]
-    fn split<'a>(self) -> (i32, &'a mut RawWebSocket) {
+    fn h1_parts<'a>(self) -> (i32, &'a mut RawWebSocket) {
         let (ssl, p) = match self {
             AnyWebSocket::Ssl(p) => (1, p),
             AnyWebSocket::Tcp(p) => (0, p),
+            _ => unreachable!("stream WebSockets do not have a uSockets handle"),
         };
         // S012: `RawWebSocket` is an `opaque_ffi!` ZST — route the
         // `*mut → &mut` deref through the const-asserted safe accessor.
@@ -77,17 +112,28 @@ impl AnyWebSocket {
     }
 
     pub fn memory_cost(self) -> usize {
-        let (ssl, ws) = self.split();
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::memory_cost(ws)) {
+            return result;
+        }
+        let (ssl, ws) = self.h1_parts();
         ws.memory_cost(ssl)
     }
 
     pub fn close(self) {
-        let (ssl, ws) = self.split();
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::close(ws)) {
+            return result;
+        }
+        let (ssl, ws) = self.h1_parts();
         c::uws_ws_close(ssl, ws)
     }
 
     pub fn send(self, message: &[u8], opcode: Opcode, compress: bool, fin: bool) -> SendStatus {
-        let (ssl, ws) = self.split();
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::send(
+            ws, message, opcode, compress, fin
+        )) {
+            return result;
+        }
+        let (ssl, ws) = self.h1_parts();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
         unsafe {
             c::uws_ws_send_with_options(
@@ -103,13 +149,19 @@ impl AnyWebSocket {
     }
 
     pub fn end(self, code: i32, message: &[u8]) {
-        let (ssl, ws) = self.split();
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::end(ws, code, message)) {
+            return result;
+        }
+        let (ssl, ws) = self.h1_parts();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
         unsafe { c::uws_ws_end(ssl, ws, code, message.as_ptr(), message.len()) }
     }
 
     // See NewWebSocket::cork — same fn-pointer tunneling.
     pub fn cork<C>(self, ctx: &mut C, callback: fn(&mut C)) {
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::cork(ws, ctx, callback)) {
+            return result;
+        }
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn wrap<C>(user_data: *mut c_void) {
@@ -122,26 +174,35 @@ impl AnyWebSocket {
         }
         let mut data: (*mut C, fn(&mut C)) = (std::ptr::from_mut::<C>(ctx), callback);
         let ud = (&raw mut data).cast::<c_void>();
-        let (ssl, ws) = self.split();
+        let (ssl, ws) = self.h1_parts();
         // `data` lives on this stack frame for the duration of the synchronous
         // uws_ws_cork call; the shim only forwards `ud` back to `wrap`.
         c::uws_ws_cork(ssl, ws, Some(wrap::<C>), ud)
     }
 
     pub fn subscribe(self, topic: &[u8]) -> bool {
-        let (ssl, ws) = self.split();
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::subscribe(ws, topic)) {
+            return result;
+        }
+        let (ssl, ws) = self.h1_parts();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
         unsafe { c::uws_ws_subscribe(ssl, ws, topic.as_ptr(), topic.len()) }
     }
 
     pub fn unsubscribe(self, topic: &[u8]) -> bool {
-        let (ssl, ws) = self.split();
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::unsubscribe(ws, topic)) {
+            return result;
+        }
+        let (ssl, ws) = self.h1_parts();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
         unsafe { c::uws_ws_unsubscribe(ssl, ws, topic.as_ptr(), topic.len()) }
     }
 
     pub fn is_subscribed(self, topic: &[u8]) -> bool {
-        let (ssl, ws) = self.split();
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::is_subscribed(ws, topic)) {
+            return result;
+        }
+        let (ssl, ws) = self.h1_parts();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
         unsafe { c::uws_ws_is_subscribed(ssl, ws, topic.as_ptr(), topic.len()) }
     }
@@ -156,7 +217,12 @@ impl AnyWebSocket {
         opcode: Opcode,
         compress: bool,
     ) -> SendStatus {
-        let (ssl, ws) = self.split();
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::publish(
+            ws, topic, message, opcode, compress
+        )) {
+            return result;
+        }
+        let (ssl, ws) = self.h1_parts();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
         unsafe {
             c::uws_ws_publish_with_options(
@@ -172,7 +238,7 @@ impl AnyWebSocket {
         }
     }
 
-    pub fn publish_with_options(
+    pub fn publish_h1_with_options(
         ssl: bool,
         app: *mut c_void,
         topic: &[u8],
@@ -204,12 +270,24 @@ impl AnyWebSocket {
     }
 
     pub fn get_buffered_amount(self) -> usize {
-        let (ssl, ws) = self.split();
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::buffered_amount(ws)) {
+            return result;
+        }
+        let (ssl, ws) = self.h1_parts();
         c::uws_ws_get_buffered_amount(ssl, ws)
     }
 
     pub fn get_remote_address<'a>(self, buf: &'a mut [u8]) -> &'a mut [u8] {
-        let (ssl_flag, ws) = self.split();
+        if let Some(address) = with_stream!(self, |ws| StreamWebSocket::remote_address(ws)) {
+            let Some(address) = address else {
+                return &mut buf[..0];
+            };
+            let ip = address.ip();
+            let len = ip.len().min(buf.len());
+            buf[..len].copy_from_slice(&ip[..len]);
+            return &mut buf[..len];
+        }
+        let (ssl_flag, ws) = self.h1_parts();
         let mut ptr: *mut u8 = core::ptr::null_mut();
         let len = c::uws_ws_get_remote_address(ssl_flag, ws, &mut ptr);
         // SAFETY: uWS returns a pointer+len into its internal buffer.
@@ -322,7 +400,7 @@ pub trait WebSocketHandler: Sized + 'static {
 }
 
 /// Server type that handles the HTTP→WS upgrade.
-pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
+pub trait H1WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
     /// # Safety
     /// `this` is the raw user-data pointer passed to `uws_ws()` at registration
     /// time, cast to `*mut Self`. **Its actual pointee type is discriminated by
@@ -332,7 +410,7 @@ pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
     /// deliberately forwards the raw pointer (no `&mut Self` is ever
     /// materialized) so that the wrong-typed reference is never created when
     /// `id != 0`.
-    unsafe fn on_websocket_upgrade(
+    unsafe fn on_h1_websocket_upgrade(
         this: *mut Self,
         res: *mut uws::NewAppResponse<SSL>,
         req: &mut Request,
@@ -343,11 +421,137 @@ pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
 
 /// `extern "C"` trampolines that downcast user-data and forward to `Type`'s
 /// methods, plus `apply()` to fill a `WebSocketBehavior`.
-pub struct Wrap<Server, T, const SSL: bool>(PhantomData<(Server, T)>);
+pub struct H1Wrap<Server, T, const SSL: bool>(PhantomData<(Server, T)>);
 
-impl<Server, T, const SSL: bool> Wrap<Server, T, SSL>
+/// A stream transport whose WebSockets surface as one [`AnyWebSocket`] variant.
+pub trait StreamWebSocketTransport: crate::stream_websocket::Transport + Sized {
+    fn any_websocket(ws: *mut StreamWebSocket<Self>) -> AnyWebSocket;
+}
+
+impl StreamWebSocketTransport for uws::h2::H2Transport {
+    #[inline(always)]
+    fn any_websocket(ws: *mut StreamWebSocket<Self>) -> AnyWebSocket {
+        AnyWebSocket::H2(ws)
+    }
+}
+
+/// Callback adapter for stream-backed WebSockets. Unlike [`H1Wrap`], it does
+/// not implement the HTTP/1 socket-upgrade callback and never fabricates a
+/// uSockets handle.
+pub struct StreamWrap<T, X>(PhantomData<(T, X)>);
+
+impl<T: WebSocketHandler, X: StreamWebSocketTransport> StreamWrap<T, X> {
+    #[inline(always)]
+    fn make_ws(raw_ws: *mut StreamWebSocket<X>) -> AnyWebSocket {
+        X::any_websocket(raw_ws)
+    }
+
+    unsafe fn on_open(raw_ws: *mut StreamWebSocket<X>) {
+        let ws = Self::make_ws(raw_ws);
+        let this = ws.as_ptr::<T>();
+        if !this.is_null() {
+            unsafe { T::on_open(this, ws) };
+        }
+    }
+    unsafe fn on_message(
+        raw_ws: *mut StreamWebSocket<X>,
+        message: *const u8,
+        length: usize,
+        opcode: Opcode,
+    ) {
+        let ws = Self::make_ws(raw_ws);
+        let this = ws.as_ptr::<T>();
+        if !this.is_null() {
+            unsafe { T::on_message(this, ws, thunk::c_slice(message, length), opcode) };
+        }
+    }
+    unsafe fn on_drain(raw_ws: *mut StreamWebSocket<X>) {
+        let ws = Self::make_ws(raw_ws);
+        let this = ws.as_ptr::<T>();
+        if !this.is_null() {
+            unsafe { T::on_drain(this, ws) };
+        }
+    }
+    unsafe fn on_ping(raw_ws: *mut StreamWebSocket<X>, message: *const u8, length: usize) {
+        let ws = Self::make_ws(raw_ws);
+        let this = ws.as_ptr::<T>();
+        if !this.is_null() {
+            unsafe { T::on_ping(this, ws, thunk::c_slice(message, length)) };
+        }
+    }
+    unsafe fn on_pong(raw_ws: *mut StreamWebSocket<X>, message: *const u8, length: usize) {
+        let ws = Self::make_ws(raw_ws);
+        let this = ws.as_ptr::<T>();
+        if !this.is_null() {
+            unsafe { T::on_pong(this, ws, thunk::c_slice(message, length)) };
+        }
+    }
+    unsafe fn on_close(
+        raw_ws: *mut StreamWebSocket<X>,
+        code: i32,
+        message: *const u8,
+        length: usize,
+    ) {
+        let ws = Self::make_ws(raw_ws);
+        let this = ws.as_ptr::<T>();
+        if !this.is_null() {
+            unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
+        }
+    }
+
+    pub fn apply(behavior: &WebSocketBehavior) -> crate::stream_websocket::WebSocketBehavior<X> {
+        let mut ping_timeout = 4;
+        while i32::from(behavior.idle_timeout) - i32::from(ping_timeout) * 2
+            >= i32::from(ping_timeout) * 2
+            && ping_timeout < 16
+        {
+            ping_timeout <<= 1;
+        }
+        let idle_timeout = if behavior.idle_timeout == 0 {
+            0
+        } else if behavior.send_pings_automatically {
+            behavior.idle_timeout - ping_timeout
+        } else {
+            behavior.idle_timeout
+        };
+        crate::stream_websocket::WebSocketBehavior {
+            compression: behavior.compression as u16,
+            idle_timeout,
+            ping_timeout,
+            send_pings_automatically: behavior.send_pings_automatically,
+            reset_idle_timeout_on_send: behavior.reset_idle_timeout_on_send,
+            max_payload_length: behavior.max_payload_length as usize,
+            max_backpressure: behavior.max_backpressure as usize,
+            close_on_backpressure_limit: behavior.close_on_backpressure_limit,
+            open: Some(Self::on_open),
+            message: if T::HAS_ON_MESSAGE {
+                Some(Self::on_message)
+            } else {
+                None
+            },
+            drain: if T::HAS_ON_DRAIN {
+                Some(Self::on_drain)
+            } else {
+                None
+            },
+            ping: if T::HAS_ON_PING {
+                Some(Self::on_ping)
+            } else {
+                None
+            },
+            pong: if T::HAS_ON_PONG {
+                Some(Self::on_pong)
+            } else {
+                None
+            },
+            close: Some(Self::on_close),
+        }
+    }
+}
+
+impl<Server, T, const SSL: bool> H1Wrap<Server, T, SSL>
 where
-    Server: WebSocketUpgradeServer<SSL>,
+    Server: H1WebSocketUpgradeServer<SSL>,
     T: WebSocketHandler,
 {
     #[inline(always)]
@@ -452,7 +656,7 @@ where
         // by `id` inside the implementer (see trait docs), and materializing a
         // typed reference here would be UB when `id` selects a different type.
         unsafe {
-            Server::on_websocket_upgrade(
+            Server::on_h1_websocket_upgrade(
                 ptr.cast::<Server>(),
                 res.cast::<uws::NewAppResponse<SSL>>(),
                 thunk::handle_mut(req),

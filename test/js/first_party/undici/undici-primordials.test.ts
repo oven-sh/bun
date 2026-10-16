@@ -20,7 +20,7 @@ it("undici", () => {
     globalThis.URL =
     globalThis.AbortSignal =
     globalThis.URLSearchParams =
-      42;
+      42 as any;
 
   const undici = require("undici");
   expect(undici).toBeDefined();

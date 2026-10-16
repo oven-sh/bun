@@ -13,7 +13,7 @@ beforeEach(() => {
 });
 
 test("[query, no query]", async () => {
-  const second = await import("./import-query-fixture.ts?query");
+  const second = await import("./import-query-fixture.ts?query" as string);
   const first = await import("./import-query-fixture.ts");
   expect(second.url).toBe(first.url + "?query");
   expect(globalThis.importQueryFixtureOrder).toEqual([resolvedURL + "?query", resolvedURL]);
@@ -21,7 +21,7 @@ test("[query, no query]", async () => {
 
 test("[no query, query]", async () => {
   const first = await import("./import-query-fixture.ts");
-  const second = await import("./import-query-fixture.ts?query");
+  const second = await import("./import-query-fixture.ts?query" as string);
   expect(second.url).toBe(first.url + "?query");
   expect(globalThis.importQueryFixtureOrder).toEqual([resolvedURL, resolvedURL + "?query"]);
 });

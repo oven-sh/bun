@@ -116,6 +116,9 @@ bitflags::bitflags! {
         /// Renaming can also break any identifier used inside a "with" statement.
         const MUST_NOT_BE_RENAMED = 1 << 2;
 
+        /// An import some use holds as a value or deletes from, not only `X.a`, `X[a]`, `const { a } = X`.
+        const IMPORT_USED_AS_VALUE = 1 << 3;
+
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
 
         /// The file assigns this variable after its declaration (or a mapped
@@ -151,6 +154,7 @@ macro_rules! symbol_flag_accessors {
 symbol_flag_accessors! {
     must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
+    import_used_as_value, set_import_used_as_value => IMPORT_USED_AS_VALUE;
     remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
     called_as_method, set_called_as_method => CALLED_AS_METHOD;

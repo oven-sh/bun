@@ -6,6 +6,10 @@
 
 const agent = require("internal/trace_events");
 
+interface ErrnoError {
+  errno: number;
+}
+
 const newRawSocketFd = $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2);
 const listenRawFd = $newRustFunction("udp_socket.rs", "jsDgramListenFd", 1);
 const closeRawFd = $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1);
@@ -28,7 +32,9 @@ class TestTCPWrap {
       listenRawFd(this.#fd);
       return 0;
     } catch (err) {
-      return typeof err?.errno === "number" && err.errno < 0 ? err.errno : -1;
+      return typeof (err as ErrnoError | null | undefined)?.errno === "number" && (err as ErrnoError).errno < 0
+        ? (err as ErrnoError).errno
+        : -1;
     }
   }
 

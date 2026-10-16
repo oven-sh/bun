@@ -9,7 +9,7 @@ function rawHttp10Request(port: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
   const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
   socket.on("error", reject);
-  socket.on("data", chunk => chunks.push(chunk));
+  socket.on("data", (chunk: Buffer) => chunks.push(chunk));
   socket.on("close", () => resolve(Buffer.concat(chunks)));
   socket.write("GET / HTTP/1.0\r\n\r\n");
   return promise;
@@ -39,7 +39,7 @@ describe("close-delimited response framing", () => {
         );
       },
     });
-    const raw = await rawHttp10Request(server.port);
+    const raw = await rawHttp10Request(server.port!);
     const headerEnd = raw.indexOf("\r\n\r\n");
     expect(headerEnd).toBeGreaterThan(0);
     const body = raw.subarray(headerEnd + 4);
@@ -68,7 +68,7 @@ describe("close-delimited response framing", () => {
         );
       },
     });
-    const raw = await rawHttp10Request(server.port);
+    const raw = await rawHttp10Request(server.port!);
     const headerEnd = raw.indexOf("\r\n\r\n");
     expect(headerEnd).toBeGreaterThan(0);
     const body = raw.subarray(headerEnd + 4);

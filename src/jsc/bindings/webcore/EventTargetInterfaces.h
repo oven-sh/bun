@@ -31,6 +31,7 @@ enum EventTargetInterface {
     EventTargetInterfaceType = 45,
     AbortSignalEventTargetInterfaceType = 46,
     BroadcastChannelEventTargetInterfaceType = 47,
+    ClipboardEventTargetInterfaceType = 48,
     DOMWindowEventTargetInterfaceType = 50,
     MessagePortEventTargetInterfaceType = 61,
     PerformanceEventTargetInterfaceType = 63,

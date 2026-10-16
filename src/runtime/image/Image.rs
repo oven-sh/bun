@@ -844,8 +844,8 @@ impl Image {
     // JS-thread synchronous read of the system clipboard for an image
     // representation, returning a fresh `Bun.Image` wrapping the raw container
     // bytes. Decode/encode still go through the normal off-thread pipeline;
-    // only the pasteboard fetch is synchronous, and that's a memcpy of bytes
-    // the OS already has in-process. `null` ⇔ no image present. Linux returns
+    // only the pasteboard fetch is synchronous (on macOS it can wait for a
+    // `navigator.clipboard` job). `null` ⇔ no image present. Linux returns
     // `null` unconditionally — there's no stable native API to dlopen and
     // shelling out to `wl-paste`/`xclip` from inside `Bun.Image` is the wrong
     // layer.

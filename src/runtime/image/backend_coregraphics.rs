@@ -293,9 +293,9 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
 }
 
 // ── NSPasteboard ───────────────────────────────────────────────────────────
-// JS-thread only (NSPasteboard is documented main-thread-safe to *read*, and
-// the static `Bun.Image.fromClipboard()` accessor calls this synchronously
-// before constructing the Image — the heavy decode still goes to WorkPool).
+// The static `Bun.Image.fromClipboard()` accessor calls this synchronously on
+// the JS thread (the heavy decode still goes to WorkPool); the shim serializes
+// it with the `navigator.clipboard` jobs.
 
 unsafe extern "C" {
     fn bun_coregraphics_clipboard(out: *mut u8, out_len: *mut usize, probe_only: i32) -> i32;

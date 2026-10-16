@@ -63,6 +63,10 @@ public:
         return createAdopted(Blob__dupe(ptr));
     }
 
+    // `new Blob([bytes], { type })`.
+    static RefPtr<Blob> create(std::span<const uint8_t> bytes, const String& type, JSC::JSGlobalObject* globalThis);
+    static RefPtr<Blob> createWithExactType(std::span<const uint8_t> bytes, ASCIILiteral type, JSC::JSGlobalObject* globalThis);
+
     String fileName()
     {
         return m_fileName;

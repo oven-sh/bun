@@ -11,6 +11,8 @@ pub(crate) mod array_buffer_sink;
 pub(crate) mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
 pub(crate) mod byte_stream;
+#[path = "webcore/clipboard.rs"]
+pub(crate) mod clipboard;
 #[path = "webcore/CompressionStreamCoder.rs"]
 pub(crate) mod compression_stream_coder;
 #[path = "webcore/CookieMap.rs"]

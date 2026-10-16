@@ -26,11 +26,14 @@
 #include "config.h"
 #include "JSDOMPromise.h"
 
+#include "JSDOMGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSPromiseConstructor.h>
+#include <JavaScriptCore/SourceCode.h>
 
 using namespace JSC;
 
@@ -46,6 +49,14 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
         std::exchange(callback, {})();
         return JSC::JSValue::encode(JSC::jsUndefined());
     });
+
+    // A native promise takes the reaction directly. `then` looks up the species
+    // through the promise's `constructor`, which a script can define, so
+    // calling it could run user code and throw here.
+    if (auto* nativePromise = dynamicDowncast<JSC::JSPromise>(promise)) {
+        nativePromise->performPromiseThen(vm, globalObject, handler, handler, JSC::jsUndefined());
+        return IsCallbackRegistered::Yes;
+    }
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     const JSC::Identifier& privateName = vm.propertyNames->builtinNames().thenPrivateName();
@@ -66,6 +77,52 @@ auto DOMPromise::whenPromiseIsSettled(JSDOMGlobalObject* globalObject, JSC::JSOb
 
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
     return scope.exception() ? IsCallbackRegistered::No : IsCallbackRegistered::Yes;
+}
+
+// https://github.com/WebKit/WebKit/blob/main/Source/WebCore/bindings/js/JSDOMPromise.cpp
+auto DOMPromise::whenSettledWithResult(Function<void(JSDOMGlobalObject*, bool, JSC::JSValue)>&& callback) -> IsCallbackRegistered
+{
+    auto* globalObject = this->globalObject();
+    if (!globalObject || isSuspended())
+        return IsCallbackRegistered::No;
+    auto& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* handler = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String {}, [callback = WTF::move(callback)](JSGlobalObject* globalObject, CallFrame* callFrame) mutable {
+        if (auto* promise = dynamicDowncast<JSC::JSPromise>(callFrame->thisValue()))
+            std::exchange(callback, {})(uncheckedDowncast<JSDOMGlobalObject>(globalObject), promise->status() == JSC::JSPromise::Status::Fulfilled, promise->result());
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    });
+    RETURN_IF_EXCEPTION(scope, IsCallbackRegistered::No);
+
+    auto* promise = this->promise();
+    auto* thisHandler = JSC::JSBoundFunction::create(vm, globalObject, handler, promise, JSC::ArgList {}, 0, jsEmptyString(vm), JSC::makeSource("createWhenPromiseSettledFunction"_s, JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted));
+    RETURN_IF_EXCEPTION(scope, IsCallbackRegistered::No);
+    if (!thisHandler) [[unlikely]]
+        return IsCallbackRegistered::No;
+
+    promise->performPromiseThenExported(vm, globalObject, thisHandler, thisHandler, JSC::jsUndefined());
+    RETURN_IF_EXCEPTION(scope, IsCallbackRegistered::No);
+    return IsCallbackRegistered::Yes;
+}
+
+auto DOMPromise::whenFulfilled(JSC::JSPromise& derived, Function<JSC::JSValue(JSDOMGlobalObject&, JSC::JSValue)>&& reaction) -> IsCallbackRegistered
+{
+    auto* globalObject = this->globalObject();
+    if (!globalObject || isSuspended())
+        return IsCallbackRegistered::No;
+    auto& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* handler = JSC::JSNativeStdFunction::create(vm, globalObject, 1, String {}, [reaction = WTF::move(reaction)](JSGlobalObject* globalObject, CallFrame* callFrame) mutable {
+        return JSC::JSValue::encode(std::exchange(reaction, {})(*uncheckedDowncast<JSDOMGlobalObject>(globalObject), callFrame->argument(0)));
+    });
+    RETURN_IF_EXCEPTION(scope, IsCallbackRegistered::No);
+
+    // No rejection handler: the rejection reaches `derived` unchanged.
+    promise()->performPromiseThenExported(vm, globalObject, handler, JSC::jsUndefined(), &derived);
+    RETURN_IF_EXCEPTION(scope, IsCallbackRegistered::No);
+    return IsCallbackRegistered::Yes;
 }
 
 }

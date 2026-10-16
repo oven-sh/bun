@@ -203,6 +203,7 @@ impl InstallResult {
 pub enum Step {
     OpeningCacheDir,
     OpeningDestDir,
+    RemovingOldDir,
     CopyingFiles,
     LinkingDependency,
 }
@@ -214,6 +215,7 @@ impl Step {
             Step::CopyingFiles => b"copying files from cache to destination",
             Step::OpeningCacheDir => b"opening cache/package/version dir",
             Step::OpeningDestDir => b"opening node_modules/package dir",
+            Step::RemovingOldDir => b"removing the old node_modules/package dir",
             Step::LinkingDependency => b"linking dependency/workspace to node_modules",
         }
     }
@@ -1082,7 +1084,20 @@ impl LinkBatch {
         let old = if job.skip_delete {
             None
         } else {
-            move_aside(tree_dir, &job.destination_dir_subpath, job.random)
+            match move_aside(
+                tree_dir,
+                &job.destination_dir_subpath,
+                job.random,
+                IfRefused::ClearInPlace,
+            ) {
+                Ok(old) => old,
+                Err(err) => {
+                    let _ = job
+                        .result
+                        .set(InstallResult::fail(err.into(), Step::RemovingOldDir));
+                    return;
+                }
+            }
         };
         let result = PackageFiles {
             cache_dir: job.cache_dir,
@@ -1152,6 +1167,8 @@ impl LinkBatch {
 
 /// Holds the commit of a git package or the integrity of a tarball. Both linkers look for it.
 pub(crate) const BUN_TAG: &[u8] = b".bun-tag";
+/// What the marker of a patched copy, `.bun-tag-<hash of the patch>`, begins with.
+pub(crate) const PATCH_TAG_PREFIX: &[u8] = b".bun-tag-";
 
 /// Whether an installed tarball's `.bun-tag` says it holds the bytes bun.lock pins.
 pub(crate) fn tarball_tag_matches(tag: &[u8], integrity: &Integrity, skips_verify: bool) -> bool {
@@ -1167,29 +1184,13 @@ impl<'a> PackageInstall<'a> {
         let mut buf: BuntagHashBuf = BuntagHashBuf::default();
         let bunhashtag = buntaghashbuf_make(&mut buf, patchfile_contents_hash);
 
-        let patch_tag_path = path::resolve_path::join_z::<path::platform::Posix>(&[
-            self.destination_dir_subpath.as_bytes(),
-            bunhashtag,
-        ]);
-
         let Ok(destination_dir) = self.node_modules.open_dir(root_node_modules_dir) else {
             return false;
         };
-        #[cfg(unix)]
-        {
-            if sys::fstatat(&destination_dir, patch_tag_path).is_err() {
-                return false;
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            match sys::openat(&destination_dir, patch_tag_path, sys::O::RDONLY, 0) {
-                Err(_) => return false,
-                Ok(fd) => fd.close(),
-            }
-        }
-
-        true
+        let Ok(package) = destination_dir.open_at(self.destination_dir_subpath.as_bytes()) else {
+            return false;
+        };
+        has_only_patch_marker(&package, bunhashtag)
     }
 
     // 1. verify that .bun-tag exists (was it installed from bun?)
@@ -2107,12 +2108,27 @@ impl PackageFiles<'_> {
 /// What `move_aside` names begin with. What is left of one if bun dies stays until `bun prune`.
 pub(crate) const MOVED_ASIDE_PREFIX: &str = ".old-";
 
+/// What `move_aside` does with a directory that the file system refuses to rename.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IfRefused {
+    /// Return the rename's error.
+    Fail,
+    /// Empty it where it is, so that the new files never join the old ones. A mount point (a Docker
+    /// volume with the package's source in it) holds what is not bun's to delete: there, only the
+    /// files `verify` reads go.
+    ClearInPlace,
+}
+
 /// Renames `subpath`, if it is there, to a name in `destination_dir` made of `random`. On any thread.
+///
+/// `Ok(Some(name))` is the new name. `Ok(None)`: `subpath` is gone, or it stays and holds nothing
+/// that `verify` reads any more. `Err`: a file that `verify` reads is still there.
 pub(crate) fn move_aside(
     destination_dir: &Dir,
     subpath: &ZStr,
     random: u64,
-) -> Option<bun_core::ZBox> {
+    if_refused: IfRefused,
+) -> sys::Maybe<Option<bun_core::ZBox>> {
     let old = bun_core::ZBox::from_vec(
         format!(
             "{MOVED_ASIDE_PREFIX}{}",
@@ -2120,33 +2136,115 @@ pub(crate) fn move_aside(
         )
         .into_bytes(),
     );
-    match sys::renameat(destination_dir.fd(), subpath, destination_dir.fd(), &old) {
-        Ok(()) => Some(old),
-        // overlayfs moves no directory of a lower layer. The new files must not join the old ones.
-        Err(err) if err.get_errno() == sys::E::EXDEV => {
-            let _ = destination_dir.delete_tree(subpath.as_bytes());
-            None
-        }
-        // It is not there, or it stays: what is in a mount point (EBUSY) is not bun's to delete.
-        Err(_) => None,
+    let refused = match sys::renameat(destination_dir.fd(), subpath, destination_dir.fd(), &old) {
+        Ok(()) => return Ok(Some(old)),
+        Err(err) if err.get_errno() == sys::E::ENOENT => return Ok(None),
+        Err(err) => err,
+    };
+    if if_refused == IfRefused::Fail {
+        return Err(refused);
+    }
+    // overlayfs moves no directory of a lower layer, Windows none with a file open in it, and no
+    // system a mount point. The rename's error does not tell these apart.
+    if sys::is_mount_point(destination_dir.fd(), subpath)? {
+        let dir = destination_dir.open_at_with(
+            subpath.as_bytes(),
+            sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NOFOLLOW,
+        )?;
+        let unmarked = unmark(&dir);
+        dir.close();
+        return unmarked.map(|()| None);
+    }
+    empty_in_place(destination_dir, subpath).map(|()| None)
+}
+
+/// Deletes what is in `subpath` through a handle, then `subpath` itself if that left it empty.
+/// `Err`: a file that `verify` reads could not be deleted. Any other file that cannot go (on
+/// Windows, one a program has open) stays, and the new copy goes in beside it.
+pub(crate) fn empty_in_place(dir: &Dir, subpath: &ZStr) -> sys::Maybe<()> {
+    let flags = sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NOFOLLOW;
+    let Ok(handle) = dir.open_at_with(subpath.as_bytes(), flags) else {
+        return dir.delete_tree(subpath.as_bytes());
+    };
+    // First: a delete that is cut short must not leave a folder that passes `verify`.
+    let unmarked = unmark(&handle);
+    // `delete_tree` stops at the first entry it cannot delete. This goes on.
+    let _ = handle.delete_children();
+    handle.close();
+    let _ = sys::rmdirat(dir.fd(), subpath);
+    unmarked
+}
+
+/// `unmark` of the package at `subpath`, if it is there.
+pub(crate) fn unmark_at(dir: &Dir, subpath: &ZStr) {
+    if let Ok(package) = dir.open_at_with(subpath.as_bytes(), sys::O::RDONLY | sys::O::CLOEXEC) {
+        let _ = unmark(&package);
+        package.close();
     }
 }
 
+/// Deletes what `verify` reads from a package folder: `package.json`, `.bun-tag` and every
+/// `.bun-tag-<hash>`. The first error is returned once every entry has been tried.
+fn unmark(dir: &Dir) -> sys::Maybe<()> {
+    let mut names: Vec<bun_core::ZBox> = vec![bun_core::ZBox::from_bytes(b"package.json")];
+    let mut iter = sys::iterate_dir(dir.fd());
+    while let Some(entry) = iter.next()? {
+        let name = entry.name.slice_u8();
+        if name.starts_with(BUN_TAG) {
+            names.push(bun_core::ZBox::from_bytes(name));
+        }
+    }
+    drop(iter);
+    let mut result = Ok(());
+    for name in &names {
+        let deleted = match dir.delete_file_z(name) {
+            Err(err) if err.get_errno() != sys::E::ENOENT => Err(err),
+            _ => Ok(()),
+        };
+        result = result.and(deleted);
+    }
+    result
+}
+
+/// Whether `package` holds `marker` and no other `.bun-tag-<hash>`. A folder with two was written
+/// on top of another install by an earlier bun, and is to be installed again.
+pub(crate) fn has_only_patch_marker(package: &Dir, marker: &[u8]) -> bool {
+    let mut found = false;
+    let mut iter = sys::iterate_dir(package.fd());
+    while let Ok(Some(entry)) = iter.next() {
+        let name = entry.name.slice_u8();
+        if name == marker {
+            found = true;
+        } else if name.starts_with(PATCH_TAG_PREFIX) {
+            found = false;
+            break;
+        }
+    }
+    found
+}
+
 impl<'a> PackageInstall<'a> {
-    pub(crate) fn uninstall_before_install(&self, destination_dir: &Dir) {
+    /// `Err`: the old copy, or part of it, is still there. See `move_aside`.
+    pub(crate) fn uninstall_before_install(
+        &self,
+        destination_dir: &Dir,
+        if_refused: IfRefused,
+    ) -> sys::Maybe<()> {
         let Some(temp_path) = move_aside(
             destination_dir,
             self.destination_dir_subpath,
             bun_core::fast_random(),
-        ) else {
-            return;
+            if_refused,
+        )?
+        else {
+            return Ok(());
         };
         // What is scheduled on a pool whose first worker the OS refuses never runs.
         let pool = &PackageManager::get().thread_pool;
         pool.warm(1);
         if !pool.has_workers() {
             let _ = destination_dir.delete_tree(temp_path.as_bytes());
-            return;
+            return Ok(());
         }
         // A large tree takes a while to delete. Under its random name another thread can do that.
         let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
@@ -2174,6 +2272,7 @@ impl<'a> PackageInstall<'a> {
         pool.schedule(Batch::from(unsafe {
             core::ptr::addr_of_mut!((*task).task)
         }));
+        Ok(())
     }
 
     fn is_dangling_symlink(path: &ZStr) -> bool {
@@ -2190,10 +2289,12 @@ impl<'a> PackageInstall<'a> {
         destination_dir: &Dir,
     ) -> InstallResult {
         let dest_path = self.destination_dir_subpath;
-        // If this fails, we don't care.
-        // we'll catch it the next error
-        if !skip_delete && dest_path.as_bytes() != b"." {
-            self.uninstall_before_install(destination_dir);
+        // A link replaces the whole folder. What stays in one that cannot go is not to be touched.
+        if !skip_delete
+            && dest_path.as_bytes() != b"."
+            && let Err(err) = self.uninstall_before_install(destination_dir, IfRefused::Fail)
+        {
+            return InstallResult::fail(err.into(), Step::RemovingOldDir);
         }
 
         // `None` when there is no directory component.
@@ -2457,10 +2558,12 @@ impl<'a> PackageInstall<'a> {
         method_: Method,
         resolution_tag: resolution::Tag,
     ) -> InstallResult {
-        // If this fails, we don't care.
-        // we'll catch it the next error
-        if !skip_delete && self.destination_dir_subpath.as_bytes() != b"." {
-            self.uninstall_before_install(destination_dir);
+        if !skip_delete
+            && self.destination_dir_subpath.as_bytes() != b"."
+            && let Err(err) =
+                self.uninstall_before_install(destination_dir, IfRefused::ClearInPlace)
+        {
+            return InstallResult::fail(err.into(), Step::RemovingOldDir);
         }
 
         PackageFiles {
@@ -2587,7 +2690,12 @@ impl PackageFiles<'_> {
             let _ = destination_dir.delete_tree(staging.as_bytes());
         }
         // No staging (`Staging::Off`, `dest` is occupied, the rename is refused): link in place.
-        self.install_into(destination_dir, method_, resolution_tag, owner)
+        let result = self.install_into(destination_dir, method_, resolution_tag, owner);
+        // What was linked before the failure must not pass `verify`.
+        if let InstallResult::Failure(_) = &result {
+            unmark_at(destination_dir, dest);
+        }
+        result
     }
 
     fn install_into(

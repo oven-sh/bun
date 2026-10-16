@@ -522,21 +522,15 @@ pub(crate) fn remove_placed_package(
         return;
     };
     // Rename first: a delete can stop midway, and a half-deleted package must not pass `verify`.
-    let moved = package_install::move_aside(
+    let _ = match package_install::move_aside(
         &node_modules,
         &bun_core::ZBox::from_bytes(alias),
         bun_core::fast_random(),
-    );
-    if let Some(old) = moved {
-        let _ = node_modules.delete_tree(old.as_bytes());
-    } else {
-        // If the rename fails, delete the files `verify` reads first.
-        if let Some(package) = crate::prune::descend(&node_modules, alias) {
-            let _ = package.delete_tree(b"package.json");
-            let _ = package.delete_tree(package_install::BUN_TAG);
-        }
-        let _ = node_modules.delete_tree(alias);
-    }
+        package_install::IfRefused::ClearInPlace,
+    ) {
+        Ok(Some(old)) => node_modules.delete_tree(old.as_bytes()),
+        _ => node_modules.delete_tree(alias),
+    };
     crate::prune::prune_bins(&node_modules);
 }
 

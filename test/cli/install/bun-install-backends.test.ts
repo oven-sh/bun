@@ -251,6 +251,7 @@ describe.skipIf(isWindows)("install backends on POSIX", () => {
       for (const file of Object.keys(packageFiles)) chmodSync(join(packageDir, file), 0o644);
       chmodSync(installed, 0o777);
       chmodSync(join(projectDir, "node_modules"), 0o555);
+      const { ino } = statSync(installed);
       try {
         const { stdout, stderr, exitCode } = await install(projectDir, "symlink", { unprivileged: true });
         expect(stderr).not.toContain("error");
@@ -259,8 +260,9 @@ describe.skipIf(isWindows)("install backends on POSIX", () => {
       } finally {
         chmodSync(join(projectDir, "node_modules"), 0o755);
       }
-      // The old directory was indeed installed into rather than replaced.
-      expect(existsSync(join(installed, "not-in-the-package"))).toBe(true);
+      // The old directory was indeed installed into rather than replaced, once emptied.
+      expect(statSync(installed).ino).toBe(ino);
+      expect(existsSync(join(installed, "not-in-the-package"))).toBe(false);
       expect(readlinkSync(join(installed, "index.js"))).toBe(join(realpathSync.native(packageDir), "index.js"));
       expect(readFileSync(join(installed, "index.js"), "utf8")).toBe(packageFiles["index.js"]);
     },

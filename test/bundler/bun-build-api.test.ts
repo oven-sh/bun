@@ -1646,6 +1646,18 @@ describe.concurrent("sourceMappingURL comment", () => {
       inMemory: expected,
     });
   });
+
+  test("a file name keeps the bytes that esbuild keeps, except a colon", async () => {
+    // Letters, digits and `-._~$&+,;=@` stay. The rest is `%XX`. So is a colon,
+    // which esbuild keeps: `a:b.js.map` as a relative URL has the scheme `a`.
+    // A Windows file name cannot contain `:` or `*`.
+    const name = `A-z_0.9~$&+,;=@ !'()[]é${isWindows ? "" : ":*"}`;
+    using dir = tempDir("sourcemap-url-kept-bytes", { [`${name}.js`]: "export default 1;\n" });
+
+    const encoded = `A-z_0.9~$&+,;=@%20%21%27%28%29%5B%5D%C3%A9${isWindows ? "" : "%3A%2A"}`;
+    const expected = `//# sourceMappingURL=${encoded}.js.map\n`;
+    expect(await linkedComments(join(String(dir), `${name}.js`))).toEqual({ onDisk: expected, inMemory: expected });
+  });
 });
 
 const originalCwd = process.cwd() + "";

@@ -2053,6 +2053,12 @@ impl<'a> FindVersionResult<'a> {
     }
 }
 
+/// Whether the text of a range is npm's `*`, which `find_any_version` resolves. npm goes by the
+/// text: `x` and `>=0.0.0` are ranges like any other.
+pub(crate) fn is_any_version_range(literal: &[u8]) -> bool {
+    literal == b"*" || literal.ends_with(b"@*")
+}
+
 impl PackageManifest {
     pub(crate) fn find_for_dependency(
         &self,
@@ -2063,8 +2069,7 @@ impl PackageManifest {
     ) -> FindVersionResult<'_> {
         let literal = version.literal.slice(buf);
         if version.tag == crate::dependency::Tag::Npm {
-            // npm goes by the text: `x` and `>=0.0.0` are ranges like any other.
-            if literal == b"*" || literal.ends_with(b"@*") {
+            if is_any_version_range(literal) {
                 return self.find_any_version(minimum_release_age_ms, exclusions);
             }
             return self.find_best_version_with_filter(

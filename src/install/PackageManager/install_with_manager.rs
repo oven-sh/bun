@@ -2381,8 +2381,10 @@ fn rows_outside_overrides(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)>
                         version.try_npm().is_some_and(|npm| {
                             // Under another name the row follows an `npm:` alias, not the rule.
                             npm.name.slice(buf) == names[package_id as usize].slice(buf)
-                                // An empty range resolves to `latest`, even to a prerelease.
+                                // An empty range and `*` resolve to `latest`, even if that is a
+                                // prerelease, which no range accepts.
                                 && !npm.version.is_empty()
+                                && !crate::npm::is_any_version_range(version.literal.slice(buf))
                                 && !npm.version.satisfies(
                                     resolutions[package_id as usize].npm().version,
                                     buf,

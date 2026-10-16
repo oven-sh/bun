@@ -1291,18 +1291,20 @@ fn look_ahead_from_project_folder(this: &mut PackageManager, id: DependencyID, a
     let mut buf = bun_paths::path_buffer_pool::get();
     let abs = project_path(path, &mut buf[..]);
     if let Some(listed) = FolderResolution::listed_dependencies(asked.version.tag, abs, this) {
-        let locked = names_locked_for_folder(this, listed.package.name_hash);
+        let locked = names_locked_for_folder(this, &listed);
         look_ahead_from(this, &listed, &locked);
     }
 }
 
-/// The names that the folder package `name_hash` had resolved in bun.lock. When its package.json is
-/// read again, `Diff::keep_resolutions` leaves the unchanged ones on their versions, which takes no
-/// manifest. A changed one is left out here too, and requests its manifest when its turn comes.
+/// The dependencies in `listed`, by name, that keep the version that bun.lock has for them. When the
+/// package.json of a folder that bun.lock has is read again, `Diff::keep_resolutions` leaves a
+/// dependency on its version if its range is unchanged or still accepts that version, and that
+/// takes no manifest.
 fn names_locked_for_folder(
     this: &PackageManager,
-    name_hash: PackageNameHash,
+    listed: &ListedDependencies,
 ) -> Vec<PackageNameHash> {
+    use crate::lockfile_real::package::Diff;
     use crate::resolution::Tag;
     let lockfile = &*this.lockfile;
     if this.to_update {
@@ -1310,14 +1312,34 @@ fn names_locked_for_folder(
     }
     let resolutions = lockfile.packages.items_resolution();
     let lists = lockfile.packages.items_dependencies();
-    (lockfile.packages_named(name_hash).iter())
+    let locked_rows: Vec<usize> = (lockfile.packages_named(listed.package.name_hash).iter())
         .filter(|&&id| {
             id < lockfile.loaded_package_count
                 && matches!(resolutions[id as usize].tag, Tag::Workspace | Tag::Folder)
         })
         .flat_map(|&id| lists[id as usize].begin() as usize..lists[id as usize].end() as usize)
         .filter(|&row| lockfile.buffers.resolutions[row] != invalid_package_id)
-        .map(|row| lockfile.buffers.dependencies[row].name_hash)
+        .collect();
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let listed_buf = listed.lockfile.buffers.string_bytes.as_slice();
+    (listed.package.dependencies)
+        .get(listed.lockfile.buffers.dependencies.as_slice())
+        .iter()
+        .filter(|dependency| {
+            locked_rows.iter().any(|&row| {
+                let locked = &lockfile.buffers.dependencies[row];
+                locked.name_hash == dependency.name_hash
+                    && (locked.version.literal.slice(buf)
+                        == dependency.version.literal.slice(listed_buf)
+                        || Diff::locked_version_satisfies(
+                            lockfile,
+                            lockfile.buffers.resolutions[row],
+                            dependency,
+                            listed_buf,
+                        ))
+            })
+        })
+        .map(|dependency| dependency.name_hash)
         .collect()
 }
 

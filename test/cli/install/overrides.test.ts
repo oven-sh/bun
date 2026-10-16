@@ -545,6 +545,23 @@ describe("a bun.lock written by Bun 1.4", () => {
       packages: () => [["prereleases-3", "prereleases-3@5.0.0-alpha.153"]],
     },
     {
+      title: "the prerelease that `latest` names under *",
+      pkg: () => ({
+        dependencies: { "prereleases-3": "5.0.0-alpha.153" },
+        overrides: { "prereleases-3": "*" },
+      }),
+      packages: () => [["prereleases-3", "prereleases-3@5.0.0-alpha.153"]],
+    },
+    {
+      title: "the prerelease that `latest` names under a $name that is *",
+      pkg: () => ({
+        dependencies: { "prereleases-3": "*" },
+        overrides: { "prereleases-3": "$prereleases-3" },
+      }),
+      rules: { "prereleases-3": "*" },
+      packages: () => [["prereleases-3", "prereleases-3@5.0.0-alpha.153"]],
+    },
+    {
       title: "a workspace has the name and another version",
       pkg: () => ({
         workspaces: ["packages/*"],

@@ -1528,7 +1528,7 @@ impl Diff {
     }
 
     /// npm's sticky rule: `to_dep` names the package `locked` and its range accepts that version.
-    fn locked_version_satisfies(
+    pub(crate) fn locked_version_satisfies(
         from_lockfile: &Lockfile,
         locked: PackageID,
         to_dep: &Dependency,

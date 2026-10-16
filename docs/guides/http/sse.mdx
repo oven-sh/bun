@@ -89,3 +89,26 @@ Bun.serve({
   },
 });
 ```
+
+## Consuming a stream from Bun
+
+Bun has no `EventSource` global. To consume an SSE stream from a Bun script, add the `undici` package with `bun add undici` and import `EventSource` from it. The package provides the TypeScript types; at runtime, Bun resolves `undici` to its built-in implementation.
+
+```ts client.ts icon="/icons/typescript.svg"
+import { EventSource } from "undici";
+
+const events = new EventSource("http://localhost:3000/events");
+
+events.onmessage = event => {
+  console.log(event.data);
+};
+
+events.onerror = () => {
+  // Bun reconnects on its own after the server closes the stream.
+  // readyState is EventSource.CLOSED when the server answered with a
+  // status other than 200 or a Content-Type other than text/event-stream.
+  console.log("readyState:", events.readyState);
+};
+```
+
+Bun sends the `Last-Event-ID` header when it reconnects, and honors the `retry:` field. Call `events.close()` to stop the stream.

@@ -3212,6 +3212,11 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
+    // A test's console in Jest and Vitest has none. Where there is one, React's development build reads into the props of what it renders.
+    if (isBunTest) {
+        consoleObject->deleteProperty(this, Identifier::fromString(vm, "timeStamp"_s));
+        RETURN_IF_EXCEPTION(scope, );
+    }
 }
 
 // ===================== start conditional builtin globals =====================

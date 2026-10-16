@@ -1894,6 +1894,56 @@ function runTest({
   }
 }
 
+// A test's console in Jest and Vitest is a `new Console()`, which has none. React's development build logs each render
+// where it finds one, and reads into the props for that: a getter that throws there breaks every later render.
+describe.concurrent("console.timeStamp", () => {
+  test.each([[[]], [["--isolate"]], [["--isolate=modules"]]])(
+    "is not defined in a preload or a test file %j",
+    async args => {
+      using dir = tempDir("console-timestamp", {
+        "preload.js": `globalThis.inPreload = [typeof console.timeStamp, "timeStamp" in console];`,
+        "first.test.js": `
+        import { expect, test } from "bun:test";
+        test("the console", () => {
+          expect(globalThis.inPreload).toEqual(["undefined", false]);
+          expect([typeof console.timeStamp, "timeStamp" in console]).toEqual(["undefined", false]);
+          expect([typeof console.time, typeof console.timeEnd, typeof console.timeLog]).toEqual(["function", "function", "function"]);
+        });
+      `,
+        "second.test.js": `
+        import { expect, test } from "bun:test";
+        test("a file can define it", () => {
+          console.timeStamp = () => "mine";
+          expect(console.timeStamp()).toBe("mine");
+        });
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--preload", "./preload.js", ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 2 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("is a function outside of bun test", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "console.log(typeof console.timeStamp)"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("function\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("test file discovery (scanner)", () => {
   test("discovers tests in deeply nested directories and prunes dot-dirs and node_modules", async () => {
     const files: Record<string, string> = {

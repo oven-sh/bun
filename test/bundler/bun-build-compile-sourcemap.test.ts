@@ -126,6 +126,38 @@ main();`,
     expect(mapContent.mappings).toBeString();
   });
 
+  // One compile per test, and not concurrent: each compile copies the whole bun binary.
+  test.each([true, false])(
+    "compile with sourcemap: external fails the build when the .map file cannot be written (throw: %p)",
+    async shouldThrow => {
+      using dir = tempDir("build-compile-sourcemap-unwritable", {
+        ...helperFiles,
+        // A directory where the .map file goes, so the write fails for every user, root included.
+        out: { "app.map": { keep: "" } },
+      });
+
+      let settled: unknown;
+      try {
+        const result = await Bun.build({
+          entrypoints: [join(String(dir), "app.js")],
+          compile: { outfile: join(String(dir), "out", "app") },
+          sourcemap: "external",
+          throw: shouldThrow,
+        });
+        settled = {
+          success: result.success,
+          logs: result.logs.map(log => log.message),
+          outputs: result.outputs.map(output => output.kind),
+        };
+      } catch (error) {
+        settled = { rejected: (error as AggregateError).errors.map(error => error.message) };
+      }
+
+      const message = expect.stringContaining("writing sourcemap file");
+      expect(settled).toEqual(shouldThrow ? { rejected: [message] } : { success: false, logs: [message], outputs: [] });
+    },
+  );
+
   test("compile without sourcemap does not write .map file", async () => {
     using dir = tempDir("build-compile-no-sourcemap-file", {
       "nosourcemap_entry.js": helperFiles["app.js"],

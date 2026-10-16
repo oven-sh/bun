@@ -113,6 +113,7 @@ pub mod border;
 pub mod border_image;
 pub mod border_radius;
 pub mod box_shadow;
+pub mod contain;
 pub mod display;
 pub mod flex;
 pub mod font;
@@ -242,6 +243,9 @@ mod generic_registrations {
         border_radius::BorderRadius,
         // box_shadow
         box_shadow::BoxShadow,
+        // contain
+        contain::Container,
+        contain::ContainerName,
         // css_modules
         css_modules::Composes,
         // display

@@ -7929,6 +7929,24 @@ describe("css tests", () => {
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
     );
+
+    // The container-type, container-name and container properties.
+    minify_test(".foo { container-type: normal; }", ".foo{container-type:normal}");
+    minify_test(".foo { container-type: size; }", ".foo{container-type:size}");
+    minify_test(".foo { container-type: inline-size; }", ".foo{container-type:inline-size}");
+    minify_test(".foo { container-name: none; }", ".foo{container-name:none}");
+    minify_test(".foo { container-name: foo; }", ".foo{container-name:foo}");
+    minify_test(".foo { container-name: foo bar; }", ".foo{container-name:foo bar}");
+    minify_test(".foo { container: none; }", ".foo{container:none}");
+    minify_test(".foo { container: none / size; }", ".foo{container:none/size}");
+    minify_test(".foo { container: foo; }", ".foo{container:foo}");
+    minify_test(".foo { container: foo / normal; }", ".foo{container:foo}");
+    minify_test(".foo { container: foo / size; }", ".foo{container:foo/size}");
+    minify_test(".foo { container: foo bar / inline-size; }", ".foo{container:foo bar/inline-size}");
+    // `none`, `and`, `not` and `or` are not valid container names. The
+    // declaration is kept as written.
+    minify_test(".foo { container-name: and; }", ".foo{container-name:and}");
+    minify_test(".foo { container-name: foo none; }", ".foo{container-name:foo none}");
   });
 
   describe("font-palette-values", () => {

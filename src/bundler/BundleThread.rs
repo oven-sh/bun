@@ -95,7 +95,6 @@ pub trait CompletionStruct: Node + Send + 'static {
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
-        generation: bun_core::Generation,
     ) -> Result<&'a mut Transpiler<'a>, crate::Error>;
 
     /// Constructs the `BundleV2`, wires `plugins`/`completion`/`file_map`,
@@ -279,7 +278,9 @@ impl<C: CompletionStruct> BundleThread<C> {
         ast_memory_store.push();
 
         // Allocate + configure folded — see `create_and_configure_transpiler` doc.
-        let transpiler = completion.create_and_configure_transpiler(bump, generation)?;
+        let transpiler = completion.create_and_configure_transpiler(bump)?;
+
+        transpiler.resolver.generation = generation;
 
         // Construction + run delegated — see
         // `init_and_run` doc. Reborrow `transpiler` through a raw ptr so

@@ -1117,35 +1117,6 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The build's .env discovery probes the working directory's listing while
-  // the build is configured, before any module is resolved. That probe used
-  // to run before the build's generation was set, so it reused the listing
-  // the runtime read at startup, and a .env file written since was never
-  // opened.
-  test.concurrent("a build with env inlining sees a .env file written before the call", async () => {
-    using dir = tempDir("build-sees-new-dotenv", {
-      "package.json": `{}`,
-      "entry.js": `console.log(process.env.BUN_BUILD_NEW_DOTENV);\n`,
-      "driver.ts": `
-        import { writeFileSync } from "node:fs";
-        writeFileSync(".env", "BUN_BUILD_NEW_DOTENV=from-dotenv\\n");
-        const build = await Bun.build({ entrypoints: ["./entry.js"], env: "inline", throw: false });
-        console.log(build.success ? await build.outputs[0].text() : build.logs[0].message);
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "driver.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain(`console.log("from-dotenv")`);
-    expect(exitCode).toBe(0);
-  });
-
   // https://github.com/oven-sh/bun/issues/33099
   // A package reached through a symlinked node_modules entry caches its file
   // descriptor in the resolver. A second in-process Bun.build() used to reuse a

@@ -514,18 +514,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     }
                                     new_ref
                                 };
-                                p.note_commonjs_export_use(name, ref_, identifier_opts);
+                                let is_callee = p.note_commonjs_export_use(name, identifier_opts);
 
                                 p.ignore_usage(id.ref_);
                                 p.record_usage(ref_);
 
-                                return Some(p.new_expr(
-                                    E::CommonJSExportIdentifier {
-                                        ref_,
-                                        ..Default::default()
-                                    },
-                                    name_loc,
-                                ));
+                                return Some(
+                                    p.new_expr(
+                                        E::CommonJSExportIdentifier::new(
+                                            ref_,
+                                            E::CommonJSExportIdentifierBase::Exports,
+                                        )
+                                        .with_is_callee(is_callee),
+                                        name_loc,
+                                    ),
+                                );
                             } else if p.options.features.commonjs_at_runtime
                                 && identifier_opts.assign_target() != js_ast::AssignTarget::None
                             {
@@ -728,18 +731,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                         new_ref
                                     };
-                                    p.note_commonjs_export_use(name, ref_, identifier_opts);
+                                    let is_callee =
+                                        p.note_commonjs_export_use(name, identifier_opts);
 
                                     p.record_usage(ref_);
 
-                                    return Some(p.new_expr(
-                                        // Record this as from module.exports
-                                        E::CommonJSExportIdentifier::new(
-                                            ref_,
-                                            E::CommonJSExportIdentifierBase::ModuleDotExports,
+                                    return Some(
+                                        p.new_expr(
+                                            // Record this as from module.exports
+                                            E::CommonJSExportIdentifier::new(
+                                                ref_,
+                                                E::CommonJSExportIdentifierBase::ModuleDotExports,
+                                            )
+                                            .with_is_callee(is_callee),
+                                            name_loc,
                                         ),
-                                        name_loc,
-                                    ));
+                                    );
                                 } else if p.options.features.commonjs_at_runtime
                                     && identifier_opts.assign_target() != js_ast::AssignTarget::None
                                 {

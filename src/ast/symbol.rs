@@ -126,7 +126,7 @@ bitflags::bitflags! {
         /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
 
-        /// An import item (`ns.name`) or a lifted export that a use calls as a method.
+        /// An import item (`ns.name`) that a use calls as a method.
         const CALLED_AS_METHOD = 1 << 6;
 
         /// A call of this function declaration or lifted export ignores `this`.

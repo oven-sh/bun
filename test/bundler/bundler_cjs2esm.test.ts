@@ -1706,6 +1706,316 @@ describe("bundler", () => {
       stdout: "helped:in",
     },
   });
+
+  // A call that reads `exports.who` as a value passes no `this`: `(0, exports.who)()`,
+  // `(true ? exports.who : 0)()`, `const g = exports.who; g()`. A fold or an inlined local
+  // moves the read into the callee position. Only `exports.who()` as written is a method call.
+  // The bundles run under node: Bun's runtime folds `(0, o.f)\`\`` to `o.f\`\`` again.
+  const whoExport = /* js */ `
+    exports.tag = "exports";
+    exports.who = function () {
+      return this === undefined || this === globalThis ? "none" : this.tag === "exports" ? "exports" : "other";
+    };
+  `;
+  const valueCalls = {
+    comma: "return (0, exports.who)();",
+    commaOptional: "return (0, exports.who)?.();",
+    commaTag: "return (0, exports.who)``;",
+    ternary: "return (true ? exports.who : 0)();",
+    ternaryNo: "return (false ? 0 : exports.who)();",
+    ternaryTag: "return (true ? exports.who : 0)``;",
+    impureTernary: "return ([] ? exports.who : 0)();",
+    and: "return (1 && exports.who)();",
+    or: "return (0 || exports.who)();",
+    nullish: "return (null ?? exports.who)();",
+    computed: 'return (0, exports["who"])();',
+    moduleExports: "return (0, module.exports.who)();",
+    local: "const g = exports.who; return g();",
+    localOptional: "const g = exports.who; return g?.();",
+    localTag: "const g = exports.who; return g``;",
+    localModuleExports: "const g = module.exports.who; return g();",
+  };
+  const methodCalls = {
+    method: "return exports.who();",
+    methodOptional: "return exports.who?.();",
+    methodTag: "return exports.who``;",
+    methodComputed: 'return exports["who"]();',
+    methodModuleExports: "return module.exports.who();",
+  };
+  const exportFunctions = (bodies: Record<string, string>) =>
+    Object.entries(bodies)
+      .map(([name, body]) => `exports.${name} = function () { ${body} };`)
+      .join("\n");
+  const logEach = (names: string[], callee = (name: string) => name) =>
+    `console.log([${names.map(name => `"${name}=" + ${callee(name)}()`).join(", ")}].join(" "));`;
+  const results = (names: string[], result: string) => names.map(name => `${name}=${result}`);
+  const valueNames = Object.keys(valueCalls);
+  const methodNames = Object.keys(methodCalls);
+
+  for (const minifySyntax of [false, true]) {
+    const suffix = minifySyntax ? "MinifySyntax" : "";
+
+    itBundled(`cjs2esm/ValueCallOfExportInWrappedFilePassesNoThis${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const lib = require("./lib.cjs");
+          ${logEach([...valueNames, ...methodNames], name => "lib." + name)}
+        `,
+        "/lib.cjs": `${whoExport}\n${exportFunctions({ ...valueCalls, ...methodCalls })}`,
+      },
+      outfile: "/out.mjs",
+      minifySyntax,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.mjs");
+        expect(out).toContain("var require_lib = __commonJS(");
+        expect(out).toContain("return (0, exports.who)();");
+        expect(out).toContain("return (0, exports.who)?.();");
+        expect(out).toContain("return (0, exports.who)``;");
+        expect(out).toContain("return exports.who();");
+      },
+      run: {
+        runtime: "node",
+        stdout: [...results(valueNames, "none"), ...results(methodNames, "exports")].join(" "),
+      },
+    });
+    itBundled(`cjs2esm/ValueCallOfExportInLiftedFilePassesNoThis${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { ${valueNames.join(", ")} } from "./lib.cjs";
+          ${logEach(valueNames)}
+        `,
+        "/lib.cjs": `${whoExport}\n${exportFunctions(valueCalls)}`,
+      },
+      outfile: "/out.mjs",
+      cjs2esm: true,
+      minifySyntax,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.mjs");
+        // The binding has no receiver, so no call needs `(0, ...)` or the namespace object.
+        expect(out).toContain("return $who();");
+        expect(out).not.toContain("exports_lib");
+        if (minifySyntax) expect(out).not.toContain("(0, $who)");
+      },
+      run: {
+        runtime: "node",
+        stdout: results(valueNames, "none").join(" "),
+      },
+    });
+    itBundled(`cjs2esm/ValueCallOfExportNextToAMethodCallPassesNoThis${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { ${[...valueNames, ...methodNames].join(", ")} } from "./lib.cjs";
+          ${logEach([...valueNames, ...methodNames])}
+        `,
+        "/lib.cjs": `${whoExport}\n${exportFunctions({ ...valueCalls, ...methodCalls })}`,
+      },
+      outfile: "/out.mjs",
+      cjs2esm: true,
+      minifySyntax,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.mjs");
+        expect(out).toContain("return $who();");
+        expect(out).toContain("return exports_lib.who();");
+      },
+      run: {
+        runtime: "node",
+        stdout: [...results(valueNames, "none"), ...results(methodNames, "exports")].join(" "),
+      },
+    });
+    // Only the method call needs the namespace object, and `unused` is tree-shaken.
+    itBundled(`cjs2esm/ValueCallOfExportNextToAnUnusedMethodCallPassesNoThis${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { ${valueNames.join(", ")} } from "./lib.cjs";
+          ${logEach(valueNames)}
+        `,
+        "/lib.cjs": `${whoExport}\n${exportFunctions({ ...valueCalls, unused: "return exports.who();" })}`,
+      },
+      outfile: "/out.mjs",
+      cjs2esm: true,
+      minifySyntax,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.mjs");
+        expect(out).toContain("return $who();");
+        expect(out).not.toContain("exports_lib");
+      },
+      run: {
+        runtime: "node",
+        stdout: results(valueNames, "none").join(" "),
+      },
+    });
+  }
+
+  // The other spellings of the property: a key that is not an identifier, and
+  // `module.exports.who` in a file that also assigns `module.exports`.
+  itBundled("cjs2esm/ValueCallOfExportInWrappedFileOtherSpellingsMinifySyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        const lib = require("./lib.cjs");
+        ${logEach(["quotedKey", "quotedKeyMethod", "viaModule", "viaModuleMethod"], name => "lib." + name)}
+      `,
+      "/lib.cjs": /* js */ `
+        ${whoExport}
+        exports["a-b"] = exports.who;
+        exports.quotedKey = function () { return (0, exports["a-b"])(); };
+        exports.quotedKeyMethod = function () { return exports["a-b"](); };
+        exports.viaModule = function () { return (0, module.exports.who)(); };
+        exports.viaModuleMethod = function () { return module.exports.who(); };
+        if (globalThis.REPLACE) module.exports = {};
+      `,
+    },
+    outfile: "/out.mjs",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.mjs");
+      expect(out).toContain('return (0, exports["a-b"])();');
+      expect(out).toContain('return exports["a-b"]();');
+      expect(out).toContain("return (0, module.exports.who)();");
+      expect(out).toContain("return module.exports.who();");
+    },
+    run: {
+      runtime: "node",
+      stdout: "quotedKey=none quotedKeyMethod=exports viaModule=none viaModuleMethod=exports",
+    },
+  });
+
+  // TypeScript's CommonJS output for:
+  //   export const greet = function (this: { name: string } | void) { return (this ?? { name: "fallback" }).name; };
+  //   export function run() { return greet(); }
+  const typescriptValueCall = {
+    "/app.cjs": /* js */ `
+      const lib = require("./lib.cjs");
+      console.log("app: " + lib.run());
+    `,
+    "/lib.cjs": /* js */ `
+      "use strict";
+      Object.defineProperty(exports, "__esModule", { value: true });
+      exports.greet = void 0;
+      exports.run = run;
+      const greet = function () { return (this ?? { name: "fallback" }).name; };
+      exports.greet = greet;
+      function run() { return (0, exports.greet)(); }
+    `,
+  };
+  itBundled("cjs2esm/TypeScriptValueCallOfExportedConstMinifySyntax", {
+    files: typescriptValueCall,
+    minifySyntax: true,
+    backend: "cli",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("return (0, exports.greet)();");
+    },
+    run: {
+      stdout: "app: fallback",
+    },
+  });
+  itBundled("cjs2esm/TypeScriptValueCallOfExportedConstProduction", {
+    files: typescriptValueCall,
+    target: "bun",
+    production: true,
+    run: {
+      stdout: "app: fallback",
+    },
+  });
+  itBundled("cjs2esm/SingleUseLocalOfExportMinifySyntax", {
+    files: {
+      "/app.cjs": /* js */ `
+        const lib = require("./lib.cjs");
+        console.log("app: " + lib.run());
+      `,
+      "/lib.cjs": /* js */ `
+        "use strict";
+        exports.greet = function () { return (this ?? { name: "fallback" }).name; };
+        exports.run = function () { const g = exports.greet; return g(); };
+      `,
+    },
+    minifySyntax: true,
+    backend: "cli",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("return (0, exports.greet)();");
+    },
+    run: {
+      stdout: "app: fallback",
+    },
+  });
+
+  // `<div />` is the method call `exports.h("div", null)`. The React Compiler builds that
+  // call again for a component that it compiles. `useWho` holds a value call, and stays as written.
+  for (const [name, factory, reactCompiler] of [
+    ["", "exports.h", false],
+    ["ModuleExports", "module.exports.h", false],
+    ["ReactCompiler", "exports.h", true],
+  ] as const) {
+    itBundled(`cjs2esm/JsxClassicFactoryOnExportsKeepsThis${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const lib = require("./lib.jsx");
+          console.log(lib.App({ a: "A" }), lib.useWho());
+        `,
+        "/lib.jsx": /* jsx */ `
+          ${whoExport}
+          exports.h = function (type, props) {
+            return type + ":" + props.title + ":" + exports.who.call(this);
+          };
+          function App({ a }) {
+            const o = { a };
+            return <div title={o.a} />;
+          }
+          exports.App = App;
+          function useWho() {
+            return (true ? exports.who : 0)();
+          }
+          exports.useWho = useWho;
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": `exports.version = "0.0.0";`,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          exports.c = function useMemoCache(size) {
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          };
+        `,
+      },
+      jsx: {
+        runtime: "classic",
+        factory,
+      },
+      reactCompiler,
+      backend: "cli",
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain('exports.h("div", {');
+        expect(out).toContain("return (0, exports.who)();");
+        expect(out.includes("useMemoCache")).toBe(reactCompiler);
+      },
+      run: {
+        stdout: "div:A:exports none",
+      },
+    });
+  }
+  // A factory on an import is not a call of `exports.h`: it binds to the lifted `$h` as before.
+  itBundled("cjs2esm/JsxClassicFactoryOnImportNamespaceBindsDirectly", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import * as R from "./lib.cjs";
+        console.log(<div />);
+      `,
+      "/lib.cjs": /* js */ `
+        exports.h = function (type) {
+          return type + ":" + (this === undefined || this === globalThis ? "none" : "bound");
+        };
+      `,
+    },
+    jsx: {
+      runtime: "classic",
+      factory: "R.h",
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain('$h("div", null)');
+    },
+    run: {
+      stdout: "div:none",
+    },
+  });
   itBundled("cjs2esm/DefaultImportJsxClassicRuntime", {
     files: {
       "/entry.jsx": /* jsx */ `

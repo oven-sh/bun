@@ -362,8 +362,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         break 'tagger _tag;
                     }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
-                        break 'tagger p
-                            .jsx_classic_member_expression(expr.loc, |jsx| &jsx.fragment);
+                        break 'tagger p.jsx_classic_member_expression(
+                            expr.loc,
+                            |jsx| &jsx.fragment,
+                            false,
+                        );
                     }
                     break 'tagger p.jsx_import(JSXImport::Fragment, expr.loc);
                 };
@@ -425,7 +428,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     let target: Expr = if runtime == options::JSX::Runtime::Classic {
-                        p.jsx_classic_member_expression(expr.loc, |jsx| &jsx.factory)
+                        p.jsx_classic_member_expression(expr.loc, |jsx| &jsx.factory, true)
                     } else {
                         // jsxStringsToMemberExpression(factory) must run
                         // unconditionally before the runtime check; it has the side-effect of

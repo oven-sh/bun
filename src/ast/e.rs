@@ -534,7 +534,7 @@ impl ImportIdentifier {
 /// the identifier in the Ref
 /// 8-byte CJS-export-identifier payload — `base` rides in `Ref` user bit 0
 /// (`Exports` = 0, `ModuleDotExports` = 1; see `Identifier` doc for packing
-/// rationale).
+/// rationale) and `is_callee` in user bit 1.
 #[derive(Clone, Copy)]
 pub struct CommonJSExportIdentifier {
     pub ref_: Ref,
@@ -563,6 +563,19 @@ impl CommonJSExportIdentifier {
             CommonJSExportIdentifierBase::ModuleDotExports
         } else {
             CommonJSExportIdentifierBase::Exports
+        }
+    }
+    /// The source wrote this access as the target of a call or as a template
+    /// tag (`exports.name()`), so that call passes the exports object as `this`.
+    /// Without it the node is a value read, wherever a fold moves it.
+    #[inline]
+    pub const fn is_callee(self) -> bool {
+        self.ref_.user_bit(1)
+    }
+    #[inline]
+    pub const fn with_is_callee(self, is_callee: bool) -> Self {
+        Self {
+            ref_: self.ref_.with_user_bit(1, is_callee),
         }
     }
 }

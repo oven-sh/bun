@@ -4613,15 +4613,14 @@ pub(crate) mod __gated_printer {
         }
 
         /// `exports.name`: the binding `$name`, or a property for a call that reads `this`.
+        /// A call target that the source did not write there is a value read that a fold or
+        /// an inlined local moved. Its property form is `(0, exports.name)`.
         fn print_commonjs_export_identifier(
             &mut self,
             id: E::CommonJSExportIdentifier,
             loc: bun_ast::Loc,
             is_call_target: bool,
         ) {
-            self.print_space_before_identifier();
-            self.add_source_mapping(loc);
-
             let Some(exports) = self.options.commonjs_named_exports else {
                 return;
             };
@@ -4638,13 +4637,22 @@ pub(crate) mod __gated_printer {
             let key = BackRef::<[u8]>::new(&exports.keys()[idx][..]);
             let value = &exports.values()[idx];
             let (binding, needs_decl) = (value.loc_ref.ref_, value.needs_decl);
-            let call_needs_this = is_call_target
+            let is_method_call = is_call_target && id.is_callee();
+            let call_needs_this = is_method_call
                 && self
                     .symbols()
                     .get_const(id.ref_)
-                    .is_some_and(|symbol| symbol.called_as_method() && !symbol.call_ignores_this());
+                    .is_some_and(|symbol| !symbol.call_ignores_this());
+            let is_property =
+                self.options.commonjs_named_exports_deoptimized || needs_decl || call_needs_this;
+            let wrap = is_property && is_call_target && !is_method_call;
 
-            if !(self.options.commonjs_named_exports_deoptimized || needs_decl || call_needs_this) {
+            if wrap {
+                self.print_whitespacer(ws!(b"(0, "));
+            }
+            self.print_space_before_identifier();
+            self.add_source_mapping(loc);
+            if !is_property {
                 self.print_symbol(binding);
                 return;
             }
@@ -4666,6 +4674,9 @@ pub(crate) mod __gated_printer {
                 self.print(b"[");
                 self.print_string_literal_utf8(key, false);
                 self.print(b"]");
+            }
+            if wrap {
+                self.print(b")");
             }
         }
 

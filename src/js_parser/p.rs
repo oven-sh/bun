@@ -5531,6 +5531,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         parts: &[&'a [u8]],
+        is_call_target: bool,
     ) -> Result<Expr, crate::Error> {
         let result = self.find_symbol(loc, parts[0])?;
 
@@ -5545,7 +5546,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_is_property_access_target(parts.len() > 1),
         );
         if parts.len() > 1 {
-            return Ok(self.member_expression(loc, value, &parts[1..]));
+            return Ok(self.member_expression(loc, value, &parts[1..], is_call_target));
         }
 
         Ok(value)
@@ -5555,11 +5556,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// a member expression (`React.createElement`), resolved from the current
     /// scope. `options.jsx` is dropped when `Parser::parse` returns, but the
     /// parts live on in symbols and `E::Dot.name` until the printer runs, so
-    /// they are duped into the AST arena.
+    /// they are duped into the AST arena. `is_call_target`: the caller makes
+    /// the result the target of a call.
     pub(crate) fn jsx_classic_member_expression(
         &mut self,
         loc: bun_ast::Loc,
         members: fn(&options::JSX::Pragma) -> &options::JSX::MemberList,
+        is_call_target: bool,
     ) -> Expr {
         let arena = self.arena;
         let parts: &[&'a [u8]] = arena.alloc_slice_fill_iter(
@@ -5567,7 +5570,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .iter()
                 .map(|b| -> &'a [u8] { arena.alloc_slice_copy(b) }),
         );
-        self.jsx_strings_to_member_expression(loc, parts)
+        self.jsx_strings_to_member_expression(loc, parts, is_call_target)
             .expect("unreachable")
     }
 
@@ -5576,16 +5579,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         initial_value: Expr,
         parts: &[&'a [u8]],
+        is_call_target: bool,
     ) -> Expr {
         let mut value = initial_value;
 
         for (i, part) in parts.iter().enumerate() {
+            let is_last = i + 1 == parts.len();
+            // `exports.h(...)`: the export node must know that it is the call target, or its
+            // printer takes it for a value read. No other target gets the option, so an
+            // import item still binds directly.
+            let is_commonjs_export_call_target = is_call_target
+                && is_last
+                && match value.data {
+                    js_ast::ExprData::EIdentifier(id) => id.ref_.eql(self.exports_ref),
+                    js_ast::ExprData::ESpecial(E::Special::ModuleExports) => true,
+                    _ => false,
+                };
             if let Some(rewrote) = self.maybe_rewrite_property_access(
                 loc,
                 value,
                 part,
                 loc,
-                IdentifierOpts::default().with_is_property_access_target(i + 1 < parts.len()),
+                IdentifierOpts::default()
+                    .with_is_property_access_target(!is_last)
+                    .with_is_call_target(is_commonjs_export_call_target),
             ) {
                 value = rewrote;
             } else {
@@ -5989,32 +6006,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.commonjs_named_exports_deoptimized = true;
     }
 
-    /// Records an assignment to `exports.name`, or a call of it.
-    pub(crate) fn note_commonjs_export_use(
-        &mut self,
-        name: &[u8],
-        ref_: Ref,
-        opts: IdentifierOpts,
-    ) {
+    /// Records an assignment to `exports.name`, or a call of it. Returns whether the
+    /// source calls it as a method, for `E::CommonJSExportIdentifier::is_callee`.
+    pub(crate) fn note_commonjs_export_use(&mut self, name: &[u8], opts: IdentifierOpts) -> bool {
         if opts.assign_target() != js_ast::AssignTarget::None
             && let Some(export) = self.commonjs_named_exports.get_mut(name)
         {
             export.assign_count = export.assign_count.saturating_add(1);
         }
-        if opts.is_call_target() || opts.is_template_tag() {
-            self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
-            if !self.is_revisit_for_substitution {
-                let call = self
-                    .import_symbol_property_uses
-                    .get_or_put_value(self.exports_ref, Default::default())
-                    .expect("OOM")
-                    .value_ptr
-                    .get_or_put_value(name, Default::default())
-                    .expect("OOM");
-                call.count_estimate += 1;
-                call.is_call_target = true;
-            }
+        let is_callee = opts.is_call_target() || opts.is_template_tag();
+        if is_callee && !self.is_revisit_for_substitution {
+            let call = self
+                .import_symbol_property_uses
+                .get_or_put_value(self.exports_ref, Default::default())
+                .expect("OOM")
+                .value_ptr
+                .get_or_put_value(name, Default::default())
+                .expect("OOM");
+            call.count_estimate += 1;
+            call.is_call_target = true;
         }
+        is_callee
     }
 
     /// Sets `CALL_IGNORES_THIS` on each lifted export whose calls ignore `this`.

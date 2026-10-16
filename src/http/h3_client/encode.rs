@@ -120,12 +120,13 @@ pub(crate) fn write_request(
     drop(lower);
     drop(headers);
 
+    // Pass our `client` down; `stream.client` points at the same client.
     if has_inline_body {
         stream.pending_body = req_body;
-        drain_send_body(stream, qs);
+        drain_send_body_for(stream, qs, client);
     } else if is_streaming {
         stream.is_streaming_body = true;
-        drain_send_body(stream, qs);
+        drain_send_body_for(stream, qs, client);
     } else {
         stream.request_body_done = true;
     }
@@ -149,14 +150,21 @@ pub(crate) fn write_request(
 /// from `write_request`, `callbacks.on_stream_writable`, and
 /// `ClientSession.stream_body_by_http_id` (when the JS sink delivers more bytes).
 pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
-    if stream.request_body_done {
-        return;
-    }
     let Some(client_ptr) = stream.client else {
         return;
     };
     // `stream.client` is a live backref while attached — see `client_mut` doc.
     let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
+    drain_send_body_for(stream, qs, client);
+}
+
+/// Same as [`drain_send_body`], for a caller that already holds the stream's
+/// client. Making a second `&mut` from `stream.client` there would overlap
+/// the caller's borrow.
+fn drain_send_body_for(stream: &mut Stream, qs: &mut quic::Stream, client: &mut HTTPClient<'_>) {
+    if stream.request_body_done {
+        return;
+    }
 
     if stream.is_streaming_body {
         let HTTPRequestBody::Stream(body) = &mut client.state.original_request_body else {

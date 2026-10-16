@@ -204,7 +204,6 @@ bitflags::bitflags! {
     pub struct ServerFlags: u8 {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
-        const HAS_HANDLED_ALL_CLOSED_PROMISE = 1 << 2;
     }
 }
 
@@ -296,8 +295,7 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `get_all_closed_promise`; read in `deinit_if_we_can` (which can run
     /// after the wrapper is collected, so a wrapper-traced slot would not
     /// suffice — this Strong is what keeps the cell live across that window).
-    /// The cycle through a user `.then(cb)` is broken by resolving the
-    /// promise in `deinit_if_we_can`, after which the Strong is dropped.
+    /// A `.then(cb)` can reach the wrapper, so `deinit_if_we_can` moves the Strong into the task that resolves the promise.
     pub(crate) all_closed_promise: jsc::JSPromiseStrong,
 
     pub poll_ref: KeepAlive,
@@ -1479,7 +1477,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     )
                 };
 
-                // A pipelined response stays queued: `raw_response` describes the one ahead of it.
+                // A pipelined response stays queued: the connection's state describes the one ahead of it.
                 let threw_while_queued = !node_http_response.is_null()
                     // SAFETY: see `nhr` above.
                     && unsafe { &*node_http_response }.mark_dispatch_threw_if_queued();
@@ -1490,7 +1488,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     let nhr_flags = nhr.flags.get();
                     if !nhr_flags.contains(NhrFlags::UPGRADED) && !nhr.is_socket_closed_or_closing()
                     {
-                        if let Some(raw) = nhr.raw_response.get() {
+                        if let Some(raw) = nhr.writer() {
                             if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
                             {
@@ -1525,7 +1523,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let nhr = unsafe { &*node_http_response };
             let nhr_flags = nhr.flags.get();
             if !nhr_flags.contains(NhrFlags::UPGRADED) {
-                if let Some(raw) = nhr.raw_response.get() {
+                if let Some(raw) = nhr.reader() {
                     if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                         && raw.state().is_response_pending()
                     {
@@ -1545,7 +1543,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             } else if nhr_flags.contains(NhrFlags::IS_REQUEST_PENDING) {
                 // The socket was adopted by the WebSocket context inside the
-                // handler; `raw_response` is gone and no further uws abort/end
+                // handler; the connection is gone and no further uws abort/end
                 // callback will fire on it, so the IS_REQUEST_PENDING ref
                 // (one of the initial 3) would otherwise strand and leak the
                 // box. Release it now and balance the server's
@@ -1891,7 +1889,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // pass panicking means this server is unrecoverable anyway.
 
         httplog!(
-            "deinitIfWeCan. requests={}, listener={}, connections={}, websockets={}, has_handled_all_closed_promise={}, all_closed_promise={}, has_js_deinited={}",
+            "deinitIfWeCan. requests={}, listener={}, connections={}, websockets={}, all_closed_promise={}, has_js_deinited={}",
             self.pending_requests.get(),
             if self.listener.is_none() {
                 "null"
@@ -1904,8 +1902,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             } else {
                 "no"
             },
-            self.flags
-                .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE),
             if self.all_closed_promise.has_value() {
                 "has"
             } else {
@@ -1916,9 +1912,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         let closed = self.is_closed();
         if closed
-            && !self
-                .flags
-                .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE)
             && self.all_closed_promise.has_value()
             // `ServerAllConnectionsClosedTask::run_from_js_thread` early-returns
             // (without resolving the promise) when the VM is shutting down —
@@ -1929,21 +1922,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             && !self.vm().is_shutting_down()
         {
             httplog!("schedule other promise");
-            // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
-            // again before the task has run.
-            self.flags
-                .insert(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE);
-
-            let global = self.global_this();
             let vm_ref = jsc::VirtualMachine::get_mut();
             ServerAllConnectionsClosedTask::schedule(
                 ServerAllConnectionsClosedTask {
                     global_object: self.global_this,
-                    // Duplicate the Strong handle so that we can hold two independent strong references to it.
-                    promise: jsc::JSPromiseStrong::from_value(
-                        self.all_closed_promise.value(),
-                        global,
-                    ),
+                    promise: self.all_closed_promise.take(),
                     tracker: jsc::AsyncTaskTracker::init(vm_ref),
                     context: self.context.get(),
                 },
@@ -2249,7 +2232,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
         }
 
-        // The bake options (and the arena that backs `root`) live in
+        // The bake options (`root`, and the arena the transpilers live in) are in
         // `(*server).config.bake` for the server's lifetime. Initialise
         // DevServer AFTER the server box exists so the `Options::arena` borrow
         // points into the heap-allocated config rather than the caller's
@@ -2265,15 +2248,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             };
             let dev = match crate::bake::DevServer::init(crate::bake::DevServer::Options {
                 arena: &bake_options.arena,
-                root: bake_options.root,
+                root: bake_options.root.as_zstr(),
                 // SAFETY: per-thread VM singleton; STATIC lifetime.
                 vm: jsc::VirtualMachine::get(),
-                // LAYERING: `UserOptions` carries the `bake_body` shapes;
-                // `DevServer::Options` consumes the keystone shapes;
-                // `From` impls in `bake/mod.rs` bridge
-                // until the duplicates are collapsed.
-                framework: core::mem::take(&mut bake_options.framework).into(),
-                bundler_options: core::mem::take(&mut bake_options.bundler_options).into(),
+                framework: core::mem::take(&mut bake_options.framework),
+                bundler_options: core::mem::take(&mut bake_options.bundler_options),
                 broadcast_console_log_from_browser_to_server: broadcast,
             }) {
                 Ok(d) => d,

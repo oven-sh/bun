@@ -533,7 +533,7 @@ fn check_and_lint_in(
     }
     // Of code that is nested too deeply for the parser the linter says so itself.
     let out_of_stack = incomplete.into_iter().filter(|it| !it.is_nested_too_deeply);
-    (context.out_of_stack.lock()).extend(out_of_stack.map(|it| it.path));
+    (context.out_of_stack.lock()).extend(out_of_stack.map(|it| to_native(&it.path).to_vec()));
     let mut results = std::mem::take(results.get_mut());
     // Each was checked, and linted, as an empty file. Who lints it without types says why it cannot be read.
     for path in &unreadable {

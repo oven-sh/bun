@@ -442,9 +442,14 @@ impl Ignored {
         };
         let is_oxfmt = flavor == Flavor::Oxfmt;
         // Prettier does not read it. It goes with `.gitignore`, the first of `default`, which Git asks before it.
+        let cannot_read = |file: &[u8], error: &bun_sys::Error| {
+            let file = paths::relative(cwd, file);
+            Fatal([b"Unable to read '", &file[..], b"': ", &fs::describe(error)].concat())
+        };
         let mut excludes = match is_oxfmt || options.ignore_path.is_some() {
             true => None,
-            false => gitignore::excludes_above(cwd),
+            false => gitignore::excludes_above(cwd)
+                .map_err(|(file, error)| cannot_read(&file, &error))?,
         };
         let mut files = Vec::new();
         for file in options.ignore_path.as_deref().unwrap_or(default) {
@@ -466,17 +471,7 @@ impl Ignored {
                 Err(error) if error.get_errno() == bun_sys::E::ENOENT => {
                     files.extend(excludes.map(Some))
                 }
-                Err(error) => {
-                    return Err(Fatal(
-                        [
-                            b"Unable to read '",
-                            &paths::relative(cwd, &file)[..],
-                            b"': ",
-                            &fs::describe(&error),
-                        ]
-                        .concat(),
-                    ));
-                }
+                Err(error) => return Err(cannot_read(&file, &error)),
             }
         }
         let all = &options.ignore_pattern;

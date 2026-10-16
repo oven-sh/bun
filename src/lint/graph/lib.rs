@@ -77,8 +77,9 @@ impl Store {
     }
 
     fn disk(&self) -> &Disk {
-        self.disk
-            .get_or_init(|| Disk::with_already_read(1, FxHashMap::default(), &self.cwd))
+        self.disk.get_or_init(|| {
+            Disk::with_already_read(1, FxHashMap::default(), &self.cwd).started_in(&self.cwd)
+        })
     }
 }
 

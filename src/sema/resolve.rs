@@ -1286,6 +1286,14 @@ pub fn is_same_path(a: &[u8], b: &[u8], is_case_sensitive: bool) -> bool {
             }
 }
 
+/// The same for two file names that [`is_same_path`] takes for one if the case does not count.
+pub fn hash_without_case(file_name: &[u8]) -> u64 {
+    match file_name.is_ascii() {
+        true => bun_wyhash::hash_ascii_lowercase(0, file_name),
+        false => bun_wyhash::hash(&to_file_name_lower_case(file_name)),
+    }
+}
+
 /// `ToFileNameLowerCase`
 pub fn to_file_name_lower_case(file_name: &[u8]) -> Vec<u8> {
     if file_name.is_ascii() {

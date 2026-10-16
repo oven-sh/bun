@@ -64,8 +64,12 @@ pub struct Ran {
 #[derive(Clone, Debug)]
 pub struct WithoutTypes {
     pub why: Refusal,
-    /// Where the config file is. Each config file looks for its own `eslint`.
+    /// Where the config file is. Each config file looks for its own `eslint`. Empty for [`Refusal::Rejected`].
     pub directory: Box<[u8]>,
+    /// The files, for [`Refusal::Rejected`].
+    pub files: Vec<Box<[u8]>>,
+    /// Whether the rules ran without types. If not, they threw because they can't.
+    pub have_run: bool,
     pub rules: Vec<Arc<Rule>>,
 }
 
@@ -117,7 +121,7 @@ pub struct Loading {
     pub need_the_configuration: Vec<Box<[u8]>>,
     /// How many texts ESLint's own `Linter` was given.
     pub linted_by_eslint: u64,
-    /// How many of those were for rules that asked for types, and which rules got them.
+    /// How many of those gave types to rules that asked for them, and which rules these are.
     pub linted_for_types: u64,
     pub given_types: Vec<Arc<Rule>>,
     /// [`Engine::sizes`]
@@ -260,10 +264,8 @@ impl<'e> Host<'e> {
         }
     }
 
-    pub(super) fn count_one_for_eslint(&self, is_for_types: bool) {
-        let loading = &mut self.state.lock().loading;
-        loading.linted_by_eslint += 1;
-        loading.linted_for_types += u64::from(is_for_types);
+    pub(super) fn count_one_for_eslint(&self) {
+        self.state.lock().loading.linted_by_eslint += 1;
     }
 
     /// What has been loaded so far. Only the number of realms is known unless the host is [measuring](Host::measuring).
@@ -392,30 +394,43 @@ impl<'e> Host<'e> {
         self.gives_types
     }
 
-    /// ESLint's own `Linter` ran `rules`, which asked for types.
+    /// ESLint's own `Linter` ran `rules`, which asked for types, on a file.
     pub fn has_given_types<'r>(&self, rules: impl Iterator<Item = &'r Arc<Rule>>) {
-        add_rules(&mut self.state.lock().loading.given_types, rules);
+        let loading = &mut self.state.lock().loading;
+        loading.linted_for_types += 1;
+        add_rules(&mut loading.given_types, rules);
     }
 
-    /// `rules` asked for types in a file whose config file is in `directory`, and because of `why` they got none.
+    /// `rules` asked for types in `file`, whose config file is in `directory`, and because of `why` they got none.
+    /// `have_run`: [`WithoutTypes::have_run`].
     pub fn cannot_give_types<'r>(
         &self,
-        why: Refusal,
-        directory: &[u8],
+        why: &Refusal,
+        (directory, file): (&[u8], &[u8]),
+        have_run: bool,
         rules: impl Iterator<Item = &'r Arc<Rule>>,
     ) {
+        let is_about_file = matches!(why, Refusal::Rejected(_));
+        let directory = if is_about_file { &[][..] } else { directory };
         let all = &mut self.state.lock().without_types;
-        let known = (all.iter()).position(|it| it.why == why && *it.directory == *directory);
+        let known = (all.iter()).position(|it| {
+            it.why == *why && *it.directory == *directory && it.have_run == have_run
+        });
         let at = known.unwrap_or_else(|| {
             all.push(WithoutTypes {
-                why,
+                why: why.clone(),
                 directory: directory.into(),
+                files: Vec::new(),
+                have_run,
                 rules: Vec::new(),
             });
             all.len() - 1
         });
         if let Some(it) = all.get_mut(at) {
             add_rules(&mut it.rules, rules);
+            if is_about_file {
+                it.files.push(file.into());
+            }
         }
     }
 
@@ -423,10 +438,13 @@ impl<'e> Host<'e> {
     pub fn rules_without_types(&self) -> Vec<WithoutTypes> {
         let mut all = self.state.lock().without_types.clone();
         crate::utils::sort::sort_by(&mut all, |a, b| {
-            (&a.directory, &a.why).cmp(&(&b.directory, &b.why))
+            (&a.directory, &a.why, a.have_run).cmp(&(&b.directory, &b.why, b.have_run))
         });
         for it in &mut all {
             crate::utils::sort::sort_by(&mut it.rules, |a, b| a.id.cmp(&b.id));
+            // `--fix` lints a file several times.
+            crate::utils::sort::sort_unstable(&mut it.files);
+            it.files.dedup();
         }
         all
     }

@@ -174,10 +174,17 @@ fn exclude_file_above(directory: &[u8]) -> Option<(&[u8], Vec<u8>)> {
     Some((root, paths::join(&common, b"info/exclude")))
 }
 
-/// The `info/exclude` of the repository that `directory` is in, as Prettier would read it.
-pub(crate) fn excludes_above(directory: &[u8]) -> Chain {
-    let (root, file) = exclude_file_above(directory)?;
-    with_excludes(None, root, &fs::read(&file).ok()?, false)
+/// The `info/exclude` of the repository that `directory` is in, as Prettier would read it. Or the file that is there and
+/// cannot be read.
+pub(crate) fn excludes_above(directory: &[u8]) -> Result<Chain, (Vec<u8>, bun_sys::Error)> {
+    let Some((root, file)) = exclude_file_above(directory) else {
+        return Ok(None);
+    };
+    match fs::read(&file) {
+        Ok(text) => Ok(with_excludes(None, root, &text, false)),
+        Err(error) if error.get_errno() == bun_sys::E::ENOENT => Ok(None),
+        Err(error) => Err((file, error)),
+    }
 }
 
 /// If `file` is the `info/exclude` of a repository, the root of its working tree. A repository can have several: then it is the

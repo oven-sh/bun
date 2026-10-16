@@ -1156,30 +1156,42 @@ impl Run<'_> {
         }
         for it in js_plugins.rules_without_types() {
             let ids: Vec<&[u8]> = it.rules.iter().map(|it| &it.id[..]).collect();
+            let ids = ids.join(&b", "[..]);
+            let (before, after): (&[u8], &[u8]) = match (it.have_run, it.rules.len()) {
+                (true, _) => (b"no type information for ", b": "),
+                (false, 1) => (b"", b" needs type information and did not run: "),
+                (false, _) => (b"", b" need type information and did not run: "),
+            };
             let directory = paths::relative(&environment.cwd, &it.directory);
             let within: &[u8] = if directory.is_empty() { b"" } else { b" in " };
-            let (why, then, message): (&[u8], &[u8], _) = match &it.why {
-                Refusal::NotInstalled => (
-                    b": eslint is not installed",
+            let first = it.files.first().map_or(&[][..], |it| &it[..]);
+            let first = paths::relative(&environment.cwd, first);
+            let count = it.files.len().to_string();
+            let why: Vec<&[u8]> = match &it.why {
+                Refusal::NotInstalled => vec![
+                    &b"eslint is not installed"[..],
+                    within,
+                    &directory,
                     b"\n  Run bun add -d eslint",
-                    &[][..],
-                ),
+                ],
                 Refusal::NotConfigured(message) | Refusal::Thrown(message) => {
-                    (b": could not set up eslint", b": ", &message[..])
+                    let what = &b"could not set up eslint"[..];
+                    vec![what, within, &directory, b": ", message]
+                }
+                Refusal::Rejected(reason) if it.files.len() == 1 => {
+                    vec![&reason[..], b": ", &first]
+                }
+                Refusal::Rejected(reason) => {
+                    let count = count.as_bytes();
+                    vec![&reason[..], b": ", count, b" files (", &first, b", ..)"]
                 }
             };
-            self.warn(
-                &[
-                    b"no type information for ",
-                    &ids.join(&b", "[..])[..],
-                    why,
-                    within,
-                    &directory[..],
-                    then,
-                    message,
-                ]
-                .concat(),
-            );
+            let line: Vec<&[u8]> = [before, &ids[..], after].into_iter().chain(why).collect();
+            // A rule that did not run is like anything else that the config asks for and does not get.
+            match it.have_run {
+                true => self.warn(&line.concat()),
+                false => loader.cannot_do(&line),
+            }
         }
         for (reason, files) in std::mem::take(&mut *handed_back.lock()) {
             // That is so until the formatter is there, and says nothing to the user.

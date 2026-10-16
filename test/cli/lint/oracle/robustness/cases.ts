@@ -541,7 +541,7 @@ export const cases: Case[] = [
     rules: { "typescript/no-floating-promises": "error" },
     args: typed,
     reports: { "@typescript-eslint/no-floating-promises": 1 },
-    orWarns: /^warn: The type checker ran out of stack in a\.ts$|The code is nested too deeply/m,
+    orWarns: /^warn: The type checker ran out of stack in a\.ts$/m,
     exitCode: [0, 1],
     isHeavy: true,
   },

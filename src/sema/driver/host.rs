@@ -17,16 +17,16 @@ use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::portable::SharedFile;
 use bun_sema::resolve::{
-    Host, Kept, ModuleDetection, ParseOptions, Paths, Phase, ScriptKind, Spent, ancestors, inside,
-    is_declaration_file_name, is_same_path, join, root_length, to_file_name_lower_case, to_path,
-    typescript_path,
+    Host, Kept, ModuleDetection, ParseOptions, Paths, Phase, ScriptKind, Spent, ancestors,
+    hash_without_case, inside, is_declaration_file_name, is_same_path, join, root_length,
+    to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sys::{EntryKind, ExistsAtType, Fd};
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -99,6 +99,8 @@ struct Entry {
     /// Where its name is in `Listing::names`.
     start: u32,
     len: u32,
+    /// `hash_without_case` of its name.
+    hash: u32,
     is_directory: bool,
     is_link: bool,
 }
@@ -114,9 +116,8 @@ impl Entry {
 struct Listing {
     /// The names, one after the other.
     names: Box<[u8]>,
-    /// Sorted by name.
+    /// Sorted by `hash`, so names that differ in case alone are next to each other. Then by name.
     entries: Box<[Entry]>,
-    is_ascii: bool,
 }
 
 /// A [`Listing`] that is being made.
@@ -143,6 +144,7 @@ impl Entries {
         self.entries.push(Entry {
             start,
             len,
+            hash: hash_without_case(name) as u32,
             is_directory,
             is_link,
         });
@@ -152,7 +154,9 @@ impl Entries {
         let Entries { names, mut entries } = self;
         let name = |it: &Entry| it.name_in(&names);
         entries.shared_sort_unstable_by(|a, b| {
-            (name(a).cmp(name(b))).then(a.is_directory.cmp(&b.is_directory))
+            (a.hash.cmp(&b.hash))
+                .then_with(|| name(a).cmp(name(b)))
+                .then(a.is_directory.cmp(&b.is_directory))
         });
         // What is only in memory can have the name of a link on the disk.
         entries.dedup_by(|dropped, kept| {
@@ -161,20 +165,10 @@ impl Entries {
             is_same
         });
         Listing {
-            is_ascii: names.is_ascii(),
             names: names.into_boxed_slice(),
             entries: entries.into_boxed_slice(),
         }
     }
-}
-
-/// What is known about a directory.
-#[derive(Default)]
-struct Cached {
-    /// Threads that ask for it at the same time wait for the first of them to read it.
-    directory: OnceLock<Directory>,
-    /// How often `Disk::find` has been asked about an entry of it before it was read.
-    asked: AtomicU32,
 }
 
 enum Directory {
@@ -203,20 +197,14 @@ impl Listing {
     }
 
     fn look_up(&self, name: &[u8]) -> Found<'_> {
-        let at = self.entries.partition_point(|it| self.name(it) < name);
-        if let Some(exact) = self.entries.get(at).filter(|it| self.name(it) == name) {
+        let hash = hash_without_case(name) as u32;
+        let from = self.entries.partition_point(|it| it.hash < hash);
+        let with_hash = || self.entries[from..].iter().take_while(|it| it.hash == hash);
+        if let Some(exact) = with_hash().find(|it| self.name(it) == name) {
             return Found::Exact(exact);
         }
-        // Few names have the same length, and only outside ASCII does the case of a letter change the length.
-        let is_ascii = self.is_ascii && name.is_ascii();
-        let is_alike = |it: &&Entry| match is_ascii {
-            true => it.len as usize == name.len() && self.name(it).eq_ignore_ascii_case(name),
-            false => is_same_path(self.name(it), name, false),
-        };
-        self.entries
-            .iter()
-            .find(is_alike)
-            .map_or(Found::Nothing, Found::Alike)
+        let alike = with_hash().find(|it| is_same_path(self.name(it), name, false));
+        alike.map_or(Found::Nothing, Found::Alike)
     }
 
     /// The name as spelled in the directory, and whether it is a directory.
@@ -235,7 +223,9 @@ impl Listing {
                 .entries
                 .iter()
                 .filter(|it| it.is_directory == is_directory);
-            entries.map(|it| self.name(it).to_vec()).collect()
+            let mut names: Vec<Vec<u8>> = entries.map(|it| self.name(it).to_vec()).collect();
+            names.shared_sort_unstable();
+            names
         };
         (of_kind(false), of_kind(true))
     }
@@ -253,7 +243,10 @@ pub struct Disk {
     /// nothing waits for them: not the threads either that the request starts to coordinate its projects.
     is_of_a_thread_of_the_pool: bool,
     case_sensitive: bool,
-    directories: ShardedMap<Vec<u8>, Cached>,
+    /// Threads that ask for a directory at the same time wait for the first of them to read it.
+    directories: ShardedMap<Vec<u8>, OnceLock<Directory>>,
+    /// See `started_in`.
+    working_directory: Vec<u8>,
     /// The real path of each directory that was queried.
     real_directories: ShardedMap<Vec<u8>, Vec<u8>>,
     /// On macOS, opening and reading files slows down with the number of concurrent threads by more
@@ -509,6 +502,12 @@ impl Disk {
         });
     }
 
+    /// `cwd`: the working directory, in the checker's path format.
+    pub fn started_in(mut self, cwd: &[u8]) -> Self {
+        self.working_directory = cwd.to_vec();
+        self
+    }
+
     /// `project`: a path in the project, in the checker's path format.
     pub fn with_already_read(threads: usize, already_read: AlreadyRead, project: &[u8]) -> Self {
         let case_sensitive = is_file_system_case_sensitive(project);
@@ -530,6 +529,7 @@ impl Disk {
             is_of_a_thread_of_the_pool: !bun_threading::thread_pool::Thread::current().is_null(),
             case_sensitive,
             directories: ShardedMap::default(),
+            working_directory: Vec::new(),
             real_directories: ShardedMap::default(),
             reading: cfg!(target_os = "macos").then(|| {
                 let places = bun_threading::Semaphore::default();
@@ -598,22 +598,32 @@ impl Disk {
             false => path,
         };
         // What is above it is not read for it: a project can be in a directory with any number of other entries.
-        self.cached(path).directory.get_or_init(|| {
+        let cell = match self.directories.get_ref(path) {
+            Some(known) => known,
+            None => (self.directories).insert_ref(path.to_vec(), OnceLock::new()),
+        };
+        cell.get_or_init(|| {
             let known = self.known_directory(split(path).parent);
             self.read_directory(path, known.unwrap_or(&Directory::Unreadable))
         })
     }
 
-    fn cached(&self, path: &[u8]) -> &Cached {
-        match self.directories.get_ref(path) {
-            Some(known) => known,
-            None => (self.directories).insert_ref(path.to_vec(), Cached::default()),
+    /// The directory at `path` to look an entry up in. `None`: the system has to be asked about the entry. What is above the
+    /// working directory is not read for that. It is asked about a `node_modules`, a `package.json` and little else, and
+    /// to read it takes as long as it has entries: a project can be in a directory with any number of others.
+    fn directory_to_look_in(&self, path: &[u8]) -> Option<&Directory> {
+        let rest = self.working_directory.strip_prefix(path);
+        let is_above =
+            rest.is_some_and(|it| it.starts_with(b"/") || !it.is_empty() && path.ends_with(b"/"));
+        match is_above {
+            true => self.known_directory(path),
+            false => Some(self.directory(path)),
         }
     }
 
     /// The directory at `path`, if it has been read.
     fn known_directory(&self, path: &[u8]) -> Option<&Directory> {
-        self.directories.get_ref(path)?.directory.get()
+        self.directories.get_ref(path)?.get()
     }
 
     /// The directory at `path`, which is in `parent`.
@@ -669,15 +679,7 @@ impl Disk {
         if name.is_empty() || Self::is_above_listings(parent) {
             return None;
         }
-        // To read a directory takes four system calls if it is empty, and as long as it has entries. To ask about one entry
-        // takes one. What is above a project is asked about a `tsconfig.json` or a `node_modules` and nothing else.
-        let cached = self.cached(parent);
-        let directory = match cached.directory.get() {
-            Some(known) => known,
-            None if cached.asked.fetch_add(1, Ordering::Relaxed) < 4 => return None,
-            None => self.directory(parent),
-        };
-        match directory {
+        match self.directory_to_look_in(parent)? {
             Directory::Missing => Some(None),
             Directory::Unreadable => None,
             Directory::Listed(listing) => self.find_in(listing, name),
@@ -752,7 +754,7 @@ impl Disk {
         if name.is_empty() || Self::is_above_listings(parent) {
             return Self::ask_for_real_path(path);
         }
-        let Directory::Listed(listing) = self.directory(parent) else {
+        let Some(Directory::Listed(listing)) = self.directory_to_look_in(parent) else {
             return Self::ask_for_real_path(path);
         };
         let Some(found) = self.find_in(listing, name) else {

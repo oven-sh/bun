@@ -232,8 +232,8 @@ note: package.json has a "${command}" script, so bun ${command} runs that script
         cwd: join(String(dir), cwd),
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      return problem.test(stdout.trim()) && exitCode === 1 ? "the command" : stdout.trim();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return problem.test(stdout.trim()) && exitCode === 1 ? "the command" : stdout.trim() || stderr.trim();
     }
 
     test.each([

@@ -1068,7 +1068,9 @@ const withTypes = {
   "node_modules/@typescript-eslint/parser/index.js": `
     exports.meta = { name: "typescript-eslint/parser", version: "8.0.0" };
     exports.parseForESLint = (text, options) => {
-      if (text.includes("in no project")) throw new Error(options.filePath.split(/[\\\\/]/).at(-1) + " was not found by the project service.");
+      if (text.includes("in no project")) throw new Error(options.filePath + " was not found by the project service. Consider either including it in the tsconfig.json or including it in allowDefaultProject.");
+      const rejected = /^\\/\\/ rejected: (.+)$/m.exec(text);
+      if (rejected) throw new Error(JSON.parse(rejected[1]).replace("<path>", options.filePath));
       const checker = { typeOf: () => "number" };
       const program = options.projectService ? { getTypeChecker: () => checker, getCompilerOptions: () => ({ strict: true }) } : null;
       const maps = { esTreeNodeToTSNodeMap: new WeakMap(), tsNodeToESTreeNodeMap: new WeakMap() };
@@ -1357,34 +1359,128 @@ describe.concurrent("bun lint: JavaScript rules that ask for types", () => {
     timeout,
   );
 
-  // ESLint stops at such a file. `bun lint` still lints it.
-  test(
-    "a file that ESLint's parser rejects is linted without types",
-    async () => {
-      const result = await lint(
-        {
-          ...withTypes,
-          "eslint.config.mjs": typedConfig(["checks", "plain"]),
-          "a.ts": "// in no project\nvar typed;\n",
-          "b.ts": "let typed;\n",
-        },
-        ["-f", "json", "a.ts", "b.ts"],
-      );
-      expect(summary(result.raw)).toMatchInlineSnapshot(`
-        "a.ts: 2:1 own/plain plain
-        a.ts: 2:1 own/checks checks nothing
-        a.ts: 2:1 no-var Unexpected var, use let or const instead. [fix 17,20 "let"]
-        b.ts: 1:1 own/plain plain
-        b.ts: 1:1 own/checks checks number (eslint)"
-      `);
-      expect(result.stderr).not.toContain("warn");
-      expect(result.exitCode).toBe(1);
+  // ESLint stops at such a file. `bun lint` still lints it, and says what it couldn't do.
+  describe.each(["1", "8"])("a file that ESLint's parser rejects, %s threads", threads => {
+    const outside = "// in no project\nvar typed;\n";
+    const project = (rules: string[], names: string[]) => ({
+      ...withTypes,
+      "eslint.config.mjs": typedConfig(rules),
+      "src/inside.ts": "let typed;\n",
+      ...Object.fromEntries(names.map(name => [name, outside])),
+    });
+    const flags = ["-f", "json", "--timing", "--threads", threads, "."];
+    const several = ["vite.config.ts", "scripts/clean.ts", "scripts/build.ts"];
+
+    test(
+      "a rule that falls back runs without types, with a warning",
+      async () => {
+        const result = await lint(project(["checks", "plain"], ["scripts/build.ts"]), flags);
+        expect(summary(result.raw)).toMatchInlineSnapshot(`
+          "build.ts: 2:1 own/plain plain
+          build.ts: 2:1 own/checks checks nothing
+          build.ts: 2:1 no-var Unexpected var, use let or const instead. [fix 17,20 "let"]
+          inside.ts: 1:1 own/plain plain
+          inside.ts: 1:1 own/checks checks number (eslint)"
+        `);
+        expect(result.stderr).toStartWith(
+          "warn: no type information for own/checks: not found by the project service: scripts/build.ts\nLinted",
+        );
+        expect(result.stderr).not.toContain("did not run");
+        expect(result.stderr).toContain("the eslint package linted 2 files, 1 of them to give types to own/checks");
+        expect(result.exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test(
+      "a rule that insists on types doesn't run there, and the run fails",
+      async () => {
+        const files = project(["strict", "plain"], ["scripts/build.ts"]);
+        const result = await lint(files, flags);
+        expect(summary(result.raw)).toMatchInlineSnapshot(`
+          "build.ts: 2:1 own/plain plain
+          build.ts: 2:1 no-var Unexpected var, use let or const instead. [fix 17,20 "let"]
+          inside.ts: 1:1 own/plain plain
+          inside.ts: 1:1 own/strict strict number (eslint)"
+        `);
+        expect(result.stderr).not.toContain("warn:");
+        expect(result.stderr).toContain(
+          "error: own/strict needs type information and did not run: not found by the project service: scripts/build.ts\n  Everything else was linted. Use --allow-unsupported to make this a warning.",
+        );
+        expect(result.exitCode).toBe(2);
+        const allowed = await lint(files, ["--allow-unsupported", ...flags]);
+        expect(allowed.stderr).toContain(
+          "warn: own/strict needs type information and did not run: not found by the project service: scripts/build.ts\n",
+        );
+        expect(allowed.exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test(
+      "several files and rules of both kinds get one line for each kind",
+      async () => {
+        const result = await lint(project(["checks", "strict", "later", "at-once", "plain"], several), flags);
+        expect(summary(result.raw)).toMatchInlineSnapshot(`
+          "build.ts: 2:1 own/plain plain
+          build.ts: 2:1 own/checks checks nothing
+          build.ts: 2:1 no-var Unexpected var, use let or const instead. [fix 17,20 "let"]
+          clean.ts: 2:1 own/plain plain
+          clean.ts: 2:1 own/checks checks nothing
+          clean.ts: 2:1 no-var Unexpected var, use let or const instead. [fix 17,20 "let"]
+          inside.ts: 1:1 own/plain plain
+          inside.ts: 1:1 own/checks checks number (eslint)
+          inside.ts: 1:1 own/strict strict number (eslint)
+          inside.ts: 1:1 own/later later number (eslint)
+          inside.ts: 1:1 own/at-once at-once true (eslint)
+          vite.config.ts: 2:1 own/plain plain
+          vite.config.ts: 2:1 own/checks checks nothing
+          vite.config.ts: 2:1 no-var Unexpected var, use let or const instead. [fix 17,20 "let"]"
+        `);
+        expect(result.stderr).toStartWith(
+          "warn: no type information for own/checks: not found by the project service: 3 files (scripts/build.ts, ..)\nLinted",
+        );
+        expect(result.stderr).toContain(
+          "error: own/at-once, own/later, own/strict need type information and did not run: not found by the project service: 3 files (scripts/build.ts, ..)\n",
+        );
+        expect(result.stderr).toContain("the eslint package linted 4 files, 1 of them to give types to own/");
+        expect(result.exitCode).toBe(2);
+      },
+      timeout,
+    );
+  });
+
+  // What typescript-eslint 8 says, with `projectService`, with `project`, and with `project` in a single run.
+  test.each([
+    [
+      "<path> was included by allowDefaultProject but also was found in the project service. Consider removing it from allowDefaultProject.",
+      "included by allowDefaultProject but also was found in the project service",
+    ],
+    [
+      "ESLint was configured to lint `<tsconfigRootDir>/scripts/a.ts` with type information from `parserOptions.project`: <tsconfigRootDir>/tsconfig.json\nHowever, that TSConfig does not include this file, so type information is not available for it. Either:\n- Change that TSConfig to include this file",
+      "that TSConfig does not include this file",
+    ],
+    [
+      '"parserOptions.project" has been provided for @typescript-eslint/parser.\nThe file was not found in any of the provided project(s): scripts/a.ts',
+      "The file was not found in any of the provided project(s)",
+    ],
+    ["';' expected.", "';' expected"],
+  ])(
+    "the warning has the parser's reason, without the path and the advice: %s",
+    async (said, reason) => {
+      const files = {
+        ...withTypes,
+        "eslint.config.mjs": typedConfig(["checks"]),
+        "scripts/a.ts": `// rejected: ${JSON.stringify(said)}\nlet typed;\n`,
+      };
+      const result = await lint(files, ["scripts"]);
+      expect(result.stderr).toStartWith(`warn: no type information for own/checks: ${reason}: scripts/a.ts\nLinted`);
     },
     timeout,
   );
 
   test(
-    "a rule that throws without types is skipped where there are none",
+    "with --no-type-aware a rule that insists on types doesn't run at all",
     async () => {
       const files = {
         ...withTypes,
@@ -1392,14 +1488,6 @@ describe.concurrent("bun lint: JavaScript rules that ask for types", () => {
         "a.ts": "// in no project\n",
         "b.ts": "let b;\n",
       };
-      const result = await lint(files, ["-f", "json", "--threads", "1", "a.ts", "b.ts"]);
-      expect(summary(result.raw)).toMatchInlineSnapshot(`
-        "a.ts: 2:1 own/plain plain
-        b.ts: 1:1 own/plain plain
-        b.ts: 1:1 own/strict strict number (eslint)"
-      `);
-      expect(result.stderr).not.toContain("did not run");
-      expect(result.exitCode).toBe(1);
       const off = await lint(files, ["-f", "json", "--no-type-aware", "a.ts", "b.ts"]);
       expect(off.stderr).toContain(
         "1 rule did not run because rules that run in JavaScript cannot use type information: own/strict",
@@ -1476,10 +1564,15 @@ describe.concurrent("bun lint: JavaScript rules that ask for types", () => {
         c.ts: 1:1 own/checks checks nothing"
       `);
       expect(result.stderr).toStartWith(
-        "warn: no type information for own/checks, own/strict: eslint is not installed in packages/b\n  Run bun add -d eslint\n" +
-          "warn: no type information for own/checks, own/strict: could not set up eslint in packages/c: Cannot find module 'typescript'\nLinted",
+        "warn: no type information for own/checks: eslint is not installed in packages/b\n  Run bun add -d eslint\n" +
+          "warn: no type information for own/checks: could not set up eslint in packages/c: Cannot find module 'typescript'\nLinted",
       );
-      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toEndWith(
+        "error: own/strict needs type information and did not run: eslint is not installed in packages/b\n  Run bun add -d eslint\n" +
+          "error: own/strict needs type information and did not run: could not set up eslint in packages/c: Cannot find module 'typescript'\n" +
+          "  Everything else was linted. Use --allow-unsupported to make this a warning.",
+      );
+      expect(result.exitCode).toBe(2);
     },
     timeout,
   );

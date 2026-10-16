@@ -100,6 +100,8 @@ pub enum Refusal {
     NotInstalled,
     /// Setting up the configuration threw this, for example because a package is missing.
     NotConfigured(Vec<u8>),
+    /// Its parser rejected the file, for this reason. Only for [`Text::only`]: otherwise that's a message about the file.
+    Rejected(Vec<u8>),
     /// What was thrown.
     Thrown(Vec<u8>),
 }
@@ -183,7 +185,7 @@ impl Host<'_> {
         message.extend_from_slice(file.path);
         message.extend_from_slice(&only);
         message.extend_from_slice(file.text);
-        self.count_one_for_eslint(file.only.is_some());
+        self.count_one_for_eslint();
         let mut returned = Err(OUT_OF_STEP.to_vec().into());
         let mut lint = |vm: &mut dyn Vm| returned = self.lint_in(vm, &message, configuration, run);
         match file.only {

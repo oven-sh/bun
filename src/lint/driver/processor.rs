@@ -236,9 +236,11 @@ impl Context<'_, '_> {
                 Some(linted.deprecated),
             ),
             Err(Refusal::NotInstalled) => (thrown(not_installed(it.path, config)), None),
-            Err(Refusal::NotConfigured(message) | Refusal::Thrown(message)) => {
-                (thrown(message), None)
-            }
+            Err(
+                Refusal::NotConfigured(message)
+                | Refusal::Rejected(message)
+                | Refusal::Thrown(message),
+            ) => (thrown(message), None),
         }
     }
 

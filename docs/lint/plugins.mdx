@@ -183,6 +183,8 @@ Those files are as slow as in ESLint, because TypeScript has to load your projec
 
 - A rule that only checks whether `parserServices.program` is there, or only calls `program.getTypeChecker()`, stays in Bun.
 - Keep `eslint`, `typescript`, and the parser installed. Without them Bun warns, and the rules run without types.
+- A file that no `tsconfig.json` includes has no types for these rules either. ESLint stops at such a file. Bun lints it, warns, and runs the rules without types.
+- A rule that throws without types, like one that calls typescript-eslint's `getParserServices()`, is skipped in both cases, and `bun lint` exits with code `2`.
 - `--no-type-aware` turns this off.
 
 ## Processors

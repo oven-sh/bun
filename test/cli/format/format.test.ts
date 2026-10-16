@@ -6023,6 +6023,16 @@ describe.concurrent("info/exclude of the repository that the working directory i
     ).toEqual([left, ["a.js"], ["sub/a.js"], left, names.filter(it => it !== "kept.js"), names]);
   });
 
+  test("one that is there and can't be read is an error, like a .gitignore", async () => {
+    const results = await Promise.all(
+      [".git/info/exclude", ".gitignore"].map(name => format({ [`${name}/a`]: "", "a.js": ugly }, ["--check"])),
+    );
+    expect(results.map(it => [it.stderr.split(":")[1], it.exitCode])).toEqual([
+      [" Unable to read '.git/info/exclude'", 2],
+      [" Unable to read '.gitignore'", 2],
+    ]);
+  });
+
   test("--check succeeds if every other file is formatted", async () => {
     const files = { ".git/info/exclude": "/ugly.ts\n", "ugly.ts": "const   a=1\n", "ok.ts": "const a = 1;\n" };
     const results = await Promise.all([

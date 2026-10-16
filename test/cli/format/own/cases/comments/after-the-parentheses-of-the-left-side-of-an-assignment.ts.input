@@ -1,0 +1,17 @@
+(a as b) // a
+// b
+= c;
+(a as b // a
+// b
+) = c;
+(a as b) // a
+= c;
+(a as b) /* a */ // b
+// c
+= d;
+(a!) // a
+// b
+= c;
+a // a
+// b
+= c;

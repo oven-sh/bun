@@ -48,7 +48,7 @@ describe("fetch doesn't leak", () => {
       headers["Content-Encoding"] = "deflate";
     }
 
-    const serveOptions = {
+    const serveOptions: Bun.Serve.Options<undefined> = {
       port: 0,
       idleTimeout: 0,
       fetch(req) {
@@ -62,7 +62,7 @@ describe("fetch doesn't leak", () => {
 
     using server = Bun.serve(serveOptions);
 
-    const env = {
+    const env: Record<string, string | undefined> = {
       ...bunEnv,
       SERVER: server.url.href,
       BUN_JSC_forceRAMSize: (1024 * 1024 * 64).toString(10),
@@ -124,7 +124,7 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
         },
       });
 
-      const rss = [];
+      const rss: number[] = [];
 
       await using process = Bun.spawn({
         cmd: [
@@ -174,7 +174,7 @@ test("do not leak", async () => {
     if (isDone) {
       return;
     }
-    url ??= new URL(`http://127.0.0.1:${server.address().port}`);
+    url ??= new URL(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
     const controller = new AbortController();
     fetch(url, { signal: controller.signal })
       .then(res => res.arrayBuffer())
@@ -1070,7 +1070,7 @@ test("fetch().arrayBuffer() of a large Content-Length body peaks at ~1x the payl
     socket.on("error", () => {});
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
-  const { port } = server.address();
+  const { port } = server.address() as net.AddressInfo;
 
   try {
     await using proc = Bun.spawn({

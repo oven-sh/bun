@@ -9,12 +9,14 @@
 // state     idle     the pipe has room, so the sink takes each chunk at once
 //           parked   the first chunk is larger than the pipe, which is read after the calls
 //           failing  as parked, but the read end closes after the calls
+//           broken   the read end is closed before the calls
 // sequence  a key of `sequences`
 //
 // The report is the list of what the stream did after the calls, in order: each callback by
 // name (with the code of its error), 'finish' and 'error'. A callback that ran before the
 // calls returned says so.
 const { spawn, spawnSync } = require("node:child_process");
+const { once } = require("node:events");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -25,11 +27,14 @@ const { Writable } = require("node:stream");
 const protoWrite = (stream, chunk, callback) => Writable.prototype.write.call(stream, chunk, callback);
 
 // `first` is the chunk that decides the state. `cb(name)` makes the callback that reports
-// as `name`. A sequence with `states` is a row only in those states. With `namesOnly`,
-// Node and Bun agree on which callbacks run and in which order, not on what each one gets.
+// as `name`. A sequence can return its last call, which is then made on the next turn of
+// the loop. A sequence is a row in the idle, parked and failing states, or in its `states`.
+// With `namesOnly`, Node and Bun agree on which callbacks run and in which order, not on
+// what each one gets.
 const sequences = {
   "write x3": {
     callbacks: ["w0", "w1", "w2"],
+    states: ["idle", "parked", "failing", "broken"],
     run(stream, first, cb) {
       stream.write(first, cb("w0"));
       stream.write("", cb("w1"));
@@ -87,6 +92,17 @@ const sequences = {
     run(stream, first, cb) {
       stream.write(first);
       stream.write("", cb("w1"));
+    },
+  },
+  // In the broken state the write has failed by the time of uncork().
+  "cork, write, write, then uncork": {
+    callbacks: ["w0", "w1"],
+    states: ["idle", "parked", "failing", "broken"],
+    run(stream, first, cb) {
+      stream.cork();
+      stream.write(first, cb("w0"));
+      stream.write("b", cb("w1"));
+      return () => stream.uncork();
     },
   },
   // Only 'error' can report this failure.
@@ -156,7 +172,8 @@ function observe(stream, state, sequence) {
   // destroy() does not owe the end() callback.
   const owed = new Set(destroys ? callbacks.filter(name => name !== "end") : callbacks);
   // The event that comes after the last callback of the row.
-  const last = destroys ? "close" : state === "failing" ? "error" : sequence.includes("end(") ? "finish" : null;
+  const fails = state === "failing" || state === "broken";
+  const last = destroys ? "close" : fails ? "error" : sequence.includes("end(") ? "finish" : null;
   const report = [];
   const { promise, resolve } = Promise.withResolvers();
   let inside = true;
@@ -179,25 +196,31 @@ function observe(stream, state, sequence) {
   stream.on("close", () => saw("close"));
 
   // Larger than a pipe holds, so the sink parks it.
-  run(stream, state === "idle" ? "a" : Buffer.alloc((1 << 20) + 1, "a"), cb);
-  inside = false;
-  check();
+  const lastCall = run(stream, state === "idle" ? "a" : Buffer.alloc((1 << 20) + 1, "a"), cb);
+  const returned = () => {
+    inside = false;
+    check();
+  };
+  if (lastCall) setImmediate(() => (lastCall(), returned()));
+  else returned();
   return promise;
 }
 
 // A row on the stdin of a child. The child reads at once, starts to read when told, or
-// closes its end when told. It stays alive, so that a failure comes from the pipe and not
-// from the exit of the child.
+// closes its end: when told, or at once. It stays alive, so that a failure comes from the
+// pipe and not from the exit of the child.
 async function childStdinRow(state, sequence, execPath = process.execPath, env = process.env) {
   const script = {
     idle: "process.stdin.resume()",
     parked: "process.on('message', () => process.stdin.resume())",
     failing: "process.on('message', () => require('node:fs').closeSync(0))",
+    broken: "require('node:fs').closeSync(0); process.on('message', () => {}); process.send('closed')",
   }[state];
   const child = spawn(execPath, ["-e", script], { env, stdio: ["pipe", "ignore", "inherit", "ipc"] });
   try {
+    if (state === "broken") await once(child, "message");
     const report = observe(child.stdin, state, sequence);
-    if (state !== "idle") child.send("the calls are made");
+    if (state === "parked" || state === "failing") child.send("the calls are made");
     return await report;
   } finally {
     child.kill();
@@ -210,6 +233,7 @@ function stdioRow(name, state, sequence) {
   setTimeout(() => process.exit(1), 30_000);
   // Held from the start, so that the pipe has a reader until this process decides otherwise.
   const readFd = fs.openSync(process.env.BUN_TEST_FIFO, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+  if (state === "broken") fs.closeSync(readFd);
   observe(process[name], state, sequence).then(report => {
     fs.writeSync(name === "stdout" ? 2 : 1, JSON.stringify(report) + "\n");
     process.exit(0);

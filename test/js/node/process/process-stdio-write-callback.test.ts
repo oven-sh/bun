@@ -231,10 +231,10 @@ describe("process.stdout and process.stderr write callbacks", () => {
 describe("the write callback contract", () => {
   const fixture = path.join(import.meta.dir, "process-stdio-write-callback-fixture.js");
   const table: Record<string, { callbacks: string[]; states?: string[]; namesOnly?: boolean }> = sequences;
-  const states = ["idle", "parked", "failing"] as const;
+  const states = ["idle", "parked", "failing", "broken"] as const;
   const rows = states.flatMap(state =>
     Object.keys(table)
-      .filter(sequence => table[sequence].states?.includes(state) ?? true)
+      .filter(sequence => (table[sequence].states ?? ["idle", "parked", "failing"]).includes(state))
       // Node itself does not settle what a failing pipe and destroy() report together.
       .filter(sequence => !(state === "failing" && sequence.includes("destroy()")))
       .map(sequence => [state, sequence] as const),
@@ -247,7 +247,7 @@ describe("the write callback contract", () => {
       // calls. destroy() does not owe the end() callback.
       const writes = report.filter(entry => !/^(end|finish|error)\b/.test(entry)).map(entry => entry.split(":")[0]);
       expect(writes).toEqual(callbacks.filter(name => name !== "end"));
-    } else if (state === "failing") {
+    } else if (state === "failing" || state === "broken") {
       // EPIPE on POSIX. Whatever the platform calls it, every callback gets the same one.
       const code = report[0]?.split(":")[1];
       expect(code).toMatch(/^E[A-Z]+$/);

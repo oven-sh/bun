@@ -3,7 +3,7 @@
 // The top-level functions assume the arguments are already validated
 
 use bun_paths::strings;
-use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ffi::{c_char, c_int, c_uint};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -694,7 +694,7 @@ mod _async_tasks {
             task.tracker.did_schedule(cx.global());
 
             let loop_ = uv::Loop::get();
-            task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
+            task.req.data = core::ptr::from_mut::<Self>(task).cast::<core::ffi::c_void>();
 
             // The match resolves at compile time (`F` is a const generic), but
             // each arm's body needs `A` re-asserted to its concrete `args::*`
@@ -1799,9 +1799,10 @@ mod _async_tasks {
             } else {
                 let at = AnyTaskWithExtraContext::from_callback_auto_deinit(
                     this,
-                    |p: *mut Self, ctx| {
-                        // SAFETY: subtask count hit zero ⇒ exclusive access to the leaked task.
-                        unsafe { (*p).run_from_js_thread_mini(ctx) }
+                    |p: *mut Self, _ctx| {
+                        // SAFETY: the count is at zero, so `p` is the only pointer to the leaked task.
+                        // Only the shell posts to a mini loop, and the shell arm returns `Ok`.
+                        let _ = unsafe { Self::run_from_js_thread(p) };
                     },
                 );
                 // `from_callback_auto_deinit` heap-allocates; never null.
@@ -1811,27 +1812,40 @@ mod _async_tasks {
             drop(poster);
         }
 
-        pub(crate) fn run_from_js_thread_mini(&mut self, _: *mut c_void) {
-            let _ = self.run_from_js_thread(); // TODO: properly propagate exception upwards
-        }
-
-        pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
+        /// SAFETY: `this` must be the pointer Box::leak'd in `schedule_new()`, with the subtask count at zero. The body frees it before it calls back, so it is not `&mut self`.
+        pub(crate) unsafe fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
             if IS_SHELL {
-                // SAFETY: shelltask is set by create_for_shell and outlives this task
-                // Move the result out — `Maybe<ret::Cp>` (= `Maybe<()>`) has a cheap
-                // `Ok(())` placeholder.
-                let result = core::mem::replace(self.result.get_mut(), Ok(()));
-                let src = core::mem::take(&mut self.args.src);
-                let dest = core::mem::take(&mut self.args.dest);
-                let shelltask = self.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr();
+                // SAFETY: fn contract. The borrow ends before `destroy` below.
+                let (result, src, dest, shelltask) = unsafe {
+                    let task = &mut *this;
+                    (
+                        core::mem::replace(task.result.get_mut(), Ok(())),
+                        core::mem::take(&mut task.args.src),
+                        core::mem::take(&mut task.args.dest),
+                        task.shelltask.expect("IS_SHELL ⇒ shelltask").as_mut_ptr(),
+                    )
+                };
                 // SAFETY: shelltask is non-null in the IS_SHELL specialization and
                 // outlives this task; `cp_on_finish` enqueues it concurrently.
                 unsafe { ShellCpTask::cp_on_finish(shelltask, src, dest, result) };
-                // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
-                unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+                // SAFETY: fn contract. `this` is not used again.
+                unsafe { Self::destroy(this) };
                 return Ok(());
             }
-            let go_ptr = self.evtloop.global_object();
+            // SAFETY: fn contract. The borrow ends before `destroy` below.
+            let (result, mut promise, evtloop, tracker) = unsafe {
+                let task = &mut *this;
+                (
+                    core::mem::replace(task.result.get_mut(), Ok(())),
+                    task.promise.take(),
+                    task.evtloop,
+                    task.tracker,
+                )
+            };
+            // SAFETY: fn contract. `this` is not used again.
+            unsafe { Self::destroy(this) };
+
+            let go_ptr = evtloop.global_object();
             if go_ptr.is_null() {
                 panic!(
                     "No global object, this indicates a bug in Bun. Please file a GitHub issue."
@@ -1839,43 +1853,18 @@ mod _async_tasks {
             }
             // SAFETY: non-null erased *mut JSGlobalObject from the JS event loop vtable.
             let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
-            let success = (*self.result.get_mut()).is_ok();
-            let promise_value = self.promise.value();
-            // Captured as a raw pointer because `Self::destroy(self)` runs *before* the
-            // resolve/reject. The `JSPromise` itself lives on the JS heap
-            // and is kept alive past `destroy` by `promise_value.ensure_still_alive()`.
-            let promise: *mut bun_jsc::JSPromise = self.promise.get();
-            let result = match core::mem::replace(self.result.get_mut(), Ok(())) {
-                // SAFETY: `promise` is the sole live reference to the heap `JSPromise`.
-                Err(err) => match err.to_js_with_async_stack(global_object, unsafe { &*promise }) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
-                        // reference on this thread (see comment above `let promise`).
-                        return unsafe { &mut *promise }.reject(global_object, Err(e));
-                    }
-                },
-                Ok(res) => match FsReturn::fs_to_js(res, global_object) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        // SAFETY: `promise` points at a GC-rooted JS heap cell; sole live
-                        // reference on this thread (see comment above `let promise`).
-                        return unsafe { &mut *promise }.reject(global_object, Err(e));
-                    }
-                },
+            let success = result.is_ok();
+            let converted = match result {
+                Err(err) => err.to_js_with_async_stack(global_object, promise.get()),
+                Ok(res) => FsReturn::fs_to_js(res, global_object),
             };
-            promise_value.ensure_still_alive();
 
-            let _dispatch = self.tracker.dispatch(global_object);
+            let _dispatch = tracker.dispatch(global_object);
 
-            // SAFETY: self was Box::leak'd in create*(); destroyed exactly once here
-            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-            if success {
-                bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
-            } else {
-                bun_jsc::JSPromise::opaque_mut(promise).reject(global_object, Ok(result))?;
+            match converted {
+                Ok(value) if success => promise.resolve(global_object, value),
+                error => promise.reject(global_object, error),
             }
-            Ok(())
         }
 
         /// SAFETY: `this` must be the pointer returned by Box::leak in

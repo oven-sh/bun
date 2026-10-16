@@ -293,13 +293,19 @@ pub(crate) fn run_task(
         }
         task_tag::AsyncCpTask => {
             // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
-            unsafe { (*task.ptr.cast::<crate::node::fs::AsyncCpTask>()).run_from_js_thread()? };
+            unsafe {
+                crate::node::fs::AsyncCpTask::run_from_js_thread(cast_ptr!(
+                    crate::node::fs::AsyncCpTask
+                ))
+            }?;
         }
         task_tag::ShellAsyncCpTask => {
             // SAFETY: as above.
             unsafe {
-                (*task.ptr.cast::<crate::node::fs::ShellAsyncCpTask>()).run_from_js_thread()?
-            };
+                crate::node::fs::ShellAsyncCpTask::run_from_js_thread(cast_ptr!(
+                    crate::node::fs::ShellAsyncCpTask
+                ))
+            }?;
         }
         task_tag::StatWatcherHop => {
             // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.

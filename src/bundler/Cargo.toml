@@ -17,6 +17,9 @@ strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 enum-map.workspace = true
+# `raw-entry`: the module table looks a key up by a borrowed (namespace, text)
+# pair without building the key.
+hashbrown = { workspace = true, features = ["raw-entry"] }
 bitflags.workspace = true
 thiserror.workspace = true
 bun_base64.workspace = true

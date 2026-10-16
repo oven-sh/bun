@@ -6,7 +6,7 @@
 
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_collections::ArrayHashMap;
 use bun_core::ThreadLock;
 
 // `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
@@ -150,7 +150,7 @@ bun_core::declare_scope!(scan_counter, visible);
 
 /// Values are raw `*mut ParseTask` (arena-owned by `graph.heap`); the map only
 /// dedups by path during a single `on_parse_task_complete` pass.
-pub(crate) type ResolveQueue = StringHashMap<*mut ParseTask>;
+pub(crate) type ResolveQueue = crate::PathToSourceIndexMap::ModuleMap<*mut ParseTask>;
 
 pub struct BakeOptions<'a> {
     pub framework: bake::Framework,
@@ -2635,7 +2635,7 @@ pub mod bv2_impl {
                     let secondary_path: &[u8] = &secondary_paths[source_index as usize];
                     if !secondary_path.is_empty() {
                         let Some(secondary_source_index) =
-                            path_to_source_index_map.get(secondary_path)
+                            path_to_source_index_map.get_file(secondary_path)
                         else {
                             continue;
                         };
@@ -2680,7 +2680,7 @@ pub mod bv2_impl {
                     let (found_existing, value_ptr): (bool, *mut u32) = {
                         let entry = self
                             .path_to_source_index_map(target)
-                            .get_or_put(path_primary.text)
+                            .get_or_put(&path_primary)
                             .expect("oom");
                         (
                             entry.found_existing,
@@ -2933,7 +2933,7 @@ pub mod bv2_impl {
 
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
-            if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
+            if let Some(existing) = self.path_to_source_index_map(target).get(&path) {
                 out_source_index = Some(Index::init(existing));
             } else {
                 path = self
@@ -2973,7 +2973,7 @@ pub mod bv2_impl {
                     )
                     .expect("oom");
                 self.path_to_source_index_map(target)
-                    .put(path.text, idx)
+                    .put(&path, idx)
                     .expect("oom");
                 out_source_index = Some(Index::init(idx));
 
@@ -2993,7 +2993,6 @@ pub mod bv2_impl {
                 if self.transpiler.options.server_components && !loader.is_javascript_like() {
                     // reshaped for borrowck — cannot hold two `&mut` into
                     // `self.graph` simultaneously, so re-derive the map per insert.
-                    let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
                     let main_target = self.transpiler.options.target;
                     let separate_ssr = self
                         .framework
@@ -3009,11 +3008,11 @@ pub mod bv2_impl {
                         _ => (Target::Browser, Target::ServerComponentsSsr),
                     };
                     self.path_to_source_index_map(ta)
-                        .put(&key_text, idx)
+                        .put(&path, idx)
                         .expect("oom");
                     if separate_ssr {
                         self.path_to_source_index_map(tb)
-                            .put(&key_text, idx)
+                            .put(&path, idx)
                             .expect("oom");
                     }
                 }
@@ -3039,7 +3038,7 @@ pub mod bv2_impl {
             // borrow doesn't span the resolver / `&mut self` calls below.
             if self
                 .path_to_source_index_map(target)
-                .get(path_slice)
+                .get_file(path_slice)
                 .is_some()
             {
                 return Ok(());
@@ -3063,7 +3062,7 @@ pub mod bv2_impl {
             // `pretty`.
             result.path_pair.primary = path;
             self.path_to_source_index_map(target)
-                .put(path_slice, source_index.get())
+                .put_file(path_slice, source_index.get())
                 .expect("oom");
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
@@ -3135,7 +3134,7 @@ pub mod bv2_impl {
             // borrowck: get-then-put instead of a single get-or-put.
             if self
                 .path_to_source_index_map(target)
-                .get(path.text)
+                .get(&path)
                 .is_some()
             {
                 return Ok(None);
@@ -3173,7 +3172,7 @@ pub mod bv2_impl {
                 *p = path;
             }
             self.path_to_source_index_map(target)
-                .put(path.text, source_index.get())
+                .put(&path, source_index.get())
                 .expect("oom");
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
@@ -3781,7 +3780,7 @@ pub mod bv2_impl {
             // try this.graph.entry_points.append(arena, Index.runtime);
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
             self.path_to_source_index_map(self.transpiler.options.target)
-                .put(&b"bun:wrap"[..], Index::RUNTIME.get())
+                .put_file(b"bun:wrap", Index::RUNTIME.get())
                 .expect("oom");
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
@@ -5314,7 +5313,7 @@ pub mod bv2_impl {
                         let (value_ptr, found_existing) = {
                             let existing = this
                                 .path_to_source_index_map(resolve.import_record.original_target)
-                                .get_or_put(path.text)
+                                .get_or_put(&path)
                                 .expect("oom");
                             (
                                 std::ptr::from_mut(existing.value_ptr),
@@ -6807,15 +6806,13 @@ pub mod bv2_impl {
                         });
                         import_record.loader = Some(import_record_loader);
 
-                        if let Some(id) =
-                            self.path_to_source_index_map(target).get(path_primary.text)
+                        if let Some(id) = self.path_to_source_index_map(target).get(&path_primary)
                         {
                             import_record.source_index = Index::init(id);
                             continue;
                         }
 
-                        let resolve_entry =
-                            resolve_queue.get_or_put(path_primary.text).expect("oom");
+                        let resolve_entry = resolve_queue.get_or_put(&path_primary).expect("oom");
                         if resolve_entry.found_existing {
                             // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                             import_record.path =
@@ -7189,7 +7186,7 @@ pub mod bv2_impl {
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
+                if let Some(id) = self.path_to_source_index_map(target).get(path) {
                     if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
@@ -7203,7 +7200,7 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
+                let resolve_entry = resolve_queue.get_or_put(path).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
                     import_record.path =
@@ -7245,7 +7242,7 @@ pub mod bv2_impl {
                 }
 
                 if is_html_entrypoint {
-                    self.generate_server_html_module(path, target, import_record, path.text)
+                    self.generate_server_html_module(path, target, import_record)
                         .expect("unreachable");
                 }
             }
@@ -7277,7 +7274,7 @@ pub mod bv2_impl {
                     )
                 });
             let dev_server_is_none = self.dev_server.is_none();
-            for (key, value) in resolve_queue.iter() {
+            for value in resolve_queue.values() {
                 let value: *mut ParseTask = *value;
                 // SAFETY: ParseTask was arena-allocated in `resolve_import_records`;
                 // the arena outlives this loop.
@@ -7298,7 +7295,7 @@ pub mod bv2_impl {
                     } else {
                         self.graph.path_to_source_index_map(target)
                     };
-                    let existing = map.get_or_put(key).expect("oom");
+                    let existing = map.get_or_put(&value.path).expect("oom");
                     (
                         existing.found_existing,
                         std::ptr::from_mut::<IndexInt>(existing.value_ptr),
@@ -7397,7 +7394,7 @@ pub mod bv2_impl {
     #[derive(Clone, Copy)]
     pub struct PatchImportRecordsCtx<'a> {
         pub(crate) source_index: Index,
-        pub(crate) source_path: &'a [u8],
+        pub(crate) source_path: Fs::Path<'a>,
         pub(crate) loader: Loader,
         pub(crate) target: options::Target,
         pub(crate) redirect_import_record_index: u32,
@@ -7410,7 +7407,7 @@ pub mod bv2_impl {
         fn default() -> Self {
             Self {
                 source_index: Index::INVALID,
-                source_path: b"",
+                source_path: Fs::Path::default(),
                 loader: Loader::File,
                 target: Target::Browser,
                 redirect_import_record_index: u32::MAX,
@@ -7463,7 +7460,7 @@ pub mod bv2_impl {
                 if !only_selected_record(ctx.only_records, i) {
                     continue;
                 }
-                if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
+                if let Some(source_index) = path_to_source_index_map.get(&record.path) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
                     {
@@ -7472,7 +7469,7 @@ pub mod bv2_impl {
 
                     if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
                         if compare == i as u32 {
-                            let _ = path_to_source_index_map.put(ctx.source_path, source_index); // OOM-only Result
+                            let _ = path_to_source_index_map.put(&ctx.source_path, source_index); // OOM-only Result
                         }
                     }
                 }
@@ -7484,7 +7481,6 @@ pub mod bv2_impl {
             path: &Fs::Path,
             target: options::Target,
             import_record: &mut ImportRecord,
-            path_text: &[u8],
         ) -> Result<(), Error> {
             // 1. Create the ast right here
             // 2. Create a separate "virutal" module that becomes the manifest later on.
@@ -7566,7 +7562,7 @@ pub mod bv2_impl {
             import_record.source_index = Index::init(fake_source_index.0);
             let _ = self
                 .path_to_source_index_map(target)
-                .put(path_text, fake_source_index.0); // OOM-only Result
+                .put(path, fake_source_index.0); // OOM-only Result
             self.graph
                 .html_imports
                 .server_source_indices
@@ -7702,11 +7698,10 @@ pub mod bv2_impl {
                     // Borrowck forbids holding `&input_files.source[i]` while writing
                     // other `input_files` columns through the MultiArrayList accessor
                     // methods (each takes `&mut input_files`), so copy out the
-                    // `'static` path text now and re-borrow `source` per-use below.
-                    let source_path_text: &'static [u8] = this.graph.input_files.items_source()
-                        [result_source_index]
-                        .path
-                        .text;
+                    // `'static` path now and re-borrow `source` per-use below.
+                    let source_path: Fs::Path<'static> =
+                        this.graph.input_files.items_source()[result_source_index].path;
+                    let source_path_text: &'static [u8] = source_path.text;
                     this.source_code_length += if result_source_index != 0 {
                         this.graph.input_files.items_source()[result_source_index]
                             .contents
@@ -7781,7 +7776,7 @@ pub mod bv2_impl {
                         &mut import_records,
                         PatchImportRecordsCtx {
                             source_index: Index::init(result_source_index as IndexInt),
-                            source_path: source_path_text,
+                            source_path,
                             loader: result.loader,
                             target: result.ast.target,
                             redirect_import_record_index: result.ast.redirect_import_record_index,
@@ -7802,7 +7797,7 @@ pub mod bv2_impl {
                             let resolved_index = if star_ir.source_index.is_valid() {
                                 star_ir.source_index.get()
                             } else if let Some(idx) =
-                                this.graph.build_graphs[result_ast_target].get_path(&star_ir.path)
+                                this.graph.build_graphs[result_ast_target].get(&star_ir.path)
                             {
                                 idx
                             } else {
@@ -7950,7 +7945,7 @@ pub mod bv2_impl {
 
                         this.graph
                             .path_to_source_index_map(result_ast_target)
-                            .put(source_path_text, reference_source_index)
+                            .put(&source_path, reference_source_index)
                             .expect("oom");
 
                         this.graph

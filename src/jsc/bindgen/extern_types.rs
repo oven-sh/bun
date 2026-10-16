@@ -129,7 +129,7 @@ unsafe extern "C" {
     ) -> JSValue;
     pub(super) fn Bun__Bindgen__createObject(
         global: *mut JSGlobalObject,
-        structure_index: u32,
+        first_member_name_index: u32,
         values: *const JSValue,
         count: usize,
     ) -> JSValue;

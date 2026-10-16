@@ -584,19 +584,19 @@ pub mod to_js {
     /// An empty value is a member that is absent.
     ///
     /// # Safety
-    /// `values` are the members of `Tables::objectStructures[structure_index]`.
+    /// `Tables::memberNames` names `values`, from `first_member_name_index`.
     #[doc(hidden)]
     #[inline]
-    pub unsafe fn object_with_structure<'a>(
+    pub unsafe fn object<'a>(
         heap: &JsHeap<'a>,
-        structure_index: u32,
+        first_member_name_index: u32,
         values: &[JSValue],
     ) -> Result<'a, JsLocal<'a>> {
         // SAFETY: forwarded; this cannot throw.
         Ok(JsLocal::from_raw(unsafe {
             extern_types::Bun__Bindgen__createObject(
                 heap.global_ptr(),
-                structure_index,
+                first_member_name_index,
                 values.as_ptr(),
                 values.len(),
             )

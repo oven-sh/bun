@@ -219,9 +219,8 @@ configure a Bun API. For a plain object, where the own properties are therefore
 the whole answer, the member is read straight out of the object's property table. The two paths are indistinguishable to JavaScript;
 `test/internal/bindgen.test.ts` holds them to that.
 
-Returning a dictionary makes an object with a prebuilt `Structure`: one
-allocation and one store per member. An `.optional` member that is `None` is
-left out, and the object is then built one property at a time.
+Returning a dictionary makes an object with room for its members inline and puts
+each one on it. An `.optional` member that is `None` is left out.
 
 The second argument of `b.dictionary` takes:
 

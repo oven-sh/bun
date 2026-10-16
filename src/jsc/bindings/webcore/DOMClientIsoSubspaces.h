@@ -80,7 +80,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSWebView { nullptr };
 
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
-    GCClient::IsoSubspace* m_clientSubspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClassSubspaces] {};
+    GCClient::IsoSubspace* m_clientSubspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /* --- bun --- */
 
     GCClient::IsoSubspace* m_clientSubspaceForDOMException { nullptr };

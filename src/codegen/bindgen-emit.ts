@@ -43,8 +43,6 @@ export interface Tables {
   memberNames: string[];
   /** Made into `JSString`s per VM on first use. */
   enumerationValues: string[];
-  /** Returned dictionaries: a run of `memberNames`, made into a `Structure` per global object on first use. */
-  objectStructures: { firstMemberNameIndex: number; memberCount: number }[];
   classes: ClassType[];
 }
 
@@ -66,7 +64,7 @@ function walk(type: Type, visit: (type: Type) => void, seen = new Set<Type>()): 
 
 /** Marks which direction each dictionary travels and gives every table entry its index. */
 export function analyze(files: readonly SchemaFile[]): Tables {
-  const tables: Tables = { memberNames: [], enumerationValues: [], objectStructures: [], classes: [] };
+  const tables: Tables = { memberNames: [], enumerationValues: [], classes: [] };
   const markAccepted = (type: Type) => walk(type, t => void (t instanceof DictionaryType && (t.accepted = true)));
   const markReturned = (type: Type) =>
     walk(type, t => void ((t instanceof DictionaryType || t instanceof EnumerationType) && (t.returned = true)));
@@ -109,11 +107,7 @@ export function analyze(files: readonly SchemaFile[]): Tables {
           tables.memberNames.push(...type.names);
         }
         if (type.returned) {
-          type.structureIndex = tables.objectStructures.length;
-          tables.objectStructures.push({
-            firstMemberNameIndex: tables.memberNames.length,
-            memberCount: type.members.length,
-          });
+          type.firstReturnedMemberNameIndex = tables.memberNames.length;
           tables.memberNames.push(...type.members.map(member => member.name));
           const scope = type.origin!;
           for (const member of type.members) {
@@ -863,7 +857,8 @@ export function cppCounts(tables: Tables): string {
   return `${banner(null)}#pragma once
 
 namespace Bun::Bindgen::Counts {
-inline constexpr unsigned numberOfClassSubspaces = ${Math.max(tables.classes.length, 1)};
+// At least 1: an array cannot be empty.
+inline constexpr unsigned numberOfClasses = ${Math.max(tables.classes.length, 1)};
 }
 `;
 }
@@ -890,16 +885,6 @@ namespace Bun::Bindgen::Tables {
 ${array("WTF::ASCIILiteral", "memberNames", tables.memberNames.map(asciiLiteral))}
 
 ${array("WTF::ASCIILiteral", "enumerationValues", tables.enumerationValues.map(asciiLiteral))}
-
-struct ObjectStructure {
-    unsigned firstMemberNameIndex;
-    unsigned memberCount;
-};
-${array(
-  "ObjectStructure",
-  "objectStructures",
-  tables.objectStructures.map(structure => `{ ${structure.firstMemberNameIndex}, ${structure.memberCount} }`),
-)}
 
 ${array(
   "const ClassDefinition*",
@@ -1116,8 +1101,8 @@ impl ${type.name}${lifetime ? "<'_>" : ""} {
         let values = [
 ${type.members.map(member => `            ${value(member)},`).join("\n")}
         ];
-        // SAFETY: structure ${type.structureIndex} has these members, in this order.
-        unsafe { bindgen::to_js::object_with_structure(heap, ${type.structureIndex}, &values) }
+        // SAFETY: the names of these members start there in the table.
+        unsafe { bindgen::to_js::object(heap, ${type.firstReturnedMemberNameIndex}, &values) }
     }
 }
 `;

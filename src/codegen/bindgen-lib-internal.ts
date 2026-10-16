@@ -1199,10 +1199,9 @@ export interface DictionaryOptions {
 export class DictionaryType extends NamedType {
   readonly options: DictionaryOptions;
   readonly members: readonly Member[];
-  /** Index of the first member name in `Tables::memberNames`. Set by the generator. */
+  /** Index in `Tables::memberNames` of the first name read, and of the first name written. Set by the generator. */
   firstMemberNameIndex = -1;
-  /** Index in `Tables::objectStructures`. Set by the generator. */
-  structureIndex = -1;
+  firstReturnedMemberNameIndex = -1;
   /** Reachable from an argument or `fromJS` / from a return type. Set by the generator. */
   accepted = false;
   returned = false;

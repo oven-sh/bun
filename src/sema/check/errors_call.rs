@@ -43,30 +43,42 @@ impl ArgumentCounts {
 
 impl Checker<'_, '_> {
     pub(super) fn check_calls(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
-            if !matches!(
-                hir.exprs[i].kind,
+        let hir = self.hir(file);
+        for (i, e) in hir.exprs.iter().enumerate() {
+            if matches!(
+                e.kind,
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
-            ) || bound.is_unchecked(i)
-                || self.is_never_checked(hir.exprs[i].pos)
-            {
-                continue;
+            ) {
+                self.check_call_like(file, ExprId(i as u32));
             }
-            // `checkVariableLikeDeclaration` returns after `checkAliasSymbol` for `const x = require("m")`, so it never checks the call.
-            if let Parent::VarInit(d) = bound.expr_parent[i]
-                && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
-                && self.external_module_require_argument(file, d).is_some()
-            {
-                continue;
-            }
-            let e = ExprId(i as u32);
-            match hir.exprs[i].kind {
-                ExprKind::Call(c) => self.check_call(file, e, c, false),
-                ExprKind::New(c) => self.check_call(file, e, c, true),
-                ExprKind::TaggedTemplate(c) => self.check_tagged_template(file, e, c),
-                _ => {}
-            }
+        }
+    }
+
+    /// `checkCallExpression`, `checkNewExpression` or `checkTaggedTemplateExpression`, if `e` is one of them.
+    pub(super) fn check_call_like(&mut self, file: FileId, e: ExprId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let i = e.idx();
+        if !matches!(
+            hir.exprs[i].kind,
+            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
+        ) || bound.is_unchecked(i)
+            // The ranges are those of the file of the task.
+            || self.task.file == Some(file) && self.is_never_checked(hir.exprs[i].pos)
+        {
+            return;
+        }
+        // `checkVariableLikeDeclaration` returns after `checkAliasSymbol` for `const x = require("m")`, so it never checks the call.
+        if let Parent::VarInit(d) = bound.expr_parent[i]
+            && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
+            && self.external_module_require_argument(file, d).is_some()
+        {
+            return;
+        }
+        match hir.exprs[i].kind {
+            ExprKind::Call(c) => self.check_call(file, e, c, false),
+            ExprKind::New(c) => self.check_call(file, e, c, true),
+            ExprKind::TaggedTemplate(c) => self.check_tagged_template(file, e, c),
+            _ => {}
         }
     }
 
@@ -970,7 +982,8 @@ impl Checker<'_, '_> {
                 return false;
             }
         }
-        let mut params = self.sig_params(sig);
+        let mut params = self.sig_params_with_first(sig, args.len().min(1));
+        let is_open = matches!(params, List::Own(_));
         let rest = self.non_array_rest_type(&params);
         let count = if rest.is_some() {
             (self.parameter_count(&params) - 1).min(args.len())
@@ -984,10 +997,10 @@ impl Checker<'_, '_> {
             }
             // `getTypeAtPosition(signature, i)`: a cycle through the type of a parameter is found
             // here, and not for a parameter after the first argument that fails.
-            if let List::Own(_) = params {
+            if is_open {
                 params = self.sig_params_up_to(sig, i + 1);
             }
-            let Some(expected) = self.param_type_at(&params, i) else {
+            let Some(expected) = self.param_type_asked_at(sig, &params, i) else {
                 continue;
             };
             let actual = match arg {
@@ -1153,9 +1166,9 @@ impl Checker<'_, '_> {
             has_rest: false,
         };
         for &sig in sigs {
-            let params = self.sig_params(sig);
+            let params = self.sig_params_with_first(sig, 0);
             let (from, to) = (
-                self.min_argument_count(&params),
+                self.min_argument_count_asked(Some(sig), &params),
                 self.parameter_count(&params),
             );
             counts.least = counts.least.min(from);
@@ -1180,8 +1193,8 @@ impl Checker<'_, '_> {
     ) -> Vec<Reported> {
         let mut closest: Option<(usize, SigId)> = None;
         for &sig in sigs {
-            let params = self.sig_params(sig);
-            let least = self.min_argument_count(&params);
+            let params = self.sig_params_with_first(sig, 0);
+            let least = self.min_argument_count_asked(Some(sig), &params);
             if closest.is_none_or(|(fewest, _)| least < fewest) {
                 closest = Some((least, sig));
             }

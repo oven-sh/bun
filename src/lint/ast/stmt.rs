@@ -520,6 +520,14 @@ impl<'a> Stmt<'a> {
         ImportAttributes::within(self.file, self.span())
     }
 
+    /// The offset of the `*` of an `ExportStar`.
+    pub fn export_star_offset(self) -> Option<u32> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::ExportStar { star_pos, .. } => Some(star_pos),
+            _ => None,
+        }
+    }
+
     /// The `N` of the `ExportAsNamespace` `export as namespace N`, where it is written.
     pub fn namespace_export_name(self) -> Option<Ident<'a>> {
         let hir::StmtKind::ExportAsNamespace(name) = self.try_raw()?.kind else {

@@ -323,13 +323,12 @@ preserveDuplicates = true
     expect(result.files["a.jsx"]).toBe(sorted.replaceAll('"', "'"));
   });
 
-  test("fails when tailwindcss isn't installed", async () => {
-    const result = await format({ ...bunfig("sortTailwindcss = true"), "a.jsx": input, "b.js": "b  ;\n" });
-    expect(result.stderr).toContain("the tailwindcss package was not found");
-    expect(result.files["a.jsx"]).toBe(input);
-    // Files without classes don't need the package.
+  test("leaves the classes alone when tailwindcss isn't installed", async () => {
+    const result = await format({ ...bunfig("sortTailwindcss = true"), "a.jsx": `${input}a  ;\n`, "b.js": "b  ;\n" });
+    expect(result.stderr).toBe("");
+    expect(result.files["a.jsx"]).toBe(`${input}a;\n`);
     expect(result.files["b.js"]).toBe("b;\n");
-    expect(result.exitCode).toBe(2);
+    expect(result.exitCode).toBe(0);
   });
 
   test.each([

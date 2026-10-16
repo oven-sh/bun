@@ -1722,6 +1722,17 @@ impl<'p, 's> Checker<'p, 's> {
         (from, to)
     }
 
+    /// Whether `flowLoopStack` is not empty: the types that a reference has are those that a loop has collected so far.
+    pub(super) fn is_in_flow_loop(&self) -> bool {
+        self.flow_loop_pushed_at().is_some()
+    }
+
+    /// The depth of `stack` when the pass over the innermost loop of `flowLoopStack` began.
+    pub(super) fn flow_loop_pushed_at(&self) -> Option<usize> {
+        (self.flow_loops.last().map(|pushed| pushed.5))
+            .filter(|&pushed_at| self.is_flow_loop_visible(pushed_at))
+    }
+
     /// The depth of `stack` when the top of `flowLoopStack` was pushed, if that was after
     /// `stack[since]` was entered. Or else when `isExhaustiveSwitchStatement` set the innermost
     /// `ExhaustiveStateComputing`: it goes on with an empty `flowLoopStack`
@@ -6514,6 +6525,7 @@ impl<'p, 's> Checker<'p, 's> {
             let mode = CheckMode::SKIP_CONTEXT_SENSITIVE;
             c.check_expression_with_contextual_type(file, e, TypeId::ANY, None, mode)
         });
+        self.check_expression_in_flow_loop(file, e);
         self.context_free_level = outer;
         if let Some(stored) = stored
             && !self.is_stack_low()
@@ -6810,9 +6822,10 @@ impl<'p, 's> Checker<'p, 's> {
                     incomplete = entry.incomplete;
                     let entry = entry.ty;
                     let mut types: SmallVec<[TypeId; 4]> = smallvec![entry];
-                    // A walk in which a cycle is left unmarked behind `eager` is not one tsgo makes:
-                    // nothing of it is in `flowLoopCache`.
-                    let refusals = self.unmarked_refusals;
+                    // A walk in which a cycle is left unmarked behind `eager` is not one tsgo makes, nor one in which a query is
+                    // refused for the depth at which it is made or at a limit that tsgo has not: the value assigned on a
+                    // back edge is missing then. Nothing of it is in `flowLoopCache`, which outlives the frames around.
+                    let refusals = self.interruptions();
                     // Once the type is the declared type, only subtypes could be added. Unlike at a
                     // branch label, the initial type is not considered.
                     if entry != walk.declared {
@@ -6839,7 +6852,7 @@ impl<'p, 's> Checker<'p, 's> {
                             // "Control flow analysis was restarted and completed by checkExpressionCached."
                             restarted = (self.flow_memo)
                                 .cached_flow_loop_type(&key, &walk.reference)
-                                .filter(|_| self.unmarked_refusals == refusals);
+                                .filter(|_| refusals == self.interruptions());
                             if restarted.is_some() {
                                 break;
                             }
@@ -6868,7 +6881,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if !incomplete
                         && !walk.too_deep
                         && walk.steps < MAX_STEPS
-                        && self.unmarked_refusals == refusals
+                        && refusals == self.interruptions()
                     {
                         self.flow_memo
                             .flow_loop_cache
@@ -7504,6 +7517,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             } if head == left => {
                 let iterable = self.type_of_expr(file, expr);
+                self.check_expression_in_flow_loop(file, expr);
                 let iterable = self.non_nullable_type_if_needed(iterable);
                 Some(self.checked_iterated_type(iterable, is_await))
             }
@@ -8225,14 +8239,19 @@ impl<'p, 's> Checker<'p, 's> {
     /// `checkExpressionCached`: the type of `e`, computed with an empty `flowLoopStack` and an empty `flowTypeCache`. Only its callers
     /// read `links.resolvedType`, each once: `checkExpression` computes the type again.
     fn type_of_expr_outside_loops(&mut self, file: FileId, e: ExprId) -> TypeId {
+        self.outside_flow_loops(|c| c.type_of_expr(file, e))
+    }
+
+    /// With an empty `flowLoopStack` and an empty `flowTypeCache`, as in `checkExpressionCached`.
+    pub(super) fn outside_flow_loops<R>(&mut self, compute: impl FnOnce(&mut Self) -> R) -> R {
         let loops = std::mem::take(&mut self.flow_loops);
         let cache = std::mem::take(&mut self.flow_type_cache);
         let depth = std::mem::replace(&mut self.flow_type_cache_depth, self.stack.len());
-        let ty = self.type_of_expr(file, e);
+        let result = compute(self);
         self.flow_type_cache = cache;
         self.flow_type_cache_depth = depth;
         self.flow_loops = loops;
-        ty
+        result
     }
 
     /// `isExhaustiveSwitchStatement`

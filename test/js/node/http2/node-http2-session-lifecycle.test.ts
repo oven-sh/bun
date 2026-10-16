@@ -336,11 +336,15 @@ describe("Http2Session lifecycle getters", () => {
   });
 
   test("client: a refused connection leaves it connecting and destroyed", async () => {
-    // A port that was just released: nothing listens on it.
-    const released = net.createServer();
-    const port = await listen(released);
-    released.close();
-    await once(released, "close");
+    // The local port of a live connection: nothing listens on it, and no listen(0) of another
+    // test can get it.
+    const sink = net.createServer();
+    const holder = net.connect(await listen(sink), "127.0.0.1");
+    const [[accepted]] = (await Promise.all([once(sink, "connection"), once(holder, "connect")])) as [
+      [net.Socket],
+      unknown,
+    ];
+    const { port } = holder.address() as net.AddressInfo;
     const client = http2.connect(`http://127.0.0.1:${port}`);
     const seen: Record<string, unknown> = {};
     client.on("error", (error: NodeJS.ErrnoException) => {
@@ -355,6 +359,9 @@ describe("Http2Session lifecycle getters", () => {
       });
     } finally {
       client.destroy();
+      holder.destroy();
+      accepted.destroy();
+      sink.close();
     }
   });
 

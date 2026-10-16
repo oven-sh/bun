@@ -175,10 +175,8 @@ public:
         if (!idle) {
             return false;
         }
-        /* Bun.serve: a response that completed through end() can still have
-         * bytes in the backpressure buffer, which close() drops. Not idle
-         * until they are out: the graceful stop() that asks marks the
-         * connection, and onWritable closes it after the drain. */
+        /* Bun.serve: close() would drop the bytes of a finished response that are still in the backpressure buffer.
+         * Not idle until they are out: the graceful stop() marks the connection, and onWritable closes it. */
         if (!HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp() && !Super::hasFullyDrained()) {
             return false;
         }

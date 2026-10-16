@@ -860,29 +860,16 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.flush_headers(flush_immediately))
     }
 
-    /// Sends the rest of an HTTP/1 response head for a body that has produced
-    /// nothing yet: `Date`, the framing header and the blank line.
-    ///
-    /// A response with no status, one whose head is already out (`write`),
-    /// and one that `end`/`try_end` started are left alone: a `try_end` that
-    /// is parked on backpressure has written `Content-Length` and part of the
-    /// body, and a second header terminator would land inside that body.
-    ///
-    /// HTTP/2 and HTTP/3 still send HEADERS with the first DATA. An HTTP/3
-    /// body that fails ends its stream with a FIN, so HEADERS sent ahead of
-    /// a failure would make a complete, empty response. An HTTP/2 HEADERS
-    /// frame sent ahead takes a socket write of its own.
-    ///
-    /// The caller owns two preconditions. The response is live: one that a
-    /// sink ended may be freed or reused. `prepare_for_sendfile` did not run:
-    /// it terminates the head without a state bit.
+    /// Ends the header section of a live HTTP/1 response whose body has sent nothing yet.
     pub fn commit_head(self) {
+        // HTTP/3 ends a failed body with a FIN, and early HTTP/2 HEADERS cost a socket write.
         if matches!(self, AnyResponse::H3(_) | AnyResponse::H2(_)) {
             return;
         }
         let open_head = State::HTTP_STATUS_CALLED | State::HTTP_RESPONSE_PENDING;
-        let committed = State::HTTP_WRITE_CALLED | State::HTTP_END_CALLED;
-        if self.state().bits() & (open_head | committed).bits() != open_head.bits() {
+        // A `try_end` parked on backpressure sets only END_CALLED: its head is out too.
+        let head_is_out = State::HTTP_WRITE_CALLED | State::HTTP_END_CALLED;
+        if self.state().bits() & (open_head | head_is_out).bits() != open_head.bits() {
             return;
         }
         self.corked(|| self.flush_headers(false));

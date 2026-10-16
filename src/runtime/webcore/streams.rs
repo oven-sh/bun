@@ -1806,10 +1806,11 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         source.abort(CommonAbortReason::ConnectionClosed);
     }
 
-    /// The auto flusher is registered and has bytes to write: `on_auto_flush`
-    /// sends them when the deferred tasks of the current drain run.
-    pub(crate) fn has_queued_flush(&self) -> bool {
-        self.auto_flusher.registered.get() && !self.readable_slice().is_empty()
+    /// The sink ended the response, parked an `end()`, or queued a flush: each completes the head.
+    pub(crate) fn sends_head_itself(&self) -> bool {
+        self.ended_response
+            || self.requested_end
+            || (self.auto_flusher.registered.get() && !self.readable_slice().is_empty())
     }
 
     fn unregister_auto_flusher(&mut self) {

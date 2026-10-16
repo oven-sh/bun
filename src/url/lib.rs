@@ -499,12 +499,7 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// Formats `<displayProtocol>://<displayHost>/<trimmed pathname>/`.
-    ///
-    /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
-    /// `Display`); the other two pieces are raw byte slices, so we assemble
-    /// into a `Vec<u8>` directly rather than going through `format!` and
-    /// risking lossy UTF-8 round-trips.
+    /// The URL without its userinfo, ending in exactly one `/`: `http://host/`, `http://host/npm/`.
     pub fn href_without_auth(&self) -> Box<[u8]> {
         let proto = self.display_protocol();
         let path = strings::trim(self.pathname, b"/");
@@ -516,8 +511,10 @@ impl<'a> URL<'a> {
         // bun_core::io::Write on Vec<u8> is infallible.
         let _ = buf.print(format_args!("{}", self.display_host()));
         buf.push(b'/');
-        buf.extend_from_slice(path);
-        buf.push(b'/');
+        if !path.is_empty() {
+            buf.extend_from_slice(path);
+            buf.push(b'/');
+        }
         buf.into_boxed_slice()
     }
 
@@ -721,9 +718,9 @@ impl<'a> URL<'a> {
                 offset += url.parse_host(base).unwrap_or(0);
             }
             b'/' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b':' => {
-                let is_protocol_relative = base.len() > 1 && base[1] == b'/';
+                let is_protocol_relative = base.starts_with(b"//");
                 if is_protocol_relative {
-                    offset += 1;
+                    offset += 2;
                 } else {
                     offset += url.parse_protocol(&base[offset as usize..]).unwrap_or(0);
                 }
@@ -831,7 +828,8 @@ impl<'a> URL<'a> {
             url.pathname = &url.pathname[1..];
         }
 
-        url.origin = strings::trim(url.origin, b"/ ?#");
+        // Only the right side: a protocol-relative origin keeps its leading `//`.
+        url.origin = strings::trim_right(url.origin, b"/ ?#");
         url
     }
 
@@ -1477,6 +1475,27 @@ impl PercentEncoding {
     pub fn decode_into(out: &mut [u8], input: &[u8]) -> Result<u32, DecodeError> {
         let mut w = bun_core::fmt::SliceCursor::new(out);
         Self::decode(&mut w, input)
+    }
+
+    /// WHATWG percent-decode, which cannot fail: a `%` that no two hex digits follow stays.
+    pub fn decode_lenient_alloc(input: &[u8]) -> Box<[u8]> {
+        let mut out: Vec<u8> = Vec::with_capacity(input.len());
+        let mut rest = input;
+        while let Some(percent) = strings::index_of_char_usize(rest, b'%') {
+            out.extend_from_slice(&rest[..percent]);
+            rest = &rest[percent..];
+            if let [b'%', hi, lo, ..] = rest
+                && let Some(byte) = bun_fmt::hex_pair_value(*hi, *lo)
+            {
+                out.push(byte);
+                rest = &rest[3..];
+            } else {
+                out.push(b'%');
+                rest = &rest[1..];
+            }
+        }
+        out.extend_from_slice(rest);
+        out.into_boxed_slice()
     }
 
     pub fn decode_fault_tolerant<W: bun_core::io::Write, const FAULT_TOLERANT: bool>(

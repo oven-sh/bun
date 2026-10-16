@@ -734,6 +734,34 @@ describe.concurrent("Readable.fromWeb over a native stream ends the web stream",
     expect(state(web)).toEqual(errored);
   });
 
+  // Node's destroy helper aborts `readable.req` and leaves the Readable alone when `req` looks
+  // like an http request. The source still ends later, and that end must not pass for an EOF.
+  it("the Readable does not end cleanly when its failure is left to readable.req", async () => {
+    const web = new Blob([payload]).stream();
+    const abort = new AbortController();
+    addAbortSignal(abort.signal, web);
+    const node = fromWebNative(web);
+    let aborts = 0;
+    let ended = false;
+    let received = 0;
+    node.req = { setHeader() {}, abort: () => aborts++ };
+    node.on("end", () => (ended = true));
+    await once(node, "readable");
+    abort.abort();
+    node.on("data", chunk => (received += chunk.length));
+    // addAbortSignal() does not stop the Blob source: it delivers every byte, then reports its end.
+    const turn = () => new Promise(resolve => setImmediate(resolve));
+    for (let turns = 0; turns < 100 && received < payload.length && !ended; turns++) await turn();
+    for (let turns = 0; turns < 3; turns++) await turn();
+    expect({ ended, aborts, received, destroyed: node.destroyed }).toEqual({
+      ended: false,
+      aborts: 1,
+      received: payload.length,
+      destroyed: false,
+    });
+    node.destroy();
+  });
+
   // An abort errors the body stream of the Response and then ends its source. The Readable must
   // not take that for the end of the body.
   it("a fetch() body fails with the abort reason of its fetch", async () => {

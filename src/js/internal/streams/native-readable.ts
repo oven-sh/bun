@@ -16,7 +16,7 @@ const closeTransferredReadableStream = $newCppFunction(
   "jsFunctionCloseTransferredReadableStream",
   1,
 );
-const { errorOrDestroy } = require("internal/streams/destroy");
+const { destroyer } = require("internal/streams/destroy");
 
 const kWebStream = Symbol("webStream");
 const kRefCount = Symbol("refCount");
@@ -112,7 +112,7 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   transferToNativeReadable(readableStream);
   stream[kWebStream] = readableStream;
   // Node: `reader.closed` rejects and the Readable fails with that error, for example the abort reason of a fetch().
-  $webStreamClosedPromise(readableStream).$then(undefined, error => errorOrDestroy(stream, error));
+  $webStreamClosedPromise(readableStream).$then(undefined, error => fail(stream, error));
 
   $debug(`[${stream.debugId}] constructed!`);
 
@@ -127,20 +127,27 @@ function closeWebStream(stream: NativeReadable) {
   closeTransferredReadableStream(webStream);
 }
 
-function errorWebStream(stream: NativeReadable, error: unknown) {
+function isWebStreamErrored(stream: NativeReadable) {
   const webStream = stream[kWebStream];
-  if (webStream === undefined) return;
-  stream[kWebStream] = undefined;
-  $webStreamControllerError(webStream, error);
+  return webStream !== undefined && $isPromiseRejected($webStreamClosedPromise(webStream));
+}
+
+function fail(stream: NativeReadable, error?: unknown) {
+  // The web stream stays until _destroy(): destroyer() can leave the Readable alone (it aborts a `req` instead), and a later end of the source must still see the error.
+  const webStream = stream[kWebStream];
+  if (webStream !== undefined) {
+    const closed = $webStreamClosedPromise(webStream);
+    // A fetch() abort errors the web stream with the reason. Its source then reports a generic AbortError, or an end: the reason wins.
+    if ($isPromiseRejected(closed)) error = $peekPromiseSettledValue(closed);
+    else $webStreamControllerError(webStream, error);
+  }
+  // Node's destroy(readable, error): a falsy error, such as abort(null), fails the stream with an AbortError. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/webstreams/adapters.js#L644
+  destroyer(stream, error);
 }
 
 function endOfSource(stream: NativeReadable) {
-  const webStream = stream[kWebStream];
-  if (webStream !== undefined) {
-    // A fetch() abort errors the web stream, then ends its source: not an EOF, and it can get here before the handler above runs.
-    const closed = $webStreamClosedPromise(webStream);
-    if ($isPromiseRejected(closed)) return errorOrDestroy(stream, $peekPromiseSettledValue(closed));
-  }
+  // Not an EOF: the source ended because something errored the web stream. This can run before the handler of the closed promise.
+  if (isWebStreamErrored(stream)) return fail(stream);
   closeWebStream(stream);
   process.nextTick(pushEof, stream);
 }
@@ -171,13 +178,12 @@ function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
   return chunk;
 }
 
-// start() and pull() throw when the source fails. Readable.read() catches the rethrow and destroys this stream with it.
+// start() and pull() throw when the source fails.
 function read(this: NativeReadable, maxToRead: number) {
   try {
     return readFromHandle.$call(this, maxToRead);
   } catch (error) {
-    errorWebStream(this, error);
-    throw error;
+    fail(this, error);
   }
 }
 
@@ -230,10 +236,7 @@ function readFromHandle(this: NativeReadable, maxToRead: number) {
         this[kPendingRead] = false;
         this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
       },
-      reason => {
-        errorWebStream(this, reason);
-        errorOrDestroy(this, reason);
-      },
+      reason => fail(this, reason),
     );
   } else {
     this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);

@@ -403,6 +403,58 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
     expect(await settled).toBe(reason);
   });
 
+  // From a macrotask, the first read runs before the Readable hears of the abort. The source
+  // fails that read with a generic AbortError, and the Readable still reports the reason.
+  test.concurrent(
+    "Readable.fromWeb(res.body) that reads in the turn of the abort fails with signal.reason",
+    async () => {
+      using server = await stalledBodyServer();
+      const controller = new AbortController();
+      const reason = new Error("custom");
+      const res = await fetch(server.url, { signal: controller.signal });
+      const readable = Readable.fromWeb(res.body as any);
+      const settled = new Promise(resolve => readable.on("error", resolve).on("end", () => resolve("ended")));
+      setImmediate(() => {
+        controller.abort(reason);
+        readable.resume();
+      });
+      expect(await settled).toBe(reason);
+    },
+  );
+
+  // Readable.destroy() takes a falsy error for no error. Node's adapter fails the Readable with
+  // an AbortError then, and does not only close it.
+  test.concurrent.each([[null], [0], [""], [false]])(
+    "Readable.fromWeb(res.body) fails with an AbortError after abort(%p)",
+    async reason => {
+      for (const timing of ["while it waits for more", "before it reads"]) {
+        using server = await stalledBodyServer();
+        const controller = new AbortController();
+        const res = await fetch(server.url, { signal: controller.signal });
+        const readable = Readable.fromWeb(res.body as any);
+        const settled = new Promise<any>(resolve =>
+          readable
+            .on("error", resolve)
+            .on("end", () => resolve("ended"))
+            .on("close", () => resolve("closed")),
+        );
+        if (timing === "while it waits for more") {
+          // The 40 bytes arrived, and one turn later the next pull is parked.
+          await once(readable, "data");
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        controller.abort(reason);
+        if (timing === "before it reads") readable.resume();
+        const error = await settled;
+        expect({ timing, name: error?.name, code: error?.code }).toEqual({
+          timing,
+          name: "AbortError",
+          code: "ABORT_ERR",
+        });
+      }
+    },
+  );
+
   // The reason is not kept natively: a Strong there would root reason -> Response -> stream.
   test.concurrent("an abort reason that references its Response is collected after the body is read", async () => {
     const script = `

@@ -224,6 +224,37 @@ enum class CallbackKind : uint8_t {
 
 const ClassInfo JSMockImplementation::s_info = { "MockImpl"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockImplementation) };
 
+// Only a Proxy and a WebAssembly GC object answer isExtensible() themselves. When they say no, their own defineOwnProperty() decides the store.
+static bool storesThroughDefineOwnProperty(JSGlobalObject* globalObject, JSObject* target)
+{
+    if (!target->structure()->typeInfo().overridesIsExtensible()) [[likely]]
+        return false;
+    return !target->isExtensible(globalObject);
+}
+
+// Returns false when the target refuses the store without throwing.
+static bool putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* target, PropertyName key, JSValue storage, unsigned attributes, bool throughDefineOwnProperty)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (throughDefineOwnProperty) [[unlikely]] {
+        PropertyDescriptor descriptor;
+        descriptor.setDescriptor(storage, attributes);
+        RELEASE_AND_RETURN(scope, target->methodTable()->defineOwnProperty(target, globalObject, key, descriptor, true));
+    }
+    if (attributes & PropertyAttribute::Accessor)
+        RELEASE_AND_RETURN(scope, target->putDirectAccessor(globalObject, key, uncheckedDowncast<GetterSetter>(storage), attributes));
+    if (auto index = parseIndex(key))
+        RELEASE_AND_RETURN(scope, target->putDirectIndex(globalObject, *index, storage, attributes, PutDirectIndexLikePutDirect));
+    return target->putDirect(vm, key, storage, attributes);
+}
+
+static void throwStoreRefused(JSGlobalObject* globalObject, JSC::ThrowScope& scope, ASCIILiteral action, PropertyName key, ASCIILiteral reason)
+{
+    throwTypeError(globalObject, scope, makeString("Cannot "_s, action, " the `"_s, String(key.uid()), "` property because "_s, reason));
+}
+
 class JSMockFunction : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
@@ -271,6 +302,7 @@ public:
     unsigned spyAttributes = 0;
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
+    static constexpr unsigned SpyAttributeDefineOwnProperty = 1 << 29;
 
     JSString* jsName()
     {
@@ -357,38 +389,34 @@ public:
         this->tail.clear();
     }
 
-    // Puts the original value back on the spied-on object; that put can throw (a module namespace
-    // export, an indexed slot).
+    // Puts the original value back on the spied-on object. If the object refuses, the spy stays installed and can be restored again.
     void clearSpy(JSGlobalObject* globalObject)
     {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        this->reset();
 
-        auto* target = this->spyTarget.get();
-        JSValue implValue = this->spyOriginal.get();
-        if (!implValue) {
-            implValue = jsUndefined();
+        if (auto* target = this->spyTarget.get()) {
+            JSValue original = this->spyOriginal.get();
+            if (!original)
+                original = jsUndefined();
+            unsigned attributes = this->spyAttributes;
+            bool isExport = attributes & SpyAttributeESModuleNamespace;
+
+            bool restored = true;
+            if (!isExport)
+                restored = putOwnPropertyStorage(globalObject, target, this->spyIdentifier, original, attributes & ~SpyAttributeDefineOwnProperty, attributes & SpyAttributeDefineOwnProperty);
+            else if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target))
+                restored = moduleNamespaceObject->overrideExportValue(globalObject, this->spyIdentifier, original);
+            RETURN_IF_EXCEPTION(scope, );
+            if (!restored) [[unlikely]] {
+                throwStoreRefused(globalObject, scope, "restore"_s, this->spyIdentifier, isExport ? "the module does not export it"_s : "the object does not allow it to be changed"_s);
+                return;
+            }
         }
-        JSC::Identifier identifier = this->spyIdentifier;
-        unsigned attributes = this->spyAttributes;
+
+        this->reset();
         this->spyTarget.clear();
         this->spyIdentifier = JSC::Identifier();
         this->spyAttributes = 0;
-        if (!target)
-            return;
-
-        if (attributes & SpyAttributeESModuleNamespace) {
-            if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
-                moduleNamespaceObject->overrideExportValue(globalObject, identifier, implValue);
-                RETURN_IF_EXCEPTION(scope, );
-            }
-        } else if (auto index = parseIndex(identifier)) {
-            // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
-            target->putDirectIndex(globalObject, *index, implValue, attributes, PutDirectIndexLikePutDirect);
-            RETURN_IF_EXCEPTION(scope, );
-        } else {
-            target->putDirect(this->vm(), identifier, implValue, attributes);
-        }
     }
 
     JSArray* getCalls() const
@@ -632,21 +660,41 @@ static void forEachMockInSet(JSC::WriteBarrier<JSC::Unknown>& mockSet, const Fun
     }
 }
 
+static void addToMockSet(Zig::GlobalObject* globalObject, JSC::WriteBarrier<JSC::Unknown>& mockSet, JSMockFunction* mock)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (!mockSet)
+        mockSet.set(vm, globalObject, ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject)));
+    uncheckedDowncast<ActiveSpySet>(mockSet.get())->add(vm, mock, mock);
+}
+
+// Restores every spy it can, keeps the ones whose object refused, and rethrows the first error.
 static void restoreAllMocks(Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue spies = globalObject->mockModule.activeSpies.get();
-    if (!spies)
+    auto& activeSpies = globalObject->mockModule.activeSpies;
+    if (!activeSpies)
         return;
     MarkedArgumentBuffer active;
-    uncheckedDowncast<ActiveSpySet>(spies)->takeSnapshot(active);
+    uncheckedDowncast<ActiveSpySet>(activeSpies.get())->takeSnapshot(active);
+    activeSpies.clear();
+
+    JSC::Exception* firstException = nullptr;
     for (size_t i = 0; i < active.size(); ++i) {
-        if (auto* spy = dynamicDowncast<JSMockFunction>(active.at(i))) {
-            spy->clearSpy(globalObject);
-            RETURN_IF_EXCEPTION(scope, );
+        auto* spy = dynamicDowncast<JSMockFunction>(active.at(i));
+        if (!spy)
+            continue;
+        spy->clearSpy(globalObject);
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException())
+                return;
+            addToMockSet(globalObject, activeSpies, spy);
+            if (!firstException)
+                firstException = exception;
         }
     }
-    globalObject->mockModule.activeSpies.clear();
+    if (firstException)
+        throwException(globalObject, scope, firstException);
 }
 
 extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
@@ -1497,6 +1545,38 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetAllMocks, (JSC::JSGlobalObject * globalO
     return JSValue::encode(jsUndefined());
 }
 
+// Replaces target[key] with the spy: the mock itself, or a getter/setter pair of it when `attributes` has Accessor.
+static void installSpy(Zig::GlobalObject* globalObject, JSMockFunction* mock, JSC::JSObject* target, JSC::PropertyName key, unsigned attributes)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
+        bool overridden = moduleNamespaceObject->overrideExportValue(globalObject, key, mock);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!overridden) [[unlikely]] {
+            throwStoreRefused(globalObject, scope, "spy on"_s, key, "the module does not export it"_s);
+            return;
+        }
+        mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+        return;
+    }
+
+    bool throughDefineOwnProperty = storesThroughDefineOwnProperty(globalObject, target);
+    RETURN_IF_EXCEPTION(scope, );
+    JSValue storage = mock;
+    if (attributes & PropertyAttribute::Accessor)
+        storage = JSC::GetterSetter::create(vm, globalObject, mock, mock);
+    bool stored = putOwnPropertyStorage(globalObject, target, key, storage, attributes, throughDefineOwnProperty);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!stored) [[unlikely]] {
+        throwStoreRefused(globalObject, scope, "spy on"_s, key, "the object does not allow it to be changed"_s);
+        return;
+    }
+    if (throughDefineOwnProperty)
+        mock->spyAttributes |= JSMockFunction::SpyAttributeDefineOwnProperty;
+}
+
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1563,16 +1643,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             mock->copyNameAndLength(vm, globalObject, value);
             RETURN_IF_EXCEPTION(scope, {});
 
-            if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
-                mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
-            } else if (auto index = parseIndex(propertyKey)) {
-                // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
-                object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);
-            } else {
-                object->putDirect(vm, propertyKey, mock, attributes);
-            }
-
+            installSpy(globalObject, mock, object, propertyKey, attributes);
             RETURN_IF_EXCEPTION(scope, {});
 
             pushImpl(mock, globalObject, JSMockImplementation::Kind::Call, value);
@@ -1589,13 +1660,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
 
             attributes |= PropertyAttribute::Accessor;
 
-            if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
-                mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
-            } else {
-                object->putDirectAccessor(globalObject, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
-            }
-
+            installSpy(globalObject, mock, object, propertyKey, attributes);
             // mock->setName(propertyKey.publicName());
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -1603,24 +1668,8 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         }
 
         mock->spyOriginal.set(vm, mock, value);
-
-        {
-            if (!globalObject->mockModule.activeSpies) {
-                ActiveSpySet* activeSpies = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
-                globalObject->mockModule.activeSpies.set(vm, globalObject, activeSpies);
-            }
-            ActiveSpySet* activeSpies = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeSpies.get());
-            activeSpies->add(vm, mock, mock);
-        }
-
-        {
-            if (!globalObject->mockModule.activeMocks) {
-                ActiveSpySet* activeMocks = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
-                globalObject->mockModule.activeMocks.set(vm, globalObject, activeMocks);
-            }
-            ActiveSpySet* activeMocks = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeMocks.get());
-            activeMocks->add(vm, mock, mock);
-        }
+        addToMockSet(globalObject, globalObject->mockModule.activeSpies, mock);
+        addToMockSet(globalObject, globalObject->mockModule.activeMocks, mock);
 
         return JSValue::encode(mock);
     }
@@ -1661,13 +1710,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsMockFn, (JSC::JSGlobalObject * lexicalGlobalO
         thisObject->setName("mockConstructor"_s);
     }
 
-    if (!globalObject->mockModule.activeMocks) {
-        ActiveSpySet* activeMocks = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
-        globalObject->mockModule.activeMocks.set(vm, globalObject, activeMocks);
-    }
-
-    ActiveSpySet* activeMocks = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeMocks.get());
-    activeMocks->add(vm, thisObject, thisObject);
+    addToMockSet(globalObject, globalObject->mockModule.activeMocks, thisObject);
 
     return JSValue::encode(thisObject);
 }

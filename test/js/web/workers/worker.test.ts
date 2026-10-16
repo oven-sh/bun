@@ -354,7 +354,8 @@ describe("web worker", () => {
       cmd: [
         bunExe(),
         "-e",
-        `const worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(`setInterval(() => {}, 100000); ${fail}`)}])));
+        `const worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(`setInterval(() => {}, 100000); postMessage("loaded"); ${fail}`)}])));
+         worker.addEventListener("message", e => console.log(e.data));
          worker.addEventListener("error", () => console.log("error"));
          worker.addEventListener("close", e => console.log("close", e.code, e.wasClean));`,
       ],
@@ -363,7 +364,7 @@ describe("web worker", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "error\nclose 1 false\n", exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({ stdout: "loaded\nerror\nclose 1 false\n", exitCode: 0 });
   });
 
   test.concurrent.each([

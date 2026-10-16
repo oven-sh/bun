@@ -871,11 +871,9 @@ impl WebWorker {
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                // process.exit() or a fatal error may have ended the load; don't clobber its code.
-                // terminate() may have too, and it sets no code.
-                if !self.exit_called.load(Ordering::Relaxed)
-                    && !self.terminated_by_parent.load(Ordering::Relaxed)
-                {
+                // A stop (process.exit(), a fatal error, terminate()) is not a failed load: the
+                // code is its requester's to set.
+                if !self.has_requested_terminate() {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);

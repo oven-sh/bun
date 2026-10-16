@@ -1706,8 +1706,7 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.requested = true;
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
-        bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
-        pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
+        print_unhandled_version_note();
     }
     vm.global_exit();
 }
@@ -1733,8 +1732,8 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
     exit_with_unhandled_note(vm);
 }
 
-/// Cold tail of `Run::start` when `ANY_UNHANDLED` tripped on an otherwise-clean
-/// exit: print the sourcemap note + version string.
+/// Printed after the 'exit' listeners when `ANY_UNHANDLED` tripped: the
+/// sourcemap note + version string.
 #[cold]
 #[inline(never)]
 #[cfg_attr(

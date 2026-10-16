@@ -3983,8 +3983,6 @@ pub struct ResolveFunctionResult {
     // which outlives every `ResolveFunctionResult`.
     pub path: &'static [u8],
     pub(crate) query_string: &'static [u8],
-    /// A `?` of the specifier was read as part of a name in `path`.
-    pub(crate) path_has_question_mark: bool,
 }
 
 /// The last module key with a `?` that a resolve decided about, and the length of its `<path>`.
@@ -5117,11 +5115,18 @@ impl VirtualMachine {
         key
     }
 
-    /// Byte length of `<path>` in the module key `<path>` or `<path>?<query>`: what the last resolve decided for it, or else up to the first `?` that is not in the name of a file or folder the resolver knows.
+    /// Byte length of `<path>` in the module key `<path>` or `<path>?<query>`.
+    #[inline]
     pub fn module_key_path_len(&mut self, key: &[u8]) -> usize {
-        let Some(first) = bun_core::strings::index_of_char_usize(key, b'?') else {
-            return key.len();
-        };
+        match bun_core::strings::index_of_char_usize(key, b'?') {
+            Some(first) => self.module_key_path_len_from(key, first),
+            None => key.len(),
+        }
+    }
+
+    /// [`module_key_path_len`](Self::module_key_path_len) of a `key` with a `?`, the first at `first`: what the last resolve decided for it, or else up to the first `?` that is not in the name of a file or folder the resolver knows.
+    #[inline(never)]
+    fn module_key_path_len_from(&mut self, key: &[u8], first: usize) -> usize {
         if self.module_key_query.key.eql_utf8(key) {
             // A code unit is a byte in a key that is all ASCII. In any other key they are counted.
             let units = self.module_key_query.path_len as usize;
@@ -5371,7 +5376,6 @@ impl VirtualMachine {
         // SAFETY: PORT — `query_string` re-slices `specifier` (caller-owned;
         // see lifetime erasure note above).
         ret.query_string = unsafe { bun_ptr::detach_lifetime(query_string) };
-        ret.path_has_question_mark = first.is_some_and(|first| first < normalized_specifier.len());
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
@@ -5379,6 +5383,14 @@ impl VirtualMachine {
         // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        // A `?` of the specifier is part of a name in `ret.path`: the loader reads that decision, whatever the folder listings say then.
+        if first.is_some_and(|first| first < normalized_specifier.len()) {
+            let key = bun_core::String::clone_utf8(ret.path);
+            self.module_key_query = ModuleKeyQuery {
+                path_len: key.length() as u32,
+                key,
+            };
+        }
 
         Ok(())
     }
@@ -5655,14 +5667,7 @@ impl VirtualMachine {
             *query = bun_core::String::clone_utf8(result.query_string);
         }
 
-        let path = bun_core::String::clone_utf8(result.path);
-        if result.path_has_question_mark {
-            jsc_vm.module_key_query = ModuleKeyQuery {
-                path_len: path.length() as u32,
-                key: path.clone(),
-            };
-        }
-        Ok(Ok(path))
+        Ok(Ok(bun_core::String::clone_utf8(result.path)))
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {

@@ -573,10 +573,23 @@ function abortTransport(transport: SocketInstance) {
   transport.destroy();
 }
 function releaseTransport(transport: SocketInstance) {
-  if (!(transport instanceof Socket)) return void transport.destroy();
+  if (!(transport instanceof Socket)) {
+    // Nothing else closes a stream that is no socket: it goes once it has passed on what it took.
+    if (transport.destroyed || transport.writableFinished || transport.errored) return void transport.destroy();
+    transport.once("finish", transport.destroy);
+    if (!transport.writableEnded) endOrDestroy(transport);
+    return;
+  }
   // What leaves a socket at 'finish' is still the kernel's to send, and a close over unread input drops that. So it only gets the
   // end() of the engine, closes at the FIN of its peer and reports its own errors until then.
   transport.removeAllListeners(kReadError);
+}
+function endOrDestroy(transport: SocketInstance) {
+  try {
+    transport.end();
+  } catch {
+    transport.destroy();
+  }
 }
 // The wrapped socket reports nothing and closes with the TLS socket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L676-L688
 function closeWithTLSSocket(self, raw) {

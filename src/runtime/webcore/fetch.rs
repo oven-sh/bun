@@ -867,9 +867,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try {
             if !obj.is_empty() {
-                if let Some(redirect_value) =
-                    obj.get_optional_enum::<FetchRedirect>(global_this, "redirect")?
-                {
+                if let Some(redirect_value) = obj.get_optional_enum_common_string::<FetchRedirect>(
+                    global_this,
+                    jsc::CommonString::FetchOptionRedirect,
+                    "redirect",
+                )? {
                     break 'extract_redirect_type redirect_value;
                 }
             }

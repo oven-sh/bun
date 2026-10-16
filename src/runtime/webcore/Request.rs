@@ -1341,7 +1341,11 @@ impl Request {
 
             // Extract redirect option
             if !fields.contains(Fields::Redirect) {
-                match value.get_optional_enum::<FetchRedirect>(cx.global(), "redirect") {
+                match value.get_optional_enum_common_string::<FetchRedirect>(
+                    cx.global(),
+                    bun_jsc::CommonString::FetchOptionRedirect,
+                    "redirect",
+                ) {
                     Ok(Some(redirect_value)) => {
                         req.flags.redirect = redirect_value;
                         fields.insert(Fields::Redirect);
@@ -1353,7 +1357,11 @@ impl Request {
 
             // Extract cache option
             if !fields.contains(Fields::Cache) {
-                match value.get_optional_enum::<FetchCacheMode>(cx.global(), "cache") {
+                match value.get_optional_enum_common_string::<FetchCacheMode>(
+                    cx.global(),
+                    bun_jsc::CommonString::FetchOptionCache,
+                    "cache",
+                ) {
                     Ok(Some(cache_value)) => {
                         req.flags.cache = cache_value;
                         fields.insert(Fields::Cache);
@@ -1365,7 +1373,11 @@ impl Request {
 
             // Extract mode option
             if !fields.contains(Fields::Mode) {
-                match value.get_optional_enum::<FetchRequestMode>(cx.global(), "mode") {
+                match value.get_optional_enum_common_string::<FetchRequestMode>(
+                    cx.global(),
+                    bun_jsc::CommonString::FetchOptionMode,
+                    "mode",
+                ) {
                     Ok(Some(mode_value)) => {
                         req.flags.mode = mode_value;
                         fields.insert(Fields::Mode);

@@ -127,7 +127,7 @@ impl FileCopier {
                         }
                     }
                     EntryKind::File => {
-                        match bun_sys::copy_file::copy_file(
+                        match bun_sys::copy_file::copy_file_replacing(
                             self.src_path.slice_z(),
                             self.dest_subpath.slice_z(),
                         ) {
@@ -150,7 +150,7 @@ impl FileCopier {
                                             &dest_dir,
                                             entry_dirname,
                                         );
-                                        bun_sys::copy_file::copy_file(
+                                        bun_sys::copy_file::copy_file_replacing(
                                             self.src_path.slice_z(),
                                             self.dest_subpath.slice_z(),
                                         )
@@ -176,7 +176,7 @@ impl FileCopier {
                 let src = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)?;
                 let src = bun_sys::File::from_fd(src);
 
-                let dest = match dest_dir.create_file_z(entry.path, Default::default()) {
+                let dest = match dest_dir.create_fresh_file_z(entry.path) {
                     Ok(f) => f,
                     Err(_) => {
                         if let Some(entry_dirname) =
@@ -188,7 +188,7 @@ impl FileCopier {
                             );
                         }
 
-                        dest_dir.create_file_z(entry.path, Default::default())?
+                        dest_dir.create_fresh_file_z(entry.path)?
                     }
                 };
 

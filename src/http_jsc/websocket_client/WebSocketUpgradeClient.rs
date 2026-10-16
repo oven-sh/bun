@@ -318,6 +318,8 @@ where
 
         let mut poll_ref = KeepAlive::init();
         poll_ref.r#ref(vm.loop_ctx());
+        // `r#ref` reaches the VM again through the loop context, so `vm` is
+        // not used past this point. Later code asks `global` afresh.
 
         log!(
             "connect: ssl={}, has_ssl_config={}, using_proxy={}",
@@ -356,7 +358,7 @@ where
                         // Per-VM weak cache: every `new WebSocket(wss://, {tls:{ca}})`
                         // with the same CA shares one CTX with each other and with
                         // any `Bun.connect`/Postgres/etc. that named it.
-                        let ctx = vm.ssl_ctx_cache_get_or_create(
+                        let ctx = global.bun_vm().ssl_ctx_cache_get_or_create(
                             &config.as_usockets_for_client_verification(),
                             &mut err,
                         );
@@ -367,7 +369,7 @@ where
                             // connection succeed against a host the user didn't
                             // trust. The C++ caller emits an `error` event on null.
                             log!("createSSLContext failed for WebSocket: {:?}", err);
-                            poll_ref.unref(vm.loop_ctx());
+                            poll_ref.unref(global.bun_vm().loop_ctx());
                             return None;
                         };
                         let raw = ctx.as_ptr();
@@ -375,7 +377,7 @@ where
                         break 'brk Some(raw);
                     }
                 }
-                Some(vm.default_client_ssl_ctx())
+                Some(global.bun_vm().default_client_ssl_ctx())
             }
         } else {
             None

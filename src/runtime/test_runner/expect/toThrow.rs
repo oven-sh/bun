@@ -7,6 +7,7 @@ use bun_core::strings;
 
 use super::Expect;
 use super::ExpectAny;
+use super::Promise;
 use super::expect_any_js;
 use super::get_signature;
 use super::throw;
@@ -59,10 +60,16 @@ pub(crate) fn to_throw(
 
     let not = this.flags.get().not();
 
-    let (result_, return_value_from_function) = this.get_value_as_to_throw(
-        global,
-        this.get_value(global, this_value, "toThrow", "<green>expected<r>")?,
-    )?;
+    let received = this.get_value(global, this_value, "toThrow", "<green>expected<r>")?;
+    // Jest counts a fulfilled value as thrown only when it is an error. A callable value goes to the helper.
+    let (result_, return_value_from_function) = if this.flags.get().promise() == Promise::Resolves
+        && !received.is_callable()
+        && !bun_jsc::cpp::Expect__isError(global, received)?
+    {
+        (None, received)
+    } else {
+        this.get_value_as_to_throw(global, received)?
+    };
 
     let did_throw = result_.is_some();
 

@@ -759,8 +759,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             bun_core::write_any_to_hasher(&mut h, stat.st_mtime as i64);
             #[cfg(windows)]
             bun_core::write_any_to_hasher(&mut h, &(stat.mtim.sec as i64));
-            h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Client).code);
-            h.update(crate::bake::bake_body::get_hmr_runtime(bake::Side::Server).code);
+            h.update(crate::bake::get_hmr_runtime(bake::Side::Client).code);
+            h.update(crate::bake::get_hmr_runtime(bake::Side::Server).code);
         } else {
             h.update(Environment::GIT_SHA_SHORT.as_bytes());
         }
@@ -1145,7 +1145,7 @@ impl Drop for DevServer {
 impl DevServer {
     fn init_server_runtime(&mut self) -> JsResult<()> {
         let runtime = BunString::create_static_external(
-            crate::bake::bake_body::get_hmr_runtime(crate::bake::bake_body::Side::Server)
+            crate::bake::get_hmr_runtime(crate::bake::Side::Server)
                 .code
                 .as_bytes(),
             true,

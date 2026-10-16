@@ -11,7 +11,6 @@ use bstr::BStr;
 
 use crate::bake::router::PatternBuffer;
 use crate::bake;
-use crate::bake::bake_body;
 use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
 use bun_alloc::Arena;
 use bun_bundler::BundleV2;
@@ -391,7 +390,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 ))));
             };
 
-            bake_body::UserOptions::from_js(app, global).map_err(js_err)?
+            crate::bake::UserOptions::from_js(app, global).map_err(js_err)?
         }
         Unwrapped::Rejected(err) => {
             return Err(js_err(global.throw_value(err.to_error().unwrap_or(err))));
@@ -429,16 +428,16 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     framework.init_transpiler(
         &options.arena,
         vm_log,
-        bake_body::Mode::ProductionStatic,
-        bake_body::Graph::Server,
+        crate::bake::Mode::ProductionStatic,
+        crate::bake::Graph::Server,
         &mut server_transpiler,
         &options.bundler_options.server,
     )?;
     framework.init_transpiler(
         &options.arena,
         vm_log,
-        bake_body::Mode::ProductionStatic,
-        bake_body::Graph::Client,
+        crate::bake::Mode::ProductionStatic,
+        crate::bake::Graph::Client,
         &mut client_transpiler,
         &options.bundler_options.client,
     )?;
@@ -446,8 +445,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         framework.init_transpiler(
             &options.arena,
             vm_log,
-            bake_body::Mode::ProductionStatic,
-            bake_body::Graph::Ssr,
+            crate::bake::Mode::ProductionStatic,
+            crate::bake::Graph::Ssr,
             &mut ssr_transpiler,
             &options.bundler_options.ssr,
         )?;

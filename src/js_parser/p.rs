@@ -1791,8 +1791,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if is_export
             // `using` disposes its value when the block ends: the declaration stays.
             || kind.is_using()
-            // The React Compiler declares the locals of this function again: none can become an import.
-            || self.react_compiler_may_replace_body
             // The value is that namespace, not another identifier the initializer left: `x = (require("a"), y)`.
             || self.imports_to_convert_from_require[import].namespace.ref_ != alias.namespace
             || !is_declared_by_scope
@@ -1868,6 +1866,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         let import_record_index =
             self.imports_to_convert_from_require[alias.import as usize].import_record_id;
+        // Each folded read prints the symbol of the local, which the React Compiler would declare again.
+        self.react_compiler_may_replace_body &= items.count() == 0;
         for (name, item) in items.keys().iter().zip(items.values()) {
             self.symbols[item.ref_.inner_index() as usize].namespace_alias =
                 Some(bun_alloc::ast_box(G::NamespaceAlias {
@@ -2019,6 +2019,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         self.require_aliases.clear();
+    }
+
+    /// Every statement of the module is in one part. If not, each is a part of its own.
+    #[inline]
+    pub(crate) fn module_is_one_part(&self) -> bool {
+        !self.options.tree_shaking || self.will_wrap_module_in_try_catch_for_using
     }
 
     #[inline]

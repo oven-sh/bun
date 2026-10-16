@@ -1751,9 +1751,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .is_some_and(|alias| alias.scope == p.current_scope)
             && kind != StmtsKind::SwitchStmt
             && p.single_stmt_body_scope != Some(p.current_scope)
-            && (p.current_scope != p.module_scope
-                || !p.options.tree_shaking
-                || p.will_wrap_module_in_try_catch_for_using)
+            && (p.current_scope != p.module_scope || p.module_is_one_part())
         {
             p.settle_require_aliases(stmts);
         }

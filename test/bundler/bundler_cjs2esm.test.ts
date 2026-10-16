@@ -1492,9 +1492,10 @@ describe("bundler", () => {
       },
     });
   }
-  // The React Compiler declares the locals of a component again, so none of
-  // them becomes an import: a `require()` variable of a component stays a
-  // variable. The namespace that it holds is a binding of the module.
+  // The React Compiler declares the locals of a component again. A namespace
+  // of a `require()` is a binding of the module for it, also when a variable
+  // of the component became that namespace. A variable that stays after a
+  // read took it for the namespace keeps its component as it is written.
   itBundled("cjs2esm/UnwrappedRequireInReactCompilerCandidate", {
     files: {
       "/entry.js": /* js */ `
@@ -1621,7 +1622,8 @@ describe("bundler", () => {
         ...["Direct", "AsValue", "InBlock", "Rebound", "ReboundAfterRead", "InArray", "CheckInClosure"],
         ...["DefaultParameter", "ModuleAlias", "ModuleRebound", "NoRequire"],
       ];
-      expect(names.filter(name => !isCompiled(name))).toEqual(["DefaultParameter"]);
+      expect(names.filter(name => !isCompiled(name))).toEqual(["ReboundAfterRead", "DefaultParameter"]);
+      expect(code).toContain("return props.on ? $version : typeof $version;");
     },
     run: {
       stdout: [

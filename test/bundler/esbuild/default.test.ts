@@ -1656,23 +1656,32 @@ describe.concurrent("bundler", () => {
       stdout: "c\ng\ne\nf\nd\nc\n",
     },
   });
-  itBundled("default/ThisOutsideFunctionRenamedToExports", {
+  // esbuild renames a top-level `this` of a CommonJS file to `exports`. Bun calls
+  // the module body on `module.exports`, as Node does, so `this` stays and does
+  // not follow the `exports` variable.
+  itBundled("default/ThisOutsideFunctionIsModuleExports", {
     files: {
       "/entry.js": /* js */ `
-        console.log(this)
-        console.log((x = this) => this)
-        console.log({x: this})
-        console.log(class extends this.foo {})
-        console.log(class { [this.foo] })
-        console.log(class { [this.foo]() {} })
-        console.log(class { static [this.foo] })
-        console.log(class { static [this.foo]() {} })
+        const start = module.exports;
+        start.foo = class Foo {};
+        start.key = "key";
+        const seen = [
+          this === start,
+          ((x = this) => x === start && this === start)(),
+          { x: this }.x === start,
+          Object.getPrototypeOf(class extends this.foo {}) === start.foo,
+          Object.keys(new (class { [this.key] = 1 })()).join() === "key",
+          typeof (class { [this.key]() {} }).prototype.key === "function",
+          Object.keys(class { static [this.key] = 1 }).join() === "key",
+          typeof (class { static [this.key]() {} }).key === "function",
+        ];
+        exports = {};
+        seen.push(this === start);
+        console.log(seen.join(" "));
       `,
     },
-    onAfterBundle(api) {
-      if (api.readFile("/out.js").includes("this")) {
-        throw new Error("All cases of `this` should have been rewritten to `exports`");
-      }
+    run: {
+      stdout: "true true true true true true true true true",
     },
   });
   itBundled("default/ThisOutsideFunctionNotRenamed", {

@@ -32,6 +32,27 @@ test("custom require extension 1", () => {
   expect(custom.mock.calls.length).toBe(1);
   expect(require("./extensions-fixture/c.custom")).toBe("c dot custom"); // use js loader
 });
+// Node: `Module._extensions[extension](this, filename)`, and `Module.prototype._compile`
+// calls the module wrapper on `module.exports`.
+test("a handler is called on require.extensions, and the source it compiles on module.exports", () => {
+  using dir = tempDir("extensions-receiver", { "exporter.receiver": "" });
+  const receivers: unknown[] = [];
+  require.extensions[".receiver"] = function (this: unknown, module, filename) {
+    receivers.push(this);
+    // CoffeeScript and UMD output export through `this`.
+    (module as any)._compile(
+      `(function () { this.Foo = 1; }).call(this); module.exports.isExports = this === module.exports;`,
+      filename,
+    );
+  };
+  try {
+    expect(require(path.join(String(dir), "exporter.receiver"))).toEqual({ Foo: 1, isExports: true });
+    expect(receivers).toHaveLength(1);
+    expect(receivers[0]).toBe(require.extensions);
+  } finally {
+    delete require.extensions[".receiver"];
+  }
+});
 test("custom require extension overwrite default loader", () => {
   const original = require.extensions[".js"];
   try {

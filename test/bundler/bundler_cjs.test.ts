@@ -1235,4 +1235,103 @@ describe("bundler", () => {
       stdout: "function/undefined",
     },
   });
+
+  // ============================================================================
+  // `this` at the top level of a CommonJS file is the `module.exports` the
+  // module started with, as in Node. `__commonJS` calls the body on it.
+  // ============================================================================
+
+  // Tests 63 and 64: a wrapped file, in ESM output and in CommonJS output
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`cjs/__commonJS_this_is_module_exports_${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          console.log(JSON.stringify(require("./dep.cjs")));
+        `,
+        "/dep.cjs": /* js */ `
+          const start = module.exports;
+          const seen = {
+            literal: this === start,
+            eval: eval("this") === start,
+            arrow: (() => this)() === start,
+            argumentCount: arguments.length,
+          };
+          exports = { other: true };
+          seen.afterExportsAssignment = this === start;
+          module.exports = seen;
+        `,
+      },
+      format,
+      run: {
+        stdout: `{"literal":true,"eval":true,"arrow":true,"argumentCount":2,"afterExportsAssignment":true}`,
+      },
+    });
+  }
+
+  // Test 65: the entry point of CommonJS output has no `__commonJS` call around
+  // it: the module loader of the host calls it. A Bun older than this bundler
+  // passes the module object there, so `exports` stands in for `this`.
+  itBundled("cjs/this_in_entry_point_of_cjs_output", {
+    files: {
+      "/entry.cjs": /* js */ `
+        this.x = 1;
+        module.exports.y = typeof this;
+        console.log(JSON.stringify(module.exports));
+      `,
+    },
+    target: "bun",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("exports.x = 1");
+      api.expectFile("/out.js").not.toContain("this");
+    },
+    run: {
+      stdout: `{"x":1,"y":"object"}`,
+    },
+  });
+
+  // Test 66: the same kind of file with bytecode. The cached wrapper is called
+  // on module.exports too.
+  itBundled("cjs/this_in_entry_point_of_cjs_output_with_bytecode", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(this === module.exports, eval("this") === module.exports);
+      `,
+    },
+    target: "bun",
+    format: "cjs",
+    bytecode: true,
+    backend: "api",
+    outdir: "/out",
+    run: {
+      stdout: "true true",
+    },
+  });
+
+  // Test 67: the legacy decorator lowering moves the key of a decorated instance
+  // field into the constructor, where `this` is the instance.
+  itBundled("cjs/this_in_key_of_legacy_decorated_field", {
+    files: {
+      "/entry.ts": /* ts */ `
+        console.log(JSON.stringify(require("./dep.ts")));
+      `,
+      "/dep.ts": /* ts */ `
+        function dec(target: any, key: any) {}
+        exports.key = "fromExports";
+        class A {
+          key = "fromInstance";
+          @dec [this.key] = 1;
+          @dec [(() => this.key + "Arrow")()] = 2;
+          @dec static [this.key + "Static"] = 3;
+        }
+        module.exports = { instance: Object.keys(new A()), static: Object.keys(A) };
+      `,
+      "/tsconfig.json": /* json */ `
+        { "compilerOptions": { "experimentalDecorators": true } }
+      `,
+    },
+    run: {
+      stdout: `{"instance":["key","fromExports","fromExportsArrow"],"static":["fromExportsStatic"]}`,
+    },
+  });
 });

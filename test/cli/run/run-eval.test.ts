@@ -348,3 +348,26 @@ test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", a
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
 });
+
+// Node runs `-e`, `-p` and stdin source as a script, where `this` is globalThis.
+// `module` and `exports` are still in scope.
+describe.concurrent("top-level this is globalThis in a CommonJS eval entry", () => {
+  const expression = "this === globalThis && eval('this') === globalThis && this !== module.exports";
+  test.each([
+    ["-e", ["-e", `console.log(${expression})`], undefined],
+    ["--print", ["--print", expression], undefined],
+    ["stdin", ["-"], `console.log(${expression})`],
+    // `this` alone makes the source CommonJS.
+    ["-e, as the only CommonJS syntax", ["-e", "console.log(this === globalThis)"], undefined],
+  ])("%s", async (_, args, stdin) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+  });
+});

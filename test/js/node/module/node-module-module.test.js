@@ -747,6 +747,123 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  // Node: `ReflectApply(compiledWrapper, thisValue, [exports, require, module, filename, dirname])`
+  // in `Module.prototype._compile`, where `thisValue` is `module.exports`, read once.
+  describe("the receiver of the module wrapper is module.exports", () => {
+    async function run(files) {
+      using dir = tempDir("module-wrapper-receiver", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test("for source given to Module.prototype._compile", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "main.cjs": `
+          const Module = require("node:module");
+          const path = require("node:path");
+          function compile(name, source, ...exportsBefore) {
+            const filename = path.join(__dirname, name + ".js");
+            const m = new Module(filename, module);
+            m.filename = filename;
+            if (exportsBefore.length) m.exports = exportsBefore[0];
+            m._compile(source, filename);
+            return m;
+          }
+          const probe =
+            'module.probe = { literal: this === module.exports, eval: eval("this") === module.exports, ' +
+            "arrow: (() => this)() === module.exports, isModule: this === module };";
+          const rows = {
+            sloppy: compile("sloppy", probe).probe,
+            strict: compile("strict", '"use strict";' + probe).probe,
+            // The receiver is whatever module.exports holds when _compile runs.
+            preassigned: compile("preassigned", "module.probe = this === module.exports && this.pre;", { pre: true })
+              .probe,
+            primitiveStrict: compile("primitive-strict", '"use strict"; module.probe = this;', 7).probe,
+            primitiveSloppy: compile("primitive-sloppy", 'module.probe = typeof this + ":" + this;', 7).probe,
+            undefinedStrict: compile("undefined-strict", '"use strict"; module.probe = this === undefined;', undefined)
+              .probe,
+            undefinedSloppy: compile("undefined-sloppy", "module.probe = this === globalThis;", undefined).probe,
+            // Later assignments do not change it.
+            afterAssignment: compile(
+              "after-assignment",
+              'const start = this; exports = {}; module.exports = {}; module.probe = this === start && eval("this") === start;',
+            ).probe,
+            // CoffeeScript and UMD output export through \`this\`.
+            exportsThroughThis: compile("through-this", "(function () { this.Foo = 1; }).call(this);").exports,
+          };
+
+          // Each _compile call reads module.exports again.
+          const twice = compile("twice", "module.exports = { second: true };");
+          twice._compile("module.probe = this.second === true && this === module.exports;", twice.filename);
+          rows.twice = twice.probe;
+
+          // An accessor is read once per call, and its value is both \`this\` and \`exports\`.
+          const accessor = new Module(path.join(__dirname, "accessor.js"), module);
+          accessor.filename = path.join(__dirname, "accessor.js");
+          const value = {};
+          let reads = 0;
+          Object.defineProperty(accessor, "exports", { get: () => (reads++, value), configurable: true });
+          accessor._compile("module.probe = this === exports;", accessor.filename);
+          rows.accessor = { probe: accessor.probe, reads };
+
+          console.log(JSON.stringify(rows));
+        `,
+      });
+      expect(stderr).toBe("");
+      const wrapperReceiver = { literal: true, eval: true, arrow: true, isModule: false };
+      expect(JSON.parse(stdout)).toEqual({
+        sloppy: wrapperReceiver,
+        strict: wrapperReceiver,
+        preassigned: true,
+        primitiveStrict: 7,
+        primitiveSloppy: "object:7",
+        undefinedStrict: true,
+        undefinedSloppy: true,
+        afterAssignment: true,
+        exportsThroughThis: { Foo: 1 },
+        twice: true,
+        accessor: { probe: true, reads: 1 },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("for a custom Module.wrapper", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "main.cjs": `
+          const Module = require("node:module");
+          const start = Module.wrapper[0];
+          // This wrapper has no parameter named "exports": only the receiver can provide \`this\`.
+          Module.wrapper[0] =
+            "(function (renamed, require, module, __filename, __dirname) { module.receiver = this; module.evalReceiver = eval('this');";
+          const exported = require("./wrapped.cjs");
+          Module.wrapper[0] = start;
+          const wrapped = require.cache[require.resolve("./wrapped.cjs")];
+          console.log(
+            JSON.stringify({
+              receiver: wrapped.receiver === wrapped.exports,
+              evalReceiver: wrapped.evalReceiver === wrapped.exports,
+              ...exported,
+            }),
+          );
+        `,
+        "wrapped.cjs": `
+          module.exports.literal = this === module.exports;
+          module.exports.arrow = (() => this)() === module.exports;
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ receiver: true, evalReceiver: true, literal: true, arrow: true });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("Overwriting _resolveFilename with a non-callable makes require() throw like Node", async () => {
     // Node keeps _resolveFilename as a plain data property: any value can be
     // assigned and reads back, and require() throws when it goes to call it.
@@ -1064,6 +1181,22 @@ console.log("survived", require("./late.js"));`,
         stderr: `TypeError: ${described} is not a function\n\nBun v<bun-version>`,
         exitCode: 1,
       });
+    });
+
+    // Node: `Module.runMain(mainEntry)`.
+    test.each([
+      ["the main thread", false],
+      ["a Worker", true],
+    ])("to a function, which %s calls on Module", async (_, inWorker) => {
+      const preload = `
+        const Module = require("module");
+        const runMain = Module.runMain;
+        Module.runMain = function (main) {
+          console.log(this === Module, arguments.length, typeof main);
+          return runMain.apply(this, arguments);
+        };
+      `;
+      expect(await run(preload, inWorker)).toEqual({ stdout: "true 1 string\nmain ran\n", stderr: "", exitCode: 0 });
     });
 
     test("to a function that throws", async () => {

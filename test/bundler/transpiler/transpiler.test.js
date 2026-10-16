@@ -3940,6 +3940,25 @@ class Foo {
     );
   });
 
+  // The caller of a CommonJS body passes `module.exports` as `this` at run
+  // time, so the transpiler does not replace it with the `exports` variable.
+  it("a top-level `this` in a file with no ES module syntax is kept as written", () => {
+    for (const [code, out] of [
+      ["console.log(this)", "console.log(this)"],
+      ["this.foo = 1", "this.foo = 1"],
+      ["module.exports = this", "module.exports = this"],
+      ["exports = {}; console.log(this === module.exports)", "exports = {};\nconsole.log(this === module.exports)"],
+      ["const f = (x = this) => [x, this]", "const f = (x = this) => [x, this]"],
+      ["class A extends this.Base { [this.key] = 1 }", "class A extends this.Base {\n  [this.key] = 1;\n}"],
+      ["console.log(typeof this)", "console.log(typeof this)"],
+      ["delete this", "delete this"],
+    ]) {
+      expectPrinted_(code, out);
+      expectPrintedMin_(code, out);
+      ts.expectPrinted_(code, out);
+    }
+  });
+
   it("declarations named eval or arguments, and reserved words, in strict mode", () => {
     expectParseError(
       '"use strict"; var arguments = 1',

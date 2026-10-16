@@ -595,6 +595,45 @@ devTest("commonjs forms", {
     await c.expectMessage({ field: "6" });
   },
 });
+// `this` at the top level of a CommonJS module is the `module.exports` the
+// module started with, as in Node. The module loader calls the body on it.
+devTest("commonjs top-level this", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import imported from "./imported.js";
+      console.log(imported);
+    `,
+    "imported.js": `
+      const start = module.exports;
+      this.viaThis = true;
+      start.literal = this === start;
+      start.eval = eval("this") === start;
+      exports = {};
+      start.afterExportsAssignment = this === start;
+      start.required = require("./required.js");
+    `,
+    "required.js": `
+      const start = module.exports;
+      start.literal = this === start;
+      exports = {};
+      start.afterExportsAssignment = this === start;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage({
+      viaThis: true,
+      literal: true,
+      eval: true,
+      afterExportsAssignment: true,
+      required: { literal: true, afterExportsAssignment: true },
+    });
+  },
+});
 
 // --- Barrel optimization tests ---
 

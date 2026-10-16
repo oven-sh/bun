@@ -614,16 +614,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // Bun writes a split `require()` as `import.meta.require("./chunk.js")`.
                     if name == b"require"
-                        && identifier_opts.is_call_target()
                         && p.options.bundle
+                        && !p.import_meta_require_as_written
                         && !p.is_source_runtime()
                     {
-                        return Some(Expr {
-                            data: js_ast::ExprData::ESpecial(E::Special::ImportMetaRequire(
-                                name_loc,
-                            )),
-                            loc: target.loc,
-                        });
+                        if identifier_opts.is_call_target() {
+                            return Some(Expr {
+                                data: js_ast::ExprData::ESpecial(E::Special::ImportMetaRequire(
+                                    name_loc,
+                                )),
+                                loc: target.loc,
+                            });
+                        }
+                        if identifier_opts.assign_target() != js_ast::AssignTarget::None
+                            || identifier_opts.is_delete_target()
+                        {
+                            p.import_meta_require_is_assigned = true;
+                        }
                     }
 
                     // Inline import.meta properties for Bake

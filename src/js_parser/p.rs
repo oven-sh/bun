@@ -264,6 +264,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_import_meta: bool,
     /// Set by `absorb_require_aliases`. Such a `require` does not make the file CommonJS.
     pub(crate) require_is_from_import_meta: bool,
+    /// This parse made a `require` out of an `import.meta.require`, in a declaration or in a call.
+    pub(crate) read_import_meta_require_as_require: bool,
+    /// The file assigns or deletes `import.meta.require`.
+    pub(crate) import_meta_require_is_assigned: bool,
+    /// The second parse of a file for which `can_replace_import_meta_require` is true. It reads nothing as `require`.
+    pub(crate) import_meta_require_as_written: bool,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -5028,7 +5034,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if local.kind.is_using() {
                 continue;
             }
-            let may_absorb = !local.is_export && local.kind != js_ast::s::Kind::KLet;
+            let may_absorb = !local.is_export;
 
             let mut at = 0;
             while at < local.decls.len() {
@@ -5102,6 +5108,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // SAFETY: `name` is the `original_name` of a symbol, which lives as long as the scope.
                     unsafe { self.module_scope_mut().members.put(name, require) };
                     self.require_is_from_import_meta = true;
+                    self.read_import_meta_require_as_require = true;
                     continue;
                 }
 
@@ -5118,6 +5125,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let require = self.store_name_in_ref(b"require");
                     local.decls[at].value = Some(Expr::init_identifier(require, value_loc));
                     self.require_is_from_import_meta = true;
+                    self.read_import_meta_require_as_require = true;
                 }
                 at += 1;
             }
@@ -5126,6 +5134,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts[index].data = js_ast::StmtData::SEmpty(S::Empty {});
             }
         }
+    }
+
+    /// After the visit pass: whether the file can give a name or a call that was read as `require` another value.
+    pub(crate) fn can_replace_import_meta_require(&self) -> bool {
+        self.import_meta_require_is_assigned
+            || (self.require_is_from_import_meta
+                && (self.symbols[self.require_ref.inner_index() as usize].has_been_assigned_to()
+                    || self.module_scope().contains_direct_eval))
     }
 
     /// Whether the binding at `loc` is the only declaration of its symbol in the module scope.
@@ -9874,6 +9890,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             latest_return_had_semicolon: false,
             has_import_meta: false,
             require_is_from_import_meta: false,
+            read_import_meta_require_as_require: false,
+            import_meta_require_is_assigned: false,
+            import_meta_require_as_written: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,

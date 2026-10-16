@@ -289,7 +289,8 @@ error: Hello World`,
         import { d } from "./lib/indexed.js";
         import { e } from "./lib/used-above.js";
         import { f } from "./lib/two-properties.js";
-        console.log(a, b, c, d, e, f);
+        import { g } from "./lib/let.js";
+        console.log(a, b, c, d, e, f, g);
       `,
       "/lib/renamed.js": `var { require: require2 } = import.meta;\nexport const a = require2("./a.cjs").x;`,
       "/lib/formatted.js": `// @bun\nvar { require } = import.meta;\nexport const b = require("./b.cjs").x;`,
@@ -297,15 +298,17 @@ error: Hello World`,
       "/lib/indexed.js": `export const d = import.meta["require"]("./d.cjs").x;`,
       "/lib/used-above.js": `function load() { return __require("./e.cjs").x; }\nvar __require = import.meta.require;\nexport const e = load();`,
       "/lib/two-properties.js": `var { require, main } = import.meta;\nexport const f = require("./f.cjs").x + typeof main;`,
+      "/lib/let.js": `let load = import.meta.require;\nexport const g = load("./g.cjs").x;`,
       "/lib/a.cjs": `exports.x = "a";`,
       "/lib/b.cjs": `exports.x = "b";`,
       "/lib/c.cjs": `exports.x = "c";`,
       "/lib/d.cjs": `exports.x = "d";`,
       "/lib/e.cjs": `exports.x = "e";`,
       "/lib/f.cjs": `exports.x = "f";`,
+      "/lib/g.cjs": `exports.x = "g";`,
     },
     target: "bun",
-    run: { stdout: "a b c d e fboolean" },
+    run: { stdout: "a b c d e fboolean g" },
     onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("import.meta.require");
     },
@@ -458,21 +461,36 @@ error: Hello World`,
         import "./declared-after.js";
         import "./declared-before.js";
         import "./declared-in-block.js";
-        import "./reassigned.js";
+        import "./assigned.js";
+        import "./assigned-in-pattern.js";
+        import "./assigned-with-warning.js";
+        import "./with-eval.js";
+        import "./let.js";
+        import "./assigned-property.js";
         console.log(exported("./dep.cjs").x);
       `,
       "/exported.js": `var __require = import.meta.require;\nexport { __require as exported };`,
       "/declared-after.js": `var load = import.meta.require;\nvar load = x => "declared after:" + x;\nconsole.log(load("./dep.cjs"));`,
       "/declared-before.js": `var load = x => "declared before:" + x;\nconsole.log(load("./dep.cjs"));\nvar load = import.meta.require;`,
       "/declared-in-block.js": `var load = import.meta.require;\n{\n  var load = x => "declared in a block:" + x;\n}\nconsole.log(load("./dep.cjs"));`,
-      "/reassigned.js": `let load = import.meta.require;\nload = x => "reassigned:" + x;\nconsole.log(load("./dep.cjs"));`,
+      "/assigned.js": `var load = import.meta.require;\nload = x => "assigned:" + x;\nconsole.log(load("./dep.cjs"));`,
+      "/assigned-in-pattern.js": `var {require}=import.meta;\n[require] = [x => "assigned in a pattern:" + x];\nconsole.log(require("./dep.cjs"));`,
+      "/assigned-with-warning.js": `-->\nvar load = import.meta.require;\nload = x => "assigned with a warning:" + x;\nconsole.log(load("./dep.cjs"));`,
+      "/assigned-property.js": `import.meta.require = x => "assigned property:" + x;\nconsole.log(import.meta.require("./dep.cjs"));`,
+      "/with-eval.js": `var {require}=import.meta;\nconsole.log("with eval:", eval("1 + 1"), require("./dep.cjs").x);`,
+      "/let.js": `let load = import.meta.require;\nload = x => "let:" + x;\nconsole.log(load("./dep.cjs"));`,
       "/dep.cjs": `exports.x = "not in the bundle";`,
     },
     target: "bun",
     run: {
       stdout:
-        "declared after:./dep.cjs\ndeclared before:./dep.cjs\n" +
-        "declared in a block:./dep.cjs\nreassigned:./dep.cjs\nnot in the bundle",
+        "declared after:./dep.cjs\ndeclared before:./dep.cjs\ndeclared in a block:./dep.cjs\n" +
+        "assigned:./dep.cjs\nassigned in a pattern:./dep.cjs\nassigned with a warning:./dep.cjs\n" +
+        "with eval: 2 not in the bundle\nlet:./dep.cjs\nassigned property:./dep.cjs\nnot in the bundle",
+    },
+    // The second parse of a file does not report a warning again.
+    bundleWarnings: {
+      "/assigned-with-warning.js": ['Treating "-->" as the start of a legacy HTML single-line comment'],
     },
     onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("not in the bundle");

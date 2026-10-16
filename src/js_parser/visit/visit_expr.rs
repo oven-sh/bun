@@ -2475,10 +2475,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let state = TransposeState::default();
             match first.data {
                 Data::EString(..) => {
+                    p.read_import_meta_require_as_require = true;
                     *e = p.transpose_require(first, &state);
                     return true;
                 }
                 Data::EIf(..) => {
+                    p.read_import_meta_require_as_require = true;
                     *e = p.transpose_known_to_be_if_require(first, &state);
                     return true;
                 }

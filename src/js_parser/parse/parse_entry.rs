@@ -413,7 +413,7 @@ impl<'a> Parser<'a> {
         {
             self.options.ts = true;
             self.options.jsx.parse = true;
-            return self._parse::<true>();
+            return self._parse::<true>(false);
         }
 
         // JSX is no longer part of the parser's monomorphization (it only
@@ -423,9 +423,9 @@ impl<'a> Parser<'a> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if self.options.ts {
-                self._parse::<true>()
+                self._parse::<true>(false)
             } else {
-                self._parse::<false>()
+                self._parse::<false>(false)
             }
         }
     }
@@ -828,7 +828,26 @@ fn lower_one_date_time_literal<'a>(
 }
 
 impl<'a> Parser<'a> {
-    fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
+    /// The file can give `import.meta.require`, or a name that was read as it, another value: parse it again as written.
+    #[cold]
+    #[inline(never)]
+    fn parse_with_import_meta_require_as_written<const TS: bool>(
+        p: &mut P<'a, TS, false>,
+        orig_log: (usize, u32),
+    ) -> Result<crate::Result<'a>, Error> {
+        let options = core::mem::take(&mut p.options);
+        let parser = Parser::init(options, p.log(), p.source, p.define, p.arena)?;
+        // SAFETY: `init` made this pointer from the `&mut Log` above, and nothing else borrows the log here.
+        let log = unsafe { &mut *parser.log.as_ptr() };
+        log.msgs.truncate(orig_log.0);
+        log.warnings = orig_log.1;
+        parser._parse::<TS>(true)
+    }
+
+    fn _parse<const TS: bool>(
+        self,
+        import_meta_require_as_written: bool,
+    ) -> Result<crate::Result<'a>, Error> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
         let _action_guard = bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(
@@ -856,6 +875,8 @@ impl<'a> Parser<'a> {
             bump, log, source, define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+        p.import_meta_require_as_written = import_meta_require_as_written;
+        let orig_log = (p.log().msgs.len(), p.log().warnings);
 
         if p.options.features.hot_module_reloading {
             debug_assert!(!p.options.tree_shaking);
@@ -1001,7 +1022,7 @@ impl<'a> Parser<'a> {
             // part must be at the start as it is referred to by index.
             before.push(js_ast::Part::default());
 
-            if p.has_import_meta && !p.is_source_runtime() {
+            if p.has_import_meta && !p.import_meta_require_as_written && !p.is_source_runtime() {
                 p.absorb_require_aliases(stmts);
             }
         }
@@ -1221,6 +1242,10 @@ impl<'a> Parser<'a> {
         // If there were errors while visiting, also halt here
         if p.log().errors > orig_error_count {
             return Err(crate::Error::SyntaxError);
+        }
+
+        if p.read_import_meta_require_as_require && p.can_replace_import_meta_require() {
+            return Self::parse_with_import_meta_require_as_written(p, orig_log);
         }
 
         // `perf::Ctx` ends the span in its `Drop` impl — bind it for the rest of `_parse`.

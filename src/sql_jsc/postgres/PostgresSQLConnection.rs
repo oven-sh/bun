@@ -63,22 +63,6 @@ pub mod js {
     pub use crate::jsc::codegen::JSPostgresSQLConnection::*;
 }
 
-impl jsc::JsClass for PostgresSQLConnection {
-    fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        // Ownership transfers to the JSC wrapper's m_ctx; freed via `finalize`.
-        js::to_js(bun_core::heap::into_raw(Box::new(self)), global)
-    }
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js::from_js(value)
-    }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js::from_js_direct(value)
-    }
-    fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        js::get_constructor(global)
-    }
-}
-
 // `verify_error_to_js` sunk to `bun_jsc::system_error`; reach it via
 // `crate::jsc::verify_error_to_js`.
 use crate::jsc::verify_error_to_js;

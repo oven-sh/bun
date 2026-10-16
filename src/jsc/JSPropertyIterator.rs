@@ -92,12 +92,6 @@ impl IntoIterObject for &JSObject {
         std::ptr::from_ref::<JSObject>(self).cast_mut()
     }
 }
-impl IntoIterObject for &mut JSObject {
-    #[inline]
-    fn into_iter_object(self) -> *mut JSObject {
-        std::ptr::from_mut::<JSObject>(self)
-    }
-}
 
 pub struct JSPropertyIterator<'a> {
     pub len: usize,

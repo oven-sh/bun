@@ -281,13 +281,6 @@ impl CssEql for VendorPrefix {
     }
 }
 
-impl CssEql for () {
-    #[inline]
-    fn eql(&self, _other: &Self) -> bool {
-        true
-    }
-}
-
 // `CssEql` impls for `CustomIdent`/`DashedIdent`/`Ident` (defined in
 // `values/ident.rs`, which does not depend on this trait).
 mod ident_eql {
@@ -1107,20 +1100,6 @@ impl<T: Parse> Parse for Vec<T> {
     }
 }
 impl<T: Parse> ParseWithOptions for Vec<T> {
-    #[inline]
-    fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
-        <Self as Parse>::parse(input)
-    }
-}
-
-// Parse the pointee then heap-allocate.
-impl<T: Parse> Parse for Box<T> {
-    #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
-        T::parse(input).map(Box::new)
-    }
-}
-impl<T: Parse> ParseWithOptions for Box<T> {
     #[inline]
     fn parse_with_options(input: &mut Parser, _options: &ParserOptions) -> CssResult<Self> {
         <Self as Parse>::parse(input)

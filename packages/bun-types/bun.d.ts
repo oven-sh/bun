@@ -9233,7 +9233,7 @@ declare module "bun" {
    *
    * Like `readline()`, but without the IO.
    */
-  function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number): number;
+  function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number | bigint): number;
 
   interface GlobScanOptions {
     /**

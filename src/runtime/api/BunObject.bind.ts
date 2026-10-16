@@ -39,7 +39,7 @@ export const gc = b.fn({
 export const indexOfLine = b.fn({
   args: {
     buffer: b.bufferSource.bytes.allowShared,
-    offset: b.f64.loose.default(0),
+    offset: b.f64.loose.allowBigInt.default(0),
   },
   returns: b.f64,
 });

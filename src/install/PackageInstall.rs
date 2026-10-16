@@ -2120,9 +2120,9 @@ pub(crate) const MOVED_ASIDE_PREFIX: &str = ".old-";
 /// Renames `subpath`, if it is there, to a name in `destination_dir` made of `random`. On any thread.
 ///
 /// `Ok(Some(name))` is the new name. `Ok(None)`: `subpath` is gone, or it is a directory that cannot
-/// be renamed (a mount point, overlayfs, an open file in it on Windows) and is empty now. `Err`: a
-/// file in it could not be deleted. What can be deleted is gone, so that the tree no longer passes
-/// `verify`: the new files must never join the old ones.
+/// be renamed and holds nothing that `verify` reads any more. `Err`: a file in it could not be
+/// deleted. In every case the files that `verify` reads are gone if they could go, so that the old
+/// install never passes for the new one: the new files must not join the old ones.
 pub(crate) fn move_aside(
     destination_dir: &Dir,
     subpath: &ZStr,
@@ -2136,25 +2136,65 @@ pub(crate) fn move_aside(
         .into_bytes(),
     );
     match sys::renameat(destination_dir.fd(), subpath, destination_dir.fd(), &old) {
-        Ok(()) => Ok(Some(old)),
-        Err(err) if err.get_errno() == sys::E::ENOENT => Ok(None),
-        Err(_) => {
-            // Emptied through a handle: `delete_tree` stops at the first entry it cannot delete.
-            let Ok(dir) = destination_dir.open_at_with(
+        Ok(()) => return Ok(Some(old)),
+        Err(err) if err.get_errno() == sys::E::ENOENT => return Ok(None),
+        Err(_) => {}
+    }
+    match sys::rmdirat(destination_dir.fd(), subpath) {
+        Ok(()) => Ok(None),
+        // A mount point (a Docker volume with the package's source in it) holds what is not bun's to
+        // delete. The rename's own error does not show that: it is `EXDEV` inside a mounted volume.
+        Err(err) if err.get_errno() == sys::E::EBUSY => {
+            let dir = destination_dir.open_at_with(
                 subpath.as_bytes(),
                 sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NOFOLLOW,
-            ) else {
-                return destination_dir
-                    .delete_tree(subpath.as_bytes())
-                    .map(|()| None);
-            };
-            let emptied = dir.delete_children();
+            )?;
+            let unmarked = unmark(&dir);
             dir.close();
-            // A mount point stays, and the files go into it.
-            let _ = sys::rmdirat(destination_dir.fd(), subpath);
-            emptied.map(|()| None)
+            unmarked.map(|()| None)
+        }
+        // overlayfs moves no directory of a lower layer, Windows none with a file open in it.
+        Err(_) => empty_in_place(destination_dir, subpath).map(|()| None),
+    }
+}
+
+/// Deletes what is in `subpath` through a handle, then `subpath` itself if that left it empty.
+/// `delete_tree` stops at the first entry it cannot delete. This goes on, so that nothing `verify`
+/// reads stays behind such an entry, and returns the first error.
+pub(crate) fn empty_in_place(dir: &Dir, subpath: &ZStr) -> sys::Maybe<()> {
+    let flags = sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NOFOLLOW;
+    let Ok(handle) = dir.open_at_with(subpath.as_bytes(), flags) else {
+        return dir.delete_tree(subpath.as_bytes());
+    };
+    let emptied = handle.delete_children();
+    handle.close();
+    let _ = sys::rmdirat(dir.fd(), subpath);
+    emptied
+}
+
+/// Deletes what `verify` reads from a package folder: `package.json`, `.bun-tag` and every
+/// `.bun-tag-<hash>`. The first error is returned once every entry has been tried.
+fn unmark(dir: &Dir) -> sys::Maybe<()> {
+    let mut names: Vec<Box<[u8]>> = vec![b"package.json".as_slice().into()];
+    let mut iter = sys::iterate_dir(dir.fd());
+    while let Some(entry) = iter.next()? {
+        let name = entry.name.slice_u8();
+        if name.starts_with(BUN_TAG) {
+            names.push(name.into());
         }
     }
+    drop(iter);
+    let mut result = Ok(());
+    for name in &names {
+        let mut z = name.to_vec();
+        z.push(0);
+        let deleted = match sys::unlinkat(dir.fd(), ZStr::from_slice_with_nul(&z)) {
+            Err(err) if err.get_errno() != sys::E::ENOENT => Err(err),
+            _ => Ok(()),
+        };
+        result = result.and(deleted);
+    }
+    result
 }
 
 impl<'a> PackageInstall<'a> {

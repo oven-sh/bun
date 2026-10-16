@@ -522,13 +522,14 @@ pub(crate) fn remove_placed_package(
         return;
     };
     // Rename first: a delete can stop midway, and a half-deleted package must not pass `verify`.
-    if let Ok(Some(old)) = package_install::move_aside(
+    let _ = match package_install::move_aside(
         &node_modules,
         &bun_core::ZBox::from_bytes(alias),
         bun_core::fast_random(),
     ) {
-        let _ = node_modules.delete_tree(old.as_bytes());
-    }
+        Ok(Some(old)) => node_modules.delete_tree(old.as_bytes()),
+        _ => node_modules.delete_tree(alias),
+    };
     crate::prune::prune_bins(&node_modules);
 }
 

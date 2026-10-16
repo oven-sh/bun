@@ -1014,33 +1014,40 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
 });
 
 // https://github.com/oven-sh/bun/issues/45184
-// The old node_modules/is-odd cannot be renamed aside: it is a mount point, or a program on Windows
-// has a file in it open. A non-writable node_modules refuses the rename the same way. The new copy
-// used to be written on top of the old one, so the old patch's marker and files stayed, and the
-// next install with the old patch configured found its marker and did nothing.
-describe.concurrent("relinking a patched package whose folder cannot be renamed aside", () => {
-  // Root renames and deletes in a directory whatever its mode says (CAP_DAC_OVERRIDE).
-  const setpriv = isRoot ? Bun.which("setpriv") : null;
-  const unprivileged = setpriv ? [setpriv, "--bounding-set", "-dac_override,-dac_read_search"] : [];
+// The old folder of the package cannot be renamed aside: it is a mount point, or a program on
+// Windows has a file in it open. A non-writable parent refuses the rename the same way. The new
+// copy used to be written on top of the old one, so the old patch's marker and files stayed, and
+// the next install with the old patch configured found its marker and did nothing.
+describe.concurrent.each(["hoisted", "isolated"] as const)(
+  "relinking a patched package whose folder cannot be renamed aside (%s linker)",
+  linker => {
+    // Root renames and deletes in a directory whatever its mode says (CAP_DAC_OVERRIDE).
+    const setpriv = isRoot ? Bun.which("setpriv") : null;
+    const unprivileged = setpriv ? [setpriv, "--bounding-set", "-dac_override,-dac_read_search"] : [];
 
-  const packageJson = JSON.stringify({
-    name: "relink-test",
-    dependencies: { "is-odd": "3.0.1" },
-    patchedDependencies: { "is-odd@3.0.1": "patches/is-odd@3.0.1.patch" },
-  });
+    const packageJson = JSON.stringify({
+      name: "relink-test",
+      dependencies: { "is-odd": "3.0.1" },
+      patchedDependencies: { "is-odd@3.0.1": "patches/is-odd@3.0.1.patch" },
+    });
+    /** Where the linker puts the copy of is-odd, relative to the project. */
+    const packagePath =
+      linker === "hoisted"
+        ? join("node_modules", "is-odd")
+        : join("node_modules", ".bun", "is-odd@3.0.1", "node_modules", "is-odd");
 
-  // is-odd@3.0.1/index.js has 9 lines and ends with `};`.
-  const generationPatch = (generation: "A" | "B") =>
-    (generation === "A"
-      ? `diff --git a/extra.js b/extra.js
+    // is-odd@3.0.1/index.js has 9 lines and ends with `};`.
+    const generationPatch = (generation: "A" | "B") =>
+      (generation === "A"
+        ? `diff --git a/extra.js b/extra.js
 new file mode 100644
 --- /dev/null
 +++ b/extra.js
 @@ -0,0 +1 @@
 +module.exports = "created by generation A";
 `
-      : "") +
-    `diff --git a/index.js b/index.js
+        : "") +
+      `diff --git a/index.js b/index.js
 --- a/index.js
 +++ b/index.js
 @@ -7,3 +7,4 @@
@@ -1050,154 +1057,143 @@ new file mode 100644
 +module.exports.generation = "${generation}";
 `;
 
-  async function install(dir: string, env: Env, wrapper = unprivileged) {
-    await using proc = Bun.spawn({
-      cmd: [...wrapper, bunExe(), "install"],
-      cwd: dir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr: stderr.replace(installProgress, ""), exitCode };
-  }
-
-  /** The entries of node_modules/is-odd, and what `require("is-odd").generation` is. */
-  async function installedState(dir: string) {
-    const entries = (await readdir(join(dir, "node_modules", "is-odd"))).sort();
-    const index = await file(dir, "node_modules", "is-odd", "index.js").text();
-    return {
-      markers: entries.filter(name => name.startsWith(".bun-tag-")).length,
-      files: entries.filter(name => !name.startsWith(".bun-tag-")),
-      generation: index.match(/generation = "(\w)"/)?.[1] ?? null,
-    };
-  }
-
-  const generationA = {
-    markers: 1,
-    files: ["extra.js", "index.js", "package.json"],
-    generation: "A",
-  };
-
-  async function setup(prefix: string) {
-    const project = createProject(prefix, {
-      "package.json": packageJson,
-      patches: { "is-odd@3.0.1.patch": generationPatch("A") },
-    });
-    expect(await install(project.dir, project.env)).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await installedState(project.dir)).toEqual(generationA);
-    return project;
-  }
-
-  test.skipIf(isWindows || (isRoot && !setpriv))("the old files and marker are replaced", async () => {
-    await using project = await setup("patch-relink-in-place");
-    const { dir, env } = project;
-
-    await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("B"));
-    await chmod(join(dir, "node_modules"), 0o555);
-    try {
-      expect(await install(dir, env)).toMatchObject({ stderr: "", exitCode: 0 });
-    } finally {
-      await chmod(join(dir, "node_modules"), 0o755);
+    async function install(dir: string, env: Env, wrapper = unprivileged) {
+      await using proc = Bun.spawn({
+        cmd: [...wrapper, bunExe(), "install"],
+        cwd: dir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: stderr.replace(installProgress, ""), exitCode };
     }
-    expect(await installedState(dir)).toEqual({
+
+    /** The entries of the copy of is-odd, and what `require("is-odd").generation` would be. */
+    async function installedState(dir: string) {
+      const entries = (await readdir(join(dir, packagePath))).sort();
+      const index = await file(dir, packagePath, "index.js").text();
+      return {
+        markers: entries.filter(name => name.startsWith(".bun-tag-")).length,
+        files: entries.filter(name => !name.startsWith(".bun-tag-")),
+        generation: index.match(/generation = "(\w)"/)?.[1] ?? null,
+      };
+    }
+
+    const generationA = {
       markers: 1,
-      files: ["index.js", "package.json"],
-      generation: "B",
-    });
+      files: ["extra.js", "index.js", "package.json"],
+      generation: "A",
+    };
 
-    await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("A"));
-    expect(await install(dir, env)).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await installedState(dir)).toEqual(generationA);
-  });
+    async function setup(prefix: string) {
+      const project = createProject(`${prefix}-${linker}`, {
+        "package.json": packageJson,
+        "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+        patches: { "is-odd@3.0.1.patch": generationPatch("A") },
+      });
+      expect(await install(project.dir, project.env)).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(await installedState(project.dir)).toEqual(generationA);
+      return project;
+    }
 
-  test.skipIf(isWindows || (isRoot && !setpriv))(
-    "a relink that cannot remove the old files fails and leaves no marker",
-    async () => {
-      await using project = await setup("patch-relink-locked");
+    test.skipIf(isWindows || (isRoot && !setpriv))("the old files and marker are replaced", async () => {
+      await using project = await setup("patch-relink-in-place");
       const { dir, env } = project;
+      const parent = join(dir, packagePath, "..");
 
-      // A file that cannot be deleted, like one that a program on Windows has open.
-      const locked = join(dir, "node_modules", "is-odd", "locked");
-      await mkdir(locked);
-      await Bun.write(join(locked, "held-open.txt"), "");
-      await chmod(locked, 0o555);
-      await chmod(join(dir, "node_modules"), 0o555);
       await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("B"));
-      let result;
+      await chmod(parent, 0o555);
       try {
-        result = await install(dir, env);
+        expect(await install(dir, env)).toMatchObject({ stderr: "", exitCode: 0 });
       } finally {
-        await chmod(join(dir, "node_modules"), 0o755);
-        await chmod(locked, 0o755);
+        await chmod(parent, 0o755);
       }
-      expect(result.stderr).toContain("EACCES");
-      expect(result.exitCode).toBe(1);
-      // Nothing that `bun install` takes as proof of an installed package is left.
-      const entries = await readdir(join(dir, "node_modules", "is-odd"));
-      expect(entries.filter(name => name.startsWith(".bun-tag-") || name === "package.json")).toEqual([]);
-
-      expect(await install(dir, env)).toMatchObject({ stderr: "", exitCode: 0 });
       expect(await installedState(dir)).toEqual({
         markers: 1,
         files: ["index.js", "package.json"],
         generation: "B",
       });
-    },
-  );
 
-  // The case of the issue: a mount point cannot be renamed (EBUSY). A mount point inside it cannot
-  // be deleted either. Needs user namespaces, which a container can forbid.
-  const canMount =
-    isLinux &&
-    Bun.which("unshare") !== null &&
-    Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
-  const mounted = (...paths: string[]) => [
-    "unshare",
-    "-Urm",
-    "sh",
-    "-c",
-    paths.map(path => `mount --bind '${path}' '${path}' && `).join("") + 'exec "$0" "$@"',
-  ];
-
-  test.skipIf(!canMount)("a mount point is emptied and filled in place", async () => {
-    await using project = await setup("patch-relink-mount");
-    const { dir, env } = project;
-
-    await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("B"));
-    expect(await install(dir, env, mounted("node_modules/is-odd"))).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await installedState(dir)).toEqual({
-      markers: 1,
-      files: ["index.js", "package.json"],
-      generation: "B",
+      await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("A"));
+      expect(await install(dir, env)).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(await installedState(dir)).toEqual(generationA);
     });
 
-    await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("A"));
-    expect(await install(dir, env)).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await installedState(dir)).toEqual(generationA);
-  });
+    test.skipIf(isWindows || (isRoot && !setpriv))(
+      "a relink that cannot remove the old files fails and leaves no marker",
+      async () => {
+        await using project = await setup("patch-relink-locked");
+        const { dir, env } = project;
+        const parent = join(dir, packagePath, "..");
 
-  test.skipIf(!canMount)("a mount point with a mount point inside fails the install", async () => {
-    await using project = await setup("patch-relink-nested-mount");
-    const { dir, env } = project;
+        // A file that cannot be deleted, like one that a program on Windows has open.
+        const locked = join(dir, packagePath, "locked");
+        await mkdir(locked);
+        await Bun.write(join(locked, "held-open.txt"), "");
+        await chmod(locked, 0o555);
+        await chmod(parent, 0o555);
+        await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("B"));
+        let result;
+        try {
+          result = await install(dir, env);
+        } finally {
+          await chmod(parent, 0o755);
+          await chmod(locked, 0o755);
+        }
+        expect(result.stderr).toContain("EACCES");
+        expect(result.exitCode).toBe(1);
+        // Nothing that `bun install` takes as proof of an installed package is left.
+        const entries = await readdir(join(dir, packagePath));
+        expect(entries.filter(name => name.startsWith(".bun-tag-") || name === "package.json")).toEqual([]);
 
-    await mkdir(join(dir, "node_modules", "is-odd", "volume"));
-    await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("B"));
-    const result = await install(dir, env, mounted("node_modules/is-odd", "node_modules/is-odd/volume"));
-    expect(normalizeBunSnapshot(result.stderr)).toMatchInlineSnapshot(
-      `"EBUSY: failed removing the old node_modules/package dir for package is-odd"`,
+        expect(await install(dir, env)).toMatchObject({ stderr: "", exitCode: 0 });
+        expect(await installedState(dir)).toEqual({
+          markers: 1,
+          files: ["index.js", "package.json"],
+          generation: "B",
+        });
+      },
     );
-    expect(result.exitCode).toBe(1);
-    expect(await readdir(join(dir, "node_modules", "is-odd"))).toEqual(["volume"]);
 
-    expect(await install(dir, env)).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await installedState(dir)).toEqual({
-      markers: 1,
-      files: ["index.js", "package.json"],
-      generation: "B",
-    });
-  });
-});
+    // The case of the issue: a mount point cannot be renamed (EBUSY). What is in it is the user's
+    // (docker-compose mounts the source of a package there), so only the files that say which
+    // install it holds go before the new files are put in. Needs user namespaces, which a
+    // container can forbid.
+    const canMount =
+      isLinux &&
+      Bun.which("unshare") !== null &&
+      Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+    const mounted = (path: string) => [
+      "unshare",
+      "-Urm",
+      "sh",
+      "-c",
+      `mount --bind '${path}' '${path}' && exec "$0" "$@"`,
+    ];
+
+    test.skipIf(linker !== "hoisted" || !canMount)(
+      "a mount point keeps its files and loses the old marker",
+      async () => {
+        await using project = await setup("patch-relink-mount");
+        const { dir, env } = project;
+
+        await Bun.write(join(dir, packagePath, "source.js"), "");
+        await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("B"));
+        expect(await install(dir, env, mounted(packagePath))).toMatchObject({ stderr: "", exitCode: 0 });
+        expect(await installedState(dir)).toEqual({
+          markers: 1,
+          files: ["extra.js", "index.js", "package.json", "source.js"],
+          generation: "B",
+        });
+
+        await Bun.write(join(dir, "patches", "is-odd@3.0.1.patch"), generationPatch("A"));
+        expect(await install(dir, env, mounted(packagePath))).toMatchObject({ stderr: "", exitCode: 0 });
+        expect(await installedState(dir)).toEqual({ ...generationA, files: [...generationA.files, "source.js"] });
+      },
+    );
+  },
+);
 
 describe.concurrent("patchedDependencies contents_hash", () => {
   // A patch that creates node_modules/is-odd/m.js; `hunk` is the @@ line.

@@ -5661,6 +5661,17 @@ pub(crate) extern "C" fn Blob__sharedView(
     true
 }
 
+/// C-ABI trampoline for [`Blob::contents_differ`], for deep equality
+/// (`specialObjectsDequalSlow`, `DOMFormData::entriesEqual`).
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Blob__contentsDiffer(
+    a: &Blob,
+    b: &Blob,
+    as_form_data_entry: bool,
+) -> bool {
+    a.contents_differ(b, as_form_data_entry)
+}
+
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid readable byte range (or `ptr` null / `len` 0).
 #[unsafe(no_mangle)]

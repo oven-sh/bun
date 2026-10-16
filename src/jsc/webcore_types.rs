@@ -329,6 +329,57 @@ impl Blob {
         &slice[..slice.len().min(self.size.get() as usize)]
     }
 
+    /// What `blob.name` gives JS: `name` when one is set, else the name of
+    /// the store.
+    fn name_for_js(&self) -> Option<std::borrow::Cow<'_, bun_core::String>> {
+        let name = self.name.get();
+        if !name.is_dead() {
+            return Some(std::borrow::Cow::Borrowed(name));
+        }
+        self.store_path()
+            .map(|path| std::borrow::Cow::Owned(bun_core::String::from_bytes(path)))
+    }
+
+    /// Deep-equality verdict for two blobs. `true`: they differ. `false`:
+    /// they are equal, or this does not decide: a blob on disk or in S3 is
+    /// never read.
+    ///
+    /// `type` and `name` count only when both sides have one. Without a set
+    /// type, the type JS sees comes from the store's mime, which a `Response`
+    /// round trip rewrites. `lastModified` never counts: it defaults to the
+    /// time of construction.
+    ///
+    /// `as_form_data_entry`: the caller compares the file name of the entry.
+    /// A `File` appended under another file name keeps its own name, so the
+    /// name does not count here.
+    pub fn contents_differ(&self, other: &Blob, as_form_data_entry: bool) -> bool {
+        let in_memory = |blob: &Blob| match blob.store().map(|store| &store.data) {
+            None | Some(store::Data::Bytes(_)) => true,
+            Some(store::Data::File(_) | store::Data::S3(_)) => false,
+        };
+        if !in_memory(self) || !in_memory(other) {
+            return false;
+        }
+        let (a, b) = (self.shared_view(), other.shared_view());
+        if a.len() != b.len() {
+            return true;
+        }
+        if self.content_type_was_set.get()
+            && other.content_type_was_set.get()
+            && self.content_type_slice() != other.content_type_slice()
+        {
+            return true;
+        }
+        if !as_form_data_entry {
+            if let (Some(name), Some(other_name)) = (self.name_for_js(), other.name_for_js()) {
+                if !name.eql(&other_name) {
+                    return true;
+                }
+            }
+        }
+        !core::ptr::eq(a.as_ptr(), b.as_ptr()) && a != b
+    }
+
     /// Release the store ref without
     /// dropping `self`.
     #[inline]

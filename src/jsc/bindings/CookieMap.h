@@ -40,6 +40,10 @@ public:
     size_t size() const;
     size_t memoryCost() const;
 
+    // The iterators of both maps give the same [name, value] entries. The order of the names
+    // does not count. The order of the values of one name does.
+    bool entriesEqual(CookieMap&);
+
     class Iterator {
     public:
         explicit Iterator(CookieMap&);

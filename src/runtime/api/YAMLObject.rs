@@ -1230,8 +1230,8 @@ impl<'a> ParserCtx<'a> {
                     let key = self.to_js(args, key_expr)?;
                     let value = self.to_js(args, value_expr)?;
 
-                    let key_str = key.to_bun_string(self.global)?;
-                    obj.put_may_be_index(self.global, &key_str, value)?;
+                    let name = self.property_name(key_expr, key)?;
+                    obj.put_may_be_index(self.global, &name, value)?;
                 }
 
                 Ok(obj)
@@ -1241,5 +1241,59 @@ impl<'a> ParserCtx<'a> {
             // expr types
             _ => Ok(JSValue::UNDEFINED),
         }
+    }
+
+    /// What `ToString` of a key is. `ToString` of a sequence or a mapping is JavaScript that a program can replace, and
+    /// none may run while the tree points into the caller's buffer, so theirs is made from the tree.
+    fn property_name(&mut self, key_expr: Expr, key: JSValue) -> Result<BunString, ToJsError> {
+        if !matches!(key_expr.data, ExprData::EArray(_) | ExprData::EObject(_)) {
+            return Ok(key.to_bun_string(self.global)?);
+        }
+        let mut name = wtf::StringBuilder::init();
+        self.append_to_string(&mut name, key_expr, &mut Vec::new())?;
+        Ok(name.to_string(self.global)?.to_bun_string(self.global)?)
+    }
+
+    /// `joining` is the sequences this one is inside of. As for `Array.prototype.join`, one of those is empty, and so is
+    /// `null`.
+    fn append_to_string(
+        &mut self,
+        out: &mut wtf::StringBuilder,
+        expr: Expr,
+        joining: &mut Vec<*const c_void>,
+    ) -> Result<(), ToJsError> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(ToJsError::StackOverflow);
+        }
+        match expr.data {
+            ExprData::EArray(e_array) => {
+                let sequence = e_array.as_ptr().cast_const().cast::<c_void>();
+                if joining.contains(&sequence) {
+                    return Ok(());
+                }
+                joining.push(sequence);
+                for (i, item) in e_array.slice().iter().enumerate() {
+                    if i != 0 {
+                        out.append_lchar(b',');
+                    }
+                    self.append_to_string(out, *item, joining)?;
+                }
+                joining.pop();
+            }
+            ExprData::EObject(_) => out.append_latin1(b"[object Object]"),
+            ExprData::EBoolean(boolean) => {
+                out.append_latin1(if boolean.value { b"true" } else { b"false" });
+            }
+            ExprData::ENumber(number) => {
+                out.append_string(&JSValue::js_number(number.value()).to_bun_string(self.global)?)
+            }
+            ExprData::EString(str) => out.append_string(
+                &bun_js_parser_jsc::value_string_to_js(str.get(), self.global)?
+                    .to_bun_string(self.global)?,
+            ),
+            // `null`. The YAML tree has no other kind.
+            _ => {}
+        }
+        Ok(())
     }
 }

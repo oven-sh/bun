@@ -519,6 +519,70 @@ parent: &ref
       expect(result.parent.child.parent).toBe(result.parent);
     });
 
+    describe("a key that is a sequence or a mapping", () => {
+      const keys = [
+        "[]",
+        "[a]",
+        "[a, b]",
+        "[a, null, b]",
+        "[~, ~]",
+        "[1, 2.5, -0.0, 1e21, 1e-7, 0x10, .inf, -.inf, .nan]",
+        "[true, false]",
+        "[[a, [b, []]], c]",
+        "[{x: 1}, y, {}]",
+        '["", " ", "a,b"]',
+        '["\\xe9", "\\u65e5\\u672c", "\\U0001F600"]',
+        "{}",
+        "{x: 1}",
+        "{[a]: [b]}",
+        "&a [1, *a, 2]",
+        "&a [[*a], [x, *a]]",
+        "[&b [x], *b, *b]",
+      ];
+
+      test.each(keys)("%s is named as String() names it", key => {
+        const names = Object.keys(YAML.parse(`? ${key}\n: value\n`) as object);
+        expect(names).toEqual([String(YAML.parse(key))]);
+      });
+
+      test("naming it runs no JavaScript", () => {
+        const text = "? [a, [b], {c: d}]\n: first\n? {e: f}\n: second\n" + "key: a value to read afterwards\n";
+        const input = new TextEncoder().encode(text);
+        let calls = 0;
+        const replaced: [object, PropertyKey, PropertyDescriptor | undefined][] = [];
+        const replace = (holder: object, name: PropertyKey) => {
+          replaced.push([holder, name, Object.getOwnPropertyDescriptor(holder, name)]);
+          Object.defineProperty(holder, name, {
+            configurable: true,
+            value() {
+              calls++;
+              input.buffer.transfer();
+              return "replaced";
+            },
+          });
+        };
+        let result;
+        try {
+          for (const holder of [Array.prototype, Object.prototype]) {
+            for (const name of ["toString", "valueOf", Symbol.toPrimitive]) replace(holder, name);
+          }
+          replace(Array.prototype, "join");
+          result = YAML.parse(input);
+        } finally {
+          for (const [holder, name, descriptor] of replaced) {
+            if (descriptor) Object.defineProperty(holder, name, descriptor);
+            else delete (holder as any)[name];
+          }
+        }
+        expect(calls).toBe(0);
+        expect(result).toEqual({
+          "a,b,[object Object]": "first",
+          "[object Object]": "second",
+          key: "a value to read afterwards",
+        });
+      });
+    });
+
     describe("cyclic aliases", () => {
       test("block mapping referencing itself", () => {
         const root: any = YAML.parse("&a\nname: root\nself: *a\n");

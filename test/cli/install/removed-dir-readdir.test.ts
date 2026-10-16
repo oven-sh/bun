@@ -30,28 +30,29 @@ const installEnv = (dir: string, log: string): NodeJS.Dict<string> => ({
 });
 
 /**
- * The shim, and every directory that `bun pm cache rm` can reach inside `side`:
- * the install cache is `side/bun-install/install/cache`, and the temp directory
- * that the command sweeps for bunx trees is `side/tmp`.
+ * The shim, and every directory that `bun pm cache` can reach inside `side`:
+ * the install cache is `side/cache`, and the temp directory that `rm` sweeps
+ * for bunx trees is `side/tmp`.
  */
-function cacheRmEnv(side: string, log: string): NodeJS.Dict<string> {
+function cacheEnv(side: string, log: string): NodeJS.Dict<string> {
   const env: NodeJS.Dict<string> = {
     ...removedDirReaddir.env(log),
     HOME: join(side, "home"),
     USERPROFILE: join(side, "home"),
     XDG_CACHE_HOME: join(side, "xdg-cache"),
-    BUN_INSTALL: join(side, "bun-install"),
+    BUN_INSTALL_CACHE_DIR: join(side, "cache"),
     TMPDIR: join(side, "tmp"),
     TMP: join(side, "tmp"),
     TEMP: join(side, "tmp"),
   };
-  delete env.BUN_INSTALL_CACHE_DIR;
+  delete env.BUN_INSTALL;
   return env;
 }
-const cacheRmFiles = {
+const cacheFiles = {
   "home/.keep": "",
   "xdg-cache/.keep": "",
-  "bun-install/install/cache/bar@0.0.2@@@1/package.json": "{}",
+  "tmp/.keep": "",
+  "cache/bar@0.0.2@@@1/package.json": "{}",
   "proj/package.json": JSON.stringify({ name: "demo" }),
 };
 const folderDependency = {
@@ -66,11 +67,11 @@ describe.skipIf(!removedDirReaddir.available)("a directory that is removed while
   describe.concurrent("ends its listing", () => {
     test("bun pm cache rm removes the rest of a bunx tree", async () => {
       const bunx = `bunx-${process.getuid!()}-cowsay@latest`;
-      using side = tempDir("cache-rm-vanishing-dir", { ...cacheRmFiles, [`tmp/${bunx}/keep/file.txt`]: "x" });
+      using side = tempDir("cache-rm-vanishing-dir", { ...cacheFiles, [`tmp/${bunx}/keep/file.txt`]: "x" });
       mkdirSync(join(String(side), "tmp", bunx, "vanish-before-read"));
       const log = join(String(side), "shim.log");
 
-      expect(await run(["pm", "cache", "rm"], join(String(side), "proj"), cacheRmEnv(String(side), log))).toEqual({
+      expect(await run(["pm", "cache", "rm"], join(String(side), "proj"), cacheEnv(String(side), log))).toEqual({
         stdout: "Cleared 'bun install' cache\nCleared 1 cached 'bunx' packages\n",
         stderr: "",
         exitCode: 0,
@@ -90,7 +91,7 @@ describe.skipIf(!removedDirReaddir.available)("a directory that is removed while
 
       expect(
         await run(["pm", "cache", "prune"], String(dir), {
-          ...removedDirReaddir.env(log),
+          ...cacheEnv(String(dir), log),
           BUN_INSTALL_CACHE_DIR: cache,
         }),
       ).toEqual({
@@ -119,28 +120,30 @@ describe.skipIf(!removedDirReaddir.available)("a directory that is removed while
   // that was removed is not an empty one for them: they fail as they did before.
   describe.concurrent("is not an empty directory", () => {
     // The walker that copies or links a package: the copy would lack what the directory held.
-    test.each([
+    describe.each([
       [[], "failed copying files from cache to destination for package dep"],
       [["--backend=copyfile"], "failed copying files from cache to destination for package dep"],
       [["--linker=isolated"], "failed to link package: dep@dep"],
-    ] as const)("bun install %j fails", async (flags, message) => {
-      using dir = tempDir("install-vanishing-dir", {
-        ...folderDependency,
-        "proj/dep/lib/vanish-before-read/inner.txt": "x",
-      });
-      const log = join(String(dir), "shim.log");
+    ] as const)("bun install %j", (flags, message) => {
+      test("fails", async () => {
+        using dir = tempDir("install-vanishing-dir", {
+          ...folderDependency,
+          "proj/dep/lib/vanish-before-read/inner.txt": "x",
+        });
+        const log = join(String(dir), "shim.log");
 
-      const { stderr, exitCode } = await run(
-        ["install", ...flags],
-        join(String(dir), "proj"),
-        installEnv(String(dir), log),
-      );
-      // The hardlink backend also reads its staged copy of the directory when it cleans up.
-      expect(removedDirReaddir.actions(log, String(dir))).toContain(
-        "vanish-before-read proj/dep/lib/vanish-before-read",
-      );
-      expect(stderr).toContain(message);
-      expect(exitCode).toBe(1);
+        const { stderr, exitCode } = await run(
+          ["install", ...flags],
+          join(String(dir), "proj"),
+          installEnv(String(dir), log),
+        );
+        // The hardlink backend also reads its staged copy of the directory when it cleans up.
+        expect(removedDirReaddir.actions(log, String(dir))).toContain(
+          "vanish-before-read proj/dep/lib/vanish-before-read",
+        );
+        expect(stderr).toContain(message);
+        expect(exitCode).toBe(1);
+      });
     });
 
     // The check for a folder that is already linked compares the listing of
@@ -251,21 +254,46 @@ describe.skipIf(!removedDirReaddir.available)("a directory that is removed while
   });
 
   // A filesystem can answer the read of a directory that is still there with
-  // ENOENT; the shim plays one for "read-fails-enoent". rmdir then finds the
-  // directory full. The walk reports that. It does not read the directory
-  // again: it would read the same way every time.
-  test("bun pm cache rm reports a directory that reads as removed and is still there", async () => {
-    const bunx = `bunx-${process.getuid!()}-cowsay@latest`;
-    const stillThere = `tmp/${bunx}/read-fails-enoent`;
-    using side = tempDir("cache-rm-still-there", { ...cacheRmFiles, [`${stillThere}/inner.txt`]: "x" });
-    const log = join(String(side), "shim.log");
+  // ENOENT; the shim plays one for "read-fails-enoent". A command that deletes
+  // reports such a directory. It does not take it for one that is gone.
+  describe.concurrent("bun pm cache rm reports a directory that reads as removed and is still there", () => {
+    // rmdir finds the directory full. The walk does not read it again: it
+    // would read the same way every time.
+    test("below a bunx tree", async () => {
+      const bunx = `bunx-${process.getuid!()}-cowsay@latest`;
+      const stillThere = `tmp/${bunx}/read-fails-enoent`;
+      using side = tempDir("cache-rm-still-there", { ...cacheFiles, [`${stillThere}/inner.txt`]: "x" });
+      const log = join(String(side), "shim.log");
 
-    expect(await run(["pm", "cache", "rm"], join(String(side), "proj"), cacheRmEnv(String(side), log))).toEqual({
-      stdout: "Cleared 'bun install' cache\nCleared 0 cached 'bunx' packages\n",
-      stderr: `ENOTEMPTY: Directory not empty: Could not delete ${bunx} (unlink)\n`,
-      exitCode: 1,
+      expect(await run(["pm", "cache", "rm"], join(String(side), "proj"), cacheEnv(String(side), log))).toEqual({
+        stdout: "Cleared 'bun install' cache\nCleared 0 cached 'bunx' packages\n",
+        stderr: `ENOTEMPTY: Directory not empty: Could not delete ${bunx} (unlink)\n`,
+        exitCode: 1,
+      });
+      expect(removedDirReaddir.actions(log, String(side))).toEqual([`read-fails-enoent ${stillThere}`]);
+      expect(existsSync(join(String(side), stillThere, "inner.txt"))).toBeTrue();
     });
-    expect(removedDirReaddir.actions(log, String(side))).toEqual([`read-fails-enoent ${stillThere}`]);
-    expect(existsSync(join(String(side), stillThere, "inner.txt"))).toBeTrue();
+
+    // Only what the cache directory holds is deleted, so no rmdir follows its listing.
+    test("the cache directory itself", async () => {
+      using side = tempDir("cache-rm-cache-still-there", {
+        ...cacheFiles,
+        "read-fails-enoent/bar@0.0.2@@@1/package.json": "{}",
+      });
+      const cache = join(String(side), "read-fails-enoent");
+      const log = join(String(side), "shim.log");
+
+      const result = await run(["pm", "cache", "rm"], join(String(side), "proj"), {
+        ...cacheEnv(String(side), log),
+        BUN_INSTALL_CACHE_DIR: cache,
+      });
+      expect(removedDirReaddir.actions(log, String(side))).toEqual(["read-fails-enoent read-fails-enoent"]);
+      expect(result).toEqual({
+        stdout: "Cleared 0 cached 'bunx' packages\n",
+        stderr: `ENOENT: No such file or directory: Could not delete ${cache} (getdents64)\n`,
+        exitCode: 1,
+      });
+      expect(existsSync(join(cache, "bar@0.0.2@@@1", "package.json"))).toBeTrue();
+    });
   });
 });

@@ -546,7 +546,11 @@ declare var ErrorEvent: {
  *
  * Call `event.preventDefault()` in an `unhandledrejection` listener to mark
  * the rejection as handled. This has the same effect as a
- * `process.on("unhandledRejection")` listener.
+ * `process.on("unhandledRejection")` listener. With
+ * `--unhandled-rejections=strict`, Bun raises the uncaught exception before
+ * the listener runs. With `--unhandled-rejections=warn`, the warning still
+ * prints. Under `bun test`, the event is not dispatched: the test runner
+ * reports the rejection itself.
  */
 interface PromiseRejectionEvent extends Event {
   readonly promise: Promise<any>;

@@ -3,6 +3,7 @@
 import { JSON5 } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { freemem } from "node:os";
 
 describe("escape sequences", () => {
   test("\\v vertical tab", () => {
@@ -1758,9 +1759,13 @@ describe("stringify memory", () => {
 test.each(["ArrayBuffer", "SharedArrayBuffer"] as const)(
   "parse rejects a %s of 2**31 bytes or more instead of panicking",
   kind => {
+    const size = 2 ** 31 + 2;
+    // The copy is memory that is written. A failure to allocate it is not a reason to skip: it is also what
+    // a copy that cannot be this long reports.
+    if (kind === "SharedArrayBuffer" && freemem() < 2 * size) return;
     let input: ArrayBuffer | SharedArrayBuffer;
     try {
-      input = new globalThis[kind](2 ** 31 + 2);
+      input = new globalThis[kind](size);
     } catch {
       // The 2 GiB reservation itself can fail on a memory-pressured runner;
       // there is nothing to test then.

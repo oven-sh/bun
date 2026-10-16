@@ -73,7 +73,7 @@ describe("hash", () => {
 
       test("password is required", () => {
         // @ts-expect-error
-        expect(() => hash()).toThrow();
+        expect(() => hash()).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
         // @ts-expect-error
         expect(() => hash(undefined)).toThrow(/password (must|to) be a string/);
         // @ts-expect-error
@@ -245,10 +245,11 @@ describe("verify", () => {
   describe("arguments parsing", () => {
     for (let verify of [password.verify, password.verifySync]) {
       test("minimum args", () => {
+        const invalidArgument = expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
         // @ts-expect-error
-        expect(() => verify()).toThrow();
+        expect(() => verify()).toThrow(invalidArgument);
         // @ts-expect-error
-        expect(() => verify("")).toThrow();
+        expect(() => verify("")).toThrow(invalidArgument);
         // @ts-expect-error
         expect(() => verify(undefined, "$")).toThrow(/password (must|to) be a string/);
         // @ts-expect-error

@@ -1046,7 +1046,6 @@ describe("SQL adapter environment variable precedence", () => {
         password: "sekret-password",
         tls: { key: Buffer.from("sekret-key"), passphrase: "sekret-passphrase" },
       });
-      expect((sql.options.tls as Bun.TLSOptions).passphrase).toBe("sekret-passphrase");
       for (const printed of [Bun.inspect(sql.options), util.inspect(sql.options, { depth: 4 })]) {
         expect(printed).toMatch(/passphrase: ["']\[REDACTED\]["']/);
         expect(printed).toMatch(/key: ["']\[REDACTED\]["']/);
@@ -1054,6 +1053,11 @@ describe("SQL adapter environment variable precedence", () => {
         expect(printed).not.toContain("sekret-password");
         expect(printed).not.toContain(Bun.inspect(Buffer.from("sekret-key")));
       }
+
+      // Printing works on a copy: the real values are intact and round-trip.
+      const real = { key: Buffer.from("sekret-key"), passphrase: "sekret-passphrase" };
+      expect(sql.options.tls).toMatchObject(real);
+      expect(new SQL(sql.options).options.tls).toMatchObject(real);
     });
   });
 });

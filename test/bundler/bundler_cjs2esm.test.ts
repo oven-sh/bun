@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunExe, isASAN, isCI, isDebug } from "harness";
+import { bunExe, isASAN, isDebug } from "harness";
 import { readdirSync } from "node:fs";
-import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
+import { bundlerTestTimeout, itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 import { checkMatrix, type Options } from "./unwrapped-require-matrix";
 
 const fakeReactNodeModules = {
@@ -1784,8 +1784,7 @@ describe("bundler", () => {
     async (_, options, cells) => {
       expect(await checkMatrix(bunExe(), options)).toEqual({ cells, plain: {}, minified: {} });
     },
-    // As for `itBundled`: the CI runner sets the limit, and a local debug build has none.
-    isCI ? undefined : isDebug || isASAN ? Infinity : 30_000,
+    bundlerTestTimeout(5_000, 6),
   );
   // `sideEffect(); module.exports = require("./main")` in an unwrapped package
   // becomes `sideEffect(); export * from "./main"`, so the file needs no

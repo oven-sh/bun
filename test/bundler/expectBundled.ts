@@ -1968,6 +1968,11 @@ for (const [key, blob] of build.outputs) {
 
 /** Shorthand for test and expectBundled. See `expectBundled` for what this does.
  */
+/** Time limit of a test that bundles: the CI runner sets it, and a local debug build has none. */
+export function bundlerTestTimeout(base = 5_000, scale = 1): number | undefined {
+  return isCI ? undefined : isDebug ? Infinity : base * scale;
+}
+
 export function itBundled(
   id: string,
   opts: BundlerTestInput | ((metadata: BundlerTestWrappedAPI) => BundlerTestInput),
@@ -2002,11 +2007,7 @@ export function itBundled(
     // of describe.concurrent / --concurrent.
     const testFn = resolveBackend(opts) === "api" ? it.serial : it;
     const baseTimeout = opts.snapshotSourceMap || opts.compile ? 30_000 : 5_000;
-    testFn(
-      id,
-      () => expectBundled(id, opts as any),
-      isCI ? undefined : isDebug ? Infinity : baseTimeout * (opts.timeoutScale ?? 1),
-    );
+    testFn(id, () => expectBundled(id, opts as any), bundlerTestTimeout(baseTimeout, opts.timeoutScale));
   }
   return ref;
 }
@@ -2018,7 +2019,7 @@ itBundled.only = (id: string, opts: BundlerTestInput) => {
     id,
     () => expectBundled(id, opts as any) as Promise<BundlerTestRef>,
     // sourcemap code is slow
-    isCI ? undefined : isDebug ? Infinity : (opts.snapshotSourceMap ? 30_000 : 5_000) * (opts.timeoutScale ?? 1),
+    bundlerTestTimeout(opts.snapshotSourceMap ? 30_000 : 5_000, opts.timeoutScale),
   );
 };
 

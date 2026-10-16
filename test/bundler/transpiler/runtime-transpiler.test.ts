@@ -302,6 +302,34 @@ describe.concurrent("a single-use declaration moved into the next statement", ()
     const values = [andInArray(), orInArray(), nullishInArray(), and(), or(), nullish()];
     console.log(JSON.stringify({ values, calls }));
   `;
+  // Every case of a switch is in one scope, so a later case can use the declaration.
+  const switchCases = /* js */ `
+    var sink;
+    const use = x => x;
+    function fallThrough(v) { switch (v) { case 0: let a = [1]; let k = 0; k && use(a); case 1: return a; } }
+    function comparison(v) { switch (v) { case 0: let a = [1]; let k = 5; (k > 3) && use(a); case 1: return a; } }
+    function laterClosure(v) { switch (v) { case 0: let a = use(1); throw a; case 1: return () => a; } }
+    function earlierClosure(v) { switch (v) { case 1: return () => a; case 0: let a = use(1); throw a; } }
+    function accumulate(v) { switch (v) { case 3: let acc = []; acc.push(3); case 2: acc.push(2); return acc; } }
+    function evalInLaterCase(v, code) { switch (v) { case 0: let a = 1; use(a); case 1: return eval(code); } }
+    function shadowsParameter(k, x) { switch (k) { case 0: let x = use(7); sink = x; case 1: return x; } }
+    function writesOuter(k) { let x = "outer"; switch (k) { case 0: let x = use(1); sink = x; case 1: x = "inner-write"; } return x; }
+    function sameCase(v) { switch (v) { case 0: let a = use(1); return a + 1; default: return null; } }
+    const attempt = f => {
+      try { return f(); } catch (e) { return e.constructor.name + (/initiali[sz]/.test(e.message) ? " (TDZ)" : ": " + e.message); }
+    };
+    console.log(JSON.stringify({
+      fallThrough: attempt(() => fallThrough(0)),
+      comparison: attempt(() => comparison(0)),
+      laterClosure: attempt(() => laterClosure(1)()),
+      earlierClosure: attempt(() => earlierClosure(1)()),
+      accumulate: attempt(() => accumulate(3)),
+      evalInLaterCase: attempt(() => evalInLaterCase(0, "a")),
+      shadowsParameter: attempt(() => shadowsParameter(0, "parameter")),
+      writesOuter: attempt(() => writesOuter(0)),
+      sameCase: attempt(() => sameCase(0)),
+    }));
+  `;
   async function run(source: string, how: "mjs" | "cjs" | "-e", flags: string[] = []) {
     using dir = tempDir("transpiler-single-use", how === "-e" ? {} : { [`fixture.${how}`]: source });
     await using proc = Bun.spawn({
@@ -320,6 +348,27 @@ describe.concurrent("a single-use declaration moved into the next statement", ()
     async how => {
       expect(await run(shortCircuit, how)).toEqual({
         stdout: { values: [[0], [1], [1], 0, 1, 1], calls: 6 },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.each(["mjs", "cjs", "-e"] as const)(
+    "a declaration in a switch case stays for the cases after it (%s)",
+    async how => {
+      expect(await run(switchCases, how)).toEqual({
+        stdout: {
+          fallThrough: [1],
+          comparison: [1],
+          laterClosure: "ReferenceError (TDZ)",
+          earlierClosure: "ReferenceError (TDZ)",
+          accumulate: [3, 2],
+          evalInLaterCase: 1,
+          shadowsParameter: 7,
+          writesOuter: "outer",
+          sameCase: 2,
+        },
         stderr: "",
         exitCode: 0,
       });

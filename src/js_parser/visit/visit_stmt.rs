@@ -1367,7 +1367,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && (p.options.features.minify_syntax && data.value.is_primitive_literal());
         p.stmt_expr_value = data.value.data;
 
-        let is_top_level = p.current_scope == p.module_scope && !p.is_inside_single_stmt_body;
+        let is_top_level =
+            p.current_scope == p.module_scope && p.single_stmt_body_scope != Some(p.module_scope);
         if p.should_unwrap_common_js_to_esm() {
             p.commonjs_named_exports_needs_conversion = if is_top_level {
                 u32::MAX
@@ -2155,6 +2156,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 cases[i].body = list_to_stmts(_stmts);
             }
             p.fn_or_arrow_data_visit.is_inside_switch = old_is_inside_switch;
+
+            // The statements of the scope are in the lists of every `case`.
+            if p.require_aliases
+                .last()
+                .is_some_and(|alias| alias.scope == p.current_scope)
+            {
+                for case in cases.iter_mut() {
+                    let mut body = stmts_to_list(p.arena, case.body);
+                    p.confirm_require_aliases_in(&mut body);
+                    case.body = list_to_stmts(body);
+                }
+                p.revoke_waiting_require_aliases();
+            }
 
             for i in 0..cases.len() {
                 if p.should_lower_using_declarations(cases[i].body.slice()) {

@@ -280,8 +280,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_export: bool,
     ) -> usize {
         let was_const = kind == LocalKind::KConst;
-        // `using` disposes what it holds: the module's own exports, not a namespace.
-        let require_stays_call = kind.is_using();
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
@@ -358,7 +356,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
-                        require_stays_call,
                         // `const { a } = x` reads `x.a` and drops `x`.
                         is_property_access_target: matches!(decl.binding.data, BData::BObject(_)),
                         ..Default::default()
@@ -397,6 +394,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && self.note_require_alias(
                         decl.binding,
                         val,
+                        kind,
                         is_export,
                         prev_require_to_convert_count,
                     )
@@ -776,17 +774,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             }
             StmtData::SLocal(mut st) => {
-                let require_stays_call = st.kind.is_using();
                 for dec in st.decls.slice_mut() {
                     self.visit_binding(dec.binding, None);
                     if let Some(val) = dec.value.as_mut() {
-                        self.visit_expr_in_out(
-                            val,
-                            ExprIn {
-                                require_stays_call,
-                                ..Default::default()
-                            },
-                        );
+                        self.visit_expr(val);
                     }
                 }
                 st.kind = self.select_local_kind(st.kind);
@@ -976,14 +967,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
         }
 
-        let old_is_inside_single_stmt_body = self.is_inside_single_stmt_body;
-        self.is_inside_single_stmt_body = true;
+        let old_single_stmt_body_scope = self.single_stmt_body_scope.replace(self.current_scope);
 
         let mut stmts = BumpVec::with_capacity_in(1, self.arena);
         stmts.push(stmt);
         self.visit_stmts(&mut stmts, kind).expect("unreachable");
 
-        self.is_inside_single_stmt_body = old_is_inside_single_stmt_body;
+        self.single_stmt_body_scope = old_single_stmt_body_scope;
 
         if has_if_scope {
             self.pop_scope();
@@ -1755,14 +1745,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = old_is_control_flow_dead;
         }
 
-        // The statements of a function, or of the module when it is one part.
+        // `stmts` are all the statements of the scope: no `case`, no body without braces, no part of the module.
         if p.require_aliases
             .last()
             .is_some_and(|alias| alias.scope == p.current_scope)
-            && (kind == StmtsKind::FnBody
-                || (p.current_scope == p.module_scope
-                    && !p.is_inside_single_stmt_body
-                    && (!p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using)))
+            && kind != StmtsKind::SwitchStmt
+            && p.single_stmt_body_scope != Some(p.current_scope)
+            && (p.current_scope != p.module_scope
+                || !p.options.tree_shaking
+                || p.will_wrap_module_in_try_catch_for_using)
         {
             p.settle_require_aliases(stmts);
         }
@@ -1790,8 +1781,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(pending) = rc_pending
             && p.react_compiler_may_replace_body
-            // The compiler declares the locals again and cannot name a namespace `transpose_require` minted.
-            && !p.holds_unwrapped_require_namespace(p.react_compiler_first_require)
             && let Some(mut rc) = p.react_compiler.take()
         {
             let name = pending

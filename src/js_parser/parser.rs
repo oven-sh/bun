@@ -455,7 +455,7 @@ pub struct DeferredImportNamespace {
     /// Scope the namespace binding lives in. Used by
     /// `imports_to_convert_from_dynamic_import` to bail when a direct
     /// `eval()` can observe the binding by name. Unused by
-    /// `imports_to_convert_from_require` until a local of the scope becomes the namespace.
+    /// `imports_to_convert_from_require`.
     pub(crate) scope: Option<bun_ast::StoreRef<bun_ast::Scope>>,
 }
 
@@ -1053,9 +1053,6 @@ pub struct ExprIn {
     /// isn't something real-world code would do but it matters for conformance
     /// tests.
     pub(crate) assign_target: js_ast::AssignTarget,
-
-    /// When this expression is a `require()` call, it is not unwrapped into an import.
-    pub(crate) require_stays_call: bool,
 
     pub(crate) property_access_for_method_call_maybe_should_replace_with_undefined: bool,
 

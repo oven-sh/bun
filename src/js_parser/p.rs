@@ -488,8 +488,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
     /// Visiting a function that is handed to the React Compiler, which re-declares its locals as new symbols.
     pub(crate) react_compiler_may_replace_body: bool,
-    /// `imports_to_convert_from_require.len()` when the visit of that function began.
-    pub(crate) react_compiler_first_require: usize,
 
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
@@ -573,7 +571,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// visit pass has numbered every scope. A `None` scope is the whole file.
     pub(crate) span_uses: Vec<(Option<js_ast::StoreRef<Scope>>, u32)>,
 
-    /// True while `visit_single_stmt` is visiting a non-block body. `if`,
+    /// The scope `visit_single_stmt` is visiting a non-block body in. `if`,
     /// `else`, `while`, and `do` reach it without pushing a scope, so inside
     /// their unbraced body `current_scope == module_scope` is still true at
     /// module level even though the statement is not a top-level module
@@ -581,7 +579,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// gate the CJS→ESM `export {}` rewrite. (`for`/`with`/`label` callers
     /// push a scope first, and braced bodies take the `visit_single_stmt_block`
     /// path which also pushes a scope, so this flag is redundant for those.)
-    pub(crate) is_inside_single_stmt_body: bool,
+    pub(crate) single_stmt_body_scope: Option<js_ast::StoreRef<Scope>>,
 
     /// We must be careful to avoid revisiting nodes that have scopes.
     pub(crate) is_revisit_for_substitution: bool,
@@ -1027,29 +1025,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn maybe_transpose_if_require(&mut self, arg: Expr, stays_call: bool) -> Expr {
+    pub(crate) fn maybe_transpose_if_require(&mut self, arg: Expr) -> Expr {
         match arg.data {
             js_ast::ExprData::EIf(ex) => Expr::init(
                 E::If {
-                    yes: self.maybe_transpose_if_require(ex.yes, stays_call),
-                    no: self.maybe_transpose_if_require(ex.no, stays_call),
+                    yes: self.maybe_transpose_if_require(ex.yes),
+                    no: self.maybe_transpose_if_require(ex.no),
                     test: ex.test,
                 },
                 arg.loc,
             ),
-            _ => self.transpose_require(arg, stays_call),
+            _ => self.transpose_require(arg),
         }
     }
 
-    pub(crate) fn transpose_known_to_be_if_require(&mut self, arg: Expr, stays_call: bool) -> Expr {
+    pub(crate) fn transpose_known_to_be_if_require(&mut self, arg: Expr) -> Expr {
         // Caller guarantees `arg.data` is `EIf`.
         let js_ast::ExprData::EIf(ex) = arg.data else {
             unreachable!()
         };
         Expr::init(
             E::If {
-                yes: self.maybe_transpose_if_require(ex.yes, stays_call),
-                no: self.maybe_transpose_if_require(ex.no, stays_call),
+                yes: self.maybe_transpose_if_require(ex.yes),
+                no: self.maybe_transpose_if_require(ex.no),
                 test: ex.test,
             },
             arg.loc,
@@ -1637,8 +1635,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// `stays_call`: `ExprIn::require_stays_call`.
-    pub(crate) fn transpose_require(&mut self, arg: Expr, stays_call: bool) -> Expr {
+    pub(crate) fn transpose_require(&mut self, arg: Expr) -> Expr {
         if !self.options.features.allow_runtime {
             return self.new_expr(
                 E::Call {
@@ -1678,8 +1675,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // We cannot unwrap a require wrapped in a try/catch because
                     // import statements cannot be wrapped in a try/catch and
                     // require cannot return a promise.
-                    && !handles_import_errors
-                    && !stays_call;
+                    && !handles_import_errors;
 
                 if should_unwrap_require {
                     let import_record_index = self.add_import_record_by_range_and_path(
@@ -1774,6 +1770,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         binding: Binding,
         value: Expr,
+        kind: S::Kind,
         is_export: bool,
         import: usize,
     ) -> bool {
@@ -1788,11 +1785,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             import: u32::try_from(import).expect("int cast"),
             scope: self.current_scope,
         };
+        // A `let` or `const` is declared by its block. A `var` in a block is not.
+        let is_declared_by_scope = alias.scope.kind_stops_hoisting()
+            || (alias.scope.kind == js_ast::scope::Kind::Block && kind != S::Kind::KVar);
         if is_export
+            // `using` disposes its value when the block ends: the declaration stays.
+            || kind.is_using()
+            // The React Compiler declares the locals of this function again: none can become an import.
+            || self.react_compiler_may_replace_body
             // The value is that namespace, not another identifier the initializer left: `x = (require("a"), y)`.
             || self.imports_to_convert_from_require[import].namespace.ref_ != alias.namespace
-            // `settle_require_aliases` sees the statements of a scope that stops hoisting.
-            || !alias.scope.kind_stops_hoisting()
+            || !is_declared_by_scope
+            // The body of a statement without braces is in no list that `settle_require_aliases` reads.
+            || self.single_stmt_body_scope == Some(alias.scope)
             // Another declaration of the variable can initialize it again.
             || self.symbols[alias.local.inner_index() as usize].shares_variable()
             || !self.require_alias_holds(&alias)
@@ -1847,24 +1852,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// The local becomes the namespace of the `import * as` statement. The caller removes its declarator.
     fn confirm_require_alias(&mut self, alias: &RequireAlias, is_import_equals: bool) {
-        let import = &mut self.imports_to_convert_from_require[alias.import as usize];
-        import.namespace.ref_ = alias.local;
-        import.scope = Some(alias.scope);
+        self.imports_to_convert_from_require[alias.import as usize]
+            .namespace
+            .ref_ = alias.local;
         // An import nothing reads is a type to TypeScript and is removed. A `require()` call runs.
         if TYPESCRIPT && !is_import_equals {
             self.ts_use_counts[alias.local.inner_index() as usize] += 1;
         }
-    }
-
-    /// A namespace that `transpose_require` minted from `first` on is still used as a value.
-    pub(crate) fn holds_unwrapped_require_namespace(&self, first: usize) -> bool {
-        self.imports_to_convert_from_require[first..]
-            .iter()
-            .any(|import| {
-                import.scope.is_none()
-                    && self.symbols[import.namespace.ref_.inner_index() as usize].use_count_estimate
-                        > 0
-            })
     }
 
     /// The local stays a variable that holds the namespace: each folded `local.a` prints as written.
@@ -1888,13 +1882,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Settles the `require_aliases` of the current scope, whose statements are `stmts`.
     #[cold]
     pub(crate) fn settle_require_aliases(&mut self, stmts: &mut ListManaged<'a, Stmt>) {
-        let scope = self.current_scope;
-        let first = self
-            .require_aliases
-            .iter()
-            .rposition(|alias| alias.scope != scope)
-            .map_or(0, |at| at + 1);
+        self.confirm_require_aliases_in(stmts);
+        self.revoke_waiting_require_aliases();
+    }
 
+    /// A declarator of `stmts` whose local nothing rebinds goes: the local becomes the namespace.
+    #[cold]
+    pub(crate) fn confirm_require_aliases_in(&mut self, stmts: &mut ListManaged<'a, Stmt>) {
         let mut emptied_a_statement = false;
         for stmt in stmts.iter() {
             let js_ast::StmtData::SLocal(mut s_local) = stmt.data else {
@@ -1937,8 +1931,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 |stmt| !matches!(stmt.data, js_ast::StmtData::SLocal(s_local) if s_local.decls.is_empty()),
             );
         }
+    }
 
-        // A rebound one stays a variable. So does a `var` in a body without braces: it is not one of `stmts`.
+    /// What still waits in the current scope stays a variable: something rebinds it.
+    #[cold]
+    pub(crate) fn revoke_waiting_require_aliases(&mut self) {
+        let scope = self.current_scope;
+        let first = self
+            .require_aliases
+            .iter()
+            .rposition(|alias| alias.scope != scope)
+            .map_or(0, |at| at + 1);
         for at in first..self.require_aliases.len() {
             let alias = self.require_aliases[at];
             if !self.require_alias_is_confirmed(&alias) {
@@ -5664,6 +5667,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // body can write to `self.symbols` (disjoint allocation) while the
         // scope is read via `Deref`.
         let current_scope = self.current_scope_ref();
+        debug_assert!(
+            self.require_aliases
+                .last()
+                .is_none_or(|alias| alias.scope != current_scope),
+            "a require alias is settled before its scope ends"
+        );
         // We cannot rename anything inside a scope containing a direct eval() call
         if current_scope.contains_direct_eval {
             let mut iter = current_scope.members.iter();
@@ -10148,7 +10157,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_pending: None,
             react_compiler_result: None,
             react_compiler_may_replace_body: false,
-            react_compiler_first_require: 0,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),
@@ -10168,7 +10176,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             field_init_class_bodies: Vec::new(),
             scope_uses: Vec::new(),
             span_uses: Vec::new(),
-            is_inside_single_stmt_body: false,
+            single_stmt_body_scope: None,
             is_revisit_for_substitution: false,
             method_call_must_be_replaced_with_undefined: false,
             has_non_local_export_declare_inside_namespace: false,

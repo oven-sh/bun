@@ -693,6 +693,19 @@ export const socketFaultInjection = {
   clear: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsClearSocketFaults", 0) as () => void,
 };
 
+/**
+ * Runs the socket timeout sweep `count` times on this thread's loop. The loop
+ * runs one sweep every 4 seconds, so `sweepSocketTimers(n)` moves the timeout
+ * of every uSockets socket on this thread forward by `n * 4` seconds without
+ * waiting. It does not reach the HTTP thread of `fetch`, nor the timers of
+ * named pipe and duplex sockets.
+ */
+export const sweepSocketTimers: (count: number) => void = $newRustFunction(
+  "runtime/socket/socket.rs",
+  "TestingAPIs.jsSweepSocketTimers",
+  1,
+);
+
 export const namedPipeInternals = {
   /**
    * Live native contexts behind sockets over Windows named pipes: one per

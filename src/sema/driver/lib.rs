@@ -31,10 +31,10 @@ use bun_sema::program::{
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
-    Host, ModuleDetection, Options, Phase, ancestors, contains_path, displayed_path,
-    get_relative_path_from_directory, inside, is_declaration_file_name, is_javascript,
-    is_javascript_file, is_relative, is_same_path, join, output_declaration_file_name, to_path,
-    to_path_in, typescript_path,
+    Host, ModuleDetection, Options, Phase, PluginImported, PluginImports, ancestors, contains_path,
+    displayed_path, get_relative_path_from_directory, inside, is_declaration_file_name,
+    is_javascript, is_javascript_file, is_relative, is_same_path, join,
+    output_declaration_file_name, to_path, to_path_in, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
@@ -1434,6 +1434,23 @@ pub fn check_provided_then<R>(
     });
     disk.script_kinds = script_kinds.collect();
     disk.script_kinds_by_extension = request.script_kinds_by_extension.to_vec();
+    // By `tspath.Path` too. Only a file has a path.
+    let written = |name: &[u8]| match name.starts_with(b"/") {
+        true => disk.as_written(name),
+        false => name.to_vec(),
+    };
+    let key = |name: &[u8]| to_path(&written(name), disk.is_case_sensitive()).into_owned();
+    let plugin_imports = provided.plugin_imports.into_iter();
+    let plugin_imports = plugin_imports.map(|(importer, mut imports)| {
+        for import in &mut imports {
+            import.path = match import.is {
+                PluginImported::Source => written(&import.path),
+                PluginImported::Loaded | PluginImported::Virtual => key(&import.path),
+            };
+        }
+        (key(&importer), imports)
+    });
+    disk.plugin_imports = plugin_imports.collect();
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
@@ -2799,6 +2816,9 @@ impl Host for WithOutputs<'_> {
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
         self.disk.scripts_of_page(page)
     }
+    fn plugin_imports(&self) -> Option<&PluginImports> {
+        self.disk.plugin_imports()
+    }
     fn parse<'s>(
         &self,
         arena: &'s Arena,
@@ -3798,6 +3818,7 @@ fn check_named_files(
         .map(|i| FileId(i as u32))
         .collect();
     let mut scripts_elsewhere = Vec::new();
+    let plugin_imports = host.plugin_imports();
     let is_reached = named.map(|named| {
         let modules = &program.files.modules;
         let mut is_reached = vec![false; modules.len()];
@@ -3807,6 +3828,9 @@ fn check_named_files(
         for &i in &to_follow {
             is_reached[i] = true;
         }
+        // What a plugin has loaded and is followed for what it imports, by `PluginImport::path`.
+        let mut through: Vec<&[u8]> = Vec::new();
+        let mut is_followed: FxHashSet<&[u8]> = FxHashSet::default();
         while let Some(i) = to_follow.pop() {
             // A page stands for its scripts.
             let specifiers = modules[i].bound.specifiers.iter();
@@ -3828,6 +3852,36 @@ fn check_named_files(
             for edge in edges.iter().copied().chain(scripts) {
                 if !std::mem::replace(&mut is_reached[edge.idx()], true) {
                     to_follow.push(edge.idx());
+                }
+            }
+            // What only a plugin can read, like `App.svelte`, stands for what it imports.
+            let Some(plugin_imports) = plugin_imports else {
+                continue;
+            };
+            through.push(modules[i].path.text);
+            while let Some(importer) = through.pop() {
+                for import in plugin_imports.get(importer).map_or(&[][..], Vec::as_slice) {
+                    let here = match import.is {
+                        PluginImported::Virtual => None,
+                        _ => program.files.by_path.get(&import.path),
+                    };
+                    match (import.is, here) {
+                        (PluginImported::Source | PluginImported::Loaded, Some(file)) => {
+                            if !std::mem::replace(&mut is_reached[file.idx()], true) {
+                                to_follow.push(file.idx());
+                            }
+                        }
+                        // It is checked in its own project, like the script of a page.
+                        (PluginImported::Source, None) => {
+                            scripts_elsewhere.push(import.path.clone())
+                        }
+                        // No program has it to check. It is followed once.
+                        _ => {
+                            if is_followed.insert(&import.path) {
+                                through.push(&import.path);
+                            }
+                        }
+                    }
                 }
             }
         }

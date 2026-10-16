@@ -281,6 +281,8 @@ pub struct Disk {
     /// `Host::shared_paths`
     paths: bun_threading::Guarded<FxHashSet<Arc<Paths>>>,
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
+    /// `Host::plugin_imports`
+    pub(crate) plugin_imports: PluginImports,
 }
 
 /// `Host::share_declaration_files`
@@ -319,12 +321,16 @@ pub type BeforeRead = Box<dyn Fn(&[u8]) + Send + Sync>;
 /// `Host::scripts_of_page`. The paths are in the checker's format.
 pub type ScriptsOfPage = Box<dyn Fn(&[u8]) -> Vec<Vec<u8>> + Send + Sync>;
 
+pub use bun_sema::resolve::{PluginImport, PluginImported, PluginImports};
+
 /// What the caller of a check has for its host.
 #[derive(Default)]
 pub struct Provided {
     pub already_read: AlreadyRead,
     pub before_read: Option<BeforeRead>,
     pub scripts_of_page: Option<ScriptsOfPage>,
+    /// `Host::plugin_imports`. The paths are in the checker's format, as the caller has them.
+    pub plugin_imports: PluginImports,
     /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
     /// takes it for a blank. `bun lint` has a rule about it, and writes the text back.
     pub keeps_byte_order_marks: bool,
@@ -549,6 +555,7 @@ impl Disk {
             script_kinds_by_extension: Vec::new(),
             before_read: None,
             scripts_of_page: None,
+            plugin_imports: PluginImports::default(),
         }
     }
 
@@ -1544,6 +1551,9 @@ impl Host for Disk {
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
         let scripts = self.scripts_of_page.as_ref().map(|of| of(page));
         scripts.unwrap_or_default()
+    }
+    fn plugin_imports(&self) -> Option<&PluginImports> {
+        (!self.plugin_imports.is_empty()).then_some(&self.plugin_imports)
     }
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         &self.script_kinds_by_extension

@@ -2556,6 +2556,41 @@ pub mod bv2_impl {
                     loaders[index].is_javascript_like() && sources[index].path.is_file()
                 })
                 .map(|index| sources[index].path.text);
+            // Elsewhere in the graph the type checker follows the imports itself, except into and
+            // out of what a plugin has loaded. A file that is named above for what it imports is
+            // not asked again.
+            let is_named_for_its_imports = |index: usize| {
+                is_named[index] && (loaders[index] == Loader::Html || is_loaded_by_plugin(index))
+            };
+            let is_of_the_project = |index: usize| !sources[index].path.is_node_module();
+            let end = |index: usize| (sources[index].path.namespace, sources[index].path.text);
+            let plugin_imports = self.plugins.is_some().then(|| {
+                let importers = (0..sources.len())
+                    .filter(|&index| is_of_the_project(index) && !is_named_for_its_imports(index));
+                importers.flat_map(|importer| {
+                    let records = import_records[importer].as_slice().iter();
+                    let imported = (records.map(|record| record.source_index))
+                        .filter(|imported| imported.is_valid())
+                        .map(|imported| imported.get() as usize);
+                    let imported = imported.filter(move |&imported| {
+                        let is_code = loaders[imported].is_javascript_like();
+                        match is_loaded_by_plugin(imported) {
+                            true => is_of_the_project(imported),
+                            false => {
+                                is_loaded_by_plugin(importer)
+                                    && is_code
+                                    && is_of_the_project(imported)
+                            }
+                        }
+                    });
+                    imported.map(move |imported| options::PluginImport {
+                        importer: end(importer),
+                        imported: end(imported),
+                        is_loaded_by_plugin: is_loaded_by_plugin(imported),
+                    })
+                })
+            });
+            let mut plugin_imports = plugin_imports.into_iter().flatten();
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
             let mut sources = (sources.iter().zip(loaders).zip(flags))
@@ -2573,6 +2608,7 @@ pub mod bv2_impl {
                 loaders: &self.transpiler.options.loaders,
                 entry_points: &mut entry_points,
                 sources: &mut sources,
+                plugin_imports: &mut plugin_imports,
             };
             if type_check(checked, self.transpiler.log_mut()) {
                 return Ok(());

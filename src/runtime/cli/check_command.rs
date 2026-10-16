@@ -8,7 +8,9 @@ use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
-use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
+use bun_sema_driver::host::{
+    AlreadyRead, BeforeRead, PluginImport, PluginImported, PluginImports, Provided,
+};
 use bun_sema_driver::{
     Category, CommandLine, CompilerOption, Diagnostic, FlagError, Progress, RejectedFlag, Report,
     Request, ScriptKind,
@@ -618,17 +620,18 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
     }))
 }
 
-/// `sources` of `bun_bundler::options::TypeCheck`. A key of `files` of `Bun.build` may be relative,
-/// and its value may start with a byte order mark.
+/// A path of the bundler in the checker's format. A key of `files` of `Bun.build` may be relative.
+fn from_bundler(cwd: &[u8], path: &[u8]) -> Vec<u8> {
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    bun_sema_driver::host::from_native(join_abs_string::<Auto>(cwd, &[path]))
+}
+
+/// `sources` of `bun_bundler::options::TypeCheck`. The value of a key of `files` of `Bun.build` may
+/// start with a byte order mark.
 fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
     use bun_core::strings::without_utf8_bom;
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     sources
-        .map(|(path, text)| {
-            let path = join_abs_string::<Auto>(cwd, &[path]);
-            let text = without_utf8_bom(text).to_vec();
-            (bun_sema_driver::host::from_native(path), text)
-        })
+        .map(|(path, text)| (from_bundler(cwd, path), without_utf8_bom(text).to_vec()))
         .collect()
 }
 
@@ -652,6 +655,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         loaders,
         entry_points,
         sources,
+        plugin_imports,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows what it loads each file with. What is installed is what its name says.
@@ -663,13 +667,33 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         }
         (path, text)
     });
-    let provided = Provided {
-        already_read: already_read(cwd, &mut sources),
-        ..Default::default()
-    };
+    let already_read = already_read(cwd, &mut sources);
     // Not `App.svelte`, which a plugin turns into TypeScript.
     let is_source = |path: &&[u8]| {
         has_types_with(&by_extension, path) || script_kinds.iter().any(|it| it.0 == **path)
+    };
+    // A module that is in no file goes by a name that no path is: a path begins with `/`.
+    let name_of = |(namespace, path): (&[u8], &[u8])| match namespace {
+        b"" | b"file" => from_bundler(cwd, path),
+        _ => [b"\0", namespace, b":", path].concat(),
+    };
+    let mut imports = PluginImports::default();
+    for import in plugin_imports {
+        let path = name_of(import.imported);
+        let is = match import.is_loaded_by_plugin {
+            // The text of a file that a plugin has loaded is read from the disk, if it is there.
+            true if already_read.contains_key(&path) => PluginImported::Virtual,
+            true => PluginImported::Loaded,
+            false if is_source(&import.imported.1) => PluginImported::Source,
+            false => continue,
+        };
+        let of_importer = imports.entry(name_of(import.importer)).or_default();
+        of_importer.push(PluginImport { path, is });
+    }
+    let provided = Provided {
+        already_read,
+        plugin_imports: imports,
+        ..Default::default()
     };
     let paths: Vec<Vec<u8>> = (entry_points.filter(is_source))
         .map(<[u8]>::to_vec)

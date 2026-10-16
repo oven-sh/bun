@@ -18,6 +18,29 @@ use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::time::{Duration, Instant};
 
+/// `Host::plugin_imports`, by the `tspath.Path` of the file that imports. A module of a plugin
+/// that is in no file goes by a name that no file has.
+pub type PluginImports = FxHashMap<Vec<u8>, Vec<PluginImport>>;
+
+/// What the bundler has found for an import.
+pub struct PluginImport {
+    /// The file name of `PluginImported::Source`. Of the others, what `PluginImports` has them by.
+    pub path: Vec<u8>,
+    pub is: PluginImported,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PluginImported {
+    /// TypeScript or JavaScript of the project that no plugin has loaded.
+    Source,
+    /// What a plugin has loaded from a file. A program that does not have the file follows what
+    /// it imports, and the file is not checked.
+    Loaded,
+    /// What only a plugin provides. It is not code of the project: what it imports is followed,
+    /// and it is not checked for being imported in this way.
+    Virtual,
+}
+
 /// The phases of loading a program, for timing. `Discover`, `Link` and `Merge` run on one thread,
 /// and `Aliases` is the time of the thread that waits for it. The others run on all threads in
 /// parallel, and the time of every thread is counted.
@@ -120,6 +143,12 @@ pub trait Host: Sync {
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
+    /// The imports that only the bundler can follow, because a plugin of it has loaded the file
+    /// that imports or the file that is imported: `main.ts` imports `App.svelte`, which imports
+    /// `lib.ts`. A file refers to what such a file imports. `None`: there is no such import.
+    fn plugin_imports(&self) -> Option<&PluginImports> {
+        None
+    }
     /// Several programs are about to be loaded: from here on there is a `shared_file` for a
     /// declaration file. `variants`: a bit for each `variant_of_files` that more than one of them
     /// has. What no other program can use is not kept: nothing is once `programs` more

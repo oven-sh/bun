@@ -63,13 +63,43 @@ pub const PACKAGE_JSON_OPTS: JSONOptions = JSONOptions {
     ..JSONOptions::DEFAULT
 };
 
-static EMPTY_OBJECT: bun_core::RacyCell<E::Object> = bun_core::RacyCell::new(E::Object::EMPTY);
-
+/// A private `{}` for each call: owners edit the root they get.
 #[inline]
-fn empty_object_expr() -> Expr {
-    Expr {
-        loc: bun_ast::Loc { start: 0 },
-        data: js_ast::expr::Data::EObject(js_ast::StoreRef::from_raw(EMPTY_OBJECT.get())),
+fn empty_object_expr<D: Dest>(bump: &Bump) -> Expr {
+    D::expr(bump, E::Object::default(), bun_ast::Loc { start: 0 })
+}
+
+/// Where the classic tree is built.
+trait Dest {
+    fn expr<T: js_ast::expr::IntoExprData>(bump: &Bump, st: T, loc: bun_ast::Loc) -> Expr;
+    fn list<T>(bump: &Bump, cap: usize) -> bun_alloc::AstVec<T>;
+}
+
+/// Nodes through `Expr::init`, lists through `AstAlloc`.
+struct InStore;
+
+/// Nodes and lists in the caller's arena.
+struct InArena;
+
+impl Dest for InStore {
+    #[inline]
+    fn expr<T: js_ast::expr::IntoExprData>(_: &Bump, st: T, loc: bun_ast::Loc) -> Expr {
+        Expr::init(st, loc)
+    }
+    #[inline]
+    fn list<T>(_: &Bump, cap: usize) -> bun_alloc::AstVec<T> {
+        Vec::with_capacity_in(cap, bun_alloc::AstAlloc)
+    }
+}
+
+impl Dest for InArena {
+    #[inline]
+    fn expr<T: js_ast::expr::IntoExprData>(bump: &Bump, st: T, loc: bun_ast::Loc) -> Expr {
+        Expr::allocate(bump, st, loc)
+    }
+    #[inline]
+    fn list<T>(bump: &Bump, cap: usize) -> bun_alloc::AstVec<T> {
+        bun_alloc::AstAlloc::vec_with_capacity_in_arena(cap, bump)
     }
 }
 
@@ -320,12 +350,12 @@ pub fn parse_utf8_impl<const CHECK_LEN: bool>(
     bump: &Bump,
 ) -> crate::Result<Expr> {
     if source.contents.is_empty() {
-        return Ok(empty_object_expr());
+        return Ok(empty_object_expr::<InStore>(bump));
     }
-    Ok(parse_classic(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
+    Ok(parse_classic::<InStore>(source, log, bump, JSON_OPTS, CHECK_LEN)?.root)
 }
 
-fn parse_classic(
+fn parse_classic<D: Dest>(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     bump: &Bump,
@@ -337,7 +367,7 @@ fn parse_classic(
         ..opts
     };
     let mut out = parse_impl(source, log, opts, check_len)?;
-    out.root = match materialize_impl(&out.root, source, bump, opts.was_originally_macro) {
+    out.root = match materialize_impl::<D>(&out.root, source, bump, opts.was_originally_macro) {
         Ok(root) => root,
         Err(e) => {
             log.add_error_fmt_opts(
@@ -491,9 +521,9 @@ pub fn parse_package_json_utf8(
     bump: &Bump,
 ) -> crate::Result<Expr> {
     if source.contents.is_empty() {
-        return Ok(empty_object_expr());
+        return Ok(empty_object_expr::<InStore>(bump));
     }
-    Ok(parse_classic(source, log, bump, PACKAGE_JSON_OPTS, false)?.root)
+    Ok(parse_classic::<InStore>(source, log, bump, PACKAGE_JSON_OPTS, false)?.root)
 }
 
 #[derive(Default)]
@@ -511,11 +541,11 @@ pub fn parse_package_json_utf8_with_opts(
 ) -> crate::Result<JsonResult> {
     if source.contents.is_empty() {
         return Ok(JsonResult {
-            root: empty_object_expr(),
+            root: empty_object_expr::<InStore>(bump),
             ..Default::default()
         });
     }
-    let out = parse_classic(source, log, bump, opts, false)?;
+    let out = parse_classic::<InStore>(source, log, bump, opts, false)?;
     Ok(JsonResult {
         root: out.root,
         indentation: out.indentation,
@@ -528,9 +558,9 @@ pub fn parse_for_macro(
     bump: &Bump,
 ) -> crate::Result<Expr> {
     if source.contents.is_empty() {
-        return Ok(empty_object_expr());
+        return Ok(empty_object_expr::<InStore>(bump));
     }
-    Ok(parse_classic(source, log, bump, MACRO_JSON_OPTS, false)?.root)
+    Ok(parse_classic::<InStore>(source, log, bump, MACRO_JSON_OPTS, false)?.root)
 }
 
 /// `tsconfig.json` / `.jsonc` (comments, trailing commas) into the classic `E::Object` AST.
@@ -541,9 +571,9 @@ pub fn parse_ts_config(
     bump: &Bump,
 ) -> crate::Result<Expr> {
     if source.contents.is_empty() {
-        return Ok(empty_object_expr());
+        return Ok(empty_object_expr::<InStore>(bump));
     }
-    Ok(parse_classic(source, log, bump, TSCONFIG_OPTS, false)?.root)
+    Ok(parse_classic::<InStore>(source, log, bump, TSCONFIG_OPTS, false)?.root)
 }
 
 /// `.env` / `--define` values: JSON, keywords, or an implicitly-quoted string.
@@ -554,7 +584,7 @@ pub fn parse_env_json(
 ) -> crate::Result<Expr> {
     let contents: &[u8] = &source.contents;
     if contents.is_empty() {
-        return Ok(empty_object_expr());
+        return Ok(empty_object_expr::<InArena>(bump));
     }
 
     if contents.len() >= 2 && contents[0] == b'\\' && matches!(contents[1], b'"' | b'\'') {
@@ -568,15 +598,15 @@ pub fn parse_env_json(
         }
         let rewritten: &[u8] = bump.alloc_slice_copy(&unescaped);
         let rw_source = bun_ast::Source::init_path_string("", rewritten);
-        return Ok(parse_classic(&rw_source, log, bump, DOTENV_JSON_OPTS, false)?.root);
+        return Ok(parse_classic::<InArena>(&rw_source, log, bump, DOTENV_JSON_OPTS, false)?.root);
     }
 
     match contents[0] {
         b'{' | b'[' | b'0'..=b'9' | b'"' | b'\'' => {
-            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
+            Ok(parse_classic::<InArena>(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
         b'-' | b'.' if leads_a_number(contents) => {
-            Ok(parse_classic(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
+            Ok(parse_classic::<InArena>(source, log, bump, DOTENV_JSON_OPTS, false)?.root)
         }
         _ => {
             let word_len = contents
@@ -936,7 +966,7 @@ pub fn materialize(
     log: &mut bun_ast::Log,
     bump: &Bump,
 ) -> crate::Result<Expr> {
-    materialize_impl(root, source, bump, false).inspect_err(|_| {
+    materialize_impl::<InStore>(root, source, bump, false).inspect_err(|_| {
         log.add_error_fmt_opts(
             format_args!("Document is too deeply nested"),
             bun_ast::AddErrorOptions {
@@ -948,18 +978,19 @@ pub fn materialize(
     })
 }
 
-fn materialize_impl(
+fn materialize_impl<D: Dest>(
     root: &Expr,
     source: &bun_ast::Source,
     bump: &Bump,
     was_originally_macro: bool,
 ) -> crate::Result<Expr> {
-    let m = Materializer {
+    let m = Materializer::<D> {
         contents: &source.contents,
         bump,
         was_originally_macro,
         stack_check: bun_core::StackCheck::init(),
         overflowed: core::cell::Cell::new(false),
+        dest: core::marker::PhantomData,
     };
     let out = m.expr(root, root.loc);
     if m.overflowed.get() {
@@ -968,22 +999,25 @@ fn materialize_impl(
     Ok(out)
 }
 
-struct Materializer<'a> {
+struct Materializer<'a, D: Dest> {
     contents: &'a [u8],
     bump: &'a Bump,
     was_originally_macro: bool,
     stack_check: bun_core::StackCheck,
     overflowed: core::cell::Cell<bool>,
+    dest: core::marker::PhantomData<D>,
 }
 
-impl Materializer<'_> {
+impl<D: Dest> Materializer<'_, D> {
     fn expr(&self, e: &Expr, loc: bun_ast::Loc) -> Expr {
         match &e.data {
-            js_ast::expr::Data::EObjectJSON(o) => Expr::init(self.object(o.get()), loc),
-            js_ast::expr::Data::EArrayJSON(a) => Expr::init(self.array(a.get(), loc), loc),
-            js_ast::expr::Data::EString(s) => {
-                Expr::init(E::EString::init(self.rehome(s.get().data).slice()), loc)
-            }
+            js_ast::expr::Data::EObjectJSON(o) => D::expr(self.bump, self.object(o.get()), loc),
+            js_ast::expr::Data::EArrayJSON(a) => D::expr(self.bump, self.array(a.get(), loc), loc),
+            js_ast::expr::Data::EString(s) => D::expr(
+                self.bump,
+                E::EString::init(self.rehome(s.get().data).slice()),
+                loc,
+            ),
             _ => Expr { data: e.data, loc },
         }
     }
@@ -994,11 +1028,11 @@ impl Materializer<'_> {
             return E::Object::default();
         }
         let rows = o.properties();
-        let mut properties: G::PropertyList =
-            Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+        let mut properties: G::PropertyList = D::list(self.bump, rows.len());
         let value_locs = o.value_locs();
         for (i, row) in rows.iter().enumerate() {
-            let key = Expr::init(
+            let key = D::expr(
+                self.bump,
                 E::String {
                     data: self.rehome(row.key),
                     ..Default::default()
@@ -1033,8 +1067,7 @@ impl Materializer<'_> {
             return E::Array::default();
         }
         let rows = a.items();
-        let mut items: js_ast::ExprNodeList =
-            Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+        let mut items: js_ast::ExprNodeList = D::list(self.bump, rows.len());
         let item_locs = a.item_locs();
         let mut cursor = match item_locs {
             Some(_) => None,
@@ -1063,9 +1096,11 @@ impl Materializer<'_> {
 
     fn json_value(&self, value: &E::JsonValue, loc: bun_ast::Loc) -> Expr {
         match value {
-            E::JsonValue::Object(o) => Expr::init(self.object(o.get()), loc),
-            E::JsonValue::Array(a) => Expr::init(self.array(a.get(), loc), loc),
-            E::JsonValue::String(s) => Expr::init(E::EString::init(self.rehome(*s).slice()), loc),
+            E::JsonValue::Object(o) => D::expr(self.bump, self.object(o.get()), loc),
+            E::JsonValue::Array(a) => D::expr(self.bump, self.array(a.get(), loc), loc),
+            E::JsonValue::String(s) => {
+                D::expr(self.bump, E::EString::init(self.rehome(*s).slice()), loc)
+            }
             _ => Expr::from_json_value(value, loc),
         }
     }

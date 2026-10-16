@@ -493,6 +493,18 @@ impl CssColor {
         }
     }
 
+    /// The type of the color that this value holds, when the color is known at build time.
+    pub(crate) fn payload_type_id(&self) -> Option<core::any::TypeId> {
+        use core::any::TypeId;
+        match self {
+            CssColor::Rgba(_) => Some(TypeId::of::<RGBA>()),
+            CssColor::Lab(lab) => Some(lab.payload_type_id()),
+            CssColor::Predefined(pre) => Some(pre.payload_type_id()),
+            CssColor::Float(f) => Some(f.payload_type_id()),
+            CssColor::CurrentColor | CssColor::LightDark { .. } | CssColor::System(_) => None,
+        }
+    }
+
     /// The kinds of token that `to_css` starts and ends with: `red`, `#f00` or `rgb(…)`.
     pub(crate) fn serialization_types(
         &self,
@@ -787,21 +799,12 @@ impl CssColor {
         }
 
         fn check_converted<T: 'static>(color: &CssColor) -> Option<bool> {
-            use core::any::TypeId;
             debug_assert!(!matches!(
                 color,
                 CssColor::LightDark { .. } | CssColor::CurrentColor
             ));
-            match color {
-                CssColor::Rgba(_) => Some(TypeId::of::<T>() == TypeId::of::<RGBA>()),
-                CssColor::Lab(lab) => Some(TypeId::of::<T>() == lab.payload_type_id()),
-                CssColor::Predefined(pre) => Some(TypeId::of::<T>() == pre.payload_type_id()),
-                CssColor::Float(f) => Some(TypeId::of::<T>() == f.payload_type_id()),
-                // System colors cannot be converted to specific color spaces at parse time
-                CssColor::System(_) => None,
-                // We checked these above
-                CssColor::LightDark { .. } | CssColor::CurrentColor => unreachable!(),
-            }
+            // System colors cannot be converted to specific color spaces at parse time
+            Some(core::any::TypeId::of::<T>() == color.payload_type_id()?)
         }
 
         let converted_first = check_converted::<T>(self)?;
@@ -1120,10 +1123,10 @@ pub(crate) fn parse_color_function(
         b"oklab" => parse_lab::<OKLAB>(input, &mut parser, |l, a, b, alpha| {
             LABColor::Oklab(OKLAB { l, a, b, alpha })
         }),
-        b"lch" => parse_lch::<LCH>(input, &mut parser, |l, c, h, alpha| {
+        b"lch" => parse_lch::<LCH, LAB>(input, &mut parser, LCH_POWERLESS_CHROMA, |l, c, h, alpha| {
             LABColor::Lch(LCH { l, c, h, alpha })
         }),
-        b"oklch" => parse_lch::<OKLCH>(input, &mut parser, |l, c, h, alpha| {
+        b"oklch" => parse_lch::<OKLCH, OKLAB>(input, &mut parser, OKLCH_POWERLESS_CHROMA, |l, c, h, alpha| {
             LABColor::Oklch(OKLCH { l, c, h, alpha })
         }),
         b"color" => parse_predefined(input, &mut parser),
@@ -1338,11 +1341,34 @@ where
     })
 }
 
-pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>>(
+// The chroma at or below which a color has no hue: https://www.w3.org/TR/css-color-4/#lab-to-lch
+const LCH_POWERLESS_CHROMA: f32 = 0.0015;
+const OKLCH_POWERLESS_CHROMA: f32 = 0.000004;
+// The difference of the largest and the smallest sRGB channel at or below which a converted color has no stable hue.
+const HUE_NOISE_CHROMA: f32 = 1e-4;
+
+/// Whether this type becomes sRGB with no matrix (hex, name, `rgb()`, `hsl()`, `hwb()`, `color(srgb ...)`), so a gray stays exact.
+fn is_srgb_type(ty: core::any::TypeId) -> bool {
+    use core::any::TypeId;
+    [
+        TypeId::of::<RGBA>(),
+        TypeId::of::<SRGB>(),
+        TypeId::of::<HSL>(),
+        TypeId::of::<HWB>(),
+    ]
+    .contains(&ty)
+}
+
+/// `R` is the rectangular form of `T`: `LAB` for `LCH`, `OKLAB` for `OKLCH`.
+pub(crate) fn parse_lch<T, R: 'static>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
+    powerless_chroma: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
-) -> CssResult<CssColor> {
+) -> CssResult<CssColor>
+where
+    T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>,
+{
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
             if let Some(from) = &mut p.from {
@@ -1356,6 +1382,19 @@ pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> +
 
             let l = p.parse_percentage(i)?.clamp(0.0, 1.0);
             let c = p.parse_number(i)?.clamp(0.0, f32::MAX);
+            // A gray that is converted has no hue (css-color-4 #powerless), and browsers do not agree on its `h`. A color with chroma cannot take it.
+            if let Some(from) = &mut p.from {
+                use core::any::TypeId;
+                // The hue of the origin is the one that is written, or the 0 of a chroma that is exactly 0 in the same family.
+                let exact = from.origin == Some(TypeId::of::<T>())
+                    || (from.origin == Some(TypeId::of::<R>()) && from.components.1 == 0.0);
+                // A chroma of `none` counts as chroma: the hue shows when the color is mixed.
+                let has_chroma = c > powerless_chroma || c.is_nan();
+                let gray = from.components.1 <= powerless_chroma;
+                if !exact && gray && has_chroma && !i.flags.must_fold() {
+                    from.types.2 = ChannelType::empty();
+                }
+            }
             let h = parse_angle_or_number(i, p)?;
             let alpha = parse_alpha(i, p)?;
             let lab = func(l, c, h, alpha);
@@ -1395,6 +1434,26 @@ pub(crate) fn parse_hsl_hwb_components<T>(
     allows_legacy: bool,
 ) -> CssResult<(f32, f32, f32, bool)> {
     let _ = core::marker::PhantomData::<T>; // autofix
+    // The difference of the largest and the smallest sRGB channel.
+    let is_hsl = parser
+        .from
+        .as_ref()
+        .is_some_and(|from| from.names.1 == b"s");
+    let chroma = |a: f32, b: f32| {
+        if is_hsl {
+            a * (1.0 - (2.0 * b - 1.0).abs())
+        } else {
+            1.0 - a - b
+        }
+    };
+    // An origin that is not written in sRGB is converted with a rounding error. When it is almost a gray, its hue is that error.
+    let hue_is_noise = !input.flags.must_fold()
+        && parser.from.as_ref().is_some_and(|from| {
+            chroma(from.components.1, from.components.2) <= HUE_NOISE_CHROMA
+                && !from.origin.is_some_and(is_srgb_type)
+        });
+
+    let hue_start = input.state();
     let h = parse_angle_or_number(input, parser)?;
     let is_legacy_syntax = allows_legacy
         && parser.from.is_none()
@@ -1413,6 +1472,19 @@ pub(crate) fn parse_hsl_hwb_components<T>(
 
     if is_legacy_syntax && (a.is_nan() || b.is_nan()) {
         return Err(input.new_custom_error(css::ParserError::invalid_value));
+    }
+
+    // A color with chroma shows its hue, so its hue channel must parse with no `h`. `none` counts as chroma.
+    let new_chroma = chroma(a, b);
+    if hue_is_noise && (new_chroma > HUE_NOISE_CHROMA || new_chroma.is_nan()) {
+        let end = input.state();
+        input.reset(&hue_start);
+        if let Some(from) = &mut parser.from {
+            from.types.0 = ChannelType::empty();
+        }
+        let hue = parse_angle_or_number(input, parser);
+        input.reset(&end);
+        hue?;
     }
 
     Ok((h, a, b, is_legacy_syntax))
@@ -1964,7 +2036,9 @@ impl ComponentParser {
             None => return Err(input.new_custom_error(css::ParserError::invalid_value)),
         };
 
-        self.from = Some(RelativeComponentParser::new(&new_from));
+        let mut relative = RelativeComponentParser::new(&new_from);
+        relative.origin = from.payload_type_id();
+        self.from = Some(relative);
 
         func(input, self)
     }
@@ -2111,6 +2185,8 @@ pub(crate) struct RelativeComponentParser {
     pub(crate) names: (&'static [u8], &'static [u8], &'static [u8]),
     pub(crate) components: (f32, f32, f32, f32),
     pub(crate) types: (ChannelType, ChannelType, ChannelType),
+    /// The type of the origin as written, before its conversion to the color space of the function.
+    origin: Option<core::any::TypeId>,
 }
 
 impl RelativeComponentParser {
@@ -2119,6 +2195,7 @@ impl RelativeComponentParser {
             names: color.channels(),
             components: color.components(),
             types: color.types(),
+            origin: None,
         }
     }
 

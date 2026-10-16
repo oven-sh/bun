@@ -867,6 +867,38 @@ describe("relative color with a channel outside its range", () => {
   });
 });
 
+// https://www.w3.org/TR/css-color-4/#powerless
+// A gray has no hue. After a conversion its `h` is not the same in every browser, so a style
+// sheet keeps the color as written. `Bun.color()` must give a value, and takes the hue it has.
+describe("hue of a gray origin", () => {
+  test.each([
+    "oklch(from #fff 82.5% 0.1 h)",
+    "oklch(from gray l 0.1 h)",
+    "lch(from #333 50% 30 h)",
+    "hsl(from lab(50% 0 0) h 100% 50%)",
+    "hwb(from oklch(50% 0 120) h 0% 0%)",
+  ])("%s has a value", input => {
+    expect(color(input, "css")).not.toBeNull();
+  });
+
+  test.each([
+    ["oklch(from #fff 82.5% 0.1 120)", "oklch(82.5% .1 120)"],
+    ["oklch(from oklch(50% 0.1 40) 82.5% 0.1 h)", "oklch(82.5% .1 40)"],
+    // An origin of the same type is not converted.
+    ["lch(from lch(50% 0 40) 60% 20 h)", "lch(60% 20 40)"],
+    // `lab(L 0 0)` has a chroma of exactly 0 in lch().
+    ["lch(from lab(50% 0 0) 60% 20 h)", "lch(60% 20 0)"],
+    // `lab(50% 0.001 0)` has a chroma above 0 and the hue 0.
+    ["lch(from lab(50% 0.001 0) 50% 20 h)", "lch(50% 20 0)"],
+    ["oklch(from oklch(97% 0 250) l 0.05 h)", "oklch(97% .05 250)"],
+    // A gray hex, name or color(srgb ...) origin has the hue 0 in hsl() and hwb().
+    ["hsl(from gray h 50% 50%)", "#bf4040"],
+    ["hsl(from color(srgb .5 .5 .50001) h 100% 50%)", "#00f"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});
+
 // https://drafts.csswg.org/css-color-5/#relative-colors
 // An omitted alpha is the alpha of the origin color, not 100%.
 describe("relative color origin alpha", () => {

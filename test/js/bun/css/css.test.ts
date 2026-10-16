@@ -7666,6 +7666,66 @@ describe("css tests", () => {
     minify_test(".a { color: color-mix(in lab, lab(150% 0 0), black) }", ".a{color:lab(50% 0 0)}");
   });
 
+  describe("hue of a gray origin", () => {
+    // https://www.w3.org/TR/css-color-4/#powerless
+    // A gray has no hue. Browsers do not agree on the `h` of a gray that is converted to lch() or oklch():
+    // Chrome 153 has about 24 for white in oklch(), and the parser had 90.
+    // A color with chroma cannot take that hue at build time, so it stays as written.
+    const cases: [string, string][] = [
+      ["color: oklch(from #fff 82.5% 0.1 h)", "color:oklch(from #fff 82.5% .1 h)"],
+      ["color: oklch(from #808080 l 0.1 h)", "color:oklch(from gray l .1 h)"],
+      ["color: oklch(from #808080 l 0.1 calc(h + 30))", "color:oklch(from gray l .1 calc(h + 30))"],
+      ["color: lch(from #333 50% 30 h)", "color:lch(from #333 50% 30 h)"],
+      ["color: oklch(from lab(50% 0 0) 60% 0.1 h)", "color:oklch(from lab(50% 0 0) 60% .1 h)"],
+      ["color: lch(from lab(50% 0.001 0) 50% 20 h)", "color:lch(from lab(50% .001 0) 50% 20 h)"],
+      // A chroma of `none` is not a gray: the hue shows when the color is mixed.
+      ["color: oklch(from #fff 82.5% none h)", "color:oklch(from #fff 82.5% none h)"],
+      // The hue is not read.
+      ["color: oklch(from #fff 82.5% 0.1 120)", "color:oklch(82.5% .1 120)"],
+      // The origin has a hue.
+      ["color: oklch(from oklch(50% 0.1 40) 82.5% 0.1 h)", "color:oklch(82.5% .1 40)"],
+      ["color: lch(from lch(50% 30 40) 60% 20 h)", "color:lch(60% 20 40)"],
+      // An origin of the same type is not converted: its hue is the one that is written.
+      ["color: lch(from lch(50% 0 40) 60% 20 h)", "color:lch(60% 20 40)"],
+      // `lab(L 0 0)` has a chroma of exactly 0 in lch(), and the hue 0 in every browser.
+      ["color: lch(from lab(50% 0 0) 60% 20 h)", "color:lch(60% 20 0)"],
+      ["color: oklch(from oklab(70% 0 0) l 0.1 h)", "color:oklch(70% .1 0)"],
+      ["color: oklch(from oklch(70% 0 120) l calc(c + 0.1) h)", "color:oklch(70% .1 120)"],
+      ["color: oklch(from oklch(70% none 120) l 0.15 h)", "color:oklch(70% .15 120)"],
+      ["color: lch(from lch(from lch(60% 40 30) l 0 h) l 30 h)", "color:lch(60% 30 30)"],
+      // hsl() and hwb(): a gray hex, name or color(srgb ...) origin has the hue 0 in every browser.
+      ["color: hsl(from #808080 h 50% 50%)", "color:#bf4040"],
+      ["color: hwb(from color(srgb .5 .5 .5) h 0% 0%)", "color:red"],
+      ["color: hsl(from color(srgb .5 .5 .50001) h 100% 50%)", "color:#00f"],
+      // A gray of another color space is converted with a rounding error, and its hue is that error.
+      ["color: hsl(from lab(50% 0 0) h 100% 50%)", "color:hsl(from lab(50% 0 0) h 100% 50%)"],
+      ["color: hwb(from oklch(50% 0 120) h 0% 0%)", "color:hwb(from oklch(50% 0 120) h 0% 0%)"],
+      [
+        "color: hsl(from color(display-p3 .5 .5 .5) calc(h + 30) 100% 50%)",
+        "color:hsl(from color(display-p3 .5 .5 .5) calc(h + 30)100% 50%)",
+      ],
+      ["color: hwb(from lab(50% 0 0) h none none)", "color:hwb(from lab(50% 0 0) h none none)"],
+      ["color: hsl(from lab(50% 0 0) 120 s l)", "color:#777"],
+      ["color: hsl(from lab(50% 40 -50) h s l)", "color:#965dcd"],
+    ];
+    for (const [input, expected] of cases) {
+      minify_test(`.a { ${input} }`, `.a{${expected}}`);
+    }
+
+    // A typed `@property` keeps the color as written too.
+    minify_test(
+      `@property --p { syntax: "<color>"; inherits: false; initial-value: oklch(from #fff 82.5% 0.1 h); }`,
+      `@property --p{syntax:"<color>";inherits:false;initial-value:oklch(from #fff 82.5% .1 h)}`,
+    );
+
+    // The color stays gray. The digits of the noise are not pinned.
+    test.each(["oklch(from #fff 82.5% c h)", "lch(from #333 50% c h)"])("%s is resolved", input => {
+      expect(cssInternals.minifyTest(`.a{color:${input}}`, "")).toMatch(
+        /^\.a\{color:(ok)?lch\((82\.5|50)% [^ ]+ [\d.]+\)\}$/,
+      );
+    });
+  });
+
   describe("relative color with a channel outside its range", () => {
     // https://drafts.csswg.org/css-color-5/#relative-colors
     // A relative rgb(), hsl() or hwb() color is not clamped: a browser computes `color(srgb 1.18 .4 .6)` for the first row.

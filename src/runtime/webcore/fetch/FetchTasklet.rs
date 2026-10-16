@@ -321,15 +321,21 @@ impl HTTPRequestBody {
     }
 }
 
-jsc::impl_abort_handle_owner!(FetchTasklet, abort_handle, |this, cause| {
-    // SAFETY: trait contract — `this` is live; JS thread.
-    unsafe {
-        match cause {
-            jsc::AbortCause::Signal(reason) => (*this).abort_listener(reason),
-            jsc::AbortCause::ContextStopped(_) => (*this).abort_task(),
+jsc::impl_abort_handle_owner!(
+    FetchTasklet,
+    abort_handle,
+    // What it roots is the promise script receives: a reference on it would outlive the request.
+    keeps_graph_alive = |_this| None,
+    |this, cause| {
+        // SAFETY: trait contract — `this` is live; JS thread.
+        unsafe {
+            match cause {
+                jsc::AbortCause::Signal(reason) => (*this).abort_listener(reason),
+                jsc::AbortCause::ContextStopped(_) => (*this).abort_task(),
+            }
         }
     }
-});
+);
 
 impl Drop for FetchTasklet {
     fn drop(&mut self) {

@@ -117,6 +117,13 @@ JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
 // The frame the running script's Bun.ModuleGraph context was entered with; null when it is in none.
 JSC::JSObject* currentModuleGraphFrame(Zig::GlobalObject*);
 
+// ── What keeps a graph alive ─────────────────────────────────────────────────────────
+// `owner`, the wrapper native code keeps rooted while work that script of `context`'s graph
+// started still runs, refers to that graph from here on: the graph is not collected, and its
+// context not stopped, under that work. A null `context`, or one that has stopped: `owner`
+// refers to no graph any more.
+void keepModuleGraphAliveFrom(WebCore::ScriptExecutionContext* context, JSC::JSObject* owner);
+
 // ── What a graph's require() and import() use ────────────────────────────────────────
 // `graph` null: the global object's.
 JSC::JSMap* requireMapOf(Zig::GlobalObject*, JSModuleGraph*);

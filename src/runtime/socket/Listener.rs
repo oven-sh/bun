@@ -102,10 +102,16 @@ pub(crate) struct Listener {
     pub(crate) context: bun_jsc::ContextId,
 }
 
-bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ not finalized).
-    Listener::do_stop(unsafe { &*this }, true)
-});
+bun_jsc::impl_abort_handle_owner!(
+    Listener,
+    abort_handle,
+    // Script always gives it handlers, whose saved async context refers to the graph.
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ not finalized).
+        Listener::do_stop(unsafe { &*this }, true)
+    }
+);
 
 #[derive(Clone, Copy, Default)]
 pub(crate) enum ListenerType {

@@ -457,12 +457,18 @@ pub(crate) struct StatWatcher {
     abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_jsc::impl_abort_handle_owner!(StatWatcher, abort_handle, |this, _cause| {
-    // Live until `close()` disarms it (JS thread, us): `deinit` cannot fire
-    // before `close()` drops the wrapper's Strong ref.
-    // SAFETY: trait contract — `this` is live.
-    unsafe { &*this }.close()
-});
+bun_jsc::impl_abort_handle_owner!(
+    StatWatcher,
+    abort_handle,
+    // It always has a listener, whose saved async context refers to the graph.
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // Live until `close()` disarms it (JS thread, us): `deinit` cannot fire
+        // before `close()` drops the wrapper's Strong ref.
+        // SAFETY: trait contract — `this` is live.
+        unsafe { &*this }.close()
+    }
+);
 
 impl Drop for StatWatcher {
     fn drop(&mut self) {

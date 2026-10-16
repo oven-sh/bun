@@ -1301,10 +1301,12 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                         server.on_reload_from_zig(&mut config, global_object);
                         // Its handlers are the calling script's now, and so is the server: it goes
                         // with that script's context, not with the one that first listened.
-                        server.abort_handle.leave();
-                        server.context.set(context.id());
                         // SAFETY: heap-allocated; leaves its context in `stop_listening` / `deinit`.
-                        unsafe { bun_jsc::AbortHandle::arm_owner(std::ptr::from_mut(server), context) };
+                        unsafe {
+                            bun_jsc::AbortHandle::owner_left(std::ptr::from_mut(server));
+                            server.context.set(context.id());
+                            bun_jsc::AbortHandle::arm_owner(std::ptr::from_mut(server), context)
+                        };
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
                 }

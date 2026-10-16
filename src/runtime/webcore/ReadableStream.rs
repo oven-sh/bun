@@ -901,6 +901,9 @@ jsc::impl_abort_handle_owner!(
         // SAFETY: trait contract — `this` is live.
         unsafe { (*this).this_jsvalue.try_get() }.map(jsc::EnsureStillAlive)
     },
+    // Rooted while a read waits, which for the pipe of a child that has exited lasts for as long
+    // as a descendant holds the other end: longer than the graph has work.
+    keeps_graph_alive = |_this| None,
     |this, _cause| {
         // SAFETY: trait contract — `this` is live.
         let wrapper = unsafe { &(*this).this_jsvalue };

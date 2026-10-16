@@ -65,6 +65,12 @@ public:
     bool isOnline() const { return m_contextProxy->isOnline(); }
     void setKeepAlive(bool);
 
+    // Pending activity keeps the wrapper alive while the worker runs. The wrapper of a worker that
+    // script of a Bun.ModuleGraph started keeps that graph for as long (ModuleGraph.cpp, "What
+    // keeps a graph alive"), and lets go of it once the worker has exited.
+    void keepModuleGraphAlive(JSC::JSObject* wrapper);
+    void letGoOfModuleGraph();
+
     // Node worker_threads: 'message'/'error'/'messageerror' are not delivered once terminate() was
     // called; 'close' (which carries the exit code) always is.
     void dispatchEvent(Event&) final;

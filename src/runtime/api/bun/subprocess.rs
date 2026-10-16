@@ -309,32 +309,41 @@ macro_rules! assert_stdio_result {
 }
 pub(crate) use assert_stdio_result;
 
-bun_jsc::impl_abort_handle_owner!(Subprocess<'static>, abort_handle, |this, cause| {
-    // SAFETY: trait contract — `this` is live.
-    let this = unsafe { &*this };
-    let signal = match cause {
-        // Its own signal: the child is asked the way its script chose. It stays in its
-        // context, which may still stop before the child is gone.
-        bun_jsc::AbortCause::Signal(_) => {
-            this.abort_handle.unfollow();
-            this.kill_signal
+bun_jsc::impl_abort_handle_owner!(
+    Subprocess<'static>,
+    abort_handle,
+    // Strong while the child runs.
+    keeps_graph_alive = |this| {
+        // SAFETY: trait contract — `this` is live.
+        unsafe { (*this).this_value.get().try_get() }
+    },
+    |this, cause| {
+        // SAFETY: trait contract — `this` is live.
+        let this = unsafe { &*this };
+        let signal = match cause {
+            // Its own signal: the child is asked the way its script chose. It stays in its
+            // context, which may still stop before the child is gone.
+            bun_jsc::AbortCause::Signal(_) => {
+                this.abort_handle.unfollow();
+                this.kill_signal
+            }
+            // A child outlives the VM that spawned it, as one the host spawned does.
+            bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown) => {
+                this.clear_abort_signal();
+                return;
+            }
+            // Nobody is left to wait for a child that ignores being asked.
+            bun_jsc::AbortCause::ContextStopped(_) => {
+                this.clear_abort_signal();
+                SignalCode::SIGKILL
+            }
+        };
+        if !this.has_exited() {
+            this.update_flags(|f| f.insert(Flags::ABORT_SIGNAL_KILLED));
         }
-        // A child outlives the VM that spawned it, as one the host spawned does.
-        bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown) => {
-            this.clear_abort_signal();
-            return;
-        }
-        // Nobody is left to wait for a child that ignores being asked.
-        bun_jsc::AbortCause::ContextStopped(_) => {
-            this.clear_abort_signal();
-            SignalCode::SIGKILL
-        }
-    };
-    if !this.has_exited() {
-        this.update_flags(|f| f.insert(Flags::ABORT_SIGNAL_KILLED));
+        let _ = this.try_kill(signal);
     }
-    let _ = this.try_kill(signal);
-});
+);
 
 bun_spawn::link_impl_ProcessExit! {
     Subprocess for Subprocess<'static> => |this| {
@@ -1211,6 +1220,17 @@ impl Subprocess<'_> {
         if !did_update_has_pending_activity {
             self.update_has_pending_activity();
         }
+        // The child is gone. What is left of it (a wrapper its host kept, a pipe a grandchild
+        // holds open) does not keep the graph that spawned it.
+        // SAFETY: `self` is live until the `deref()` below; the lifetime is erased as where it
+        // was armed.
+        unsafe {
+            bun_jsc::AbortHandle::owner_left(
+                core::ptr::from_ref(self)
+                    .cast_mut()
+                    .cast::<Subprocess<'static>>(),
+            )
+        };
         self.disconnect_ipc(true);
         self.deref();
     }

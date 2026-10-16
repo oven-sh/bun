@@ -48,11 +48,17 @@ pub(crate) struct WindowsNamedPipeContext {
     abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_jsc::impl_abort_handle_owner!(WindowsNamedPipeContext, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live; `close` re-enters `on_close`,
-    // which may free `this`.
-    unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close_or_cancel_connect() }
-});
+bun_jsc::impl_abort_handle_owner!(
+    WindowsNamedPipeContext,
+    abort_handle,
+    // The socket over the pipe always has handlers, and those reach the graph.
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live; `close` re-enters `on_close`,
+        // which may free `this`.
+        unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close_or_cancel_connect() }
+    }
+);
 
 /// Reached from `on_close` → `Self::deref` while `WindowsNamedPipe::on_close`
 /// still holds a live `&mut (*this).named_pipe` and uses it after we return, so

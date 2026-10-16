@@ -2593,10 +2593,16 @@ pub(crate) struct ThreadSafeFunction {
     pub(crate) resources_released: AtomicBool,
 }
 
-bun_jsc::impl_abort_handle_owner!(ThreadSafeFunction, abort_handle, |this, _cause| {
-    // SAFETY: trait contract: `this` is live, and this is the JS thread.
-    unsafe { &mut *this }.unref()
-});
+bun_jsc::impl_abort_handle_owner!(
+    ThreadSafeFunction,
+    abort_handle,
+    // Its lifetime is the addon's: one that is never released would keep its graph for ever.
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // SAFETY: trait contract: `this` is live, and this is the JS thread.
+        unsafe { &mut *this }.unref()
+    }
+);
 
 pub(crate) enum TsfnCallback {
     Js(StrongOptional),

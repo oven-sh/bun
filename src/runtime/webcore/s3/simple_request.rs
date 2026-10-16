@@ -141,14 +141,21 @@ pub(crate) struct S3HttpSimpleTask {
     pub(crate) context: bun_jsc::ContextId,
 }
 
-bun_jsc::impl_abort_handle_owner!(S3HttpSimpleTask, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ its response has not
-    // run); `http` is initialised before the task is armed.
-    unsafe {
-        (*this).signal_store.aborted.store(true, Ordering::Relaxed);
-        bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
+bun_jsc::impl_abort_handle_owner!(
+    S3HttpSimpleTask,
+    abort_handle,
+    // Roots no JS value: the promise is its caller's, and is the one script receives
+    // (`FetchTasklet`).
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ its response has not
+        // run); `http` is initialised before the task is armed.
+        unsafe {
+            (*this).signal_store.aborted.store(true, Ordering::Relaxed);
+            bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
+        }
     }
-});
+);
 
 impl Taskable for S3HttpSimpleTask {
     const TAG: TaskTag = task_tag::S3HttpSimpleTask;

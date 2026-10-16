@@ -406,6 +406,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     auto jsValue = toJSNewlyCreated<IDLInterface<Worker>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
+    uncheckedDowncast<JSWorker>(jsValue)->wrapped().keepModuleGraphAlive(asObject(jsValue));
 
     // Emit the 'worker' event on the process. If we are constructing a `node:worker_threads`
     // worker, we emit the event with the worker_threads Worker object instead of the Web Worker.
@@ -1036,7 +1037,9 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
-    return createWrapper<Worker>(globalObject, WTF::move(impl));
+    auto* wrapper = createWrapper<Worker>(globalObject, WTF::move(impl));
+    wrapper->wrapped().keepModuleGraphAlive(wrapper);
+    return wrapper;
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Worker& impl)

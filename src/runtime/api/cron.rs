@@ -1405,19 +1405,25 @@ pub(crate) struct CronJob {
 }
 
 bun_event_loop::impl_timer_owner!(CronJob; from_timer_ptr => event_loop_timer);
-bun_jsc::impl_abort_handle_owner!(CronJob, abort_handle, |this, cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ not yet stopped).
-    let job = unsafe { &*this };
-    let vm_is_going = matches!(
-        cause,
-        bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown)
-    );
-    CronJob::stop_with_its_context(
-        job.self_ref.get().this_ptr(),
-        job.global.bun_vm(),
-        vm_is_going,
-    )
-});
+bun_jsc::impl_abort_handle_owner!(
+    CronJob,
+    abort_handle,
+    // It always has a callback, whose saved async context refers to the graph.
+    keeps_graph_alive = |_this| None,
+    |this, cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ not yet stopped).
+        let job = unsafe { &*this };
+        let vm_is_going = matches!(
+            cause,
+            bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown)
+        );
+        CronJob::stop_with_its_context(
+            job.self_ref.get().this_ptr(),
+            job.global.bun_vm(),
+            vm_is_going,
+        )
+    }
+);
 
 pub(crate) mod js {
     // `jsc.Codegen.JSCronJob` cached-slot accessors. The C++ side is emitted by

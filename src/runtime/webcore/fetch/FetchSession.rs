@@ -178,10 +178,17 @@ pub(crate) struct FetchSession {
     abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_jsc::impl_abort_handle_owner!(FetchSession, abort_handle, |this, _cause| {
-    // SAFETY: trait contract: `this` is live (the wrapper's `m_ctx`; `finalize` drops the handle).
-    unsafe { &*this }.close_idle_sockets()
-});
+bun_jsc::impl_abort_handle_owner!(
+    FetchSession,
+    abort_handle,
+    // Rooted only while it has requests in flight, and a request does not keep its graph
+    // (`FetchTasklet`).
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // SAFETY: trait contract: `this` is live (the wrapper's `m_ctx`; `finalize` drops the handle).
+        unsafe { &*this }.close_idle_sockets()
+    }
+);
 
 /// One request's hold on its session, from the moment `fetch()` reads the
 /// `session` option: the option is a property of `init`, so nothing else keeps

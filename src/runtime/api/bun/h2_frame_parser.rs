@@ -1369,6 +1369,8 @@ bun_jsc::impl_abort_handle_owner!(
         // SAFETY: trait contract — `this` is live.
         unsafe { (*this).parser.ref_guard() }
     },
+    // Follows a signal only: it never joins a context.
+    keeps_graph_alive = |_this| None,
     |this, cause| {
         if let bun_jsc::AbortCause::Signal(reason) = cause {
             // SAFETY: trait contract — `this` is live; aborting the stream frees it.
@@ -7822,11 +7824,17 @@ impl H2FrameParser {
     }
 }
 
-bun_jsc::impl_abort_handle_owner!(H2FrameParser, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ not dropped). The wrapper this makes
-    // collectible is not finalized under this call.
-    unsafe { (*this).release_from_js() }
-});
+bun_jsc::impl_abort_handle_owner!(
+    H2FrameParser,
+    abort_handle,
+    // Its session always has handlers, which refer to the graph.
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ not dropped). The wrapper this makes
+        // collectible is not finalized under this call.
+        unsafe { (*this).release_from_js() }
+    }
+);
 
 impl Drop for H2FrameParser {
     fn drop(&mut self) {

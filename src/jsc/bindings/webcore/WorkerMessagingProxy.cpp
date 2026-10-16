@@ -573,6 +573,9 @@ void WorkerMessagingProxy::workerGlobalScopeDestroyedInternal(int32_t exitCode, 
         workerObject->dispatchCloseEvent(event);
     }
 
+    if (RefPtr workerObject = m_workerObject)
+        workerObject->letGoOfModuleGraph();
+
     releaseWorkerThread();
     m_scriptExecutionContext = nullptr;
 }

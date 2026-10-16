@@ -164,10 +164,19 @@ pub(crate) struct Terminal {
     abort_handle: jsc::AbortHandle,
 }
 
-jsc::impl_abort_handle_owner!(Terminal, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live; the wrapper's ref outlasts the close.
-    unsafe { (*this).close_without_callbacks() }
-});
+jsc::impl_abort_handle_owner!(
+    Terminal,
+    abort_handle,
+    // Strong while it is open.
+    keeps_graph_alive = |this| {
+        // SAFETY: trait contract — `this` is live.
+        unsafe { (*this).this_value.get().try_get() }
+    },
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live; the wrapper's ref outlasts the close.
+        unsafe { (*this).close_without_callbacks() }
+    }
+);
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
@@ -1726,7 +1735,8 @@ impl Terminal {
             return;
         }
         self.update_flags(|f| f.insert(Flags::CLOSED));
-        self.abort_handle.leave();
+        // SAFETY: `self` is live.
+        unsafe { jsc::AbortHandle::owner_left(core::ptr::from_ref(self).cast_mut()) };
 
         // Close writer (closes write_fd). R-2: `with_mut` borrow is held across
         // the synchronous `on_writer_close` parent callback, but that callback

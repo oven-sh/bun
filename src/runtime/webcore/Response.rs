@@ -131,6 +131,8 @@ bun_jsc::impl_abort_handle_owner!(
         // SAFETY: the `Response` drops this box, and with it the handle, before it goes.
         unsafe { RefPtr::init_ref((*this).response.as_mut_ptr()) }
     },
+    // Follows a signal only: it never joins a context.
+    keeps_graph_alive = |_this| None,
     |this, cause| {
         if let bun_jsc::AbortCause::Signal(reason) = cause {
             // SAFETY: the `Response` that owns the box is kept alive.

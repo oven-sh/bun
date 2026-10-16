@@ -108,21 +108,33 @@ pub(crate) struct CallerOfTheBuild {
     handle: jsc::AbortHandle,
 }
 
-jsc::impl_abort_handle_owner!(CallerOfTheBuild, handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is the `caller` field of a live task (armed ⇒ its
-    // completion has not run); the plugin cell is protected by the task.
-    unsafe {
-        let task = bun_core::from_field_ptr!(JSBundleCompletionTask, caller, this);
-        if let Some(plugins) = (*task).plugins {
-            crate::api::JSBundler::PluginJscExt::tombstone(plugins.as_ref());
+jsc::impl_abort_handle_owner!(
+    CallerOfTheBuild,
+    handle,
+    // What the build roots is the promise script receives: a reference on it would outlive the build.
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is the `caller` field of a live task (armed ⇒ its
+        // completion has not run); the plugin cell is protected by the task.
+        unsafe {
+            let task = bun_core::from_field_ptr!(JSBundleCompletionTask, caller, this);
+            if let Some(plugins) = (*task).plugins {
+                crate::api::JSBundler::PluginJscExt::tombstone(plugins.as_ref());
+            }
         }
     }
-});
+);
 
-jsc::impl_abort_handle_owner!(JSBundleCompletionTask, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ its completion has not run).
-    unsafe { JSBundleCompletionTask::give_up_on_result(this) }
-});
+jsc::impl_abort_handle_owner!(
+    JSBundleCompletionTask,
+    abort_handle,
+    // Joins the realm's own context only.
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ its completion has not run).
+        unsafe { JSBundleCompletionTask::give_up_on_result(this) }
+    }
+);
 
 #[repr(u8)]
 pub(crate) enum Stage {

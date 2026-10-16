@@ -1660,26 +1660,32 @@ impl FileSink {
     }
 }
 
-bun_jsc::impl_abort_handle_owner!(FileSink, abort_handle, |this, _cause| {
-    // What is buffered is dropped with the graph: the writer closes without draining (a reader
-    // that never reads would keep it open for ever), and a parked write gives up its promise and
-    // the wrapper it pins, as when an attached process exits. `on_close` may free `this`.
-    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run) with
-    // write+dealloc provenance; the guard keeps it so across `close()` and `run_pending`.
-    unsafe {
-        let _guard = RefPtr::init_ref(this);
-        (*this).done.set(true);
-        #[cfg(windows)]
-        if !(*this).writer.get().owns_fd {
-            // Never closed, so `on_close` does not follow: settle a piped stream here.
-            (*this).settle_stream_done();
-            (*this).release_pipe();
+bun_jsc::impl_abort_handle_owner!(
+    FileSink,
+    abort_handle,
+    // Joins before it has a wrapper, and a writer that is only open roots none.
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // What is buffered is dropped with the graph: the writer closes without draining (a reader
+        // that never reads would keep it open for ever), and a parked write gives up its promise and
+        // the wrapper it pins, as when an attached process exits. `on_close` may free `this`.
+        // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run) with
+        // write+dealloc provenance; the guard keeps it so across `close()` and `run_pending`.
+        unsafe {
+            let _guard = RefPtr::init_ref(this);
+            (*this).done.set(true);
+            #[cfg(windows)]
+            if !(*this).writer.get().owns_fd {
+                // Never closed, so `on_close` does not follow: settle a piped stream here.
+                (*this).settle_stream_done();
+                (*this).release_pipe();
+            }
+            (*this).writer.with_mut(|w| w.close());
+            FileSink::run_pending(this);
+            FileSink::clear_keep_alive_ref(this);
         }
-        (*this).writer.with_mut(|w| w.close());
-        FileSink::run_pending(this);
-        FileSink::clear_keep_alive_ref(this);
     }
-});
+);
 
 #[derive(Default)]
 pub(crate) struct FlushPendingTask {

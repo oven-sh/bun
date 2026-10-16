@@ -4,7 +4,9 @@
 //! listener, an in-flight `fetch`, a watcher) embeds an [`AbortHandle`] armed
 //! in the context that was current when script opened it, and is stopped when
 //! that context stops: VM teardown, the `bun test --isolate` file swap, or the
-//! disposal of the `Bun.ModuleGraph` the context was made for.
+//! disposal or collection of the `Bun.ModuleGraph` the context was made for.
+//! An owner can keep its graph from being collected while it works
+//! ([`AbortHandleOwner::keeps_graph_alive`]).
 //! `WebCore::ScriptExecutionContext` does the same for `ActiveDOMObject`s, and
 //! owns the Rust context of a graph.
 
@@ -20,8 +22,8 @@ pub use bun_event_loop::ContextId;
 pub enum StopReason {
     /// The VM is being torn down; nothing enters script again.
     VmTeardown,
-    /// The VM keeps running: the `Bun.ModuleGraph` the context was made for was disposed, or
-    /// `bun test --isolate` retired the realm.
+    /// The VM keeps running: the `Bun.ModuleGraph` the context was made for was disposed or
+    /// collected, or `bun test --isolate` retired the realm.
     Disposed,
 }
 
@@ -46,9 +48,9 @@ pub struct ScriptExecutionContext {
     /// Armed handles, oldest first.
     head: JsCell<*mut AbortHandle>,
     tail: JsCell<*mut AbortHandle>,
-    /// A graph's context after [`stop`](Self::stop): what is armed from then
-    /// on (script of the disposed graph still running) is stopped at once.
-    stopped: JsCell<bool>,
+    /// [`STOPPED`](Self::STOPPED) and [`OF_GRAPH`](Self::OF_GRAPH). One byte, zero for the
+    /// realm's own context while it runs: arming reads it once, and only then has nothing more to do.
+    state: JsCell<u8>,
     /// The client sockets script of a graph's context opened (`Bun.connect`,
     /// WebSocket, SQL, Valkey). A VM's own contexts use `RareData`'s.
     socket_groups: JsCell<Option<Box<crate::rare_data::SocketGroups>>>,
@@ -77,7 +79,7 @@ impl Default for ScriptExecutionContext {
             id: JsCell::new(ContextId::default()),
             head: JsCell::new(ptr::null_mut()),
             tail: JsCell::new(ptr::null_mut()),
-            stopped: JsCell::new(false),
+            state: JsCell::new(0),
             socket_groups: JsCell::new(None),
             stop_again_queued: JsCell::new(false),
             dom_context: core::cell::Cell::new(ptr::null_mut()),
@@ -87,6 +89,12 @@ impl Default for ScriptExecutionContext {
 }
 
 impl ScriptExecutionContext {
+    /// A graph's context after [`stop`](Self::stop): what is armed from then
+    /// on (script of the disposed graph still running) is stopped at once.
+    const STOPPED: u8 = 1 << 0;
+    /// A `Bun.ModuleGraph`'s context.
+    const OF_GRAPH: u8 = 1 << 1;
+
     #[inline]
     pub fn id(&self) -> ContextId {
         *self.id.get()
@@ -108,7 +116,7 @@ impl ScriptExecutionContext {
     pub(crate) fn dead() -> Self {
         let context = Self::default();
         context.id.set(ContextId::DEAD);
-        context.stopped.set(true);
+        context.state.set(Self::STOPPED);
         context
     }
 
@@ -116,6 +124,7 @@ impl ScriptExecutionContext {
         let context = Self::default();
         context.id.set(id);
         context.dom_context.set(dom_context);
+        context.state.set(Self::OF_GRAPH);
         context
     }
 
@@ -146,13 +155,27 @@ impl ScriptExecutionContext {
 
     #[inline]
     pub fn is_stopped(&self) -> bool {
-        *self.stopped.get()
+        *self.state.get() & Self::STOPPED != 0
+    }
+
+    /// `value` refers to this (graph's) context's graph from here on: the graph is alive for as
+    /// long as `value` is.
+    fn keep_graph_alive_from(&self, value: JSValue) {
+        debug_assert!(*self.state.get() & Self::OF_GRAPH != 0);
+        // SAFETY: a graph's `WebCore::ScriptExecutionContext`, or null once that is gone; JS thread.
+        unsafe { Bun__ModuleGraph__keepAliveFrom(self.dom_context.get(), value) }
+    }
+
+    /// `value` refers to no graph any more.
+    fn let_go_of_graph(value: JSValue) {
+        // SAFETY: a null context clears the reference; JS thread.
+        unsafe { Bun__ModuleGraph__keepAliveFrom(ptr::null_mut(), value) }
     }
 
     /// A graph's context stops for good (JS thread): one stop-phase sweep over
     /// its handles and its client sockets.
     pub(crate) fn stop(&self, reason: StopReason) -> SweepResult {
-        self.stopped.set(true);
+        self.state.set(*self.state.get() | Self::STOPPED);
         self.stop_again_queued.set(false);
         let result = self.stop_handles(reason);
         self.close_sockets();
@@ -290,6 +313,9 @@ pub struct AbortHandle {
     signal: JsCell<Option<AbortSignalRef>>,
     /// Its context stopped it, or had already stopped when it was armed.
     context_stopped: core::cell::Cell<bool>,
+    /// What [`AbortHandleOwner::keeps_graph_alive`] names refers to the graph of the context
+    /// this joined, until [`owner_left`](Self::owner_left).
+    keeps_graph_alive: core::cell::Cell<bool>,
 }
 
 impl AbortHandle {
@@ -302,6 +328,7 @@ impl AbortHandle {
             on_abort: Self::owner_aborted::<O>,
             signal: JsCell::new(None),
             context_stopped: core::cell::Cell::new(false),
+            keeps_graph_alive: core::cell::Cell::new(false),
         }
     }
 
@@ -336,26 +363,42 @@ impl AbortHandle {
         self.signal.get().as_deref()
     }
 
+    /// Returns whether `context` is a `Bun.ModuleGraph`'s that has not stopped: the one case
+    /// in which [`arm_owner`](Self::arm_owner) has an edge to the graph to write.
+    ///
     /// # Safety
     /// `this` is live, carries its owner's provenance, and does not move or
     /// drop while armed other than through `disarm` / `Drop`.
-    unsafe fn arm(this: *mut Self, context: &ScriptExecutionContext) {
+    unsafe fn arm(this: *mut Self, context: &ScriptExecutionContext) -> bool {
         // SAFETY: fn contract.
         unsafe {
             if (*this).is_armed() {
-                return;
+                return false;
             }
             context.push(this);
             // (An owner that another context takes over is that context's from here.)
-            (*this).context_stopped.set(context.is_stopped());
-            if context.is_stopped() {
-                // Script of a disposed graph is still opening things: they go on
-                // the next turn of the loop, not under the caller that is arming.
-                crate::VirtualMachineRef::get()
-                    .as_mut()
-                    .stop_graph_context_again(context.id());
-            }
+            (*this).context_stopped.set(false);
+            *context.state.get() != 0 && Self::armed_in_graph_or_stopped(this, context)
         }
+    }
+
+    /// [`arm`](Self::arm) for a context that is not the realm's own while it runs.
+    ///
+    /// # Safety
+    /// As [`arm`](Self::arm); `this` was just linked into `context`.
+    #[cold]
+    unsafe fn armed_in_graph_or_stopped(this: *mut Self, context: &ScriptExecutionContext) -> bool {
+        if !context.is_stopped() {
+            return true;
+        }
+        // SAFETY: fn contract.
+        unsafe { (*this).context_stopped.set(true) };
+        // Script of a disposed graph is still opening things: they go on
+        // the next turn of the loop, not under the caller that is arming.
+        crate::VirtualMachineRef::get()
+            .as_mut()
+            .stop_graph_context_again(context.id());
+        false
     }
 
     /// # Safety
@@ -426,6 +469,22 @@ pub trait AbortHandleOwner: Sized {
     /// `handle` came from [`abort_handle`](Self::abort_handle) of a live `Self`.
     unsafe fn from_abort_handle(handle: *mut AbortHandle) -> *mut Self;
 
+    /// The JS value through which the owner keeps its `Bun.ModuleGraph` alive while it works:
+    /// its wrapper, which native code roots for as long as the owner is open.
+    /// [`arm_owner`](AbortHandle::arm_owner) makes that value refer to the graph whose context
+    /// the owner joins, and it lets go when the owner leaves
+    /// ([`owner_left`](AbortHandle::owner_left)), which is also how its context stops it. A
+    /// graph its host no longer references is then not collected, and its context not stopped,
+    /// under work that still runs, whether or not script gave that work a callback.
+    ///
+    /// `None`: the owner does not keep its graph. Script always gives it a callback, whose saved
+    /// async context refers to the graph already; or it roots no JS value of its own; or it
+    /// roots one for longer than it works, which would keep a graph that nothing else needs.
+    ///
+    /// # Safety
+    /// `this` is live.
+    unsafe fn keeps_graph_alive(this: *mut Self) -> Option<JSValue>;
+
     /// JS thread. `this` may free itself.
     ///
     /// # Safety
@@ -446,11 +505,44 @@ impl AbortHandle {
     /// Join `context` (JS thread): from here until the handle is disarmed,
     /// `O::on_abort(owner, ..)` runs if `context` stops. A no-op if already armed.
     ///
+    /// In a `Bun.ModuleGraph`'s context, what [`AbortHandleOwner::keeps_graph_alive`] names keeps
+    /// that graph from here on: arm once the owner has made that value, and leave with
+    /// [`owner_left`](Self::owner_left).
+    ///
     /// # Safety
     /// `owner` is live and heap-pinned until its handle is disarmed or dropped.
     pub unsafe fn arm_owner<O: AbortHandleOwner>(owner: *mut O, context: &ScriptExecutionContext) {
         // SAFETY: fn contract.
-        unsafe { Self::arm(O::abort_handle(owner), context) }
+        unsafe {
+            let handle = O::abort_handle(owner);
+            if Self::arm(handle, context) {
+                if let Some(value) = O::keeps_graph_alive(owner) {
+                    context.keep_graph_alive_from(value);
+                    (*handle).keeps_graph_alive.set(true);
+                }
+            }
+        }
+    }
+
+    /// [`leave`](Self::leave), for an owner whose work for its context is over, its context
+    /// having stopped it or not (JS thread): what [`AbortHandleOwner::keeps_graph_alive`] names
+    /// lets go of the graph, so an owner that script still holds does not keep a graph it no
+    /// longer works for.
+    ///
+    /// # Safety
+    /// `owner` is live.
+    pub unsafe fn owner_left<O: AbortHandleOwner>(owner: *mut O) {
+        // SAFETY: fn contract.
+        unsafe {
+            let handle = &*O::abort_handle(owner);
+            handle.leave();
+            if handle.keeps_graph_alive.replace(false) {
+                // (`None`: the value was collected, or is being finalized.)
+                if let Some(value) = O::keeps_graph_alive(owner) {
+                    ScriptExecutionContext::let_go_of_graph(value);
+                }
+            }
+        }
     }
 
     /// `O::on_abort(owner, ..)` also runs when `signal` fires; before this
@@ -464,12 +556,13 @@ impl AbortHandle {
     }
 }
 
-/// `impl_abort_handle_owner!(Owner, field, |this, cause| body)`: `Owner` embeds
-/// an [`AbortHandle`] at `field`; `body` is [`AbortHandleOwner::on_abort`].
+/// `impl_abort_handle_owner!(Owner, field, keeps_graph_alive = |this| value, |this, cause| body)`:
+/// `Owner` embeds an [`AbortHandle`] at `field`; `value` is
+/// [`AbortHandleOwner::keeps_graph_alive`] and `body` is [`AbortHandleOwner::on_abort`].
 /// Generic owners: `impl_abort_handle_owner!([const N: bool] Owner<N>, field, ..)`.
 #[macro_export]
 macro_rules! impl_abort_handle_owner {
-    ([$($generics:tt)*] $Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, |$this:ident, $cause:ident| $body:expr) => {
+    ([$($generics:tt)*] $Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, keeps_graph_alive = |$owner:ident| $keeps:expr, |$this:ident, $cause:ident| $body:expr) => {
         impl<$($generics)*> $crate::script_execution_context::AbortHandleOwner for $Owner {
             type KeepAlive = $KeepAlive;
             #[inline]
@@ -488,6 +581,10 @@ macro_rules! impl_abort_handle_owner {
                 // SAFETY: caller contract — `handle` addresses `Self.$field`.
                 unsafe { ::bun_core::from_field_ptr!(Self, $field, handle) }
             }
+            #[inline]
+            unsafe fn keeps_graph_alive($owner: *mut Self) -> ::core::option::Option<$crate::JSValue> {
+                $keeps
+            }
             unsafe fn on_abort(
                 $this: *mut Self,
                 $cause: $crate::script_execution_context::AbortCause,
@@ -496,18 +593,24 @@ macro_rules! impl_abort_handle_owner {
             }
         }
     };
-    ([$($generics:tt)*] $Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
-        $crate::impl_abort_handle_owner!([$($generics)*] $Owner, $field, keep_alive = |_this| -> () {}, |$this, $cause| $body);
+    ([$($generics:tt)*] $Owner:ty, $field:ident, keeps_graph_alive = |$owner:ident| $keeps:expr, |$this:ident, $cause:ident| $body:expr) => {
+        $crate::impl_abort_handle_owner!([$($generics)*] $Owner, $field, keep_alive = |_this| -> () {}, keeps_graph_alive = |$owner| $keeps, |$this, $cause| $body);
     };
-    ($Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, |$this:ident, $cause:ident| $body:expr) => {
-        $crate::impl_abort_handle_owner!([] $Owner, $field, keep_alive = |$pinned| -> $KeepAlive $pin, |$this, $cause| $body);
+    ($Owner:ty, $field:ident, keep_alive = |$pinned:ident| -> $KeepAlive:ty $pin:block, keeps_graph_alive = |$owner:ident| $keeps:expr, |$this:ident, $cause:ident| $body:expr) => {
+        $crate::impl_abort_handle_owner!([] $Owner, $field, keep_alive = |$pinned| -> $KeepAlive $pin, keeps_graph_alive = |$owner| $keeps, |$this, $cause| $body);
     };
-    ($Owner:ty, $field:ident, |$this:ident, $cause:ident| $body:expr) => {
-        $crate::impl_abort_handle_owner!([] $Owner, $field, |$this, $cause| $body);
+    ($Owner:ty, $field:ident, keeps_graph_alive = |$owner:ident| $keeps:expr, |$this:ident, $cause:ident| $body:expr) => {
+        $crate::impl_abort_handle_owner!([] $Owner, $field, keeps_graph_alive = |$owner| $keeps, |$this, $cause| $body);
     };
 }
 
 // `WebCore::ScriptExecutionContext` owns the context of a `Bun.ModuleGraph`.
+
+unsafe extern "C" {
+    /// ModuleGraph.cpp: the object `value` refers to the graph of `context` (a graph's
+    /// `WebCore::ScriptExecutionContext`) from here on; to none for a null `context`.
+    fn Bun__ModuleGraph__keepAliveFrom(context: *mut core::ffi::c_void, value: JSValue);
+}
 
 /// A global's `WebCore::ScriptExecutionContext` is made with this as its Rust half.
 ///

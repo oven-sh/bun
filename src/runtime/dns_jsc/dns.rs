@@ -3632,11 +3632,17 @@ pub(crate) struct Resolver {
 
 bun_event_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
 
-bun_jsc::impl_abort_handle_owner!(Resolver, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ `destroy_channel` has
-    // not run); it may free itself inside, and is not touched after.
-    let _ = unsafe { Resolver::close_channel_for_terminate(this) };
-});
+bun_jsc::impl_abort_handle_owner!(
+    Resolver,
+    abort_handle,
+    // Its wrapper is not rooted. Each query in flight holds a promise of its own.
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ `destroy_channel` has
+        // not run); it may free itself inside, and is not touched after.
+        let _ = unsafe { Resolver::close_channel_for_terminate(this) };
+    }
+);
 
 impl Drop for Resolver {
     fn drop(&mut self) {

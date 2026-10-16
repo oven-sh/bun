@@ -201,16 +201,23 @@ pub struct ShellSubprocess {
     abort_handle: jsc::AbortHandle,
 }
 
-jsc::impl_abort_handle_owner!(ShellSubprocess, abort_handle, |this, cause| {
-    // A child outlives the VM that spawned it, as one `Bun.spawn` started does.
-    if !matches!(
-        cause,
-        jsc::AbortCause::ContextStopped(jsc::StopReason::VmTeardown)
-    ) {
-        // SAFETY: trait contract — `this` is live.
-        let _ = unsafe { (*this).try_kill(SignalCode::SIGKILL as i32) };
+jsc::impl_abort_handle_owner!(
+    ShellSubprocess,
+    abort_handle,
+    // A script is its interpreter's work, not this child's: kept from here, a script would be
+    // kept or not by whether a command of it is a builtin.
+    keeps_graph_alive = |_this| None,
+    |this, cause| {
+        // A child outlives the VM that spawned it, as one `Bun.spawn` started does.
+        if !matches!(
+            cause,
+            jsc::AbortCause::ContextStopped(jsc::StopReason::VmTeardown)
+        ) {
+            // SAFETY: trait contract — `this` is live.
+            let _ = unsafe { (*this).try_kill(SignalCode::SIGKILL as i32) };
+        }
     }
-});
+);
 
 pub(crate) type SignalCode = bun_core::SignalCode;
 

@@ -82,7 +82,8 @@ unsafe extern "C" {
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     this.closed.set(true);
-    this.abort_handle.leave();
+    // SAFETY: `this` is live.
+    unsafe { bun_jsc::AbortHandle::owner_left(core::ptr::from_ref(this).cast_mut()) };
     this.poll_ref.with_mut(|p| p.disable());
     this.this_value.with_mut(|r| r.downgrade());
     this.socket.set(None);
@@ -553,10 +554,19 @@ pub(crate) struct UDPSocket {
     abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_jsc::impl_abort_handle_owner!(UDPSocket, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run).
-    UDPSocket::close_socket(unsafe { &*this })
-});
+bun_jsc::impl_abort_handle_owner!(
+    UDPSocket,
+    abort_handle,
+    // Strong from bind until close.
+    keeps_graph_alive = |this| {
+        // SAFETY: trait contract — `this` is live.
+        unsafe { (*this).this_value.get().try_get() }
+    },
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ `on_close` has not run).
+        UDPSocket::close_socket(unsafe { &*this })
+    }
+);
 
 impl UDPSocket {
     /// A socket event is dispatched inside the context of the script that opened the socket (the

@@ -47,13 +47,19 @@ pub struct S3HttpDownloadStreamingTask {
     pub(crate) abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_jsc::impl_abort_handle_owner!(S3HttpDownloadStreamingTask, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ not yet freed by `on_response`).
-    unsafe {
-        (*this).signal_store.aborted.store(true, Ordering::Relaxed);
-        bun_http::http_thread().schedule_shutdown_by_id((*this).async_http_id);
+bun_jsc::impl_abort_handle_owner!(
+    S3HttpDownloadStreamingTask,
+    abort_handle,
+    // Roots no JS value: the stream it feeds is kept by whoever reads it.
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ not yet freed by `on_response`).
+        unsafe {
+            (*this).signal_store.aborted.store(true, Ordering::Relaxed);
+            bun_http::http_thread().schedule_shutdown_by_id((*this).async_http_id);
+        }
     }
-});
+);
 
 // Hot-dispatch tag for `ConcurrentTask::from`.
 impl Taskable for S3HttpDownloadStreamingTask {

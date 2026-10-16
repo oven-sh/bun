@@ -326,6 +326,37 @@ extern "C" void* Bun__currentGraphContext(JSGlobalObject* globalObject)
     return defaultGlobalObject(globalObject)->currentScriptExecutionContext()->bunContext();
 }
 
+// ─── What keeps a graph alive ────────────────────────────────────────────────────────
+//
+// A graph nothing refers to is collected, and its context then stops what the graph's script
+// left open. What that script made refers to the graph: its functions through the overlay, the
+// callbacks it gave native code through the async context they were stored with. A server, a
+// child process, a UDP socket, a terminal or a worker that was given no callback refers to it
+// from here: its wrapper, which native code keeps rooted for as long as it is open or running,
+// holds the graph under @moduleGraph until that work ends, its context having stopped it or
+// not. A graph's own module holding such a wrapper is a cycle like any other.
+
+void keepModuleGraphAliveFrom(WebCore::ScriptExecutionContext* context, JSObject* owner)
+{
+    VM& vm = owner->vm();
+    Identifier name = moduleGraphSlotName(vm);
+    // (A graph that was disposed has no work left to be kept for.)
+    if (JSObject* graph = context && !context->isStopped() ? context->moduleGraph() : nullptr) {
+        owner->putDirect(vm, name, graph, static_cast<unsigned>(PropertyAttribute::DontEnum));
+        return;
+    }
+    if (owner->getDirect(vm, name))
+        owner->putDirect(vm, name, jsUndefined(), static_cast<unsigned>(PropertyAttribute::DontEnum));
+}
+
+// ScriptExecutionContext.rs: what AbortHandleOwner::keeps_graph_alive names, when its owner joins
+// a graph's context; with no context, when the owner leaves it.
+extern "C" void Bun__ModuleGraph__keepAliveFrom(WebCore::ScriptExecutionContext* context, EncodedJSValue encodedOwner)
+{
+    if (JSObject* owner = JSValue::decode(encodedOwner).getObject())
+        keepModuleGraphAliveFrom(context, owner);
+}
+
 // The frame's properties, in the order async_hooks.ts's Frame declares them, at fixed offsets.
 enum ModuleGraphFrameOffset : PropertyOffset { FrameStorage,
     FrameValue,

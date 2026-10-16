@@ -218,6 +218,11 @@ const N_HTTP_METHODS: usize = 36;
 bun_jsc::impl_abort_handle_owner!(
     [const SSL: bool, const DEBUG: bool] NewServer<SSL, DEBUG>,
     abort_handle,
+    // Strong while it listens, and until its last connection is gone.
+    keeps_graph_alive = |this| {
+        // SAFETY: trait contract — `this` is live.
+        unsafe { (*this).js_value.try_get() }
+    },
     |this, _cause| {
         // SAFETY: trait contract — `this` is live (armed ⇒ not deinit'd).
         unsafe { (*this).stop(true) }
@@ -1720,7 +1725,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // A graceful stop leaves connections open, and this handle is how their context's stop
         // reaches them: it stays until they are gone (`deinit_if_we_can`).
         if abrupt {
-            self.abort_handle.leave();
+            // SAFETY: `self` is live.
+            unsafe { jsc::AbortHandle::owner_left(core::ptr::from_mut(self)) };
         }
 
         if Self::HAS_H3 {
@@ -1937,7 +1943,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.unref();
         }
         if self.is_drained() {
-            self.abort_handle.leave();
+            // SAFETY: `self` is live.
+            unsafe { jsc::AbortHandle::owner_left(core::ptr::from_mut(self)) };
             // No handler is dispatched from here on (`js_value_for_dispatch`), so the wrapper —
             // the handlers' only GC root — may become collectible.
             self.js_value.downgrade();

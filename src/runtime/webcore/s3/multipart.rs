@@ -171,18 +171,24 @@ pub struct MultiPartUpload {
     pub(crate) callback_context: Cell<*mut c_void>,
 }
 
-bun_jsc::impl_abort_handle_owner!(MultiPartUpload, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ not dropped); the scoped ref keeps it so
-    // while the completion callback releases others.
-    unsafe {
-        let _guard = RefPtr::init_ref(this);
-        // (What its callback settles is settled in the stopped context: for nobody.)
-        let _ = (*this).fail(S3Error {
-            code: b"AbortError",
-            message: b"The operation was aborted",
-        });
+bun_jsc::impl_abort_handle_owner!(
+    MultiPartUpload,
+    abort_handle,
+    // Roots no JS value of its own, and a writer that is only open has nothing in flight.
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ not dropped); the scoped ref keeps it so
+        // while the completion callback releases others.
+        unsafe {
+            let _guard = RefPtr::init_ref(this);
+            // (What its callback settles is settled in the stopped context: for nobody.)
+            let _ = (*this).fail(S3Error {
+                code: b"AbortError",
+                message: b"The operation was aborted",
+            });
+        }
     }
-});
+);
 
 /// [`MultiPartUpload::fail_writer_collected`]'s task: same pointer as the upload, its own tag.
 #[repr(transparent)]

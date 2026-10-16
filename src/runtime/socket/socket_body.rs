@@ -4359,10 +4359,16 @@ pub(crate) struct DuplexUpgradeContext {
 }
 
 // `close` may re-enter (`on_close`) and schedule the free of `this`.
-bun_jsc::impl_abort_handle_owner!(DuplexUpgradeContext, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ `deinit` has not run).
-    unsafe { bun_ptr::ThisPtr::new(this) }.upgrade.close()
-});
+bun_jsc::impl_abort_handle_owner!(
+    DuplexUpgradeContext,
+    abort_handle,
+    // The socket it upgrades always has handlers, and those reach the graph.
+    keeps_graph_alive = |_this| None,
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ `deinit` has not run).
+        unsafe { bun_ptr::ThisPtr::new(this) }.upgrade.close()
+    }
+);
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]

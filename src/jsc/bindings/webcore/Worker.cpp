@@ -50,6 +50,7 @@
 #include "JSMessageChannel.h"
 #include "JSWorker.h"
 #include "MessagePortPipe.h"
+#include "ModuleGraph.h"
 #include "JSBroadcastChannel.h"
 #include "JSStructuredSerializeOptions.h"
 #include "BunClientData.h"
@@ -117,6 +118,21 @@ void Worker::terminate()
 void Worker::stop()
 {
     terminate();
+}
+
+void Worker::keepModuleGraphAlive(JSC::JSObject* wrapper)
+{
+    if (auto* context = scriptExecutionContext(); context && context->isForModuleGraph()) [[unlikely]]
+        Bun::keepModuleGraphAliveFrom(context, wrapper);
+}
+
+void Worker::letGoOfModuleGraph()
+{
+    auto* context = scriptExecutionContext();
+    if (!context || !context->isForModuleGraph()) [[likely]]
+        return;
+    if (auto* wrapper = this->wrapper())
+        Bun::keepModuleGraphAliveFrom(nullptr, wrapper);
 }
 
 bool Worker::virtualHasPendingActivity() const

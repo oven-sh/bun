@@ -152,8 +152,10 @@ void ScriptExecutionContext::ownGraphContext(ScriptExecutionContext& made)
 void ScriptExecutionContext::moduleGraphDestroyed()
 {
     m_moduleGraph.clear();
-    // Its objects (a WebSocket, a Worker) may be alive and mid-operation: they keep a live
-    // context until they are stopped. At VM teardown they already were (prepareForDestruction).
+    // Its objects (a WebSocket, a writer nobody closed) may be alive and mid-operation: they keep
+    // a live context until they are stopped. (A server, a child or a worker that still ran kept
+    // the graph: ModuleGraph.cpp, "What keeps a graph alive".) At VM teardown they already were
+    // (prepareForDestruction).
     if (!isStopped())
         Bun__VM__queueTask(m_bunVM, new EventLoopTask([protectedThis = Ref { *this }](ScriptExecutionContext&) { protectedThis->stop(); }));
 }

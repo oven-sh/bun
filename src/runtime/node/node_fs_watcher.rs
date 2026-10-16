@@ -79,14 +79,20 @@ pub(crate) struct FSWatcher {
     abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ not yet detached).
-    let this = unsafe { &*this };
-    match cause {
-        bun_jsc::AbortCause::Signal(reason) => this.emit_abort(reason),
-        bun_jsc::AbortCause::ContextStopped(_) => this.close_without_event(),
+bun_jsc::impl_abort_handle_owner!(
+    FSWatcher,
+    abort_handle,
+    // It always has a listener, whose saved async context refers to the graph.
+    keeps_graph_alive = |_this| None,
+    |this, cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ not yet detached).
+        let this = unsafe { &*this };
+        match cause {
+            bun_jsc::AbortCause::Signal(reason) => this.emit_abort(reason),
+            bun_jsc::AbortCause::ContextStopped(_) => this.close_without_event(),
+        }
     }
-});
+);
 
 /// `jsc.Codegen.JSFSWatcher` cached-slot accessors (`values: ["listener"]` in
 /// node.classes.ts). The C++ side is emitted by `generate-classes.ts`.

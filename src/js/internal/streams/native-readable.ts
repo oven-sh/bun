@@ -37,6 +37,7 @@ interface NativeReadable extends NodeReadable {
     buffer: unknown[];
     bufferIndex: number;
     length: number;
+    emitClose: boolean;
   };
   $bunNativePtr: NativePtr | undefined;
   $start?: typeof ensureConstructed;
@@ -65,14 +66,25 @@ interface NativePtr {
 
 let debugId = 0;
 
-function constructNativeReadable(readableStream: ReadableStream, options): NativeReadable {
+// "libuv-handle": child.stdout and child.stderr, net.Sockets in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L335-L337
+function constructNativeReadable(
+  readableStream: ReadableStream,
+  options,
+  nodeSource: "libuv-handle" | "webstream",
+): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = (readableStream as any).$bunNativePtr;
   $assert(typeof bunNativePtr === "object", "Invalid native ptr");
 
   const stream = new Readable(options) as NativeReadable;
   stream._read = read;
-  stream._destroy = destroy;
+  if (nodeSource === "libuv-handle") {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L414-L415
+    stream._readableState.emitClose = false;
+    stream._destroy = destroyHandle;
+  } else {
+    stream._destroy = destroy;
+  }
 
   if (!!$debug) {
     stream.debugId = ++debugId;
@@ -261,16 +273,36 @@ function adjustHighWaterMark(stream: NativeReadable) {
   stream[kHasResized] = true;
 }
 
-function destroy(this: NativeReadable, error: any, cb: () => void) {
-  const ptr = this.$bunNativePtr;
+function cancelSource(stream: NativeReadable, error: any) {
+  const ptr = stream.$bunNativePtr;
   if (ptr) {
     ptr.cancel(error);
   }
-  dropReadAhead(this);
+  dropReadAhead(stream);
+}
+
+function destroy(this: NativeReadable, error: any, cb: (error?: any) => void) {
+  cancelSource(this, error);
   if (cb) {
     // `_destroy` reports its error through the callback.
     process.nextTick(cb, error);
   }
+}
+
+// As net.Socket, 'close' is armed before cb() and does not wait for 'error': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L897-L906
+function destroyHandle(this: NativeReadable, error: any, cb: (error?: any) => void) {
+  cancelSource(this, error);
+  // Two ticks put 'close' behind 'error', where the stream layer emits it. An immediate (net.ts) keeps the loop alive after a fatal error.
+  process.nextTick(queueClose, this, !!error);
+  cb(error);
+}
+
+function queueClose(stream: NativeReadable, hadError: boolean) {
+  process.nextTick(emitClose, stream, hadError);
+}
+
+function emitClose(stream: NativeReadable, hadError: boolean) {
+  stream.emit("close", hadError);
 }
 
 // `_read()` pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async sources do not.

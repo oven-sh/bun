@@ -39,6 +39,34 @@ describe.concurrent("run-shell", () => {
   });
 });
 
+// Bun's shell runs package.json scripts by default on Windows. The system
+// shell row shows that both shells give the same output.
+test.each(isWindows ? ["bun"] : ["bun", "system"])("package script expands ${NAME} with --shell=%s", async shell => {
+  using dir = tempDir("run-shell-braced", {
+    "package.json": JSON.stringify({
+      name: "braced-fixture",
+      version: "1.2.3",
+      scripts: {
+        braced: 'echo ${BRACED_NAME} "${BRACED_VERSION}" ${npm_lifecycle_event}-x',
+      },
+    }),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", `--shell=${shell}`, "braced", "${BRACED_NAME}"],
+    cwd: String(dir),
+    env: { ...bunEnv, BRACED_NAME: "braced-fixture", BRACED_VERSION: "1.2.3" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The argument after the script name is data. It stays text.
+  expect(stdout).toBe("braced-fixture 1.2.3 braced-x ${BRACED_NAME}\n");
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(isWindows)(
   "package script shell interpreter is resolved from the original PATH, not node_modules/.bin",
   async () => {

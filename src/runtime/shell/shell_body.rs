@@ -618,13 +618,14 @@ impl<'a> ShellSrcBuilder<'a> {
         Ok(true)
     }
 
+    /// The script ends in `$NAME` or `{NAME`: a value spliced in as text would extend the name.
     fn outbuf_ends_with_var_ref(&self) -> bool {
         match self
             .outbuf
             .iter()
             .rposition(|b| !(b.is_ascii_alphanumeric() || *b == b'_'))
         {
-            Some(i) => self.outbuf[i] == b'$',
+            Some(i) => matches!(self.outbuf[i], b'$' | b'{'),
             None => false,
         }
     }

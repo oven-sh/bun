@@ -27,6 +27,17 @@ describe("bun exec", () => {
     .stdout('hi "there bud"\n')
     .runAsTest("it works2");
 
+  TestBuilder.command`${BUN} exec ${'FOO=bar; echo ${FOO} "${FOO}" ${FOO}baz'}`
+    .env(bunEnv)
+    .stdout("bar bar barbaz\n")
+    .runAsTest("expands ${NAME}");
+
+  TestBuilder.command`${BUN} script.sh`
+    .file("script.sh", 'FOO=bar\necho ${FOO} "${FOO}" ${FOO}baz\n')
+    .env(bunEnv)
+    .stdout("bar bar barbaz\n")
+    .runAsTest("expands ${NAME} in a .sh file");
+
   TestBuilder.command`${BUN} exec ${"cat filename"}`
     .file(
       "filename",

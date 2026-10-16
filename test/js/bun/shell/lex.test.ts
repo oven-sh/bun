@@ -821,6 +821,122 @@ describe("lex shell", () => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
   });
 
+  // `${` in a JS template literal starts an interpolation, so the sources
+  // here go to the lexer as a raw array.
+  describe("${NAME}", () => {
+    const tokens = (source: string) => JSON.parse(lex({ raw: [source] }));
+
+    test.each([
+      ["a whole word", "echo ${PORT}", "echo $PORT"],
+      ["in double quotes", 'echo "${X}"', 'echo "$X"'],
+      ["in double quotes beside text", 'echo "a ${X} b"', 'echo "a $X b"'],
+      ["two in one word", "${A}${B}", "$A$B"],
+      ["a positional parameter", "echo ${1}", "echo $1"],
+      ["before a brace group", "${X}{a,b}", "$X{a,b}"],
+      ["in a brace group", "{${X},b}", "{$X,b}"],
+      ["in a script that is not ASCII", "é${X}", "é$X"],
+      ["before a character that is not ASCII", "${X}é", "$Xé"],
+      ["in $(...)", "echo $(echo ${X})", "echo $(echo $X)"],
+      ["in $(...) in a script that is not ASCII", "é $(echo ${X})", "é $(echo $X)"],
+      ["in backticks", "echo `echo ${X}`", "echo `echo $X`"],
+      ["in a subshell", "(echo ${X})", "(echo $X)"],
+      ["before a space", "${FOO} bar", "$FOO bar"],
+      ["before a newline", "echo ${FOO}\nls", "echo $FOO\nls"],
+      ["before a semicolon", "${FOO};b", "$FOO;b"],
+      ["before an operator", "${FOO}|b", "$FOO|b"],
+      ["before a #", "${X}#c", "$X#c"],
+      ["after a literal $", "$${X}", "$$X"],
+      ["inside a form that is not supported", "${X:-${Y}}", "${X:-$Y}"],
+      ["inside a form that is not supported, in double quotes", '"${X:-${Y}}"', '"${X:-$Y}"'],
+    ])("the same tokens as $NAME: %s", (_name, braced, bare) => {
+      expect(tokens(braced)).toEqual(tokens(bare));
+    });
+
+    test.each([
+      [
+        "text after the brace",
+        "echo ${FOO}bar",
+        [{ Text: "echo" }, { Delimit: {} }, { Var: "FOO" }, { Text: "bar" }, { Delimit: {} }, { Eof: {} }],
+      ],
+      ["text on both sides", "a${X}b", [{ Text: "a" }, { Var: "X" }, { Text: "b" }, { Delimit: {} }, { Eof: {} }]],
+      [
+        "text on both sides in a script that is not ASCII",
+        "é${X}b",
+        [{ Text: "é" }, { Var: "X" }, { Text: "b" }, { Delimit: {} }, { Eof: {} }],
+      ],
+      ["name characters after the brace", "${X}_1", [{ Var: "X" }, { Text: "_1" }, { Delimit: {} }, { Eof: {} }]],
+      ["a digit after a positional parameter", "${1}0", [{ VarArgv: 1 }, { Text: "0" }, { Delimit: {} }, { Eof: {} }]],
+      ["an underscore and digits in the name", "${_X_1}", [{ Var: "_X_1" }, { Eof: {} }]],
+    ])("the braces end the name: %s", (_name, source, expected) => {
+      expect(tokens(source)).toEqual(expected);
+    });
+
+    const literal = (...inside: object[]) => [
+      { Text: "$" },
+      { BraceBegin: {} },
+      ...inside,
+      { BraceEnd: {} },
+      { Eof: {} },
+    ];
+    test.each([
+      ["an escaped $", "\\${X}", literal({ Text: "X" })],
+      ["an escaped {", "$\\{X}", [{ Text: "$" }, { Text: "{X" }, { BraceEnd: {} }, { Eof: {} }]],
+      ["single quotes", "'${X}'", [{ SingleQuotedText: "${X}" }, { Eof: {} }]],
+      ["an escaped $ in double quotes", '"\\${X}"', [{ DoubleQuotedText: "${X}" }, { Eof: {} }]],
+    ])("stays text, as in sh: %s", (_name, source, expected) => {
+      expect(tokens(source)).toEqual(expected);
+    });
+
+    // sh expands or rejects each of these. Bun's shell does not support them:
+    // the `$` is text and the rest is lexed as ordinary shell syntax. The rows
+    // record that reading `${NAME}` left these tokens as they were.
+    test.each([
+      ["an operator", "${X:-d}", literal({ Text: "X:-d" })],
+      [
+        "an operator in double quotes",
+        '"${X:-d}"',
+        [{ DoubleQuotedText: "$" }, { DoubleQuotedText: "{X:-d}" }, { Eof: {} }],
+      ],
+      ["a length", "${#X}", literal({ Text: "#X" })],
+      ["two digits", "${10}", literal({ Text: "10" })],
+      ["no name", "${}", literal()],
+      ["a digit then a letter", "${1a}", literal({ Text: "1a" })],
+      ["a name that is not ASCII", "${é}", literal({ Text: "é" })],
+      ["spaces around the name", "${ X }", literal({ Delimit: {} }, { Text: "X" }, { Delimit: {} })],
+      ["a backslash in the name", "${F\\OO}", literal({ Text: "FOO" })],
+      ["a brace group after $", "${a,b}", literal({ Text: "a" }, { Comma: {} }, { Text: "b" })],
+      ["no closing brace", "${X", [{ Text: "$" }, { BraceBegin: {} }, { Text: "X" }, { Delimit: {} }, { Eof: {} }]],
+      [
+        "no closing brace in $(...)",
+        "$(echo ${X)",
+        [
+          { CmdSubstBegin: {} },
+          { Text: "echo" },
+          { Delimit: {} },
+          { Text: "$" },
+          { BraceBegin: {} },
+          { Text: "X" },
+          { Delimit: {} },
+          { CmdSubstEnd: {} },
+          { Eof: {} },
+        ],
+      ],
+    ])("not supported, tokens unchanged: %s", (_name, source, expected) => {
+      expect(tokens(source)).toEqual(expected);
+    });
+
+    // An interpolated value is data. It never supplies the name, or a part of
+    // the name, of a `${NAME}` that the template opens.
+    test.each([
+      ["the whole name", ["echo ${", "}"], "X", literal({ Text: "X" })],
+      ["the end of the name", ["echo ${FOO", "}"], "BAR", literal({ Text: "FOO" }, { Text: "BAR" })],
+      ["a digit", ["echo ${", "}"], 1, literal({ Text: "1" })],
+      ["the name, after an escaped $", ["echo \\${", "}"], "X", literal({ Text: "X" })],
+    ])("an interpolated value is not a braced name: %s", (_name, raw, value, word) => {
+      expect(JSON.parse(lex({ raw }, value))).toEqual([{ Text: "echo" }, { Delimit: {} }, ...word]);
+    });
+  });
+
   describe("errors", async () => {
     // This is disallowed because the js object references get turned into special vars: $__bun_0, $__bun_1, etc.
     // this will break things inside of a quote.

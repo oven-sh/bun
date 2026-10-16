@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
+import { statSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-// The umask is pinned for the tests that check the permissions of the profile: bun writes it at exit.
-const testScript = `process.umask(0o022); const arr = []; for (let i = 0; i < 100; i++) arr.push({ x: i, y: "hello" + i }); console.log("done");`;
+const testScript = `const arr = []; for (let i = 0; i < 100; i++) arr.push({ x: i, y: "hello" + i }); console.log("done");`;
 
 // Node's DiagnosticFilename format: Heap.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq>.heapprofile
 const nodeFilenameRe = /^Heap\.\d{8}\.\d{6}\.\d+\.0\.\d{3}\.heapprofile$/;
@@ -22,11 +22,6 @@ function expectV8HeapSnapshotShape(profile: any) {
   expect(Array.isArray(profile.nodes)).toBe(true);
   expect(Array.isArray(profile.edges)).toBe(true);
   expect(Array.isArray(profile.strings)).toBe(true);
-}
-
-// The permission bits in octal. Windows has none to check.
-async function permissions(path: string) {
-  return ((await Bun.file(path).stat()).mode & 0o777).toString(8);
 }
 
 test("--heap-prof writes a .heapprofile with node's filename format on exit", async () => {
@@ -49,8 +44,6 @@ test("--heap-prof writes a .heapprofile with node's filename format on exit", as
   const files = Array.from(glob.scanSync({ cwd: String(dir) }));
   expect(files.length).toBe(1);
   expect(files[0]).toMatch(nodeFilenameRe);
-  // Node creates the file with mode 0600 (WriteFileSync in src/node_file_utils.cc).
-  if (!isWindows) expect(await permissions(join(String(dir), files[0]))).toBe("600");
 
   const profile = await readProfile(String(dir), files[0]);
   expectV8HeapSnapshotShape(profile);
@@ -128,8 +121,6 @@ test("--heap-prof-md generates markdown heap profile on exit", async () => {
 
   // Read and validate the heap profile content
   const profilePath = join(String(dir), files[0]);
-  // Node has no --heap-prof-md. The file gets the mode of the --heap-prof file.
-  if (!isWindows) expect(await permissions(profilePath)).toBe("600");
   const content = await Bun.file(profilePath).text();
 
   // Check for markdown headers
@@ -238,21 +229,34 @@ test("--heap-prof-name specifies output filename", async () => {
   expectV8HeapSnapshotShape(profile);
 });
 
-// The first open fails because the directory is missing. The open after the mkdir creates the file.
-test.skipIf(isWindows)("--heap-prof-dir is created when missing, and the profile gets mode 0600", async () => {
-  using dir = tempDir("heap-prof-missing-dir-test", {});
+// Node creates a --heap-prof file with mode 0600 (WriteFileSync in src/node_file_utils.cc).
+// Node has no --heap-prof-md. That file gets the same mode.
+test.skipIf(isWindows).each([
+  {
+    name: "--heap-prof",
+    flags: ["--heap-prof", "--heap-prof-name", "out.heapprofile"],
+    stderr: /^$/,
+    modes: { "out.heapprofile": "600" },
+  },
+  {
+    name: "--heap-prof-md",
+    flags: ["--heap-prof-md", "--heap-prof-name", "out.md"],
+    stderr: /^Heap profile written to: .*out\.md\n$/,
+    modes: { "out.md": "600" },
+  },
+  {
+    // The first open fails because the directory is missing. The open after the mkdir creates the file.
+    name: "--heap-prof with a missing --heap-prof-dir",
+    flags: ["--heap-prof", "--heap-prof-dir", "missing/dir", "--heap-prof-name", "out.heapprofile"],
+    stderr: /^$/,
+    modes: { "missing": "755", "missing/dir": "755", "missing/dir/out.heapprofile": "600" },
+  },
+])("$name creates the profile with mode 0600", async ({ flags, stderr: expectedStderr, modes }) => {
+  using dir = tempDir("heap-prof-mode-test", {});
 
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "--heap-prof",
-      "--heap-prof-dir",
-      "missing/dir",
-      "--heap-prof-name",
-      "retry.heapprofile",
-      "-e",
-      "process.umask(0o022);",
-    ],
+    // The profile is written at exit, so the umask that the script sets applies to it.
+    cmd: [bunExe(), ...flags, "-e", "process.umask(0o022);"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -260,16 +264,12 @@ test.skipIf(isWindows)("--heap-prof-dir is created when missing, and the profile
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  expect(stderr).toMatch(expectedStderr);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
 
   const entries = [...new Bun.Glob("**").scanSync({ cwd: String(dir), onlyFiles: false })];
-  const modes = await Promise.all(entries.map(async entry => [entry, await permissions(join(String(dir), entry))]));
-  expect(Object.fromEntries(modes)).toEqual({
-    "missing": "755",
-    "missing/dir": "755",
-    "missing/dir/retry.heapprofile": "600",
-  });
-  expectV8HeapSnapshotShape(await readProfile(join(String(dir), "missing", "dir"), "retry.heapprofile"));
+  const permissions = entries.map(entry => [entry, (statSync(join(String(dir), entry)).mode & 0o777).toString(8)]);
+  expect(Object.fromEntries(permissions)).toEqual(modes);
 });
 
 test("--heap-prof-name and --heap-prof-dir work together", async () => {

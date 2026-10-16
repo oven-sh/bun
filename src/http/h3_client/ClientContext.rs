@@ -203,7 +203,7 @@ impl ClientContext {
         session.registry_index = u32::MAX;
     }
 
-    pub(crate) fn abort_by_http_id(async_http_id: u32) -> bool {
+    pub(crate) fn abort_by_http_id(async_http_id: u64) -> bool {
         let Some(this) = Self::get() else {
             return false;
         };
@@ -233,7 +233,7 @@ impl ClientContext {
         }
     }
 
-    pub(crate) fn stream_body_by_http_id(async_http_id: u32, message: WriteMessageType) {
+    pub(crate) fn stream_body_by_http_id(async_http_id: u64, message: WriteMessageType) {
         let Some(this) = Self::get() else {
             return;
         };
@@ -247,7 +247,7 @@ impl ClientContext {
         }
     }
 
-    pub(crate) fn resume_receive_by_http_id(async_http_id: u32) {
+    pub(crate) fn resume_receive_by_http_id(async_http_id: u64) {
         let Some(this) = Self::get() else {
             return;
         };

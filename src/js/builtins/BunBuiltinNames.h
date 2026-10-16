@@ -38,7 +38,6 @@ using namespace JSC;
     macro(WritableStreamDefaultWriter) \
     macro(_events) \
     macro(abort) \
-    macro(addAbortAlgorithmToSignal) \
     macro(arrayBuffer) \
     macro(asUint8Array) \
     macro(atimeMs) \
@@ -153,7 +152,6 @@ using namespace JSC;
     macro(readableType) \
     macro(redirect) \
     macro(relative) \
-    macro(removeAbortAlgorithmFromSignal) \
     macro(require) \
     macro(requireESM) \
     macro(requireMap) \

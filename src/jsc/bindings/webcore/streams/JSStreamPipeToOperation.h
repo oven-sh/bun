@@ -31,9 +31,11 @@
 
 namespace WebCore {
 
-class JSStreamPipeToOperation final : public JSC::JSInternalFieldObjectImpl<9> {
+enum class AbortAlgorithmIdentifier : uint64_t;
+
+class JSStreamPipeToOperation final : public JSC::JSInternalFieldObjectImpl<8> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<9>;
+    using Base = JSC::JSInternalFieldObjectImpl<8>;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
 
@@ -55,8 +57,6 @@ public:
         // The promise of the write we are currently reacting to (the pipe reacts to EVERY
         // write-request promise).
         CurrentWrite,
-        // "shutdown with an action": the action's promise while it is pending.
-        ShutdownActionPromise,
         // The `originalError` / `error` handed to finalize; gated by m_hasShutdownError
         // (an error value of `undefined` is legal).
         ShutdownError,
@@ -139,7 +139,6 @@ public:
     JSC::JSObject* signal() const { return uncheckedDowncast<JSC::JSObject>(fieldCell(Field::Signal)); }
     JSC::JSPromise* promise() const { return uncheckedDowncast<JSC::JSPromise>(fieldCell(Field::Promise)); }
     JSC::JSPromise* currentWrite() const { return uncheckedDowncast<JSC::JSPromise>(fieldCell(Field::CurrentWrite)); }
-    JSC::JSPromise* shutdownActionPromise() const { return uncheckedDowncast<JSC::JSPromise>(fieldCell(Field::ShutdownActionPromise)); }
     JSC::JSValue shutdownError() const { return internalField(Field::ShutdownError).get(); }
 
     void setSource(JSC::VM& vm, JSReadableStream* source) { internalField(Field::Source).set(vm, this, source); }
@@ -149,11 +148,10 @@ public:
     void setSignal(JSC::VM& vm, JSC::JSObject* signal) { internalField(Field::Signal).set(vm, this, signal); }
     void setPromise(JSC::VM& vm, JSC::JSPromise* promise) { internalField(Field::Promise).set(vm, this, promise); }
     void setCurrentWrite(JSC::VM& vm, JSC::JSPromise* promise) { internalField(Field::CurrentWrite).set(vm, this, promise); }
-    void setShutdownActionPromise(JSC::VM& vm, JSC::JSPromise* promise) { internalField(Field::ShutdownActionPromise).set(vm, this, promise); }
     void setShutdownError(JSC::VM& vm, JSC::JSValue error) { internalField(Field::ShutdownError).set(vm, this, error); }
 
-    // Handle returned by WebCore::addAbortAlgorithmToSignal; 0 = none registered.
-    uint32_t m_abortAlgorithmId { 0 };
+    // Handle returned by WebCore::addAbortAlgorithmToSignal; the zero value = none registered.
+    AbortAlgorithmIdentifier m_abortAlgorithmId {};
     // "shutdown with an action" wait-for-all latch: the number of action promises still
     // pending (AbortBoth registers two). The last settlement proceeds.
     uint8_t m_pendingShutdownActions { 0 };
@@ -165,6 +163,8 @@ public:
     bool m_shuttingDown : 1 { false };
     // set once "finalize" ran (back-edges cleared, abort algorithm removed).
     bool m_finalized : 1 { false };
+    // the "shutdown with an action" action has been performed; it runs at most once.
+    bool m_shutdownActionStarted : 1 { false };
     // a read has been issued and its read request has not settled yet.
     bool m_readInFlight : 1 { false };
     bool m_preventClose : 1 { false };
@@ -181,5 +181,7 @@ private:
         return value.isCell() ? value.asCell() : nullptr;
     }
 };
+
+static_assert(sizeof(JSStreamPipeToOperation) == 96, "allocated once per pipeTo() / pipeThrough() call; 104 bytes would take a 112-byte cell");
 
 } // namespace WebCore

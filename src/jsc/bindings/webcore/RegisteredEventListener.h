@@ -31,6 +31,7 @@ namespace WebCore {
 
 class AbortSignal;
 class WeakPtrImplWithEventTargetData;
+enum class AbortAlgorithmIdentifier : uint64_t;
 
 // https://dom.spec.whatwg.org/#concept-event-listener
 class RegisteredEventListener : public RefCounted<RegisteredEventListener> {
@@ -72,7 +73,7 @@ public:
     // removeAllEventListeners) markAsRemoved() will drop that algorithm from
     // the signal so m_algorithms doesn't grow unboundedly when the same
     // signal is reused across many add/remove cycles.
-    void setAbortSignal(WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData>&&, uint32_t algorithmIdentifier);
+    void setAbortSignal(WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData>&&, AbortAlgorithmIdentifier);
 
 private:
     RegisteredEventListener(Ref<EventListener>&& listener, const Options& options)
@@ -90,9 +91,13 @@ private:
     bool m_isOnce : 1;
     bool m_wasRemoved : 1;
     bool m_resistStopPropagation : 1;
-    uint32_t m_abortAlgorithmIdentifier { 0 };
+    AbortAlgorithmIdentifier m_abortAlgorithmIdentifier {};
     Ref<EventListener> m_callback;
     WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData> m_abortSignal;
 };
+
+#if !CHECK_REF_COUNTED_LIFECYCLE
+static_assert(sizeof(RegisteredEventListener) == 32, "allocated once per addEventListener() call");
+#endif
 
 } // namespace WebCore

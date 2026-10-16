@@ -206,7 +206,7 @@ void AbortSignal::runAbortSteps()
     for (auto& algorithm : std::exchange(m_algorithms, {}))
         algorithm.second(reason);
 
-    Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> abortAlgorithms;
+    decltype(m_abortAlgorithms) abortAlgorithms;
     {
         Locker locker { m_abortAlgorithmsLock };
         abortAlgorithms = std::exchange(m_abortAlgorithms, {});
@@ -299,21 +299,27 @@ void AbortSignal::eventListenersDidChange()
     }
 }
 
-uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)
+AbortAlgorithmIdentifier AbortSignal::nextAlgorithmIdentifier()
+{
+    m_algorithmIdentifier = AbortAlgorithmIdentifier { std::to_underlying(m_algorithmIdentifier) + 1 };
+    return m_algorithmIdentifier;
+}
+
+AbortAlgorithmIdentifier AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)
 {
     if (signal.aborted()) {
         // TODO: Null check.
         algorithm->handleEvent(signal.jsReason(*signal.scriptExecutionContext()->jsGlobalObject()));
-        return 0;
+        return {};
     }
-    auto identifier = ++signal.m_algorithmIdentifier;
+    auto identifier = signal.nextAlgorithmIdentifier();
     Locker locker { signal.m_abortAlgorithmsLock };
     signal.m_abortAlgorithms.append(std::make_pair(identifier, WTF::move(algorithm)));
     signal.m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
     return identifier;
 }
 
-void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t algorithmIdentifier)
+void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, AbortAlgorithmIdentifier algorithmIdentifier)
 {
     Locker locker { signal.m_abortAlgorithmsLock };
     if (signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
@@ -322,14 +328,15 @@ void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t a
         signal.m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
-uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
+AbortAlgorithmIdentifier AbortSignal::addAlgorithm(Algorithm&& algorithm)
 {
-    m_algorithms.append(std::make_pair(++m_algorithmIdentifier, WTF::move(algorithm)));
+    auto identifier = nextAlgorithmIdentifier();
+    m_algorithms.append(std::make_pair(identifier, WTF::move(algorithm)));
     m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
-    return m_algorithmIdentifier;
+    return identifier;
 }
 
-void AbortSignal::removeAlgorithm(uint32_t algorithmIdentifier)
+void AbortSignal::removeAlgorithm(AbortAlgorithmIdentifier algorithmIdentifier)
 {
     if (m_algorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
             return pair.first == algorithmIdentifier;

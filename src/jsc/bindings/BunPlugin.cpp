@@ -2467,6 +2467,46 @@ __attribute__((minsize)) static bool isImportedByModuleYetToRun(Zig::GlobalObjec
     return false;
 }
 
+// The body of the module that `mock` patched has run since, and has given a value to the exports that had none. Resolves once the factory has settled too.
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionBodyOfPatchedModuleDidRun, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* mock = toModuleMock(globalObject, scope, callframe->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    String specifier = mock->specifier->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (registeredModuleMock(globalObject, specifier) != mock)
+        return JSValue::encode(jsUndefined());
+
+    LoadedModule loaded;
+    findLoadedESModule(globalObject, mock->specifier.get(), loaded);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (JSObject* overwritten = loaded.esmNamespace ? mock->originalExports.get() : nullptr) {
+        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        overwritten->getOwnPropertyNames(overwritten, globalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, {});
+        for (auto& name : names) {
+            JSValue saved = overwritten->get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (saved != overwritten)
+                continue;
+            ExportVariable variable = findExportVariable(globalObject, loaded.esmNamespace, name);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSValue original = variable.record ? variable.record->moduleEnvironment()->readVariable(vm, variable.offset) : JSValue();
+            if (!original)
+                continue;
+            overwritten->putDirectMayBeIndex(globalObject, name, original);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    JSC::JSPromise* pending = mock->run(globalObject, false);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(pending ? JSValue(pending) : jsUndefined());
+}
+
 __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, ModuleMockFunction function)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -2581,6 +2621,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // Left for later, the body of a linked module would assign over the patch. It can't run ahead of an import whose own body is up the stack, though.
     using Status = JSC::CyclicModuleRecord::Status;
     auto* linked = loaded.esmNamespace ? dynamicDowncast<JSC::CyclicModuleRecord>(loaded.esmNamespace->moduleRecord()) : nullptr;
+    JSC::JSPromise* bodyYetToRun = nullptr;
     if (linked && linked->status() == Status::Linked && !linked->hasLiveExports() && !anyUnevaluatedImport(linked, [](JSC::CyclicModuleRecord* imported) { return imported->status() == Status::Evaluating; })) {
         JSC::JSPromise* evaluating = linked->evaluate(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2589,6 +2630,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             scope.throwException(globalObject, evaluating->result());
             return {};
         }
+        // It waits for an import that is asynchronous, e.g. a module that a preload mocks with an async factory.
+        if (evaluating->status() == JSC::JSPromise::Status::Pending)
+            bodyYetToRun = evaluating;
         loaded = findLoadedModule(globalObject, specifierString);
         RETURN_IF_EXCEPTION(scope, {});
         previous = registeredModuleMock(globalObject, specifier);
@@ -2639,6 +2683,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             isCurrent = isStillRegisteredModuleMock(globalObject, specifier, previous);
         }
     }
+    // Its functions are the mock's from here on. What the body assigns is the mock's once it is patched again.
+    if (bodyYetToRun && isCurrent)
+        pendingFactory = thenWithContext(globalObject, bodyYetToRun, jsFunctionBodyOfPatchedModuleDidRun, nullptr, mock);
 
     auto& plugins = globalObject->onLoadPlugins;
     if (isCurrent) {
@@ -3342,6 +3389,9 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
             auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
             if (!cyclic || cyclic->isSCCEvaluated())
                 return;
+        } else if (auto* mock = registeredModuleMock(globalObject, key); mock && mock->state == JSModuleMock::State::Settled && !mock->importsOriginal) {
+            // What is being fetched is the mock's own module, which imports nothing.
+            return;
         } else if (auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key)); entry && isBeingFetchedWithoutFactory(globalObject, entry)) {
             // Another load is fetching it, and it may import the mock. In the chain it would get the original, for that load too, so treat it as waiting.
             running.waitingModules.add(key);

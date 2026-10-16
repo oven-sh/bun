@@ -5867,6 +5867,51 @@ describe.concurrent("vi.doMock() of a module that a preload has loaded and the f
   });
 });
 
+// For a few ticks after a plain factory has returned, the module of its mock is still being fetched. It used to count as a module
+// that may wait for the running factory, and with it everything that imports it, so import() gave an empty copy that doesn't wait.
+test.concurrent.each([[[]], [["--isolate"]]])(
+  "a factory imports a partly mocked module whose original imports a mocked one, after any number of ticks %j",
+  async args => {
+    const files: Record<string, string> = {};
+    const ticks = 16;
+    for (let i = 0; i < ticks; i++) {
+      files[`${i}/unit.ts`] = `export const unit = "real";`;
+      files[`${i}/token.ts`] = `
+        import { unit } from "./unit";
+        export const token = { unit };
+        export function read() { return "real"; }
+      `;
+      files[`${i}/panel.ts`] = `
+        import { token } from "./token";
+        export const panel = () => token;
+      `;
+      files[`${i}/page.ts`] = `
+        import { panel } from "./panel";
+        import { token, read } from "./token";
+        export const page = () => ({ own: token, given: panel(), read: read() });
+      `;
+      files[`${i}/ticks.test.ts`] = `
+        import { expect, test, vi } from "bun:test";
+        vi.mock("./unit", () => ({ unit: "mock" }));
+        vi.mock("./token", async importOriginal => ({ ...(await importOriginal()), read: () => "mock" }));
+        vi.mock("./panel", async () => {
+          for (let i = 0; i < ${i}; i++) await null;
+          const { token } = await import("./token");
+          return { panel: () => token };
+        });
+        import { page } from "./page";
+        test("${i} ticks", () => {
+          const { own, given, read } = page();
+          expect(own).toEqual({ unit: "mock" });
+          expect(given).toBe(own);
+          expect(read).toBe("mock");
+        });
+      `;
+    }
+    await expectFixturesToPass(files, ticks, args);
+  },
+);
+
 describe.concurrent("a module that is linked, but not evaluated yet, when it is mocked", () => {
   // linked.test.ts hoists nothing, so all its imports are linked before the first of them is evaluated, which mocks the last.
   function linked(name: string, mocksTax: string, expected: string, startOfTax = "") {
@@ -5933,6 +5978,47 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
         ),
       },
       8,
+      args,
+    );
+  });
+
+  // Its body can't run at once then, and would assign over a patch that is made before it.
+  test.each([[[]], [["--isolate"]]])("an import of its own has an async factory from a preload %j", async args => {
+    await expectFixturesToPass(
+      {
+        "bunfig.toml": `[test]\npreload = ["./mocks-region.ts"]`,
+        "mocks-region.ts": `
+          import { vi } from "bun:test";
+          vi.mock("./region", async importOriginal => ({ ...(await importOriginal()) }));
+        `,
+        "region.ts": `export const region = "EU";`,
+        "tax.ts": `
+          import { region } from "./region";
+          export const rate = region === "EU" ? 0.2 : 0.1;
+          export let label = "real " + region;
+          export class Tax {}
+          export function round() { return "real"; }
+        `,
+        "invoice.ts": `
+          import { rate, label, round, Tax } from "./tax";
+          export const read = () => [rate, label, round(), Tax.name];
+        `,
+        "mocks-tax.ts": `
+          import { vi } from "bun:test";
+          vi.mock("./tax", () => ({ rate: 1, label: "mock", round: () => "mock", Tax: class Mock {} }));
+        `,
+        "linked.test.ts": `
+          import "./mocks-tax";
+          import { expect, test, vi } from "bun:test";
+          import { read } from "./invoice";
+          test("every kind of export is the mock's", async () => {
+            expect(read()).toEqual([1, "mock", "mock", "Mock"]);
+            const { rate, label, round, Tax } = await vi.importActual("./tax");
+            expect([rate, label, round(), Tax.name]).toEqual([0.2, "real EU", "real", "Tax"]);
+          });
+        `,
+      },
+      1,
       args,
     );
   });

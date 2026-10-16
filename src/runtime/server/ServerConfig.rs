@@ -713,7 +713,6 @@ impl ServerConfig {
                 global,
             };
             let init_ctx = &mut init_ctx_;
-            // (dedupe_html_bundle_map is unused on the success path; drops at scope end.)
 
             // Vec<StaticRouteEntry> drops elements (which deref route)
             // automatically on error.

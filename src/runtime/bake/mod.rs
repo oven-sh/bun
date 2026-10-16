@@ -77,9 +77,7 @@ impl Mode {
 
 /// `bake.Framework.ServerComponents`.
 ///
-/// In this and the types below, `Cow::Borrowed` is only ever a literal or a path
-/// the resolver interned.
-#[derive(Clone)]
+/// Here and in the types below, `Cow::Borrowed` is a literal or a path the resolver interned.
 pub(crate) struct ServerComponents {
     pub(crate) separate_ssr_graph: bool,
     /// REQUIRED — `fromJS` throws if `serverRuntimeImportSource` is absent.
@@ -90,9 +88,9 @@ pub(crate) struct ServerComponents {
 }
 
 impl ServerComponents {
-    pub(crate) fn new(server_runtime_import: Cow<'static, [u8]>) -> Self {
+    pub(crate) fn new(separate_ssr_graph: bool, server_runtime_import: Cow<'static, [u8]>) -> Self {
         Self {
-            separate_ssr_graph: false,
+            separate_ssr_graph,
             server_runtime_import,
             server_register_client_reference: Cow::Borrowed(b"registerClientReference"),
             server_register_server_reference: Cow::Borrowed(b"registerServerReference"),
@@ -101,7 +99,6 @@ impl ServerComponents {
     }
 }
 
-#[derive(Clone)]
 pub(crate) struct ReactFastRefresh {
     pub(crate) import_source: Cow<'static, [u8]>,
 }
@@ -129,10 +126,7 @@ pub(crate) struct FileSystemRouterType {
 }
 
 /// A "Framework" is simply a set of bundler options that a framework author
-/// would set in order to integrate with the application. The default is
-/// unopinionated. `from_js`, `react` and `auto` live in `bake_body.rs`.
-///
-/// Full documentation on these fields is located in the TypeScript definitions.
+/// would set in order to integrate with the application.
 #[derive(Default)]
 pub(crate) struct Framework {
     pub(crate) is_built_in_react: bool,
@@ -144,7 +138,7 @@ pub(crate) struct Framework {
     pub(crate) built_in_modules: bun_collections::StringArrayHashMap<BuiltInModule>,
 }
 
-pub(crate) fn resolve_path(
+fn resolve_path(
     r: &mut bun_resolver::Resolver,
     path: &[u8],
 ) -> Result<Cow<'static, [u8]>, bun_resolver::Error> {
@@ -168,16 +162,9 @@ impl Framework {
     /// lower-tier crate and cannot name `bun_runtime::bake::Framework`; this is
     /// the value `init_transpiler` arena-allocates and hands to
     /// `out.options.framework`.
-    pub(crate) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
+    fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
         use bun_bundler::bake_types as bt;
-        let mut built_in_modules = bun_collections::StringArrayHashMap::new();
-        for (k, v) in self.built_in_modules.iter() {
-            let bv = match v {
-                BuiltInModule::Import(p) => BuiltInModule::Import(p.clone()),
-                BuiltInModule::Code(c) => BuiltInModule::Code(c.clone()),
-            };
-            bun_core::handle_oom(built_in_modules.put(k, bv));
-        }
+        let built_in_modules = bun_core::handle_oom(self.built_in_modules.clone());
         let server_components = self
             .server_components
             .as_ref()
@@ -212,8 +199,7 @@ impl Framework {
     }
 
     /// Resolves built-in module
-    /// specifiers and entry points against the resolvers, in place.
-    /// Errors written into `r.log`.
+    /// specifiers and entry points against the resolvers, in place. Errors written into `r.log`.
     pub(crate) fn resolve(
         &mut self,
         server: &mut bun_resolver::Resolver,
@@ -281,7 +267,7 @@ impl Framework {
     ) {
         if let Some(module) = built_in_modules.get(path) {
             if let BuiltInModule::Import(p) = module {
-                *path = Cow::Owned(p.to_vec());
+                path.clone_from(p);
             }
             return;
         }

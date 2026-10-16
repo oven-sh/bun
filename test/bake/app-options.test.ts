@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // Every option here is declared as `string` or `boolean` in bake.d.ts. A value
@@ -58,33 +58,41 @@ test("Bun.serve({ app }) rejects wrong-typed framework options", async () => {
   expect(exitCode).toBe(0);
 });
 
-test('Bun.serve({ app }) reports a framework entry point that a "browser" map disables', async () => {
-  using dir = tempDir("bake-app-disabled-entry", {
+describe.concurrent('a framework entry point that a "browser" map disables is reported', () => {
+  const fsr = `{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" }`;
+  const files = {
     "package.json": JSON.stringify({ name: "app", browser: { "./client.ts": false } }),
     "client.ts": `export {};`,
     "server.ts": `export function render() { return new Response("ok"); }`,
     "routes/index.ts": `export default () => new Response("ok");`,
+    "bun.app.ts": `export default { app: { framework: { fileSystemRouterTypes: [${fsr}] } } };`,
     "fixture.ts": `
-      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
       try {
-        Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } }).stop(true);
+        Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [${fsr}] } } }).stop(true);
         console.log("no error");
       } catch (e) {
         console.log("threw: " + e.message);
       }
     `,
-  });
+  };
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  test.each([
+    { name: "Bun.serve({ app })", args: ["fixture.ts"], out: "threw: Framework is missing required files!\n", code: 0 },
+    { name: "bun build --app", args: ["build", "--app"], out: "", code: 1 },
+  ])("$name", async ({ args, out, code }) => {
+    using dir = tempDir("bake-app-disabled-entry", files);
 
-  expect(stderr).toContain("Failed to resolve './client.ts' for framework (client side entrypoint)");
-  expect(stdout).toBe("threw: Framework is missing required files!\n");
-  expect(exitCode).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Failed to resolve './client.ts' for framework (client side entrypoint)");
+    expect(stdout).toBe(out);
+    expect(exitCode).toBe(code);
+  });
 });

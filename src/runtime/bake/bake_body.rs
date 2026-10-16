@@ -285,7 +285,7 @@ impl Framework {
     /// $ bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun
     pub(crate) fn react() -> Framework {
         // Cannot use .import because resolution must happen from the user's POV
-        let built_in: [(&[u8], &[u8]); 3] = [
+        let built_in: [(&[u8], &'static [u8]); 3] = [
             (
                 b"bun-framework-react/client.tsx",
                 // Browser-side source: compressed in release builds.
@@ -304,15 +304,17 @@ impl Framework {
         ];
         let mut built_in_modules = StringArrayHashMap::new();
         for (path, code) in built_in {
-            bun_core::handle_oom(built_in_modules.put(path, BuiltInModule::Code(code.into())));
+            bun_core::handle_oom(
+                built_in_modules.put(path, BuiltInModule::Code(Cow::Borrowed(code))),
+            );
         }
 
         Framework {
             is_built_in_react: true,
-            server_components: Some(ServerComponents {
-                separate_ssr_graph: true,
-                ..ServerComponents::new(Cow::Borrowed(b"react-server-dom-bun/server"))
-            }),
+            server_components: Some(ServerComponents::new(
+                true,
+                Cow::Borrowed(b"react-server-dom-bun/server"),
+            )),
             react_fast_refresh: Some(ReactFastRefresh::default()),
             file_system_router_types: vec![FileSystemRouterType {
                 root: Cow::Borrowed(b"pages"),
@@ -352,11 +354,11 @@ impl Framework {
             fw.react_fast_refresh = Some(ReactFastRefresh {
                 import_source: Cow::Borrowed(b"react-refresh/runtime/index.js"),
             });
-            let react_refresh_code: &[u8] =
-                bun_zstd::embed_compressed!(codegen "node-fallbacks/react-refresh.js");
             bun_core::handle_oom(fw.built_in_modules.put(
                 b"react-refresh/runtime/index.js",
-                BuiltInModule::Code(react_refresh_code.into()),
+                BuiltInModule::Code(Cow::Borrowed(
+                    bun_zstd::embed_compressed!(codegen "node-fallbacks/react-refresh.js"),
+                )),
             ));
         }
 
@@ -473,10 +475,8 @@ impl Framework {
                     "Missing 'framework.serverComponents.serverRuntimeImportSource'"
                 )));
             };
-            let mut server_components = ServerComponents {
-                separate_ssr_graph,
-                ..ServerComponents::new(server_runtime_import)
-            };
+            let mut server_components =
+                ServerComponents::new(separate_ssr_graph, server_runtime_import);
             if let Some(name) =
                 get_optional_string(sc, global, b"serverRegisterClientReferenceExport")?
             {
@@ -515,9 +515,9 @@ impl Framework {
 
                 let value: BuiltInModule =
                     if let Some(str) = get_optional_string(file, global, b"path")? {
-                        BuiltInModule::Import(str.into_owned().into())
+                        BuiltInModule::Import(str)
                     } else if let Some(str) = get_optional_string(file, global, b"code")? {
-                        BuiltInModule::Code(str.into_owned().into())
+                        BuiltInModule::Code(str)
                     } else {
                         return Err(global.throw_invalid_arguments(format_args!(
                             "'builtInModules[{}]' needs either 'path' or 'code'",
@@ -595,9 +595,7 @@ impl Framework {
                 )?;
                 // errdefer style.deinit() — handled by Style's Drop
 
-                let extensions: Vec<Cow<'static, [u8]>> = if let Some(exts_js) =
-                    fsr_opts.get(global, "extensions")?
-                {
+                let extensions = if let Some(exts_js) = fsr_opts.get(global, "extensions")? {
                     'exts: {
                         if exts_js.is_string() {
                             let str = exts_js.to_utf8(global)?;
@@ -609,8 +607,8 @@ impl Framework {
                             let mut extensions =
                                 Vec::with_capacity(exts_js.get_length(global)? as usize);
                             while let Some(array_item) = it_2.next()? {
-                                let mut slice = array_item.to_utf8(global)?.into_vec();
-                                if slice == b"*" {
+                                let slice = array_item.to_utf8(global)?;
+                                if slice.slice() == b"*" {
                                     return Err(global.throw_invalid_arguments(format_args!(
                                             "'extensions' cannot include \"*\" as an extension. Pass \"*\" instead of the array."
                                         )));
@@ -622,10 +620,11 @@ impl Framework {
                                     )));
                                 }
 
-                                if slice[0] != b'.' {
-                                    slice.insert(0, b'.');
-                                }
-                                extensions.push(Cow::Owned(slice));
+                                extensions.push(Cow::Owned(if slice[0] == b'.' {
+                                    slice.into_vec()
+                                } else {
+                                    [b".", slice.slice()].concat()
+                                }));
                             }
                             break 'exts extensions;
                         }
@@ -640,25 +639,24 @@ impl Framework {
                     ])
                 };
 
-                let ignore_dirs: Vec<Cow<'static, [u8]>> =
-                    if let Some(exts_js) = fsr_opts.get(global, "ignoreDirs")? {
-                        'exts: {
-                            if exts_js.is_array() {
-                                let mut it_2 = array.array_iterator(global)?;
-                                let mut dirs = Vec::with_capacity(len as usize);
-                                while let Some(array_item) = it_2.next()? {
-                                    dirs.push(Cow::Owned(array_item.to_utf8(global)?.into_vec()));
-                                }
-                                break 'exts dirs;
+                let ignore_dirs = if let Some(exts_js) = fsr_opts.get(global, "ignoreDirs")? {
+                    'exts: {
+                        if exts_js.is_array() {
+                            let mut it_2 = array.array_iterator(global)?;
+                            let mut dirs = Vec::with_capacity(len as usize);
+                            while let Some(array_item) = it_2.next()? {
+                                dirs.push(Cow::Owned(array_item.to_utf8(global)?.into_vec()));
                             }
+                            break 'exts dirs;
+                        }
 
-                            return Err(global.throw_invalid_arguments(format_args!(
+                        return Err(global.throw_invalid_arguments(format_args!(
                             "'ignoreDirs' must be an array of strings or \"*\" for all extensions"
                         )));
-                        }
-                    } else {
-                        literals(&[b".git", b"node_modules"])
-                    };
+                    }
+                } else {
+                    literals(&[b".git", b"node_modules"])
+                };
 
                 file_system_router_types.push(FileSystemRouterType {
                     root,
@@ -694,9 +692,9 @@ impl Framework {
         Ok(framework)
     }
 
-    /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
+    /// Returns the arena slot for the `bake_types::Framework` projection, which the arena does not drop.
     pub(crate) fn init_transpiler<'a>(
-        &mut self,
+        &self,
         arena: &'a Arena,
         log: &mut bun_ast::Log,
         mode: Mode,
@@ -783,9 +781,7 @@ impl Framework {
         out.options.inline_entrypoint_import_meta_main = true;
 
         out.options.source_map = match mode {
-            // Source maps must always be external, as DevServer special cases
-            // the linking and part of the generation of these. It also relies
-            // on source maps always being enabled.
+            // DevServer links source maps itself and relies on them always being enabled.
             Mode::Development => bun_bundler::options::SourceMapOption::External,
             Mode::ProductionStatic => {
                 bun_bundler::options::SourceMapOption::from_api(Some(bundler_options.source_map))

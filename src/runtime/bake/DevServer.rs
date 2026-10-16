@@ -149,11 +149,6 @@ pub(crate) struct Options<'a> {
     pub broadcast_console_log_from_browser_to_server: bool,
 }
 
-// Note: the fields (`arena`, `root`, `vm`, `framework`,
-// `bundler_options`, `broadcast_console_log_from_browser_to_server`) are
-// required with no sensible zero value, so `Default` is intentionally NOT
-// implemented. Callers construct `Options` via struct-literal at the call site.
-
 // The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`
 // all use `@fieldParentPointer` to access DevServer's state. This pattern has
 // made it easier to group related fields together, but one must remember those
@@ -451,7 +446,7 @@ impl DeferredPromise {
 }
 
 /// DevServer is stored on the heap, storing its allocator.
-pub(crate) fn init(mut options: Options) -> JsResult<Box<DevServer>> {
+pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // Note: `Features.dev_server +|= 1` (saturating add). AtomicUsize has
     // no `saturating_inc`; on a 64-bit counter overflow is unreachable, so a
     // relaxed `fetch_add(1)` is equivalent in practice.
@@ -625,8 +620,7 @@ pub(crate) fn init(mut options: Options) -> JsResult<Box<DevServer>> {
     //
     // SAFETY: `init_transpiler` writes the slot via `MaybeUninit::write` (see
     // `bake_body.rs`), so the previous (uninitialized) bytes are never dropped.
-    // `log` was written above; reborrowing it via `addr_of_mut!` is sound
-    // because no `&mut DevServer` exists.
+    // `log` was written above; reborrowing it is sound because no `&mut DevServer` exists.
     // Note: `Transpiler<'static>` erases the arena lifetime — `options.arena`
     // is the `UserOptions.arena` which is moved into / outlives the `DevServer`
     // box. Widen `'a → 'static` here once.
@@ -640,7 +634,7 @@ pub(crate) fn init(mut options: Options) -> JsResult<Box<DevServer>> {
     // `addr_of_mut!`, so no overlapping `&mut` exists.
     unsafe {
         // Still in `options`, so that an early return drops them.
-        let framework = &mut options.framework;
+        let framework = &options.framework;
         let log = &mut *addr_of_mut!((*p).log);
         let bundler_options = &options.bundler_options;
 

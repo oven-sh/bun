@@ -299,19 +299,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         unresolved_config_entry_point = prefixed;
     }
 
-    let config_entry_point_string = match vm
-        .transpiler
-        .resolver
-        .resolve(
-            cwd,
-            &unresolved_config_entry_point,
-            bun_ast::ImportKind::EntryPointBuild,
-        )
-        .and_then(|resolved| match resolved.path_const() {
-            Some(path) => Ok(BunString::clone_utf8(path.text)),
-            None => Err(bun_resolver::Error::ModuleNotFound),
-        }) {
-        Ok(string) => string,
+    let config_entry_point = match vm.transpiler.resolver.resolve(
+        cwd,
+        &unresolved_config_entry_point,
+        bun_ast::ImportKind::EntryPointBuild,
+    ) {
+        Ok(r) => r,
         Err(err) => {
             if err == bun_resolver::Error::ModuleNotFound {
                 if ctx.args.entry_points.is_empty() {
@@ -337,6 +330,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             Global::crash();
         }
     };
+
+    let config_entry_point_string =
+        BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
 
     let Some(config_promise) =
         JSModuleLoader::load_and_evaluate_module_ptr(vm.global, &config_entry_point_string)

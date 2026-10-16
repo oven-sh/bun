@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isFreeBSD, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -250,6 +250,258 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
     `),
   );
 });
+
+// accept() can fail and leave its connection in the listen backlog (EMFILE at
+// the descriptor limit). The listener is level-triggered, so it used to be
+// reported readable again at once and the loop retried the failing accept()
+// with no delay. It now leaves the poll set. A close on the loop, or a 5 ms
+// deadline, registers it again.
+async function runAcceptFixture(cmd: string[]) {
+  await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  let result: any = stdout.trim();
+  try {
+    result = JSON.parse(result);
+  } catch {}
+  return { result, signalCode: proc.signalCode, exitCode, stderrTail: exitCode === 0 ? "" : stderr.slice(-2000) };
+}
+
+// Two listeners fail in the same window (a descriptor limit is process-wide;
+// ENOBUFS stands for it, because it repeats on every platform) and a third
+// one has no client. The retries borrow the deadline of the sweep that expires
+// idle sockets, and the sweep keeps its own deadline meanwhile: a 1 s timeout
+// fires at the first sweep, 4 s after the loop got its first socket, and the
+// longer ones do not fire. The explicit timeout is required: the sweep ticks
+// every 4 s, and the Bun child takes more than a second to start on a
+// debug+ASAN build.
+test.concurrent.skipIf(skip)(
+  "Bun.listen: two backed-off listeners retry without a spin, idle timeouts keep their 4 s cadence, both accept afterwards",
+  async () => {
+    using dir = tempDir("accept-backoff", {});
+    const { result, ...exit } = await runAcceptFixture([
+      bunExe(),
+      "-e",
+      /* js */ `
+        import { socketFaultInjection as fault, getEventLoopStats } from "bun:internal-for-testing";
+        import os from "node:os";
+
+        // Event loop iterations for each of 10 timers of 10 ms: about one when
+        // idle, a few while a listener is backed off, hundreds when accept()
+        // is retried with no delay.
+        async function iterationsPerTimer() {
+          const before = getEventLoopStats().iteration;
+          for (let i = 0; i < 10; i++) await new Promise(resolve => setTimeout(resolve, 10));
+          return (getEventLoopStats().iteration - before) / 10;
+        }
+        // Who holds the loop's sweep timer: one for each linked socket, and one
+        // for the time that a listener is backed off.
+        function sweepState() {
+          const { acceptBackoffPending, sweepTimerCount } = getEventLoopStats();
+          return { backedOff: acceptBackoffPending, sweepTimerCount };
+        }
+
+        const unixPath = ${JSON.stringify(join(String(dir), "listen.sock"))};
+        const accepted = { tcp: 0, unix: 0, spare: 0 };
+        const closed = { tcp: 0, unix: 0, spare: 0 };
+        const opened = { tcp: Promise.withResolvers(), unix: Promise.withResolvers() };
+        const handlers = name => ({
+          socket: {
+            open() {
+              accepted[name]++;
+              opened[name]?.resolve();
+            },
+            close() {
+              closed[name]++;
+            },
+            data() {},
+          },
+        });
+        const tcp = Bun.listen({ hostname: "127.0.0.1", port: 0, ...handlers("tcp") });
+        const unix = Bun.listen({ unix: unixPath, ...handlers("unix") });
+        // No client connects to this one while accept() fails: it stays in the poll set.
+        const spare = Bun.listen({ hostname: "127.0.0.1", port: 0, ...handlers("spare") });
+
+        const fired = { oneSecond: Promise.withResolvers(), eightSeconds: false, sixtySeconds: false };
+        const idleSocket = async (seconds, timeout) => {
+          const socket = await Bun.connect({ hostname: "127.0.0.1", port: spare.port, socket: { data() {}, timeout } });
+          socket.timeout(seconds);
+          return socket;
+        };
+        const start = performance.now();
+        const sockets = [
+          await idleSocket(1, () => fired.oneSecond.resolve(performance.now() - start)),
+          await idleSocket(8, () => (fired.eightSeconds = true)),
+          await idleSocket(60, () => (fired.sixtySeconds = true)),
+        ];
+        const idle = await iterationsPerTimer();
+        const before = sweepState();
+
+        fault.set({ syscall: "accept", action: "errno", errno: os.constants.errno.ENOBUFS, repeat: -1 });
+        // Each connect resolves when the kernel queued the connection: accept() did not take it.
+        sockets.push(await Bun.connect({ hostname: "127.0.0.1", port: tcp.port, socket: { data() {} } }));
+        sockets.push(await Bun.connect({ unix: unixPath, socket: { data() {} } }));
+        const failing = await iterationsPerTimer();
+        // A retry puts the listeners back into the poll set for one iteration:
+        // wait for an iteration that is not that one.
+        for (let i = 0; i < 1000 && !getEventLoopStats().acceptBackoffPending; i++) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        const during = sweepState();
+        const firedAfterMs = await fired.oneSecond.promise;
+        const { eightSeconds, sixtySeconds } = fired;
+
+        // Each close on the loop gives one backed-off listener a retry, in
+        // turn. accept() still fails, so the listener backs off again.
+        const turn = () => new Promise(resolve => setImmediate(resolve));
+        const turns = [];
+        for (const socket of sockets.slice(0, 3)) {
+          socket.terminate();
+          for (let i = 0; i < 20; i++) {
+            await turn();
+            const { acceptBackoffTurn } = getEventLoopStats();
+            if (turns.at(-1) !== acceptBackoffTurn) turns.push(acceptBackoffTurn);
+          }
+        }
+        for (let i = 0; i < 5000 && closed.spare < 3; i++) await turn();
+        const acceptedWhileFailing = accepted.tcp + accepted.unix;
+
+        fault.clear();
+        await Promise.all([opened.tcp.promise, opened.unix.promise]);
+        console.log(
+          JSON.stringify({
+            idle,
+            failing,
+            before,
+            during,
+            after: sweepState(),
+            oneSecondNotEarly: firedAfterMs >= 2000,
+            eightSeconds,
+            sixtySeconds,
+            turns,
+            acceptedWhileFailing,
+            accepted,
+          }),
+        );
+        for (const socket of sockets.slice(3)) socket.terminate();
+        for (const listener of [tcp, unix, spare]) listener.stop(true);
+      `,
+    ]);
+    const { idle, failing, before, during, after, turns, ...rest } = result ?? {};
+    expect({
+      rates: { idle, failing },
+      backsOff: failing <= idle + 8,
+      // Two client sockets, and one holder for the episode.
+      during: { backedOff: during?.backedOff, holders: during?.sweepTimerCount - before?.sweepTimerCount },
+      // The three idle sockets and their peers are gone. Two client sockets
+      // and the two sockets that the listeners accepted are new.
+      after: { backedOff: after?.backedOff, holders: after?.sweepTimerCount - before?.sweepTimerCount },
+      turns,
+      // The positions of the two backed-off listeners, one after the other (0: no turn yet).
+      takesTurns: new Set(turns?.filter((position: number) => position !== 0)).size === 2,
+      ...rest,
+      ...exit,
+    }).toEqual({
+      rates: expect.anything(),
+      backsOff: true,
+      during: { backedOff: true, holders: 3 },
+      after: { backedOff: false, holders: -2 },
+      turns: expect.anything(),
+      takesTurns: true,
+      oneSecondNotEarly: true,
+      eightSeconds: false,
+      sixtySeconds: false,
+      acceptedWhileFailing: 0,
+      accepted: { tcp: 1, unix: 1, spare: 3 },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+  },
+  30_000,
+);
+
+// No injector, so it runs on every Linux build. A is accepted, the process
+// runs out of descriptors, B waits in the backlog, and the listener backs off.
+// Then the server closes A. The loop closed that descriptor itself, so B gets
+// its turn at once and not at the 5 ms deadline: with setImmediate keeping the
+// loop busy, the deadline is many iterations away. Not for macOS: there the
+// kernel drops B when accept() cannot get a descriptor.
+test.concurrent.skipIf(!isLinux && !isFreeBSD)(
+  "Bun.listen at the descriptor limit: a close on the loop gives the queued client its turn at once",
+  async () => {
+    const { result, ...exit } = await runAcceptFixture([
+      "/bin/sh",
+      "-c",
+      `ulimit -n 256 && exec "$1" --no-install -e "$2"`,
+      "sh",
+      bunExe(),
+      /* js */ `
+        import { getEventLoopStats } from "bun:internal-for-testing";
+        import { closeSync, openSync } from "node:fs";
+
+        let opened = Promise.withResolvers();
+        let openedAt = 0;
+        const listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open(socket) {
+              openedAt = getEventLoopStats().iteration;
+              opened.resolve(socket);
+            },
+            data() {},
+          },
+        });
+        const connect = () => Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+        const turn = () => new Promise(resolve => setImmediate(resolve));
+        let busy = true;
+        (function spin() {
+          if (busy) setImmediate(spin);
+        })();
+
+        const iterationsToAccept = [];
+        for (let round = 0; round < 12; round++) {
+          opened = Promise.withResolvers();
+          const clientA = await connect();
+          const serverA = await opened.promise;
+          opened = Promise.withResolvers();
+          const held = [];
+          for (;;) {
+            try {
+              held.push(openSync("/dev/null", "r"));
+            } catch (e) {
+              if (e.code !== "EMFILE") throw e;
+              break;
+            }
+          }
+          // B's own socket takes the one descriptor that is free.
+          closeSync(held.pop());
+          const clientB = await connect();
+          for (let i = 0; !getEventLoopStats().acceptBackoffPending; i++) {
+            if (i === 5000) throw new Error("the listener did not back off");
+            await turn();
+          }
+          // A different phase of the retry deadline in each round.
+          for (let i = 0; i < round * 4; i++) await turn();
+          const closedAt = getEventLoopStats().iteration;
+          serverA.terminate();
+          const serverB = await opened.promise;
+          iterationsToAccept.push(openedAt - closedAt);
+          for (const fd of held) closeSync(fd);
+          for (const socket of [clientA, clientB, serverB]) socket.terminate();
+        }
+        busy = false;
+        console.log(JSON.stringify({ iterationsToAccept }));
+        listener.stop(true);
+      `,
+    ]);
+    expect({
+      iterationsToAccept: result?.iterationsToAccept,
+      atOnce: result?.iterationsToAccept?.length === 12 && result.iterationsToAccept.every((n: number) => n <= 8),
+      ...exit,
+    }).toEqual({ iterationsToAccept: expect.anything(), atOnce: true, signalCode: null, exitCode: 0, stderrTail: "" });
+  },
+);
 
 // A paused socket whose peer hung up is taken out of epoll by the dispatcher
 // (EPOLLHUP is level-triggered and cannot be masked) and registered again by

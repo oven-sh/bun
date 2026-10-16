@@ -38,7 +38,7 @@ describe("the query of a postgres:// URL", () => {
     ],
     ["channel_binding=require", { channelBinding: "require" }],
     ["sslmode=require&channel_binding=require", { sslMode: 2, channelBinding: "require" }],
-    ["sslrootcert=/x/ca.pem", { sslMode: 4, tls: { caFile: "/x/ca.pem", serverName: "uh" } }],
+    ["sslrootcert=/x/ca.pem", { sslMode: 4, tls: { caFile: "/x/ca.pem", rejectUnauthorized: true, serverName: "uh" } }],
     [
       "sslmode=verify-ca&sslrootcert=/x/ca.pem&sslcert=/x/c.pem&sslkey=/x/k.pem&sslpassword=s",
       { sslMode: 3, tls: { caFile: "/x/ca.pem", certFile: "/x/c.pem", keyFile: "/x/k.pem", passphrase: "s" } },

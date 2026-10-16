@@ -467,17 +467,14 @@ describe("SQL adapter environment variable precedence", () => {
       ["TLS_DATABASE_URL", "mysql"],
       ["TLS_MYSQL_DATABASE_URL", "mysql"],
       ["TLS_MARIADB_DATABASE_URL", "mariadb"],
-    ])("a mode in the URL or in the options replaces the `require` of %s=%s://", (urlVariable, scheme) => {
+    ])("nothing in the URL or the options goes below the `require` of %s=%s://", (urlVariable, scheme) => {
       const resolved = (query: string, options?: SQL.Options) => {
         process.env[urlVariable] = `${scheme}://user@host/db${query}`;
         const { sslMode, tls } = new SQL(options).options;
         return [sslMode, tls];
       };
-      const off = [0, undefined];
-      const opportunistic = [1, { serverName: "host" }];
       const encrypted = [2, { serverName: "host" }];
       expect({
-        "": resolved(""),
         "?sslmode=disable": resolved("?sslmode=disable"),
         "?sslmode=allow": resolved("?sslmode=allow"),
         "?sslmode=prefer": resolved("?sslmode=prefer"),
@@ -488,20 +485,17 @@ describe("SQL adapter environment variable precedence", () => {
         'tls: "disable"': resolved("", { tls: "disable" }),
         'ssl: "prefer"': resolved("", { ssl: "prefer" }),
         "?sslmode=verify-ca": resolved("?sslmode=verify-ca"),
-        "?sslmode=disable, tls: true": resolved("?sslmode=disable", { tls: true }),
       }).toEqual({
-        "": encrypted,
-        "?sslmode=disable": off,
-        "?sslmode=allow": opportunistic,
-        "?sslmode=prefer": opportunistic,
-        "?ssl=false": off,
-        "?tls=0": off,
-        "tls: false": off,
-        "ssl: false": off,
-        'tls: "disable"': off,
-        'ssl: "prefer"': opportunistic,
-        "?sslmode=verify-ca": [3, { serverName: "host" }],
-        "?sslmode=disable, tls: true": encrypted,
+        "?sslmode=disable": encrypted,
+        "?sslmode=allow": encrypted,
+        "?sslmode=prefer": encrypted,
+        "?ssl=false": encrypted,
+        "?tls=0": encrypted,
+        "tls: false": encrypted,
+        "ssl: false": encrypted,
+        'tls: "disable"': encrypted,
+        'ssl: "prefer"': encrypted,
+        "?sslmode=verify-ca": [3, { serverName: "host", rejectUnauthorized: true }],
       });
     });
 
@@ -516,12 +510,12 @@ describe("SQL adapter environment variable precedence", () => {
       ["mysql://u:p@h/db?ssl-mode=DISABLED", 0, undefined],
       ["mysql://u:p@h/db?ssl_mode=preferred", 1, { serverName: "h" }],
       ["mysql://u:p@h/db?ssl-mode=REQUIRED", 2, { serverName: "h" }],
-      ["mysql://u:p@h/db?ssl-mode=VERIFY_CA", 3, { serverName: "h" }],
-      ["mysql://u:p@h/db?ssl-mode=VERIFY_IDENTITY", 4, { serverName: "h" }],
+      ["mysql://u:p@h/db?ssl-mode=VERIFY_CA", 3, { serverName: "h", rejectUnauthorized: true }],
+      ["mysql://u:p@h/db?ssl-mode=VERIFY_IDENTITY", 4, { serverName: "h", rejectUnauthorized: true }],
       ["postgres://u@h:5432/db?ssl=prefer", 1, { serverName: "h" }],
       ["postgres://u@h:5432/db?ssl=require", 2, { serverName: "h" }],
-      ["postgres://u@h:5432/db?tls=verify-ca", 3, { serverName: "h" }],
-      ["postgres://u@h:5432/db?ssl=verify-full", 4, { serverName: "h" }],
+      ["postgres://u@h:5432/db?tls=verify-ca", 3, { serverName: "h", rejectUnauthorized: true }],
+      ["postgres://u@h:5432/db?ssl=verify-full", 4, { serverName: "h", rejectUnauthorized: true }],
     ] as const)("%s selects sslMode %d", (url, expectedMode, expectedTls) => {
       const options = new SQL(url);
       expect(options.options.hostname).toBe("h");
@@ -540,7 +534,7 @@ describe("SQL adapter environment variable precedence", () => {
 
         const withExplicitTls = new SQL(url, { tls: { ca: "x" } });
         expect(withExplicitTls.options.sslMode).toBe(4);
-        expect(withExplicitTls.options.tls).toEqual({ ca: "x", serverName: "h" });
+        expect(withExplicitTls.options.tls).toEqual({ ca: "x", serverName: "h", rejectUnauthorized: true });
       },
     );
 
@@ -595,8 +589,8 @@ describe("SQL adapter environment variable precedence", () => {
       ["allow", 1, { serverName: "h" }],
       ["prefer", 1, { serverName: "h" }],
       ["require", 2, { serverName: "h" }],
-      ["verify-ca", 3, { serverName: "h" }],
-      ["verify-full", 4, { serverName: "h" }],
+      ["verify-ca", 3, { serverName: "h", rejectUnauthorized: true }],
+      ["verify-full", 4, { serverName: "h", rejectUnauthorized: true }],
     ] as const)("ssl: %p selects sslMode %d", (mode, expectedMode, expectedTls) => {
       const options = new SQL({ adapter: "postgres", hostname: "h", ssl: mode as any });
       expect(options.options.sslMode).toBe(expectedMode);
@@ -607,13 +601,13 @@ describe("SQL adapter environment variable precedence", () => {
       const options = new SQL({ adapter: "mysql", hostname: "h", tls: "verify-full" as any });
       expect(options.options.adapter).toBe("mysql");
       expect(options.options.sslMode).toBe(4);
-      expect(options.options.tls).toEqual({ serverName: "h" });
+      expect(options.options.tls).toEqual({ serverName: "h", rejectUnauthorized: true });
     });
 
     test("ssl: 'verify-full' takes priority over URL ?sslmode=require", () => {
       const options = new SQL("postgres://u@h:5432/db?sslmode=require", { ssl: "verify-full" as any });
       expect(options.options.sslMode).toBe(4);
-      expect(options.options.tls).toEqual({ serverName: "h" });
+      expect(options.options.tls).toEqual({ serverName: "h", rejectUnauthorized: true });
     });
 
     test("ssl: 'verify-ca' takes priority over PGSSLMODE=require", () => {
@@ -621,7 +615,7 @@ describe("SQL adapter environment variable precedence", () => {
 
       const options = new SQL({ adapter: "postgres", hostname: "h", ssl: "verify-ca" as any });
       expect(options.options.sslMode).toBe(3);
-      expect(options.options.tls).toEqual({ serverName: "h" });
+      expect(options.options.tls).toEqual({ serverName: "h", rejectUnauthorized: true });
     });
 
     test("an unrecognised ssl string throws", () => {
@@ -637,12 +631,12 @@ describe("SQL adapter environment variable precedence", () => {
 
       const options = new SQL({ adapter: "postgres", hostname: "h", tls: { caFile } });
       expect(options.options.sslMode).toBe(4);
-      expect(options.options.tls).toEqual({ caFile, serverName: "h" });
+      expect(options.options.tls).toEqual({ caFile, serverName: "h", rejectUnauthorized: true });
 
       const mysqlOptions = new SQL("mysql://u:p@h/db", { tls: { caFile } });
       expect(mysqlOptions.options.adapter).toBe("mysql");
       expect(mysqlOptions.options.sslMode).toBe(4);
-      expect(mysqlOptions.options.tls).toEqual({ caFile, serverName: "h" });
+      expect(mysqlOptions.options.tls).toEqual({ caFile, serverName: "h", rejectUnauthorized: true });
 
       const optedOut = new SQL({ adapter: "postgres", hostname: "h", tls: { caFile, rejectUnauthorized: false } });
       expect(optedOut.options.sslMode).toBe(2);
@@ -650,7 +644,7 @@ describe("SQL adapter environment variable precedence", () => {
 
       const fromUrl = new SQL("postgres://u@h:5432/db?sslmode=verify-ca", { tls: { caFile } });
       expect(fromUrl.options.sslMode).toBe(3);
-      expect(fromUrl.options.tls).toEqual({ caFile, serverName: "h" });
+      expect(fromUrl.options.tls).toEqual({ caFile, serverName: "h", rejectUnauthorized: true });
     });
   });
 
@@ -662,7 +656,7 @@ describe("SQL adapter environment variable precedence", () => {
       for (const key of ["tls", "ssl"] as const) {
         const options = new SQL({ adapter: "postgres", hostname: "h", [key]: ca });
         expect(options.options.sslMode).toBe(4); // SSLMode.verify_full
-        expect(options.options.tls).toEqual({ ca, serverName: "h" });
+        expect(options.options.tls).toEqual({ ca, serverName: "h", rejectUnauthorized: true });
         expect((options.options.tls as Bun.TLSOptions).ca).toBe(ca);
       }
 
@@ -674,7 +668,7 @@ describe("SQL adapter environment variable precedence", () => {
       // An sslmode that already verifies the chain is kept; the file is still the CA.
       const fromUrl = new SQL("postgres://u@h:5432/db?sslmode=verify-ca", { tls: ca });
       expect(fromUrl.options.sslMode).toBe(3);
-      expect(fromUrl.options.tls).toEqual({ ca, serverName: "h" });
+      expect(fromUrl.options.tls).toEqual({ ca, serverName: "h", rejectUnauthorized: true });
       expect((fromUrl.options.tls as Bun.TLSOptions).ca).toBe(ca);
     });
   });
@@ -696,7 +690,7 @@ describe("SQL adapter environment variable precedence", () => {
       try {
         const { options } = new SQL({ adapter: "postgres", hostname: "h", tls: { ca: "x" } });
         expect(options.sslMode).toBe(4);
-        expect({ ...(options.tls as object) }).toEqual({ ca: "x", serverName: "h" });
+        expect({ ...(options.tls as object) }).toEqual({ ca: "x", serverName: "h", rejectUnauthorized: true });
         expect(Object.getPrototypeOf(options.tls)).toBeNull();
       } finally {
         delete Object.prototype[key];
@@ -722,7 +716,7 @@ describe("SQL adapter environment variable precedence", () => {
       { label: "true", options: { [key]: true } },
       { label: "{}", options: { [key]: {} } },
     ];
-    // From the lowest priority to the highest.
+    // From the lowest priority to the highest. The URL variable names no mode: it is a floor under all of them.
     const SOURCES: [string, Setting[]][] = [
       ["PGSSLMODE", MODES.map(mode => ({ label: mode, mode, env: { PGSSLMODE: mode } }))],
       ["URL variable", [{ label: "TLS_DATABASE_URL", urlVariable: "TLS_DATABASE_URL" }]],
@@ -800,13 +794,13 @@ describe("SQL adapter environment variable precedence", () => {
         verify-full               disable     prefer      prefer      require     verify-ca   verify-full verify-full verify-full
 
         URL variable \\ URL query  disable     allow       prefer      require     verify-ca   verify-full ssl=true
-        TLS_DATABASE_URL          disable     prefer      prefer      require     verify-ca   verify-full require
+        TLS_DATABASE_URL          require     require     require     require     verify-ca   verify-full require
 
         URL variable \\ ssl        disable     allow       prefer      require     verify-ca   verify-full true        {}
-        TLS_DATABASE_URL          disable     prefer      prefer      require     verify-ca   verify-full require     require
+        TLS_DATABASE_URL          require     require     require     require     verify-ca   verify-full require     require
 
         URL variable \\ tls        disable     allow       prefer      require     verify-ca   verify-full true        {}
-        TLS_DATABASE_URL          disable     prefer      prefer      require     verify-ca   verify-full require     require
+        TLS_DATABASE_URL          require     require     require     require     verify-ca   verify-full require     require
 
         URL query \\ ssl           disable     allow       prefer      require     verify-ca   verify-full true        {}
         disable                   disable     prefer      prefer      require     verify-ca   verify-full require     require
@@ -1064,75 +1058,115 @@ describe("SQL adapter environment variable precedence", () => {
     const byUrl = { url: "postgres://appuser:apppw@apphost:1/appdb" };
     const app = { adapter: "postgres", hostname: "apphost", port: 1, username: "appuser", password: "apppw" };
 
-    const rest = { port: 7, username: "envuser", password: "ENVSECRET", database: "envdb" };
+    const defaults = { port: 5432, username: "postgres", password: "", database: "postgres" };
     const five = { hostname: "apphost", port: 1, username: "appuser", password: "apppw", database: "appdb" };
+    const mysqlUrl = "mysql://x:y@envhost:9/x";
     test.each<Row>([
       ...["hostname", "host"].flatMap(key =>
         ["DATABASE_URL", "POSTGRES_URL"].map((name): Row => [
           key,
           { [name]: envUrl },
           [{ [key]: "apphost" }],
-          { hostname: "apphost", ...rest },
+          { hostname: "apphost", ...defaults },
         ]),
       ),
-      ["hostname", { DATABASE_URL: `${envUrl}?sslmode=verify-full` }, [{ hostname: "apphost" }], { sslMode: 4 }],
-      ["hostname", { DATABASE_URL: `${envUrl}?sslmode=verify-full` }, [five], { ...five, sslMode: 4 }],
-      ["hostname", { DATABASE_URL: `${envUrl}?sslmode=verify-full` }, [{ ...five, tls: true }], { sslMode: 4 }],
-      ["hostname", { DATABASE_URL: `${envUrl}?sslmode=verify-full` }, [{ ...five, tls: false }], { sslMode: 0 }],
-      ["hostname", { TLS_DATABASE_URL: envUrl }, [{ hostname: "apphost" }], { hostname: "apphost", sslMode: 2 }],
+      ["hostname", { MYSQL_URL: mysqlUrl }, [{ hostname: "apphost" }], { adapter: "postgres", ...defaults }],
       [
         "hostname",
-        { MYSQL_URL: "mysql://x:y@envhost:9/x" },
-        [{ hostname: "apphost" }],
-        { adapter: "mysql", hostname: "apphost", port: 9, username: "x", password: "y", database: "x" },
-      ],
-      [
-        "hostname",
-        { DATABASE_URL: "mysql://x:y@envhost:9/x?sslmode=require" },
+        { DATABASE_URL: mysqlUrl },
         [{ adapter: "postgres", hostname: "apphost" }],
-        { adapter: "postgres", hostname: "apphost", port: 9, username: "x", password: "y", database: "x", sslMode: 2 },
+        { adapter: "postgres", hostname: "apphost", ...defaults },
       ],
-    ])("fills in what options with `%s` leave out (%j, %j)", expectOptions);
+      ...["path", "socket"].map((key): Row => [
+        key,
+        { MYSQL_URL: "mysql://envuser:ENVSECRET@envhost:7/envdb" },
+        [{ [key]: "/run/app.sock" }],
+        { adapter: "postgres", path: "/run/app.sock", hostname: "localhost", username: "postgres", password: "" },
+      ]),
+      ["url", { MYSQL_URL: mysqlUrl }, [{ url: "appuser:apppw@apphost:1/appdb" }], { ...app, database: "appdb" }],
+      [
+        "url",
+        { MARIADB_URL: "mariadb://x:y@envhost:9/x" },
+        [{ url: "mysql://appuser:apppw@apphost:1/appdb" }],
+        { ...app, adapter: "mysql", database: "appdb" },
+      ],
+    ])("gives nothing of its own to a server that the options name with `%s` (%j, %j)", expectOptions);
 
-    test.each(["path", "socket"])("fills in what options with `%s` leave out", key => {
-      process.env.MYSQL_URL = "mysql://envuser:ENVSECRET@envhost:7/envdb";
-      expect(new SQL({ [key]: "/run/app.sock" } as SQL.Options).options).toMatchObject({
-        adapter: "mysql",
-        path: "/run/app.sock",
-        username: "envuser",
-        password: "ENVSECRET",
-        database: "envdb",
-      });
-    });
-
-    test("is above the per-field variables next to a host too, except for the database", () => {
+    test("the per-field variables still fill in what an explicit target leaves out", () => {
       Object.assign(process.env, { DATABASE_URL: envUrl, PGUSER: "pguser", PGPASSWORD: "pgpw", PGDATABASE: "pgdb" });
       expect(new SQL({ hostname: "apphost" }).options).toMatchObject({
         hostname: "apphost",
-        username: "envuser",
-        password: "ENVSECRET",
+        username: "pguser",
+        password: "pgpw",
         database: "pgdb",
       });
     });
 
-    // Of the variable only the name counts: for the adapter, where the URL in the options names none, and TLS_.
+    // It can only ask for more. A `tls` or `ssl` option that names a mode replaces what it asks for.
+    const verified = { DATABASE_URL: `${envUrl}?sslmode=verify-full` };
+    test.each<Row>([
+      ["?sslmode=verify-full", verified, [{ hostname: "apphost" }], { hostname: "apphost", ...defaults, sslMode: 4 }],
+      ["?sslmode=verify-full", verified, [five], { ...five, sslMode: 4 }],
+      ["?sslmode=verify-full", verified, [{ ...five, tls: true }], { sslMode: 4 }],
+      ["?sslmode=verify-full", verified, [{ ...five, ssl: "require" }], { sslMode: 2 }],
+      ["?sslmode=verify-full", verified, [{ ...five, tls: false }], { sslMode: 0 }],
+      ["?sslmode=require", { DATABASE_URL: `${envUrl}?sslmode=require` }, [{ host: "apphost" }], { sslMode: 2 }],
+      [
+        "?sslmode=verify-ca",
+        { DATABASE_URL: `${envUrl}?sslmode=verify-ca` },
+        [{ hostname: "apphost", tls: { ca: "x" } }],
+        { sslMode: 4 },
+      ],
+      [
+        "?sslmode=disable",
+        { DATABASE_URL: `${envUrl}?sslmode=disable`, PGSSLMODE: "require" },
+        [{ hostname: "apphost" }],
+        { sslMode: 2 },
+      ],
+      ["?sslmode=verify-full", { ...verified, PGSSLMODE: "require" }, [{ hostname: "apphost" }], { sslMode: 4 }],
+      ["?ssl=true", { POSTGRES_URL: `${envUrl}?ssl=true` }, [{ hostname: "apphost" }], { sslMode: 2 }],
+      [
+        "?sslrootcert=",
+        { DATABASE_URL: `${envUrl}?sslrootcert=/x/ca.pem` },
+        [{ hostname: "apphost" }],
+        { ...defaults, sslMode: 4, tls: { caFile: "/x/ca.pem", serverName: "apphost" }, query: "" },
+      ],
+      ["TLS_", { TLS_DATABASE_URL: envUrl }, [{ hostname: "apphost" }], { ...defaults, sslMode: 2 }],
+      ["TLS_", { TLS_POSTGRES_DATABASE_URL: envUrl }, [{ hostname: "apphost", tls: false }], { sslMode: 2 }],
+      [
+        "?ssl-mode=REQUIRED",
+        { MYSQL_URL: `${mysqlUrl}?ssl-mode=REQUIRED` },
+        [{ hostname: "apphost" }],
+        { adapter: "postgres", ...defaults, sslMode: 2 },
+      ],
+      [
+        "?sslmode=require",
+        { DATABASE_URL: `${mysqlUrl}?sslmode=require` },
+        [{ adapter: "postgres", hostname: "apphost" }],
+        { adapter: "postgres", ...defaults, sslMode: 2 },
+      ],
+      [
+        "?sslmode=require",
+        { MYSQL_URL: `${mysqlUrl}?sslmode=require` },
+        [{ adapter: "mysql", path: "/run/app.sock" }],
+        { path: "/run/app.sock", username: "root", password: "", sslMode: 2 },
+      ],
+      [
+        "a URL that does not parse",
+        { DATABASE_URL: "postgres://u@:port/d" },
+        [{ hostname: "apphost" }],
+        { sslMode: 0 },
+      ],
+      ["a mode that there is not", { DATABASE_URL: `${envUrl}?sslmode=no` }, [{ hostname: "apphost" }], { sslMode: 0 }],
+    ])("still says how well that connection is protected: %s (%j, %j)", expectOptions);
+
+    // The URL in the options says what it wants. Of the variable, the TLS_ in the name counts.
     test.each<Row>([
       ["TLS_", { TLS_DATABASE_URL: envUrl }, [byUrl], { ...app, database: "appdb", sslMode: 2 }],
       ["TLS_", { TLS_POSTGRES_DATABASE_URL: envUrl }, [byUrl], { ...app, database: "appdb", sslMode: 2 }],
-      ["no ?sslmode=", { DATABASE_URL: `${envUrl}?sslmode=verify-full` }, [byUrl], { ...app, sslMode: 0 }],
-      [
-        "the adapter",
-        { MYSQL_URL: "mysql://x:y@envhost:9/x" },
-        [{ url: "appuser:apppw@apphost:1/appdb" }],
-        { ...app, adapter: "mysql", database: "appdb" },
-      ],
-      [
-        "the adapter, between mysql and mariadb",
-        { MARIADB_URL: "mariadb://x:y@envhost:9/x" },
-        [{ url: "mysql://appuser:apppw@apphost:1/appdb" }],
-        { ...app, adapter: "mariadb", database: "appdb" },
-      ],
-    ])("next to `url` in the options: %s (%j)", expectOptions);
+      ["TLS_", { TLS_DATABASE_URL: envUrl }, [{ url: `${byUrl.url}?sslmode=disable` }], { ...app, sslMode: 2 }],
+      ["no ?sslmode=", verified, [byUrl], { ...app, sslMode: 0 }],
+    ])("next to `url` in the options: %s (%j, %j)", expectOptions);
 
     test.each<Row>([
       ["TLS_DATABASE_URL", { TLS_DATABASE_URL: envUrl }, [byUrl.url], { ...app, sslMode: 0 }],
@@ -1158,9 +1192,9 @@ describe("SQL adapter environment variable precedence", () => {
       ["path", { SQLITE_URL: "sqlite://:memory:" }, [{ path: "/run/app.sock" }], { adapter: "postgres" }],
       [
         "hostname",
-        { DATABASE_URL: ":memory:", POSTGRES_URL: envUrl },
+        { DATABASE_URL: ":memory:", POSTGRES_URL: `${envUrl}?sslmode=require` },
         [{ hostname: "apphost" }],
-        { hostname: "apphost", ...rest },
+        { hostname: "apphost", ...defaults, sslMode: 2 },
       ],
     ])("an SQLite URL counts as not set next to `%s` (%j)", expectOptions);
 
@@ -1248,6 +1282,24 @@ describe("SQL adapter environment variable precedence", () => {
         { TLS_DATABASE_URL: my },
         [{ adapter: "postgres" }],
         { adapter: "postgres", hostname: "localhost", password: "", sslMode: 2 },
+      ],
+      [
+        "{ adapter: 'postgres' }: with no other URL, the connection is as well protected as the MySQL URL asks for",
+        { DATABASE_URL: `${my}?sslmode=require` },
+        [{ adapter: "postgres" }],
+        { adapter: "postgres", hostname: "localhost", port: 5432, password: "", sslMode: 2 },
+      ],
+      [
+        "{ adapter: 'postgres' }: so it is next to a MySQL URL without a host",
+        { DATABASE_URL: "mysql://?ssl-mode=VERIFY_IDENTITY" },
+        [{ adapter: "postgres" }],
+        { adapter: "postgres", hostname: "localhost", sslMode: 4 },
+      ],
+      [
+        "{ adapter: 'postgres' }: POSTGRES_URL says itself what it wants",
+        { DATABASE_URL: `${my}?sslmode=verify-full`, POSTGRES_URL: pg },
+        [{ adapter: "postgres" }],
+        { adapter: "postgres", hostname: "pghost", sslMode: 0 },
       ],
       [
         "{ adapter: 'postgres' }: the next generic variable is read after a foreign one",
@@ -1502,25 +1554,22 @@ describe("SQL adapter environment variable precedence", () => {
 
   describe("certificate verification", () => {
     test.each(["postgres", "mysql"] as const)(
-      "%s: rejectUnauthorized is what the option says, so that without it NODE_TLS_REJECT_UNAUTHORIZED is asked",
+      "%s: a mode that verifies says so to the TLS layer, unless the option is false",
       adapter => {
         const tlsOf = (options: SQL.Options) => new SQL({ adapter, hostname: "h", ...options } as SQL.Options).options;
         for (const options of [
           { ssl: "verify-ca" },
           { ssl: "verify-full" },
           { tls: { ca: "x" } },
+          { tls: { rejectUnauthorized: true } },
           { ssl: "verify-full", tls: {} },
-          { ssl: "prefer" },
-          { ssl: "require" },
-          { tls: true },
-          { tls: {} },
+          { ssl: "verify-full", tls: { rejectUnauthorized: undefined } },
         ] as SQL.Options[]) {
+          expect(tlsOf(options).tls).toMatchObject({ rejectUnauthorized: true });
+        }
+        for (const options of [{ ssl: "prefer" }, { ssl: "require" }, { tls: true }, { tls: {} }] as SQL.Options[]) {
           expect(tlsOf(options).tls).not.toHaveProperty("rejectUnauthorized");
         }
-        expect(tlsOf({ tls: { rejectUnauthorized: true } })).toMatchObject({
-          sslMode: 4,
-          tls: { rejectUnauthorized: true },
-        });
         expect(tlsOf({ ssl: "verify-full", tls: { rejectUnauthorized: false } })).toMatchObject({
           sslMode: 4,
           tls: { rejectUnauthorized: false },
@@ -1540,7 +1589,7 @@ describe("SQL adapter environment variable precedence", () => {
 
       expect(tlsOf({ checkServerIdentity })).toMatchObject({
         sslMode: 4,
-        tls: { checkServerIdentity, serverName: "h" },
+        tls: { checkServerIdentity, rejectUnauthorized: true, serverName: "h" },
       });
       expect(tlsOf({ checkServerIdentity }, "mysql://h/d").sslMode).toBe(4);
       expect(tlsOf({ checkServerIdentity }, "postgres://h/d?sslmode=verify-ca").sslMode).toBe(3);

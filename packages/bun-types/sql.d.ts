@@ -441,9 +441,11 @@ declare module "bun" {
        * Connection URL, for example `postgres://user:pass@localhost:5432/mydb`.
        *
        * For each setting, an option takes priority over the URL, and the URL
-       * over the environment. Without `url` and without a connection string,
-       * Bun reads a URL from the environment, such as `DATABASE_URL`, and the
-       * other options change single fields of it.
+       * over the environment. Bun connects to a URL from the environment, such
+       * as `DATABASE_URL`, only when none of `url`, `hostname`, `host`, `path`
+       * and `socket` is set and no connection string is passed. Next to
+       * `hostname`, `host`, `path` and `socket`, only its TLS settings apply,
+       * and they can only raise the SSL mode.
        */
       url?: URL | string | undefined;
 
@@ -582,12 +584,13 @@ declare module "bun" {
        * `true` and an options object ask for at least `"require"`. An object
        * with `ca`, `caFile`, `checkServerIdentity` or
        * `rejectUnauthorized: true` raises a mode below `"verify-ca"` to
-       * `"verify-full"`. Without `rejectUnauthorized`,
-       * `NODE_TLS_REJECT_UNAUTHORIZED=0` turns certificate verification off in
-       * every mode. PostgreSQL ignores this option on a unix socket.
+       * `"verify-full"`. `"verify-ca"` and `"verify-full"` verify the
+       * certificate even with `NODE_TLS_REJECT_UNAUTHORIZED=0`; only
+       * `rejectUnauthorized: false` turns that off. PostgreSQL ignores this
+       * option on a unix socket.
        *
-       * A URL that Bun reads from a `TLS_*` environment variable uses
-       * `"require"` unless the URL or this option names a mode.
+       * A URL that Bun reads from a `TLS_*` environment variable keeps at least
+       * `"require"`, also with `false` or `"disable"` here.
        * @default false
        * @example
        * ```ts

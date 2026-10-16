@@ -194,7 +194,7 @@ for (const image of images) {
       );
 
       test.skipIf(image.image !== "mysql_tls")(
-        "NODE_TLS_REJECT_UNAUTHORIZED=0 turns verification off, except next to rejectUnauthorized: true",
+        "a mode that verifies does so under NODE_TLS_REJECT_UNAUTHORIZED=0",
         async () => {
           await container.ready;
           const rows = [
@@ -227,14 +227,7 @@ console.log(JSON.stringify(outcomes));`,
           });
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stderr).toBe("");
-          expect(JSON.parse(stdout)).toEqual([
-            "connected",
-            "connected",
-            "connected",
-            "connected",
-            "connected",
-            "refused",
-          ]);
+          expect(JSON.parse(stdout)).toEqual(["connected", "refused", "refused", "refused", "connected", "refused"]);
           expect(exitCode).toBe(0);
         },
       );

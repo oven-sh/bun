@@ -9,24 +9,41 @@
 // read that segfaulted (ASAN: heap-buffer-overflow in onAbort).
 //
 // The sink ends a body through tryEnd() only while the response head is not
-// sent, and a pull() that waits for a task has its head sent. So the wait
-// alternates between two kinds:
-//   a task:      the stream is parked when the abort arrives, and the sink
-//                then ends a chunked body on the dying socket.
-//   a microtask: the body ends before the head is sent, through tryEnd().
+// sent, and a stream that is still parked when the handler's microtasks are
+// done has its head sent. So the requests take turns between two bodies:
+//   most of them:  pull() waits for a task, then ends. The stream is parked
+//                  when the abort arrives, and the sink ends a chunked body
+//                  on the dying socket.
+//   every tenth:   pull() ends a body that the socket does not take whole,
+//                  then waits for a task. The one tryEnd() of that body is
+//                  parked on the drain when the abort arrives.
 
+const large = new Uint8Array(8 * 1024 * 1024);
 let requests = 0;
-const wait = () => (requests++ % 2 === 0 ? Bun.sleep(0) : Promise.resolve());
 
 const server = Bun.serve({
   port: 0,
   fetch() {
+    if (++requests % 10 === 0) {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller: any) {
+            // Above the payload, so write() only buffers and end() sends it all.
+            controller.start({ highWaterMark: large.length + 1 });
+            controller.write(large);
+            controller.end();
+            await Bun.sleep(0);
+          },
+        } as any),
+      );
+    }
     return new Response(
       new ReadableStream({
         async pull(controller) {
-          // The await is load-bearing: it lets the abort interleave between
-          // stream completion and teardown.
-          await wait();
+          // The await is load-bearing: it parks the stream so the abort can
+          // interleave between stream completion and teardown.
+          await Bun.sleep(0);
           controller.enqueue(new Uint8Array(8));
           controller.close();
         },

@@ -74,7 +74,10 @@ impl core::fmt::Display for SystemError {
             write!(
                 f,
                 "{}: {}: {} ({}())",
-                self.code, self.path, self.message, self.syscall,
+                self.code,
+                bun_core::fmt::EscapeControlChars(&self.path),
+                self.message,
+                self.syscall,
             )
         } else {
             // "<code>: <message> (<syscall>())"
@@ -163,6 +166,28 @@ pub mod dir_iterator {
     pub struct IteratorResult {
         pub name: Name,
         pub kind: EntryKind,
+        /// The inode number the directory records for the entry; 0 on Windows.
+        pub ino: u64,
+        #[cfg(windows)]
+        has_directory_attribute: bool,
+    }
+
+    impl IteratorResult {
+        /// Whether a `SymLink` stands for a directory, where the listing says
+        /// so: a link on Windows is made as one or the other, whatever is at
+        /// its target, and `NtQueryAttributesFile` answers with the same bit.
+        /// `None`: the link has to be followed.
+        #[inline]
+        pub fn link_is_directory(&self) -> Option<bool> {
+            #[cfg(windows)]
+            {
+                Some(self.has_directory_attribute)
+            }
+            #[cfg(not(windows))]
+            {
+                None
+            }
+        }
     }
 
     /// Length-known, NUL-terminated entry name in OS-native encoding.
@@ -360,6 +385,11 @@ pub mod dir_iterator {
                 // SAFETY: kernel filled `[0..end_index]`; `base < end_index` and
                 // each record fits entirely in `[base..base+reclen) ⊆ [0..end_index)`.
                 let buf = unsafe { self.buf.filled(self.end_index) };
+                let d_ino = u64::from_ne_bytes(
+                    buf[base..base + 8]
+                        .try_into()
+                        .expect("infallible: size matches"),
+                );
                 let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
                 let d_type = buf[base + 18];
                 self.index = base + reclen;
@@ -380,6 +410,7 @@ pub mod dir_iterator {
                 return Ok(Some(IteratorResult {
                     name: Name::borrow(name),
                     kind: kind_from_dt(d_type),
+                    ino: d_ino,
                 }));
             }
         }
@@ -478,6 +509,7 @@ pub mod dir_iterator {
                 return Ok(Some(IteratorResult {
                     name: Name::borrow(name),
                     kind: kind_from_dt(d_type),
+                    ino: d_ino,
                 }));
             }
         }
@@ -550,6 +582,7 @@ pub mod dir_iterator {
                 return Ok(Some(IteratorResult {
                     name: Name::borrow(name),
                     kind: kind_from_dt(d_type),
+                    ino: fileno,
                 }));
             }
         }
@@ -714,8 +747,8 @@ pub mod dir_iterator {
                     continue;
                 }
 
+                let isdir = (file_attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
                 let kind = {
-                    let isdir = (file_attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
                     let islink = (file_attrs & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0;
                     // On Windows, symlinks can be directories too. We
                     // prioritize the "sym_link" kind over the "directory"
@@ -733,6 +766,8 @@ pub mod dir_iterator {
                 return Ok(Some(IteratorResult {
                     name: Name::from_slice(dir_info_name),
                     kind,
+                    ino: 0,
+                    has_directory_attribute: isdir,
                 }));
             }
         }
@@ -1069,6 +1104,13 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
+/// For [`flock`]: advisory `flock(2)` on POSIX, mandatory `LockFileEx` on Windows; released on close.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FileLockMode {
+    Shared,
+    Exclusive,
+}
+
 /// What [`renameat2`] does when the destination exists.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RenameMode {
@@ -1366,7 +1408,6 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const fchdir: Tag = Tag(102);
     pub const fchownat: Tag = Tag(103);
-    #[cfg(not(windows))]
     pub(crate) const ioctl: Tag = Tag(104);
     #[cfg(not(windows))]
     pub(crate) const getrlimit: Tag = Tag(105);
@@ -1374,10 +1415,11 @@ impl Tag {
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
     pub const uv_os_setpriority: Tag = Tag(108);
+    pub const flock: Tag = Tag(109);
     #[cfg(not(windows))]
-    pub(crate) const flistxattr: Tag = Tag(109);
+    pub(crate) const flistxattr: Tag = Tag(110);
     #[cfg(not(windows))]
-    pub(crate) const fgetxattr: Tag = Tag(110);
+    pub(crate) const fgetxattr: Tag = Tag(111);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1385,7 +1427,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 111] = [
+        const NAMES: [&str; 112] = [
             "TODO",
             "dup",
             "access",
@@ -1496,6 +1538,7 @@ impl Tag {
             "setrlimit",
             "clone3",
             "uv_os_setpriority",
+            "flock",
             "flistxattr",
             "fgetxattr",
         ];
@@ -2700,6 +2743,24 @@ mod posix_impl {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
     }
+    /// `Ok(false)` when `nonblocking` and the lock is held elsewhere.
+    pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
+        let op = match mode {
+            FileLockMode::Shared => libc::LOCK_SH,
+            FileLockMode::Exclusive => libc::LOCK_EX,
+        } | if nonblocking { libc::LOCK_NB } else { 0 };
+        loop {
+            // SAFETY: `fd` is a live descriptor; `op` is a valid flock op.
+            if unsafe { libc::flock(fd.native(), op) } == 0 {
+                return Ok(true);
+            }
+            match last_errno() {
+                libc::EINTR => continue,
+                libc::EWOULDBLOCK if nonblocking => return Ok(false),
+                e => return Err(Error::from_code_int(e, Tag::flock).with_fd(fd)),
+            }
+        }
+    }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // SAFETY: `buf` is a valid exclusive slice; `getcwd` writes at most
         // `buf.len()` bytes (including the NUL).
@@ -2755,18 +2816,12 @@ mod posix_impl {
                 }
             } else {
                 let mut buf = [0u8; 32];
-                let n = {
-                    use std::io::Write as _;
-                    let mut c = std::io::Cursor::new(&mut buf[..]);
-                    let _ = write!(c, "/proc/self/fd/{}\0", tmpfd.native());
-                    c.position() as usize - 1
-                };
-                let _ = n;
-                // SAFETY: NUL written by the format string above.
+                let proc_path = fd_path_z(b"/proc/self/fd/", tmpfd, &mut buf);
+                // SAFETY: `proc_path` is NUL-terminated; dirfd valid.
                 unsafe {
                     libc::linkat(
                         libc::AT_FDCWD,
-                        buf.as_ptr().cast(),
+                        proc_path.as_ptr(),
                         dirfd.native(),
                         name.as_ptr(),
                         libc::AT_SYMLINK_FOLLOW,
@@ -2870,6 +2925,11 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         {
+            // glibc/musl `fchmodat(.., AT_SYMLINK_NOFOLLOW)` try `fchmodat2(2)` too.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if super::linux_syscall::is_android_kernel() {
+                return lchmod_no_fchmodat2(path, mode);
+            }
             const SYS_FCHMODAT2: libc::c_long = 452;
             loop {
                 // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
@@ -2895,6 +2955,20 @@ mod posix_impl {
                 return Ok(());
             }
         }
+    }
+    /// musl's fallback: `O_PATH` + `chmod("/proc/self/fd/N")`; symlinks get EOPNOTSUPP like libc.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn lchmod_no_fchmodat2(path: &ZStr, mode: Mode) -> Maybe<()> {
+        let retag = |mut err: Error| {
+            err.syscall = Tag::lchmod;
+            err.with_path(path.as_bytes())
+        };
+        let fd = open(path, O::PATH | O::NOFOLLOW | O::CLOEXEC, 0).map_err(retag)?;
+        let _close = crate::CloseOnDrop::new(fd);
+        if kind_from_mode(fstat(fd).map_err(retag)?.st_mode as Mode) == FileKind::SymLink {
+            return Err(retag(Error::from_code_int(libc::EOPNOTSUPP, Tag::lchmod)));
+        }
+        chmod(fd_path_z(b"/proc/self/fd/", fd, &mut [0u8; 32]), mode).map_err(retag)
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
         check_p!(
@@ -3010,7 +3084,7 @@ mod posix_impl {
             unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
         }
     }
-    /// Calls extern C `is_executable_file` (c-bindings.cpp) via FFI.
+    /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
     pub fn is_executable_file_path(path: &ZStr) -> bool {
         unsafe extern "C" {
             // `c_char`, not `i8` — `char` is unsigned on aarch64/arm/ppc, so
@@ -3679,6 +3753,24 @@ mod windows_impl {
         }
         Ok(bytes_written as usize)
     }
+    /// Unlike `flock(2)`, `LockFileEx` cannot convert a lock the handle already holds.
+    pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
+        use w::kernel32::{LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY};
+        let flags = (LOCKFILE_EXCLUSIVE_LOCK * u32::from(mode == FileLockMode::Exclusive))
+            | (LOCKFILE_FAIL_IMMEDIATELY * u32::from(nonblocking));
+        let mut overlapped: w::OVERLAPPED = bun_core::ffi::zeroed();
+        let ol = &raw mut overlapped;
+        // SAFETY: FFI; `fd.native()` is a valid HANDLE, `ol` a valid out-param at range start 0.
+        let rc = unsafe { w::kernel32::LockFileEx(fd.native(), flags, 0, u32::MAX, u32::MAX, ol) };
+        if rc != 0 {
+            return Ok(true);
+        }
+        let er = w::Win32Error::get();
+        if nonblocking && er == w::Win32Error::LOCK_VIOLATION {
+            return Ok(false);
+        }
+        Err(Error::new(er.to_e(), Tag::flock).with_fd(fd))
+    }
     pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
         // Positioned-I/O lowering:
         // libuv path for uv-kind fds, kernel32 ReadFile+OVERLAPPED for system
@@ -3721,7 +3813,7 @@ mod windows_impl {
             return Ok(amount_read as usize);
         }
     }
-    pub(crate) fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
+    pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
         // Same lowering as `pread`: kernel32 WriteFile with an
         // `OVERLAPPED.Offset` for HANDLE-kind fds.
         if fd.kind() == FdKind::Uv {
@@ -3911,7 +4003,31 @@ mod windows_impl {
         sys_uv::symlink_uv(target, link, 0)
     }
     pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
-        sys_uv::readlink(path, buf).map(|s| s.len())
+        let err = match sys_uv::readlink(path, buf) {
+            Ok(target) => return Ok(target.len()),
+            Err(err) => err,
+        };
+        // libuv passes the path to Windows unchanged, and a path of 260 characters or more only
+        // works with the `\\?\` prefix, so retry with it.
+        let bytes = path.as_bytes();
+        if err.get_errno() != E::ENOENT
+            || bytes.len() < 248
+            || bytes.len() + 5 > bun_paths::MAX_PATH_BYTES
+            || !bun_paths::is_drive_letter(bytes[0])
+            || bytes[1] != b':'
+            || !bun_paths::is_sep_any(bytes[2])
+        {
+            return Err(err);
+        }
+        let mut long = bun_paths::path_buffer_pool::get();
+        long[..4].copy_from_slice(&w::LONG_PATH_PREFIX_U8);
+        let normalized = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
+            bytes,
+            &mut long[4..],
+        );
+        let len = 4 + normalized.len();
+        long[len] = 0;
+        sys_uv::readlink(ZStr::from_buf(&long[..], len), buf).map(|target| target.len())
     }
     pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
         sys_uv::fchmod(fd, mode)
@@ -3935,6 +4051,28 @@ mod windows_impl {
         };
         if rc != bun_windows_sys::NTSTATUS::SUCCESS {
             return Err(Error::new(rc, Tag::ftruncate).with_fd(fd));
+        }
+        Ok(())
+    }
+    /// `FSCTL_SET_SPARSE`: without it NTFS gives every byte below the end of a file real clusters.
+    pub fn set_sparse(fd: Fd) -> Maybe<()> {
+        let mut returned: w::DWORD = 0;
+        // SAFETY: FFI; fd is a valid HANDLE, the call passes no buffer, and
+        // `returned` is valid for the call.
+        let ok = unsafe {
+            w::kernel32::DeviceIoControl(
+                fd.native(),
+                w::FSCTL_SET_SPARSE,
+                core::ptr::null_mut(),
+                0,
+                core::ptr::null_mut(),
+                0,
+                &mut returned,
+                core::ptr::null_mut(),
+            )
+        };
+        if ok == w::FALSE {
+            return Err(Error::from_win32(w::Win32Error::get(), Tag::ioctl).with_fd(fd));
         }
         Ok(())
     }
@@ -7159,13 +7297,9 @@ pub enum ExistsAtType {
     File,
     Directory,
 }
-/// Windows tail — `NtQueryAttributesFile` against an
-/// OBJECT_ATTRIBUTES built from an already NT-prefixed wide path. Shared by the
-/// UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`) entry points so the
-/// width dispatch does not
-/// duplicate the syscall body.
+/// `path` is NT-prefixed. Like `GetFileAttributesW`, does not follow a final reparse point.
 #[cfg(windows)]
-fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
+fn nt_query_attributes_at(dir: Fd, mut path: &[u16]) -> Maybe<u32> {
     use bun_windows_sys::externs as w;
     // Trim leading `.\` — NtQueryAttributesFile expects relative paths
     // without it.
@@ -7201,16 +7335,32 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
         // `directory_exists_at()` branches on.
         return Err(Error::new(rc, Tag::access));
     }
+    Ok(basic_info.FileAttributes)
+}
+/// Attributes of the entry `sub` itself (a reparse point is not followed).
+#[cfg(windows)]
+pub fn get_file_attributes_at(dir: Fd, sub: &ZStr) -> Maybe<WindowsFileAttributes> {
+    use bun_windows_sys::externs as w;
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
+    let dword = nt_query_attributes_at(dir, path)?;
+    Ok(WindowsFileAttributes {
+        is_directory: (dword & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
+        is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
+    })
+}
+#[cfg(windows)]
+fn exists_at_type_nt(dir: Fd, path: &[u16]) -> Maybe<ExistsAtType> {
+    use bun_windows_sys::externs as w;
+    let attrs = nt_query_attributes_at(dir, path)?;
     // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
     // marker (OneDrive sets it) and does not affect directory-ness; only
     // `FILE_ATTRIBUTE_DIRECTORY` decides the type.
-    Ok(
-        if (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
-            ExistsAtType::Directory
-        } else {
-            ExistsAtType::File
-        },
-    )
+    Ok(if (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
+        ExistsAtType::Directory
+    } else {
+        ExistsAtType::File
+    })
 }
 /// `fstatat` then `S_ISDIR`.
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
@@ -7490,22 +7640,22 @@ fn linux_kernel_is_freebsd() -> bool {
     detected == 2
 }
 
+/// `<prefix><fd number>`, NUL-terminated in `buf`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn fd_path_z<'a>(prefix: &[u8], fd: Fd, buf: &'a mut [u8; 32]) -> &'a ZStr {
+    buf[..prefix.len()].copy_from_slice(prefix);
+    let end = prefix.len() + bun_core::fmt::print_int(&mut buf[prefix.len()..], fd.native());
+    buf[end] = 0;
+    ZStr::from_buf(&buf[..], end)
+}
+
 /// readlink `/dev/fd/N` (fdescfs).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn get_fd_path_freebsd_linuxulator<'a>(
     fd: Fd,
     out: &'a mut bun_paths::PathBuffer,
 ) -> Maybe<&'a mut [u8]> {
-    let mut dev = [0u8; 32];
-    let n = {
-        use std::io::Write as _;
-        let mut c = std::io::Cursor::new(&mut dev[..]);
-        let _ = write!(c, "/dev/fd/{}\0", fd.native());
-        c.position() as usize - 1
-    };
-    // SAFETY: NUL written above.
-    let z = ZStr::from_buf(&dev[..], n);
-    let len = readlink(z, &mut out.0)?;
+    let len = readlink(fd_path_z(b"/dev/fd/", fd, &mut [0u8; 32]), &mut out.0)?;
     Ok(&mut out.0[..len])
 }
 
@@ -7519,16 +7669,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         if linux_kernel_cached_is_freebsd() {
             return get_fd_path_freebsd_linuxulator(fd, out);
         }
-        let mut proc = [0u8; 32];
-        let n = {
-            use std::io::Write as _;
-            let mut c = std::io::Cursor::new(&mut proc[..]);
-            let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
-            c.position() as usize - 1
-        };
-        // SAFETY: NUL written above.
-        let z = ZStr::from_buf(&proc[..], n);
-        match readlink(z, &mut out.0) {
+        match readlink(fd_path_z(b"/proc/self/fd/", fd, &mut [0u8; 32]), &mut out.0) {
             Ok(len) => return Ok(&mut out.0[..len]),
             Err(e) => {
                 // Under FreeBSD Linuxulator, fall back to
@@ -8862,32 +9003,6 @@ pub fn get_fd_path_z<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'
     Ok(ZStr::from_buf(&out.0[..], len))
 }
 
-/// `&[u8]`-taking convenience over [`renameat_concurrently`] — Z-terminates both
-/// paths into stack buffers.
-pub fn renameat_concurrently_a(
-    from_dir_fd: Fd,
-    from: &[u8],
-    to_dir_fd: Fd,
-    to: &[u8],
-    opts: RenameatConcurrentlyOptions,
-) -> Maybe<()> {
-    // Z-terminate both paths into stack buffers.
-    let mut from_buf = bun_paths::path_buffer_pool::get();
-    let from_len = from.len().min(from_buf.0.len() - 1);
-    from_buf.0[..from_len].copy_from_slice(&from[..from_len]);
-    from_buf.0[from_len] = 0;
-    // SAFETY: NUL-terminated above.
-    let from_z = ZStr::from_buf(&from_buf.0[..], from_len);
-
-    let mut to_buf = bun_paths::path_buffer_pool::get();
-    let to_len = to.len().min(to_buf.0.len() - 1);
-    to_buf.0[..to_len].copy_from_slice(&to[..to_len]);
-    to_buf.0[to_len] = 0;
-    // SAFETY: NUL-terminated above.
-    let to_z = ZStr::from_buf(&to_buf.0[..], to_len);
-
-    renameat_concurrently(from_dir_fd, from_z, to_dir_fd, to_z, opts)
-}
 /// `bun.iterateDir(dir)` — convenience wrapper around `dir_iterator::iterate`.
 #[inline]
 pub fn iterate_dir(dir: Fd) -> dir_iterator::WrappedIterator {
@@ -9013,6 +9128,7 @@ pub(crate) fn move_file_z_slow_maybe(
 /// `renameatConcurrently`. Tries an atomic NOREPLACE rename,
 /// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
 /// an EXDEV result falls through to a slow open/copy.
+/// After an EXCHANGE, `from` holds the tree that was at `to`.
 pub fn renameat_concurrently(
     from_dir_fd: Fd,
     from: &ZStr,
@@ -9430,11 +9546,11 @@ mod owned_handle_tests {
         let to_dir = open_dir_at(root, b"to").expect("open to");
 
         // The dest `to/sub` exists, so the rename must `delete_tree` it first.
-        renameat_concurrently_a(
+        renameat_concurrently(
             root,
-            b"from/sub",
+            bun_core::zstr!("from/sub"),
             to_dir,
-            b"sub",
+            bun_core::zstr!("sub"),
             RenameatConcurrentlyOptions {
                 move_fallback: true,
             },

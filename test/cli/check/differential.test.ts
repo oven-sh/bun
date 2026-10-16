@@ -1554,8 +1554,9 @@ differential("the errors of the projects of a build", async () => {
   expect(different).toEqual({});
 });
 
-// More projects than are built at once: the small ones are each checked by one thread, many at a time, and a large one by
-// all of them. A project reads what the ones it references have emitted, so the order still matters.
+// With four threads there is a project for each, which it loads and checks alone. The last ones, and the large one, have the
+// help of the threads that are left without one. A project reads what the ones it references have emitted, so the order
+// still matters.
 differential("a build of many small projects and a large one", async () => {
   const files: Record<string, string> = {};
   const names: string[] = [];
@@ -1597,9 +1598,57 @@ differential("a build of many small projects and a large one", async () => {
   // In this order: `tsc -b` writes files.
   const ours = await linesOf([bunExe(), "check", "-b"], root, root);
   const oneThread = await linesOf([bunExe(), "check", "-b", "--threads=1"], root, root);
+  const fourThreads = await linesOf([bunExe(), "check", "-b", "--threads=4"], root, root);
   const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], root, root);
   expect(theirs.length).toBeGreaterThan(30);
-  expect({ ours, oneThread }).toEqual({ ours: theirs, oneThread: theirs });
+  expect({ ours, oneThread, fourThreads }).toEqual({ ours: theirs, oneThread: theirs, fourThreads: theirs });
+});
+
+// Three projects can be built at a time, so with more threads than that each project is the work of several, and how many
+// changes while it is built. `late` references nothing, so it begins with the first ones, and reads what one of them emits.
+differential("a build of many layers of a few projects", async () => {
+  const files: Record<string, string> = {};
+  const names: string[] = [];
+  const options = { composite: true, emitDeclarationOnly: true, outDir: "out", rootDir: "src", strict: true };
+  const compilerOptions = { ...options, lib: ["es2020"], skipLibCheck: true, types: [] };
+  for (let layer = 0; layer < 5; layer++) {
+    for (let i = 0; i < 3; i++) {
+      const name = `p${layer}_${i}`;
+      names.push(name);
+      const below = layer === 0 ? [] : [`p${layer - 1}_${i}`, `p${layer - 1}_${(i + 1) % 3}`];
+      files[`${name}/tsconfig.json`] = JSON.stringify({
+        compilerOptions,
+        include: ["src"],
+        references: below.map(it => ({ path: `../${it}` })),
+      });
+      // The type of a project has those of all the layers below in it.
+      files[`${name}/src/index.ts`] =
+        below.map((it, k) => `import type { Top as Below${k} } from "../../${it}/src/index";\n`).join("") +
+        `import { f0 } from "./f0";\n` +
+        `export interface Top { name: "${name}"; f: typeof f0; ${below.map((_, k) => `below${k}: Below${k}; `).join("")}}\n` +
+        `export declare const top: Top;\n` +
+        `export const wrong: ${"Top" + `["below0"]`.repeat(layer)}["name"] = "${name}";\n`;
+      for (let file = 0; file < 6; file++) {
+        files[`${name}/src/f${file}.ts`] =
+          (file < 5 ? `import { f${file + 1} } from "./f${file + 1}";\n` : "") +
+          `export const f${file}: ${file % 4 === i ? "number" : "string"} = \`${file}\`${file < 5 ? ` + f${file + 1}` : ""};\n`;
+      }
+    }
+  }
+  names.push("late");
+  files["late/tsconfig.json"] = JSON.stringify({ compilerOptions, include: ["src"] });
+  files["late/src/index.ts"] = `import { top } from "../../p0_2/out/index";\nexport const name: "late" = top.name;\n`;
+  files["tsconfig.json"] = JSON.stringify({ files: [], references: names.map(it => ({ path: `./${it}` })) });
+  using dir = tempDir("bun-check-differential", files);
+  const root = String(dir);
+  // In this order: `tsc -b` writes files.
+  const ours: Record<string, string[]> = {};
+  for (const threads of ["1", "2", "4", "7", "16"]) {
+    ours[threads] = await linesOf([bunExe(), "check", "-b", `--threads=${threads}`], root, root);
+  }
+  const theirs = await linesOf([tsc!, "-b", ".", "--pretty", "false", "--singleThreaded"], root, root);
+  expect(theirs.length).toBeGreaterThan(30);
+  expect(ours).toEqual({ 1: theirs, 2: theirs, 4: theirs, 7: theirs, 16: theirs });
 });
 
 // A referenced project emits its own sources. Every other file that a project imports is a file of that project.

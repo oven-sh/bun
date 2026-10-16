@@ -1770,6 +1770,28 @@ export { greeting };`,
     expect(exitCode).toBe(0);
   });
 
+  test.each(["5", '"text"', "[]"])("onEnd is not affected by Object.prototype.onEndCallbacks = %s", async value => {
+    using dir = tempDir("onend-object-prototype", {
+      "index.ts": `console.log("hello");`,
+      "build.ts": `
+        Object.prototype.onEndCallbacks = ${value};
+        const inherited = Object.prototype.onEndCallbacks;
+        const calls = [];
+        const plugin = name => ({ name, setup(builder) { builder.onEnd(result => { calls.push(name + ":" + result.success); }); } });
+        const withOnEnd = await Bun.build({ entrypoints: ["./index.ts"], plugins: [plugin("a"), plugin("b")] });
+        const withoutOnEnd = await Bun.build({ entrypoints: ["./index.ts"], plugins: [{ name: "c", setup() {} }] });
+        console.log(JSON.stringify({ calls, success: [withOnEnd.success, withoutOnEnd.success], inherited: inherited.length ?? null }));
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "build.ts"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      out: { calls: ["a:true", "b:true"], success: [true, true], inherited: JSON.parse(value).length ?? null },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("onEnd fires before promise resolves with throw: true", async () => {
     const dir = tempDirWithFiles("onend-throwonerror-true", {
       "index.ts": `

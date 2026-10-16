@@ -1,4 +1,4 @@
-use crate::js::format::identifier;
+use crate::js::format::{identifier, name_without_comments};
 use crate::js::utils::call_expression::strip_chain_element_wrappers;
 use crate::js::utils::member_chain::chain_member::FormatComputedMemberExpressionWithoutObject;
 use crate::js::utils::typecast::{is_cast_target, is_cast_target_that_hides_its_kind};
@@ -101,12 +101,17 @@ pub(crate) fn write_lookup<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
 /// [`write_lookup`] after the leading comments of the name have been written before the `.`, as oxfmt does. There a
 /// `prettier-ignore` comment among them is not about the name any more.
 pub(crate) fn write_lookup_after_its_comments<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
-    write_lookup_without_comments(member, f);
-    if !f.is_quiet()
-        && let Some(start) = member.member_name_start()
-    {
-        FormatTrailingComments::Comments(f.comments().of_name(start).trailing).fmt(f);
+    if f.is_quiet() {
+        return write_lookup_without_comments(member, f);
     }
+    let Some(start) = member.member_name_start() else {
+        return;
+    };
+    let operator = if member.is_optional() { "?." } else { "." };
+    // The member access ends with the name.
+    let name = name_without_comments(Span::new(start, member.span().end));
+    let trailing_comments = FormatTrailingComments::Comments(f.comments().of_name(start).trailing);
+    write!(f, [operator, name, trailing_comments]);
 }
 
 /// The `.b` or `?.b` of `member`, where there are no comments.

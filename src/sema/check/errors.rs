@@ -216,10 +216,16 @@ impl Checker<'_, '_> {
         self.get_additional_js_syntactic_diagnostics(file);
         // `getBindAndCheckDiagnostics` reports nothing for a JSON file.
         let is_json = hir.kind == FileKind::Json;
-        if self.expected != Requested::All || is_json || !self.reports_semantic_errors(file) {
+        let is_checked = match self.expected {
+            Requested::All => true,
+            // A walk of the control flow nests at most once per flow node.
+            Requested::Types => self.bound(file).flow_places > super::flow::MAX_FLOW_DEPTH,
+            Requested::Syntactic | Requested::Declaration => false,
+        };
+        if !is_checked || is_json || !self.reports_semantic_errors(file) {
             let syntactic = std::mem::take(&mut self.reported);
             let mut declaration = Vec::new();
-            if self.expected != Requested::Syntactic {
+            if matches!(self.expected, Requested::Declaration | Requested::All) {
                 self.emit_resolver_links = Default::default();
                 declaration = self.get_declaration_diagnostics(file);
             }

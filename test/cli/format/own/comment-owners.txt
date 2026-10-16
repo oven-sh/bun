@@ -290,6 +290,31 @@ comments/before-and-behind-the-parenthesis-of-a-call-in-a-chain.js
 73 77 T NumericLiteral 71 72 -
 80 84 T CallExpression 67 79 -
 157 167 T ObjectExpression 133 156 -
+comments/before-from.js
+13 26 T ImportSpecifier 9 10 -
+51 61 T ImportSpecifier 47 48 -
+86 96 T ImportSpecifier 82 83 -
+121 134 T ExportSpecifier 117 118 -
+155 168 T ImportDefaultSpecifier 153 154 -
+189 199 T ImportDefaultSpecifier 187 188 -
+220 230 L StringLiteral 236 239 -
+256 269 L StringLiteral 275 278 -
+comments/before-the-colon-of-a-type.ts
+14 27 L TSTypeAnnotation 28 31 -
+38 51 L TSTypeAnnotation 52 55 -
+63 76 L TSTypeAnnotation 77 80 -
+88 95 T Identifier 86 87 -
+96 100 T Identifier 86 87 -
+114 124 L TSTypeAnnotation 127 130 -
+153 166 T Identifier 151 152 -
+177 190 T Identifier 174 175 -
+202 215 L TSTypeAnnotation 216 219 -
+235 248 L TSTypeAnnotation 249 252 -
+270 283 T Identifier 268 269 -
+305 318 L TSTypeAnnotation 319 322 -
+352 365 L TSTypeAnnotation 366 369 -
+388 401 L TSTypeAnnotation 402 405 -
+407 420 L TSTypeAnnotation 421 424 -
 comments/before-the-comma-after-the-last-parameter.ts
 21 25 L TSTypeAnnotation 28 34 -
 59 66 T Identifier 49 58 -
@@ -564,6 +589,16 @@ comments/in-an-import-call-with-a-phase.js
 134 138 L StringLiteral 140 143 -
 157 161 L StringLiteral 169 172 -
 193 197 L StringLiteral 200 203 -
+comments/in-import-attributes-without-attributes.js
+23 33 T StringLiteral 14 17 -
+36 46 T StringLiteral 14 17 -
+76 86 T StringLiteral 65 68 -
+114 124 T StringLiteral 105 108 -
+127 137 T StringLiteral 105 108 -
+165 178 T StringLiteral 156 159 -
+181 191 T StringLiteral 156 159 -
+214 224 T StringLiteral 210 213 -
+232 242 T StringLiteral 210 213 -
 comments/in-the-empty-parentheses-of-a-call-that-something-follows.ts
 26 33 D NewExpression 10 34 -
 69 76 D NewExpression 53 77 -
@@ -1021,6 +1056,27 @@ ignore/before-the-body-of-a-function.ts
 233 254 L BlockStatement 255 263 -
 284 305 L BlockStatement 306 314 -
 324 342 L ExpressionStatement 347 351 -
+ignore/before-the-colon-of-a-signature.ts
+18 39 T Identifier 16 17 -
+56 77 T Identifier 53 54 -
+95 113 L TSTypeReference 118 125 -
+133 154 L TSTypeAnnotation 155 164 -
+196 217 T Identifier 194 195 -
+246 267 L TSTypeAnnotation 268 277 -
+302 312 L TSTypeReference 317 324 -
+341 354 L TSTypeOperator 359 372 -
+395 416 T Identifier 393 394 -
+427 440 T TSTypeReference 419 426 -
+465 478 L TSTypeReference 484 485 -
+494 507 L TSTypeReference 513 514 -
+522 529 L TSTypeReference 544 545 -
+534 541 T Identifier 518 519 -
+551 564 T Identifier 549 550 -
+576 589 T Identifier 574 575 -
+617 630 T Identifier 615 616 -
+642 663 T Identifier 640 641 -
+676 689 T TSTypeReference 668 675 -
+697 707 L TSTypeReference 714 715 -
 ignore/before-the-parameters-of-a-function.ts
 11 32 T Identifier 9 10 -
 55 73 L Identifier 76 77 -

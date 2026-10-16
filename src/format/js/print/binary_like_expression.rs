@@ -1,5 +1,6 @@
 //! `a + b`, `a && b`. Prettier's `printBinaryishExpression`.
 
+use super::flow::is_match_expression_case;
 use crate::js::utils::typecast::{
     comments_of_expression, has_comments, has_leading_own_line_comment, is_cast_target,
     is_cast_target_that_hides_its_kind, is_chain_expression_without_comments,
@@ -177,7 +178,11 @@ impl<'a> BinaryLikeExpression<'a> {
 
         // A condition has its own indentation and group.
         if !is_in_type_cast && self.is_inside_condition(parent) {
-            return format_flattened_logical_expression(*self, true, false, f);
+            let place = ChainPlace {
+                inside_condition: true,
+                is_nested: false,
+            };
+            return format_flattened_logical_expression(*self, place, f);
         }
 
         // Where it is in parentheses: `(a + b)()`, `!(a + b)`, `(a + b).c`.
@@ -191,7 +196,7 @@ impl<'a> BinaryLikeExpression<'a> {
             return write!(
                 f,
                 group(&soft_block_indent(&format_with(|f| {
-                    format_flattened_logical_expression(*self, false, false, f)
+                    format_flattened_logical_expression(*self, ChainPlace::default(), f)
                 })))
             );
         }
@@ -200,7 +205,9 @@ impl<'a> BinaryLikeExpression<'a> {
             return write!(
                 f,
                 group(&format_with(|f| format_flattened_logical_expression(
-                    *self, false, false, f
+                    *self,
+                    ChainPlace::default(),
+                    f
                 )))
             );
         }
@@ -208,7 +215,7 @@ impl<'a> BinaryLikeExpression<'a> {
         let inline_logical_expression = self.should_inline_logical_expression(f);
         let should_indent_if_inlines =
             !is_in_type_cast && should_indent_if_parent_inlines(parent, f);
-        let parts = split_into_left_and_right_sides(*self, false, false, f);
+        let parts = split_into_left_and_right_sides(*self, ChainPlace::default(), f);
         let flattened = parts.len() > 2 || self.right_with_same_operator(f).is_some();
 
         if (inline_logical_expression && !flattened)
@@ -306,18 +313,26 @@ enum Operands {
     Last,
 }
 
-/// Writes all operands of a chain one after the other. `is_nested`: see [`BinaryLeftOrRightSide::Right::is_nested`].
+/// Where a chain is. By default it is not in a condition, and is a node of its own.
+#[derive(Debug, Copy, Clone, Default)]
+struct ChainPlace {
+    /// See [`BinaryLeftOrRightSide::Right::inside_condition`].
+    inside_condition: bool,
+    /// See [`BinaryLeftOrRightSide::Right::is_nested`], for the whole chain.
+    is_nested: bool,
+}
+
+/// Writes all operands of a chain one after the other.
 fn format_flattened_logical_expression<'a>(
     binary: BinaryLikeExpression<'a>,
-    inside_condition: bool,
-    is_nested: bool,
+    place: ChainPlace,
     f: &mut Formatter<'a>,
 ) {
     // `a && ((b && ((c && ..) && d)) && e)`: it is not written by way of `Expr`.
     if !f.context_mut().has_stack_left() {
         return;
     }
-    let parts = split_into_left_and_right_sides(binary, inside_condition, is_nested, f);
+    let parts = split_into_left_and_right_sides(binary, place, f);
     f.join().entries(parts.iter());
 }
 
@@ -391,12 +406,11 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
                     .filter(|left| left.operator == operator && !is_cast_target(left.expr, f))
                 {
                     Some(left_logical_child) => {
-                        format_flattened_logical_expression(
-                            left_logical_child,
-                            inside_parenthesis,
-                            true,
-                            f,
-                        );
+                        let place = ChainPlace {
+                            inside_condition: inside_parenthesis,
+                            is_nested: true,
+                        };
+                        format_flattened_logical_expression(left_logical_child, place, f);
                     }
                     None => right_logical.left.fmt(f),
                 }
@@ -736,13 +750,16 @@ impl<'a> BinaryLeftOrRightSide<'a> {
 }
 
 /// The operands of a chain, in order: the leftmost that is not part of the chain, and then the
-/// right side of each expression on the way up. `is_nested`: see [`BinaryLeftOrRightSide::Right::is_nested`], for `binary`.
+/// right side of each expression on the way up.
 fn split_into_left_and_right_sides<'a>(
     binary: BinaryLikeExpression<'a>,
-    inside_condition: bool,
-    is_nested: bool,
+    place: ChainPlace,
     f: &Formatter<'a>,
 ) -> SmallVec<[BinaryLeftOrRightSide<'a>; 4]> {
+    let ChainPlace {
+        inside_condition,
+        is_nested,
+    } = place;
     let mut items = SmallVec::new();
     let mut current = binary;
     loop {
@@ -782,8 +799,9 @@ fn key_of_method_is_indented(f: &Formatter<'_>) -> bool {
 fn should_indent_if_parent_inlines(parent: AstNodes<'_>, f: &Formatter<'_>) -> bool {
     match parent {
         AstNodes::ObjectProperty(property) => {
-            matches!(property.kind(), PropKind::Init | PropKind::Shorthand)
-                || !key_of_method_is_indented(f)
+            (matches!(property.kind(), PropKind::Init | PropKind::Shorthand)
+                || !key_of_method_is_indented(f))
+                && !is_match_expression_case(property)
         }
         AstNodes::AssignmentExpression(_)
         | AstNodes::AssignmentTargetPropertyProperty(_)

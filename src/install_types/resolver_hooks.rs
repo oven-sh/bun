@@ -1421,6 +1421,10 @@ pub trait AutoInstaller {
         package_json_dir: Option<&[u8]>,
         buf: &'b mut [u8],
     ) -> Option<&'b [u8]>;
+    /// The folder of the root package.json, or `None` if a rule of `overrides` names this peer.
+    fn project_dir_for_peer(&self, name: &[u8]) -> Option<&[u8]>;
+    /// The part of `path` below the global cache directory, by its path or its real path.
+    fn cache_relative_path<'p>(&mut self, path: &'p [u8]) -> Option<&'p [u8]>;
     /// Returns the package's folder in the cache. An npm package that is not cached yet is
     /// downloaded first, and the call blocks until that finishes.
     fn path_for_resolution<'b>(

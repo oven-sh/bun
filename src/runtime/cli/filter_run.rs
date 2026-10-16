@@ -26,8 +26,8 @@ struct ScriptConfig {
     script_name: Box<[u8]>,
     script_content: Box<[u8]>,
     combined: &'static ZStr, // interned via `cli_dupe` into the process-lifetime CLI arena
-    // Owned dep names; the rows would dangle once the parsed `PackageJSON`
-    // (which owns the file bytes) drops.
+    // Owned dep names; the rows of the package.json would dangle once the
+    // parsed `PackageJSON` (which owns the file bytes) drops.
     deps: Vec<Box<[u8]>>,
 
     // $PATH must be set per script because it contains

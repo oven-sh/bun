@@ -1000,7 +1000,8 @@ describe.concurrent("auto-install reads the dependencies of a package.json, what
     expect(exitCode).toBe(0);
   });
 
-  // The last group wins, and in a group the last row of a name, as in an install.
+  // As when nothing read the folder first: the last group wins, and in a group the last row of
+  // a name.
   test("group order and a name that is in a group twice, after Bun.build read the folder", async () => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-first-reader-groups", {
@@ -1130,7 +1131,7 @@ describe.concurrent("auto-install reads the dependencies of a package.json, what
 
     const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
     expect(stdout).toBe("1.0.1\n");
-    expect(registry.tarballs()).toEqual(["/outer/-/outer-1.0.0.tgz", "/no-deps/-/no-deps-1.0.1.tgz"]);
+    expect(registry.tarballs().sort()).toEqual(["/no-deps/-/no-deps-1.0.1.tgz", "/outer/-/outer-1.0.0.tgz"]);
     expect(exitCode).toBe(0);
   });
 
@@ -1160,6 +1161,228 @@ describe.concurrent("auto-install reads the dependencies of a package.json, what
     expect(exitCode).toBe(0);
   });
 
+  // That read also finds the folders above the package. The node_modules that the package ships
+  // then counted like a node_modules of the project, which turns auto-install off.
+  test("a package of the cache that ships a node_modules installs a dependency after an import in it failed", async () => {
+    using registry = await registryWithPackages([
+      {
+        manifest: { name: "carrier", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } },
+        files: {
+          "index.js": `try {\n  require("./not-there.js");\n} catch {}\nmodule.exports = [require("shipped"), require("no-deps").version];\n`,
+          "node_modules/shipped/package.json": JSON.stringify({ name: "shipped", version: "1.0.0" }),
+          "node_modules/shipped/index.js": `module.exports = "shipped";\n`,
+        },
+      },
+    ]);
+    using dir = tempDir("autoinstall-shipped-after-bust", {
+      "index.js": `console.log(require("carrier").join(" "));\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("shipped 1.0.0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The files of the package have their real path after that read, and the cache directory is
+  // named by the symlink.
+  test.skipIf(isWindows)(
+    "a package of the cache keeps the dependencies of the lockfile after an import in it failed, with the cache behind a symlink",
+    async () => {
+      using registry = await registryWithPackages([
+        {
+          manifest: {
+            name: "carrier",
+            version: "1.0.0",
+            dependencies: { "no-deps": "1.0.0" },
+            devDependencies: { "no-deps": "2.0.0" },
+          },
+          files: {
+            "index.js": `try {\n  require("./not-there.js");\n} catch {}\nmodule.exports = require("./after.js");\n`,
+            "after.js": `module.exports = require("no-deps").version;\n`,
+          },
+        },
+      ]);
+      using dir = tempDir("autoinstall-cached-symlink", {
+        "index.js": `console.log(require("carrier"));\n`,
+        "bunfig.toml": registry.bunfig,
+      });
+      mkdirSync(join(String(dir), "real-cache"));
+      symlinkSync(join(String(dir), "real-cache"), join(String(dir), "cache"));
+
+      const { stdout, exitCode } = await runAutoInstallWithEnv(
+        { BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") },
+        String(dir),
+        "index.js",
+      );
+      expect(stdout).toBe("1.0.0\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The cache names the folder of a tarball after the hash of the tarball. The name and the
+  // version in its package.json do not say which package of the lockfile the folder is.
+  test("a tarball of the project keeps its dependencies after an import in it failed", async () => {
+    using registry = fixtureRegistry();
+    const carrier = await new Bun.Archive({
+      "package/package.json": JSON.stringify({
+        name: "carrier",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+        devDependencies: { "no-deps": "2.0.0" },
+      }),
+      "package/index.js": `try {\n  require("./not-there.js");\n} catch {}\nmodule.exports = require("no-deps").version;\n`,
+    }).bytes("gzip");
+    using dir = tempDir("autoinstall-tarball-after-bust", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { carrier: "file:./carrier.tgz" } }),
+      "carrier.tgz": Buffer.from(carrier),
+      "index.js": `console.log(require("carrier"));\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("1.0.0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Every path in such a cache has a node_modules folder in it.
+  test("a package that ships a node_modules, in a cache directory that is below a node_modules folder", async () => {
+    using registry = await registryWithPackages([
+      {
+        manifest: { name: "carrier", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } },
+        files: {
+          "index.js": `module.exports = [require("shipped"), require("no-deps").version];\n`,
+          "node_modules/shipped/package.json": JSON.stringify({ name: "shipped", version: "1.0.0" }),
+          "node_modules/shipped/index.js": `module.exports = "shipped";\n`,
+        },
+      },
+    ]);
+    using dir = tempDir("autoinstall-cache-below-node-modules", {
+      "index.js": `console.log(require("carrier").join(" "));\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstallWithEnv(
+      { BUN_INSTALL_CACHE_DIR: join(String(dir), "node_modules", ".cache", "bun") },
+      String(dir),
+      "index.js",
+    );
+    expect(stdout).toBe("shipped 1.0.0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun install --backend=symlink` links node_modules to the folders of the cache, so the files
+  // of carrier have their path in the cache. Nothing links member, and its import creates the
+  // package manager without a read of the cache.
+  describe.skipIf(isWindows)("a package that node_modules links to in the cache", () => {
+    const carrier = {
+      manifest: {
+        name: "carrier",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+        devDependencies: { "no-deps": "2.0.0" },
+      },
+      files: { "index.js": `module.exports = require("no-deps").version;\n` },
+    };
+
+    test.each([
+      ["", false],
+      [", with the cache behind a symlink", true],
+    ])("has the dependencies of the lockfile%s", async (_, behindSymlink) => {
+      using registry = await registryWithPackages([carrier]);
+      using dir = tempDir("autoinstall-linked-cache", {
+        "app/package.json": JSON.stringify({
+          name: "app",
+          workspaces: ["member"],
+          dependencies: { carrier: "1.0.0" },
+        }),
+        "app/member/package.json": JSON.stringify({ name: "member", version: "1.0.0" }),
+        "app/member/index.js": `module.exports = 1;\n`,
+        "app/index.js": `require("member");\nconsole.log(require("carrier"));\n`,
+        "app/bunfig.toml": registry.bunfig,
+      });
+      const app = join(String(dir), "app");
+      if (behindSymlink) {
+        mkdirSync(join(String(dir), "real-cache"));
+        symlinkSync(join(String(dir), "real-cache"), join(String(dir), "cache"));
+      }
+      const env = { BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") };
+      const install = await runAutoInstallWithEnv(env, app, "install", "--backend=symlink", "--linker=hoisted");
+      expect(install.exitCode).toBe(0);
+      rmSync(join(app, "node_modules", "member"), { recursive: true, force: true });
+      registry.requests.length = 0;
+
+      const { stdout, exitCode } = await runAutoInstallWithEnv(env, app, "--install=fallback", "index.js");
+      expect(stdout).toBe("1.0.0\n");
+      expect(registry.requests).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+
+    // The global store of `bun install` is in the cache directory. node_modules links to
+    // `links/<name>@<version>-<hash>/node_modules/<name>` there. The peer of carrier is
+    // optional, so `bun install` does not install it. bun.lock has its range. The failed
+    // import is first, so that the project of the process is app/.
+    test("in the global store has the dependencies of the lockfile", async () => {
+      using registry = await registryWithPackages([
+        {
+          manifest: {
+            name: "carrier",
+            version: "1.0.0",
+            peerDependencies: { "no-deps": "^1.0.0" },
+            peerDependenciesMeta: { "no-deps": { optional: true } },
+          },
+          files: carrier.files,
+        },
+      ]);
+      using dir = tempDir("autoinstall-global-store", {
+        "app/package.json": JSON.stringify({ name: "app", dependencies: { carrier: "1.0.0" } }),
+        "app/index.js": `try {\n  require("not-a-package");\n} catch {}\nconsole.log(require("carrier"));\n`,
+        "app/bunfig.toml": registry.bunfig + `linker = "isolated"\nglobalStore = true\n`,
+      });
+      const app = join(String(dir), "app");
+      const env = { BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") };
+      expect((await runAutoInstallWithEnv(env, app, "install")).exitCode).toBe(0);
+
+      const { stdout, exitCode } = await runAutoInstallWithEnv(env, app, "--install=fallback", "index.js");
+      expect(stdout).toBe("1.1.0\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // one-range-dep is in node_modules and in bun.lock, which has no-deps@1.0.1 for it and
+  // no-deps@1.1.0 for the project. Its package.json is read before the first import creates the
+  // package manager.
+  test("a package in node_modules that bun.lock has loads the versions of the lockfile", async () => {
+    using registry = fixtureRegistry();
+    const dependencies = { "no-deps": "1.1.0", "one-range-dep": "1.0.0" };
+    using dir = tempDir("autoinstall-installed-locked", {
+      "package.json": JSON.stringify({ name: "app", dependencies }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "app", dependencies } },
+        packages: {
+          "no-deps": ["no-deps@1.1.0", "", {}, ""],
+          "one-range-dep": ["one-range-dep@1.0.0", "", { dependencies: { "no-deps": "^1.0.0" } }, ""],
+          "one-range-dep/no-deps": ["no-deps@1.0.1", "", {}, ""],
+        },
+      }),
+      "node_modules/one-range-dep/package.json": JSON.stringify({
+        name: "one-range-dep",
+        version: "1.0.0",
+        dependencies: { "no-deps": "^1.0.0" },
+      }),
+      "node_modules/one-range-dep/index.js": `module.exports = require("no-deps").version;\n`,
+      "index.js": `console.log(require("one-range-dep"));\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "--install=fallback", "index.js");
+    expect(stdout).toBe("1.0.1\n");
+    expect(registry.requests).toEqual(["/no-deps/-/no-deps-1.0.1.tgz"]);
+    expect(exitCode).toBe(0);
+  });
+
   // sub/package.json is read when no-deps@1.0.1 is in the lockfile. It is not that package.
   test("a package.json of the project with the name and version of a package of the lockfile", async () => {
     using registry = fixtureRegistry();
@@ -1184,19 +1407,304 @@ describe.concurrent("auto-install reads the dependencies of a package.json, what
   });
 
   // one-range-dep depends on no-deps@^1.0.0 and gets the target of the project's alias of that
-  // name, as from `bun install`. sub/package.json is read with the entry file, before the first
-  // import creates the package manager.
-  test("an npm: alias counts for the first package that is imported", async () => {
+  // name, as from `bun install`.
+  const printAliased = `const dep = require("one-range-dep").dependencies["no-deps"];\nconsole.log(dep.name + "@" + dep.version);\n`;
+
+  test("an npm: alias in a workspace package that the file imports by its name", async () => {
     using registry = fixtureRegistry();
-    using dir = tempDir("autoinstall-alias-first-import", {
-      "package.json": JSON.stringify({ name: "app" }),
-      "sub/package.json": JSON.stringify({ name: "sub", dependencies: { "no-deps": "npm:left-pad@1.0.0" } }),
-      "sub/index.js": `const dep = require("one-range-dep").dependencies["no-deps"];\nconsole.log(dep.name + "@" + dep.version);\n`,
+    using dir = tempDir("autoinstall-alias-member", {
+      "package.json": JSON.stringify({ name: "app", workspaces: ["a", "b"] }),
+      "a/package.json": JSON.stringify({ name: "a" }),
+      "a/index.js": `require("b");\n` + printAliased,
+      "b/package.json": JSON.stringify({ name: "b", dependencies: { "no-deps": "npm:is-number@1.0.0" } }),
+      "b/index.js": `module.exports = 1;\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "a/index.js");
+    expect(stdout).toBe("is-number@1.0.0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // b/package.json is read after the import of left-pad created the package manager.
+  test("an npm: alias in a workspace package whose folder is read after the first import", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-alias-member-late", {
+      "package.json": JSON.stringify({ name: "app", workspaces: ["a", "b"] }),
+      "a/package.json": JSON.stringify({ name: "a" }),
+      "a/index.js": `require("left-pad");\nrequire("../b/index.js");\n` + printAliased,
+      "b/package.json": JSON.stringify({ name: "b", dependencies: { "no-deps": "npm:is-number@1.0.0" } }),
+      "b/index.js": `module.exports = 1;\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "a/index.js");
+    expect(stdout).toBe("is-number@1.0.0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The package.json above proj/ is not the project's: `bun install` in proj/ does not read it.
+  test("an npm: alias in a package.json above the project does not replace a dependency of the project", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-alias-above-project", {
+      "package.json": JSON.stringify({ name: "outer", dependencies: { "no-deps": "npm:is-number@1.0.0" } }),
+      "proj/package.json": JSON.stringify({ name: "proj", dependencies: { "no-deps": "1.0.1" } }),
+      "proj/index.js": printNoDeps,
+      "proj/bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(join(String(dir), "proj"), "index.js");
+    expect(stdout).toBe("no-deps@1.0.1\n");
+    expect(registry.requests).toEqual(["/no-deps", "/no-deps/-/no-deps-1.0.1.tgz"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // carrier, from the registry, has no-deps as a peer. The root package.json says what no-deps
+  // is, and `bun install` links the peer to that, whatever range the peer has.
+  describe("a peer of a package from the registry that the root package.json has as a folder", () => {
+    const carrier = (meta: object) => ({
+      manifest: { name: "carrier", version: "1.0.0", peerDependencies: { "no-deps": "*" }, ...meta },
+      files: { "index.js": `module.exports = require("no-deps");\n` },
+    });
+    const printPeer = `const { name, version } = require("carrier");\nconsole.log(name + "@" + version);\n`;
+
+    test.each([
+      ["file:", { "no-deps": "file:./local" }, {}],
+      ["link:", { "no-deps": "link:./local" }, {}],
+      [
+        "file:, and the peer is optional",
+        { "no-deps": "file:./local" },
+        { peerDependenciesMeta: { "no-deps": { optional: true } } },
+      ],
+    ])("%s", async (_, dependencies, meta) => {
+      using registry = await registryWithPackages([carrier(meta)]);
+      using dir = tempDir("autoinstall-peer-folder", {
+        ...local,
+        "package.json": JSON.stringify({ name: "app", dependencies: { carrier: "1.0.0", ...dependencies } }),
+        "index.js": printPeer,
+        "bunfig.toml": registry.bunfig,
+      });
+
+      const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+      expect(stdout).toBe("no-deps@7.0.0\n");
+      expect(registry.requests).toEqual(["/carrier", "/carrier/-/carrier-1.0.0.tgz"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("file:, with the bun.lock that bun install writes", async () => {
+      using registry = await registryWithPackages([carrier({})]);
+      using dir = tempDir("autoinstall-peer-folder-lock", {
+        ...local,
+        "package.json": JSON.stringify({ name: "app", dependencies: { carrier: "1.0.0", "no-deps": "file:./local" } }),
+        "index.js": printPeer,
+        "bunfig.toml": registry.bunfig,
+      });
+      expect((await runAutoInstall(String(dir), "install", "--lockfile-only")).exitCode).toBe(0);
+      registry.requests.length = 0;
+
+      const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+      expect(stdout).toBe("no-deps@7.0.0\n");
+      expect(registry.requests).toEqual(["/carrier/-/carrier-1.0.0.tgz"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("file:, and the folder does not exist", async () => {
+      using registry = await registryWithPackages([carrier({})]);
+      using dir = tempDir("autoinstall-peer-folder-missing", {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { carrier: "1.0.0", "no-deps": "file:./nowhere" },
+        }),
+        "index.js": printPeer,
+        "bunfig.toml": registry.bunfig,
+      });
+
+      const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.js");
+      expect(stdout).toBe("");
+      expect(noteLines(stderr)).toEqual([
+        `note: "no-deps@file:./nowhere": folder "${join(String(dir), "nowhere")}" does not exist`,
+      ]);
+      expect(registry.requests).toEqual(["/carrier", "/carrier/-/carrier-1.0.0.tgz"]);
+      expect(exitCode).toBe(1);
+    });
+
+    // The registry's no-deps@2.0.0 is in ^2.0.0, and the workspace package is not.
+    test.each([
+      ["workspace:*", { carrier: "1.0.0", "no-deps": "workspace:*" }, "*"],
+      ["not listed", { carrier: "1.0.0" }, "*"],
+      [
+        "workspace:*, with a version outside the range of the peer",
+        { carrier: "1.0.0", "no-deps": "workspace:*" },
+        "^2.0.0",
+      ],
+    ])("a workspace package, %s", async (_, dependencies, range) => {
+      using registry = await registryWithPackages([carrier({ peerDependencies: { "no-deps": range } })]);
+      using dir = tempDir("autoinstall-peer-member", {
+        ...local,
+        "package.json": JSON.stringify({ name: "app", workspaces: ["local"], dependencies }),
+        "index.js": printPeer,
+        "bunfig.toml": registry.bunfig,
+      });
+
+      const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+      expect(stdout).toBe("no-deps@7.0.0\n");
+      expect(registry.requests).toEqual(["/carrier", "/carrier/-/carrier-1.0.0.tgz"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // The package manager applies the rule.
+    test("overrides for the name of the peer win over the folder", async () => {
+      using registry = await registryWithPackages([carrier({})]);
+      using dir = tempDir("autoinstall-peer-folder-override", {
+        ...local,
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { carrier: "1.0.0", "no-deps": "file:./local" },
+          overrides: { "no-deps": "1.0.1" },
+        }),
+        "index.js": printPeer,
+        "bunfig.toml": registry.bunfig,
+      });
+
+      const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+      expect(stdout).toBe("no-deps@1.0.1\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // `bun install` links the workspace package when its version is in the range that the catalog
+  // has. The registry has no no-deps in ^7.0.0.
+  test.each([
+    ["", ["index.js"], {}],
+    [", with a node_modules next to it", ["--install=fallback", "index.js"], { "node_modules/.keep": "" }],
+  ])("a catalog: range for a workspace package%s", async (_, args, more) => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-catalog-member", {
+      ...local,
+      ...more,
+      "package.json": JSON.stringify({
+        name: "app",
+        workspaces: { packages: ["local"], catalog: { "no-deps": "^7.0.0" } },
+        dependencies: { "no-deps": "catalog:" },
+      }),
+      "index.js": printNoDeps,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), ...args);
+    expect(stdout).toBe("no-deps@7.0.0\n");
+    expect(registry.requests).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Only the registry knows which version a dist-tag is, so `bun install` links the workspace
+  // package for a dist-tag of its name in the root package.json.
+  test.each([
+    ["", ["index.js"], {}],
+    [", imported in a member", ["web/index.js"], {}],
+    [", with a node_modules next to it", ["--install=fallback", "index.js"], { "node_modules/.keep": "" }],
+  ])("a dist-tag for a workspace package in the root package.json%s", async (_, args, more) => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-root-dist-tag", {
+      ...local,
+      ...more,
+      "package.json": JSON.stringify({
+        name: "app",
+        workspaces: ["local", "web"],
+        dependencies: { "no-deps": "latest" },
+      }),
+      "web/package.json": JSON.stringify({ name: "web" }),
+      "index.js": printNoDeps,
+      "web/index.js": printNoDeps,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), ...args);
+    expect(stdout).toBe("no-deps@7.0.0\n");
+    expect(registry.requests).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The package manager applies the rule, as for a name that no workspace package has.
+  test.each([
+    ["a dist-tag in the root package.json", "latest"],
+    ["a catalog: range", "catalog:"],
+  ])("overrides for the name of a workspace package win over %s", async (_, version) => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-member-override", {
+      ...local,
+      "package.json": JSON.stringify({
+        name: "app",
+        workspaces: { packages: ["local"], catalog: { "no-deps": "^7.0.0" } },
+        dependencies: { "no-deps": version },
+        overrides: { "no-deps": "1.0.1" },
+      }),
+      "index.js": printNoDeps,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("no-deps@1.0.1\n");
+    expect(registry.requests).toEqual(["/no-deps", "/no-deps/-/no-deps-1.0.1.tgz"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A path in a catalog is from the root package.json.
+  test.each([
+    ["file:", "file:./local", "index.js"],
+    ["link:", "link:./local", "index.js"],
+    ["file:, for a workspace package", "file:./local", "web/index.js"],
+  ])("a catalog: entry that is a folder: %s", async (_, entry, file) => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-catalog-folder", {
+      ...local,
+      "package.json": JSON.stringify({
+        name: "app",
+        workspaces: { packages: ["web"], catalog: { "no-deps": entry } },
+        dependencies: { "no-deps": "catalog:" },
+      }),
+      "web/package.json": JSON.stringify({ name: "web", dependencies: { "no-deps": "catalog:" } }),
+      "index.js": printNoDeps,
+      "web/index.js": printNoDeps,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), file);
+    expect(stdout).toBe("no-deps@7.0.0\n");
+    expect(registry.requests).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["workspace:*", ["local", "web"], "workspace:*"],
+    ["file:", [], "file:../local"],
+  ])("peerDependencies of a package.json of the project: %s", async (_, workspaces, version) => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-own-peer", {
+      ...local,
+      "package.json": JSON.stringify({ name: "app", workspaces }),
+      "web/package.json": JSON.stringify({ name: "web", peerDependencies: { "no-deps": version } }),
+      "web/index.js": printNoDeps,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "web/index.js");
+    expect(stdout).toBe("no-deps@7.0.0\n");
+    expect(registry.requests).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a version that cannot be read: a package.json further up decides", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-rejected-version-above", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.1" } }),
+      "sub/package.json": `{ "name": "sub", "dependencies": { "no-deps": 5 } }`,
+      "sub/index.js": printNoDeps,
       "bunfig.toml": registry.bunfig,
     });
 
     const { stdout, exitCode } = await runAutoInstall(String(dir), "sub/index.js");
-    expect(stdout).toBe("left-pad@1.0.0\n");
+    expect(stdout).toBe("no-deps@1.0.1\n");
     expect(exitCode).toBe(0);
   });
 

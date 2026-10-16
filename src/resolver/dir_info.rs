@@ -106,8 +106,7 @@ pub struct DirInfo {
     // Fields with write sites are `Option<NonNull<T>>` so
     // mut-provenance from the allocation site is preserved through to the
     // write/drop sites (a `*const→*mut` cast there would be UB under Stacked
-    // Borrows). Read sites use the `.package_json()` / `.tsconfig_json()`
-    // accessors.
+    // Borrows). Read sites use the `.package_json()` / `.tsconfig_json()` accessors.
     pub(crate) package_json_for_browser_field: Option<&'static PackageJSON>,
     pub(crate) enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
 
@@ -168,9 +167,8 @@ impl Default for DirInfo {
 
 /// Dereference an arena-interned `NonNull<T>` to `&'static T`.
 ///
-/// Single deref site for the two `Option<NonNull<_>>` read accessors on
-/// [`DirInfo`] (`package_json` / `tsconfig_json`). The pointee is interned in
-/// the resolver's process-lifetime
+/// Single deref site for the `Option<NonNull<_>>` read accessors on [`DirInfo`] (`package_json`,
+/// `tsconfig_json`). The pointee is interned in the resolver's process-lifetime
 /// PackageJSON / TSConfigJSON arena (see `intern_package_json` / the tsconfig
 /// merge loop); never freed for the life of the process.
 #[inline]

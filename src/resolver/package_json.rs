@@ -19,9 +19,7 @@ use bun_parsers::json_parser;
 // all install-tier value types are the canonical `bun_install_types` shapes.
 
 use ::bun_install_types::resolver_hooks::Behavior as DependencyBehavior;
-pub use ::bun_install_types::resolver_hooks::{
-    Dependency, DependencyGroup, DependencyVersion, DependencyVersionTag,
-};
+pub use ::bun_install_types::resolver_hooks::DependencyGroup;
 pub use ::bun_install_types::resolver_hooks::{INVALID_PACKAGE_ID, PackageID};
 // Deliberately a bare alias rather than `bun_collections::StringMap` (which
 // wraps the same `StringArrayHashMap<Box<[u8]>>` with a `dupe_keys` flag the
@@ -65,9 +63,7 @@ pub struct PackageJSON {
     pub config: Option<Box<StringArrayHashMap<&'static [u8]>>>,
 
     pub(crate) package_manager_package_id: PackageID,
-    /// Where the rows of each group of `DEPENDENCY_GROUPS` are in `json_tape`. Every parse records
-    /// the ranges and parses no row, so the record does not depend on which resolver cached the
-    /// file. Auto-install parses the one row it looks up.
+    /// Where the rows of each group of `DEPENDENCY_GROUPS` are in `json_tape`, for auto-install.
     pub(crate) dependency_rows: [core::ops::Range<u32>; DEPENDENCY_GROUPS.len()],
 
     pub(crate) side_effects: SideEffects,
@@ -151,40 +147,37 @@ const DEPENDENCY_GROUPS: [DependencyGroup; 4] = [
 ];
 
 impl PackageJSON {
-    /// One of the project's own package.json files, not that of a package in node_modules.
+    /// Not in a node_modules folder. A package of the global cache is not in one either.
     pub(crate) fn is_project_file(&self) -> bool {
         !strings::contains(self.source.path.text, NODE_MODULES_PATH.as_bytes())
     }
 
-    /// The rows of each dependency group, lowest precedence first. A package in node_modules has
-    /// no `devDependencies` or `peerDependencies` for the packages it loads.
-    fn dependency_groups(
-        &self,
-    ) -> impl DoubleEndedIterator<Item = (DependencyBehavior, &[js_ast::E::PropertyJSON])> {
-        let is_project_file = self.is_project_file();
-        DEPENDENCY_GROUPS
-            .iter()
-            .zip(&self.dependency_rows)
-            .filter(move |(group, _)| {
-                is_project_file || !(group.behavior.is_dev() || group.behavior.is_peer())
-            })
-            .map(|(group, rows)| {
-                let tape = self.json_tape.as_deref().filter(|_| !rows.is_empty());
-                let rows = tape.map_or(&[][..], |tape| tape.properties(rows.clone()));
-                (group.behavior, rows)
-            })
+    /// In a `node_modules` folder below the folder of `root`.
+    pub(crate) fn is_in_node_modules_of(&self, root: &PackageJSON) -> bool {
+        bun_paths::dirname(root.source.path.text)
+            .and_then(|dir| self.source.path.text.strip_prefix(dir))
+            .is_some_and(|below| strings::contains(below, NODE_MODULES_PATH.as_bytes()))
     }
 
-    /// The rows that declare `name`, highest precedence first.
+    /// The rows of one group of `DEPENDENCY_GROUPS`.
+    fn group_rows(&self, group: usize) -> &[js_ast::E::PropertyJSON] {
+        let rows = &self.dependency_rows[group];
+        let tape = self.json_tape.as_deref().filter(|_| !rows.is_empty());
+        tape.map_or(&[][..], |tape| tape.properties(rows.clone()))
+    }
+
+    /// The rows that declare `name`, highest precedence first. `of_project` adds dev and peer rows.
     pub(crate) fn dependency_rows_of<'a>(
         &'a self,
         name: &'a [u8],
+        of_project: bool,
     ) -> impl Iterator<Item = (&'a js_ast::E::PropertyJSON, DependencyBehavior)> {
-        self.dependency_groups()
+        (0..DEPENDENCY_GROUPS.len())
             .rev()
-            .flat_map(move |(behavior, rows)| {
-                rows.iter()
-                    .rev()
+            .map(|group| (group, DEPENDENCY_GROUPS[group].behavior))
+            .filter(move |(_, behavior)| of_project || !(behavior.is_dev() || behavior.is_peer()))
+            .flat_map(move |(group, behavior)| {
+                (self.group_rows(group).iter().rev())
                     .filter(move |row| row.key.slice() == name)
                     .map(move |row| (row, behavior))
             })
@@ -192,27 +185,23 @@ impl PackageJSON {
 
     /// Every dependency that is an `npm:` alias, as its name and version.
     pub(crate) fn npm_aliases(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
-        self.dependency_groups()
-            .flat_map(|(_, rows)| rows)
+        (0..DEPENDENCY_GROUPS.len())
+            .flat_map(|group| self.group_rows(group))
             .filter_map(|row| Some((row.key.slice(), row.value.as_str()?)))
-            .filter(|(_, version)| version.starts_with(b"npm:"))
+            .filter(|(_, version)| strings::trim_left(version, b" \t\n\r").starts_with(b"npm:"))
     }
 
-    /// The names in `dependencies`, `devDependencies` and `optionalDependencies`, each once.
+    /// Each name that is not only a peer, once, for `bun run --filter`.
     pub fn dependency_names(&self) -> Vec<&[u8]> {
-        let mut names: Vec<&[u8]> = Vec::new();
-        for (behavior, rows) in self.dependency_groups() {
-            if behavior.is_peer() {
-                continue;
-            }
-            for row in rows.iter().filter(|row| row.value.as_str().is_some()) {
-                let name = row.key.slice();
-                if !names.contains(&name) {
-                    names.push(name);
-                }
-            }
-        }
-        names
+        let mut seen =
+            bun_collections::hashbrown::HashSet::<&[u8], bun_wyhash::BuildHasher>::default();
+        (0..DEPENDENCY_GROUPS.len())
+            .filter(|&group| !DEPENDENCY_GROUPS[group].behavior.is_peer())
+            .flat_map(|group| self.group_rows(group))
+            .filter(|row| row.value.as_str().is_some())
+            .map(|row| row.key.slice())
+            .filter(|name| seen.insert(name))
+            .collect()
     }
 
     /// Normalize path separators to forward slashes for glob matching
@@ -814,8 +803,7 @@ impl PackageJSON {
             package_json.package_manager_package_id = pkg;
         }
 
-        // This runs for every package.json that any resolver loads, so it only records where the
-        // rows are. The first key of a name counts, as for `Expr::get`.
+        // Every resolver's parse runs this, so it only records where the rows are.
         if let js_ast::ExprData::EObjectJSON(root) = &json.data {
             let mut seen = [false; DEPENDENCY_GROUPS.len()];
             for row in root.get().properties() {

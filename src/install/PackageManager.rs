@@ -501,6 +501,10 @@ pub struct PackageManager {
     pub(crate) workspace_root_name_hash: PackageNameHash,
     /// The `version` in the root package.json, as written. The lockfile records none for the root.
     pub(crate) workspace_root_version: Box<[u8]>,
+    /// For auto-install: the folder of the package.json that is the root package of the lockfile.
+    pub(crate) runtime_project_dir: Box<[u8]>,
+    /// For `cache_relative_path`: whether the cache directory was open, its path, its real path.
+    pub(crate) runtime_cache_dirs: Option<(bool, [Box<[u8]>; 2])>,
 
     pub(crate) thread_pool: ThreadPool,
     pub(crate) task_batch: thread_pool::Batch,
@@ -1730,6 +1734,8 @@ fn allocate_package_manager(
         wr!(root_package_id, RootPackageId::default());
         wr!(workspace_root_name_hash, 0);
         wr!(workspace_root_version, Box::default());
+        wr!(runtime_project_dir, Box::default());
+        wr!(runtime_cache_dirs, None);
         wr!(task_batch, thread_pool::Batch::default());
         wr!(task_queue, TaskDependencyQueue::default());
         wr!(manifests, PackageManifestMap::default());
@@ -3255,6 +3261,7 @@ fn init_with_runtime_once(
     // the `&mut PackageManager` validity invariant now holds for the post-init
     // body.
     let manager = unsafe { &mut *manager_ptr };
+    manager.runtime_project_dir = project_dir.into();
 
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();

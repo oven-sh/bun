@@ -795,6 +795,227 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  // https://github.com/oven-sh/bun/issues/13194
+  // A string literal passed to a direct eval can name `__dirname` or
+  // `__filename`. A wrapped CommonJS module then declares the name, with the
+  // value a direct reference gets.
+  itBundled("cjs2esm/DirectEvalReadsDirnameAndFilename", {
+    files: {
+      "/entry.js": /* js */ `
+        import issue from "./node_modules/checkpoint/index.js";
+        import template from "./lib/template.cjs";
+        import mixed from "./lib/mixed.cjs";
+        import nonAscii from "./lib/non-ascii.cjs";
+        import shadowed from "./lib/shadowed.cjs";
+        import classDecl from "./lib/class.cjs";
+        const last = (p, n) => p.split(/[\\\\/]/).slice(-n).join("/");
+        console.log(JSON.stringify({
+          issue: [last(issue.child, 3), last(issue.file, 3), issue.pair],
+          template: [last(template[0], 1), last(template[1], 2)],
+          mixed,
+          nonAscii,
+          shadowed,
+          classDecl,
+        }));
+      `,
+      // The shape in checkpoint-client, which @prisma/internals depends on.
+      "/node_modules/checkpoint/index.js": /* js */ `
+        var path = require("path");
+        function outer() {
+          return (function inner() {
+            return path.join(eval("__dirname"), "child");
+          })();
+        }
+        module.exports = {
+          child: outer(),
+          file: eval("__filename"),
+          pair: eval("__dirname") === path.dirname(eval("__filename")),
+        };
+      `,
+      "/lib/template.cjs": /* js */ `
+        module.exports = [eval(\`__dirname\`), eval(\`__filename\`)];
+      `,
+      // One name is read directly and the other through eval.
+      "/lib/mixed.cjs": /* js */ `
+        module.exports = __dirname === require("path").dirname(eval("__filename"));
+      `,
+      "/lib/non-ascii.cjs": /* js */ `
+        module.exports = eval("'é' + typeof __dirname + ' ' + typeof __filename");
+      `,
+      // A name that the module declares keeps its own binding.
+      "/lib/shadowed.cjs": /* js */ `
+        var __dirname = "mine";
+        module.exports = (function () {
+          return eval("__dirname");
+        })();
+      `,
+      "/lib/class.cjs": /* js */ `
+        class __filename {
+          static tag = "class";
+        }
+        module.exports = [eval("__filename.tag"), eval("typeof __dirname")];
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: JSON.stringify({
+        issue: ["node_modules/checkpoint/child", "node_modules/checkpoint/index.js", true],
+        template: ["lib", "lib/template.cjs"],
+        mixed: true,
+        nonAscii: "éstring string",
+        shadowed: "mine",
+        classDecl: ["class", "string"],
+      }),
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      // One declaration per module: five from the bundler, and the one in shadowed.cjs.
+      expect(out.match(/\b__dirname = "/g)).toHaveLength(6);
+      expect(out.match(/\b__filename = "/g)).toHaveLength(4);
+    },
+  });
+  itBundled("cjs2esm/DirectEvalReadsDirnameAndFilenameTargetNode", {
+    files: {
+      "/entry.js": /* js */ `
+        import paths from "./lib/paths.cjs";
+        console.log(JSON.stringify(paths));
+      `,
+      "/lib/paths.cjs": /* js */ `
+        const path = require("path");
+        module.exports = [
+          eval("typeof __dirname"),
+          eval("typeof __filename"),
+          eval("__dirname") === path.dirname(eval("__filename")),
+          path.basename(eval("__filename")),
+        ];
+      `,
+    },
+    target: "node",
+    run: { runtime: "node", stdout: '["string","string",true,"paths.cjs"]' },
+  });
+  // The flags from the issue: `bun build --minify --sourcemap --target bun`.
+  itBundled("cjs2esm/DirectEvalReadsDirnameMinified", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import child from "./node_modules/checkpoint/index.js";
+        console.log(child.split(/[\\\\/]/).slice(-3).join("/"));
+      `,
+      "/node_modules/checkpoint/index.js": /* js */ `
+        var path = require("path");
+        function childPath() {
+          return path.join(eval("__dirname"), "child");
+        }
+        module.exports = childPath();
+      `,
+    },
+    backend: "cli",
+    target: "bun",
+    outdir: "/out",
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    sourceMap: "external",
+    run: { stdout: "node_modules/checkpoint/child" },
+  });
+  itBundled("cjs2esm/DirectEvalReadsDirnameAndFilenameIIFE", {
+    files: {
+      "/entry.js": /* js */ `
+        import paths from "./lib/paths.cjs";
+        const last = (p, n) => p.split(/[\\\\/]/).slice(-n).join("/");
+        console.log(last(paths[0], 1), last(paths[1], 2));
+      `,
+      "/lib/paths.cjs": /* js */ `
+        module.exports = [eval("__dirname"), eval("__filename")];
+      `,
+    },
+    format: "iife",
+    run: { stdout: "lib lib/paths.cjs" },
+  });
+  // None of these evals can read the module's `__dirname` or `__filename`, so
+  // the bundle holds no source path.
+  itBundled("cjs2esm/DirectEvalDoesNotDeclareDirnameWithoutReference", {
+    files: {
+      "/entry.js": /* js */ `
+        import esm from "./lib/esm.mjs";
+        import { withExport } from "./lib/with-export.js";
+        import indirect from "./lib/indirect.cjs";
+        import otherNames from "./lib/other-names.cjs";
+        console.log(JSON.stringify({ esm, withExport, indirect, otherNames }));
+      `,
+      "/lib/esm.mjs": /* js */ `
+        export default [eval("typeof __dirname"), eval("typeof __filename")];
+      `,
+      "/lib/with-export.js": /* js */ `
+        export const withExport = [eval("typeof __dirname"), eval("typeof __filename")];
+      `,
+      "/lib/indirect.cjs": /* js */ `
+        module.exports = [
+          (0, eval)("typeof __dirname"),
+          eval?.("typeof __filename"),
+          new Function("return typeof __dirname")(),
+        ];
+      `,
+      "/lib/other-names.cjs": /* js */ `
+        var x = 1, y = 2, my__dirname = 3, __filename2 = 4, $__dirname = 5, é__dirname = 6, 𝒜__filename = 7;
+        module.exports = [
+          eval("x + y"),
+          eval("my__dirname + __filename2 + $__dirname"),
+          eval("é__dirname + 𝒜__filename"),
+          eval("'__dir' + 'name'"),
+        ];
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: JSON.stringify({
+        esm: ["undefined", "undefined"],
+        withExport: ["undefined", "undefined"],
+        indirect: ["undefined", "undefined", "undefined"],
+        otherNames: [3, 12, 13, "__dirname"],
+      }),
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).not.toMatch(/__(dirname|filename) = "/);
+    },
+  });
+  // `--define` replaces a direct reference, so there is no binding for the eval to read.
+  itBundled("cjs2esm/DirectEvalDoesNotDeclareDefinedDirname", {
+    files: {
+      "/entry.js": /* js */ `
+        import paths from "./lib/paths.cjs";
+        console.log(JSON.stringify(paths));
+      `,
+      "/lib/paths.cjs": /* js */ `
+        module.exports = [__dirname, eval("typeof __dirname"), eval("typeof __filename")];
+      `,
+    },
+    target: "bun",
+    define: { __dirname: '"defined"' },
+    run: { stdout: '["defined","undefined","string"]' },
+  });
+  // The wrapper of a CommonJS output file binds both names at run time. An
+  // eval keeps reading those, as it did before: this passes without the fix too.
+  itBundled("cjs2esm/DirectEvalReadsOutputFileDirnameInFormatCjs", {
+    files: {
+      "/entry.js": /* js */ `
+        const paths = require("./lib/paths.cjs");
+        console.log(JSON.stringify(paths));
+      `,
+      "/lib/paths.cjs": /* js */ `
+        const path = require("path");
+        module.exports = [
+          path.basename(eval("__filename")),
+          eval("__dirname") === path.dirname(eval("__filename")),
+        ];
+      `,
+    },
+    target: "bun",
+    format: "cjs",
+    run: { stdout: '["out.js",true]' },
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).not.toMatch(/__(dirname|filename) = "/);
+    },
+  });
   // `delete (null ?? exports.a)` evaluates to a value, so the result is `true`
   // with no effect on the property. Under cjs2esm, `exports.a` is rewritten to
   // an `ECommonjsExportIdentifier`; the printer has to re-wrap it as `(0, ...)`

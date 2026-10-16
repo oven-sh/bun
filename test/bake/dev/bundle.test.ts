@@ -824,6 +824,25 @@ devTest("commonjs forms", {
     await c.expectMessage({ field: "6" });
   },
 });
+devTest("direct eval reads __dirname and __filename in a commonjs module", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import paths from "./lib/paths.cjs";
+      const last = (p, n) => p.split(/[\\\\/]/).slice(-n).join("/");
+      console.log(last(paths[0], 1) + " " + last(paths[1], 2));
+    `,
+    "lib/paths.cjs": `
+      module.exports = [eval("__dirname"), eval("__filename")];
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("lib lib/paths.cjs");
+  },
+});
 
 // --- Barrel optimization tests ---
 

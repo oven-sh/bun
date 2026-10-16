@@ -1926,6 +1926,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.options.bundle && !p.is_file_considered_to_have_esm_exports {
                         p.record_usage(p.module_ref);
                         p.record_usage(p.exports_ref);
+                        Self::record_path_names_read_by_direct_eval(p, &e_);
                     }
 
                     // Walk `Scope.parent` (`Option<StoreRef<Scope>>`) via the safe
@@ -2460,6 +2461,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// A direct eval reads names from the scope of its call. When its argument
+    /// is a string literal that names `__dirname` or `__filename`, resolve the
+    /// name like a reference, so that a bundled CommonJS module declares it.
+    #[cold]
+    #[inline(never)]
+    fn record_path_names_read_by_direct_eval(p: &mut Self, call: &E::Call) {
+        const NAMES: [&[u8]; 2] = [b"__dirname", b"__filename"];
+
+        // The wrapper of a CommonJS output file binds both names at run time.
+        if p.options.output_format == crate::parser::options::Format::Cjs {
+            return;
+        }
+        let Some(arg) = call.args.slice().first() else {
+            return;
+        };
+        let Data::EString(code) = &arg.data else {
+            return;
+        };
+        for name in NAMES {
+            if !contains_identifier(code, name) {
+                continue;
+            }
+            // A define replaces every reference, so there is no binding to declare.
+            if p.define
+                .for_identifier(name)
+                .is_some_and(|def| !def.valueless())
+            {
+                continue;
+            }
+            let _ = p.find_symbol(arg.loc, name).expect("unreachable");
+        }
+    }
+
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_new(p: &mut Self, e: &mut Expr, _: ExprIn) {
         let expr = *e;
@@ -2808,4 +2842,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             e_.class_name = None;
         }
     }
+}
+
+/// Whether `text` holds `name` with no identifier character directly before or after it.
+fn contains_identifier(text: &E::String, name: &'static [u8]) -> bool {
+    fn is_whole<T: Copy>(text: &[T], at: usize, len: usize, is_part: impl Fn(T) -> bool) -> bool {
+        !(at > 0 && is_part(text[at - 1])) && !text.get(at + len).is_some_and(|&c| is_part(c))
+    }
+
+    if text.is_utf8() {
+        // The lexer keeps a literal 8-bit only when all of it is ASCII.
+        let is_part = |c: u8| js_lexer::is_identifier_continue(i32::from(c));
+        let text = text.slice8();
+        let mut from = 0;
+        while let Some(found) = strings::index_of(&text[from..], name) {
+            let at = from + found;
+            if is_whole(text, at, name.len(), is_part) {
+                return true;
+            }
+            from = at + 1;
+        }
+        return false;
+    }
+
+    // A surrogate half next to the name belongs to an astral identifier character.
+    let is_part =
+        |c: u16| (0xD800..=0xDFFF).contains(&c) || js_lexer::is_identifier_continue(i32::from(c));
+    let text = text.slice16();
+    (0..text.len()).any(|at| {
+        strings::has_prefix_comptime_utf16(&text[at..], name)
+            && is_whole(text, at, name.len(), is_part)
+    })
 }

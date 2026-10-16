@@ -1,14 +1,11 @@
-// On an interruptible filesystem (NFS, CIFS, FUSE) a signal that arrives
-// during getdents64(2) makes it return EINTR and no entries. Node never
-// reports that: libuv runs an fs request again on EINTR. fs-eintr-darwin.test.ts
-// covers the same rule on macOS. A signal cannot be aimed at one syscall of a
-// directory read, so LD_PRELOAD a shim that fails one getdents64 of a marked
-// directory with EINTR: the first read ("eintr-first-*") or the read that
-// reports the end of the directory ("eintr-second-*"). The shim leaves a
-// "<dir>.interrupted" file as proof that it did. bun issues getdents64 through
-// libc's syscall(), the interposable symbol on this path, so this is
-// glibc-only. readdir and opendir read with the node:fs iterator, Bun.Glob
-// with the bun_sys one.
+// getdents64(2) fails with EINTR when a signal arrives while it waits on a FUSE
+// daemon that honors interrupts (or on NFS or CIFS, for a handler without
+// SA_RESTART). Node never reports that: libuv runs an fs request again on EINTR.
+// A signal cannot be aimed at one syscall, so an LD_PRELOAD shim fails one
+// getdents64 of a marked directory: the first read ("eintr-first-*") or the read
+// that reports the end ("eintr-second-*"). It leaves "<dir>.interrupted" as proof.
+// bun issues getdents64 through libc's syscall(), so this is glibc-only.
+// fs-eintr-darwin.test.ts is the macOS counterpart.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isGlibc, tempDir } from "harness";
 import { join } from "node:path";

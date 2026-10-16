@@ -148,10 +148,8 @@ pub unsafe fn getdirentries64(fd: Fd, buf: *mut u8, len: usize, basep: *mut i64)
     }
 }
 
-/// `getdents64(2)`: fills `buf` with `linux_dirent64` records. Returns the
-/// byte count written (0 means end of directory). Retries EINTR.
-///
-/// SAFETY precondition: `buf` must be writable for `len` bytes.
+/// `getdents64(2)` into `buf`: the byte count, 0 at the end of the directory. Retries EINTR.
+/// SAFETY: `buf` must be writable for `len` bytes.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub unsafe fn getdents64(fd: Fd, buf: *mut u8, len: usize) -> Maybe<usize> {
     loop {
@@ -168,12 +166,8 @@ pub unsafe fn getdents64(fd: Fd, buf: *mut u8, len: usize) -> Maybe<usize> {
     }
 }
 
-/// FreeBSD `getdents(2)`: fills `buf` with `struct dirent` records. Returns
-/// the byte count written (0 means end of directory). Retries EINTR. ENOENT,
-/// which FreeBSD reports for an unlinked but still-open directory, reads as
-/// the end of the directory.
-///
-/// SAFETY precondition: `buf` must be writable for `len` bytes.
+/// FreeBSD `getdents(2)`, like `getdents64`. ENOENT (directory removed while open) is the end.
+/// SAFETY: `buf` must be writable for `len` bytes.
 #[cfg(target_os = "freebsd")]
 pub unsafe fn getdents(fd: Fd, buf: *mut u8, len: usize) -> Maybe<usize> {
     unsafe extern "C" {

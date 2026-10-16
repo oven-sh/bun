@@ -28,7 +28,7 @@ for (const when of ["first", "second"]) {
       const handle = fs.opendirSync(dir);
       const names: string[] = [];
       try {
-        for (let entry; (entry = handle.readSync()); ) names.push(entry.name);
+        for (let entry; (entry = handle.readSync());) names.push(entry.name);
       } finally {
         handle.closeSync();
       }

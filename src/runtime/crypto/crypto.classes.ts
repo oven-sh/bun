@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 const names = ["SHA1", "MD5", "MD4", "SHA224", "SHA512", "SHA384", "SHA256", "SHA512_256"];
 const named = names.map(name => {
@@ -42,30 +42,13 @@ export default [
     proto: {
       getRandomValues: {
         fn: "getRandomValues",
-        // https://discord.com/channels/876711213126520882/1276103693665828894/1276133319033229363
-        // https://discord.com/channels/876711213126520882/1276103693665828894/1276127092047609919
-        // DOMJIT: {
-        //   returns: "JSValue",
-        //   "pure": false,
-        //   args: ["JSUint8Array"],
-        // },
       },
       randomUUID: {
         fn: "randomUUID",
         length: 1,
-        DOMJIT: {
-          returns: "JSString",
-          "pure": false,
-          args: [],
-        },
       },
       timingSafeEqual: {
         fn: "timingSafeEqual",
-        DOMJIT: {
-          returns: "JSValue",
-          "pure": false,
-          args: ["JSUint8Array", "JSUint8Array"],
-        },
         length: 2,
       },
     },

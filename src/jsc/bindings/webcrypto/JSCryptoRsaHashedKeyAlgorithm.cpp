@@ -49,13 +49,13 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
     result->putDirect(vm, vm.propertyNames->name, nameValue);
     auto modulusLengthValue = toJS<IDLUnsignedLong>(lexicalGlobalObject, throwScope, dictionary.modulusLength);
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "modulusLength"_s), modulusLengthValue);
+    Bun::putDirectNamed(vm, result, "modulusLength"_s, modulusLengthValue);
     auto publicExponentValue = toJS<IDLUint8Array>(lexicalGlobalObject, globalObject, throwScope, dictionary.publicExponent);
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "publicExponent"_s), publicExponentValue);
+    Bun::putDirectNamed(vm, result, "publicExponent"_s, publicExponentValue);
     auto hashValue = toJS<IDLDictionary<CryptoKeyAlgorithm>>(lexicalGlobalObject, globalObject, throwScope, dictionary.hash);
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "hash"_s), hashValue);
+    Bun::putDirectNamed(vm, result, "hash"_s, hashValue);
     return result;
 }
 

@@ -55,6 +55,165 @@ export namespace JSC {
      */
     export type TeardownResponse = {};
   }
+  export namespace BunFrontendDevServer {
+    /**
+     * Unique identifier for Bun.serve
+     */
+    export type ServerId = number;
+    /**
+     * Unique identifier for a connected HMR WebSocket client.
+     */
+    export type ConnectionId = number;
+    /**
+     * Identifier for a specific route bundle within DevServer.
+     */
+    export type RouteBundleId = number;
+    /**
+     * A base64 encoded string representing a binary payload originally defined by DevServer's WebSocket protocol (MessageId enum in DevServer.zig).
+     */
+    export type SerializedPayloadBase64 = string;
+    /**
+     * Fired when a new HMR WebSocket client connects.
+     * @event `BunFrontendDevServer.clientConnected`
+     */
+    export type ClientConnectedEvent = {
+      /**
+       * Server ID
+       */
+      serverId: ServerId;
+      /**
+       * Identifier for the newly connected client.
+       */
+      connectionId: ConnectionId;
+    };
+    /**
+     * Fired when an HMR WebSocket client disconnects.
+     * @event `BunFrontendDevServer.clientDisconnected`
+     */
+    export type ClientDisconnectedEvent = {
+      /**
+       * Server ID
+       */
+      serverId: ServerId;
+      /**
+       * Identifier for the disconnected client.
+       */
+      connectionId: ConnectionId;
+    };
+    /**
+     * Fired when the DevServer starts processing a new bundle.
+     * @event `BunFrontendDevServer.bundleStart`
+     */
+    export type BundleStartEvent = {
+      /**
+       * Server ID
+       */
+      serverId: ServerId;
+      /**
+       * List of file paths that triggered this bundle.
+       */
+      triggerFiles: string[];
+    };
+    /**
+     * Fired when the DevServer successfully completes a bundle without build errors.
+     * @event `BunFrontendDevServer.bundleComplete`
+     */
+    export type BundleCompleteEvent = {
+      /**
+       * Server ID
+       */
+      serverId: ServerId;
+      /**
+       * Time taken for the bundle in milliseconds.
+       */
+      durationMs: number;
+    };
+    /**
+     * Fired when the DevServer completes a bundle with build errors. The payload is the base64 encoded binary data corresponding to the 'errors' MessageId.
+     * @event `BunFrontendDevServer.bundleFailed`
+     */
+    export type BundleFailedEvent = {
+      /**
+       * Server ID
+       */
+      serverId: ServerId;
+      /**
+       * Base64 encoded binary payload containing serialized build errors (MessageId.errors format).
+       */
+      buildErrorsPayloadBase64: SerializedPayloadBase64;
+    };
+    /**
+     * Fired when a connected client navigates to a new URL (via history API or initial load).
+     * @event `BunFrontendDevServer.clientNavigated`
+     */
+    export type ClientNavigatedEvent = {
+      /**
+       * Server ID
+       */
+      serverId: ServerId;
+      /**
+       * Identifier for the client that navigated.
+       */
+      connectionId: ConnectionId;
+      /**
+       * The new URL the client navigated to.
+       */
+      url: string;
+      /**
+       * The DevServer route bundle ID associated with this URL, if matched.
+       */
+      routeBundleId?: RouteBundleId | undefined;
+    };
+    /**
+     * Fired when an error reported by a client (via the /_bun/report_error endpoint) has been processed and potentially remapped by the server. The payload is the base64 encoded binary data corresponding to the remapped error format (similar to MessageId.errors but potentially containing only one error).
+     * @event `BunFrontendDevServer.clientErrorReported`
+     */
+    export type ClientErrorReportedEvent = {
+      /**
+       * Server ID
+       */
+      serverId: ServerId;
+      /**
+       * Base64 encoded binary payload containing the processed/remapped client error.
+       */
+      clientErrorPayloadBase64: SerializedPayloadBase64;
+    };
+    /**
+     * Fired when the client logs a message to the console.
+     * @event `BunFrontendDevServer.consoleLog`
+     */
+    export type ConsoleLogEvent = {
+      serverId: ServerId;
+      /**
+       * The kind of log message.
+       */
+      kind: number;
+      /**
+       * The log message.
+       */
+      message: string;
+    };
+    /**
+     * Enables the BunFrontendDevServer domain, sending events as they occur.
+     * @request `BunFrontendDevServer.enable`
+     */
+    export type EnableRequest = {};
+    /**
+     * Enables the BunFrontendDevServer domain, sending events as they occur.
+     * @response `BunFrontendDevServer.enable`
+     */
+    export type EnableResponse = {};
+    /**
+     * Disables the BunFrontendDevServer domain, stopping further events from being sent.
+     * @request `BunFrontendDevServer.disable`
+     */
+    export type DisableRequest = {};
+    /**
+     * Disables the BunFrontendDevServer domain, stopping further events from being sent.
+     * @response `BunFrontendDevServer.disable`
+     */
+    export type DisableResponse = {};
+  }
   export namespace Console {
     /**
      * Channels for different types of log messages.
@@ -65,9 +224,9 @@ export namespace JSC {
       | "network"
       | "console-api"
       | "storage"
-      | "appcache"
       | "rendering"
       | "css"
+      | "accessibility"
       | "security"
       | "content-blocker"
       | "media"
@@ -339,6 +498,7 @@ export namespace JSC {
      * Unique script identifier.
      */
     export type ScriptId = string;
+    export type ScriptType = "program" | "module" | "webassembly";
     /**
      * Call frame identifier.
      */
@@ -356,7 +516,7 @@ export namespace JSC {
        */
       lineNumber: number;
       /**
-       * Column number in the script (0-based).
+       * Column number in the script (0-based) or bytecode offset for WebAssembly modules (0-based).
        */
       columnNumber?: number | undefined;
     };
@@ -560,9 +720,17 @@ export namespace JSC {
        */
       endLine: number;
       /**
-       * Length of the last line of the script.
+       * Length of the last line of the script or the end bytecode offset for WebAssembly modules.
        */
       endColumn: number;
+      /**
+       * Identifier of the execution context in which this script was parsed.
+       */
+      executionContextId: Runtime.ExecutionContextId;
+      /**
+       * Type of script.
+       */
+      scriptType: ScriptType;
       /**
        * Determines whether this script is a user extension script.
        */
@@ -576,9 +744,13 @@ export namespace JSC {
        */
       sourceMapURL?: string | undefined;
       /**
-       * True if this script was parsed as a module.
+       * Human-readable name of the script.
        */
-      module?: boolean | undefined;
+      displayName?: string | undefined;
+      /**
+       * Identifier of the network request associated with this script (if any).
+       */
+      requestId?: Network.RequestId | undefined;
     };
     /**
      * Fired when virtual machine fails to parse the script.
@@ -1191,11 +1363,11 @@ export namespace JSC {
       url: string;
       shouldBlackbox: boolean;
       /**
-       * If <code>true</code>, <code>url</code> is case sensitive.
+       * If <code>true</code>, <code>url</code> is case sensitive. Defaults to true.
        */
       caseSensitive?: boolean | undefined;
       /**
-       * If <code>true</code>, treat <code>url</code> as regular expression.
+       * If <code>true</code>, treat <code>url</code> as regular expression. Defaults to false.
        */
       isRegex?: boolean | undefined;
       /**
@@ -1382,6 +1554,341 @@ export namespace JSC {
       result: Runtime.RemoteObject;
     };
   }
+  export namespace HTTPServer {
+    /**
+     * Unique identifier for an HTTP server instance.
+     */
+    export type ServerId = number;
+    /**
+     * Unique identifier for an HTTP request.
+     */
+    export type RequestId = number;
+    /**
+     * Unique identifier for a server route.
+     */
+    export type RouteId = number;
+    /**
+     * Identifier for a hot reload instance of a server. Increments each time the server associated with a ServerId is reloaded.
+     */
+    export type HotReloadId = number;
+    /**
+     * Request / response headers as a flat array of key/value strings. [key1, value1, key2, value2, ...]
+     */
+    export type Headers = string[];
+    /**
+     * Request route parameters as a flat array of key/value strings. [key1, value1, key2, value2, ...]
+     */
+    export type RequestParams = string[];
+    /**
+     * HTTP request method represented as an integer. (Mapping to be defined, e.g., 1=GET, 2=POST, ...)
+     */
+    export type HTTPMethod = number;
+    /**
+     * Type of the server route.
+     */
+    export type RouteType = "default" | "api" | "html" | "static";
+    /**
+     * Represents a defined server route.
+     */
+    export type Route = {
+      /**
+       * Unique identifier for the route.
+       */
+      routeId: RouteId;
+      /**
+       * The path pattern for the route (e.g., '/users/:id').
+       */
+      path: string;
+      /**
+       * The type of the route.
+       */
+      type: RouteType;
+      /**
+       * Names of the parameters defined in the path pattern.
+       */
+      paramNames?: string[] | undefined;
+      /**
+       * Filesystem path associated with 'static' or 'html' routes.
+       */
+      filePath?: string | undefined;
+      /**
+       * The HTTP method associated with the route.
+       */
+      method?: HTTPMethod | undefined;
+      /**
+       * url of the script the route is in. Available when the debugger is not attached.
+       */
+      scriptUrl?: string | undefined;
+      /**
+       * Line number in the script that started the route. Available when the debugger is not attached.
+       */
+      scriptLine: number;
+    };
+    /**
+     * Metadata about an incoming server request.
+     */
+    export type Request = {
+      /**
+       * Unique identifier for this request.
+       */
+      requestId: RequestId;
+      /**
+       * Identifier of the server processing this request.
+       */
+      serverId: ServerId;
+      /**
+       * Identifier of the route that matched this request. 0 means no route matched.
+       */
+      routeId: RouteId;
+      /**
+       * Request URL (path and query string).
+       */
+      url: string;
+      /**
+       * Full request URL including host and protocol.
+       */
+      fullUrl: string;
+      /**
+       * HTTP method as an integer.
+       */
+      method: HTTPMethod;
+      /**
+       * HTTP request headers.
+       */
+      headers: Headers;
+      /**
+       * Matched route parameters.
+       */
+      params?: RequestParams | undefined;
+      /**
+       * Indicates if the request has a body.
+       */
+      hasBody: boolean;
+      /**
+       * Timestamp when the request was received by the server (Unix epoch milliseconds).
+       */
+      timestamp: number;
+    };
+    /**
+     * Metadata about an outgoing server response.
+     */
+    export type Response = {
+      /**
+       * Identifier of the request this response corresponds to.
+       */
+      requestId: RequestId;
+      /**
+       * Identifier of the server sending this response.
+       */
+      serverId: ServerId;
+      /**
+       * HTTP status code.
+       */
+      statusCode: number;
+      /**
+       * HTTP status text.
+       */
+      statusText: string;
+      /**
+       * HTTP response headers.
+       */
+      headers: Headers;
+      /**
+       * Indicates if the response has a body.
+       */
+      hasBody: boolean;
+      /**
+       * Timestamp when the response headers were sent (Unix epoch milliseconds).
+       */
+      timestamp: number;
+    };
+    /**
+     * A chunk of a request or response body.
+     */
+    export type BodyChunk = {
+      /**
+       * Identifier of the request this chunk belongs to.
+       */
+      requestId: RequestId;
+      /**
+       * Identifier of the server handling the request.
+       */
+      serverId: ServerId;
+      /**
+       * Flags indicating the type of chunk. Bit 0: 1 if this chunk belongs to the request body, 0 for response body. Bit 1: 1 if this is the final chunk of the body, Bit 2: 1 if the chunk is base64 encoded. 0 otherwise.
+       */
+      flags: number;
+      /**
+       * The body chunk data
+       */
+      chunk: string;
+      /**
+       * Timestamp when the chunk was received/sent (Unix epoch milliseconds).
+       */
+      timestamp: number;
+    };
+    /**
+     * Details about an unhandled exception in a request handler.
+     */
+    export type RequestHandlerError = {
+      /**
+       * Identifier of the request where the error occurred.
+       */
+      requestId: RequestId;
+      /**
+       * Identifier of the server processing the request.
+       */
+      serverId: ServerId;
+      /**
+       * Error message.
+       */
+      message: string;
+      /**
+       * Timestamp when the error occurred (Unix epoch milliseconds).
+       */
+      timestamp: number;
+      /**
+       * url of the script the route is in. Available when the debugger is not attached.
+       */
+      url?: string | undefined;
+      /**
+       * Line number in the script that started the route.
+       */
+      line: number;
+    };
+    /**
+     * Fired when an HTTP server starts listening.
+     * @event `HTTPServer.listen`
+     */
+    export type ListenEvent = {
+      /**
+       * Unique identifier for this server instance.
+       */
+      serverId: ServerId;
+      /**
+       * A URL you can fetch from the server. Example: 'http://localhost:3000' or 'https://localhost:3000'
+       */
+      url: string;
+      /**
+       * Timestamp when the server started (Unix epoch milliseconds).
+       */
+      startTime: number;
+    };
+    /**
+     * Fired when an HTTP server stops listening.
+     * @event `HTTPServer.close`
+     */
+    export type CloseEvent = {
+      /**
+       * Identifier of the server that stopped.
+       */
+      serverId: ServerId;
+      /**
+       * Timestamp when the server stopped (Unix epoch milliseconds).
+       */
+      timestamp: number;
+    };
+    /**
+     * Fired when a server starts or its routes are updated (e.g., via hot reload). Provides the complete list of current routes.
+     * @event `HTTPServer.serverRoutesUpdated`
+     */
+    export type ServerRoutesUpdatedEvent = {
+      /**
+       * Identifier of the server whose routes were updated.
+       */
+      serverId: ServerId;
+      /**
+       * The number of times Bun has hot reloaded. When hot reloading server-side code, the server ID will be the same and the hotReloadId will increment. When not hot reloading, the server ID will be different and the hotReloadId will not increment.
+       */
+      hotReloadId: HotReloadId;
+      /**
+       * The complete list of routes currently served.
+       */
+      routes: Route[];
+    };
+    /**
+     * Fired when the server receives an HTTP request, before the handler is invoked. Body content is not included by default.
+     * @event `HTTPServer.requestWillBeSent`
+     */
+    export type RequestWillBeSentEvent = {
+      /**
+       * Request metadata.
+       */
+      request: Request;
+    };
+    /**
+     * Fired when the server begins sending an HTTP response. Body content is not included by default.
+     * @event `HTTPServer.responseReceived`
+     */
+    export type ResponseReceivedEvent = {
+      /**
+       * Response metadata.
+       */
+      response: Response;
+    };
+    /**
+     * Fired when a chunk of the request or response body is available, after being requested via `getRequestBody` or `getResponseBody`.
+     * @event `HTTPServer.bodyChunkReceived`
+     */
+    export type BodyChunkReceivedEvent = {
+      /**
+       * The body chunk data.
+       */
+      chunk: BodyChunk;
+    };
+    /**
+     * Fired when the server has finished processing a request and sent the response.
+     * @event `HTTPServer.requestFinished`
+     */
+    export type RequestFinishedEvent = {
+      /**
+       * Identifier of the finished request.
+       */
+      requestId: RequestId;
+      /**
+       * Identifier of the server handling the request.
+       */
+      serverId: ServerId;
+      /**
+       * Timestamp when the request finished (Unix epoch milliseconds).
+       */
+      timestamp: number;
+      /**
+       * Total duration of the request handling in milliseconds.
+       */
+      duration?: number | undefined;
+    };
+    /**
+     * Fired when an unhandled exception occurs within a request handler.
+     * @event `HTTPServer.requestHandlerException`
+     */
+    export type RequestHandlerExceptionEvent = {
+      /**
+       * Details about the error.
+       */
+      error: RequestHandlerError;
+    };
+    /**
+     * Enables the HTTPServer domain, clearing any previous data.
+     * @request `HTTPServer.enable`
+     */
+    export type EnableRequest = {};
+    /**
+     * Enables the HTTPServer domain, clearing any previous data.
+     * @response `HTTPServer.enable`
+     */
+    export type EnableResponse = {};
+    /**
+     * Disables the HTTPServer domain.
+     * @request `HTTPServer.disable`
+     */
+    export type DisableRequest = {};
+    /**
+     * Disables the HTTPServer domain.
+     * @response `HTTPServer.disable`
+     */
+    export type DisableResponse = {};
+  }
   export namespace Inspector {
     /**
      * undefined
@@ -1501,6 +2008,37 @@ export namespace JSC {
      * @response `LifecycleReporter.stopPreventingExit`
      */
     export type StopPreventingExitResponse = {};
+    /**
+     * Returns the current module graph containing ESM and CJS modules.
+     * @request `LifecycleReporter.getModuleGraph`
+     */
+    export type GetModuleGraphRequest = {};
+    /**
+     * Returns the current module graph containing ESM and CJS modules.
+     * @response `LifecycleReporter.getModuleGraph`
+     */
+    export type GetModuleGraphResponse = {
+      /**
+       * Array of ESM module paths.
+       */
+      esm: string[];
+      /**
+       * Array of CJS module paths.
+       */
+      cjs: string[];
+      /**
+       * Current working directory
+       */
+      cwd: string;
+      /**
+       * The main file
+       */
+      main: string;
+      /**
+       * argv that launched the process
+       */
+      argv: string[];
+    };
   }
   export namespace Runtime {
     /**
@@ -2593,6 +3131,14 @@ export namespace JSC {
     export type DisableResponse = {};
   }
   export type EventMap = {
+    "BunFrontendDevServer.clientConnected": BunFrontendDevServer.ClientConnectedEvent;
+    "BunFrontendDevServer.clientDisconnected": BunFrontendDevServer.ClientDisconnectedEvent;
+    "BunFrontendDevServer.bundleStart": BunFrontendDevServer.BundleStartEvent;
+    "BunFrontendDevServer.bundleComplete": BunFrontendDevServer.BundleCompleteEvent;
+    "BunFrontendDevServer.bundleFailed": BunFrontendDevServer.BundleFailedEvent;
+    "BunFrontendDevServer.clientNavigated": BunFrontendDevServer.ClientNavigatedEvent;
+    "BunFrontendDevServer.clientErrorReported": BunFrontendDevServer.ClientErrorReportedEvent;
+    "BunFrontendDevServer.consoleLog": BunFrontendDevServer.ConsoleLogEvent;
     "Console.messageAdded": Console.MessageAddedEvent;
     "Console.messageRepeatCountUpdated": Console.MessageRepeatCountUpdatedEvent;
     "Console.messagesCleared": Console.MessagesClearedEvent;
@@ -2608,6 +3154,14 @@ export namespace JSC {
     "Heap.garbageCollected": Heap.GarbageCollectedEvent;
     "Heap.trackingStart": Heap.TrackingStartEvent;
     "Heap.trackingComplete": Heap.TrackingCompleteEvent;
+    "HTTPServer.listen": HTTPServer.ListenEvent;
+    "HTTPServer.close": HTTPServer.CloseEvent;
+    "HTTPServer.serverRoutesUpdated": HTTPServer.ServerRoutesUpdatedEvent;
+    "HTTPServer.requestWillBeSent": HTTPServer.RequestWillBeSentEvent;
+    "HTTPServer.responseReceived": HTTPServer.ResponseReceivedEvent;
+    "HTTPServer.bodyChunkReceived": HTTPServer.BodyChunkReceivedEvent;
+    "HTTPServer.requestFinished": HTTPServer.RequestFinishedEvent;
+    "HTTPServer.requestHandlerException": HTTPServer.RequestHandlerExceptionEvent;
     "Inspector.evaluateForTestInFrontend": Inspector.EvaluateForTestInFrontendEvent;
     "Inspector.inspect": Inspector.InspectEvent;
     "LifecycleReporter.reload": LifecycleReporter.ReloadEvent;
@@ -2624,6 +3178,8 @@ export namespace JSC {
     "Audit.setup": Audit.SetupRequest;
     "Audit.run": Audit.RunRequest;
     "Audit.teardown": Audit.TeardownRequest;
+    "BunFrontendDevServer.enable": BunFrontendDevServer.EnableRequest;
+    "BunFrontendDevServer.disable": BunFrontendDevServer.DisableRequest;
     "Console.enable": Console.EnableRequest;
     "Console.disable": Console.DisableRequest;
     "Console.clearMessages": Console.ClearMessagesRequest;
@@ -2667,6 +3223,8 @@ export namespace JSC {
     "Heap.stopTracking": Heap.StopTrackingRequest;
     "Heap.getPreview": Heap.GetPreviewRequest;
     "Heap.getRemoteObject": Heap.GetRemoteObjectRequest;
+    "HTTPServer.enable": HTTPServer.EnableRequest;
+    "HTTPServer.disable": HTTPServer.DisableRequest;
     "Inspector.enable": Inspector.EnableRequest;
     "Inspector.disable": Inspector.DisableRequest;
     "Inspector.initialized": Inspector.InitializedRequest;
@@ -2674,6 +3232,7 @@ export namespace JSC {
     "LifecycleReporter.disable": LifecycleReporter.DisableRequest;
     "LifecycleReporter.preventExit": LifecycleReporter.PreventExitRequest;
     "LifecycleReporter.stopPreventingExit": LifecycleReporter.StopPreventingExitRequest;
+    "LifecycleReporter.getModuleGraph": LifecycleReporter.GetModuleGraphRequest;
     "Runtime.parse": Runtime.ParseRequest;
     "Runtime.evaluate": Runtime.EvaluateRequest;
     "Runtime.awaitPromise": Runtime.AwaitPromiseRequest;
@@ -2703,6 +3262,8 @@ export namespace JSC {
     "Audit.setup": Audit.SetupResponse;
     "Audit.run": Audit.RunResponse;
     "Audit.teardown": Audit.TeardownResponse;
+    "BunFrontendDevServer.enable": BunFrontendDevServer.EnableResponse;
+    "BunFrontendDevServer.disable": BunFrontendDevServer.DisableResponse;
     "Console.enable": Console.EnableResponse;
     "Console.disable": Console.DisableResponse;
     "Console.clearMessages": Console.ClearMessagesResponse;
@@ -2746,6 +3307,8 @@ export namespace JSC {
     "Heap.stopTracking": Heap.StopTrackingResponse;
     "Heap.getPreview": Heap.GetPreviewResponse;
     "Heap.getRemoteObject": Heap.GetRemoteObjectResponse;
+    "HTTPServer.enable": HTTPServer.EnableResponse;
+    "HTTPServer.disable": HTTPServer.DisableResponse;
     "Inspector.enable": Inspector.EnableResponse;
     "Inspector.disable": Inspector.DisableResponse;
     "Inspector.initialized": Inspector.InitializedResponse;
@@ -2753,6 +3316,7 @@ export namespace JSC {
     "LifecycleReporter.disable": LifecycleReporter.DisableResponse;
     "LifecycleReporter.preventExit": LifecycleReporter.PreventExitResponse;
     "LifecycleReporter.stopPreventingExit": LifecycleReporter.StopPreventingExitResponse;
+    "LifecycleReporter.getModuleGraph": LifecycleReporter.GetModuleGraphResponse;
     "Runtime.parse": Runtime.ParseResponse;
     "Runtime.evaluate": Runtime.EvaluateResponse;
     "Runtime.awaitPromise": Runtime.AwaitPromiseResponse;

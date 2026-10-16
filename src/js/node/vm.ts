@@ -1,5 +1,4 @@
 // Hardcoded module "node:vm"
-const { SafePromiseAllReturnArrayLike } = require("internal/primordials");
 const {
   validateObject,
   validateString,
@@ -11,7 +10,6 @@ const {
   validateArray,
   validateOneOf,
 } = require("internal/validators");
-const util = require("node:util");
 
 const vm = $cpp("NodeVM.cpp", "Bun::createNodeVMBinding");
 
@@ -275,6 +273,8 @@ class Module {
     return this[kNative].getError();
   }
 
+  // SyntheticModule's link() is synchronous, as in node.
+  link(linker?): Promise<void> | void;
   async link(linker) {
     validateModule(this);
     validateFunction(linker, "linker");
@@ -337,7 +337,7 @@ class Module {
     }
   }
 
-  [util.inspect.custom](depth, options) {
+  [Symbol.for("nodejs.util.inspect.custom")](depth, options) {
     validateModule(this);
     if (typeof depth === "number" && depth < 0) return this;
 
@@ -354,7 +354,7 @@ class Module {
       configurable: true,
     });
 
-    return util.inspect(o, { ...options, customInspect: false });
+    return require("node:util").inspect(o, { ...options, customInspect: false });
   }
 }
 
@@ -465,7 +465,7 @@ class SourceTextModule extends Module {
     }
 
     try {
-      const moduleNatives = await SafePromiseAllReturnArrayLike(modulePromises);
+      const moduleNatives = await require("internal/primordials").SafePromiseAllReturnArrayLike(modulePromises);
       this[kNative].link(specifiers, moduleNatives, 0);
     } catch (e) {
       this.#error = e;

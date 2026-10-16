@@ -53,8 +53,12 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
     JSDOMGlobalObject* globalObject() const { return uncheckedDowncast<JSDOMGlobalObject>(Base::globalObject()); }
-    ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
+    // What the constructor makes belongs to the context the calling script runs in.
+    ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->currentScriptExecutionContext(); }
     Bun::ErrorCode errorCode() const { return m_errorCode; }
+
+    // The `length` / `name` / `prototype` prologue shared by every `initializeProperties`.
+    void initializeBaseProperties(JSC::VM&, unsigned length, ASCIILiteral name, JSC::JSObject* prototype);
 
 protected:
     JSDOMConstructorBase(JSC::VM& vm, JSC::Structure* structure,

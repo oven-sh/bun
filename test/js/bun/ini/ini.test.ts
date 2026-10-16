@@ -649,9 +649,26 @@ describe.concurrent("source length", () => {
   // Inside a container totalmem() reports the RAM of the host, and constrainedMemory() the cgroup limit.
   const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
 
-  async function run(code: string) {
+  // A runner under memory pressure can refuse the reservation. The child then prints this, and there is nothing to test.
+  const notReserved = "not reserved";
+
+  /** Runs `code` in a child with `source`, a Uint8Array of `bytes` zero bytes. */
+  async function run(bytes: number, code: string) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `const { parse, loadNpmrc } = require("bun:internal-for-testing").iniInternals;\n${code}`],
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { parse, loadNpmrc } = require("bun:internal-for-testing").iniInternals;
+        let source;
+        try {
+          source = new Uint8Array(${bytes});
+        } catch {
+          console.log(${JSON.stringify(notReserved)});
+          process.exit(0);
+        }
+        ${code}`,
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -663,9 +680,9 @@ describe.concurrent("source length", () => {
   // The parser rejects the source by its length before it reads a byte, so the 2 GiB stay
   // untouched virtual memory.
   test("a source of 2 GiB is an error", async () => {
-    expect(
-      await run(`
-        const source = new Uint8Array(2 ** 31);
+    const result = await run(
+      2 ** 31,
+      `
         const results = {};
         try {
           results.parse = parse(source);
@@ -678,8 +695,10 @@ describe.concurrent("source length", () => {
           results.loadNpmrc = "threw " + e.message;
         }
         console.log(JSON.stringify(results));
-      `),
-    ).toEqual({
+      `,
+    );
+    if (result.stdout === notReserved) return;
+    expect(result).toEqual({
       stdout: JSON.stringify({
         parse: "INI document is too large to parse (2 GiB maximum)",
         loadNpmrc: "INI document is too large to parse (2 GiB maximum)",
@@ -695,14 +714,16 @@ describe.concurrent("source length", () => {
   test.skipIf(!isLinux && memory < 10 * 1024 ** 3)(
     "a source one byte under 2 GiB parses",
     async () => {
-      expect(
-        await run(`
-          const source = new Uint8Array(2 ** 31 - 1);
+      const result = await run(
+        2 ** 31 - 1,
+        `
           source[0] = "#".charCodeAt(0);
           source.set(Buffer.from("\\nk=v"), source.length - 4);
           console.log(JSON.stringify(parse(source)));
-        `),
-      ).toEqual({ stdout: JSON.stringify({ k: "v" }), stderr: "", exitCode: 0 });
+        `,
+      );
+      if (result.stdout === notReserved) return;
+      expect(result).toEqual({ stdout: JSON.stringify({ k: "v" }), stderr: "", exitCode: 0 });
     },
     120_000,
   );

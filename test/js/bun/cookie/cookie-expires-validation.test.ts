@@ -99,6 +99,17 @@ describe("Bun.Cookie expires validation", () => {
         Bun.Cookie.from("name", "value", { expires: 1e16 });
       }).toThrow(RangeError);
     });
+
+    test("throws RangeError for out-of-range Number via CookieMap.set", () => {
+      const map = new Bun.CookieMap();
+      expect(() => {
+        map.set("name", "value", { expires: 1e16 });
+      }).toThrow(RangeError);
+      expect(() => {
+        map.set({ name: "name", value: "value", expires: 1e16 });
+      }).toThrow(RangeError);
+      expect(map.toSetCookieHeaders()).toEqual([]);
+    });
   });
 
   describe("Special values", () => {
@@ -150,9 +161,15 @@ describe("Bun.Cookie expires validation", () => {
         expect(cookie.toString()).toBe(serialized);
       });
 
-      test("CookieMap.set", () => {
+      test("CookieMap.set(name, value, options)", () => {
         const map = new Bun.CookieMap();
         map.set("sid", "", { expires: epoch });
+        expect(map.toSetCookieHeaders()).toEqual([serialized]);
+      });
+
+      test("CookieMap.set(options)", () => {
+        const map = new Bun.CookieMap();
+        map.set({ name: "sid", value: "", expires: epoch });
         expect(map.toSetCookieHeaders()).toEqual([serialized]);
       });
     });

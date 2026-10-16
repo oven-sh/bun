@@ -4,15 +4,10 @@ interface BufferExt extends Buffer {
 }
 
 export function toJSON(this: BufferExt) {
-  // Like Node, read `length` (0 for a detached or out-of-bounds view) instead of
-  // iterating: the %TypedArray% iterator throws on such views.
-  const length = this.length;
-  if (length > 0) {
-    const data = $newArrayWithSize<number>(length);
-    for (let i = 0; i < length; i++) $putByValDirect(data, i, this[i]);
-    return { type: "Buffer", data };
-  }
-  return { type: "Buffer", data: [] };
+  const type = "Buffer";
+  // A detached or out-of-bounds view has length 0, and the %TypedArray% iterator throws on it.
+  const data = this.length === 0 ? [] : Array.from(this);
+  return { type, data };
 }
 
 $getter;

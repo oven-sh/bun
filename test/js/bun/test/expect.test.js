@@ -2441,6 +2441,27 @@ describe("expect()", () => {
     expect({ "[[[": 0 }).not.toHaveProperty("[[[", 0);
   });
 
+  test.each([undefined, null])("toHaveProperty() - the path goes on below a property that is %p", end => {
+    for (const [object, path] of [
+      [{ a: end }, "a.b"],
+      [{ a: end }, "a.b.c"],
+      [{ a: end }, "a[0]"],
+      [{ a: end }, "a."],
+      [{ a: end }, "a..b"],
+      [{ "": end }, ".b"],
+      [{ a: end }, ["a", "b"]],
+      [{ a: { b: end } }, "a.b.c"],
+      [{ a: [end] }, "a[0].b"],
+      [Object.create({ a: end }), "a.b"],
+    ]) {
+      expect(object).not.toHaveProperty(path);
+      expect(object).not.toHaveProperty(path, undefined);
+      expect(() => expect(object).toHaveProperty(path)).toThrow("Unable to find property");
+    }
+    expect({ a: end }).toHaveProperty("a", end);
+    expect({ a: { b: end } }).toHaveProperty("a.b", end);
+  });
+
   test("toHaveProperty() - with string or array", () => {
     const a = new Array(["a", "b", "c"]);
     expect(a).toHaveProperty("0.1", "b");

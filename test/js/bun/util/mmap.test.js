@@ -230,6 +230,18 @@ console.log(JSON.stringify(out));`,
     expect(() => Bun.mmap(1, 1)).toThrow("path must be a string");
   });
 
+  it("mmap rejects a path with a null byte, as Bun.file and node:fs do", () => {
+    for (const withNull of [path + "\0", path + "\0x", "\0", "\0" + path]) {
+      const expected = expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: `The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received ${JSON.stringify(withNull)}`,
+      });
+      expect(() => Bun.mmap(withNull)).toThrow(expected);
+      expect(() => Bun.file(withNull)).toThrow(expected);
+    }
+  });
+
   it("mmap takes offset and size as a BigInt too", () => {
     const text = options => Buffer.from(Bun.mmap(path, options)).toString();
     const whole = text();

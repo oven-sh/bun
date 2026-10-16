@@ -1454,6 +1454,7 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: MMapOptions) -> J
         if path.len() > MAX_PATH_BYTES {
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
         }
+        node::types::Valid::path_null_bytes(path, global_this)?;
         let mut buf = bun_paths::path_buffer_pool::get();
         let buf_len = buf.len();
         let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<

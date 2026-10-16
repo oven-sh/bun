@@ -557,6 +557,11 @@ impl Expansion {
     /// Newlines→spaces, trim, then split on whitespace runs into separate
     /// argv words.
     fn post_subshell_expansion(me: &mut Expansion, mut stdout: Vec<u8>) {
+        // Strip a single trailing newline, then convert remaining newlines
+        // to spaces.
+        if stdout.last() == Some(&b'\n') {
+            stdout.pop();
+        }
         for b in stdout.iter_mut() {
             if *b == b'\n' {
                 *b = b' ';
@@ -628,12 +633,11 @@ impl Expansion {
                 "dupe_for_subshell gives a command substitution an owned stdout buffer"
             ),
         };
-        // NUL bytes are dropped as in bash and dash, before the line-end strip and the field split.
+        // NUL bytes are dropped as in bash and dash, before the trim and the field split.
         let had_nul = bun_core::strings::contains_char(&stdout, 0);
         if had_nul {
             stdout.retain(|&b| b != 0);
         }
-        Self::strip_trailing_line_ends(&mut stdout);
 
         // Propagate the exit code if the *whole* atom was a single `$(...)`
         // (so `$(false)` as argv0 fails the command).
@@ -652,6 +656,16 @@ impl Expansion {
                 me.out_exit_code = exit_code;
             }
             if no_split {
+                if me.assign_ctx {
+                    // `$X` is never field split, so a value still loses these trailing bytes.
+                    let mut hi = stdout.len();
+                    while hi > 0 && matches!(stdout[hi - 1], b' ' | b'\n' | b'\r' | b'\t') {
+                        hi -= 1;
+                    }
+                    stdout.truncate(hi);
+                } else {
+                    Self::strip_trailing_line_ends(&mut stdout);
+                }
                 // A quoted substitution that printed only NUL bytes is one empty word, as in bash.
                 if had_nul && me.cmd_subst_quoted {
                     me.has_quoted_empty = true;

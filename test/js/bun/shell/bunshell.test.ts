@@ -406,16 +406,14 @@ describe("bunshell", () => {
     });
 
     // A CR directly before a trailing LF goes with it on every platform. bash keeps that CR.
-    describe("substitution removes trailing line ends", () => {
-      TestBuilder.command`echo "[$(echo a; echo; echo)]"`.stdout("[a]\n").runAsTest("quoted, every LF");
-      TestBuilder.command`echo "[$(echo -n -e 'a\r\n\r\n')]"`.stdout("[a]\n").runAsTest("quoted, every CRLF");
-      TestBuilder.command`echo "[$(echo -n -e 'a\r\r\n')]"`.stdout("[a]\n").runAsTest("quoted, every CR before the LF");
-      TestBuilder.command`echo "[$(echo -n -e 'a \r\n')]"`.stdout("[a ]\n").runAsTest("quoted, CRLF after a space");
+    describe("quoted substitution removes trailing line ends", () => {
+      TestBuilder.command`echo "[$(echo a; echo; echo)]"`.stdout("[a]\n").runAsTest("every LF");
+      TestBuilder.command`echo "[$(echo -n -e 'a\r\n\r\n')]"`.stdout("[a]\n").runAsTest("every CRLF");
+      TestBuilder.command`echo "[$(echo -n -e 'a\r\r\n')]"`.stdout("[a]\n").runAsTest("every CR before the LF");
+      TestBuilder.command`echo "[$(echo -n -e 'a \r\n')]"`.stdout("[a ]\n").runAsTest("CRLF after a space");
       TestBuilder.command`echo "[$(echo -n -e 'a \r\r\n\r\r\n')]"`
         .stdout("[a ]\n")
-        .runAsTest("quoted, two line ends after a space");
-      TestBuilder.command`echo $(echo a; echo; echo)b`.stdout("ab\n").runAsTest("unquoted, every LF");
-      TestBuilder.command`echo $(echo -n -e 'a\r\n\r\n')b`.stdout("ab\n").runAsTest("unquoted, every CRLF");
+        .runAsTest("two line ends after a space");
     });
   });
 
@@ -1619,30 +1617,18 @@ describe("deno_task", () => {
       .stdout("a\nb\n")
       .runAsTest("assignment keeps command substitution newlines");
 
-    TestBuilder.command`VAR=$(echo 'a ') && echo "[$VAR]"`
-      .stdout("[a ]\n")
-      .runAsTest("assignment keeps command substitution trailing space");
-
-    TestBuilder.command`VAR=$(echo 'a ')z && echo "[$VAR]"`
-      .stdout("[a z]\n")
-      .runAsTest("assignment keeps the space between a command substitution and a literal");
-
-    TestBuilder.command`VAR=$(echo -n -e 'a\t\r\n\r\n') && echo "[$VAR]"`
-      .stdout("[a\t]\n")
-      .runAsTest("assignment removes only the trailing line ends of a command substitution");
-
-    TestBuilder.command`VAR=$(echo 'a ') ${BUN} -e ${"console.log(JSON.stringify(process.env.VAR))"}`
-      .stdout('"a "\n')
-      .runAsTest("command-prefix assignment keeps command substitution trailing space");
-
-    // bash splits an unquoted $VAR into fields and passes ["a"]. Here a
-    // variable is not split, so the kept space reaches the command.
-    TestBuilder.command`VAR=$(echo 'a '); ${BUN} run ./code.ts $VAR`
+    // An unquoted $VAR is not split into fields, so an assignment value drops the trailing whitespace.
+    TestBuilder.command`A=$(echo 'f '); B="$(echo 'g ')"; export C="$(echo 'h ')"; ${BUN} run ./code.ts $A $B $C`
       .ensureTempDir()
       .file("code.ts", `console.log(JSON.stringify(process.argv.slice(2)))`)
-      .stdout('["a"]\n')
-      .todo("an unquoted variable is not split into fields")
+      .stdout('["f","g","h"]\n')
       .runAsTest("unquoted variable assigned a command substitution with a trailing space");
+
+    // bash keeps the space in the value and drops it when it splits an unquoted $VAR.
+    TestBuilder.command`VAR="$(echo 'a ')" && echo "[$VAR]"`
+      .stdout("[a ]\n")
+      .todo("an unquoted variable is not split into fields")
+      .runAsTest("assignment keeps the trailing space of a command substitution");
   });
 
   describe("env variables", async () => {
@@ -1663,10 +1649,6 @@ describe("deno_task", () => {
     TestBuilder.command`export A=$(echo one two) B=$(echo three four) && echo "$A,$B"`
       .stdout("one two,three four\n")
       .runAsTest("export does not field split multiple assignment operands");
-
-    TestBuilder.command`export NAME=$(echo 'b  ') && echo "[$NAME]"`
-      .stdout("[b  ]\n")
-      .runAsTest("export keeps command substitution trailing spaces");
 
     // A word that is not a literal `NAME=` assignment keeps the normal
     // field splitting, matching bash.

@@ -269,7 +269,7 @@ await $`
 `;
 ```
 
-Bun Shell removes the newlines at the end of the output, and any `\r` directly before them. Inside double quotes and in a variable assignment, Bun Shell keeps all other trailing whitespace.
+Bun Shell removes the newlines at the end of the output, and any `\r` directly before them. A quoted substitution in a command (`"$(...)"`) keeps the rest of the output. An unquoted substitution also drops trailing spaces, tabs and `\r`. A variable assignment drops them too, also when the substitution is quoted.
 
 <Note>
 

@@ -623,6 +623,24 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await checkSameOutput("test_ungated_calls_worker_terminate", []);
       expect(result.split(/\r?\n/)).toEqual([...Array(2).fill("terminate() resolved with 1"), "resolved to undefined"]);
     }, 30_000);
+
+    // A terminate() that lands while the addon is inside a gated call (sharp's
+    // module Init, #45252) must not put the termination where the addon can read
+    // it: node-addon-api escalates a refused call with an unexplained pending
+    // exception to napi_fatal_error, which aborts the whole process.
+    const refusedV9 = "refused: status=10 pending=0 napi_throw=10 pending_after_throw=0 get_and_clear=0 exception_type=0";
+    const refusedV10 = "refused: status=23 pending=0 napi_throw=23 pending_after_throw=0 get_and_clear=0 exception_type=0";
+    describe.each([
+      [9, "init", `${refusedV9}; node-addon-api returned`],
+      [9, "method", `${refusedV9}; node-addon-api returned`],
+      [10, "init", refusedV10],
+      [10, "method", refusedV10],
+    ])("worker.terminate() during gated calls (NAPI_VERSION=%i, %s frame)", (version, frame, probe) => {
+      it("refuses the calls as Node does and the process survives", async () => {
+        const result = await checkSameOutput("test_terminate_during_gated_calls", [version, frame]);
+        expect(result.split(/\r?\n/)).toEqual(["terminate() resolved with 1", probe, "resolved to undefined"]);
+      }, 30_000);
+    });
   });
 
   describe("status code alignment with Node.js", () => {

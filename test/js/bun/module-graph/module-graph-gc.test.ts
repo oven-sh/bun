@@ -2,7 +2,7 @@
 // records, CommonJS modules and its context) alive, and that nothing else does.
 import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, jest, test } from "bun:test";
-import { rmSync } from "fs";
+import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
@@ -96,6 +96,119 @@ const dir = String(
         controller.enqueue(new TextEncoder().encode("<div>x"));
         return registered.promise;
       }
+      // What follows gives native code no function of the graph's to call. control.opened is a WeakRef:
+      // the host finds what is still open through it without holding it.
+      export function serveStaticRoutes() {
+        const server = Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": new Response("graph " + TAG) } });
+        control.httpPort = server.port;
+        control.opened = new WeakRef(server);
+      }
+      // A child that runs until its stdin ends.
+      export function spawnChildThatReadsStdin(cmd, env, out) {
+        control.opened = new WeakRef(Bun.spawn({ cmd, env, stdin: "pipe", stdout: Bun.file(out), stderr: "inherit" }));
+      }
+      export function spawnChildAndFeedIt(cmd, env, out, bytes) {
+        const child = Bun.spawn({ cmd, env, stdin: "pipe", stdout: Bun.file(out), stderr: "inherit" });
+        child.stdin.write(Buffer.alloc(bytes, "x"));
+        child.stdin.end();
+        control.opened = new WeakRef(child);
+      }
+      // A worker nobody listens to. It counts in the shared buffer for as long as it runs.
+      // (A class of the graph's own would keep the graph through its prototype: the host gives its own.)
+      export function workerThatCounts(shared, Class = Worker) {
+        const worker = new Class("data:text/javascript," + encodeURIComponent(
+          "onmessage = ({ data }) => { const count = new Int32Array(data); setInterval(() => Atomics.add(count, 0, 1), 1); };",
+        ));
+        worker.postMessage(shared);
+        control.opened = new WeakRef(worker);
+      }
+      export async function bindUdpSocket() {
+        control.opened = new WeakRef(await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 }));
+      }
+      // A terminal with no callbacks.
+      export function openTerminalWithNoCallbacks() {
+        control.opened = new WeakRef(new Bun.Terminal({}));
+      }
+      // A child that is given more than it reads: the write nobody waits for fails when the child exits.
+      export function spawnChildThatDoesNotRead(cmd, env) {
+        const child = Bun.spawn({ cmd, env, stdin: "pipe", stdout: "ignore", stderr: "inherit" });
+        child.stdin.write(Buffer.alloc(16 << 20, "x"));
+        child.stdin.end();
+      }
+      // Leftover script of a graph that is disposed before the microtask runs.
+      export function makeWorkerFromAMicrotask() {
+        queueMicrotask(() => { control.made = new Worker("data:text/javascript,"); });
+      }
+      // The same kinds of work, handed to the host.
+      export const forTheHost = {
+        "a server with only static routes": () => Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": new Response("ok") } }),
+        "a UDP socket with no handlers": () => Bun.udpSocket({ hostname: "127.0.0.1", port: 0 }),
+        "a child process": (cmd, env) => Bun.spawn({ cmd, env, stdin: "pipe", stdout: "ignore", stderr: "inherit" }),
+        "a worker nobody listens to": () => new Worker("data:text/javascript,setInterval(() => {}, 1000)"),
+        "a terminal with no callbacks": () => new Bun.Terminal({}),
+      };
+    `,
+    // Under --hot a Bun.serve() with the hostname and port option of one that is up takes that server over.
+    "serves-static-routes.mjs": `
+      export const serve = who => Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": new Response(who) } }).port;
+    `,
+    "taken-over-under-hot.mjs": `
+      const collected = { first: false, second: false };
+      const registry = new FinalizationRegistry(which => { collected[which] = true; });
+      const serveFrom = async which => {
+        const graph = new Bun.ModuleGraph();
+        registry.register(graph, which);
+        const { serve } = await graph.import(import.meta.dir + "/serves-static-routes.mjs");
+        return graph.run(() => serve(which));
+      };
+      const port = await serveFrom("first");
+      if (process.argv[2] === "a second graph") await serveFrom("second");
+      else Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": new Response("the host") } });
+      // Until the first is collected, and then a few more for the second to be.
+      for (let turns = 0, after = 0; turns < 200 && after < 5; turns++, after += Number(collected.first)) {
+        Bun.gc(true);
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+      const answer = await fetch("http://127.0.0.1:" + port + "/").then(response => response.text(), () => "nobody");
+      console.log(JSON.stringify({ collected, answer }));
+      process.exit(0);
+    `,
+    // Something of the graph's that is open and has nothing left to do, held by the graph's own module.
+    "idle.mjs": `
+      import dns from "node:dns";
+      export let held;
+      export const hold = {
+        async "a child that has exited"({ cmd, env }) {
+          held = Bun.spawn({ cmd, env, stdin: "ignore", stdout: "ignore", stderr: "inherit" });
+          await held.exited;
+        },
+        async "a file writer nobody closed"({ path }) {
+          held = Bun.file(path).writer();
+          held.write("written");
+          await held.flush();
+        },
+        async "a file stream nobody read"({ path }) {
+          held = Bun.file(path).stream();
+        },
+        async "a fetch() response whose body nobody read"({ url }) {
+          held = await fetch(url);
+        },
+        async "a Bun.FetchSession with an idle connection"({ url }) {
+          held = new Bun.FetchSession();
+          await (await held.fetch(url + "short")).text();
+        },
+        async "a dns.Resolver"() {
+          held = new dns.Resolver();
+          held.getServers();
+        },
+        // The child leaves a child of its own on its stdout, which keeps the pipe open, and exits.
+        async "the stdout of a child that has exited, which a child of that child holds open"({ cmd, env, pidFile }) {
+          const child = Bun.spawn({ cmd: [...cmd, pidFile], env, stdin: "ignore", stdout: "pipe", stderr: "inherit" });
+          held = child.stdout;
+          await child.exited;
+          return Number(await Bun.file(pidFile).text());
+        },
+      };
     `,
   }),
 );
@@ -351,7 +464,15 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
 });
 
 describe("ModuleGraph GC: what the graph's context owns", () => {
-  const control = () => ({ stop: false, ticks: 0, httpPort: 0, tcpPort: 0, heard: [] as string[] });
+  const control = () => ({
+    stop: false,
+    ticks: 0,
+    httpPort: 0,
+    tcpPort: 0,
+    heard: [] as string[],
+    opened: undefined as WeakRef<any> | undefined,
+    made: undefined as any,
+  });
 
   test("a listening server keeps its graph alive and serving after the host dropped the graph; stopping it lets the graph go", async () => {
     const lifetimes = new Lifetimes();
@@ -366,6 +487,236 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     state.stop = true;
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
     expect(await accepts(state.httpPort)).toBe(false);
+  });
+
+  // Nothing below gives native code a function of the graph's to call: what is open is all that keeps the graph.
+  describe("with no callback of the graph's", () => {
+    test("a server with only static routes keeps its graph alive and serving after the host dropped the graph; stopping it lets the graph go", async () => {
+      const lifetimes = new Lifetimes();
+      const state = control();
+      await (async () => {
+        const graph = lifetimes.track("graph", new ModuleGraph({ globals: { TAG: "static", control: state } }));
+        const io = await graph.import(file("io.mjs"));
+        graph.run(() => io.serveStaticRoutes());
+      })();
+      expect(await lifetimes.survives("graph")).toBe(true);
+      expect(await (await fetch(`http://127.0.0.1:${state.httpPort}/`)).text()).toBe("graph static");
+      state.opened!.deref().stop(true);
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+      expect(await accepts(state.httpPort)).toBe(false);
+    });
+
+    test("a child process keeps its graph alive and running after the host dropped the graph; its exit lets the graph go", async () => {
+      const lifetimes = new Lifetimes();
+      const state = control();
+      const out = file("child-that-reads-stdin.out");
+      await (async () => {
+        const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+        const io = await graph.import(file("io.mjs"));
+        const cmd = [bunExe(), "-e", "process.stdout.write((await Bun.stdin.text()).toUpperCase())"];
+        graph.run(() => io.spawnChildThatReadsStdin(cmd, bunEnv, out));
+      })();
+      expect(await lifetimes.survives("graph")).toBe(true);
+      const child = state.opened!.deref();
+      expect({ exitCode: child.exitCode, signalCode: child.signalCode }).toEqual({ exitCode: null, signalCode: null });
+      child.stdin.write("still running");
+      child.stdin.end();
+      expect(await child.exited).toBe(0);
+      expect(await Bun.file(out).text()).toBe("STILL RUNNING");
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+      // (The host still has the child: one that has exited does not keep its graph.)
+      expect(child.exitCode).toBe(0);
+    });
+
+    test("a child process that is still reading its stdin when the host drops the graph reads all of it", async () => {
+      const state = control();
+      const out = file("child-that-is-fed.out");
+      const bytes = 8 << 20;
+      await (async () => {
+        const graph = new ModuleGraph({ globals: { control: state } });
+        const io = await graph.import(file("io.mjs"));
+        const cmd = [bunExe(), "-e", "process.stdout.write(String((await Bun.stdin.bytes()).length))"];
+        graph.run(() => io.spawnChildAndFeedIt(cmd, bunEnv, out, bytes));
+      })();
+      // Until the child is gone: its wrapper can be collected once it has exited.
+      for (let child; (child = state.opened!.deref()) && child.exitCode === null && child.signalCode === null;)
+        await collect();
+      expect(await Bun.file(out).text()).toBe(String(bytes));
+    });
+
+    for (const [ofWhichClass, Class] of [
+      ["", Worker],
+      [", of a subclass the host defined,", class extends Worker {}],
+    ] as const) {
+      test(`a worker nobody listens to${ofWhichClass} keeps its graph alive and running after the host dropped the graph; terminating it lets the graph go`, async () => {
+        const lifetimes = new Lifetimes();
+        const state = control();
+        const count = new Int32Array(new SharedArrayBuffer(4));
+        await (async () => {
+          const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+          const io = await graph.import(file("io.mjs"));
+          graph.run(() => io.workerThatCounts(count.buffer, Class));
+        })();
+        expect(await lifetimes.survives("graph")).toBe(true);
+        const counted = Atomics.load(count, 0);
+        while (Atomics.load(count, 0) === counted) await new Promise<void>(resolve => setImmediate(resolve));
+        state.opened!.deref().terminate();
+        expect(await lifetimes.stillAlive("graph")).toEqual([]);
+      });
+    }
+
+    test("a UDP socket with no handlers keeps its graph alive and bound after the host dropped the graph; closing it lets the graph go", async () => {
+      const lifetimes = new Lifetimes();
+      const state = control();
+      await (async () => {
+        const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+        const io = await graph.import(file("io.mjs"));
+        await graph.run(() => io.bindUdpSocket());
+      })();
+      expect(await lifetimes.survives("graph")).toBe(true);
+      const received = Promise.withResolvers<string>();
+      const receiver = await Bun.udpSocket({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { data: (_socket, data) => received.resolve(data.toString()) },
+      });
+      try {
+        state.opened!.deref().send("still bound", receiver.port, "127.0.0.1");
+        expect(await received.promise).toBe("still bound");
+      } finally {
+        receiver.close();
+      }
+      state.opened!.deref().close();
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    });
+
+    test("a terminal with no callbacks keeps its graph alive and open after the host dropped the graph; closing it lets the graph go", async () => {
+      const lifetimes = new Lifetimes();
+      const state = control();
+      await (async () => {
+        const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+        const io = await graph.import(file("io.mjs"));
+        graph.run(() => io.openTerminalWithNoCallbacks());
+      })();
+      expect(await lifetimes.survives("graph")).toBe(true);
+      expect(state.opened!.deref().closed).toBe(false);
+      state.opened!.deref().close();
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    });
+
+    // A graph that is alive hears what goes wrong in the work it keeps.
+    test("a child process that exits before it read its stdin tells the onError of the graph the host dropped", async () => {
+      const lifetimes = new Lifetimes();
+      const exit = file("child-that-does-not-read.exit");
+      const told = Promise.withResolvers<string>();
+      await (async () => {
+        const graph = lifetimes.track(
+          "graph",
+          new ModuleGraph({ onError: (error: any, kind) => told.resolve(kind + ": " + error.code) }),
+        );
+        const io = await graph.import(file("io.mjs"));
+        const untilToldToExit = `const fs = require("fs"); while (!fs.existsSync(process.argv[1])) await Bun.sleep(5);`;
+        graph.run(() => io.spawnChildThatDoesNotRead([bunExe(), "-e", untilToldToExit, exit], bunEnv));
+      })();
+      expect(await lifetimes.survives("graph")).toBe(true);
+      writeFileSync(exit, "");
+      expect(await told.promise).toBe("unhandledRejection: EPIPE");
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    });
+  });
+
+  // The graph is kept for the work, not for the object: what the host still holds of it lets the graph go once
+  // the work is over, and once the graph is disposed. The host holds it in `box` only, which no function here
+  // closes over: an awaited value outlives its variable in the awaiting function's saved frame.
+  describe("what the host still holds does not keep the graph", () => {
+    const over: Record<string, (held: any) => unknown> = {
+      "a server with only static routes": server => server.stop(true),
+      "a UDP socket with no handlers": socket => socket.close(),
+      "a child process": child => (child.stdin.end(), child.exited),
+      "a worker nobody listens to": worker => worker.terminate(),
+      "a terminal with no callbacks": terminal => terminal.close(),
+    };
+    for (const [what, end] of Object.entries(over)) {
+      for (const when of ["its work is over", "its graph is disposed"] as const) {
+        test(`${what}, once ${when}`, async () => {
+          const lifetimes = new Lifetimes();
+          const box: { held?: any } = {};
+          await (async () => {
+            const graph = lifetimes.track("graph", new ModuleGraph());
+            const io = await graph.import(file("io.mjs"));
+            box.held = await graph.run(() => io.forTheHost[what]([bunExe(), "-e", "await Bun.stdin.text()"], bunEnv));
+            if (when === "its graph is disposed") graph.dispose();
+          })();
+          if (when === "its work is over") await end(box.held);
+          expect(await lifetimes.stillAlive("graph")).toEqual([]);
+          expect(box.held).toBeObject();
+        });
+      }
+    }
+
+    // Its microtask runs once more, and what that makes is stopped at once.
+    test("a worker that leftover script of a disposed graph made", async () => {
+      const lifetimes = new Lifetimes();
+      const state = control();
+      await (async () => {
+        const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+        const io = await graph.import(file("io.mjs"));
+        graph.run(() => io.makeWorkerFromAMicrotask());
+        graph.dispose();
+      })();
+      expect(state.made).toBeInstanceOf(Worker);
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+      expect(state.made).toBeInstanceOf(Worker);
+    });
+  });
+
+  // What is open with nothing left to do does not keep a graph: its own module holding it is a cycle like any other.
+  describe("a dropped graph whose module holds something idle is collected", () => {
+    // What the child of the last one runs: a child of its own on the same stdout, whose pid it leaves in a file.
+    const leavesAChildOnItsStdout = `
+      const child = Bun.spawn({ cmd: [process.execPath, "-e", "await Bun.sleep(60_000)"], stdin: "ignore", stdout: "inherit", stderr: "ignore" });
+      child.unref();
+      require("fs").writeFileSync(process.argv[1], String(child.pid));
+    `;
+    const idle: Record<string, (url: string) => object> = {
+      "a child that has exited": () => ({ cmd: [bunExe(), "-e", ""], env: bunEnv }),
+      "a file writer nobody closed": () => ({ path: file("idle-writer.out") }),
+      "a file stream nobody read": () => ({ path: file("esm.mjs") }),
+      "a fetch() response whose body nobody read": url => ({ url }),
+      "a Bun.FetchSession with an idle connection": url => ({ url }),
+      "a dns.Resolver": () => ({}),
+      "the stdout of a child that has exited, which a child of that child holds open": () => ({
+        cmd: [bunExe(), "-e", leavesAChildOnItsStdout],
+        env: bunEnv,
+        pidFile: file("left-on-its-stdout.pid"),
+      }),
+    };
+    for (const [what, args] of Object.entries(idle)) {
+      test(what, async () => {
+        // "/short" answers at once; anything else sends the head and a first chunk, and never ends.
+        await using server = Bun.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          fetch: request =>
+            new URL(request.url).pathname === "/short"
+              ? new Response("short")
+              : new Response(new ReadableStream({ start: controller => controller.enqueue(new Uint8Array(1024)) })),
+        });
+        const lifetimes = new Lifetimes();
+        // The pid of what the fixture left running, if anything.
+        let leftRunning: unknown;
+        try {
+          await (async () => {
+            const graph = lifetimes.track("graph", new ModuleGraph());
+            const { hold } = await graph.import(file("idle.mjs"));
+            leftRunning = await graph.run(() => hold[what](args(server.url.href)));
+          })();
+          expect(await lifetimes.stillAlive("graph")).toEqual([]);
+        } finally {
+          if (typeof leftRunning === "number") process.kill(leftRunning);
+        }
+      });
+    }
   });
 
   test("a repeating timer keeps its graph alive; clearing it lets the graph go", async () => {
@@ -603,6 +954,28 @@ describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () =
   });
 });
 
+// The server is the graph's whose Bun.serve() took it over, or the host's: it keeps that graph, and no longer the first.
+test.concurrent.each([
+  ["a second graph", `{"collected":{"first":true,"second":false},"answer":"second"}`],
+  ["the host", `{"collected":{"first":true,"second":false},"answer":"the host"}`],
+])(
+  "ModuleGraph GC: --hot: a server with only static routes that %s took over lets the first graph go",
+  async (by, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", file("taken-over-under-hot.mjs"), by],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      // (Under --hot an error in the fixture leaves the process waiting for an edit.)
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(expected);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test("ModuleGraph GC: survives collecting continuously", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -631,6 +1004,43 @@ test("ModuleGraph GC: survives collecting continuously", async () => {
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+}, 60_000);
+
+test("ModuleGraph GC: survives collecting continuously while graphs the host dropped keep their work", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { join } = require("path");
+      const dir = ${JSON.stringify(dir)};
+      for (let i = 0; i < 3; i++) {
+        const control = { httpPort: 0, opened: undefined };
+        const opened = [];
+        await (async () => {
+          const graph = new Bun.ModuleGraph({ globals: { TAG: "dropped" + i, control } });
+          const io = await graph.import(join(dir, "io.mjs"));
+          graph.run(() => io.serveStaticRoutes()); opened.push(control.opened);
+          await graph.run(() => io.bindUdpSocket()); opened.push(control.opened);
+          graph.run(() => io.openTerminalWithNoCallbacks()); opened.push(control.opened);
+        })();
+        for (let turn = 0; turn < 20; turn++) await new Promise(resolve => setImmediate(resolve));
+        const answer = await fetch("http://127.0.0.1:" + control.httpPort + "/").then(response => response.text(), error => String(error));
+        const [server, udp, terminal] = opened.map(ref => ref.deref());
+        console.log(JSON.stringify({ answer, udp: udp && !udp.closed, terminal: terminal && !terminal.closed }));
+        server?.stop(true); udp?.close(); terminal?.close();
+      }
+      `,
+    ],
+    env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim().split("\n")).toEqual(
+    [0, 1, 2].map(i => JSON.stringify({ answer: "graph dropped" + i, udp: true, terminal: true })),
+  );
   expect(exitCode).toBe(0);
 }, 60_000);
 

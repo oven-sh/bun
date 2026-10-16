@@ -108,8 +108,7 @@ pub(crate) struct StartOptions {
     pub pollable: bool,
     /// Byte offset into the file to begin reading from.
     pub offset: u64,
-    /// Read at `offset` even when it is 0: `fd` is a regular file the caller
-    /// opened, so its position is the caller's and can be anywhere.
+    /// Read at `offset` even when it is 0: the position of a caller's `fd` can be anywhere.
     pub positional: bool,
     /// Maximum bytes to send; `None` reads to EOF. For regular files this
     /// should be `stat.size - offset` (after Range/slice clamping).
@@ -120,8 +119,7 @@ pub(crate) struct StartOptions {
 
 #[cfg(windows)]
 impl StartOptions {
-    /// A read at an offset through libuv moves the position of the handle and
-    /// puts it back, which the program's own I/O can race. Open a second handle.
+    /// libuv moves the position of a handle to read at an offset, so read through a second one.
     fn with_own_handle(mut self) -> Self {
         if !self.positional || self.auto_close {
             return self;

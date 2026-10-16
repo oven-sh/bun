@@ -45,7 +45,7 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
+    group_begin, AddedInPhase, BunTest, BunTestPtr, DescribeScope, EntryData, ExecutionEntry,
     HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
@@ -198,6 +198,33 @@ impl ExecutionSequence {
             return unsafe { entry.as_ref() }.base.mode;
         }
         ScopeMode::Normal
+    }
+
+    /// False until the first entry runs. A sequence rewound for a retry or a repeat starts
+    /// again in the same step, so it is never seen here as not started.
+    fn has_started(&self) -> bool {
+        self.executing || self.active_entry != self.first_entry
+    }
+
+    /// The scope that holds the test, or for a `beforeAll` / `afterAll` sequence the hook.
+    fn scope(&self) -> Option<*mut DescribeScope> {
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
+        self.test_entry.or(self.first_entry).and_then(|entry| unsafe { entry.as_ref() }.base.parent)
+    }
+
+    /// An `afterAll` hook of one of `scopes`. A hook entry does not store its kind: it is an
+    /// `afterAll` when the `after_all` list of its scope holds it.
+    fn is_after_all_of(&self, scopes: &[*mut DescribeScope]) -> bool {
+        let (None, Some(hook), Some(scope)) = (self.test_entry, self.first_entry, self.scope()) else {
+            return false;
+        };
+        if !scopes.contains(&scope) {
+            return false;
+        }
+        // SAFETY: the scope tree is owned by BunTest (or by BunTestRoot for the preload scope)
+        // and outlives the Execution.
+        let after_all = &unsafe { &*scope }.after_all;
+        after_all.iter().any(|entry| core::ptr::eq(&raw const **entry, hook.as_ptr()))
     }
 }
 
@@ -537,7 +564,7 @@ impl Execution {
             let test_passed = sequence.result.is_pass(PendingIs::PendingIsPass);
 
             // Handle retry logic: if test failed and we have retries remaining, retry it
-            if test_failed && sequence.remaining_retry_count > 0 {
+            if test_failed && sequence.remaining_retry_count > 0 && !Execution::bail_reached(buntest) {
                 sequence.remaining_retry_count -= 1;
                 Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
@@ -545,7 +572,7 @@ impl Execution {
             }
 
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
-            if test_passed && sequence.remaining_repeat_count > 0 {
+            if test_passed && sequence.remaining_repeat_count > 0 && !Execution::bail_reached(buntest) {
                 sequence.remaining_repeat_count -= 1;
                 Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
@@ -553,7 +580,7 @@ impl Execution {
             }
 
             // Only report the final result after all retries/repeats are done
-            Execution::on_sequence_completed(buntest, sequence);
+            let reached_bail = Execution::on_sequence_completed(buntest, sequence);
 
             // No more retries or repeats; mark sequence as complete
             // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
@@ -563,6 +590,76 @@ impl Execution {
                 return;
             }
             group.remaining_incomplete_entries -= 1;
+
+            if reached_bail {
+                // SAFETY: `sequence` is not used again. `group` is the active group, which
+                // `stop_for_bail` reaches only through this reference.
+                unsafe { (*buntest.as_ptr()).execution.stop_for_bail(group) };
+            }
+        }
+    }
+
+    /// `--bail` has stopped the run: a sequence that finishes does not start again.
+    fn bail_reached(buntest: NonNull<BunTest>) -> bool {
+        // SAFETY: `buntest` points at the live per-file BunTest, and its reporter outlives it
+        // (see the field doc); single-threaded, read-only.
+        unsafe {
+            let reporter = (*buntest.as_ptr()).reporter;
+            reporter.is_some_and(|reporter| reporter.as_ref().jest.bail_reached())
+        }
+    }
+
+    /// The failure that reached `--bail` has just completed in `bail_group`, the active group.
+    /// From here the only sequences that still start are the `afterAll` hooks of the scopes
+    /// that were entered: the scopes that a started sequence of `bail_group` is in. The groups
+    /// stay in place, so those hooks run in their usual order and a failed hook still skips
+    /// what `failure_skip_to` says.
+    #[cold]
+    fn stop_for_bail(&mut self, bail_group: &mut ConcurrentGroup) {
+        let mut entered: Vec<*mut DescribeScope> = Vec::new();
+        for index in bail_group.sequence_start..bail_group.sequence_end {
+            let sequence = &mut self.sequences[index];
+            if !sequence.has_started() {
+                sequence.active_entry = None;
+                bail_group.remaining_incomplete_entries -= 1;
+                continue;
+            }
+            let mut scope = sequence.scope();
+            while let Some(entered_scope) = scope {
+                if entered.contains(&entered_scope) {
+                    break;
+                }
+                entered.push(entered_scope);
+                // SAFETY: the scope tree is owned by BunTest (or by BunTestRoot for the
+                // preload scope) and outlives the Execution.
+                scope = unsafe { &*entered_scope }.base.parent;
+            }
+        }
+
+        for group_index in self.group_index + 1..self.groups.len() {
+            let group = &mut self.groups[group_index];
+            group.remaining_incomplete_entries = 0;
+            for index in group.sequence_start..group.sequence_end {
+                let sequence = &mut self.sequences[index];
+                if sequence.is_after_all_of(&entered) {
+                    sequence.active_entry = sequence.first_entry;
+                    group.remaining_incomplete_entries += 1;
+                } else {
+                    sequence.active_entry = None;
+                }
+            }
+        }
+    }
+
+    /// Mark the groups from `first_group` on as complete. `BunTest::advance` does this to the
+    /// preload `afterAll` hooks of a file that is not the last: they run in that file only when
+    /// `--bail` stops the run there, and `stop_for_bail` is what brings them back.
+    pub(crate) fn park_groups_from(&mut self, first_group: usize) {
+        for group in &mut self.groups[first_group..] {
+            group.remaining_incomplete_entries = 0;
+            for sequence in &mut self.sequences[group.sequence_start..group.sequence_end] {
+                sequence.active_entry = None;
+            }
         }
     }
 
@@ -628,7 +725,8 @@ impl Execution {
         }
     }
 
-    fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
+    /// Returns true for the one failure that reaches `--bail=N`.
+    fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) -> bool {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
             0
         } else {
@@ -658,12 +756,13 @@ impl Execution {
                 _ => Result::Pass,
             };
         }
+        let mut reached_bail = false;
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
                 // `buntest.execution.sequences[i]`; `handle_test_completed`'s signature still takes
                 // both `&mut BunTest` and `&mut ExecutionSequence` (callee could be reshaped to avoid this).
-                test_command::CommandLineReporter::handle_test_completed(
+                reached_bail = test_command::CommandLineReporter::handle_test_completed(
                     unsafe { &mut *buntest.as_ptr() },
                     sequence,
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
@@ -705,6 +804,7 @@ impl Execution {
                 }
             }
         }
+        reached_bail
     }
 
     /// Drop any captured failure so the next retry/repeat starts fresh.

@@ -18,6 +18,7 @@ use bun_ptr::Interned;
 use super::frame::{self, Frame};
 use super::worker::{Worker, WorkerPipe};
 use crate::test_command::CommandLineReporter;
+use crate::test_runner::jest::TestRunner;
 
 // `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
@@ -333,12 +334,7 @@ impl<'a> Coordinator<'a> {
         }
         self.stop_reason = Some(StopReason::Bail);
         self.break_dots();
-        bun_core::pretty_error!(
-            "\nBailed out after {} failure{}<r>\n",
-            self.bail,
-            if self.bail == 1 { "" } else { "s" }
-        );
-        Output::flush();
+        TestRunner::print_bail_banner(self.bail);
         // Reachable from on_frame/account_crash with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() here
         // would create a second `&mut Worker` for `w`'s slot (UB). Iterate

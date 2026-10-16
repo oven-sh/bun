@@ -1261,12 +1261,14 @@ impl CommandLineReporter {
         &mut self.jest.summary
     }
 
+    /// Returns true for the one failure that reaches `--bail=N`. The caller stops the run: the
+    /// borrows this is called under do not let it.
     pub(crate) fn handle_test_completed(
         buntest: &mut bun_test::BunTest,
         sequence: &mut bun_test::Execution::ExecutionSequence,
         test_entry: &mut bun_test::ExecutionEntry,
         elapsed_ns: u64,
-    ) {
+    ) -> bool {
         let mut output_buf: Vec<u8> = Vec::new();
 
         let initial_length = output_buf.len();
@@ -1346,7 +1348,7 @@ impl CommandLineReporter {
 
         let Some(this) = buntest.reporter else {
             let _ = Output::error_writer().write_all(formatted_line);
-            return;
+            return false;
         };
         // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
         // provenance from `enter_file`'s `&mut`; single-threaded test runner,
@@ -1384,6 +1386,7 @@ impl CommandLineReporter {
             }
         }
 
+        let mut reached_bail = false;
         use bun_test::Execution::Result as R;
         match sequence.result {
             R::Pending => {}
@@ -1404,16 +1407,8 @@ impl CommandLineReporter {
                 this.summary().fail += 1;
 
                 if this.summary().fail == this.jest.bail {
-                    this.print_summary();
-                    pretty_error!(
-                        "\nBailed out after {} failure{}<r>\n",
-                        this.jest.bail,
-                        if this.jest.bail == 1 { "" } else { "s" }
-                    );
-                    Output::flush();
-                    this.write_junit_report_if_needed();
-                    this.write_timings_if_needed();
-                    Global::exit(1);
+                    TestRunner::print_bail_banner(this.jest.bail);
+                    reached_bail = true;
                 }
             }
         }
@@ -1421,6 +1416,42 @@ impl CommandLineReporter {
             .summary()
             .expectations
             .saturating_add(sequence.expect_call_count);
+        reached_bail
+    }
+
+    /// The end of a run that `--bail` stopped: the summary line and the report files.
+    pub(crate) fn report_bailed_run(&mut self) {
+        self.print_summary();
+        pretty_error!("\n");
+        Output::flush();
+        self.write_junit_report_if_needed();
+        self.write_timings_if_needed();
+    }
+
+    /// `process.exit()` from a hook or a test that still runs after `--bail` stopped the run.
+    /// The exit skips the end of `exec`, so a run that has failed reports here and exits 1.
+    pub(crate) fn on_process_exit(vm: &mut VirtualMachine) {
+        let Some(runner) = jest::Jest::runner() else {
+            return;
+        };
+        if !runner.bail_reached() {
+            return;
+        }
+        if vm.exit_handler.exit_code == 0 {
+            vm.exit_handler.exit_code = 1;
+        }
+        // No active file: `exec` is already past the file loop and reports the run itself.
+        let Some(reporter) = runner
+            .bun_test_root
+            .active_file
+            .as_ref()
+            .and_then(|file| file.reporter)
+        else {
+            return;
+        };
+        // SAFETY: `BunTest.reporter` points at the `CommandLineReporter` that `exec` owns for
+        // the whole run; single-threaded, and this exit never returns to a frame that borrows it.
+        unsafe { &mut *reporter.as_ptr() }.report_bailed_run();
     }
 
     pub(crate) fn print_summary(&mut self) {
@@ -2376,6 +2407,25 @@ impl TestCommand {
             }
         }
 
+        if !ran_parallel && reporter.jest.bail_reached() {
+            reporter.report_bailed_run();
+            vm.exit_handler.exit_code = 1;
+            vm.is_shutting_down = true;
+            // Release the `bun:test` GC roots, then clear `RUNNER` so finalizers
+            // can't observe a partially-torn-down `TestRunner`.
+            reporter.jest.bun_test_root.deinit_for_exit();
+            // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
+            // no concurrent reader exists on this shutdown path.
+            unsafe {
+                jest::Jest::RUNNER.write(None);
+            }
+            let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only and `global_exit()`
+            // diverges, so the closure is the sole mutator.
+            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+        }
+
         // With --changed, only a subset of test files (possibly none) runs,
         // so the module loader won't naturally add every source file to the
         // watcher. Seed it from the module graph so editing any local source
@@ -2779,6 +2829,9 @@ impl TestCommand {
                         if let Some(t) = reporter.timings.as_mut() {
                             t.record_since(file_name.as_bytes(), started);
                         }
+                        if reporter.jest.bail_reached() {
+                            return;
+                        }
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
@@ -2950,49 +3003,24 @@ impl TestCommand {
             }
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            match jsc::JSInternalPromise::opaque_mut(promise).status() {
-                jsc::js_promise::Status::Rejected => {
-                    // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                    // `unhandled_rejection(&mut self, ...)` can reborrow.
-                    let global = vm.global();
-                    let p = jsc::JSInternalPromise::opaque_mut(promise);
-                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
-                    vm.unhandled_rejection(global, result, promise_js);
-                    reporter.summary().fail += 1;
-
-                    if reporter.jest.bail == reporter.summary().fail {
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-                        reporter.write_timings_if_needed();
-
-                        vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
-                        // `global_exit()` diverges, so the `exit_file()` defer
-                        // above never fires. Release the active file's
-                        // `Strong`s and the preload-hook scope here so
-                        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
-                        // then clear `RUNNER` so finalizers can't observe a
-                        // partially-torn-down `TestRunner`.
-                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
-                        // defer's escape.
-                        unsafe {
-                            (*bun_test_root_ptr).deinit_for_exit();
-                            jest::Jest::RUNNER.write(None);
-                        }
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
-                        // raw-ptr reborrow of the exclusive `vm` borrow.
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
-                    }
-
-                    return Ok(());
+            let rejected = matches!(
+                jsc::JSInternalPromise::opaque_mut(promise).status(),
+                jsc::js_promise::Status::Rejected
+            );
+            if rejected {
+                // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
+                // `unhandled_rejection(&mut self, ...)` can reborrow.
+                let global = vm.global();
+                let p = jsc::JSInternalPromise::opaque_mut(promise);
+                let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                // Counted first: reporting the error starts this file's hooks, and the order
+                // they run in depends on whether `--bail` is reached (`BunTest::advance`).
+                reporter.summary().fail += 1;
+                let reached_bail = reporter.summary().fail == reporter.jest.bail;
+                vm.unhandled_rejection(global, result, promise_js);
+                if reached_bail {
+                    TestRunner::print_bail_banner(reporter.jest.bail);
                 }
-                _ => {}
             }
 
             vm.event_loop_ref().tick();
@@ -3070,6 +3098,10 @@ impl TestCommand {
                 vm.auto_killer.disable();
             }
 
+            // A module that rejected is not evaluated again by `--rerun-each`.
+            if rejected || reporter.jest.bail_reached() {
+                break;
+            }
             repeat_index += 1;
         }
         if let Some(junit) = reporter.reporters.junit.as_mut() {

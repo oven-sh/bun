@@ -465,10 +465,9 @@ impl BunTestRoot {
 
     /// Tear down `bun:test` GC roots before `global_exit()` so
     /// `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim the
-    /// closures they pin. Releases the active file's per-test `Strong`s (the
-    /// bail path skips its `scopeguard::defer! { exit_file() }` because
-    /// `process::exit()` does not unwind), the preload-hook `Strong`s held in
-    /// `hook_scope`, and the `pending_then_refs` Vec.
+    /// closures they pin. Releases the per-test `Strong`s of a file that is
+    /// still active, the preload-hook `Strong`s held in `hook_scope`, and the
+    /// `pending_then_refs` Vec.
     pub(crate) fn deinit_for_exit(&mut self) {
         if self.active_file.is_some() {
             self.exit_file();
@@ -1072,7 +1071,20 @@ impl BunTest {
                     }
                 }
                 beforeall_order.set_failure_skip_to(&mut order);
-                let afterall_order: Order::AllOrderResult = if self.first_last.last {
+                // The preload `afterAll` hooks run in the last file. Under `--bail` every file can
+                // be the one that ends the run, so every file carries them: parked until `--bail`
+                // stops the run in this file, or live when it is already reached (this file's
+                // module rejected and that failure reached it).
+                let (bail, bail_reached) = match self.reporter {
+                    // SAFETY: reporter outlives every BunTest (see field doc).
+                    Some(reporter) => {
+                        let jest = &unsafe { reporter.as_ref() }.jest;
+                        (jest.bail, jest.bail_reached())
+                    }
+                    None => (0, false),
+                };
+                let preload_after_all_start = order.groups.len();
+                let afterall_order: Order::AllOrderResult = if self.first_last.last || bail != 0 {
                     order.generate_all_order(&root.hook_scope.after_all)?
                 } else {
                     Order::AllOrderResult::EMPTY
@@ -1080,6 +1092,9 @@ impl BunTest {
                 afterall_order.set_failure_skip_to(&mut order);
 
                 self.execution.load_from_order(&mut order);
+                if !self.first_last.last && !bail_reached {
+                    self.execution.park_groups_from(preload_after_all_start);
+                }
                 debug::dump_order(&self.execution)?;
                 Ok(Advance::Cont)
             }

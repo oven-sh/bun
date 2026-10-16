@@ -152,6 +152,23 @@ pub(crate) struct TestRunner<'a> {
 }
 
 impl<'a> TestRunner<'a> {
+    /// `--bail=N` stopped the run: N tests failed. No test, `beforeAll` or file starts after this;
+    /// what already started finishes, and the `afterAll` hooks of the scopes that were entered run.
+    #[inline]
+    pub(crate) fn bail_reached(&self) -> bool {
+        self.bail != 0 && self.summary.fail >= self.bail
+    }
+
+    /// Printed once, by the failure that reaches `--bail=N`.
+    pub(crate) fn print_bail_banner(bail: u32) {
+        bun_core::pretty_error!(
+            "\nBailed out after {} failure{}<r>\n",
+            bail,
+            if bail == 1 { "" } else { "s" }
+        );
+        bun_core::Output::flush();
+    }
+
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;

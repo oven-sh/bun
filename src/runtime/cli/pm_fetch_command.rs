@@ -2,8 +2,7 @@ use bstr::BStr;
 
 use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
-    PackageManager, get_cache_directory_and_abs_path, package_manager_options::LogLevel,
-    populate_package_cache,
+    PackageManager, get_cache_directory_and_abs_path, populate_package_cache,
 };
 
 use crate::cli::Command;
@@ -37,7 +36,7 @@ pub(crate) fn exec(
     }
 
     // Nothing is linked or run here, so the scan is left to the command that does.
-    if pm.options.security_scanner.is_some() && pm.options.log_level != LogLevel::Silent {
+    if pm.options.security_scanner.is_some() && pm.options.log_level.is_verbose() {
         bun_core::note!(
             "packages are not scanned until <b>bun install<r> runs the security scanner"
         );

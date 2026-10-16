@@ -522,8 +522,8 @@ it("a tarball that cannot be downloaded fails the command", async () => {
   expect(exitCode).toBe(1);
 });
 
-// Nothing is linked or run, so the scan is left to the install. The command says so.
-it("does not run the security scanner, and says that bun install will", async () => {
+// Nothing is linked or run, so the scan is left to the install. --verbose says so.
+it("does not run the security scanner", async () => {
   await using fixture = await projectWith("npm", `[install.security]\nscanner = "./scanner.ts"\n`);
   const { bun, requested, project } = fixture;
   await writeFile(
@@ -540,13 +540,14 @@ it("does not run the security scanner, and says that bun install will", async ()
   const note = "note: packages are not scanned until bun install runs the security scanner\n";
 
   const fetched = await bun("cache", "pm", "fetch");
-  expect(fetched.stderr).toEndWith(note);
+  expect(fetched.stderr).not.toContain(note);
   expect(fetched.stdout).toBe(summary("Fetched 1 package into cache"));
   expect(fetched.exitCode).toBe(0);
   expect(requested()).toEqual(["/dep", "/dep-1.0.0.tgz"]);
   expect(await exists(join(project, "scanned.json"))).toBe(false);
 
   expect(await bun("cache", "pm", "fetch", "--silent")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  expect((await bun("cache", "pm", "fetch", "--verbose")).stderr).toContain(note);
 
   expect(await bun("cache", "install")).toMatchObject({ exitCode: 0 });
   expect(await Bun.file(join(project, "scanned.json")).json()).toEqual(["dep"]);

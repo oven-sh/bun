@@ -816,7 +816,7 @@ impl<'a> Parser<'a, '_> {
                                 Some(self.source),
                                 expr.loc,
                                 format_args!(
-                                    "\"{key}\" is ignored in a project's bunfig.toml. Set it in $HOME/.bunfig.toml or in ${env_var}"
+                                    "ignoring \"{key}\" in project bunfig.toml, set it in $HOME/.bunfig.toml or ${env_var}"
                                 ),
                             );
                         }

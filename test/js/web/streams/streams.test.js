@@ -2499,6 +2499,125 @@ it("Blob.stream() -> new Response(stream).text()", async () => {
   expect(text).toBe("abdefgh");
 });
 
+// A reader pulls the bytes of a blob into a buffer no larger than what the blob has left. What it
+// reads is what it read out of a larger one.
+describe("a stream over bytes in memory", () => {
+  const MB = 1024 * 1024;
+  // The first chunk holds at most this much.
+  const FIRST_CHUNK = 16384;
+  // A period of 37 bytes, which no chunk size here is a multiple of, so that a chunk at the wrong offset shows.
+  const bytesOf = size => Buffer.alloc(size, "0123456789abcdefghijklmnopqrstuvwxyz_");
+  const sources = {
+    "Response.body": bytes => new Response(bytes).body,
+    "Request.body": bytes => new Request("http://localhost/", { method: "POST", body: bytes }).body,
+    "Blob.stream()": bytes => new Blob([bytes]).stream(),
+    "Blob.slice().stream()": bytes => new Blob(["abc", bytes, "def"]).slice(3, 3 + bytes.length).stream(),
+  };
+  const sizes = [1, 100, FIRST_CHUNK - 1, FIRST_CHUNK, FIRST_CHUNK + 1, 3 * FIRST_CHUNK, 300_000];
+  const cases = Object.keys(sources).flatMap(source => sizes.map(size => [source, size]));
+
+  async function chunksOf(stream) {
+    const reader = stream.getReader();
+    const chunks = [];
+    for (let result = await reader.read(); !result.done; result = await reader.read()) chunks.push(result.value);
+    await reader.closed;
+    return chunks;
+  }
+
+  test.each(cases)("%s of %d bytes is its first 16384 bytes, then the rest", async (source, size) => {
+    const bytes = bytesOf(size);
+    const chunks = await chunksOf(sources[source](bytes));
+    expect({
+      sizes: chunks.map(chunk => chunk.byteLength),
+      content: Buffer.concat(chunks).equals(bytes),
+    }).toEqual({
+      sizes: size <= FIRST_CHUNK ? [size] : [FIRST_CHUNK, size - FIRST_CHUNK],
+      content: true,
+    });
+  });
+
+  // The buffer starts at 256 KiB, or at the chunk size asked for when that is more, doubles once when a pull
+  // fills it, and holds 2 MiB at most.
+  test.each([
+    [300_000, 1000, [16384, 262144, 21472]],
+    [300_000, MB, [16384, 283616]],
+    [16384 + 262144, 1000, [16384, 262144]],
+    [16384 + 262144 + 1, 1000, [16384, 262144, 1]],
+    [3 * MB, undefined, [16384, 2097152, 1032192]],
+    [3 * MB, 1000, [16384, 262144, 524288, 524288, 524288, 524288, 524288, 245760]],
+    [3 * MB, MB, [16384, 1048576, 2080768]],
+    [5 * MB + 7, 4 * MB, [16384, 2097152, 2097152, 1032199]],
+  ])("a Blob of %d bytes .stream(%p) reads as the chunks it always did", async (size, chunkSize, expected) => {
+    const bytes = bytesOf(size);
+    const chunks = await chunksOf(new Blob([bytes]).stream(chunkSize));
+    expect({
+      sizes: chunks.map(chunk => chunk.byteLength),
+      // A chunk is a buffer of its own, not a view of a larger one.
+      whole: chunks.every(chunk => chunk.byteOffset === 0 && chunk.buffer.byteLength === chunk.byteLength),
+      content: Buffer.concat(chunks).equals(bytes),
+    }).toEqual({ sizes: expected, whole: true, content: true });
+  });
+
+  test.each(cases)("%s of %d bytes gives the same bytes to every consumer", async (source, size) => {
+    const bytes = bytesOf(size);
+    const stream = () => sources[source](bytes);
+    const iterated = [];
+    for await (const chunk of stream()) iterated.push(chunk);
+    const [left, right] = stream().tee();
+    const piped = [];
+    await stream().pipeTo(new WritableStream({ write: chunk => void piped.push(chunk) }));
+    const cancelled = stream().getReader();
+    await cancelled.read();
+    await cancelled.cancel();
+    expect({
+      iterated: Buffer.concat(iterated).equals(bytes),
+      response: Buffer.from(await new Response(stream()).arrayBuffer()).equals(bytes),
+      tee: [
+        Buffer.from(await new Response(left).bytes()).equals(bytes),
+        Buffer.from(await new Response(right).bytes()).equals(bytes),
+      ],
+      piped: Buffer.concat(piped).equals(bytes),
+      afterCancel: await cancelled.read(),
+    }).toEqual({
+      iterated: true,
+      response: true,
+      tee: [true, true],
+      piped: true,
+      afterCancel: { done: true, value: undefined },
+    });
+  });
+
+  // The string, its copy in the Response, and no 256 KiB buffer on top. An ASAN build does not allocate through mimalloc.
+  test.skipIf(isASAN).concurrent.each([100, 100_000])(
+    "reading a body of %d bytes asks the allocator for little more than the body",
+    async size => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { heapStats } = require("bun:jsc");
+           const body = Buffer.alloc(${size}, "a").toString();
+           async function read() {
+             const reader = new Response(body).body.getReader();
+             for (let result = await reader.read(); !result.done; result = await reader.read());
+           }
+           await read();
+           const before = heapStats().mimalloc.malloc_requested;
+           for (let i = 0; i < 50; i++) await read();
+           console.log(Math.round((heapStats().mimalloc.malloc_requested - before) / 50));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(Number(stdout)).toBeLessThan(2 * size + 64 * 1024);
+      expect(exitCode).toBe(0);
+    },
+  );
+});
+
 it("Bun.file().stream() of a small file does not double-close the controller", async () => {
   // When the first pull returns data + EOF synchronously, both the native onClose
   // callback and the pull-result handler enqueue callClose for the same controller.
@@ -4348,7 +4467,7 @@ describe("direct stream edge cases", () => {
         });
         const reader = rs.getReader();
         const reads = [];
-        for (let r; !(r = await reader.read()).done; ) reads.push(txt(r.value));
+        for (let r; !(r = await reader.read()).done;) reads.push(txt(r.value));
         expect({ reads, after, pulls: t.pulls, cancels: t.cancels.length }).toEqual({
           reads: ["a"],
           after: { write: 0, flush: undefined, end: undefined, "close(error)": undefined, error: undefined },

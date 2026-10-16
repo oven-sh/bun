@@ -16,6 +16,7 @@
 
 pub mod Global;
 pub mod atomic_cell;
+pub mod ci_info;
 pub mod comptime_string_map;
 pub mod error;
 pub mod hint;
@@ -240,9 +241,13 @@ pub mod os {
     }
 }
 
-pub mod deprecated;
+pub mod code_generation;
 pub mod env_var;
 pub mod feature_flags;
+pub use code_generation::{
+    CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD, CodeGenerationFromStrings,
+    code_generation_from_strings, disallow_code_generation_from_strings,
+};
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
 /// (dirname, which) can use them without an upward dep. `bun_paths` re-exports
@@ -2120,41 +2125,66 @@ pub(crate) mod strings_impl {
             return Some((0, npm_secret_len));
         }
 
-        if let Some(r) = find_url_password(str) {
+        if let Some(r) = find_url_userinfo(str) {
             return Some(r);
         }
 
         None
     }
 
-    /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
-    /// `(offset, len)` of the password segment, or None.
-    /// Only matches http:// and https:// schemes and rejects empty pw.
-    pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
-        // Case-sensitive prefix match; the search region is truncated at the
-        // first '\n' and at the end of the authority before scanning for '@'/':'.
-        let scheme_end = if s.starts_with(b"http://") {
-            7
-        } else if s.starts_with(b"https://") {
-            8
-        } else {
+    /// Returns the `(offset, len)` of the URL's userinfo (`user:password`) that must be redacted
+    /// before printing, or None. `s` must start with a URL (`https://`, `git+ssh://`, ...).
+    pub(crate) fn find_url_userinfo(s: &[u8]) -> Option<(usize, usize)> {
+        // RFC 3986 scheme (`git+https` is one scheme) followed by `://`.
+        if !s.first().is_some_and(u8::is_ascii_alphabetic) {
             return None;
-        };
-        let mut rest = &s[scheme_end..];
-        if let Some(nl) = crate::strings::index_of_char_usize(rest, b'\n') {
-            rest = &rest[..nl];
         }
-        if let Some(end) = crate::strings::index_of_any(rest, b"/?#") {
+        let scheme_len = s.iter().take_while(|&&b| is_url_scheme_byte(b)).count();
+        if !s[scheme_len..].starts_with(b"://") {
+            return None;
+        }
+        let scheme_end = scheme_len + b"://".len();
+        let (offset, len) = find_authority_userinfo(&s[scheme_end..])?;
+        Some((scheme_end + offset, len))
+    }
+
+    fn is_url_scheme_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
+    }
+
+    /// Same as [`find_url_userinfo`], but `rest` starts right after `scheme://`. The userinfo ends
+    /// at the last '@'. All of it is redacted, user name included, unless it is the ssh user `git`.
+    pub(crate) fn find_authority_userinfo(mut rest: &[u8]) -> Option<(usize, usize)> {
+        // The URL ends at whitespace, so a `name@version` later in the message is not part of it.
+        if let Some(end) = crate::strings::index_of_any(rest, b"/?# \t\r\n") {
             rest = &rest[..end];
         }
-        let at = crate::strings::index_of_char_usize(rest, b'@')?;
-        let userinfo = &rest[..at];
-        let colon = crate::strings::index_of_char_usize(userinfo, b':')?;
-        // Reject empty password (`user:@host`).
-        if colon == at - 1 {
-            return None;
+        let at = crate::strings::last_index_of_char(rest, b'@')?;
+        (at > 0 && &rest[..at] != b"git").then_some((0, at))
+    }
+
+    /// Runs [`find_url_userinfo`] on each URL at or after `from` and returns the first match. The
+    /// returned offset is relative to the start of `s`.
+    pub(crate) fn next_url_userinfo(s: &[u8], mut from: usize) -> Option<(usize, usize)> {
+        while let Some(separator) = crate::strings::index_of(&s[from..], b"://") {
+            let separator = from + separator;
+            let scheme_len = s[from..separator]
+                .iter()
+                .rev()
+                .take_while(|&&b| is_url_scheme_byte(b))
+                .count();
+            // A scheme starts with a letter.
+            let not_letters = s[separator - scheme_len..separator]
+                .iter()
+                .take_while(|b| !b.is_ascii_alphabetic())
+                .count();
+            let start = separator - scheme_len + not_letters;
+            if let Some((offset, len)) = find_url_userinfo(&s[start..]) {
+                return Some((start + offset, len));
+            }
+            from = separator + b"://".len();
         }
-        Some((scheme_end + colon + 1, at - colon - 1))
+        None
     }
 
     /// Returns the UTF-8/WTF-8 sequence length implied by a *leading* byte,

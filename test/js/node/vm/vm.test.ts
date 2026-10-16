@@ -270,12 +270,12 @@ describe("vm", () => {
 
       try {
         compileFunction("Object.prototype.polluted = true; return 'done';")();
-        expect(Object.prototype.polluted).toBeUndefined();
+        expect((Object.prototype as any).polluted).toBeUndefined();
       } catch (e) {
         // Throwing is acceptable
       } finally {
         // Clean up just in case
-        delete Object.prototype.polluted;
+        delete (Object.prototype as any).polluted;
         Object.prototype.hasOwnProperty = originalHasOwnProperty;
       }
     });
@@ -366,7 +366,7 @@ describe("Script", () => {
     for (const opts of [undefined, { displayErrors: true }, { displayErrors: false }]) {
       let err: any;
       try {
-        new Script("%%", opts);
+        new Script("%%", opts as any);
       } catch (e) {
         err = e;
       }
@@ -613,14 +613,12 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
     });
     test("cannot access global scope", () => {
       const prop = randomProp();
-      // @ts-expect-error
       globalThis[prop] = "fizz";
       try {
         const context = createContext({});
         const result = fn(`typeof ${prop};`, context);
         expect(result).toBe("undefined");
       } finally {
-        // @ts-expect-error
         delete globalThis[prop];
       }
     });
@@ -634,38 +632,29 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
   } else {
     test("can access global context", () => {
       const props = randomProps(2);
-      // @ts-expect-error
       globalThis[props[0]] = "bar";
-      // @ts-expect-error
       globalThis[props[1]] = (n: number) => "buzz".repeat(n);
       try {
         const result = fn(`${props[0]} + ${props[1]}(2);`);
         expect(result).toBe("barbuzzbuzz");
       } finally {
         for (const prop of props) {
-          // @ts-expect-error
           delete globalThis[prop];
         }
       }
     });
     test("can modify global context", () => {
       const props = randomProps(3);
-      // @ts-expect-error
       globalThis[props[0]] = ["a", "b", "c"];
-      // @ts-expect-error
       globalThis[props[1]] = "initial value";
       try {
         const result = fn(`${props[1]} = 'baz'; ${props[2]} = 'bunny'; delete ${props[0]}[0];`);
-        // @ts-expect-error
         expect(globalThis[props[1]]).toBe("baz");
-        // @ts-expect-error
         expect(globalThis[props[2]]).toBe("bunny");
-        // @ts-expect-error
         expect(globalThis[props[0]]).toEqual([undefined, "b", "c"]);
         expect(result).toBe(true);
       } finally {
         for (const prop of props) {
-          // @ts-expect-error
           delete globalThis[prop];
         }
       }
@@ -676,13 +665,11 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
     });
     test("can access this context", () => {
       const prop = randomProp();
-      // @ts-expect-error
       globalThis[prop] = "fizz";
       try {
         const result = fn(`${prop};`);
         expect(result).toBe("fizz");
       } finally {
-        // @ts-expect-error
         delete globalThis[prop];
       }
     });
@@ -741,7 +728,7 @@ function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
 function randomProps(propsNumber = 0) {
-  const props = [];
+  const props: string[] = [];
   for (let i = 0; i < propsNumber; i++) {
     props.push(randomProp());
   }
@@ -874,9 +861,9 @@ resp.text().then((a) => {
 });
 
   `;
-    URL.prototype.ok = true;
+    (URL.prototype as any).ok = true;
     await runInContext(code, context);
-    delete URL.prototype.ok;
+    delete (URL.prototype as any).ok;
   }
 });
 
@@ -1031,7 +1018,7 @@ test("can't use bytecode from a different script", () => {
 
 test("SourceTextModule accepts the cachedData it produced", () => {
   const source = `{ function inBlock() { return 1; } }\nexport default await Promise.resolve(inBlock);`; // module-only syntax, and a block function (strict semantics)
-  const cachedData = new SourceTextModule(source, { identifier: "m" }).createCachedData();
+  const cachedData = (new SourceTextModule(source, { identifier: "m" }) as any).createCachedData();
   expect(cachedData.length).toBeGreaterThan(0);
   expect(() => new SourceTextModule(source, { identifier: "m", cachedData })).not.toThrow(); // ERR_VM_MODULE_CACHED_DATA_REJECTED otherwise
   expect(() => new SourceTextModule("export default 2;", { identifier: "m", cachedData })).toThrow(
@@ -2478,7 +2465,7 @@ test("SourceTextModule applies lineOffset and columnOffset to reported positions
       fromScript = position(e);
     }
     const module = new SourceTextModule(code, { identifier: "offset.mjs", ...options });
-    await module.link(() => {});
+    await module.link((() => {}) as any);
     try {
       await module.evaluate();
     } catch (e) {
@@ -2670,3 +2657,76 @@ test.skipIf(memoryForLongStrings < 10 * 1024 ** 3)(
   },
   30_000,
 );
+
+test.concurrent("a FinalizationRegistry cleanup job is dropped when its context dies before the job runs", async () => {
+  const fixture = /* js */ `
+    import vm from "node:vm";
+    import { edenGC, fullGC } from "bun:jsc";
+
+    const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+    const liveContextCleanedUp = Promise.withResolvers();
+    let liveContext;
+    let deadContextCleanups = 0;
+
+    function setup() {
+      // A collection sweeps the first 8 cells of a type itself and leaves the rest for later. ~JSGlobalObject
+      // cancels the job too, so these contexts are past the first 8 and their registries are not.
+      const swept = Array.from({ length: 8 }, () => vm.createContext({}));
+      const contexts = Array.from({ length: 4 }, () => vm.createContext({ onCleanup: () => deadContextCleanups++ }));
+      liveContext = vm.createContext({ onCleanup: liveContextCleanedUp.resolve });
+      contexts.push(liveContext);
+      for (const context of contexts) vm.runInContext("globalThis.registry = new FinalizationRegistry(onCleanup)", context);
+      edenGC(); // Old generation now: the next eden collection leaves them marked.
+      for (const context of contexts) for (let i = 0; i < 5; i++) context.registry.register({ i }, i);
+    }
+
+    await nextTurn().then(setup);
+    await nextTurn();
+    edenGC(); // The registered objects are dead: every registry posts its cleanup job.
+    fullGC(); // All contexts but one are dead, and their registries are destroyed.
+    await liveContextCleanedUp.promise;
+    await nextTurn(); // A job posted after the live context's has run by now too.
+    console.log({ deadContextCleanups });
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "{\n  deadContextCleanups: 0,\n}\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("Atomics.notify does not wake the Atomics.waitAsync of a context that died", async () => {
+  const fixture = /* js */ `
+    import vm from "node:vm";
+    import { fullGC } from "bun:jsc";
+
+    const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+    const shared = new Int32Array(new SharedArrayBuffer(4));
+    const liveContextWoke = Promise.withResolvers();
+    let liveContext;
+
+    function setup() {
+      // ~JSGlobalObject unregisters the waiter too. A collection sweeps the first 8 globals itself and leaves the rest for later.
+      const swept = Array.from({ length: 8 }, () => vm.createContext({}));
+      const contexts = Array.from({ length: 4 }, () => vm.createContext({ shared, onWake() {} }));
+      liveContext = vm.createContext({ shared, onWake: liveContextWoke.resolve });
+      contexts.push(liveContext);
+      for (const context of contexts) vm.runInContext("Atomics.waitAsync(shared, 0, 0).value.then(onWake)", context);
+    }
+
+    await nextTurn().then(setup);
+    await nextTurn();
+    fullGC();
+    console.log("woken:", Atomics.notify(shared, 0));
+    console.log("the live context's wait resolved:", await liveContextWoke.promise);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "woken: 1\nthe live context's wait resolved: ok\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

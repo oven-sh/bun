@@ -143,6 +143,10 @@ private:
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
             // Set per-socket authorization status
             auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(s));
+            /* Opened already: this reports the failure of the established session, and usockets closes behind it. */
+            if (httpResponseData->filteredOpen) {
+                return;
+            }
             /* The app-level flag reflects the default entry; a per-serverName
              * entry adds its own client-certificate policy for its name. */
             bool rejectUnauthorized = httpContextData->flags.rejectUnauthorized ||
@@ -171,6 +175,7 @@ private:
 
             /* Call filter */
             httpResponseData->filteredOpen = true;
+            httpResponseData->isIdle = fromSocket(s)->isNodeHttp();
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -227,6 +232,8 @@ private:
         /* ...and open (TLS: once the handshake completes, in onHandshake) */
         if(!SSL) {
             ((AsyncSocketData<SSL> *) us_socket_ext(s))->filteredOpen = true;
+            /* node:http: a connection that has received nothing is idle (nodejs/node 417aacbc365). */
+            ((AsyncSocketData<SSL> *) us_socket_ext(s))->isIdle = IsNodeHttp;
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -259,7 +266,8 @@ private:
             if (httpResponseData->socketData && httpContextData->onSocketData) {
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
             }
-            if(httpResponseData->inStream) {
+            /* node:http: the body of a tunnel that started has had its last chunk from the parser. This close can come from inside that call. */
+            if(httpResponseData->inStream && (!IsNodeHttp || nodeHttpTunnelAfterBody)) {
                 httpResponseData->inStream(reinterpret_cast<HttpResponse<SSL> *>(s), "", 0, true, httpResponseData->userData);
                 httpResponseData->inStream = nullptr;
             }
@@ -481,7 +489,7 @@ private:
                 /* node:http also queues behind responses that were dispatched but
                  * are not the connection's current response yet, and behind a
                  * response that has ended but not finished: its bytes are still
-                 * in the outgoing buffer (or the TLS spill slot), and it owns the
+                 * in the outgoing buffer (or the TLS spill), and it owns the
                  * connection (Node's socket._httpMessage) until they have been
                  * written out, with later responses queued behind it (Node's
                  * state.outgoing). A write or uncork can empty the buffer before
@@ -684,6 +692,12 @@ private:
 
                 /* We absolutely have to terminate parsing if shutdown */
                 if (us_socket_is_shut_down((us_socket_t *) user)) {
+                    /* node:http: this socket can be a tunnel that still reads. Its bytes are not for a body that ended. */
+                    if constexpr (IsNodeHttp) {
+                        if (fin) {
+                            httpResponseData->inStream = nullptr;
+                        }
+                    }
                     return nullptr;
                 }
 
@@ -1127,7 +1141,8 @@ private:
         if (httpResponseData->onTimeout) {
             httpResponseData->onTimeout((HttpResponse<SSL> *)s, httpResponseData->userData);
         }
-        return asyncSocket->close();
+        asyncSocket->uncork();
+        return us_socket_close_now(s);
     }
 
     /* Static .rodata vtables — one per (SSL, IsNodeHttp), shared by every

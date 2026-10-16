@@ -79,6 +79,28 @@ struct Member {
     end: usize,
     starts_line: bool,
     ends_line: bool,
+    /// `Text::containers` index of its value, if that is an object or an array.
+    container: usize,
+}
+
+const NO_CONTAINER: usize = usize::MAX;
+
+impl Member {
+    fn old_value(&self) -> OldValue {
+        OldValue {
+            at: self.value,
+            end: self.value_end,
+            container: self.container,
+        }
+    }
+}
+
+/// A value of the old text.
+#[derive(Clone, Copy)]
+struct OldValue {
+    at: usize,
+    end: usize,
+    container: usize,
 }
 
 /// An object or an array of the old text. Its members are `Text::members[first..first + len]`.
@@ -225,11 +247,12 @@ struct Text<'a> {
     out: MutableString,
     indentation: Indentation,
     line_break: &'static [u8],
-    /// `(opening bracket, closing bracket)` of every object and array, in the order of the first.
-    /// Until a container is closed, the second is the index of the container around it.
-    brackets: Vec<(usize, usize)>,
-    /// The members of the containers that are being written, innermost last.
+    /// Every object and array of the old text, a container after the ones in it.
+    containers: Vec<Container>,
+    /// The members of `containers`.
     members: Vec<Member>,
+    /// The members of the containers that are still open while the old text is read.
+    open_members: Vec<Member>,
     scratch: Vec<u8>,
     /// A `//` comment was written without its line break: what comes next starts a line.
     in_line_comment: bool,
@@ -251,8 +274,9 @@ impl<'a> Text<'a> {
                 ..indentation
             },
             line_break: if crlf { b"\r\n" } else { b"\n" },
-            brackets: Vec::with_capacity(16),
+            containers: Vec::with_capacity(16),
             members: Vec::with_capacity(32),
+            open_members: Vec::with_capacity(32),
             scratch: Vec::new(),
             in_line_comment: false,
             stack: StackCheck::init(),
@@ -278,25 +302,25 @@ impl<'a> Text<'a> {
         if Entries::of(root, text[start]).is_none() {
             return Err(Stop::NotTheText);
         }
-        self.find_brackets(start)?;
+        let index = self.read(start)?;
+        let container = self.containers[index];
+        let old = OldValue {
+            at: start,
+            end: container.close + 1,
+            container: index,
+        };
         self.put(&text[..start]);
-        let end = self.value(root, start)?;
-        self.put(&text[end..]);
-        if self.out.list == text {
+        self.value(root, old)?;
+        self.put(&text[old.end..]);
+        if self.out.list == text || self.has_lines(&container) {
             return Ok(());
         }
         // A root that is written on one line has no layout to keep: it gets the printer's.
-        let container = self.scan(start)?;
-        let has_lines = self.has_lines(&container);
-        self.members.truncate(container.first);
-        if has_lines {
-            return Ok(());
-        }
         self.out.list.clear();
         self.in_line_comment = false;
         self.put(&text[..start]);
-        self.lay_out_value(root, start, self.line_indent(start))?;
-        self.put(&text[end..]);
+        self.lay_out_value(root, old, self.line_indent(start))?;
+        self.put(&text[old.end..]);
         Ok(())
     }
 
@@ -304,52 +328,6 @@ impl<'a> Text<'a> {
 
     fn member(&self, container: &Container, index: usize) -> Member {
         self.members[container.first + index]
-    }
-
-    /// Fills `self.brackets` for the container that opens at `root`, in one pass over it.
-    fn find_brackets(&mut self, root: usize) -> Step {
-        const NONE: usize = usize::MAX;
-        let text = self.text;
-        let mut innermost = NONE;
-        let mut at = root;
-        loop {
-            match *text.get(at).ok_or(Stop::NotTheText)? {
-                b'{' | b'[' => {
-                    self.brackets.push((at, innermost));
-                    innermost = self.brackets.len() - 1;
-                    at += 1;
-                }
-                closing @ (b'}' | b']') => {
-                    if innermost == NONE {
-                        return Err(Stop::NotTheText);
-                    }
-                    let (open, around) = self.brackets[innermost];
-                    if (text[open] == b'{') != (closing == b'}') {
-                        return Err(Stop::NotTheText);
-                    }
-                    self.brackets[innermost].1 = at;
-                    innermost = around;
-                    at += 1;
-                    if innermost == NONE {
-                        return Ok(());
-                    }
-                }
-                b'"' | b'\'' => at = scan::string_end(text, at).ok_or(Stop::NotTheText)?,
-                b'/' => at = scan::comment_end(text, at).ok_or(Stop::NotTheText)?,
-                _ => at += 1,
-            }
-        }
-    }
-
-    /// Where the value that starts at `at` ends.
-    fn value_end(&self, at: usize) -> Step<usize> {
-        if !matches!(self.text[at], b'{' | b'[') {
-            return scan::value_end(self.text, at).ok_or(Stop::NotTheText);
-        }
-        match self.brackets.binary_search_by_key(&at, |&(open, _)| open) {
-            Ok(index) => Ok(self.brackets[index].1 + 1),
-            Err(_) => Err(Stop::NotTheText),
-        }
     }
 
     /// The blanks that the line of `at` starts with.
@@ -378,12 +356,16 @@ impl<'a> Text<'a> {
         (from, false)
     }
 
-    /// Finds the members of the container that opens at `open` and pushes them on `self.members`.
-    fn scan(&mut self, open: usize) -> Step<Container> {
+    /// Reads the container that opens at `open` and the containers in it, each byte once.
+    /// Returns its index in `self.containers`.
+    fn read(&mut self, open: usize) -> Step<usize> {
+        if !self.stack.is_safe_to_recurse() {
+            return Err(Stop::Printer(js_printer::Error::StackOverflow));
+        }
         let text = self.text;
         let is_object = text[open] == b'{';
         let closing = if is_object { b'}' } else { b']' };
-        let first = self.members.len();
+        let mark = self.open_members.len();
         let mut at = open + 1;
         let close = loop {
             let token = scan::next_token(text, at).ok_or(Stop::NotTheText)?;
@@ -401,13 +383,19 @@ impl<'a> Text<'a> {
             } else {
                 (0, token)
             };
-            let value_end = self.value_end(value)?;
+            let (value_end, container) = if matches!(text[value], b'{' | b'[') {
+                let container = self.read(value)?;
+                (self.containers[container].close + 1, container)
+            } else {
+                let value_end = scan::value_end(text, value).ok_or(Stop::NotTheText)?;
+                (value_end, NO_CONTAINER)
+            };
             let after = scan::next_token(text, value_end).ok_or(Stop::NotTheText)?;
             let comma = (text[after] == b',').then_some(after);
             if comma.is_none() && text[after] != closing {
                 return Err(Stop::NotTheText);
             }
-            self.members.push(Member {
+            self.open_members.push(Member {
                 lead: 0,
                 key: token,
                 key_end: if is_object { key_end } else { value_end },
@@ -417,27 +405,28 @@ impl<'a> Text<'a> {
                 end: 0,
                 starts_line: false,
                 ends_line: false,
+                container,
             });
             at = comma.map_or(value_end, |comma| comma + 1);
         };
-        let len = self.members.len() - first;
+        let len = self.open_members.len() - mark;
         let first_key = if len == 0 {
             close
         } else {
-            self.members[first].key
+            self.open_members[mark].key
         };
         let (head_end, head_ends_line) = self.rest_of_line(open + 1, first_key);
         let (mut lead, mut at_line_start) = (head_end, head_ends_line);
-        for index in first..first + len {
-            let next_key = if index + 1 < first + len {
-                self.members[index + 1].key
+        for index in mark..mark + len {
+            let next_key = if index + 1 < mark + len {
+                self.open_members[index + 1].key
             } else {
                 close
             };
-            let member = self.members[index];
+            let member = self.open_members[index];
             let after = member.comma.map_or(member.value_end, |comma| comma + 1);
             let (end, ends_line) = self.rest_of_line(after, next_key);
-            self.members[index] = Member {
+            self.open_members[index] = Member {
                 lead,
                 end,
                 starts_line: at_line_start,
@@ -446,14 +435,18 @@ impl<'a> Text<'a> {
             };
             (lead, at_line_start) = (end, ends_line);
         }
-        Ok(Container {
+        let first = self.members.len();
+        self.members.extend_from_slice(&self.open_members[mark..]);
+        self.open_members.truncate(mark);
+        self.containers.push(Container {
             open,
             close,
             head_end,
             head_ends_line,
             first,
             len,
-        })
+        });
+        Ok(self.containers.len() - 1)
     }
 
     /// Whether the members of the container are on lines of their own.
@@ -469,6 +462,14 @@ impl<'a> Text<'a> {
     }
 
     fn string_token_is(&mut self, token: &[u8], string: &[u8]) -> bool {
+        if !matches!(token.first(), Some(b'"' | b'\'')) {
+            return false;
+        }
+        // Without an escape, a string is the text between its quotes.
+        let between = &token[1..token.len() - 1];
+        if !strings::contains_char(between, b'\\') {
+            return between == string;
+        }
         scan::string_value(token, &mut self.scratch) == Some(string)
     }
 
@@ -694,40 +695,38 @@ impl<'a> Text<'a> {
         self.print(entries.value(index)?, indent)
     }
 
-    /// Writes `value` where the old text has the value that starts at `at`. Returns where that one ends.
-    fn value(&mut self, value: &Expr, at: usize) -> Step<usize> {
+    /// Writes `value` where the old text has the value `old`.
+    fn value(&mut self, value: &Expr, old: OldValue) -> Step {
         if !self.stack.is_safe_to_recurse() {
             return Err(Stop::Printer(js_printer::Error::StackOverflow));
         }
         let text = self.text;
-        let Some(entries) = Entries::of(value, text[at]) else {
-            let end = self.value_end(at)?;
-            if self.is_token(&text[at..end], value) {
-                self.put(&text[at..end]);
+        let Some(entries) = Entries::of(value, text[old.at]) else {
+            if self.is_token(&text[old.at..old.end], value) {
+                self.put(&text[old.at..old.end]);
             } else {
-                self.print(value, self.line_indent(at))?;
+                self.print(value, self.line_indent(old.at))?;
             }
-            return Ok(end);
+            return Ok(());
         };
-        let container = self.scan(at)?;
+        let container = self.containers[old.container];
         if self.has_same_members(&container, entries) {
             let mut copied = container.open;
             for index in 0..container.len {
                 let member = self.member(&container, index);
                 self.put(&text[copied..member.value]);
-                copied = self.value(entries.value(index)?, member.value)?;
+                self.value(entries.value(index)?, member.old_value())?;
+                copied = member.value_end;
             }
             self.put(&text[copied..=container.close]);
-        } else {
-            let (pairs, stays) = self.pair(&container, entries)?;
-            if self.has_lines(&container) {
-                self.lines(&container, entries, &pairs, &stays)?;
-            } else {
-                self.lay_out(&container, entries, &pairs, self.line_indent(at))?;
-            }
+            return Ok(());
         }
-        self.members.truncate(container.first);
-        Ok(container.close + 1)
+        let (pairs, stays) = self.pair(&container, entries)?;
+        if self.has_lines(&container) {
+            self.lines(&container, entries, &pairs, &stays)
+        } else {
+            self.lay_out(&container, entries, &pairs, self.line_indent(old.at))
+        }
     }
 
     /// Writes a container whose members are on lines of their own and which gained, lost or
@@ -812,7 +811,7 @@ impl<'a> Text<'a> {
                 self.comments(member.lead, member.key, Blank::After);
             }
             self.put(&text[member.key..member.value]);
-            self.value(entries.value(index)?, member.value)?;
+            self.value(entries.value(index)?, member.old_value())?;
             match member.comma {
                 Some(comma) if has_line_break(&text[member.value_end..comma]) => {
                     if has_comma {
@@ -866,25 +865,22 @@ impl<'a> Text<'a> {
         }
     }
 
-    /// `lay_out` for a value that the old text has at `at`.
-    fn lay_out_value(&mut self, value: &Expr, at: usize, indent: &[u8]) -> Step {
+    /// `lay_out` for a value that the old text has.
+    fn lay_out_value(&mut self, value: &Expr, old: OldValue, indent: &[u8]) -> Step {
         if !self.stack.is_safe_to_recurse() {
             return Err(Stop::Printer(js_printer::Error::StackOverflow));
         }
         let text = self.text;
-        let Some(entries) = Entries::of(value, text[at]) else {
-            let end = self.value_end(at)?;
-            if self.is_token(&text[at..end], value) {
-                self.put(&text[at..end]);
+        let Some(entries) = Entries::of(value, text[old.at]) else {
+            if self.is_token(&text[old.at..old.end], value) {
+                self.put(&text[old.at..old.end]);
                 return Ok(());
             }
             return self.print(value, indent);
         };
-        let container = self.scan(at)?;
+        let container = self.containers[old.container];
         let (pairs, _) = self.pair(&container, entries)?;
-        self.lay_out(&container, entries, &pairs, indent)?;
-        self.members.truncate(container.first);
-        Ok(())
+        self.lay_out(&container, entries, &pairs, indent)
     }
 
     /// Writes a container that is written on one line the way the printer lays it out, with the
@@ -947,7 +943,7 @@ impl<'a> Text<'a> {
                 self.put(b": ");
                 self.comments(member.key_end, member.value, Blank::After);
             }
-            self.lay_out_value(entries.value(index)?, member.value, &inner)?;
+            self.lay_out_value(entries.value(index)?, member.old_value(), &inner)?;
             // What is between this member and its comma, and for the last one up to the bracket.
             let after = if old + 1 == container.len {
                 container.close

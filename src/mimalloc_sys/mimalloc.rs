@@ -66,6 +66,9 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     pub fn mi_heap_new() -> *mut Heap;
     pub fn mi_heap_destroy(heap: *mut Heap);
+    /// Ends `heap` and keeps its live blocks: they move to the main heap and each is freed with
+    /// `mi_free`. The caller must be the only thread that allocated from `heap`.
+    pub fn mi_heap_delete(heap: *mut Heap);
     pub fn mi_heap_main() -> *mut Heap;
     pub fn mi_heap_malloc(heap: *mut Heap, size: usize) -> *mut c_void;
     fn mi_heap_zalloc(heap: *mut Heap, size: usize) -> *mut c_void;

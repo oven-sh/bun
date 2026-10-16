@@ -45,10 +45,15 @@ pub(crate) struct JSTranspiler {
     pub(crate) config: JsCell<Config>,
     pub(crate) scan_pass_result: JsCell<ScanPassResult>,
     pub(crate) buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
-    // Arena bulk-frees the config strings. Boxed so its
-    // address is stable across the move into `Box<JSTranspiler>` —
-    // `transpiler.arena` holds a `&'static Arena` pointing into it.
+    // What `transpiler.arena` points at between host-fn calls (each parse
+    // method swaps in its own arena). It borrows the process heap, so a live
+    // instance owns no mimalloc heap. Boxed so its address is stable.
     pub(crate) _arena: Box<Arena>,
+    // What the constructor's arena still held when it ended: the parsed
+    // `define` values and the `exports.replace` strings that
+    // `transpiler.options.define` and `config.runtime.replace_exports` point
+    // into. Declared after both so it drops after them.
+    pub(crate) _config_blocks: bun_alloc::ArenaBlocks,
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
@@ -939,8 +944,9 @@ impl JSTranspiler {
         // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
         // stack first, then move both into the Box. Nothing observes the
         // `Box<JSTranspiler>` address before construction completes. The
-        // address-sensitive pointers are `transpiler.arena` (points into the
-        // separately-boxed `arena`, whose address is move-stable) and
+        // address-sensitive pointers are `transpiler.arena` (points at the
+        // stack-local `arena` until the end of this function, then at the
+        // boxed `_arena`) and
         // `transpiler.log` (initially points at the stack-local `config.log`;
         // it is re-pointed via `set_log` once the Box exists — see the NOTE
         // below), so no up-front allocation / `MaybeUninit` in-place init is
@@ -949,12 +955,14 @@ impl JSTranspiler {
             log: bun_ast::Log::init(),
             ..Default::default()
         };
-        let arena = Box::new(Arena::new());
-        // SAFETY: `arena` is heap-allocated and moved (as a Box) into `Box<JSTranspiler>` below;
-        // its address is stable for the lifetime of the JSTranspiler. `Transpiler<'static>` forces
-        // the borrow to 'static, so launder through a raw ptr.
-        let arena_ref: &'static Arena =
-            unsafe { bun_ptr::detach_lifetime_ref::<Arena>(arena.as_ref()) };
+        // The heap of this arena lives only as long as this function. What is
+        // still allocated in it at the end moves to the instance as a list of
+        // blocks (`into_blocks`), so no instance keeps a mimalloc heap alive.
+        let arena = Arena::new();
+        // SAFETY: `arena` does not move until `into_blocks` consumes it at the end of this
+        // function, after `transpiler.arena` is re-pointed. `Transpiler<'static>` forces the
+        // borrow to 'static, so launder through a raw ptr.
+        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(&arena) };
 
         // errdefer { ... } — on any `?` below, stack `config`/`arena` drop and run Drop, which
         // covers config.log, config.tsconfig, arena. ref_count.clearWithoutDestructor is a
@@ -990,15 +998,17 @@ impl JSTranspiler {
             }
         };
 
-        let this: Box<JSTranspiler> = Box::new(JSTranspiler {
+        let mut this: Box<JSTranspiler> = Box::new(JSTranspiler {
             config: JsCell::new(config),
-            _arena: arena,
+            _arena: Box::new(Arena::borrowing_default()),
+            _config_blocks: bun_alloc::ArenaBlocks::default(),
             transpiler: JsCell::new(transpiler),
             scan_pass_result: JsCell::new(ScanPassResult::init()),
             buffer_writer: JsCell::new(None),
             ref_count: bun_ptr::RefCount::init(),
         });
-        // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
+        // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler,
+        // then the stack `arena` drops and frees what the dropped tables pointed into.
 
         // NOTE: `config` was built on the stack and moved into the Box, so
         // `transpiler.log` (a `*mut Log`) still points at the moved-from
@@ -1054,14 +1064,22 @@ impl JSTranspiler {
         transpiler.options.react_fast_refresh = false;
         transpiler.options.repl_mode = config.repl_mode;
 
+        // SAFETY: `_arena` is heap-allocated and owned by `this`; its address is stable for
+        // the lifetime of the JSTranspiler.
+        let resting_arena: &'static Arena =
+            unsafe { bun_ptr::detach_lifetime_ref::<Arena>(this._arena.as_ref()) };
+        transpiler.set_arena(resting_arena);
+        // Nothing points at `arena` itself anymore, only at blocks in its heap.
+        this._config_blocks = arena.into_blocks();
+
         Ok(bun_core::heap::into_raw(this))
     }
 }
 
 impl Drop for JSTranspiler {
     fn drop(&mut self) {
-        // `scan()` / `scanImports()` lazily create a `MacroContext` on
-        // `self.transpiler` and (unlike `transformSync`) leave it in place
+        // `scanImports()` lazily creates a `MacroContext` on
+        // `self.transpiler` and (unlike `scan` and `transformSync`) leaves it in place
         // for reuse across calls. The boxed `bun_js_parser_jsc::MacroContext`
         // behind `.data` has no `Drop` glue — release it explicitly.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
@@ -1079,7 +1097,7 @@ impl Drop for JSTranspiler {
         // scan_pass_result.{named_imports,import_records,used_symbols}.deinit() → field Drop
         // buffer_writer.?.buffer.deinit() → Option<BufferWriter>: Drop
         // config.tsconfig.deinit() → Option<Box<TSConfigJSON>>: Drop
-        // arena.deinit() → Arena: Drop
+        // arena.deinit() → ArenaBlocks: Drop
     }
 }
 
@@ -1091,9 +1109,9 @@ struct TranspilerStateGuard {
     transpiler: *mut Transpiler::Transpiler<'static>,
     prev_arena: &'static Arena,
     restore_log: *mut bun_ast::Log,
-    /// `Some(prev)` ⇒ also restore `macro_context` to `prev` (transformSync's
-    /// by-value snapshot). `None` ⇒ leave untouched (scan / scanImports only
-    /// restore log+allocator per spec).
+    /// `Some(prev)` ⇒ also free the `macro_context` of this call and restore
+    /// `prev` (scan and transformSync: a macro can run, and its context owns
+    /// an arena). `None` ⇒ leave untouched (scanImports runs no macro).
     prev_macro_context: Option<Option<JSAst::Macro::MacroContext>>,
 }
 
@@ -1139,7 +1157,7 @@ impl Drop for TranspilerStateGuard {
         transpiler.set_log(restore_log);
         transpiler.arena = prev_arena;
         if let Some(prev) = prev_macro_context {
-            // `transformSync` created a fresh MacroContext for this parse and
+            // The parse created a fresh MacroContext and
             // stored it in `transpiler.macro_context`; the box behind its
             // `data` pointer is heap-owned and `MacroContext` has no `Drop`,
             // so overwriting it with `prev` would strand the box. Free it
@@ -1288,20 +1306,24 @@ impl JSTranspiler {
         let mut log = bun_ast::Log::init();
         // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
         // `_restore` (declared after `arena`/`log`, so dropped first) restores
-        // `prev_arena` and `&self.config.log` before either local drops.
+        // `prev_arena`, `&self.config.log`, and `prev_macro_context` before either local drops.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
         let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
-        let prev_arena = self.transpiler.with_mut(|t| {
-            let prev = t.arena;
+        let (prev_arena, prev_macro_context) = self.transpiler.with_mut(|t| {
+            let prev_arena = t.arena;
+            // A macro that this parse runs allocates its result in the arena of the
+            // `MacroContext`. The parse gets its own context, so `_restore` frees that
+            // arena with it and the instance keeps no heap after the call.
+            let prev_mc = t.macro_context.take();
             t.set_arena(arena_ref);
             t.set_log(&raw mut log);
-            prev
+            (prev_arena, prev_mc)
         });
         let _restore = TranspilerStateGuard {
             transpiler: self.transpiler.as_ptr(),
             prev_arena,
             restore_log: self.config_log_ptr(),
-            prev_macro_context: None,
+            prev_macro_context: Some(prev_macro_context),
         };
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);

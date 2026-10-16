@@ -2558,6 +2558,103 @@ export default <>hi</>
     expect(exitCode).toBe(0);
   });
 
+  it.concurrent("a live instance keeps no mimalloc heap", async () => {
+    // A process can have 64,512 live mimalloc heaps. When each instance kept the heap that its
+    // constructor allocated from, the next `new Bun.Transpiler()` after that many live instances
+    // ended the process with "Bun has run out of memory". A macro that `scan()` ran left a second
+    // heap in the instance.
+    using dir = tempDir("transpiler-no-live-heap", {
+      "macro.ts": `
+        export function value() {
+          globalThis.macroCalls = (globalThis.macroCalls ?? 0) + 1;
+          return { from: "macro" };
+        }
+      `,
+      "check.js": `
+        const { heapStats } = require("bun:jsc");
+        const liveHeaps = () => heapStats({ dump: true }).mimallocDump.heaps.length;
+        const withMacro = 'import { value } from "./macro.ts" with { type: "macro" }; export const v = value();';
+        const cases = {
+          none: () => new Bun.Transpiler(),
+          loader: () => new Bun.Transpiler({ loader: "tsx" }),
+          define: () => new Bun.Transpiler({ define: { STR: '"bar"', NUM: "123", OBJ: '{"a":[1,2,{"b":"c"}]}' } }),
+          replace: () => new Bun.Transpiler({ exports: { replace: { a: "str", b: ["c", "str"] } } }),
+          scanWithMacro: () => {
+            const transpiler = new Bun.Transpiler({ loader: "ts" });
+            transpiler.scan(withMacro);
+            return transpiler;
+          },
+        };
+        const kept = Object.values(cases).map(make => make());
+        const scanned = kept.at(-1);
+        const added = {};
+        for (const [name, make] of Object.entries(cases)) {
+          const before = liveHeaps();
+          for (let i = 0; i < 64; i++) kept.push(make());
+          added[name] = liveHeaps() - before;
+        }
+        const secondScan = scanned.scan(withMacro).exports;
+        console.log(JSON.stringify({ added, secondScan, macroCalls: globalThis.macroCalls }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "check.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // A debug build logs each macro call to stdout. The result is the last line.
+    expect(JSON.parse(stdout.trim().split("\n").at(-1))).toEqual({
+      added: { none: 0, loader: 0, define: 0, replace: 0, scanWithMacro: 0 },
+      secondScan: ["v"],
+      macroCalls: 66,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("define and exports.replace values of an instance outlive other instances", async () => {
+    // The values that the constructor parsed belong to one instance. Half of the instances are
+    // collected and new ones take their memory. The other half must still print their own values.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const make = id => ({
+            id,
+            transpiler: new Bun.Transpiler({
+              define: { STR: JSON.stringify("s" + id), OBJ: JSON.stringify({ list: [id, { name: "o" + id }] }) },
+              exports: { replace: { a: "r" + id } },
+            }),
+          });
+          let kept = [];
+          for (let id = 0; id < 200; id++) kept.push(make(id));
+          kept = kept.filter(({ id }) => id % 2 === 0);
+          Bun.gc(true);
+          for (let id = 200; id < 300; id++) kept.push(make(id));
+          Bun.gc(true);
+          const wrong = [];
+          for (const { id, transpiler } of kept) {
+            const output = transpiler.transformSync("export const a = 1; console.log(STR, OBJ);");
+            const expected = 'export const a = "r' + id + '";\\nconsole.log("s' + id + '", { list: [' + id + ', { name: "o' + id + '" }] });\\n';
+            if (output !== expected) wrong.push({ id, output });
+          }
+          console.log(JSON.stringify({ checked: kept.length, wrong }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ checked: 200, wrong: [] });
+    expect(exitCode).toBe(0);
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

@@ -305,6 +305,76 @@ impl MimallocArena {
         total
     }
 
+    /// End this arena's heap and keep the blocks that are still allocated in
+    /// it. They move to the process heap (`mi_heap_delete`) and the returned
+    /// [`ArenaBlocks`] frees each of them on `Drop`. An arena with nothing
+    /// left allocated is destroyed and the list is empty.
+    ///
+    /// For an owner that lives long but only allocates while it is built. A
+    /// live `mi_heap_t` holds one of mimalloc's dynamic thread-local slots
+    /// (at most 64,512 per process) and its own pages, so one heap per
+    /// long-lived object does not scale.
+    ///
+    /// Call this on the thread that allocated from the arena. The arena is
+    /// consumed: no `&MimallocArena` to it may be used afterwards.
+    pub fn into_blocks(self) -> ArenaBlocks {
+        extern "C" fn count(
+            _heap: *const mimalloc::Heap,
+            area: *const mimalloc::mi_heap_area_t,
+            _block: *mut c_void,
+            _block_size: usize,
+            arg: *mut c_void,
+        ) -> bool {
+            // SAFETY: mimalloc passes a valid `area` for each heap area when
+            // `visit_all_blocks == false`; `arg` is the `&mut usize` we passed.
+            unsafe { *arg.cast::<usize>() += (*area).used };
+            true
+        }
+        extern "C" fn collect(
+            _heap: *const mimalloc::Heap,
+            _area: *const mimalloc::mi_heap_area_t,
+            block: *mut c_void,
+            _block_size: usize,
+            arg: *mut c_void,
+        ) -> bool {
+            // With `visit_all_blocks == true` mimalloc calls this once per
+            // area with a null `block`, then once per live block.
+            if let Some(block) = NonNull::new(block) {
+                // SAFETY: `arg` is the `&mut Vec` we passed.
+                unsafe { (*arg.cast::<Vec<NonNull<c_void>>>()).push(block) };
+            }
+            true
+        }
+
+        debug_assert!(
+            self.owns,
+            "MimallocArena::into_blocks() on a borrowing_default() arena"
+        );
+        self.assert_owning_thread();
+        // The heap is ended below, so `Drop` must not destroy it.
+        let heap = core::mem::ManuallyDrop::new(self).heap_ptr();
+
+        let mut live: usize = 0;
+        // SAFETY: `heap` is live; `count` upholds the callback contract.
+        unsafe { mimalloc::mi_heap_visit_blocks(heap, false, Some(count), (&raw mut live).cast()) };
+        if live == 0 {
+            // SAFETY: `heap` came from `mi_heap_new` and is destroyed exactly once.
+            unsafe { mimalloc::mi_heap_destroy(heap) };
+            return ArenaBlocks(Box::default());
+        }
+
+        // Sized up front so that `collect` does not allocate during the walk.
+        let mut blocks: Vec<NonNull<c_void>> = Vec::with_capacity(live);
+        // SAFETY: `heap` is live; `collect` upholds the callback contract.
+        unsafe {
+            mimalloc::mi_heap_visit_blocks(heap, true, Some(collect), (&raw mut blocks).cast());
+        }
+        // SAFETY: `heap` came from `mi_heap_new`, this thread is the only one
+        // that allocated from it, and it is deleted exactly once.
+        unsafe { mimalloc::mi_heap_delete(heap) };
+        ArenaBlocks(blocks.into_boxed_slice())
+    }
+
     /// `mi_heap_malloc[_aligned]` on this
     /// arena's heap.
     #[inline]
@@ -450,6 +520,26 @@ impl Drop for MimallocArena {
         // SAFETY: `self.heap` is a live heap obtained from `mi_heap_new` and
         // is destroyed exactly once here.
         unsafe { mimalloc::mi_heap_destroy(self.heap_ptr()) };
+    }
+}
+
+/// The blocks that were still allocated in a [`MimallocArena`] when
+/// [`MimallocArena::into_blocks`] ended its heap. `Drop` frees each one.
+#[derive(Default)]
+pub struct ArenaBlocks(Box<[NonNull<c_void>]>);
+
+// SAFETY: the list owns its blocks, and `mi_free` may be called from any thread.
+unsafe impl Send for ArenaBlocks {}
+// SAFETY: `&ArenaBlocks` gives no access to the blocks.
+unsafe impl Sync for ArenaBlocks {}
+
+impl Drop for ArenaBlocks {
+    fn drop(&mut self) {
+        for block in self.0.iter() {
+            // SAFETY: each pointer is the head of a live mimalloc block that
+            // this list owns; it is freed exactly once here.
+            unsafe { mimalloc::mi_free(block.as_ptr()) };
+        }
     }
 }
 

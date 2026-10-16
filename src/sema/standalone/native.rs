@@ -173,6 +173,12 @@ mod fake_mimalloc {
             unsafe { libc::free(chunk) };
         }
     }
+    /// The blocks stay valid, so the chunks are kept. `mi_free` does not free a block of a heap.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn mi_heap_delete(heap: *mut c_void) {
+        // SAFETY: created by `mi_heap_new`.
+        drop(unsafe { Box::from_raw(heap.cast::<Heap>()) });
+    }
     #[unsafe(no_mangle)]
     extern "C" fn mi_heap_main() -> *mut c_void {
         main_heap().cast()

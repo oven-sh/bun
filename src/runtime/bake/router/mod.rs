@@ -708,6 +708,8 @@ impl FrameworkRouter {
 
                         if param_count > 64 {
                             log.write(format_args!("Pattern cannot have more than 64 param"));
+                            log.cursor_at = 0;
+                            log.cursor_len = u32::try_from(full_rel_path.len()).expect("int cast");
                             ctx.on_router_syntax_error(full_rel_path, log)?;
                             arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                             continue 'outer;

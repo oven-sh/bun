@@ -148,3 +148,29 @@ test.concurrent("Bun.serve({ app }) skips the directories in fileSystemRouterTyp
   expect(stdout).toBe("started\n");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent("Bun.serve({ app }) reports a route with more than 64 params", async () => {
+  const route = Array.from({ length: 65 }, (_, i) => `[p${i}]`).join("/");
+  using dir = tempDir("bake-app-too-many-params", {
+    "server.ts": `export function render() { return new Response("ok"); }`,
+    [`routes/${route}.ts`]: `export default 1;`,
+    "fixture.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } }).stop(true);
+      console.log("started");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("Pattern cannot have more than 64 param");
+  expect(stdout).toBe("started\n");
+  expect(exitCode).toBe(0);
+});

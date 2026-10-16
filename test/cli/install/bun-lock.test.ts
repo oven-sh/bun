@@ -1002,10 +1002,20 @@ describe.concurrent("registry-independent npm entries in bun.lock", () => {
   });
 
   it("keeps the tarball URL of a package with a @scope registry", async () => {
+    const scopeRegistry = new TestRegistry();
+    await scopeRegistry.start();
+    try {
+      await scopedRegistryKeepsUrl(scopeRegistry);
+    } finally {
+      scopeRegistry.stop();
+    }
+  });
+
+  async function scopedRegistryKeepsUrl(scopeRegistry: TestRegistry) {
     const { packageDir, packageJson } = await registry.createTestDir();
     await write(
       join(packageDir, "bunfig.toml"),
-      `[install]\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "/")}"\nregistry = "${registry.registryUrl()}"\n[install.scopes]\nscoped = { url = "${registry.registryUrl()}" }\n`,
+      `[install]\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "/")}"\nregistry = "${registry.registryUrl()}"\n[install.scopes]\nscoped = { url = "${scopeRegistry.registryUrl()}" }\n`,
     );
     await write(
       packageJson,
@@ -1032,9 +1042,9 @@ describe.concurrent("registry-independent npm entries in bun.lock", () => {
     // The reader may not have this scope configured. "" would send it to the
     // public registry, so the URL stays.
     expect(lockfileEntry(lockfile, "@scoped/has-bin-entry")?.[1]).toBe(
-      `${registry.registryUrl()}@scoped/has-bin-entry/-/has-bin-entry-1.0.0.tgz`,
+      `${scopeRegistry.registryUrl()}@scoped/has-bin-entry/-/has-bin-entry-1.0.0.tgz`,
     );
-  });
+  }
 
   // The credentials are split off when bunfig.toml is read. A `$VAR` registry is
   // expanded later and keeps them in the href, so both spellings are covered.
@@ -1071,6 +1081,106 @@ describe.concurrent("registry-independent npm entries in bun.lock", () => {
     const lockfile = await file(join(packageDir, "bun.lock")).text();
     expect(lockfileEntry(lockfile, "no-deps")?.[1]).toBe("");
     expect(lockfile).not.toContain("user:pass");
+
+    // A save after a read rebuilds "" from the configured registry in memory.
+    const added = spawn({
+      cmd: [bunExe(), "add", "a-dep@1.0.1"],
+      cwd: packageDir,
+      env: { ...env, ...extraEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const addErr = await added.stderr.text();
+    expect(addErr).not.toContain("error:");
+    expect(await added.exited).toBe(0);
+    const resaved = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfileEntry(resaved, "no-deps")?.[1]).toBe("");
+    expect(lockfileEntry(resaved, "a-dep")?.[1]).toBe("");
+    expect(resaved).not.toContain("user:pass");
+  });
+
+  // A scope entry with a token and no url resolves against the top-level registry.
+  it('writes "" for a package whose @scope only adds a token to the configured registry', async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const token = await registry.generateUser("scoped-token-user", "scoped-token-user");
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "/")}"\nregistry = "${registry.registryUrl()}"\n[install.scopes]\nscoped = { token = "${token}" }\n`,
+    );
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "scoped-token",
+        dependencies: { "no-deps": "1.0.0", "@scoped/has-bin-entry": "1.0.0" },
+      }),
+    );
+
+    const { exited, stdout, stderr } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfileEntry(lockfile, "no-deps")?.[1]).toBe("");
+    expect(lockfileEntry(lockfile, "@scoped/has-bin-entry")?.[1]).toBe("");
+  });
+
+  // Without an integrity hash the URL is the only thing that pins the tarball.
+  it("keeps the tarball URL of an entry that has no integrity hash", async () => {
+    // A registry that serves the fixture packages with `dist.integrity` and
+    // `dist.shasum` removed.
+    await using noIntegrity = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        const upstream = await fetch(new URL(pathname, registry.registryUrl()), { headers: req.headers });
+        if (!upstream.headers.get("content-type")?.includes("json")) return upstream;
+        const packument = await upstream.json();
+        for (const version of Object.values(packument.versions ?? {}) as any[]) {
+          delete version.dist.integrity;
+          delete version.dist.shasum;
+          version.dist.tarball = version.dist.tarball.replace(
+            registry.registryUrl(),
+            `http://localhost:${noIntegrity.port}/`,
+          );
+        }
+        return Response.json(packument, { headers: { "content-type": "application/json" } });
+      },
+    });
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "/")}"\nregistry = "http://localhost:${noIntegrity.port}/"\n`,
+    );
+    await write(packageJson, JSON.stringify({ name: "no-integrity", dependencies: { "no-deps": "1.0.0" } }));
+
+    const { exited, stdout, stderr } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfileEntry(lockfile, "no-deps")).toEqual([
+      "no-deps@1.0.0",
+      `http://localhost:${noIntegrity.port}/no-deps/-/no-deps-1.0.0.tgz`,
+      {},
+      "",
+    ]);
+    expect(lockfile).toContain('"lockfileVersion": 1');
   });
 
   // The configured registry is stored in its WHATWG form (lower-case host, no

@@ -81,15 +81,20 @@ pub(crate) fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
 /// - a URL under the default registry (the rule before registries were
 ///   normalized at all; kept so existing lockfiles do not change)
 /// - a URL that is byte-for-byte the canonical tarball URL under the
-///   writer's top-level `registry=`. A registry that serves tarballs off a
-///   different path (GitHub Packages, Artifactory) is kept verbatim since
-///   `build_url` cannot reproduce it. Userinfo is stripped from the registry
-///   before the comparison so `user:pass@` never reaches `bun.lock`.
+///   writer's top-level `registry=`, for an entry that has a supported
+///   integrity hash. The hash is what pins the package once the URL is
+///   gone, so an entry without one keeps its URL. A registry that serves
+///   tarballs off a different path (GitHub Packages, Artifactory) is kept
+///   verbatim since `build_url` cannot reproduce it. Userinfo is stripped
+///   from the registry before the comparison so `user:pass@` never reaches
+///   `bun.lock`.
 ///
-/// A package whose name has a `@scope:registry=` entry keeps its URL
-/// verbatim. Its `""` would be rebuilt against whatever registry the reader
-/// has for that scope, and a reader without the entry would fetch a private
-/// package from the public registry.
+/// A package whose name has a `@scope:registry=` entry naming another
+/// registry keeps its URL verbatim. Its `""` would be rebuilt against
+/// whatever registry the reader has for that scope, and a reader without
+/// the entry would fetch a private package from the public registry. A
+/// scope entry that only adds a token to the top-level registry counts as
+/// the top-level registry.
 struct NpmUrlWriter<'a> {
     options: &'a PackageManagerOptions,
     registry: Vec<u8>,
@@ -111,12 +116,20 @@ impl<'a> NpmUrlWriter<'a> {
         url: &[u8],
         name: &[u8],
         version: Semver::Version,
+        has_integrity: bool,
         buf: &[u8],
     ) -> bool {
+        if self
+            .options
+            .named_scope_for_package_name(name)
+            .is_some_and(|scope| scope.url_hash != self.options.scope.url_hash)
+        {
+            return false;
+        }
         if url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
             return true;
         }
-        if self.options.named_scope_for_package_name(name).is_some() {
+        if !has_integrity {
             return false;
         }
         if url_is_under_registry(url, &self.registry) {
@@ -303,8 +316,9 @@ impl Stringifier {
     /// (npm tarball without a supported integrity that is not written as `""`,
     /// unsafe git `.bun-tag`). The `""` decision is `NpmUrlWriter::writes_empty`,
     /// shared with the writer: the walk asks what the writer emits, and `""`
-    /// loads on any reader, so the stamped version stays config-independent
-    /// even though the writer's `registry=` decides which URLs become `""`.
+    /// loads on any reader. Without an integrity hash the writer only blanks a
+    /// default-registry URL, so the stamp does not depend on the writer's
+    /// `registry=`.
     ///
     /// Walks the package tree the same way the writer does — only packages that
     /// are actually serialized are considered, not every entry in the in-memory
@@ -351,9 +365,10 @@ impl Stringifier {
                         }
                         // No supported integrity: only v2-clean if the writer
                         // serializes the tarball URL as `""` (see the npm URL
-                        // serialization in `save_from_binary`). An empty
-                        // URL never sets the parser's `npm_url_needs_integrity`,
-                        // so that round-trips for any reader. Any other URL is
+                        // serialization in `save_from_binary`), which it does
+                        // only for the default registry here. An empty URL
+                        // never sets the parser's `npm_url_needs_integrity`, so
+                        // that round-trips for any reader. Any other URL is
                         // written verbatim, and the parser's integrity check is
                         // evaluated against the *reader's* scope config, so it
                         // is not config-independent: a writer with a private
@@ -362,7 +377,13 @@ impl Stringifier {
                         // at v1 for those so the file keeps loading everywhere.
                         let npm = res.npm();
                         let url = npm.url.slice(buf);
-                        if !npm_url.writes_empty(url, pkg_names[i].slice(buf), npm.version, buf) {
+                        if !npm_url.writes_empty(
+                            url,
+                            pkg_names[i].slice(buf),
+                            npm.version,
+                            false,
+                            buf,
+                        ) {
                             return Version::V1;
                         }
                     }
@@ -1035,6 +1056,7 @@ impl Stringifier {
                                         url_slice,
                                         pkg_name.slice(buf),
                                         npm.version,
+                                        pkg_meta.integrity.tag.is_supported(),
                                         buf,
                                     ) {
                                         b"" as &[u8]

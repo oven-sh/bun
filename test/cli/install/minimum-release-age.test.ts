@@ -2078,7 +2078,7 @@ describe("minimum-release-age", () => {
       const normalizedLockfile = lockfile.replace(/http:\/\/localhost:\d+/g, "http://localhost:<port>");
       expect(normalizeBunSnapshot(normalizedLockfile, dir)).toMatchInlineSnapshot(`
           "{
-            "lockfileVersion": 2,
+            "lockfileVersion": 1,
             "configVersion": 1,
             "workspaces": {
               "": {
@@ -2112,25 +2112,25 @@ describe("minimum-release-age", () => {
               },
             },
             "packages": {
-              "@scope/scoped-package": ["@scope/scoped-package@1.5.0", "", {}, ""],
+              "@scope/scoped-package": ["@scope/scoped-package@1.5.0", "http://localhost:<port>/@scope/scoped-package/-/scoped-package-1.5.0.tgz", {}, ""],
 
               "app": ["app@workspace:packages/app"],
 
-              "bugfix-package": ["bugfix-package@1.0.0", "", {}, ""],
+              "bugfix-package": ["bugfix-package@1.0.0", "http://localhost:<port>/bugfix-package/-/bugfix-package-1.0.0.tgz", {}, ""],
 
-              "daily-release-package": ["daily-release-package@1.5.0", "", {}, ""],
+              "daily-release-package": ["daily-release-package@1.5.0", "http://localhost:<port>/daily-release-package/-/daily-release-package-1.5.0.tgz", {}, ""],
 
               "legacy": ["legacy@workspace:packages/legacy"],
 
               "lib": ["lib@workspace:packages/lib"],
 
-              "regular-package": ["regular-package@2.1.0", "", {}, ""],
+              "regular-package": ["regular-package@2.1.0", "http://localhost:<port>/regular-package/-/regular-package-2.1.0.tgz", {}, ""],
 
-              "stable-package": ["stable-package@3.0.0", "", {}, ""],
+              "stable-package": ["stable-package@3.0.0", "http://localhost:<port>/stable-package/-/stable-package-3.0.0.tgz", {}, ""],
 
-              "legacy/regular-package": ["regular-package@1.0.0", "", {}, ""],
+              "legacy/regular-package": ["regular-package@1.0.0", "http://localhost:<port>/regular-package/-/regular-package-1.0.0.tgz", {}, ""],
 
-              "lib/stable-package": ["stable-package@3.2.0", "", {}, ""],
+              "lib/stable-package": ["stable-package@3.2.0", "http://localhost:<port>/stable-package/-/stable-package-3.2.0.tgz", {}, ""],
             }
           }"
         `);

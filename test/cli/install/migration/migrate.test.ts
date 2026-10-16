@@ -1169,16 +1169,16 @@ describe("package-lock.json migration fixes", () => {
     expect(stderr).toContain(
       'skipped 3 package-lock.json entries not depended on by any package: "../a", "../i", "../m"',
     );
+    const registry = (name: string) => `${OFFLINE_REGISTRY}${name}/-/${name}-1.0.0.tgz`;
     // Root-declared out-of-tree folders (j, o, o2) and registry entries under them (k) migrate; transitive out-of-tree folders (p, b) are skipped along with their edges and their own subtree (c).
-    // "" is the canonical tarball URL under the configured registry (OFFLINE_REGISTRY).
     expect(
       Object.fromEntries(Object.entries<any[]>(lock.packages).map(([key, v]) => [key, [v[0], v[1]]])),
     ).toStrictEqual({
       j: ["j@file:../i/j", { dependencies: { k: "" } }],
-      k: ["k@1.0.0", ""],
+      k: ["k@1.0.0", registry("k")],
       o: ["o@file:../m/node_modules/n/o", {}],
       o2: ["o2@file:../m/node_modules/n/o2", {}],
-      x: ["x@1.0.0", ""],
+      x: ["x@1.0.0", registry("x")],
     });
     expect(lock.packages.x[2]).toStrictEqual({});
     expect(text).not.toContain("../m/node_modules/p");
@@ -1291,6 +1291,10 @@ describe("package-lock.json migration fixes", () => {
     expect(updated.workspaces["packages/d"]).toStrictEqual({ name: "d", version: "1.0.0" });
     const { d, ...rest } = updated.packages;
     expect(d).toStrictEqual(["d@workspace:packages/d"]);
+    // "" means the registry.npmjs.org tarball; a re-save under a different configured registry spells it out.
+    for (const entry of Object.values(rest) as unknown[][]) {
+      if (typeof entry[1] === "string" && entry[1].startsWith(OFFLINE_REGISTRY)) entry[1] = "";
+    }
     expect(rest).toStrictEqual(lock.packages);
   });
 
@@ -1387,8 +1391,12 @@ describe("package-lock.json migration fixes", () => {
     expect(exitCode).toBe(0);
     const { lock } = await readLock(dir);
     expect(lock.packages["bundled-1"][2]).toStrictEqual({ dependencies: { "no-deps": "1.0.0" } });
-    // "" is the canonical tarball URL under the configured registry.
-    expect(lock.packages["bundled-1/no-deps"]).toStrictEqual(["no-deps@1.0.0", "", { bundled: true }, ""]);
+    expect(lock.packages["bundled-1/no-deps"]).toStrictEqual([
+      "no-deps@1.0.0",
+      registry.tarball("no-deps", "1.0.0"),
+      { bundled: true },
+      "",
+    ]);
     expect(
       await Bun.file(join(String(dir), "node_modules", "bundled-1", "node_modules", "no-deps", "package.json")).json(),
     ).toStrictEqual({ name: "no-deps", version: "1.0.0" });
@@ -1844,7 +1852,7 @@ describe("package-lock.json migration fixes", () => {
     const { stderr, exitCode, lock } = await migrate(dir);
     expect(stderr).not.toContain("InvalidNPMLockfile");
     expect(exitCode).toBe(0);
-    expect(lock.packages.x).toStrictEqual(["x@1.0.0", "", {}, ""]);
+    expect(lock.packages.x).toStrictEqual(["x@1.0.0", `${OFFLINE_REGISTRY}x/-/x-1.0.0.tgz`, {}, ""]);
     await frozen(dir);
   });
 

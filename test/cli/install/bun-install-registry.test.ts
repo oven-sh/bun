@@ -10788,14 +10788,12 @@ describe("manifest conditional requests", () => {
       name: "no-deps",
       version: "1.0.0",
     });
-    // The tarball URL is the canonical one under the configured registry
-    // (`http://localhost:${registryPort}/`), so bun.lock writes it as "".
-    const { packages } = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as {
-      packages: Record<string, unknown[]>;
-    };
-    expect(packages).toStrictEqual({
-      "no-deps": ["no-deps@1.0.0", "", {}, ""],
-    });
+    const npmPackages = (Object.values(parseLockfile(packageDir).packages) as any[]).filter(
+      pkg => pkg.resolution.tag === "npm",
+    );
+    expect(npmPackages.map(pkg => [pkg.name, pkg.resolution.resolved])).toStrictEqual([
+      ["no-deps", `http://localhost:${registryPort}/no-deps/-/no-deps-1.0.0.tgz`],
+    ]);
   }
 
   const accept = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";

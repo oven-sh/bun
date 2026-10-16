@@ -2558,6 +2558,52 @@ export default <>hi</>
     expect(exitCode).toBe(0);
   });
 
+  it("define errors after an earlier config error do not corrupt the log", async () => {
+    // An `external` with two `*` logs one error and construction continues.
+    // The four define-key errors that follow make the buffer of the log grow.
+    // In a child process: on a build without the fix this is a crash.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const define = { "0x": "1", "1x": "1", "2x": "1", "3x": "1" };
+          for (let i = 0; i < 20; i++) {
+            const t = new Bun.Transpiler({ external: ["a*b*c"], define });
+            if (i % 10 === 0) t.transformSync("export const a = 1;");
+            if (i % 10 === 9) Bun.gc(true);
+          }
+          Bun.gc(true);
+          console.log("constructed");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "constructed\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  it("a define value that is not JSON throws the parser's error", () => {
+    let thrown;
+    try {
+      new Bun.Transpiler({ define: { a: "{" } });
+    } catch (e) {
+      thrown = e;
+    }
+    expect([thrown?.name, thrown?.level, thrown?.message]).toEqual([
+      "BuildMessage",
+      "error",
+      'Expected "}" but found end of file',
+    ]);
+  });
+
   it("JSX keys", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

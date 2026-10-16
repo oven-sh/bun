@@ -258,8 +258,10 @@ describe("the write callback contract", () => {
   }
 
   // On Windows one uv_write takes the whole chunk and the sink holds nothing, so a write
-  // has reported before its pipe fails. Those rows say nothing there.
-  describe.each(rows.filter(([state]) => !(isWindows && state === "failing")))(
+  // has reported before its pipe fails. Those rows say nothing there. A row on a pipe that
+  // the child closed before the calls does not finish there.
+  const posixOnly = ["failing", "broken"];
+  describe.each(rows.filter(([state]) => !(isWindows && posixOnly.includes(state))))(
     "child.stdin, %s: %s",
     (state, sequence) => {
       test.concurrentIf(concurrent)("reports as Node does", async () => {

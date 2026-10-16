@@ -1469,7 +1469,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let is_linked_bundle = self.options.bundle
                 && self.options.output_format != options::Format::InternalBakeDev;
 
-            match state.import_loader {
+            match E::ImportLoader::from_options(&state.import_options) {
                 E::ImportLoader::Attribute(loader) => {
                     self.import_records.items_mut()[import_record_index as usize].loader =
                         Some(loader);

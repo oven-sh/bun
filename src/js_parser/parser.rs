@@ -717,7 +717,6 @@ pub struct TransposeState {
     pub(crate) is_then_catch_target: bool,
     pub(crate) is_require_immediately_assigned_to_decl: bool,
     pub(crate) loc: bun_ast::Loc,
-    pub(crate) import_loader: E::ImportLoader,
     pub(crate) import_options: Expr,
 }
 
@@ -728,7 +727,6 @@ impl Default for TransposeState {
             is_then_catch_target: false,
             is_require_immediately_assigned_to_decl: false,
             loc: bun_ast::Loc::EMPTY,
-            import_loader: E::ImportLoader::None,
             import_options: Expr::EMPTY,
         }
     }

@@ -1442,19 +1442,15 @@ impl<'a> SpawnArgs<'a> {
         out
     }
 
-    /// Appends one `key=value` entry per pair of `env` to the child's environment.
+    /// Sets the child's environment to one `key=value` entry per pair of `env`.
     pub(crate) fn fill_env<'e, const DISABLE_PATH_LOOKUP_FOR_ARV0: bool>(
         &mut self,
         env: impl Iterator<Item = (&'e sh::EnvStr, &'e sh::EnvStr)>,
     ) {
         self.override_env = true;
-        // `VarTable::exported` is a filter, whose lower size bound is 0, so reserve for the upper bound.
-        self.env_array.reserve_exact(
-            env.size_hint()
-                .1
-                .unwrap_or(0)
-                .saturating_sub(self.env_array.len()),
-        );
+        // The upper bound, because `VarTable::child_env` filters. One more for the null that ends the array.
+        self.env_array
+            .reserve_exact(env.size_hint().1.unwrap_or(0) + 1);
 
         if DISABLE_PATH_LOOKUP_FOR_ARV0 {
             // If the env object does not include a $PATH, it must disable path lookup for argv[0]

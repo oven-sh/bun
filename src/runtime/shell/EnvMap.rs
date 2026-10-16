@@ -51,18 +51,6 @@ impl EnvMap {
         }
     }
 
-    pub(crate) fn memory_cost(&self) -> usize {
-        let mut size: usize = core::mem::size_of::<EnvMap>();
-        size += core::mem::size_of_val(self.map.keys());
-        size += core::mem::size_of_val(self.map.values());
-        debug_assert_eq!(self.map.keys().len(), self.map.values().len());
-        for (key, value) in self.map.keys().iter().zip(self.map.values()) {
-            size += key.memory_cost();
-            size += value.memory_cost();
-        }
-        size
-    }
-
     /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
     /// before handing it to this function!!!
     pub(crate) fn insert(&mut self, key: EnvStr, val: EnvStr) {
@@ -74,10 +62,6 @@ impl EnvMap {
         }
         val.ref_();
         *result.value_ptr = val;
-    }
-
-    pub(crate) fn iter(&self) -> impl core::iter::Iterator<Item = (&EnvStr, &EnvStr)> {
-        self.map.keys().iter().zip(self.map.values())
     }
 
     /// NOTE: Make sure you deref the string when done!
@@ -193,7 +177,10 @@ impl VarTable {
 
     /// `export NAME=value`, or `export NAME` for `None`, which keeps the value. Refs `value`.
     pub(crate) fn export(&mut self, name: EnvStr, value: Option<EnvStr>) {
-        let slot = self.map.get_or_put(name).expect("OOM");
+        let slot = self
+            .map
+            .get_or_put_value(name, Var::ExportedUnset)
+            .expect("OOM");
         if !slot.found_existing {
             name.ref_();
         }
@@ -226,12 +213,21 @@ impl VarTable {
         Some(value)
     }
 
-    /// The environment of a child process: exported names that have a value.
-    pub(crate) fn exported(&self) -> impl core::iter::Iterator<Item = (&EnvStr, &EnvStr)> {
-        self.map.iter().filter_map(|(name, var)| match var {
-            Var::Exported(value) => Some((name, value)),
-            Var::Local(_) | Var::ExportedUnset => None,
-        })
+    /// The environment of a child process, one entry per name: each exported name that has a value, then `prefixes`, which replace an exported name.
+    pub(crate) fn child_env<'a>(
+        &'a self,
+        prefixes: Option<&'a EnvMap>,
+    ) -> impl core::iter::Iterator<Item = (&'a EnvStr, &'a EnvStr)> {
+        let replaced = move |name: &EnvStr| prefixes.is_some_and(|p| p.map.contains(name));
+        let (names, values): (&[EnvStr], &[EnvStr]) =
+            prefixes.map_or((&[], &[]), |p| (p.map.keys(), p.map.values()));
+        self.map
+            .iter()
+            .filter_map(move |(name, var)| match var {
+                Var::Exported(value) if !replaced(name) => Some((name, value)),
+                Var::Exported(_) | Var::Local(_) | Var::ExportedUnset => None,
+            })
+            .chain(names.iter().zip(values))
     }
 
     /// Every exported name. The value is `None` until the name is assigned.

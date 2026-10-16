@@ -63,9 +63,9 @@ impl Export {
                 continue;
             }
             let name = EnvStr::init_slice(assign.label);
-            let shell = interp.as_cmd_mut(cmd).base.shell_mut();
-            if let Some(value) = shell.cmd_local_env.get(name) {
-                shell.vars.set(name, value);
+            let me = interp.as_cmd_mut(cmd);
+            if let Some(value) = me.prefix_env.as_ref().and_then(|p| p.get(name)) {
+                me.base.shell_mut().vars.set(name, value);
                 value.deref();
             }
         }

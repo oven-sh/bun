@@ -1256,12 +1256,7 @@ booga"
       let procEnv = JSON.parse(str1);
       expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar" });
       procEnv = JSON.parse(str2);
-      expect(procEnv).toEqual({
-        ...bunEnv,
-        BAZ: "1",
-        FOO: "bar",
-        BUN_TEST_VAR: "1",
-      });
+      expect(procEnv).toEqual({ ...bunEnv, FOO: "bar", BUN_TEST_VAR: "1" });
     });
 
     test("syntax edgecase", async () => {
@@ -1276,8 +1271,8 @@ booga"
     });
   });
 
-  // `export NAME` keeps the value of the name, and a plain assignment keeps its export attribute.
-  describe("export attribute", () => {
+  // `export NAME` keeps the value, a plain assignment keeps the export attribute, a `NAME=value` prefix reaches one command.
+  describe("exported variables", () => {
     // Prints NAME=value for each NAME argument, as a child process sees it.
     const childEnv = "console.log(process.argv.slice(1).map(k => k + '=' + (process.env[k] ?? '<unset>')).join(' '))";
     const env = { ...bunEnv, OUTER: "fromenv", APPEND: "base", CLEARED: "full" };
@@ -1366,10 +1361,45 @@ booga"
       A=3 export A; echo $A
       B=1 export B=2 B; echo $B
       C=4 true; export C; echo "[$C]"
+      ${BUN} -e ${childEnv} A B C
     `
-      .stdout("3\n2\n[]\n")
+      .stdout("3\n2\n[]\nA=3 B=2 C=<unset>\n")
       .testMini()
       .runAsTest("NAME=value export NAME assigns the value to the name");
+
+    TestBuilder.command`
+      OUTER=pre NEW=1 ${BUN} -e ${childEnv} OUTER NEW
+      ${BUN} -e ${childEnv} OUTER NEW
+      OUTER=changed
+      ${BUN} -e ${childEnv} OUTER
+      echo "$OUTER [$NEW]"
+    `
+      .env(env)
+      .stdout("OUTER=pre NEW=1\nOUTER=fromenv NEW=<unset>\nOUTER=changed\nchanged []\n")
+      .testMini()
+      .runAsTest("a NAME=value prefix reaches one command only");
+
+    if (isPosix) {
+      TestBuilder.command`
+        OUTER=pre env
+        export MADE=first; MADE=second env
+        TWICE=1 TWICE=2 env
+      `
+        .env(env)
+        .stdout(out => {
+          const entries = out.split("\n").filter(line => /^(OUTER|MADE|TWICE)=/.test(line));
+          expect(entries).toEqual([
+            "OUTER=pre",
+            "OUTER=fromenv",
+            "MADE=second",
+            "OUTER=fromenv",
+            "MADE=first",
+            "TWICE=2",
+          ]);
+        })
+        .testMini()
+        .runAsTest("a NAME=value prefix over an exported name gives the child one entry for the name");
+    }
 
     test.skipIf(isWindows)("a plain assignment to PATH is used by command lookup and by which", async () => {
       using dir = tempDir("shell-path-assign", {

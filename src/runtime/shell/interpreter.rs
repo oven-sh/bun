@@ -561,7 +561,6 @@ impl Interpreter {
             root_shell: JsCell::new(ShellExecEnv {
                 _buffered_stdout: Bufio::default(),
                 _buffered_stderr: Bufio::default(),
-                cmd_local_env: EnvMap::init(),
                 vars: export_env,
                 __prev_cwd: cwd_arr.clone(),
                 __cwd: cwd_arr,
@@ -1797,7 +1796,6 @@ pub(crate) fn throw_shell_err(
 pub(crate) struct ShellExecEnv {
     pub(crate) _buffered_stdout: Bufio,
     pub(crate) _buffered_stderr: Bufio,
-    pub(crate) cmd_local_env: EnvMap,
     pub(crate) vars: VarTable,
     pub(crate) __prev_cwd: Vec<u8>,
     pub(crate) __cwd: Vec<u8>,
@@ -1838,7 +1836,6 @@ pub(crate) enum ShellExecEnvKind {
 impl ShellExecEnv {
     pub(crate) fn memory_cost(&self) -> usize {
         let mut size = core::mem::size_of::<ShellExecEnv>();
-        size += self.cmd_local_env.memory_cost();
         size += self.vars.memory_cost();
         size += self.__cwd.capacity();
         size += self.__prev_cwd.capacity();
@@ -1916,7 +1913,7 @@ impl ShellExecEnv {
 
     /// Heap-allocates a
     /// fresh env for a subshell/pipeline child: dups `cwd_fd`, clones
-    /// `vars`, gives it a fresh empty `cmd_local_env`, and
+    /// `vars`, and
     /// borrows or owns buffered stdout/stderr per `kind` (subshell/pipeline
     /// borrow the parent's buffers so output bubbles up; cmd-subst owns).
     ///
@@ -1956,7 +1953,6 @@ impl ShellExecEnv {
         let duped = Box::new(ShellExecEnv {
             _buffered_stdout: stdout,
             _buffered_stderr: stderr,
-            cmd_local_env: EnvMap::init(),
             vars: self.vars.clone(),
             __prev_cwd: self.__prev_cwd.clone(),
             __cwd: self.__cwd.clone(),
@@ -1977,7 +1973,7 @@ impl ShellExecEnv {
         // explicit close.
         let boxed = unsafe { bun_core::heap::take(this) };
         closefd(boxed.cwd_fd);
-        // EnvMap/Vec/Vec<u8> drop impls free their storage; `Bufio::Borrowed`
+        // VarTable/Vec/Vec<u8> drop impls free their storage; `Bufio::Borrowed`
         // is a raw ptr so its drop is a no-op.
         drop(boxed);
     }
@@ -1997,9 +1993,8 @@ impl ShellExecEnv {
                 o.clear_and_free();
             }
         }
-        // EnvMap has a Drop impl; replace with fresh to free now and leave
+        // VarTable has a Drop impl; replace with fresh to free now and leave
         // valid state for any later `Drop` of the outer `Interpreter` box.
-        self.cmd_local_env = EnvMap::init();
         self.vars = VarTable::init();
         self.__cwd = Vec::new();
         self.__prev_cwd = Vec::new();
@@ -2131,19 +2126,6 @@ impl ShellExecEnv {
         self.vars.export(EnvStr::init_slice(b"PWD"), Some(pwd));
 
         Ok(())
-    }
-
-    /// `FOO=1 cmd` goes to `cmd_local_env`, a bare `FOO=1` to `vars`. Both ref `value`: deref it after the call.
-    pub(crate) fn assign_var(
-        &mut self,
-        label: crate::shell::env_str::EnvStr,
-        value: crate::shell::env_str::EnvStr,
-        assign_ctx: AssignCtx,
-    ) {
-        match assign_ctx {
-            AssignCtx::Cmd => self.cmd_local_env.insert(label, value),
-            AssignCtx::Shell => self.vars.set(label, value),
-        }
     }
 
     /// `$HOME` (`$USERPROFILE` on Windows), or `""` (`/data/local/tmp` on Android) so `cd` and `~` never see a null.

@@ -641,19 +641,18 @@ describe.concurrent("global flag before subcommand", () => {
     ]);
     // Regression guard for the #34983 revert: `.env` must not leak as a
     // positional and `install` must not be treated as a package name.
-    expect(stdout + stderr).not.toContain("my.env");
+    expect(stdout + stderr).toContain("bun install");
+    expect(stdout + stderr).not.toContain("bun add");
     expect(stderr).not.toContain("Script not found");
     expect(exitCode).toBe(0);
   });
 
   // Shebang + chmod bin stub is Unix-only; see test/regression/issue/26207.test.ts.
-  // bunx reads the flags in front of `x` itself (`--bun`), but not the value
-  // that a global flag consumed, even when the value looks like a bunx flag.
-  // A leading `--env-file` is loaded for the package.
+  // bunx parses the flags in front of `x` itself: `--bun`, `--cwd` and
+  // `--env-file` with their values.
   for (const [pre, expected] of [
     [["--bun"], "under-bun unset"],
     [["--cwd", ".", "--bun"], "under-bun unset"],
-    [["--preload", "--package", "--bun"], "under-bun unset"],
     [["--env-file", "my.env", "--bun"], "under-bun loaded"],
     [["--env-file=my.env", "--bun"], "under-bun loaded"],
   ] as const) {
@@ -670,6 +669,14 @@ describe.concurrent("global flag before subcommand", () => {
       expect(exitCode).toBe(0);
     });
   }
+
+  test("bun --preload ./pre.ts x <bin> reaches bunx, which names the flag it does not have", async () => {
+    using dir = tempDir("which-bunx-preload", files);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--preload", "./pre.ts", "x", "probe"]);
+    expect(stderr).toContain("bunx has no --preload flag");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
 
   test("bun --help init prints the init help and writes nothing", async () => {
     using dir = tempDir("which-help-init", {});
@@ -836,9 +843,10 @@ describe.concurrent("global flag before subcommand", () => {
   test("bun --preload ./pre.ts install does not treat the path or 'install' as a package", async () => {
     using dir = tempDir("which-preload-install", valueFlags);
     const { stderr, exitCode } = await run(String(dir), ["--preload", "./pre.ts", "install", "--dry-run"]);
-    expect(stderr).not.toContain("Script not found");
+    // install has no such flag and says so. It does not go on to add a package.
+    expect(stderr).toContain("bun install has no --preload flag");
     expect(await Bun.file(`${dir}/package.json`).text()).toBe(valueFlags["package.json"]);
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
   });
 
   // `-` and the eval flags end the flag scan: the rest of argv belongs to the
@@ -998,6 +1006,13 @@ describe.concurrent("global flag before subcommand", () => {
           ci: () => fs.existsSync(join(cwd, "node_modules", "dep", "package.json")),
           audit: () => audits > 0,
         }[command]();
+        // The package manager commands have no --preload flag, and say so.
+        if (pre[0] === "--preload" && command !== "test" && command !== "build") {
+          expect(stderr).toContain("has no --preload flag");
+          expect(stdout).not.toContain("the package.json script");
+          expect(exitCode).toBe(1);
+          return;
+        }
         // `bun install` and `bun ci` also run the "install" lifecycle script, so only the work tells them apart.
         expect({ didItsWork, exitCode, output: didItsWork ? "" : stdout + stderr }).toEqual({
           didItsWork: true,

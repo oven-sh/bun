@@ -311,6 +311,9 @@ fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
 /// flag (`RunCommand::create_fake_temporary_node_executable` lives there).
 pub(crate) use bun_install::PRETEND_TO_BE_NODE;
 
+/// This is set `true` during `Command.which()` if argv0 is "bunx"
+static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 pub(crate) use bun_install::SUBCOMMAND_ARGV_INDEX;
 
 bun_core::declare_scope!(CLI, hidden);
@@ -787,8 +790,8 @@ pub(crate) mod command {
                     return Tag::ExecCommand;
                 }
             }
-            // argv[0] (`bunx`) plays the part of the `x` keyword.
-            SUBCOMMAND_ARGV_INDEX.store(0, core::sync::atomic::Ordering::Relaxed);
+            // SAFETY: single-threaded startup
+            IS_BUNX_EXE.store(true, core::sync::atomic::Ordering::Relaxed);
             return Tag::BunxCommand;
         }
 
@@ -1133,7 +1136,7 @@ pub(crate) mod command {
         //    must still fall through to `which()` so `node --version` reports
         //    Node's version, `bunx --version` is parsed by bunx, etc. Only
         //    the *predicates* are read here; `which()` performs the matching
-        //    `PRETEND_TO_BE_NODE` / `SUBCOMMAND_ARGV_INDEX` side effects.
+        //    `PRETEND_TO_BE_NODE` / `IS_BUNX_EXE` side effects.
         //  * the standalone-graph probe above already ran, so a compiled
         //    executable's `--version` / `-e ''` is still passed through to
         //    user code (it returned via `boot_standalone`).
@@ -1484,23 +1487,13 @@ pub(crate) mod command {
     #[inline(never)]
     fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::BunxCommand, log)?;
-        // bunx parses the flags in front of `x` itself (`--cwd`, `--env-file`,
-        // `--bun`). Each is one token for it: a value that a flag consumed is
-        // joined to the flag (`--cwd dir` is `--cwd=dir`).
+        let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
+            0
+        } else {
+            1
+        };
         let argv = argv_zslice();
-        let mut tokens: Vec<&'static bun_core::ZStr> = leading_flags()
-            .map(|(flag, value)| {
-                let mut token = flag.to_vec();
-                if let Some(value) = value {
-                    token.push(b'=');
-                    token.extend_from_slice(value);
-                }
-                token.push(0);
-                bun_core::ZStr::from_slice_with_nul(super::cli_dupe(&token))
-            })
-            .collect();
-        tokens.extend_from_slice(&argv[subcommand_argv_index().min(argv.len())..]);
-        super::bunx_command::BunxCommand::exec(ctx, &tokens)
+        super::bunx_command::BunxCommand::exec(ctx, &argv[start_idx..])
     }
 
     #[cold]

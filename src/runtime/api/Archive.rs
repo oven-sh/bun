@@ -2,9 +2,11 @@
 
 use std::ffi::CString;
 
+use crate::node::types::PathOrFileDescriptor;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::Store;
+use crate::webcore::blob::store::{Data as StoreData, File as StoreFile};
 use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::{
@@ -75,6 +77,11 @@ impl Archive {
         F: bun_jsc::ConsoleFormatter,
         W: core::fmt::Write,
     {
+        // A file or an S3 object is not read to print the archive.
+        if !matches!(Source::of(&self.store), Source::InMemory) {
+            return self.write_format_of_source::<F, W, ENABLE_ANSI_COLORS>(formatter, writer);
+        }
+
         let data = self.store.shared_view();
         let fmt_err = |_: core::fmt::Error| crate::Error::FormatError;
 
@@ -102,6 +109,40 @@ impl Archive {
                     jsc::JSType::NumberObject,
                 )
                 .map_err(|_| crate::Error::JSError)?;
+        }
+        writer.write_str("\n").map_err(fmt_err)?;
+        formatter.write_indent(writer).map_err(fmt_err)?;
+        writer.write_str("}").map_err(fmt_err)?;
+        formatter.reset_line();
+        Ok(())
+    }
+
+    /// An archive whose store is not in memory prints as `Archive { source: .. }`, with the
+    /// `Blob` of the store as the source.
+    fn write_format_of_source<F, W, const ENABLE_ANSI_COLORS: bool>(
+        &self,
+        formatter: &mut F,
+        writer: &mut W,
+    ) -> crate::Result<()>
+    where
+        F: bun_jsc::ConsoleFormatter,
+        W: core::fmt::Write,
+    {
+        let fmt_err = |_: core::fmt::Error| crate::Error::FormatError;
+
+        writer.write_str("Archive {\n").map_err(fmt_err)?;
+        {
+            let mut formatter = formatter.indented();
+            formatter.write_indent(writer).map_err(fmt_err)?;
+            write!(
+                writer,
+                "{}",
+                Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>source<d>:<r> "),
+            )
+            .map_err(fmt_err)?;
+            Blob::init_with_store(self.store.clone(), formatter.global_this())
+                .write_format::<F, W, ENABLE_ANSI_COLORS>(&mut *formatter, writer)
+                .map_err(fmt_err)?;
         }
         writer.write_str("\n").map_err(fmt_err)?;
         formatter.write_indent(writer).map_err(fmt_err)?;
@@ -391,9 +432,23 @@ fn get_entry_data<'a>(
     value: JSValue,
     array_buffer: &'a mut Option<bun_jsc::ArrayBuffer>,
 ) -> JsResult<Utf8Bytes<'a>> {
-    // For Blob, use sharedView (no copy needed). The backing store outlives
-    // the returned slice for the duration of the caller's tarball build.
     if let Some(blob) = blob_from_js(value) {
+        if let Some(store) = blob.store() {
+            match Source::of(store) {
+                Source::InMemory => {}
+                // The tar is complete when the constructor returns, so the file is read here.
+                Source::File(file) => {
+                    let (offset, size) = (blob.offset.get(), blob.size.get());
+                    return match FileRef::of(file).read(offset, size) {
+                        Ok(bytes) => Ok(Utf8Bytes::Owned(bytes)),
+                        Err(err) => Err(err.throw(global)),
+                    };
+                }
+                Source::S3 => return Err(global.throw_value(s3_error(global))),
+            }
+        }
+        // For an in-memory Blob, use sharedView (no copy needed). The backing store outlives
+        // the returned slice for the duration of the caller's tarball build.
         return Ok(Utf8Bytes::Borrowed(blob.shared_view()));
     }
 
@@ -404,6 +459,106 @@ fn get_entry_data<'a>(
 
     // For strings, convert (allocates)
     value.to_utf8(global)
+}
+
+/// How a reader gets the bytes of a `Store`. `Store::shared_view()` has them only for `InMemory`:
+/// it is empty for the other two.
+enum Source<'a> {
+    InMemory,
+    /// A `Bun.file()`. The file has to be read first.
+    File(&'a StoreFile),
+    /// Nothing in `Bun.Archive` downloads an S3 object.
+    S3,
+}
+
+impl Source<'_> {
+    fn of(store: &Store) -> Source<'_> {
+        match &store.data {
+            StoreData::Bytes(_) => Source::InMemory,
+            StoreData::File(file) => Source::File(file),
+            StoreData::S3(_) => Source::S3,
+        }
+    }
+}
+
+fn s3_error(global: &JSGlobalObject) -> JSValue {
+    global.to_invalid_arguments(format_args!(
+        "Archive cannot read an S3 file; await file.bytes() first"
+    ))
+}
+
+/// The file of a `Bun.file()` store, as plain data that a pool thread can own.
+enum FileRef {
+    Path(ZBox),
+    Fd(Fd),
+}
+
+impl FileRef {
+    fn of(file: &StoreFile) -> FileRef {
+        match &file.pathlike {
+            PathOrFileDescriptor::Path(path) => FileRef::Path(ZBox::from_bytes(path.slice())),
+            PathOrFileDescriptor::Fd(fd) => FileRef::Fd(*fd),
+        }
+    }
+
+    /// Reads `offset..offset + max` of the file, up to its end.
+    fn read(&self, offset: u64, max: u64) -> bun_sys::Result<Vec<u8>> {
+        match self {
+            FileRef::Path(path) => {
+                // O_NONBLOCK: the open of a FIFO that has no writer blocks. Not on Windows,
+                // where the flag makes the handle asynchronous.
+                let nonblock = if cfg!(unix) { bun_sys::O::NONBLOCK } else { 0 };
+                let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | nonblock;
+                bun_sys::File::open(path.as_zstr(), flags, 0)
+                    .and_then(|file| read_regular_file(file.handle(), offset, max))
+                    .map_err(|err| err.with_path(path.as_bytes()))
+            }
+            FileRef::Fd(fd) => read_regular_file(*fd, offset, max).map_err(|err| err.with_fd(*fd)),
+        }
+    }
+}
+
+/// Reads `offset..offset + max` of a regular file, up to its end, with `pread`: the position of
+/// `fd` does not move, so a second read gets the same bytes. Any other kind of file is an error:
+/// a read to the end of a FIFO, a tty or a device can block its thread, or never end.
+fn read_regular_file(fd: Fd, offset: u64, max: u64) -> bun_sys::Result<Vec<u8>> {
+    use bun_sys::{E, Tag};
+
+    let stat = bun_sys::PosixStat::init(&bun_sys::fstat(fd)?);
+    let mode = stat.mode as Mode;
+    if bun_sys::S::ISDIR(mode) {
+        return Err(bun_sys::Error::from_code(E::EISDIR, Tag::read));
+    }
+    if !bun_sys::is_regular_file(mode) {
+        return Err(bun_sys::Error::from_code(E::ESPIPE, Tag::read));
+    }
+
+    let limit = usize::try_from(max).unwrap_or(usize::MAX);
+    // `st_size` is a hint: it is 0 for a file in /proc, and stale when a writer races. So read
+    // until a read returns 0. One byte past the hint gives that read room with no growth.
+    let mut room = usize::try_from(stat.size.saturating_sub(offset))
+        .unwrap_or(usize::MAX)
+        .saturating_add(1);
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut len: usize = 0;
+    while len < limit {
+        if len == bytes.len() {
+            let grown = len.saturating_add(room).min(limit);
+            if bytes.try_reserve_exact(grown - len).is_err() {
+                return Err(bun_sys::Error::oom());
+            }
+            bytes.resize(grown, 0);
+            room = grown.max(16 * 1024);
+        }
+        let position = i64::try_from(offset.saturating_add(len as u64)).unwrap_or(i64::MAX);
+        let read = bun_sys::pread(fd, &mut bytes[len..], position)?;
+        if read == 0 {
+            break;
+        }
+        len += read;
+    }
+    bytes.truncate(len);
+    Ok(bytes)
 }
 
 /// Static method: Archive.write(path, data, options?)
@@ -656,6 +811,9 @@ impl PromiseResult {
 /// stores its result on `self`; `run_from_js` turns it into the promise's
 /// value. It is the off-thread part of an `AsyncTask<C>` job.
 pub(crate) trait TaskContext: Send + 'static {
+    /// The store whose bytes `run` or `run_from_js` reads, if it reads them. For a store that
+    /// is a file, the job puts the file's bytes here, as an in-memory store, before `run`.
+    fn source(&mut self) -> Option<&mut RefPtr<Store>>;
     /// Runs on thread pool. Stores its result on `self`.
     fn run(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult>;
@@ -664,22 +822,101 @@ pub(crate) trait TaskContext: Send + 'static {
 /// The job for a `TaskContext`: the context off-thread, its promise on the JS side.
 pub(crate) struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
 
+/// The off-thread half of an `AsyncTask<C>` job.
+pub(crate) struct PoolHalf<C> {
+    ctx: C,
+    /// Set while `ctx.source()` is a store that is not in memory.
+    unread: Option<Box<Unread>>,
+}
+
+/// What a job keeps for a store that is not in memory. It is made on the JS thread: the pool
+/// does not read a `File` store, whose other fields the JS thread changes.
+struct Unread {
+    /// The file to read. `None` for an S3 object.
+    file: Option<FileRef>,
+    /// Why the read of `file` failed.
+    read_error: Option<bun_sys::Error>,
+}
+
+impl Unread {
+    fn of(store: &Store) -> Option<Box<Unread>> {
+        let file = match Source::of(store) {
+            Source::InMemory => return None,
+            Source::File(file) => Some(FileRef::of(file)),
+            Source::S3 => None,
+        };
+        Some(Box::new(Unread {
+            file,
+            read_error: None,
+        }))
+    }
+
+    /// Pool thread. Puts the bytes of the file in `store`, as an in-memory store. Returns false
+    /// when there are no bytes for a reader to use.
+    #[cold]
+    fn read_into(&mut self, store: Option<&mut RefPtr<Store>>) -> bool {
+        let Some(file) = &self.file else {
+            return false;
+        };
+        // The whole file: a `Blob` of a file has no window that is safe to use here. Its size
+        // is also the cache of the last `stat`.
+        match file.read(0, u64::MAX) {
+            Ok(bytes) => {
+                if let Some(store) = store {
+                    *store = Store::init(bytes);
+                }
+                true
+            }
+            Err(err) => {
+                self.read_error = Some(err);
+                false
+            }
+        }
+    }
+
+    /// JS thread. What the promise rejects with after `read_into` returned false.
+    #[cold]
+    fn error(&self, global: &JSGlobalObject) -> JSValue {
+        match &self.read_error {
+            Some(err) => err.to_js(global),
+            None => s3_error(global),
+        }
+    }
+}
+
 impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
-    type OffThread = C;
+    type OffThread = PoolHalf<C>;
     type Js = JSPromiseStrong;
-    fn run(ctx: &mut C, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        ctx.run();
+    fn run(
+        half: &mut PoolHalf<C>,
+        done: bun_jsc::Completion<Self>,
+    ) -> Option<bun_jsc::Completion<Self>> {
+        if let Some(unread) = half.unread.as_deref_mut() {
+            if !unread.read_into(half.ctx.source()) {
+                return Some(done);
+            }
+            half.unread = None;
+        }
+        half.ctx.run();
         Some(done)
     }
-    fn then(mut ctx: C, mut promise: JSPromiseStrong, cx: &bun_jsc::JsThread<'_>) -> JsResult<()> {
+    fn then(
+        mut half: PoolHalf<C>,
+        mut promise: JSPromiseStrong,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> JsResult<()> {
         let global = cx.global();
         let promise = promise.swap();
-        let result = match ctx.run_from_js(global) {
-            Ok(r) => r,
-            Err(e) => {
-                // JSError means exception is already pending
-                return promise.reject(global, Err(e));
-            }
+        let result = match half.unread.as_deref() {
+            // The pool had no bytes for the reader, so the reader did not run.
+            Some(unread) => PromiseResult::Reject(unread.error(global)),
+            None => match half.ctx.run_from_js(global) {
+                Ok(r) => r,
+                Err(e) => {
+                    // JSError means exception is already pending
+                    return promise.reject(global, Err(e));
+                }
+            },
         };
         result.fulfill(global, promise)
     }
@@ -687,10 +924,11 @@ impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
 
 impl<C: TaskContext> AsyncTask<C> {
     /// Schedule `ctx` on the work pool; returns the promise it settles.
-    fn start(cx: &bun_jsc::JsThread<'_>, ctx: C) -> JSValue {
+    fn start(cx: &bun_jsc::JsThread<'_>, mut ctx: C) -> JSValue {
+        let unread = ctx.source().and_then(|store| Unread::of(store));
         let promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        bun_jsc::Job::<Self>::schedule(cx, ctx, promise);
+        bun_jsc::Job::<Self>::schedule(cx, PoolHalf { ctx, unread }, promise);
         value
     }
 }
@@ -718,6 +956,10 @@ pub(crate) struct ExtractContext {
 }
 
 impl TaskContext for ExtractContext {
+    fn source(&mut self) -> Option<&mut RefPtr<Store>> {
+        Some(&mut self.store)
+    }
+
     fn run(&mut self) {
         self.result = self.do_run();
     }
@@ -815,6 +1057,15 @@ pub(crate) struct BlobContext {
 }
 
 impl TaskContext for BlobContext {
+    fn source(&mut self) -> Option<&mut RefPtr<Store>> {
+        match (self.compress, self.output_type) {
+            // `run_from_js` gives the store itself to the `Blob`, which reads a file when it
+            // is used.
+            (Compression::None, BlobOutputType::Blob) => None,
+            _ => Some(&mut self.store),
+        }
+    }
+
     fn run(&mut self) {
         self.result = match &self.compress {
             Compression::Gzip(opts) => match compress_gzip(self.store.shared_view(), opts.level) {
@@ -911,6 +1162,13 @@ pub(crate) struct WriteContext {
 }
 
 impl TaskContext for WriteContext {
+    fn source(&mut self) -> Option<&mut RefPtr<Store>> {
+        match &mut self.data {
+            WriteData::Store(store) => Some(store),
+            WriteData::Owned(_) => None,
+        }
+    }
+
     fn run(&mut self) {
         self.result = self.do_run();
     }
@@ -1087,6 +1345,10 @@ impl FilesContext {
 }
 
 impl TaskContext for FilesContext {
+    fn source(&mut self) -> Option<&mut RefPtr<Store>> {
+        Some(&mut self.store)
+    }
+
     fn run(&mut self) {
         self.result = match self.do_run() {
             Ok(r) => r,

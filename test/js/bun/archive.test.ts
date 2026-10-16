@@ -1,7 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
@@ -2383,6 +2394,291 @@ describe("Bun.Archive", () => {
       const readArchive = new Bun.Archive(await bunFile.bytes());
       const files = await readArchive.files();
       expect(await files.get("test.txt")!.text()).toBe("test content");
+    });
+  });
+
+  describe.concurrent("Bun.file() input", () => {
+    // The text of each entry of an archive.
+    async function entries(archive: Bun.Archive): Promise<Record<string, string>> {
+      const files = await new Bun.Archive(await archive.bytes()).files();
+      return Object.fromEntries(
+        await Promise.all(Array.from(files, async ([path, file]) => [path, await file.text()] as const)),
+      );
+    }
+
+    function thrownBy(fn: () => unknown): unknown {
+      try {
+        fn();
+      } catch (e) {
+        return e;
+      }
+    }
+
+    // On Windows the open of a directory can fail before the file type is read.
+    const isADirectory = (path: string) => (isWindows ? { path } : { code: "EISDIR", syscall: "read", path });
+
+    const s3File = () =>
+      new Bun.S3Client({
+        accessKeyId: "key",
+        secretAccessKey: "secret",
+        bucket: "bucket",
+        endpoint: "http://127.0.0.1:1",
+      }).file("archive.tar");
+    const s3Error = { name: "TypeError", message: "Archive cannot read an S3 file; await file.bytes() first" };
+
+    describe("as an entry", () => {
+      test("is read from disk", async () => {
+        using dir = tempDir("archive-file-entry", {
+          "text.txt": "file content here\n",
+          "data.bin": Buffer.from([0x00, 0x01, 0xff, 0xfe]),
+        });
+        const archive = new Bun.Archive({
+          "text.txt": Bun.file(join(String(dir), "text.txt")),
+          "data.bin": Bun.file(join(String(dir), "data.bin")),
+          "inline.txt": "inline",
+        });
+
+        const files = await archive.files();
+        expect(await files.get("text.txt")!.text()).toBe("file content here\n");
+        expect(await files.get("data.bin")!.bytes()).toEqual(new Uint8Array([0x00, 0x01, 0xff, 0xfe]));
+        expect(await files.get("inline.txt")!.text()).toBe("inline");
+
+        const tarPath = join(String(dir), "out.tar");
+        await Bun.write(tarPath, archive);
+        const written = await new Bun.Archive(await Bun.file(tarPath).bytes()).files();
+        expect(await written.get("text.txt")!.text()).toBe("file content here\n");
+      });
+
+      test("keeps the window of a slice", async () => {
+        using dir = tempDir("archive-file-entry-slice", { "digits.txt": "0123456789" });
+        const file = Bun.file(join(String(dir), "digits.txt"));
+
+        const archive = new Bun.Archive({
+          "middle.txt": file.slice(2, 6),
+          "tail.txt": file.slice(7),
+          "past-end.txt": file.slice(8, 100),
+          "empty.txt": file.slice(3, 3),
+        });
+
+        expect(await entries(archive)).toEqual({
+          "middle.txt": "2345",
+          "tail.txt": "789",
+          "past-end.txt": "89",
+          "empty.txt": "",
+        });
+      });
+
+      test("is read by Archive.write()", async () => {
+        using dir = tempDir("archive-file-entry-write", { "src.txt": "written from disk" });
+        const tarPath = join(String(dir), "out.tar");
+
+        await Bun.Archive.write(tarPath, { "src.txt": Bun.file(join(String(dir), "src.txt")) });
+
+        expect(await entries(new Bun.Archive(await Bun.file(tarPath).bytes()))).toEqual({
+          "src.txt": "written from disk",
+        });
+      });
+
+      test("a file descriptor is read, and read again", async () => {
+        using dir = tempDir("archive-file-entry-fd", { "a.txt": "from a descriptor" });
+        const fd = openSync(join(String(dir), "a.txt"), "r");
+        try {
+          // A read does not move the position of the descriptor.
+          for (let i = 0; i < 2; i++) {
+            const archive = new Bun.Archive({ "a.txt": Bun.file(fd), "b.txt": Bun.file(fd) });
+            expect(await entries(archive)).toEqual({ "a.txt": "from a descriptor", "b.txt": "from a descriptor" });
+          }
+        } finally {
+          closeSync(fd);
+        }
+      });
+
+      test.skipIf(!isLinux)("a file whose size fstat does not report is read to its end", async () => {
+        // A file in /proc is a regular file with a size of 0.
+        const archive = new Bun.Archive({ "version.txt": Bun.file("/proc/version") });
+        expect(await entries(archive)).toEqual({ "version.txt": readFileSync("/proc/version", "utf8") });
+      });
+
+      test("a missing file throws from the constructor and from Archive.write()", () => {
+        using dir = tempDir("archive-file-entry-missing", {});
+        const missing = join(String(dir), "missing.txt");
+        const out = join(String(dir), "out.tar");
+        const enoent = { code: "ENOENT", syscall: "open", path: missing };
+
+        expect(thrownBy(() => new Bun.Archive({ "a.txt": Bun.file(missing) }))).toMatchObject(enoent);
+        expect(thrownBy(() => Bun.Archive.write(out, { "a.txt": Bun.file(missing) }))).toMatchObject(enoent);
+        expect(existsSync(out)).toBe(false);
+      });
+
+      test("a directory throws", () => {
+        using dir = tempDir("archive-file-entry-dir", { "sub/keep.txt": "" });
+        const sub = join(String(dir), "sub");
+
+        expect(thrownBy(() => new Bun.Archive({ "a.txt": Bun.file(sub) }))).toMatchObject(isADirectory(sub));
+      });
+
+      test("an S3 file throws", () => {
+        expect(thrownBy(() => new Bun.Archive({ "a.txt": s3File() }))).toMatchObject(s3Error);
+      });
+    });
+
+    describe("as the archive", () => {
+      test("each reader reads the file", async () => {
+        using dir = tempDir("archive-file-whole", {});
+        const tar = await new Bun.Archive({ "a.txt": "hello", "b/c.txt": "nested" }).bytes();
+        const tarPath = join(String(dir), "in.tar");
+        await Bun.write(tarPath, tar);
+        const archive = new Bun.Archive(Bun.file(tarPath));
+
+        expect(await archive.bytes()).toEqual(tar);
+        expect(await (await archive.blob()).bytes()).toEqual(tar);
+
+        const files = await archive.files();
+        expect([...files.keys()].sort()).toEqual(["a.txt", "b/c.txt"]);
+        expect(await files.get("b/c.txt")!.text()).toBe("nested");
+        expect([...(await archive.files("b/**")).keys()]).toEqual(["b/c.txt"]);
+
+        expect(await archive.extract(join(String(dir), "all"))).toBe(2);
+        expect(await Bun.file(join(String(dir), "all", "b", "c.txt")).text()).toBe("nested");
+        expect(await archive.extract(join(String(dir), "some"), { glob: "a.*" })).toBe(1);
+        expect(await Bun.file(join(String(dir), "some", "a.txt")).text()).toBe("hello");
+
+        const gzipped = await new Bun.Archive(Bun.file(tarPath), { compress: "gzip" }).bytes();
+        expect(Bun.gunzipSync(gzipped)).toEqual(tar);
+        const gzippedBlob = await new Bun.Archive(Bun.file(tarPath), { compress: "gzip" }).blob();
+        expect(Bun.gunzipSync(await gzippedBlob.bytes())).toEqual(tar);
+
+        const written = join(String(dir), "written.tar");
+        expect(await Bun.write(written, archive)).toBe(tar.length);
+        expect(await Bun.file(written).bytes()).toEqual(tar);
+
+        const rewritten = join(String(dir), "rewritten.tar");
+        await Bun.Archive.write(rewritten, archive);
+        expect(await Bun.file(rewritten).bytes()).toEqual(tar);
+      });
+
+      test("the file is read at each use, not by the constructor", async () => {
+        using dir = tempDir("archive-file-whole-lazy", {});
+        const tarPath = join(String(dir), "in.tar");
+        const enoent = { code: "ENOENT", syscall: "open", path: tarPath };
+        const first = await new Bun.Archive({ "a.txt": "first" }).bytes();
+        const second = await new Bun.Archive({ "a.txt": "second", "b.txt": "more" }).bytes();
+
+        // The file does not exist yet.
+        const archive = new Bun.Archive(Bun.file(tarPath));
+        await expect(archive.bytes()).rejects.toMatchObject(enoent);
+        await expect(archive.files()).rejects.toMatchObject(enoent);
+        await expect(archive.extract(join(String(dir), "out"))).rejects.toMatchObject(enoent);
+        await expect((await archive.blob()).bytes()).rejects.toMatchObject(enoent);
+
+        await Bun.write(tarPath, first);
+        expect(await archive.bytes()).toEqual(first);
+
+        await Bun.write(tarPath, second);
+        expect(await archive.bytes()).toEqual(second);
+        expect([...(await archive.files()).keys()].sort()).toEqual(["a.txt", "b.txt"]);
+      });
+
+      test("readers of a file descriptor get the same bytes", async () => {
+        using dir = tempDir("archive-file-whole-fd", {});
+        const tar = await new Bun.Archive({ "a.txt": "hello" }).bytes();
+        const tarPath = join(String(dir), "in.tar");
+        await Bun.write(tarPath, tar);
+        const fd = openSync(tarPath, "r");
+        try {
+          const archive = new Bun.Archive(Bun.file(fd));
+          const [bytes, again, files] = await Promise.all([archive.bytes(), archive.bytes(), archive.files()]);
+          expect(bytes).toEqual(tar);
+          expect(again).toEqual(tar);
+          expect([...files.keys()]).toEqual(["a.txt"]);
+          expect(await archive.bytes()).toEqual(tar);
+        } finally {
+          closeSync(fd);
+        }
+      });
+
+      test("a directory rejects", async () => {
+        using dir = tempDir("archive-file-whole-dir", { "sub/keep.txt": "" });
+        const sub = join(String(dir), "sub");
+
+        await expect(new Bun.Archive(Bun.file(sub)).bytes()).rejects.toMatchObject(isADirectory(sub));
+      });
+
+      test("an S3 file is refused by each reader that needs its bytes", async () => {
+        using dir = tempDir("archive-file-whole-s3", {});
+        const out = join(String(dir), "out.tar");
+
+        const archive = new Bun.Archive(s3File());
+        await expect(archive.bytes()).rejects.toMatchObject(s3Error);
+        await expect(archive.files()).rejects.toMatchObject(s3Error);
+        await expect(archive.extract(join(String(dir), "out"))).rejects.toMatchObject(s3Error);
+        await expect(Bun.Archive.write(out, archive)).rejects.toMatchObject(s3Error);
+        await expect(Bun.Archive.write(out, s3File())).rejects.toMatchObject(s3Error);
+        expect(existsSync(out)).toBe(false);
+      });
+
+      test("Bun.inspect names the file and does not read it", () => {
+        using dir = tempDir("archive-file-whole-inspect", {});
+        const tarPath = join(String(dir), "missing.tar");
+
+        expect(Bun.inspect(new Bun.Archive(Bun.file(tarPath)))).toBe(
+          `Archive {\n  source: FileRef ("${tarPath}") {\n    type: "application/x-tar"\n  }\n}`,
+        );
+      });
+
+      test("the archive can be collected while its file is read", async () => {
+        using dir = tempDir("archive-file-whole-gc", {});
+        const tarPath = join(String(dir), "in.tar");
+        await Bun.write(tarPath, await new Bun.Archive({ "a.txt": "hello" }).bytes());
+
+        const pending = Array.from({ length: 8 }, () => new Bun.Archive(Bun.file(tarPath)).files());
+        Bun.gc(true);
+        for (const files of await Promise.all(pending)) {
+          expect(await files.get("a.txt")!.text()).toBe("hello");
+        }
+      });
+    });
+
+    describe("as the data of Archive.write()", () => {
+      test("the bytes of the file are written", async () => {
+        using dir = tempDir("archive-file-write", {});
+        const tar = await new Bun.Archive({ "a.txt": "hello" }).bytes();
+        const tarPath = join(String(dir), "in.tar");
+        await Bun.write(tarPath, tar);
+
+        const out = join(String(dir), "out.tar");
+        await Bun.Archive.write(out, Bun.file(tarPath));
+        expect(await Bun.file(out).bytes()).toEqual(tar);
+
+        const gzipped = join(String(dir), "out.tar.gz");
+        await Bun.Archive.write(gzipped, Bun.file(tarPath), { compress: "gzip" });
+        expect(Bun.gunzipSync(await Bun.file(gzipped).bytes())).toEqual(tar);
+      });
+
+      test("a file that cannot be read leaves the destination as it is", async () => {
+        using dir = tempDir("archive-file-write-missing", { "out.tar": "keep" });
+        const out = join(String(dir), "out.tar");
+        const missing = join(String(dir), "missing.tar");
+
+        await expect(Bun.Archive.write(out, Bun.file(missing))).rejects.toMatchObject({
+          code: "ENOENT",
+          syscall: "open",
+          path: missing,
+        });
+        expect(await Bun.file(out).text()).toBe("keep");
+      });
+    });
+
+    test.skipIf(isWindows)("a FIFO is an error and does not block", async () => {
+      using dir = tempDir("archive-file-fifo", {});
+      const fifo = join(String(dir), "fifo");
+      mkfifo(fifo);
+      // Nothing writes to the FIFO: a read of it would wait without end.
+      const espipe = { code: "ESPIPE", syscall: "read", path: fifo };
+
+      expect(thrownBy(() => new Bun.Archive({ "a.txt": Bun.file(fifo) }))).toMatchObject(espipe);
+      await expect(new Bun.Archive(Bun.file(fifo)).bytes()).rejects.toMatchObject(espipe);
+      await expect(Bun.Archive.write(join(String(dir), "out.tar"), Bun.file(fifo))).rejects.toMatchObject(espipe);
     });
   });
 

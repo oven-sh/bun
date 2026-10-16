@@ -10156,9 +10156,13 @@ declare module "bun" {
 
   /**
    * Input data for creating an archive. Can be:
-   * - An object mapping paths to file contents (string, Blob, TypedArray, or ArrayBuffer)
-   * - A Blob containing existing archive data
+   * - An object mapping paths to file contents (string, Blob, TypedArray, or ArrayBuffer).
+   *   A `Bun.file()` value is read from disk synchronously while the archive is created.
+   * - A Blob containing existing archive data. A `Bun.file()` is read each time
+   *   the archive is used, not when it is passed.
    * - A TypedArray or ArrayBuffer containing existing archive data
+   *
+   * An S3 file is not read. Pass `await file.bytes()` instead.
    */
   type ArchiveInput = Record<string, BlobPart> | Blob | ArrayBufferView | ArrayBufferLike;
 
@@ -10300,8 +10304,10 @@ declare module "bun" {
      * By default, archives are not compressed. Use `{ compress: "gzip" }` to enable compression.
      *
      * @param data - The input data for the archive:
-     *   - **Object**: Creates a new tarball with the object's keys as file paths and values as file contents
-     *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz)
+     *   - **Object**: Creates a new tarball with the object's keys as file paths and values as file contents.
+     *     A `Bun.file()` value is read from disk before the constructor returns, and a missing file throws.
+     *   - **Blob/TypedArray/ArrayBuffer**: Wraps existing archive data (tar or tar.gz).
+     *     A `Bun.file()` is not read by the constructor. Each method that needs the bytes reads the file.
      * @param options - Archive options, including compression settings
      *
      * @example

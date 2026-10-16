@@ -58,6 +58,7 @@ File contents can be:
 
 - **Strings** - Text content
 - **Blobs** - Binary data
+- **`Bun.file()`** - A file on disk
 - **ArrayBufferViews** (such as `Uint8Array`) - Raw bytes
 - **ArrayBuffers** - Raw binary data
 
@@ -68,10 +69,15 @@ const arrayBuffer = new ArrayBuffer(8);
 const archive = new Bun.Archive({
   "text.txt": "Plain text",
   "blob.bin": new Blob([data]),
+  "file.txt": Bun.file("./file.txt"),
   "bytes.bin": new Uint8Array([1, 2, 3, 4]),
   "buffer.bin": arrayBuffer,
 });
 ```
+
+A `Bun.file()` entry is read from disk synchronously, before the constructor returns. If the file is missing, the constructor throws. To keep the read off the main thread, pass `await Bun.file(path).bytes()` instead.
+
+An S3 file is not read. Pass `await file.bytes()` instead.
 
 ### Writing Archives to Disk
 
@@ -125,6 +131,13 @@ const archiveFromFile = new Bun.Archive(tarball);
 // From a fetch response
 const response = await fetch("https://example.com/archive.tar.gz");
 const archiveFromFetch = new Bun.Archive(await response.blob());
+```
+
+You can also pass the `Bun.file()` itself. The constructor does not read it. Each method that needs the bytes reads the file again, off the main thread, and rejects if the file cannot be read:
+
+```ts
+const archive = new Bun.Archive(Bun.file("package.tar.gz"));
+const files = await archive.files(); // reads package.tar.gz now
 ```
 
 ### Extracting to Disk

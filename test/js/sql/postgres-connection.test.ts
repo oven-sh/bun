@@ -1602,7 +1602,8 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         await sql`deallocate all`.simple();
         expect(await burst()).toEqual([...Array(14).fill(expect.objectContaining({ errno: "26000" })), [{ x: 8 }]]);
         expect(await burst()).toEqual(expected);
-        expect(await onServer(sql)).toHaveLength(6);
+        // The last one of the burst before is prepared by now, the server has said int4, and so it takes the 7 too.
+        expect(await onServer(sql)).toHaveLength(5);
         expect(conversions).toBe(3);
       });
 
@@ -1621,7 +1622,8 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
           const rejected = results.filter(result => !Array.isArray(result));
           expect(rejected).toEqual(Array(rejected.length).fill(expect.objectContaining({ errno: "0A000" })));
           expect(results.filter(Array.isArray)).toEqual(Array(20 - rejected.length).fill([{ id: 1, a: 1, b: null }]));
-          expect(rejected.length).toBeWithin(1, 21 - max);
+          // 19 on one connection. Of four, one may not have prepared it in the first burst.
+          expect(rejected.length).toBeWithin(max === 1 ? 19 : 1, 21 - max);
           expect(await burst()).toEqual(Array(20).fill([{ id: 1, a: 1, b: null }]));
         } finally {
           await sql`drop table ${table}`;
@@ -1681,37 +1683,44 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         ]);
       });
 
-      // The second statement is still good, and the server runs it whatever becomes of the first.
+      // The second statement is still good. Once it is written, the server runs it whatever becomes of the first, so
+      // the first rejects. A simple query is not written behind another one, so there the first is sent again, first.
       test.each([
         [
-          "an UPDATE of the same row",
-          "update altered set a = 2 where id = 1 returning *",
-          "update altered set a = 3 where id = 1",
+          "rejects with an UPDATE of the same row written behind it, and does not run after that",
+          (sql: SQL) => sql`update altered set a = 2 where id = 1 returning *`,
+          (sql: SQL) => sql`update altered set a = 3 where id = 1`,
+          expect.objectContaining({ errno: "0A000" }),
           [{ id: 1, a: 3, b: null }],
         ],
         [
-          "an UPDATE of the row that it inserts",
-          "insert into altered (id, a) values (2, 2) returning *",
-          "update altered set a = 3 where id = 2",
+          "rejects with an UPDATE of the row that it inserts written behind it, and does not run after that",
+          (sql: SQL) => sql`insert into altered (id, a) values (2, 2) returning *`,
+          (sql: SQL) => sql`update altered set a = 3 where id = 2`,
+          expect.objectContaining({ errno: "0A000" }),
           [{ id: 1, a: 1, b: null }],
         ],
-      ])("rejects with %s written behind it, and does not run after that", async (_, stale, good, rows) => {
+        [
+          "is prepared again and runs ahead of an UPDATE of the same row that waits behind it",
+          (sql: SQL) => sql`update altered set a = 2 where id = 1 returning *`,
+          (sql: SQL) => sql`update altered set a = 3 where id = 1`.simple(),
+          [{ id: 1, a: 2, b: null }],
+          [{ id: 1, a: 3, b: null }],
+        ],
+      ])("%s", async (_, stale, good, first, rows) => {
         await using sql = await connect();
         await altered(sql);
-        await sql
-          .begin(async tx => {
-            await Promise.all([tx.unsafe(stale, []), tx.unsafe(good, [])]);
-            throw new Error("prepared");
-          })
-          .catch(() => {});
+        // Both are prepared, and nothing of them stays.
+        const prepared = sql.begin(async tx => {
+          await Promise.all([stale(tx), good(tx)]);
+          throw new Error("rolled back");
+        });
+        expect(await settled(prepared)).toMatchObject({ message: "rolled back" });
         await addColumn(sql, "b");
 
-        expect(await Promise.all([sql.unsafe(stale, []), sql.unsafe(good, [])].map(settled))).toEqual([
-          expect.objectContaining({ errno: "0A000" }),
-          [],
-        ]);
+        expect(await Promise.all([stale(sql), good(sql)].map(settled))).toEqual([first, []]);
         expect(await sql`select * from altered order by id`.simple()).toEqual(rows);
-        expect(await settled(sql.unsafe(stale, []))).toHaveLength(1);
+        expect(await settled(stale(sql))).toHaveLength(1);
       });
 
       // A retry would get 25P02 in place of the reason.

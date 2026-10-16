@@ -13,9 +13,9 @@ use bun_dotenv as DotEnv;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
-use bun_paths::{self as bun_path, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
@@ -38,17 +38,17 @@ mod coverage {
     }
 
     pub(super) fn is_ignored(
-        opts: &bun_options_types::code_coverage_options::CodeCoverageOptions,
+        ignore_patterns: &[bun_glob::Prepared<&[u8]>],
         relative_dir: &[u8],
         source_url: &[u8],
     ) -> bool {
-        if opts.ignore_patterns.is_empty() {
+        if ignore_patterns.is_empty() {
             return false;
         }
         let relative_path = bun_paths::resolve_path::relative(relative_dir, source_url);
-        opts.ignore_patterns
+        ignore_patterns
             .iter()
-            .any(|pattern| bun_glob::r#match(pattern, relative_path).matches())
+            .any(|pattern| pattern.r#match(relative_path).matches())
     }
 }
 use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
@@ -63,7 +63,6 @@ use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
 
-#[allow(non_snake_case)]
 mod bun_test {
     //! Façade over `crate::test_runner` that preserves the legacy paths
     //! the body uses (`bun_test::Execution::Result`, `bun_test::BasicResult`,
@@ -155,7 +154,7 @@ fn fmt_status_text_line(
 /// currently failing, captured as they are printed so structured reporters
 /// get them without re-running the exception formatter.
 #[derive(Default)]
-pub struct TestFailure {
+pub(crate) struct TestFailure {
     pub name: Vec<u8>,
     pub(crate) message: Vec<u8>,
     pub(crate) body: Vec<u8>,
@@ -210,7 +209,7 @@ fn push_stripping_ansi(out: &mut Vec<u8>, input: &[u8]) {
 // - Add stdout/stderr to the JUnit report
 // - Add timestamp field to the JUnit report
 #[derive(Default)]
-pub struct JunitReporter {
+pub(crate) struct JunitReporter {
     pub(crate) contents: Vec<u8>,
     pub(crate) total_metrics: Metrics,
     pub(crate) offset_of_testsuites_value: usize,
@@ -225,7 +224,7 @@ pub struct JunitReporter {
 }
 
 #[derive(Default)]
-pub struct SuiteInfo {
+pub(crate) struct SuiteInfo {
     pub name: Box<[u8]>,
     pub(crate) offset_of_attributes: usize,
     pub(crate) metrics: Metrics,
@@ -237,7 +236,7 @@ pub struct SuiteInfo {
 // unconditional drop is correct.
 
 #[derive(Default, Clone, Copy)]
-pub struct Metrics {
+pub(crate) struct Metrics {
     pub(crate) test_cases: u32,
     pub(crate) assertions: u32,
     pub(crate) failures: u32,
@@ -895,7 +894,7 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"</testsuites>\n");
         }
 
-        let mut junit_path_buf = PathBuffer::uninit();
+        let mut junit_path_buf = bun_paths::path_buffer_pool::get();
 
         junit_path_buf[..path.len()].copy_from_slice(path);
         junit_path_buf[path.len()] = 0;
@@ -943,7 +942,12 @@ pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
     !(reporter.jest.node_test_used || should_drain_event_loop())
 }
 
-pub struct CommandLineReporter {
+/// `ExitHandler::requested` at the end of a run, which does not wait for the event loop to run dry.
+pub(crate) fn exit_is_requested() -> bool {
+    !should_drain_event_loop()
+}
+
+pub(crate) struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
     // returns before process exit, so `'static` is sound here. Revisit if the
@@ -974,7 +978,7 @@ pub struct CommandLineReporter {
 }
 
 #[derive(Default)]
-pub struct ReportersConfig {
+pub(crate) struct ReportersConfig {
     pub(crate) dots: bool,
     pub(crate) only_failures: bool,
     pub(crate) junit: Option<Box<JunitReporter>>,
@@ -1470,9 +1474,14 @@ impl CommandLineReporter {
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
         let relative_dir = FileSystem::get().top_level_dir;
+        let ignore_patterns: Vec<bun_glob::Prepared<&[u8]>> = (opts
+            .ignore_patterns
+            .iter()
+            .map(|it| bun_glob::Prepared::new(&**it)))
+        .collect();
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
         for entry in map.values_mut() {
-            if !coverage::is_ignored(opts, relative_dir, entry.source_url.slice()) {
+            if !coverage::is_ignored(&ignore_patterns, relative_dir, entry.source_url.slice()) {
                 byte_ranges.push(entry);
             }
         }
@@ -1653,7 +1662,7 @@ fn write_lcov_report(
         ".lcov.info.{}.tmp",
         bun_core::fmt::hex_lower(&rand)
     );
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let tmp_path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
         relative_dir,
         &mut buf,
@@ -1808,23 +1817,23 @@ impl TestCommand {
         // backing `Vec`s live in `ctx` for the process lifetime, so each element
         // is detached to `&'static [u8]` up front (lets the outer view detach to
         // `&'static [&'static [u8]]` below without a nested-lifetime bitcast).
-        let concurrent_test_glob_view: Option<Vec<&'static [u8]>> =
+        let concurrent_test_glob_view: Option<Vec<bun_glob::Prepared<&'static [u8]>>> =
             ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
                 v.iter()
                     .map(|b| {
                         // SAFETY: backing bytes are owned by `ctx.test_options`
                         // (process-lifetime) and `exec()` never returns.
-                        unsafe { bun_ptr::detach_lifetime::<u8>(b) }
+                        bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) })
                     })
                     .collect()
             });
         // SAFETY: backing bytes are owned by `ctx.test_options` (process-lifetime)
         // and `exec()` never returns, so detaching to `'static` is sound.
-        let path_ignore_patterns_view: Vec<&'static [u8]> = ctx
+        let path_ignore_patterns_view: Vec<bun_glob::Prepared<&'static [u8]>> = ctx
             .test_options
             .path_ignore_patterns
             .iter()
-            .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
+            .map(|b| bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) }))
             .collect();
 
         // Keep an owned `Box` local — `exec()` never returns before process
@@ -1925,7 +1934,6 @@ impl TestCommand {
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
                 env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
-                store_fd: ctx.debug.hot_reload != jsc::virtual_machine::HotReload::None,
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
                 ..Default::default()
@@ -1995,6 +2003,8 @@ impl TestCommand {
             vm.test_isolation_state.proxy_env = Some(
                 bun_jsc::rare_data::ProxyEnvSnapshot::capture(&vm.env_loader().map),
             );
+            vm.test_isolation_state.synthetic_allocation_limit =
+                Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
         }
 
         if ctx.test_options.test_worker {
@@ -2314,6 +2324,24 @@ impl TestCommand {
                 }
                 _ => {}
             }
+        }
+
+        // After the file watcher is enabled: see `watching`.
+        let has_type_errors = ctx.runtime_options.check && {
+            use crate::cli::check_command::{EntryPoint, check_before, watching};
+            let paths = test_files.iter().map(|path| EntryPoint::file(path));
+            !check_before(&paths.collect::<Vec<_>>(), watching(vm))
+        };
+        if has_type_errors {
+            // No test is run.
+            if !vm.is_watcher_enabled() {
+                Global::exit(1);
+            }
+            let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only, so the closure holds the
+            // unique mutable access on this single-threaded path.
+            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
         }
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
@@ -2670,6 +2698,7 @@ impl TestCommand {
             vm.exit_handler.exit_code = 1;
         }
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
+        vm.exit_handler.requested = exit_is_requested();
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
             let vm_ptr: *mut VirtualMachine = vm;
@@ -2877,10 +2906,15 @@ impl TestCommand {
             let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_id);
             bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
-            // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
-            // raw-ptr escape so the closure does not hold a borrowck lock on
-            // it for the loop body.
-            scopeguard::defer! { unsafe { (*bun_test_root_ptr).exit_file(); } }
+            let global = vm.global();
+            scopeguard::defer! {
+                // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
+                // raw-ptr escape so the closure does not hold a borrowck lock on
+                // it for the loop body.
+                unsafe { (*bun_test_root_ptr).exit_file(); }
+                // A mock.module() patch still pending must not hold up the next file.
+                bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
+            }
 
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
@@ -2962,6 +2996,12 @@ impl TestCommand {
             }
 
             vm.event_loop_ref().tick();
+
+            // Tests start after top-level mock.module() calls with a pending factory have patched their module.
+            while bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
+                vm.event_loop_ref().auto_tick();
+                vm.event_loop_ref().tick();
+            }
 
             'blk: {
                 // Check if bun_test is available and has tests to run

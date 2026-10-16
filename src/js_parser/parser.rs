@@ -452,6 +452,11 @@ pub(crate) const LOC_MODULE_SCOPE: bun_ast::Loc = bun_ast::Loc { start: -100 };
 pub struct DeferredImportNamespace {
     pub(crate) namespace: LocRef,
     pub(crate) import_record_id: u32,
+    /// Scope the namespace binding lives in. Used by
+    /// `imports_to_convert_from_dynamic_import` to bail when a direct
+    /// `eval()` can observe the binding by name. Unused by
+    /// `imports_to_convert_from_require`.
+    pub(crate) scope: Option<bun_ast::StoreRef<bun_ast::Scope>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -533,6 +538,18 @@ impl JSXImportSymbols {
             JSXImport::Fragment => self.fragment.map(|f| f.ref_),
             JSXImport::CreateElement => self.create_element.map(|c| c.ref_),
         }
+    }
+
+    pub(crate) fn tag_of(&self, ref_: Ref) -> Option<JSXImport> {
+        [
+            JSXImport::Jsx,
+            JSXImport::JsxDEV,
+            JSXImport::Jsxs,
+            JSXImport::Fragment,
+            JSXImport::CreateElement,
+        ]
+        .into_iter()
+        .find(|&tag| self.get_with_tag(tag) == Some(ref_))
     }
 
     pub(crate) fn set(&mut self, tag: JSXImport, loc_ref: LocRef) {
@@ -700,7 +717,6 @@ pub struct TransposeState {
     pub(crate) is_then_catch_target: bool,
     pub(crate) is_require_immediately_assigned_to_decl: bool,
     pub(crate) loc: bun_ast::Loc,
-    pub(crate) import_record_tag: Option<bun_ast::ImportRecordTag>,
     pub(crate) import_loader: Option<bun_ast::Loader>,
     pub(crate) import_options: Expr,
 }
@@ -712,7 +728,6 @@ impl Default for TransposeState {
             is_then_catch_target: false,
             is_require_immediately_assigned_to_decl: false,
             loc: bun_ast::Loc::EMPTY,
-            import_record_tag: None,
             import_loader: None,
             import_options: Expr::EMPTY,
         }
@@ -905,6 +920,8 @@ impl IdentifierOpts {
     const IS_DELETE_TARGET: u8 = 1 << 2;
     const WAS_ORIGINALLY_IDENTIFIER: u8 = 1 << 3;
     const IS_CALL_TARGET: u8 = 1 << 4;
+    const IS_TEMPLATE_TAG: u8 = 1 << 5;
+    const IS_PROPERTY_ACCESS_TARGET: u8 = 1 << 6;
 
     #[inline]
     pub(crate) const fn assign_target(self) -> js_ast::AssignTarget {
@@ -932,6 +949,16 @@ impl IdentifierOpts {
     pub(crate) const fn is_call_target(self) -> bool {
         self.0 & Self::IS_CALL_TARGET != 0
     }
+    /// The tag of a tagged template, which passes `this` like a call target.
+    #[inline]
+    pub(crate) const fn is_template_tag(self) -> bool {
+        self.0 & Self::IS_TEMPLATE_TAG != 0
+    }
+    /// See `ExprIn::is_property_access_target`.
+    #[inline]
+    pub(crate) const fn is_property_access_target(self) -> bool {
+        self.0 & Self::IS_PROPERTY_ACCESS_TARGET != 0
+    }
 
     // Builder-style helpers (this stays a packed u8 rather than a
     // named-field struct).
@@ -957,6 +984,16 @@ impl IdentifierOpts {
     #[inline]
     pub(crate) const fn with_is_call_target(mut self, v: bool) -> Self {
         self.0 = (self.0 & !Self::IS_CALL_TARGET) | ((v as u8) << 4);
+        self
+    }
+    #[inline]
+    pub(crate) const fn with_is_template_tag(mut self, v: bool) -> Self {
+        self.0 = (self.0 & !Self::IS_TEMPLATE_TAG) | ((v as u8) << 5);
+        self
+    }
+    #[inline]
+    pub(crate) const fn with_is_property_access_target(mut self, v: bool) -> Self {
+        self.0 = (self.0 & !Self::IS_PROPERTY_ACCESS_TARGET) | ((v as u8) << 6);
         self
     }
 }
@@ -1013,6 +1050,9 @@ pub struct ExprIn {
     pub(crate) is_immediately_assigned_to_decl: bool,
 
     pub(crate) property_access_for_method_call_maybe_should_replace_with_undefined: bool,
+
+    /// The parent only reads, calls or assigns a property of this: `x.a`, `x[a]`, `const { a } = x`, not `delete x.a`.
+    pub(crate) is_property_access_target: bool,
 }
 
 /// This function exists to tie all of these checks together in one place
@@ -1318,7 +1358,6 @@ pub(crate) struct ImportClause<'a> {
 }
 
 pub struct PropertyOpts {
-    pub(crate) async_range: bun_ast::Range,
     pub(crate) declare_range: bun_ast::Range,
     pub(crate) is_async: bool,
     pub(crate) is_generator: bool,
@@ -1337,7 +1376,6 @@ pub struct PropertyOpts {
 impl Default for PropertyOpts {
     fn default() -> Self {
         Self {
-            async_range: bun_ast::Range::NONE,
             declare_range: bun_ast::Range::NONE,
             is_async: false,
             is_generator: false,
@@ -1357,7 +1395,6 @@ pub struct ScanPassResult {
     pub import_records: Vec<ImportRecord>,
     pub(crate) named_imports: bun_ast::ast_result::NamedImports,
     pub(crate) used_symbols: ParsePassSymbolUsageMap,
-    pub(crate) approximate_newline_count: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -1374,7 +1411,6 @@ impl ScanPassResult {
             import_records: Vec::new(),
             named_imports: Default::default(),
             used_symbols: ParsePassSymbolUsageMap::default(),
-            approximate_newline_count: 0,
         }
     }
 
@@ -1382,7 +1418,6 @@ impl ScanPassResult {
         self.named_imports.clear_retaining_capacity();
         self.import_records.clear();
         self.used_symbols.clear_retaining_capacity();
-        self.approximate_newline_count = 0;
     }
 }
 
@@ -1863,7 +1898,6 @@ impl ReactRefresh<'_> {
     /// `visit/mod.rs` stay safe; callers must not hold two results live at
     /// once (same uniqueness contract as `P::log()`).
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub(crate) fn hook_ctx_mut<'s>(&self) -> Option<&'s mut Option<HookContext>> {
         // SAFETY: `hook_ctx_storage` is `Some` only while a `visit_*` frame
         // higher on the stack has installed `&mut react_hook_data` (a stack

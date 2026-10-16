@@ -6,9 +6,19 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunExe,
+  isPosix,
+  isRoot,
+  isWindows,
+  rss,
+  runWithErrorPromise,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -54,7 +64,6 @@ afterAll(async () => {
 });
 
 const BUN = bunExe();
-const isRoot = process.getuid?.() === 0;
 
 describe("bunshell", () => {
   describe("exit codes", async () => {
@@ -101,7 +110,7 @@ describe("bunshell", () => {
     });
   });
   describe("js_obj_test", async () => {
-    function runTest(name: string, builder: TestBuilder) {
+    function runTest(name: string, builder: InstanceType<typeof TestBuilder>) {
       test(`js_obj_test_name_${name}`, async () => {
         await builder.run();
       });
@@ -1047,6 +1056,62 @@ booga"
           expect(out).not.toContain("keep2.txt");
         })
         .runAsTest("long leading run of injected ! stays literal");
+
+      // `Bun.Glob` has extglob groups. In the shell, parentheses in a word are always data.
+      for (const injected of ["@()!(zzz)", "!(zzz)", "a!(zzz)", "@(a|aa|b)", "+(a)", "?(a)a", "*(a)", "*(a|b)"]) {
+        TestBuilder.command`echo ${injected}/f.*`
+          .ensureTempDir()
+          .directory("a")
+          .file("a/f.txt", "")
+          .directory("aa")
+          .file("aa/f.txt", "")
+          .directory("b")
+          .file("b/f.txt", "")
+          .exitCode(1)
+          .stderr(`bun: no matches found: ${injected}/f.*\n`)
+          .runAsTest(`injected ${injected} is literal`);
+      }
+
+      TestBuilder.command`V=${"@()!(zzz)"}; echo "$V"/f.* || echo $(echo ${"+(a)"})/f.*`
+        .ensureTempDir()
+        .directory("a")
+        .file("a/f.txt", "")
+        .exitCode(1)
+        .stderr("bun: no matches found: @()!(zzz)/f.*\nbun: no matches found: +(a)/f.*\n")
+        .runAsTest("an extglob group from a variable or a command substitution is literal");
+
+      const withParentheses = (out: string) => expect(out.replaceAll("\\", "/")).toBe("c++(old)/f.ts\n");
+      const inFolderWithParentheses = (builder: ReturnType<typeof TestBuilder.command>) =>
+        builder.ensureTempDir().directory("c++(old)").file("c++(old)/f.ts", "").directory("c").file("c/f.ts", "");
+
+      inFolderWithParentheses(TestBuilder.command`echo ${"c++(old)"}/*.ts`)
+        .stdout(withParentheses)
+        .runAsTest("an interpolated folder name with parentheses still matches that folder");
+      inFolderWithParentheses(TestBuilder.command`echo "c++(old)"/*.ts`)
+        .stdout(withParentheses)
+        .runAsTest("a double-quoted folder name with parentheses still matches that folder");
+      inFolderWithParentheses(TestBuilder.command`echo 'c++(old)'/*.ts`)
+        .stdout(withParentheses)
+        .runAsTest("a single-quoted folder name with parentheses still matches that folder");
+
+      test.skipIf(isWindows)("a quoted name with parentheses that is a symlink to a folder still expands", async () => {
+        using dir = tempDir("bunshell-symlink-parentheses", { "real/f.ts": "" });
+        symlinkSync("real", join(String(dir), "Dropbox (Personal)"));
+        const { stdout, exitCode } = await $`echo "Dropbox (Personal)"/f.* ${"Dropbox (Personal)"}/*.ts`
+          .cwd(String(dir))
+          .nothrow()
+          .quiet();
+        expect(stdout.toString()).toBe("Dropbox (Personal)/f.ts Dropbox (Personal)/f.ts\n");
+        expect(exitCode).toBe(0);
+      });
+
+      TestBuilder.command`echo *"(1)".ts`
+        .ensureTempDir()
+        .file("g(1).ts", "")
+        .file("g1.ts", "")
+        .file("1.ts", "")
+        .stdout("g(1).ts\n")
+        .runAsTest("a literal * before quoted parentheses isn't an extglob group");
     });
 
     test("glob on a nonexistent absolute directory does not crash the process", async () => {
@@ -1313,6 +1378,21 @@ booga"
       expect(stderr).toBe("");
       expect(stdout.trim()).toBe("ENAMETOOLONG");
       expect(exitCode).toBe(0);
+    });
+
+    test(".cwd() to a missing directory rejects the promise instead of throwing from then()", async () => {
+      using dir = tempDir("cwd-missing", {});
+      const missing = join(String(dir), "does-not-exist");
+      const promise = $`echo hi`.cwd(missing).nothrow();
+      // `then()` starts the shell. A setup failure must settle the promise,
+      // not throw out of `then()`.
+      const settled = promise.then(
+        () => "resolved",
+        e => e,
+      );
+      const err = await settled;
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain("No such file or directory");
     });
 
     // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
@@ -3360,6 +3440,41 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
       stderr: result.stderr.toString(),
       exitCode: result.exitCode,
     }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+});
+
+describe.skipIf(isWindows)("stdin redirect whose pipe outlives the command's process", () => {
+  // `< ${input}` is pumped into the child over a pipe. A command finishes once
+  // its exit code and the stdin, stdout and stderr closes are all in, and the
+  // four arrive as separate event-loop callbacks. Here the child hands its
+  // stdin to a background `sleep` and exits without reading the redirect,
+  // which is bigger than the pipe buffer: the exit and the stdout/stderr EOFs
+  // are processed first, and the pending stdin write only fails once `sleep`
+  // lets go of the pipe. That stdin close is what has to finish the command.
+  // Without it the promise never settles.
+  const SIZE = 1 << 20;
+  const script = "exec 3<&0; sleep 1 <&3 >/dev/null 2>&1 & echo out; echo err >&2; exit 3";
+  const redirects: Array<[string, () => Buffer | Blob]> = [
+    ["Buffer", () => Buffer.alloc(SIZE, "a")],
+    ["Blob", () => new Blob([Buffer.alloc(SIZE, "a")])],
+  ];
+
+  test.concurrent.each(redirects)("%s", async (_name, input) => {
+    const r = await $`sh -c ${script} < ${input()}`.quiet().nothrow();
+    expect({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+      stdout: "out\n",
+      stderr: "err\n",
+      exitCode: 3,
+    });
+  });
+
+  test.concurrent("inside a pipeline", async () => {
+    const r = await $`sh -c ${script} < ${Buffer.alloc(SIZE, "a")} | cat`.quiet().nothrow();
+    expect({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+      stdout: "out\n",
+      stderr: "err\n",
+      exitCode: 0,
+    });
   });
 });
 

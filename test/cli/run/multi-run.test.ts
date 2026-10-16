@@ -1914,6 +1914,22 @@ describe("workspace integration", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  test("--parallel --filter distinguishes an unmatched filter from a missing script", async () => {
+    using dir = makeWorkspace("mr-ws-missing", {
+      "pkg-a": { build: `echo a` },
+      "pkg-b": { build: `echo b` },
+    });
+    const noPkg = await runMulti(["run", "--parallel", "--filter", "nope", "build"], String(dir));
+    expect(noPkg.stderr.trim()).toBe(`error: No workspace packages matched the filter "nope"`);
+    const negated = await runMulti(["run", "--parallel", "--filter", "*", "--filter", "!*", "build"], String(dir));
+    expect(negated.stderr.trim()).toBe(`error: No workspace packages matched the filters "*", "!*"`);
+    const noScript = await runMulti(["run", "--parallel", "--filter", "pkg-*", "lint", "test"], String(dir));
+    expect(noScript.stderr.trim()).toBe(`error: Script "lint", "test" not found in 2 packages matching "pkg-*"`);
+    expect(noPkg.exitCode).toBe(1);
+    expect(negated.exitCode).toBe(1);
+    expect(noScript.exitCode).toBe(1);
+  });
+
   test("--parallel --filter='pkg-a' runs only in matching package", async () => {
     using dir = makeWorkspace("mr-ws-single", {
       "pkg-a": { build: `echo a-only` },
@@ -2189,4 +2205,22 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.stdout).not.toContain("Bun is");
     expect(r.exitCode).toBe(1);
   });
+});
+
+test.concurrent.each([
+  ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
+  ["CR", "\r", "\\r"],
+  ["BEL", "\x07", "\\x07"],
+  ["U+009B", "\u009b2K", "\\u009b2K"],
+  ["OSC 52", "\x1b]52;c;aGk=\x07", "\\x1b]52;c;aGk=\\x07"],
+])("%s in the name of a package or a script is printed spelled out", async (_, raw, spelled) => {
+  using dir = tempDir("mr-names", {
+    "package.json": JSON.stringify({ name: "mr-names", workspaces: ["packages/*"] }),
+    "packages/a/package.json": JSON.stringify({ name: `a${raw}b`, scripts: { [`c${raw}d`]: "echo hi" } }),
+  });
+  const r = await runMulti(["run", "--filter", "*", "--parallel", "c*"], String(dir));
+  expect(r.stdout).toBe(`a${spelled}b:c${spelled}d | hi\n`);
+  expect(r.stderr).toStartWith(`a${spelled}b:c${spelled}d | Done in `);
+  expect(r.stdout + r.stderr).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/);
+  expect(r.exitCode).toBe(0);
 });

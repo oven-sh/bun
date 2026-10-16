@@ -5,8 +5,8 @@ use core::ptr;
 
 use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
 use bun_core::strings;
+use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
-use bun_paths::{PathBuffer, WPathBuffer};
 use bun_ptr::{BackRef, RawSlice};
 
 use bun_collections::index_sort;
@@ -33,7 +33,7 @@ impl Default for WindowsWatcher {
                 buf: [0u8; 64 * 1024],
                 dir_handle: w::INVALID_HANDLE_VALUE,
             },
-            buf: PathBuffer::uninit(),
+            buf: PathBuffer::ZEROED,
             base_idx: 0,
         }
     }
@@ -216,7 +216,7 @@ impl WindowsWatcher {
 
     fn init(&mut self, root: &[u8]) -> Result<(), crate::Error> {
         use bun_paths::string_paths as paths;
-        let mut pathbuf = WPathBuffer::uninit();
+        let mut pathbuf = bun_paths::w_path_buffer_pool::get();
         let wpath = paths::to_nt_path(&mut pathbuf, root);
         let path_len_bytes: u16 = (wpath.len() * 2) as u16;
         let mut nt_name = w::UNICODE_STRING {

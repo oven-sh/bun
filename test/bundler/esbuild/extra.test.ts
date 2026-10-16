@@ -1327,7 +1327,6 @@ describe("bundler", () => {
     run: true,
   });
   itBundled(`extra/TreeShaking10`, {
-    todo: true,
     files: {
       "entry.js": `
         let [a] = {}; // This must not be tree-shaken
@@ -1346,7 +1345,6 @@ describe("bundler", () => {
     run: { file: "node.js" },
   });
   itBundled(`extra/TreeShaking11`, {
-    todo: true,
     files: {
       "entry.js": `
         let sideEffect = false

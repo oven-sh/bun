@@ -76,10 +76,6 @@ use crate::cli::open::Editor;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
-#[cfg(not(windows))]
-use bun_paths::PathBuffer;
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
@@ -96,10 +92,9 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 
-/// Bindgen-generated option-structs for this module (`BunObject.bind.ts`).
-pub mod r#gen {
-    pub use bun_jsc::generated::bun_object::BracesOptions;
-}
+use crate::generated_bindgen::bun_object::BracesOptions;
+use crate::generated_bindgen::glob::GlobClass as _;
+use bun_jsc::bindgen::JsScope;
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
 // `#[bun_jsc::host_fn(static)]` is not yet emitted,
@@ -109,29 +104,29 @@ mod static_adapters {
 
     pub(super) fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::Listener::connect(g, opts)
+        crate::socket::Listener::connect(&g.js_thread_of_caller(cf), opts)
     }
 
     pub(super) fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::Listener::listen(g, opts)
+        crate::socket::Listener::listen(&g.js_thread_of_caller(cf), opts)
     }
 
     pub(super) fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::udp_socket_draft::UDPSocket::udp_socket(g, opts)
+        crate::socket::udp_socket_draft::UDPSocket::udp_socket(&g.js_thread_of_caller(cf), opts)
     }
 
     pub(super) fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [a0] = cf.arguments_as_array::<1>();
         let a1 = cf.arguments().get(1).copied();
-        crate::api::js_bun_spawn_bindings::spawn(g, a0, a1)
+        crate::api::js_bun_spawn_bindings::spawn(&g.js_thread_of_caller(cf), a0, a1)
     }
 
     pub(super) fn subprocess_spawn_sync(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [a0] = cf.arguments_as_array::<1>();
         let a1 = cf.arguments().get(1).copied();
-        crate::api::js_bun_spawn_bindings::spawn_sync(g, a0, a1)
+        crate::api::js_bun_spawn_bindings::spawn_sync(&g.js_thread_of_caller(cf), a0, a1)
     }
 
     pub(super) fn js_bundler_build(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
@@ -169,7 +164,7 @@ mod static_adapters {
 ///     - Getters use a generated wrapper function `BunObject_getter_wrap_<name>`
 /// - Update "BunObject+exports.h"
 /// - Run `bun run build`
-pub mod bun_object {
+pub(crate) mod bun_object {
     use super::*;
 
     // Each callback is exported under
@@ -299,6 +294,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_CryptoHasher => Crypto::CryptoHasher::getter,
         BunObject_lazyPropCb_CSRF => super::get_csrf_object,
         BunObject_lazyPropCb_FFI => crate::ffi::ffi_object_draft::getter,
+        BunObject_lazyPropCb_FetchSession => super::get_fetch_session_constructor,
         BunObject_lazyPropCb_FileSystemRouter => super::get_file_system_router,
         BunObject_lazyPropCb_Glob => super::get_glob_constructor,
         BunObject_lazyPropCb_Image => super::get_image_constructor,
@@ -390,19 +386,27 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     Ok(jsval)
 }
 
+/// `Bun.gc(force)`: heap size after the collection.
+pub(crate) fn gc_from_js(cx: &mut JsScope<'_>, force: bool) -> usize {
+    cx.global().bun_vm().as_mut().garbage_collect_from_js(force)
+}
+
+#[allow(clippy::needless_pass_by_value)] // the generated thunk hands over the string it owns
 pub(crate) fn braces(
-    global: &JSGlobalObject,
-    brace_str: &BunString,
-    opts: r#gen::BracesOptions,
+    cx: &mut JsScope<'_>,
+    brace_str: BunString,
+    opts: BracesOptions,
 ) -> JsResult<JSValue> {
-    let brace_slice = brace_str.to_utf8();
+    let global = cx.global();
+    let brace_utf8 = brace_str.to_utf8();
+    let brace_slice = brace_utf8.slice();
 
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
     let mut lexer_output = 'lexer_output: {
-        if strings::is_all_ascii(brace_slice.slice()) {
-            break 'lexer_output match Braces::Lexer::tokenize(brace_slice.slice()) {
+        if strings::is_all_ascii(brace_slice) {
+            break 'lexer_output match Braces::Lexer::tokenize(brace_slice) {
                 Ok(v) => v,
                 Err(err) => {
                     return Err(
@@ -412,7 +416,7 @@ pub(crate) fn braces(
             };
         }
 
-        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice.slice()) {
+        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice) {
             Ok(v) => break 'lexer_output v,
             Err(err) => {
                 return Err(
@@ -447,7 +451,7 @@ pub(crate) fn braces(
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, core::slice::from_ref(brace_str));
+        return bun_string_jsc::to_js_array(global, core::slice::from_ref(&brace_str));
     }
 
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to
@@ -593,7 +597,7 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         value,
         properties,
     )?;
-    table_printer.value_formatter.depth = format_options.max_depth;
+    table_printer.set_start_depth(format_options.max_depth);
     table_printer.value_formatter.ordered_properties = format_options.ordered_properties;
     table_printer.value_formatter.single_line = format_options.single_line;
 
@@ -673,7 +677,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
 }
 
 // HOST_EXPORT(Bun__inspect_singleline, c)
-pub fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
+pub(crate) fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
     let mut array: Vec<u8> = Vec::new();
     if ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
@@ -780,7 +784,7 @@ fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 // plain `JSValue` so the generated thunk is a bare deref+call (no
 // `ExceptionValidationScope`).
 // HOST_EXPORT(BunObject_getter_main, jsc)
-pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
+pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // SAFETY: bun_vm() returns the live singleton VirtualMachine for a Bun-owned global.
     let vm = global_this.bun_vm().as_mut();
     // If JS has set it to a custom value, use that one
@@ -822,7 +826,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
             #[cfg(windows)]
             {
-                let mut wpath = WPathBuffer::uninit();
+                let mut wpath = bun_paths::w_path_buffer_pool::get();
                 let Ok(fdpath) = bun_sys::get_fd_path_w(fd, &mut wpath) else {
                     break 'use_resolved_path;
                 };
@@ -830,7 +834,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
             }
             #[cfg(not(windows))]
             {
-                let mut path = PathBuffer::uninit();
+                let mut path = bun_paths::path_buffer_pool::get();
                 let Ok(fdpath) = bun_sys::get_fd_path(fd, &mut path) else {
                     break 'use_resolved_path;
                 };
@@ -854,7 +858,7 @@ pub fn get_main(global_this: &JSGlobalObject) -> JSValue {
 }
 
 // HOST_EXPORT(BunObject_setter_main, jsc)
-pub fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
+pub(crate) fn set_main(global_this: &JSGlobalObject, new_value: JSValue) -> bool {
     // SAFETY: bun_vm() returns the live per-thread singleton.
     global_this
         .bun_vm()
@@ -1028,15 +1032,21 @@ fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult
         )));
     }
 
+    // mimalloc's scavenger sweeps this thread's heaps while it sleeps, as it does across the event loop's poll.
+    // SAFETY: nothing allocates or frees on this thread until `mi_on_thread_idle_end` below.
+    let handed_off = unsafe { bun_alloc::mimalloc::mi_on_thread_idle_start() };
     std::thread::sleep(core::time::Duration::from_millis(
         u64::try_from(milliseconds).expect("int cast"),
     ));
+    if handed_off {
+        bun_alloc::mimalloc::mi_on_thread_idle_end();
+    }
     Ok(JSValue::UNDEFINED)
 }
 
 // HOST_EXPORT(Bun__gc, c)
-pub fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
-    vm.garbage_collect(sync)
+pub(crate) fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
+    vm.garbage_collect_from_js(sync)
 }
 
 #[bun_jsc::host_fn]
@@ -1156,12 +1166,8 @@ fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     let value = match do_resolve(global_object, callframe.arguments()) {
         Ok(v) => v,
         Err(e) => {
-            let err = global_object.take_error(e);
             return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_object,
-                    err,
-                ),
+                JSPromise::rejected_promise_with_caught_exception(global_object, e)?.to_js(),
             );
         }
     };
@@ -1169,7 +1175,7 @@ fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
 }
 
 // HOST_EXPORT(Bun__resolveSync, c)
-pub fn bun_resolve_sync(
+pub(crate) fn bun_resolve_sync(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
@@ -1210,10 +1216,8 @@ pub fn bun_resolve_sync(
 /// that remain valid for the duration of this call.
 // FFI entry point exported via HOST_EXPORT and called only from C++
 // (ImportMetaObject.cpp / NodeModuleModule.cpp), which upholds the contract
-// above. clippy excludes `extern "C"` fns from this lint; the export wrapper
-// lives in generated code, so allow it here.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
-pub fn bun_resolve_sync_with_paths(
+// above.
+pub(crate) fn bun_resolve_sync_with_paths(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
@@ -1272,7 +1276,7 @@ pub fn bun_resolve_sync_with_paths(
 bun_output::declare_scope!(importMetaResolve, visible);
 
 // HOST_EXPORT(Bun__resolveSyncWithStrings, c)
-pub fn bun_resolve_sync_with_strings(
+pub(crate) fn bun_resolve_sync_with_strings(
     global: &JSGlobalObject,
     specifier: &BunString,
     source: &BunString,
@@ -1299,7 +1303,7 @@ pub fn bun_resolve_sync_with_strings(
 /// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier
 /// that is not a string — is thrown.
 // HOST_EXPORT(Bun__resolveSyncWithSourceIfExists, c)
-pub fn bun_resolve_sync_with_source_if_exists(
+pub(crate) fn bun_resolve_sync_with_source_if_exists(
     global: &JSGlobalObject,
     specifier: JSValue,
     source: &BunString,
@@ -1340,33 +1344,23 @@ fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     };
 
     let bytes = buffer.byte_slice();
-    let mut current_offset = offset;
-    let end = bytes.len() as u32;
-
-    while current_offset < end as usize {
-        if let Some(i) = strings::index_of_newline_or_non_ascii(bytes, current_offset as u32) {
-            let byte = bytes[i as usize];
-            if byte > 0x7F {
-                current_offset =
-                    i as usize + (strings::wtf8_byte_sequence_length(byte) as usize).max(1);
-                continue;
-            }
-
-            if byte == b'\n' {
-                return Ok(JSValue::js_number(i as f64));
-            }
-
-            current_offset = i as usize + 1;
-        } else {
-            break;
-        }
+    if offset >= bytes.len() {
+        return Ok(JSValue::js_number_from_int32(-1));
     }
 
-    Ok(JSValue::js_number_from_int32(-1))
+    // 0x0A never appears inside a multi-byte UTF-8 sequence.
+    Ok(
+        match strings::index_of_char_usize(&bytes[offset..], b'\n') {
+            Some(i) => JSValue::js_number((offset + i) as f64),
+            None => JSValue::js_number_from_int32(-1),
+        },
+    )
 }
 
 #[bun_jsc::host_fn]
 fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    // The server is the calling script's.
+    let context = global_object.bun_vm().context_of_caller(callframe);
     let arguments = callframe.arguments();
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global_object.bun_vm().as_mut();
@@ -1424,6 +1418,12 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
                         let server: &mut $T = unsafe { &mut *entry.ptr.cast::<$T>() };
                         server.on_reload_from_zig(&mut config, global_object);
+                        // Its handlers are the calling script's now, and so is the server: it goes
+                        // with that script's context, not with the one that first listened.
+                        server.abort_handle.leave();
+                        server.context.set(context.id());
+                        // SAFETY: heap-allocated; leaves its context in `stop_listening` / `deinit`.
+                        unsafe { bun_jsc::AbortHandle::arm_owner(std::ptr::from_mut(server), context) };
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
                 }
@@ -1497,12 +1497,12 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             drop(_handler_pins);
             server_ref.gc_hint_after_listen();
 
-            if let Some(handles) = crate::jsc_hooks::active_handles() {
-                bun_core::handle_oom(handles.put(
-                    crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(server.cast_const())),
-                    (),
-                ));
-            }
+            // SAFETY: `server` is heap-allocated and leaves its context in
+            // `stop_listening` / `deinit`.
+            unsafe {
+                (*server).context.set(context.id());
+                bun_jsc::AbortHandle::arm_owner(server, context)
+            };
 
             // `init` moved `config` into the server (`mem::take`), so the
             // local `config` is defaulted from here on — read `allow_hot`
@@ -1575,7 +1575,7 @@ fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         let vm = global_this.bun_vm();
         let mut args = ArgumentsSlice::init(vm, callframe.arguments());
 
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let path = 'brk: {
             if let Some(path) = args.next_eat() {
                 if path.is_string() {
@@ -1704,6 +1704,10 @@ fn get_transpiler_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSV
     jsc::codegen::js::get_constructor::<crate::api::js_transpiler::JSTranspiler>(global_this)
 }
 
+fn get_fetch_session_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    jsc::codegen::js::get_constructor::<crate::webcore::fetch::FetchSession>(global_this)
+}
+
 fn get_file_system_router(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::api::filesystem_router::FileSystemRouter>(
         global_this,
@@ -1741,7 +1745,12 @@ fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValu
 }
 
 fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::api::glob::Glob>(global_this)
+    // SAFETY: a lazy property callback, entered from JSC with no `JsScope` borrowed.
+    unsafe {
+        JsScope::with(global_this.as_mut_ptr(), |cx| {
+            crate::api::glob::Glob::get_constructor(&cx.heap).to_js()
+        })
+    }
 }
 
 fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -1806,7 +1815,13 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
 fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     use crate::valkey_jsc::JSValkeyClient;
 
-    let valkey = match JSValkeyClient::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED]) {
+    // `Bun.redis` is the realm's: not owned (and closed at dispose()) by whichever
+    // Bun.ModuleGraph reads the property first.
+    let vm = global_this.bun_vm();
+    let valkey = match JSValkeyClient::create_no_js_no_pubsub(
+        &global_this.js_thread(vm.root_context()),
+        &[JSValue::UNDEFINED],
+    ) {
         Ok(p) => p,
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
@@ -2013,25 +2028,11 @@ pub(crate) mod environment_variables {
         false
     }
 
-    /// The value borrows the env map; the caller copies before the map can
-    /// mutate. `Dead` when absent.
-    #[unsafe(no_mangle)]
-    extern "C" fn Bun__getEnvValueBunString<'a>(
-        global_object: &'a JSGlobalObject,
-        name: &BunString,
-    ) -> bun_core::StringView<'a> {
-        let vm = global_object.bun_vm();
-        let name_slice = name.to_utf8();
-        match vm.env_loader().get(name_slice.slice()) {
-            Some(val) => bun_core::StringView::borrow_utf8(val),
-            None => bun_core::StringView::DEAD,
-        }
-    }
-
     /// Sync a process.env write back to the native env map so that native
     /// consumers (e.g. fetch's proxy resolution via env.getHttpProxyFor)
-    /// observe the updated value. Used by custom setters for proxy-related
-    /// env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase variants).
+    /// observe the updated value. Used by process.env's write and delete paths for proxy-related
+    /// env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY and lowercase variants).
+    /// A `Dead` value removes the variable.
     ///
     /// Values are ref-counted in RareData.proxy_env_storage so that
     /// worker_threads share the parent's strings (refcount bumped at spawn)
@@ -2062,6 +2063,12 @@ pub(crate) mod environment_variables {
         *slot.ptr = None;
 
         let env_map = &mut vm.transpiler.env_mut().map;
+
+        // `delete process.env.X`
+        if value.tag() == bun_core::Tag::Dead {
+            env_map.remove(slot.key);
+            return;
+        }
 
         if value.is_empty() {
             // Store a static empty string rather than removing, so that
@@ -2158,7 +2165,7 @@ pub(crate) fn parse_compress_buffer_and_options(
 }
 
 #[allow(non_snake_case)]
-pub mod JSZlib {
+pub(crate) mod JSZlib {
     use super::*;
     use bun_jsc::ComptimeStringMapExt as _;
     use bun_libdeflate_sys::libdeflate as bun_libdeflate;
@@ -2583,7 +2590,7 @@ pub mod JSZlib {
 }
 
 #[allow(non_snake_case)]
-pub mod JSZstd {
+pub(crate) mod JSZstd {
     use super::*;
 
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
@@ -2780,16 +2787,15 @@ pub mod JSZstd {
     }
 
     fn create_job(
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
         is_compress: bool,
         level: i32,
     ) -> JSValue {
-        let cx = global_this.js_thread();
-        let promise = jsc::JSPromiseStrong::init(global_this);
+        let promise = jsc::JSPromiseStrong::init(cx.global());
         let promise_value = promise.value();
         jsc::Job::<ZstdJob>::schedule(
-            &cx,
+            cx,
             ZstdJob {
                 buffer,
                 is_compress,
@@ -2806,8 +2812,9 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let cx = global_this.js_thread_of_caller(callframe);
         let (buffer, _, level) = get_options_async(global_this, callframe)?;
-        Ok(create_job(global_this, buffer, true, level))
+        Ok(create_job(&cx, buffer, true, level))
     }
 
     #[bun_jsc::host_fn]
@@ -2815,8 +2822,9 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let cx = global_this.js_thread_of_caller(callframe);
         let (buffer, _, _) = get_options_async(global_this, callframe)?;
-        Ok(create_job(global_this, buffer, false, 0)) // level is ignored for decompression
+        Ok(create_job(&cx, buffer, false, 0)) // level is ignored for decompression
     }
 }
 
@@ -2925,16 +2933,16 @@ mod stdio_stores {
 }
 
 // HOST_EXPORT(BunObject__createBunStdin)
-pub fn create_bun_stdin(global_this: &JSGlobalObject) -> JSValue {
+pub(crate) fn create_bun_stdin(global_this: &JSGlobalObject) -> JSValue {
     stdio_stores::stdin(global_this)
 }
 
 // HOST_EXPORT(BunObject__createBunStderr)
-pub fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
+pub(crate) fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
     stdio_stores::stderr(global_this)
 }
 
 // HOST_EXPORT(BunObject__createBunStdout)
-pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
+pub(crate) fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
     stdio_stores::stdout(global_this)
 }

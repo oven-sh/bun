@@ -2,11 +2,6 @@ use crate::jsc::{JSGlobalObject, JSValue};
 
 pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
     let binding = JSValue::create_empty_object_with_null_prototype(global_object);
-    binding.put(
-        global_object,
-        b"MySQLConnection",
-        crate::jsc::codegen::JSMySQLConnection::get_constructor(global_object),
-    );
     crate::put_host_functions!(
         binding,
         global_object,

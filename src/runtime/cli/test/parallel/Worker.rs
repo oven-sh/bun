@@ -15,14 +15,13 @@ use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Sta
 use bun_core::{self, Output};
 #[cfg(windows)]
 use bun_jsc as jsc;
-use bun_sys;
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
 use super::file_range::FileRange;
 use super::frame;
 
-pub struct Worker {
+pub(crate) struct Worker {
     // BACKREF to the owning Coordinator. Stored as `*const` for LIFETIMES.tsv
     // parity, but mutation sites (`live_workers`, `on_worker_exit`, `frame`)
     // go through `cast_mut()`. The pointer is created from `&raw mut coord` in
@@ -69,6 +68,13 @@ pub struct Worker {
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub(crate) exit_status: Option<Status>,
     pub(crate) reap_pending: bool,
+    /// Set when this process sends `.ready`; reset before each respawn.
+    /// `inflight == None` with `!reached_ready` at reap distinguishes a
+    /// startup failure from a clean post-shutdown exit.
+    pub(crate) reached_ready: bool,
+    /// Consecutive (re)spawns of this slot that exited before `.ready`;
+    /// reset on `.ready`. Bounds the respawn loop in `reap_worker`.
+    pub(crate) startup_failures: u8,
 }
 
 impl Worker {
@@ -238,7 +244,6 @@ impl Worker {
                 if let spawn::WindowsStdioResult::Buffer(p) = item {
                     let raw = bun_core::heap::into_raw(p);
                     debug_assert_eq!(raw, ipc_pipe, "extra_pipes Box must wrap ipc_pipe");
-                    let _ = raw;
                 }
             }
             this.process = Some(spawned.to_process_handle(coord.vm.event_loop()));
@@ -383,7 +388,7 @@ impl ChannelOwner for Worker {
 /// Reads worker stdout/stderr. Accumulates into the worker's `captured` buffer
 /// and flushes atomically with the next test result so console output from
 /// concurrent files never interleaves.
-pub struct WorkerPipe {
+pub(crate) struct WorkerPipe {
     pub(crate) reader: bun_io::BufferedReader,
     pub(crate) worker: *const Worker,
     /// EOF or error observed.

@@ -7,15 +7,15 @@
 
 import { existsSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { sharedCacheDir as resolveSharedCacheDir } from "./config.ts";
 import { allDeps } from "./deps/index.ts";
 
 const cwd = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-// Machine-shared cache (ccache/cargo/tarballs/webkit). Matches resolveConfig()'s
+// Machine-shared cache (ccache/cargo/tarballs/webkit): resolveConfig()'s
 // non-CI default. `clean` is a dev-machine tool so we don't branch on CI here.
-const sharedCacheDir = resolve(process.env.BUN_INSTALL || resolve(homedir(), ".bun"), "build-cache");
+const sharedCacheDir = resolveSharedCacheDir(cwd);
 
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
@@ -31,9 +31,9 @@ presets:
   release          build/release/
   debug-local      build/debug-local/
   release-local    build/release-local/
-  rust             cargo target dirs across all profiles + ~/.bun/build-cache/cargo
+  rust             rust-target/ dirs across all profiles + <build cache>/cargo
   cpp              C++ obj/ + pch/ across all profiles
-  cache            machine-shared build cache (~/.bun/build-cache: ccache, cargo,
+  cache            machine-shared build cache (${sharedCacheDir}: ccache, cargo,
                    tarballs, prebuilt webkit) — affects ALL checkouts
   deep             build/, target/, vendor/* (except manually managed deps
                    like WebKit)

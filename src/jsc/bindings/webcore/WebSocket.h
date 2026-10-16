@@ -39,6 +39,7 @@
 #include <wtf/Lock.h>
 #include "FetchHeaders.h"
 #include "WebSocketErrorCode.h"
+#include "JSValueInWrappedObject.h"
 
 namespace WebCore {
 class JSBlob;
@@ -134,6 +135,11 @@ public:
         CLOSED = 3,
     };
 
+    enum class BinaryType { Blob,
+        ArrayBuffer,
+        // non-standard:
+        NodeBuffer };
+
     enum Opcode : unsigned char {
         Continue = 0x0,
         Text = 0x1,
@@ -196,7 +202,7 @@ public:
     String protocol() const;
     String extensions() const;
 
-    String binaryType() const;
+    BinaryType binaryType() const { return m_binaryType; }
     ExceptionOr<void> setBinaryType(const String&);
 
     ScriptExecutionContext* scriptExecutionContext() const final;
@@ -204,7 +210,7 @@ public:
     void didConnect();
     void didStartClosingHandshake();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
+    void didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx, std::span<const uint8_t> verifiedHostname);
     void didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 
@@ -280,6 +286,14 @@ public:
         return m_rejectUnauthorized;
     }
 
+    bool isProxyTLS() const { return m_connectionType == ConnectionType::ProxyTLS; }
+
+    const JSValueInWrappedObject& checkServerIdentity() const { return m_checkServerIdentity; }
+    void setCheckServerIdentity(JSC::VM& vm, const JSC::JSCell* wrapper, JSC::JSValue callback)
+    {
+        m_checkServerIdentity.set(vm, wrapper, callback);
+    }
+
     size_t memoryCost() const;
 
 private:
@@ -311,11 +325,6 @@ private:
     void sendWebSocketString(const String& message, const Opcode opcode);
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
     void setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params);
-
-    enum class BinaryType { Blob,
-        ArrayBuffer,
-        // non-standard:
-        NodeBuffer };
 
     State m_state { CONNECTING };
     URL m_url;
@@ -351,6 +360,8 @@ private:
     // TLS options (native heap SSLConfig — ownership is released to the
     // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).
     WebSocketSSLConfigPtr m_sslConfig;
+    // `tls.checkServerIdentity`, marked by JSWebSocket::visitChildren.
+    JSValueInWrappedObject m_checkServerIdentity;
 
     NativeCallbacks m_native;
 };

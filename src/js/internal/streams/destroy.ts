@@ -24,9 +24,6 @@ const kConstruct = Symbol("kConstruct");
 
 function checkError(err, w, r) {
   if (err) {
-    // Avoid V8 leak, https://github.com/nodejs/node/pull/34103#issuecomment-652002364
-    err.stack; // eslint-disable-line no-unused-expressions
-
     if (w && !w.errored) {
       w.errored = err;
     }
@@ -203,9 +200,6 @@ function errorOrDestroy(stream, err, sync?) {
   if ((r && (r[kState] & kAutoDestroy) !== 0) || (w && (w[kState] & kAutoDestroy) !== 0)) {
     stream.destroy(err);
   } else if (err) {
-    // Avoid V8 leak, https://github.com/nodejs/node/pull/34103#issuecomment-652002364
-    err.stack; // eslint-disable-line no-unused-expressions
-
     if (w && (w[kState] & kErrored) === 0) {
       w.errored = err;
     }

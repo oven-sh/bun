@@ -1,8 +1,11 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { createReadStream, readFile } from "node:fs";
 import { totalmem } from "node:os";
+import { Readable } from "node:stream";
+import vm from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1396,11 +1399,12 @@ test.concurrent.each([
   ["an accessor", `Object.defineProperty(Error, "stackTraceLimit", { get: () => 10 });`],
   ["deleted", `delete Error.stackTraceLimit;`],
 ])("Error.appendStackTrace does not crash when stackTraceLimit is %s", async (_, setup) => {
-  // An error made under such a limit has no frames, so appendStackTrace captures them first.
+  // An error made under such a limit captured no stack, so appendStackTrace captures one for it first.
+  // That stack has no frame under such a limit, so it reads as the header line.
   const src = `${setup}
     const source = new Error("source"), destination = new Error("destination");
     Error.appendStackTrace(source, destination);
-    console.log(typeof destination.stack);`;
+    console.log(destination.stack);`;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
     env: bunEnv,
@@ -1408,7 +1412,10 @@ test.concurrent.each([
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({ stdout: "undefined", signalCode: null });
+  expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
+    stdout: "Error: destination",
+    signalCode: null,
+  });
   expect(exitCode).toBe(0);
 });
 
@@ -1436,6 +1443,286 @@ test("Error.stackTraceLimit default matches the limit captureStackTrace applies"
   const { reported, before, after } = JSON.parse(stdout);
   // Node.js defaults to 10 and the reported value must match the applied limit.
   expect({ reported, before, after, exitCode }).toEqual({ reported: 10, before: 10, after: 10, exitCode: 0 });
+});
+
+// In V8 every Error owns a non-enumerable `stack`. An Error that captured no frame did not own one here, so a
+// stack that was assigned to it became an ordinary enumerable key, and `error.stack` was undefined.
+describe("an Error that captured no stack frame", () => {
+  const missingFile = join(import.meta.dir, "does-not-exist");
+
+  // An Error that is made while Error.stackTraceLimit is `limit`. "deleted" deletes the property.
+  function errorUnder(limit, make = () => new Error("m")) {
+    const previous = Error.stackTraceLimit;
+    if (limit === "deleted") delete Error.stackTraceLimit;
+    else Error.stackTraceLimit = limit;
+    try {
+      return make();
+    } finally {
+      Error.stackTraceLimit = previous;
+    }
+  }
+
+  test("a stack that is assigned to it is not an enumerable key", () => {
+    const limits = [0, -1, NaN, undefined, "10", "deleted"];
+    const makers = {
+      "new Error": () => new Error("m"),
+      "new TypeError": () => new TypeError("m"),
+      "a subclass": () => new (class Mine extends Error {})("m"),
+      "thrown by the engine": () => {
+        try {
+          null.x;
+        } catch (error) {
+          return error;
+        }
+      },
+    };
+    const key = "stack";
+    const writes = {
+      "error.stack = value": error => void (error.stack = "value"),
+      "error[key] = value": error => void (error[key] = "value"),
+      "error.stack += value": error => void (error.stack += "value"),
+      "Object.assign": error => void Object.assign(error, { stack: "value" }),
+      "Reflect.set": error => void Reflect.set(error, "stack", "value"),
+    };
+    const visible = [];
+    for (const limit of limits) {
+      for (const [how, make] of Object.entries(makers)) {
+        for (const [what, write] of Object.entries(writes)) {
+          const error = errorUnder(limit, make);
+          write(error);
+          if (Object.keys(error).includes("stack") || "stack" in { ...error } || JSON.stringify(error) !== "{}")
+            visible.push(`limit ${String(limit)}, ${how}, ${what}`);
+        }
+      }
+    }
+    expect(visible).toEqual([]);
+  });
+
+  test.each([0, -1, 0.5])("made under Error.stackTraceLimit = %p, it owns a hidden stack: the header line", limit => {
+    const error = errorUnder(limit, () => new TypeError("m"));
+    expect(Object.getOwnPropertyDescriptor(error, "stack")).toEqual({
+      value: "TypeError: m",
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
+  test.each([undefined, null, "10", "deleted"])(
+    "made under a limit that is not a number (%p), it owns a hidden stack: undefined",
+    limit => {
+      const error = errorUnder(limit);
+      expect(Object.getOwnPropertyDescriptor(error, "stack")).toEqual({
+        value: undefined,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
+    },
+  );
+
+  test("Error.prepareStackTrace formats its stack when the stack is read, with no call site", () => {
+    const callSiteCounts = [];
+    Error.prepareStackTrace = (error, callSites) => {
+      callSiteCounts.push(callSites.length);
+      return "prepared " + error.message;
+    };
+
+    const error = errorUnder(0);
+    expect({
+      hasOwn: Object.hasOwn(error, "stack"),
+      in: "stack" in error,
+      ownKeys: Reflect.ownKeys(error).includes("stack"),
+      keys: Object.keys(error),
+    }).toEqual({ hasOwn: true, in: true, ownKeys: true, keys: [] });
+    const stored = errorUnder(0);
+    stored.stack = "value";
+    const deleted = errorUnder(0);
+    delete deleted.stack;
+    // None of these reads the stack, so none of them formats it.
+    expect(callSiteCounts).toEqual([]);
+
+    expect([error.stack, error.stack, stored.stack, deleted.stack]).toEqual([
+      "prepared m",
+      "prepared m",
+      "value",
+      undefined,
+    ]);
+    expect(callSiteCounts).toEqual([0]);
+
+    // No stack was captured at all, so there is nothing to format.
+    expect(errorUnder("deleted").stack).toBeUndefined();
+    expect(callSiteCounts).toEqual([0]);
+  });
+
+  test("its stack is formatted when the stack is first read", () => {
+    const error = errorUnder(0);
+    error.name = "Renamed";
+    error.message = "changed";
+    expect(error.stack).toBe("Renamed: changed");
+    error.message = "changed again";
+    expect(error.stack).toBe("Renamed: changed");
+  });
+
+  test("a stack that is deleted from it stays deleted", () => {
+    const error = errorUnder(0);
+    expect(delete error.stack).toBe(true);
+    expect({ hasOwn: Object.hasOwn(error, "stack"), stack: error.stack }).toEqual({ hasOwn: false, stack: undefined });
+    // The error owns no stack now, so this is an ordinary property, as in Node.js.
+    error.stack = "value";
+    expect(Object.keys(error)).toEqual(["stack"]);
+  });
+
+  test("it keeps its stack when it is frozen or sealed", () => {
+    const frozen = Object.freeze(errorUnder(0));
+    expect([frozen.stack, Object.isFrozen(frozen)]).toEqual(["Error: m", true]);
+
+    const sealed = Object.seal(errorUnder(0));
+    sealed.stack = "value";
+    expect([sealed.stack, Object.keys(sealed), Object.isSealed(sealed)]).toEqual(["value", [], true]);
+  });
+
+  test("its stack survives a garbage collection that runs before the first read", () => {
+    const errors = Array.from({ length: 200 }, (_, i) => errorUnder(0, () => new RangeError("m" + i)));
+    for (const error of errors) Object.hasOwn(error, "stack");
+    Bun.gc(true);
+    expect(errors.map(error => error.stack)).toEqual(errors.map((_, i) => "RangeError: m" + i));
+  });
+
+  test("structuredClone copies its stack", () => {
+    expect(structuredClone(errorUnder(0)).stack).toBe("Error: m");
+  });
+
+  test("a SyntaxError gets no parse frame in a stack that has no frame", () => {
+    expect(errorUnder(0, () => new SyntaxError("m")).stack).toBe("SyntaxError: m");
+    const parseError = errorUnder(0, () => {
+      try {
+        return new Function("let x = ;");
+      } catch (error) {
+        return error;
+      }
+    });
+    expect(parseError.stack).toBe(`SyntaxError: ${parseError.message}`);
+  });
+
+  // JavaScriptCore's own Error.captureStackTrace() is the one a node:vm context has. The stack it saves and the
+  // stack of an error with no frame are the same kind of property, so a compiled read of one also reads the other.
+  test("in a node:vm context, one site reads its stack and a stack that Error.captureStackTrace() saved", () => {
+    const mismatches = vm.runInNewContext(`
+      (function () {
+        function read(error) { return error.stack; }
+        const mismatches = [];
+        for (let i = 0; i < 3000 && !mismatches.length; i++) {
+          const limit = Error.stackTraceLimit;
+          Error.stackTraceLimit = 0;
+          const frameless = new Error("frameless");
+          Error.stackTraceLimit = limit;
+          const captured = new Error("captured");
+          Error.captureStackTrace(captured);
+          if (i % 2) Object.hasOwn(frameless, "stack");
+          const stacks = i % 3 ? [read(frameless), read(captured)] : [read(captured), read(frameless)].reverse();
+          if (stacks[0] !== "Error: frameless" || typeof stacks[1] !== "string" || !stacks[1].includes("evalmachine"))
+            mismatches.push([i, String(stacks[0]), String(stacks[1])]);
+        }
+        return JSON.stringify(mismatches);
+      })()`);
+    expect(mismatches).toBe("[]");
+  });
+
+  // The error of an fs callback is made by native code while no JavaScript runs.
+  test("an error that native code makes with no JavaScript on the stack owns a hidden stack", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    readFile(missingFile, resolve);
+    const error = await promise;
+    expect(error.code).toBe("ENOENT");
+    expect(Object.getOwnPropertyDescriptor(error, "stack")).toEqual({
+      value: `Error: ${error.message}`,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+    error.stack = "value";
+    expect(Object.keys(error)).not.toContain("stack");
+  });
+
+  // When such an error rejects a promise that an async function awaits, native code attaches the frame of that
+  // function to it. Those frames replaced a stack that was assigned before.
+  test("a stack that is assigned to it stays when native code attaches async frames later", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    readFile(missingFile, resolve);
+    const error = await promise;
+    error.stack = "assigned";
+
+    let controller;
+    const reader = new ReadableStream({
+      start(streamController) {
+        controller = streamController;
+      },
+    }).getReader();
+    async function readRejected() {
+      try {
+        await reader.read();
+      } catch (rejection) {
+        return rejection;
+      }
+    }
+    queueMicrotask(() => controller.error(error));
+    expect(await readRejected()).toBe(error);
+    expect(error.stack).toBe("assigned");
+  });
+
+  // node:stream used to read `error.stack` when a stream was destroyed. A read formats the stack, and the async
+  // frames that native code attaches when the error rejects an awaited promise come after that.
+  test("an error that passes through a node:stream keeps the async frames of the function that awaits it", async () => {
+    async function readMissingFile() {
+      await Readable.toWeb(createReadStream(missingFile)).getReader().read();
+    }
+    const error = await readMissingFile().then(
+      () => undefined,
+      error => error,
+    );
+    expect(error.code).toBe("ENOENT");
+    expect(error.stack).toContain("at async readMissingFile");
+  });
+
+  test.concurrent.each(["throw", "strict"])(
+    "--unhandled-rejections=%s gives 'uncaughtException' the error that native code rejected with",
+    async mode => {
+      const src = `
+        process.on("uncaughtException", (error, origin) => console.log(origin, error.code));
+        require("node:fs").promises.readFile(${JSON.stringify(missingFile)}).catch(error => Promise.reject(error));`;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), `--unhandled-rejections=${mode}`, "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Without an own stack the error is not "error-like", and an ERR_UNHANDLED_REJECTION error wraps it.
+      expect(stdout).toBe("unhandledRejection ENOENT\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("--unhandled-rejections=warn prints the error, and the warning's stack is not an enumerable key", async () => {
+    const src = `
+      process.on("warning", warning => {
+        if (warning.message.startsWith("Unhandled promise rejection."))
+          console.log(JSON.stringify({ keys: Object.keys(warning), stack: String(warning.stack).split("\\n")[0] }));
+      });
+      require("node:fs").promises.readFile(${JSON.stringify(missingFile)});`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--unhandled-rejections=warn", "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const header = `Error: ENOENT: no such file or directory, open '${missingFile}'`;
+    expect(stderr).toContain(`UnhandledPromiseRejectionWarning: ${header}`);
+    expect(JSON.parse(stdout)).toEqual({ keys: [], stack: header });
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("call sites inside a WebSocket message listener only contain script frames when the message arrives with the upgrade response", async () => {

@@ -1466,7 +1466,7 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
         CLEAR_IF_EXCEPTION(scope);
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return;
-        warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
+        warning->putDirect(vm, vm.propertyNames->stack, reasonStack, JSC::PropertyAttribute::DontEnum | 0);
     }
     if (!reasonStack) {
         reasonStack = JSValue::decode(Bun__noSideEffectsToString(vm, globalObject, reason));

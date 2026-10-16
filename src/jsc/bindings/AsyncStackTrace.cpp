@@ -164,6 +164,11 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
         return;
     if (auto* existing = instance->stackTrace(); existing && !existing->isEmpty())
         return;
+    // A stack that was assigned to the error stays too. Frames attached now would replace it the
+    // next time the error info materializes, which a compiled read of `stack` does not do.
+    unsigned stackAttributes = 0;
+    if (instance->getDirect(vm, vm.propertyNames->stack, stackAttributes) && !(stackAttributes & JSC::PropertyAttribute::CustomAccessorOrValue))
+        return;
 
     size_t limit = globalObject->stackTraceLimit().value_or(10);
     if (!limit)

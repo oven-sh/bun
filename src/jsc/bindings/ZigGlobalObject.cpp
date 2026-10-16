@@ -67,7 +67,6 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
-#include "BunIDLConvert.h"
 #include "BunObject.h"
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
@@ -1492,7 +1491,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     RELEASE_AND_RETURN(
         throwScope,
         Bun__encoding__toString(
-            encodedString.span8().data(),
+            byteCast<uint8_t>(encodedString.span8().data()),
             length,
             globalObject,
             static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));
@@ -2147,6 +2146,7 @@ void GlobalObject::finishCreation(VM& vm)
         setEvalEnabled(false, Bun::codeGenerationFromStringsDisallowedMessage);
 
     m_bakeAdditions.initialize();
+    m_bindgenAdditions.initialize();
     m_markdownTagStrings.initialize();
 
     static const LazyClassStructureInit lazyClassStructureInits[] = {

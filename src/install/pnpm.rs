@@ -2,7 +2,7 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_ast::{self, self as js_ast, E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
-use bun_core::fmt::for_terminal;
+use bun_core::fmt::{escape_control_chars, for_terminal};
 use bun_core::{Global, strings};
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
@@ -126,13 +126,16 @@ fn missing_package_entry(
         format_args!(
             "pnpm-lock.yaml has no package entry '{}' for dependency '{}' of {}",
             for_terminal(BStr::new(dep_path)),
-            BStr::new(dep_name),
+            escape_control_chars(dep_name),
             parent
         ),
     )
 }
 
 type StringMap = StringArrayHashMap<Box<[u8]>>;
+/// Maps each pnpm `patchedDependencies` key (`d`, `d@^1.0.0`, `d@1.0.0`) to Bun's
+/// `patchedDependencies` keys, one for every package that the pnpm key patches.
+type FoundPatches = StringArrayHashMap<Vec<Box<[u8]>>>;
 
 fn collect_strings(obj: &Expr, out: &mut StringMap) -> Result<(), AllocError> {
     for (key, value) in props(obj) {
@@ -258,9 +261,12 @@ fn resolution_from_package_entry(
         if ty == b"git"
             && let Some(repo) = get_str(obj, b"repo")
         {
+            let commit = string_buf.append(get_str(obj, b"commit").unwrap_or_default())?;
             return Ok(Resolution::init(TaggedValue::Git(Repository {
                 repo: string_buf.append(strings::without_prefix(repo, b"git+"))?,
-                committish: string_buf.append(get_str(obj, b"commit").unwrap_or_default())?,
+                committish: commit,
+                // `resolved` is the commit that gets checked out, and it names the cache folder.
+                resolved: commit,
                 ..Default::default()
             })));
         }
@@ -463,7 +469,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         .and_then(|e| e.as_bool())
         == Some(true);
 
-    let mut found_patches = StringMap::new();
+    let mut found_patches = FoundPatches::new();
     let mut snapshot_dep_paths = SnapshotDepPaths::new();
     let mut packages_with_unbound_peers: bun_collections::HashMap<PackageID, ()> =
         bun_collections::HashMap::new();
@@ -485,7 +491,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             bail!(
                 log,
                 "pnpm-lock.yaml override '{}' must be a string",
-                BStr::new(name_str)
+                escape_control_chars(name_str)
             );
         };
 
@@ -509,7 +515,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             bail!(
                 log,
                 "pnpm-lock.yaml override '{}' has an invalid value '{}'",
-                BStr::new(name_str),
+                escape_control_chars(name_str),
                 for_terminal(BStr::new(version_str))
             );
         }
@@ -591,8 +597,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 bail!(
                     log,
                     "pnpm-lock.yaml lists importer '{}' but '{}/package.json' does not exist",
-                    BStr::new(importer_path),
-                    BStr::new(importer_path)
+                    escape_control_chars(importer_path),
+                    escape_control_chars(importer_path)
                 );
             }
             crate::GetJsonResult::ParseErr(_) => return Err(InvalidPnpmLockfile),
@@ -766,8 +772,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 bail!(
                     log,
                     "pnpm-lock.yaml dependency '{}' of importer '{}' has a link path that is too long",
-                    BStr::new(dep.name.slice(string_bytes!(lockfile))),
-                    BStr::new(workspace_path)
+                    escape_control_chars(dep.name.slice(string_bytes!(lockfile))),
+                    escape_control_chars(workspace_path)
                 );
             };
 
@@ -912,7 +918,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 bail!(
                     log,
                     "pnpm-lock.yaml package '{}' has a directory path that is too long",
-                    BStr::new(name_str)
+                    escape_control_chars(name_str)
                 );
             };
             if let Some(workspace_pkg_id) = pkg_map
@@ -939,16 +945,13 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let resolved = res
                 .fmt(string_bytes!(lockfile), bun_core::fmt::PathSep::Posix)
                 .to_string();
+            let key = [name_str, b"@", resolved.as_bytes()].concat();
             lockfile.patched_dependencies.put(
-                string_hash(&[name_str, b"@", resolved.as_bytes()].concat()),
+                string_hash(&key),
                 crate::lockfile_real::PatchedDep::with_path(patch.path),
             )?;
-            if Dependency::split_name_and_maybe_version(&patch.config_key)
-                .1
-                .is_none()
-            {
-                found_patches.put(&patch.config_key, Box::from(resolved.as_bytes()))?;
-            }
+            let found = found_patches.get_or_put(&patch.config_key)?;
+            found.value_ptr.push(key.into_boxed_slice());
         }
 
         if res.tag == resolution::Tag::Npm {
@@ -972,12 +975,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         match url {
                             Some(url) => bun_core::warn!(
                                 "fetching pnpm registry \"{}\" packages from {}; add it to bunfig.toml or .npmrc if it needs authentication",
-                                BStr::new(registry_name),
-                                bun_core::fmt::redacted_npm_url(url)
+                                escape_control_chars(registry_name),
+                                for_terminal(BStr::new(url))
                             ),
                             None => bun_core::warn!(
                                 "skipped pnpm registry \"{}\" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)",
-                                BStr::new(registry_name)
+                                escape_control_chars(registry_name)
                             ),
                         }
                     }
@@ -1059,6 +1062,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             .ok_or(InvalidPnpmLockfile)?;
 
         let deps = lockfile.packages.items_dependencies()[pkg_id];
+        let mut unlocked_peers: Vec<usize> = Vec::new();
         for dep_id in deps.begin()..deps.end() {
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
             let string_buf = string_bytes!(lockfile);
@@ -1081,20 +1085,27 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             }
             let Some(version_maybe_alias) = importer_versions.get(dep_name) else {
                 if dep.behavior.is_peer() {
+                    // `--frozen-lockfile` must not resolve anything that pnpm-lock.yaml left out.
+                    if !dep.behavior.is_optional_peer()
+                        && !manager.options.enable.frozen_lockfile()
+                        && lockfile.packages_named(dep.name_hash).is_empty()
+                    {
+                        unlocked_peers.push(dep_id as usize);
+                    }
                     continue;
                 }
                 if pkg_id == 0 {
                     bail!(
                         log,
                         "pnpm-lock.yaml cannot resolve root dependency '{}' - missing version in importer",
-                        BStr::new(dep_name)
+                        escape_control_chars(dep_name)
                     );
                 }
                 bail!(
                     log,
                     "pnpm-lock.yaml cannot resolve workspace dependency '{}' in '{}' - missing version",
-                    BStr::new(dep_name),
-                    BStr::new(workspace_path)
+                    escape_control_chars(dep_name),
+                    escape_control_chars(workspace_path)
                 );
             };
             let reference = remove_suffix(strings::without_prefix(version_maybe_alias, b"npm:"));
@@ -1115,12 +1126,22 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     log,
                     &res_buf,
                     dep_name,
-                    format_args!("importer '{}'", BStr::new(workspace_path)),
+                    format_args!("importer '{}'", escape_control_chars(workspace_path)),
                 ));
             };
 
             lockfile.buffers.resolutions[dep_id as usize] = *res_pkg_id;
         }
+
+        // Drop these peers from the lockfile so that `bun install` resolves them, the same way it
+        // resolves dependencies that were added to package.json after pnpm-lock.yaml was written.
+        for &row in unlocked_peers.iter().rev() {
+            lockfile.buffers.dependencies[row..deps.end() as usize].rotate_left(1);
+            lockfile.buffers.resolutions[row..deps.end() as usize].rotate_left(1);
+        }
+        let len = deps.len - unlocked_peers.len() as u32;
+        lockfile.packages.items_dependencies_mut()[pkg_id].len = len;
+        lockfile.packages.items_resolutions_mut()[pkg_id].len = len;
     }
 
     for pkg_id in workspace_pkgs_end..lockfile.packages.len() {
@@ -1161,7 +1182,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     log,
                     &res_buf,
                     dep_name,
-                    format_args!("package '{}'", BStr::new(pkg_name)),
+                    format_args!("package '{}'", escape_control_chars(pkg_name)),
                 ));
             };
 
@@ -1180,6 +1201,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
         manager, false, // update_os_cpu
         false, // fill_integrity
+        None,
     )?;
 
     update_package_json_after_migration(Some(&mut *lockfile), manager, log, &found_patches)?;
@@ -1500,7 +1522,7 @@ impl std::fmt::Display for ImporterName<'_> {
         if self.0 == b"." {
             f.write_str("the root package")
         } else {
-            write!(f, "workspace \"{}\"", BStr::new(self.0))
+            write!(f, "workspace \"{}\"", escape_control_chars(self.0))
         }
     }
 }
@@ -1536,14 +1558,14 @@ fn parse_append_importer_dependencies(
                 bail!(
                     log,
                     "pnpm-lock.yaml dependency '{}' missing 'specifier' field",
-                    BStr::new(name_str)
+                    escape_control_chars(name_str)
                 );
             };
             let Some(version_expr) = value.get(b"version") else {
                 bail!(
                     log,
                     "pnpm-lock.yaml dependency '{}' missing 'version' field",
-                    BStr::new(name_str)
+                    escape_control_chars(name_str)
                 );
             };
             let version_str = as_str(&version_expr).ok_or(InvalidPnpmLockfile)?;
@@ -1552,8 +1574,8 @@ fn parse_append_importer_dependencies(
                 if !silent {
                     bun_core::warn!(
                         "skipped \"{}@{}\" from pnpm-lock.yaml: runtime dependencies are not supported",
-                        BStr::new(name_str),
-                        BStr::new(version_str)
+                        escape_control_chars(name_str),
+                        escape_control_chars(version_str)
                     );
                 }
                 continue;
@@ -1587,8 +1609,8 @@ fn parse_append_importer_dependencies(
                     bail!(
                         log,
                         "pnpm-lock.yaml catalog '{}' missing entry for dependency '{}'",
-                        BStr::new(catalog_name),
-                        BStr::new(name_str)
+                        escape_control_chars(catalog_name),
+                        escape_control_chars(name_str)
                     );
                 }
             }
@@ -1605,7 +1627,7 @@ fn parse_append_importer_dependencies(
         if !decl.optional && !importer_versions.contains(peer_name) && !silent {
             bun_core::warn!(
                 "skipped peer \"{}\" of {}: not recorded in pnpm-lock.yaml (bun install will resolve it)",
-                BStr::new(peer_name),
+                escape_control_chars(peer_name),
                 ImporterName(importer_path)
             );
         }
@@ -1624,7 +1646,7 @@ fn parse_append_importer_dependencies(
                 {
                     bun_core::warn!(
                         "skipped \"{}\" from {}: excluded from pnpm-lock.yaml by excludeLinksFromLockfile",
-                        BStr::new(name_str),
+                        escape_control_chars(name_str),
                         ImporterName(importer_path)
                     );
                 }
@@ -1646,21 +1668,21 @@ fn parse_append_importer_dependencies(
 }
 
 /// pnpm's allow-list of packages that may run lifecycle scripts, i.e. bun's `trustedDependencies`.
+/// Returns whether `list` is an array. An empty array counts, because it means that no package may
+/// run scripts, even though `as_array` returns `None` for it.
 fn collect_only_built_dependencies(list: &Expr, out: &mut Vec<&'static [u8]>) -> bool {
     let Some(mut items) = list.as_array() else {
-        return false;
+        return list.is_array();
     };
-    let mut found_any = false;
     while let Some(item) = items.next() {
         let Some(name) = as_str(&item).filter(|name| !name.is_empty()) else {
             continue;
         };
-        found_any = true;
         if !out.contains(&name) {
             out.push(name);
         }
     }
-    found_any
+    true
 }
 
 fn add_trusted_dependencies(
@@ -1687,7 +1709,7 @@ fn add_trusted_dependencies(
             VecExt::append(&mut items, item);
         }
     }
-    if items.len_u32() == existing_len {
+    if existing.is_some() && items.len_u32() == existing_len {
         return Ok(false);
     }
 
@@ -1729,7 +1751,7 @@ fn update_package_json_after_migration(
     lockfile: Option<&mut Lockfile>,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
-    patches: &StringMap,
+    patches: &FoundPatches,
 ) -> Result<(), AllocError> {
     let bump = bun_alloc::Arena::new();
     let silent = manager.options.log_level.is_silent();
@@ -1907,7 +1929,9 @@ fn update_package_json_after_migration(
         }
     }
 
-    if !trusted_names.is_empty() && add_trusted_dependencies(&mut json, &bump, &trusted_names)? {
+    if (pnpm_only_built_deps || workspace_only_built_deps)
+        && add_trusted_dependencies(&mut json, &bump, &trusted_names)?
+    {
         if pnpm_only_built_deps {
             copied.push("copied pnpm.onlyBuiltDependencies to trustedDependencies");
         }
@@ -2020,7 +2044,7 @@ fn copy_into_root(
     bump: &bun_alloc::Arena,
     field: &[u8],
     src: &Expr,
-    patches: Option<&StringMap>,
+    patches: Option<&FoundPatches>,
 ) -> Result<bool, AllocError> {
     let mut dest = match json.get(field) {
         Some(dest) if !dest.is_object() => return Ok(false),
@@ -2032,13 +2056,16 @@ fn copy_into_root(
         }
     };
     for (key, value) in props(src) {
-        let Some(mut key) = as_str(key) else {
+        let Some(key) = as_str(key) else {
             continue;
         };
-        if let Some(resolved) = patches.and_then(|patches| patches.get(key)) {
-            key = js_ast::data_store_dupe_str(&[key, b"@", resolved].concat());
+        let Some(found) = patches.and_then(|patches| patches.get(key)) else {
+            e_object_mut(&mut dest).put(bump, key, *value)?;
+            continue;
+        };
+        for key in found {
+            e_object_mut(&mut dest).put(bump, js_ast::data_store_dupe_str(key), *value)?;
         }
-        e_object_mut(&mut dest).put(bump, key, *value)?;
     }
     Ok(true)
 }

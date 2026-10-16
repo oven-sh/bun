@@ -21,7 +21,7 @@ bun add zod@latest
 
 Bun writes the package to `dependencies` unless you pass `--dev`, `--optional`, or `--peer`. If `package.json` already lists it in another group:
 
-- Without a flag, Bun updates that entry in place.
+- Without a flag, Bun updates that entry in place. If two of `dependencies`, `devDependencies` and `optionalDependencies` list it, Bun updates both, unless the install leaves one of those groups out (with `--omit=dev`, for example).
 - With `--dev`, `--optional`, `--peer`, or `--save-prod`, Bun moves the entry to the group you name. An entry in `peerDependencies` stays, and `--peer` keeps an entry in `devDependencies`.
 
 ## `--dev`
@@ -226,9 +226,13 @@ Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com
 }
 ```
 
-Bun runs `git` with the environment that `bun` was started in. Variables from the project's `.env` files (`PATH`, `GIT_SSH_COMMAND`, `GIT_DIR`, ...) do not reach it.
+Bun runs `git` (2.24 or newer) with the environment that `bun` was started in. Variables from the project's `.env` files (`PATH`, `GIT_SSH_COMMAND`, `GIT_DIR`, ...) do not reach it.
 
-Bun deletes a `node_modules` directory that the repository commits, unless its `package.json` has `bundleDependencies`.
+Bun tries an SSH URL over HTTPS first, then over SSH. It sets `GIT_SSH_COMMAND` to `ssh -oStrictHostKeyChecking=accept-new`, unless you have an SSH command of your own: `core.sshCommand` in your git config, `GIT_SSH` or `GIT_SSH_COMMAND`. A `core.sshCommand` from an `includeIf` section that depends on the repository does not count; use `GIT_SSH_COMMAND` for that.
+
+Bun deletes a `node_modules` directory that the repository commits, unless its `package.json` has `bundleDependencies`. A symbolic link to a file in the repository is installed as a copy of that file. Other symbolic links are not installed.
+
+The package's `prepare` script, which often builds `dist/`, runs only when the package is in [`trustedDependencies`](/pm/lifecycle#trusteddependencies). Bun does not install the package's `devDependencies` first, so a script that needs a build tool from there fails.
 
 ## Tarball dependencies
 

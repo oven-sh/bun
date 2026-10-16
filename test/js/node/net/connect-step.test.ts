@@ -1,7 +1,7 @@
 /**
- * All tests in this file run in both Bun and Node.js: `bun test` runs them
- * here, and the last test runs this same file under Node.js. The expected
- * values come from Node.js v26.3.0.
+ * The tests in this file run in both Bun and Node.js, except the one that is
+ * marked Bun-only: `bun test` runs them here, and the last test runs this same
+ * file under Node.js. The expected values come from Node.js v26.3.0.
  *
  * The step from a lookup result to the connect call. TCPWrap::Connect parses
  * the address in the family that the lookup named, and libuv allows one
@@ -24,23 +24,24 @@ const busy = process.platform === "win32" ? "EISCONN" : "EALREADY";
 
 async function listening() {
   const accepted: net.Socket[] = [];
-  let onConnection = () => {};
+  let onProbe = () => {};
   const server = net.createServer(connection => {
     accepted.push(connection);
     connection.on("error", () => {});
-    connection.resume();
-    onConnection();
+    // Only the probe of connections() writes.
+    connection.on("data", () => onProbe());
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as net.AddressInfo).port;
   return {
     port,
-    // The accept queue is in order: when this connection is accepted, every earlier one was counted.
+    // The accept queue is in order: when the server reads the probe, it counted every earlier connection.
     async connections() {
-      const probed = new Promise<void>(resolve => (onConnection = resolve));
-      const probe = net.connect(port, "127.0.0.1");
-      probe.on("error", () => {});
-      await probed;
+      const probe = net.connect(port, "127.0.0.1", () => probe.write("probe"));
+      await new Promise<void>((resolve, reject) => {
+        onProbe = resolve;
+        probe.on("error", reject);
+      });
       probe.destroy();
       return accepted.length - 1;
     },
@@ -126,7 +127,7 @@ describe("the step from a lookup result to the connect call", () => {
     }
   });
 
-  // Node.js closes the handle under the first request there, and then fails an internal assertion.
+  // Bun-only: Node.js dials the next address on a new handle there, and the result depends on that address and on the first connect.
   const bunOnly = process.versions.bun ? test : test.skip;
   const twice: Lookup = (_hostname, _options, callback) => {
     callback(null, "127.0.0.1", 4);

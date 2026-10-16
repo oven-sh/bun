@@ -7934,6 +7934,7 @@ describe("css tests", () => {
     minify_test(".foo { container-type: normal; }", ".foo{container-type:normal}");
     minify_test(".foo { container-type: size; }", ".foo{container-type:size}");
     minify_test(".foo { container-type: inline-size; }", ".foo{container-type:inline-size}");
+    minify_test(".foo { container-type: scroll-state; }", ".foo{container-type:scroll-state}");
     minify_test(".foo { container-name: none; }", ".foo{container-name:none}");
     minify_test(".foo { container-name: foo; }", ".foo{container-name:foo}");
     minify_test(".foo { container-name: foo bar; }", ".foo{container-name:foo bar}");
@@ -7943,6 +7944,7 @@ describe("css tests", () => {
     minify_test(".foo { container: foo / normal; }", ".foo{container:foo}");
     minify_test(".foo { container: foo / size; }", ".foo{container:foo/size}");
     minify_test(".foo { container: foo bar / inline-size; }", ".foo{container:foo bar/inline-size}");
+    minify_test(".foo { container: foo / scroll-state; }", ".foo{container:foo/scroll-state}");
     // `none`, `and`, `not` and `or` are not valid container names. The
     // declaration is kept as written.
     minify_test(".foo { container-name: and; }", ".foo{container-name:and}");

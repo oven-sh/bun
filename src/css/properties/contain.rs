@@ -14,6 +14,8 @@ pub enum ContainerType {
     Size,
     /// The element is a query container for inline size queries.
     InlineSize,
+    /// The element is a query container for scroll-state queries.
+    ScrollState,
 }
 
 /// A value for the [container-name](https://drafts.csswg.org/css-contain-3/#container-name) property.

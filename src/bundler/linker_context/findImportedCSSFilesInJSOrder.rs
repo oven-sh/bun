@@ -47,6 +47,11 @@ pub(crate) fn find_imported_css_files_in_js_order(
     _temp: &Arena,
     entry_point: Index,
 ) -> Vec<Index> {
+    // Without a CSS file in the bundle there is nothing to list.
+    if this.parse_graph().css_file_count == 0 {
+        return Vec::new();
+    }
+
     let mut visited = BitSet::init_empty(this.graph.files.len()).expect("oom");
     let mut order: Vec<Index> = Vec::new();
 

@@ -333,7 +333,8 @@ pub(crate) struct Connection {
     /// chunks as bytes arrive (node emits 'data' for a partial frame); buffering until the
     /// frame completes would stall consumers behind a peer that trickles one large frame.
     data_in_flight: Option<DataInFlight>,
-    /// A locally-detected connection error already tore the session down: ignore further input.
+    /// A locally-detected connection error already tore the session down, or the embedder let go
+    /// of it (`discard_input`): ignore further input.
     terminated: bool,
     /// PING/SETTINGS ACKs queued behind a non-reading peer (nghttp2's
     /// obq_flood_counter_). Reset only via note_outbound_drained() when the
@@ -843,6 +844,12 @@ impl Connection {
     /// from receive() itself so a peer that never reads cannot reset it.
     pub(crate) fn note_outbound_drained(&mut self) {
         self.obq_ack_pending = 0;
+    }
+
+    /// The embedder has no session left to deliver frames to: `receive()` consumes and ignores
+    /// whatever the peer still sends, and answers none of it.
+    pub(crate) fn discard_input(&mut self) {
+        self.terminated = true;
     }
 
     /// No-op when unchanged: the embedder re-syncs this on every read and must not refill the bucket.

@@ -350,6 +350,8 @@ const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
 const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
+// The socket's end() waits in kwriteCallback for HTTP/2 output that is still queued on the handle (endNT).
+const kEndParked = Symbol("kEndParked");
 const kRejectedWrite = Symbol("kRejectedWrite");
 const kSocketClass = Symbol("kSocketClass");
 
@@ -436,8 +438,31 @@ function endNT(self, socket, callback) {
   // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L500
   // A TLS wrap made since _final attached this socket's handle, or left the fd to the raw half of `socket`.
   const current = self._handle;
-  (!socket || current?.[kAdoptedTLSRaw] ? current : socket)?.shutdown();
+  const handle = !socket || current?.[kAdoptedTLSRaw] ? current : socket;
+  if (handle?.shutdown() === false) {
+    // An HTTP/2 session still has output queued on the handle. The handle sends the FIN after it
+    // and then reports a drain, as libuv runs node's shutdown request after the queued writes:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L548-L565
+    // The end is parked like a write that waits for the drain, and holds the loop like one.
+    self[kwriteCallback] = parkedEnd.bind(undefined, self, callback);
+    self[kEndParked] = true;
+    if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed]) handle.ref?.();
+    return;
+  }
   callback();
+}
+// The handle drained after its FIN, or it failed or closed first. Like node's afterShutdown, the
+// stream finishes whatever became of the shutdown.
+function parkedEnd(self, callback) {
+  self[kEndParked] = false;
+  callback();
+}
+// The handle closed under a parked end. The write side finishes before the socket is torn down,
+// so 'finish' still comes before 'close'.
+function finishParkedEnd(self) {
+  const parked = self[kwriteCallback];
+  self[kwriteCallback] = null;
+  parked();
 }
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
@@ -1023,7 +1048,11 @@ function SocketEmitEndNT(self, _err?) {
   // writableFinished (everything actually flushed) - NOT writableEnded (end()
   // merely called): a peer reset while queued data is still unflushed is the
   // peer aborting mid-transfer and must surface (test-net-error-twice).
-  const teardownNoise = self[kended] && self.writableFinished;
+  // A parked end has flushed all of the socket's own writes. What still waits
+  // is an HTTP/2 session's output, and node's session reports no error for it.
+  const endParked = self[kEndParked] === true;
+  const teardownNoise = self[kended] && (self.writableFinished || endParked);
+  if (endParked && self[kclosed]) finishParkedEnd(self);
   // _hadError: the failure already reached JS through the error dispatch
   // (native on_error / a fatal write); node emits a socket error exactly
   // once, so the close that follows it is delivered plain.
@@ -1734,6 +1763,7 @@ const SocketHandlers2 = {
     self[kclosed] = true;
     const leftToTLSSocket = closeWithTLSSocket(self, socket);
     if (failRejectedWrite(self)) return;
+    if (self[kEndParked] === true) finishParkedEnd(self);
     // A received RST surfacing as ECONNRESET with the close is not a clean
     // EOF - Node destroys the socket with "read ECONNRESET" instead of a
     // graceful 'end'. Only surface it when the closing handle is still the

@@ -925,6 +925,20 @@ struct SendDataOptions {
     defer_write_callback: bool,
 }
 
+/// Who still waits for `write_buffer` once the connection is asked to end. A stream counts its
+/// frames as sent when they are serialized, so output the native socket refused with would-block
+/// is already reported as written: a FIN must not overtake it and the end of the session must
+/// not free it (the rule of uSockets' `ssl_shutdown_after_spill`, one layer up).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct OwedOutput {
+    /// `detach(true)` found output the socket had not taken. The parser stays in the socket's
+    /// native-callback slot only to drain it: it has no streams and no JS context any more.
+    draining: bool,
+    /// The socket was asked to half-close over that output (`defer_shutdown`). The parser issues
+    /// that half-close once nothing is owed, and the socket's own drain dispatch reports it.
+    fin_deferred: bool,
+}
+
 struct DispatchGuard<'a>(&'a Cell<u32>);
 
 impl Drop for DispatchGuard<'_> {
@@ -1149,6 +1163,7 @@ pub(crate) struct H2FrameParser {
     /// A native write returned a terminal result (socket closed, shut down, or the kernel
     /// rejected the send). Latched once; the deferred tick closes the transport.
     transport_write_fatal: Cell<bool>,
+    owed_output: Cell<OwedOutput>,
     /// An outbound header block the HPACK encoder could not emit. Latched once; the deferred
     /// tick reports it, because it is detected inside a user submit call.
     pending_header_compression_error: Cell<bool>,
@@ -7398,7 +7413,10 @@ impl H2FrameParser {
         Ok(())
     }
 
-    pub(crate) fn on_native_writable(&self) {
+    /// Returns whether the parser consumed the writable event. It does not when the last of
+    /// the output someone waits for (`OwedOutput`) has left: the half-close that `defer_shutdown`
+    /// held back is issued, and the socket runs its own drain dispatch to report it.
+    pub(crate) fn on_native_writable(&self) -> bool {
         // flush() re-enters JS (write callbacks, onStreamEnd, onWantTrailers);
         // that JS can destroy the session and drop the socket's ref, so the
         // keepalive must span the whole loop, not just each flush() call.
@@ -7415,6 +7433,96 @@ impl H2FrameParser {
                 break;
             }
         }
+        let owed = self.owed_output.get();
+        owed == OwedOutput::default() || self.still_owes_output(owed)
+    }
+
+    /// The slow half of `on_native_writable`, for a parser someone waits on. False once nothing
+    /// is owed: a draining parser then lets go of the socket, a live one only of the latch.
+    #[cold]
+    fn still_owes_output(&self, owed: OwedOutput) -> bool {
+        if owed.draining {
+            // `detach(true)` could not reach the engine from under one of its dispatches.
+            self.discard_inbound();
+        }
+        // A fatal send is not the end of the debt: its deferred tick closes the transport, and
+        // `on_native_close` settles from there.
+        if self.has_unsent_output() && (self.transport_write_fatal.get() || self.socket_takes_output())
+        {
+            return true;
+        }
+        self.owed_output.set(OwedOutput::default());
+        if owed.fin_deferred {
+            self.shutdown_native_socket();
+        }
+        if owed.draining {
+            self.write_buffer.with_mut(|wb| wb.clear_and_free());
+            self.write_buffer_offset.set(0);
+            self.detach_native_socket();
+        }
+        false
+    }
+
+    /// The half-close that `defer_shutdown` held back.
+    fn shutdown_native_socket(&self) {
+        match self.native_socket.get() {
+            BunSocket::Tcp(socket) => socket.get().socket.get().shutdown(),
+            BunSocket::Tls(socket) => socket.get().socket.get().shutdown(),
+            BunSocket::TcpWriteonly(_) | BunSocket::TlsWriteonly(_) | BunSocket::None => {}
+        }
+    }
+
+    fn has_unsent_output(&self) -> bool {
+        !self.write_buffer.get().slice()[self.write_buffer_offset.get()..].is_empty()
+    }
+
+    /// Whether the native socket can still take output it refused with would-block: the parser
+    /// gets its writable events (`Tcp` / `Tls`) and its write side is open.
+    fn socket_takes_output(&self) -> bool {
+        match self.native_socket.get() {
+            BunSocket::Tcp(socket) => socket.get().write_side_open(),
+            BunSocket::Tls(socket) => socket.get().write_side_open(),
+            BunSocket::TcpWriteonly(_) | BunSocket::TlsWriteonly(_) | BunSocket::None => false,
+        }
+    }
+
+    /// Output that is already counted as written and can still reach the peer through this
+    /// parser: the native socket refused it with would-block.
+    fn owes_output(&self) -> bool {
+        self.has_unsent_output() && !self.transport_write_fatal.get() && self.socket_takes_output()
+    }
+
+    /// The socket is asked to half-close its write side. A FIN now would cut off the output it
+    /// has not taken yet, so the answer is true while any is owed: `on_native_writable` issues
+    /// the half-close after the last of it.
+    pub(crate) fn defer_shutdown(&self) -> bool {
+        let _keepalive = self.keepalive();
+        self.uncork();
+        if !self.owes_output() {
+            return false;
+        }
+        self.owed_output.set(OwedOutput {
+            fin_deferred: true,
+            ..self.owed_output.get()
+        });
+        true
+    }
+
+    /// A draining parser has no session to deliver inbound frames to, and answers none.
+    fn discard_inbound(&self) {
+        // Borrowed when `detach(true)` runs under a dispatch of `receive()`; the next writable
+        // event tries again.
+        let Ok(mut engine) = self.engine.try_borrow_mut() else {
+            return;
+        };
+        engine
+            .get_or_insert_with(|| {
+                crate::api::h2::connection::Connection::new(
+                    self.is_server.get(),
+                    self.rewrite_local_settings(),
+                )
+            })
+            .discard_input();
     }
 
     pub(crate) fn on_native_close(&self) {
@@ -7423,6 +7531,11 @@ impl H2FrameParser {
         // so match on_native_read/on_native_writable and hold our own +1.
         let _keepalive = self.keepalive();
         self.detach_native_socket();
+        // Nobody else frees what a draining parser kept for a socket that is now gone.
+        if self.owed_output.replace(OwedOutput::default()).draining {
+            self.write_buffer.with_mut(|wb| wb.clear_and_free());
+            self.write_buffer_offset.set(0);
+        }
     }
 
     #[bun_jsc::host_fn(method)]
@@ -7543,6 +7656,7 @@ impl H2FrameParser {
             has_nonnative_backpressure: Cell::new(false),
             js_socket_flushing: Cell::new(false),
             transport_write_fatal: Cell::new(false),
+            owed_output: Cell::new(OwedOutput::default()),
             pending_header_compression_error: Cell::new(false),
             frames_sent_legacy: Cell::new(0),
             engine_frames_received: Cell::new(0),
@@ -7745,19 +7859,53 @@ impl H2FrameParser {
         Ok(scopeguard::ScopeGuard::into_inner(guard))
     }
 
+    /// `detach(keepOutput)`: true when the parser stays behind to drain output it still owes.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn detach_from_js(
         this: &Self,
         _global_object: &JSGlobalObject,
-        _callframe: &CallFrame,
+        callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        this.release_from_js();
-        Ok(JSValue::UNDEFINED)
+        let _keepalive = this.keepalive();
+        let keep_output = callframe.argument(0).to_boolean();
+        if this.owed_output.get().fin_deferred {
+            // `detach` decides after its uncork; decide the same way here.
+            this.uncork();
+            if !(keep_output && this.owes_output()) {
+                match this.native_socket.get() {
+                    BunSocket::Tcp(socket) => this.release_with_deferred_fin::<false>(socket)?,
+                    BunSocket::Tls(socket) => this.release_with_deferred_fin::<true>(socket)?,
+                    BunSocket::TcpWriteonly(_) | BunSocket::TlsWriteonly(_) | BunSocket::None => {
+                        this.release_from_js(false);
+                    }
+                }
+                return Ok(JSValue::FALSE);
+            }
+        }
+        Ok(JSValue::from(this.release_from_js(keep_output)))
     }
 
-    /// The session is over: free its streams, let go of the socket, and stop keeping the wrapper
-    /// (and through it the handlers and their context object) alive.
-    fn release_from_js(&self) {
+    /// `release_from_js(false)` for a socket whose half-close waits on this parser
+    /// (`defer_shutdown`). No writable event is left to issue it, so it is issued here, and the
+    /// socket gets a writable event that nothing consumes. Its drain dispatch enters JS, which
+    /// is why only `detach_from_js` does this.
+    fn release_with_deferred_fin<const SSL: bool>(
+        &self,
+        socket: bun_ptr::BackRef<crate::socket::NewSocket<SSL>>,
+    ) -> JsResult<()> {
+        // SAFETY: the attachment is live, so is its socket (`BunSocket`); the pointer is the
+        // root `m_ctx` pointer `NativeSocket::attach` stored.
+        let socket = unsafe { bun_ptr::ThisPtr::new(socket.as_const_ptr().cast_mut()) };
+        // The release lets go of the socket, and JS it runs can drop the wrapper's ref.
+        let _socket_alive = RefPtr::from_this(socket);
+        self.release_from_js(false);
+        socket.socket.get().shutdown();
+        crate::socket::NewSocket::<SSL>::on_writable(socket, socket.socket.get())
+    }
+
+    /// The session is over: free its streams, let go of the socket (see `detach`), and stop
+    /// keeping the wrapper (and through it the handlers and their context object) alive.
+    fn release_from_js(&self, keep_output: bool) -> bool {
         let this = self;
         this.abort_handle.leave();
         // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
@@ -7768,31 +7916,44 @@ impl H2FrameParser {
             // cleared. `stream` points into a disjoint Box.
             unsafe { (*stream).free_resources::<false>(this) };
         }
-        this.detach();
+        let draining = this.detach(keep_output);
         if let Some(this_value) = this.strong_this.get().try_get() {
             // `global_this` is `GlobalRef` (JSC_BORROW) — Deref gives `&JSGlobalObject`.
             JSH2FrameParser::Gc::context.clear(this_value, &this.global_this);
             this.strong_this.with_mut(|s| s.set_weak(this_value));
         }
+        draining
     }
 
-    /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore
-    /// this function can be called multiple times, it will erase stream info
-    pub(crate) fn detach(&self) {
+    /// Ends the session's use of the parser: stream contexts and HPACK state go, and so does
+    /// the socket with whatever it has not taken. With `keep_output`, output the socket still
+    /// owes the peer (`owes_output`) stays, and the parser stays in the socket's native-callback
+    /// slot to write it: returns true then. Can be called more than once.
+    pub(crate) fn detach(&self, keep_output: bool) -> bool {
         self.uncork();
         self.unregister_auto_flush();
-        self.detach_native_socket();
-
-        // Free the allocation, not just the length: detach() is reachable from JS without a
-        // following `deinit`, so the capacity must be released here.
-        self.write_buffer.with_mut(|wb| wb.clear_and_free());
+        let draining = keep_output && self.owes_output();
+        if draining {
+            self.owed_output.set(OwedOutput {
+                draining: true,
+                ..self.owed_output.get()
+            });
+            self.discard_inbound();
+        } else {
+            self.owed_output.set(OwedOutput::default());
+            self.detach_native_socket();
+            // Free the allocation, not just the length: detach() is reachable from JS without a
+            // following `deinit`, so the capacity must be released here.
+            self.write_buffer.with_mut(|wb| wb.clear_and_free());
+            self.write_buffer_offset.set(0);
+        }
         self.tx_tracker.set(TxFrameTracker::default());
         // Drop every per-stream JS context root; the parser is detaching.
         self.sctx.with_mut(|m| m.clear());
-        self.write_buffer_offset.set(0);
 
         // `HpackHandle::drop` → `lshpack_wrapper_deinit` (cleanup + free).
         self.hpack.set(None);
+        draining
     }
 
     /// `process.exit()` never unwinds: the VM is destructed from inside the `exit()` call, so
@@ -7825,14 +7986,16 @@ impl H2FrameParser {
 bun_jsc::impl_abort_handle_owner!(H2FrameParser, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ not dropped). The wrapper this makes
     // collectible is not finalized under this call.
-    unsafe { (*this).release_from_js() }
+    unsafe {
+        (*this).release_from_js(false);
+    }
 });
 
 impl Drop for H2FrameParser {
     fn drop(&mut self) {
         bun_output::scoped_log!(H2FrameParser, "deinit");
 
-        self.detach();
+        self.detach(false);
         // Note: take the map out first so `self` is free for
         // `free_resources(self)` while we walk the entries.
         let streams = self.streams.replace(BunHashMap::default());

@@ -965,7 +965,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.native_callback.get().on_writable() {
             return Ok(());
         }
-        let handlers = this.get_handlers();
+        // A native callback that leaves the event to this dispatch has run JS before it did.
+        let Some(handlers) = this.handlers_opt() else {
+            return Ok(());
+        };
         let callback = handlers.on_writable();
         if callback.is_empty() {
             return Ok(());
@@ -2670,6 +2673,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         res
     }
 
+    /// Whether a write that `write_maybe_corked` does not take now can be taken after a
+    /// writable event: the socket is connected and nothing has ended its write side for good.
+    pub(crate) fn write_side_open(&self) -> bool {
+        let socket = self.socket.get();
+        socket.is_established()
+            && !socket.is_shutdown()
+            && !socket.is_closed()
+            && !(SSL && self.flags.get().contains(Flags::REJECTED))
+    }
+
     pub(crate) fn write_maybe_corked(&self, buffer: &[u8]) -> i32 {
         let socket = self.socket.get();
         if socket.is_shutdown() || socket.is_closed() {
@@ -3270,6 +3283,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callframe.arguments_count() > 0 && arg.to_boolean() {
             this.socket.get().shutdown_read();
         } else {
+            // An attached HTTP/2 session holds output this socket has not taken: it issues the
+            // FIN after that output. `false` tells node:net to wait for the drain that follows.
+            if this.native_callback.get().defer_shutdown() {
+                return Ok(JSValue::FALSE);
+            }
             this.socket.get().shutdown();
         }
 
@@ -4145,6 +4163,9 @@ pub(crate) enum NativeCallbacks {
     None,
 }
 
+// Every socket carries one: it stays a single pointer.
+const _: () = assert!(core::mem::size_of::<NativeCallbacks>() == core::mem::size_of::<usize>());
+
 impl NativeCallbacks {
     /// `&self` borrows the socket's `JsCell<NativeCallbacks>`; the dispatch
     /// re-enters JS, which can `detach_native_callback` and overwrite that cell.
@@ -4159,14 +4180,25 @@ impl NativeCallbacks {
         unsafe { (*h2).on_native_read(data) }?;
         Ok(true)
     }
+    /// False: nothing attached, or the attached parser has nothing left to write and leaves
+    /// the event to the socket's own drain dispatch.
     pub(crate) fn on_writable(&self) -> bool {
         let h2 = match self {
             NativeCallbacks::H2(h2) => h2.as_ptr(),
             NativeCallbacks::None => return false,
         };
         // SAFETY: `on_native_writable` takes a keepalive; `h2` stays live across re-entry.
-        unsafe { (*h2).on_native_writable() };
-        true
+        unsafe { (*h2).on_native_writable() }
+    }
+    /// Whether a half-close has to wait for output the attached parser still holds. The parser
+    /// then issues it after that output, and its `on_writable` answers false for that event.
+    pub(crate) fn defer_shutdown(&self) -> bool {
+        let h2 = match self {
+            NativeCallbacks::H2(h2) => h2.as_ptr(),
+            NativeCallbacks::None => return false,
+        };
+        // SAFETY: `defer_shutdown` takes a keepalive; `h2` stays live across re-entry.
+        unsafe { (*h2).defer_shutdown() }
     }
 }
 

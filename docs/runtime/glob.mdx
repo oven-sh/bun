@@ -93,7 +93,7 @@ The scan still fails in these cases:
 - A directory that still exists fails to open.
 - A directory fails to open, and the pattern has a `..` component. The same applies when `absolute` is `true` and `cwd` has a `..` component.
 
-For a directory behind a symbolic link, an error of the open fails the scan only with `throwErrorOnBrokenSymlink`.
+These cases are for directories. Without `throwErrorOnBrokenSymlink`, a symbolic link whose target does not open does not fail the scan.
 
 ## Supported Glob Patterns
 

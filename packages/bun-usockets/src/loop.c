@@ -121,7 +121,7 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
 #endif
 
 
-/* -1 if the wakeup async cannot be created; nothing is left allocated in loop->data. */
+/* -1 if the wakeup async cannot be created or registered; nothing is left allocated in loop->data. */
 int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.
@@ -138,8 +138,9 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
     if (!loop->data.recv_buf || !loop->data.send_buf) Bun__outOfMemory();
     loop->data.pre_cb = pre_cb;
     loop->data.post_cb = post_cb;
-    loop->data.wakeup_async = us_internal_create_async(loop, 1, 0);
-    if (!loop->data.wakeup_async) {
+    struct us_internal_async *wakeup_async = us_internal_create_async(loop, 1, 0);
+    /* Without the registration us_wakeup_loop cannot end this loop's wait. */
+    if (!wakeup_async || us_internal_async_set(wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb) != 0) {
         us_free(loop->data.recv_buf);
         us_free(loop->data.send_buf);
 #ifdef LIBUS_USE_LIBUV
@@ -147,7 +148,7 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
 #endif
         return -1;
     }
-    us_internal_async_set(loop->data.wakeup_async, (void (*)(struct us_internal_async *)) wakeup_cb);
+    loop->data.wakeup_async = wakeup_async;
 #if ASSERT_ENABLED
     if (Bun__lock__size != sizeof(loop->data.mutex)) {
         BUN_PANIC("The size of the mutex must match the size of the lock");

@@ -49,10 +49,7 @@ pub type Socket<const SSL: bool> = NewSocketHandler<SSL>;
 const STACK_FRAME_SIZE: usize = 1024;
 /// Minimum message size to compress (RFC 7692 recommendation)
 const MIN_COMPRESS_SIZE: usize = 860;
-/// Maximum buffered inbound message size (128 MB). A server that declares a
-/// larger frame, or whose continuation fragments accumulate past this, fails
-/// the connection with close code 1009 instead of growing `receive_buffer`
-/// without bound.
+/// Default for `max_receive_length` (128 MB), for a connection whose owner set no limit.
 const MAX_RECEIVE_MESSAGE_LENGTH: usize = 128 * 1024 * 1024;
 /// RFC 6455 §5.5: a control frame's payload is at most 125 bytes.
 const MAX_CONTROL_PAYLOAD: usize = 125;
@@ -100,6 +97,8 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) close_dispatch_pending: RefCell<Option<(u16, bun_core::String)>>,
 
     pub(crate) receive_body_remain: Cell<usize>,
+    /// Largest inbound message in bytes, buffered or inflated: a server that declares more fails the connection (`MessageTooBig`).
+    max_receive_length: Cell<usize>,
     pub(crate) receive_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
 
     pub(crate) send_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
@@ -355,7 +354,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         let result = match self.deflate.borrow_mut().as_mut() {
             None => Err(ErrorCode::CompressionUnsupported),
             Some(deflate) => deflate
-                .decompress(rare.libdeflate_decompressor(), data, &mut decompressed)
+                .decompress(
+                    rare.libdeflate_decompressor(),
+                    data,
+                    &mut decompressed,
+                    self.max_receive_length.get(),
+                )
                 .map_err(|err| match err {
                     websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
                     websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
@@ -698,6 +702,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             _ => {}
         }
 
+        // A data frame with a 7-bit length. `recv_extended_payload_length` checks a longer one.
+        if cursor.state == ReceiveState::NeedBody && self.exceeds_receive_limit(cursor.body_remain)
+        {
+            return self.recv_failed(ErrorCode::MessageTooBig);
+        }
+
         // An empty final message still dispatches ("", ArrayBuffer(0), ...).
         if cursor.body_remain == 0 && cursor.state == ReceiveState::NeedBody && cursor.is_final {
             let _ = self.consume(b"", 0, cursor.last_data_type, true);
@@ -757,7 +767,16 @@ impl<const SSL: bool> WebSocket<SSL> {
             // the server should've set length to zero
             return self.recv_failed(ErrorCode::InvalidControlFrame);
         }
+        if self.exceeds_receive_limit(cursor.body_remain) {
+            return self.recv_failed(ErrorCode::MessageTooBig);
+        }
         Step::Continue
+    }
+
+    /// Asked once per data frame, before its payload is read: buffered bytes plus the bytes it still owes stay constant.
+    fn exceeds_receive_limit(&self, frame_len: usize) -> bool {
+        let buffered_len = self.receive_buffer.borrow().readable_length();
+        buffered_len.saturating_add(frame_len) > self.max_receive_length.get()
     }
 
     /// While `control_frame_started`, `cursor.body_remain` counts bytes buffered so far, not bytes left.
@@ -819,11 +838,6 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn recv_body(&self, cursor: &mut RecvCursor<'_>) -> Step {
-        let buffered_len = self.receive_buffer.borrow().readable_length();
-        if buffered_len.saturating_add(cursor.body_remain) > MAX_RECEIVE_MESSAGE_LENGTH {
-            return self.recv_failed(ErrorCode::MessageTooBig);
-        }
-
         let (chunk, rest) = cursor
             .data
             .split_at(cursor.body_remain.min(cursor.data.len()));
@@ -1430,6 +1444,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             close_received: Cell::new(false),
             close_dispatch_pending: RefCell::new(None),
             receive_body_remain: Cell::new(0),
+            max_receive_length: Cell::new(MAX_RECEIVE_MESSAGE_LENGTH),
             receive_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             send_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             global_this: GlobalRef::from(global_this),
@@ -1462,6 +1477,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         buffered_data: Option<Box<InitialData>>,
     ) -> *mut Self {
         let ws = io_ref.this_ptr();
+        if let Some(limit) = core::num::NonZero::new(outgoing.max_receive_message_length()) {
+            ws.max_receive_length.set(limit.get() as usize);
+        }
         // C++ holds the returned pointer as `m_connectedWebSocket`.
         ws.outgoing_websocket
             .set(Some((BackRef::new(outgoing), io_ref.clone())));

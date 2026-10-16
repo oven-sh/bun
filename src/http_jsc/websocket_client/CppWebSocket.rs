@@ -106,6 +106,7 @@ unsafe extern "C" {
         opcode: u8,
     );
     safe fn WebSocket__rejectUnauthorized(websocket_context: &CppWebSocket) -> bool;
+    safe fn WebSocket__maxReceiveMessageLength(websocket_context: &CppWebSocket) -> u32;
     safe fn WebSocket__isProxyTLS(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__bunContext(websocket_context: &CppWebSocket) -> *const core::ffi::c_void;
     safe fn WebSocket__checkServerIdentity(websocket_context: &CppWebSocket) -> JSValue;
@@ -187,6 +188,11 @@ impl CppWebSocket {
     /// A field read on the C++ side: no JS runs, so no event-loop entry.
     pub(crate) fn reject_unauthorized(&self) -> bool {
         WebSocket__rejectUnauthorized(self)
+    }
+
+    /// The limit on one received message in bytes that the owner set, or 0 for the default. A field read.
+    pub(crate) fn max_receive_message_length(&self) -> u32 {
+        WebSocket__maxReceiveMessageLength(self)
     }
 
     /// Rooted through the JS wrapper, which is alive while the socket is.

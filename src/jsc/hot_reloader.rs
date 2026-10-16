@@ -860,8 +860,9 @@ where
 
             match kind {
                 bun_watcher::Kind::File => {
-                    if event.op.contains(WatchOp::DELETE)
-                        || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE)
+                    if !bun_watcher::WATCHES_BY_PATH
+                        && (event.op.contains(WatchOp::DELETE)
+                            || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE))
                     {
                         // SAFETY: the Watcher outlives this call (it owns the
                         // Reloader that calls us); `remove_at_index::<false>`

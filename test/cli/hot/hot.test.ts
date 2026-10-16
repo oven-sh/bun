@@ -1,4 +1,5 @@
 import { spawn } from "bun";
+import { dlopen } from "bun:ffi";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
@@ -927,4 +928,149 @@ it.each([
     stdout: ["first load", "collected", "third load", ""],
     stderr: [],
   });
+});
+
+/** Resolves to `true` once the stream has had `wanted` in it, or to all of its text if it ends first. */
+function follow(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
+  let text = "";
+  return async (wanted: string) => {
+    while (!text.includes(wanted)) {
+      const { value, done } = await reader.read();
+      if (done) return text;
+      text += Buffer.from(value).toString();
+    }
+    return true;
+  };
+}
+
+/** Windows only. The process finds every change that `change` makes already queued when it goes on. */
+function whileSuspended(pid: number, change: () => void) {
+  const kernel32 = dlopen("kernel32.dll", {
+    OpenProcess: { args: ["u32", "i32", "u32"], returns: "ptr" },
+    CloseHandle: { args: ["ptr"], returns: "i32" },
+  });
+  const ntdll = dlopen("ntdll.dll", {
+    NtSuspendProcess: { args: ["ptr"], returns: "i32" },
+    NtResumeProcess: { args: ["ptr"], returns: "i32" },
+  });
+  const PROCESS_SUSPEND_RESUME = 0x0800;
+  const handle = kernel32.symbols.OpenProcess(PROCESS_SUSPEND_RESUME, 0, pid);
+  expect(handle).not.toBeNull();
+  let resumed: number;
+  try {
+    expect(ntdll.symbols.NtSuspendProcess(handle)).toBe(0);
+    change();
+  } finally {
+    resumed = ntdll.symbols.NtResumeProcess(handle);
+    kernel32.symbols.CloseHandle(handle);
+    kernel32.close();
+    ntdll.close();
+  }
+  expect(resumed).toBe(0);
+}
+
+it.if(isWindows)("a deleted import is not lost in a burst of file events", async () => {
+  using dir = tempDir("hot-burst", {
+    "main.js": `import "./mods/a.js";\nimport "./mods/b.js";\nconsole.log("loaded");\n`,
+    "mods/a.js": "export {};",
+    "mods/b.js": "export {};",
+    "other/keep": "",
+  });
+  const root = String(dir);
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("loaded")).toBe(true);
+
+  whileSuspended(runner.pid, () => {
+    // The read that is already waiting completes with the first change alone.
+    writeFileSync(join(root, "other", "first"), "");
+    unlinkSync(join(root, "mods", "b.js"));
+    for (let i = 0; i < 200; i++) writeFileSync(join(root, "other", String(i)), "");
+  });
+  expect(await stderr("Cannot find module './mods/b.js'")).toBe(true);
+
+  writeFileSync(join(root, "main.js"), `import "./mods/a.js";\nconsole.log("reloaded");\n`);
+  expect(await stdout("reloaded")).toBe(true);
+});
+
+it.if(isWindows)("the dev server outlives a burst of file events with a deleted import in it", async () => {
+  // More files than the watcher dispatches events at once, which is 128.
+  const count = 150;
+  const main = (from: number, log: string) =>
+    Array.from({ length: count - from }, (_, i) => `import "./mods/${from + i}.ts";\n`).join("") +
+    `console.log(${JSON.stringify(log)});\n`;
+  using dir = tempDir("dev-server-burst", {
+    "index.html": `<script type="module" src="./main.ts"></script>`,
+    "main.ts": main(0, "first bundle"),
+    ...Object.fromEntries(Array.from({ length: count }, (_, i) => [`mods/${i}.ts`, `console.log(${i});`])),
+    "other/keep": "",
+    "server.ts": `
+        import html from "./index.html";
+        const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+        await Bun.write("url", server.url.href);
+        console.log("listening");
+      `,
+  });
+  const root = String(dir);
+  await using runner = spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  expect(await follow(runner.stdout)("listening")).toBe(true);
+  const url = readFileSync(join(root, "url"), "utf8");
+  const bundle = async () => {
+    // The page of a build that failed, as one with the deleted import does, has no script.
+    const src = /src="([^"]+)"/.exec(await (await fetch(url)).text())?.[1];
+    return src ? await (await fetch(new URL(src, url))).text() : "";
+  };
+  expect(await bundle()).toContain("first bundle");
+
+  whileSuspended(runner.pid, () => {
+    // The read that is already waiting completes with the first change alone.
+    writeFileSync(join(root, "other", "first"), "");
+    unlinkSync(join(root, "mods", "0.ts"));
+    for (let i = 1; i < count; i++) writeFileSync(join(root, "mods", `${i}.ts`), `console.log(${i}, "again");`);
+  });
+
+  writeFileSync(join(root, "main.ts"), main(1, "second bundle"));
+  while (!(await bundle()).includes("second bundle"));
+});
+
+// Elsewhere the deleted import is evicted and nothing watches its path, so "second" never comes.
+it.todoIf(!isWindows)("reloads when a deleted import is written again", async () => {
+  using dir = tempDir("hot-import-back", {
+    "main.js": `import "./imported.js";\n`,
+    "imported.js": `console.log("first");`,
+  });
+  const root = String(dir);
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("first")).toBe(true);
+
+  unlinkSync(join(root, "imported.js"));
+  expect(await stderr("Cannot find module './imported.js'")).toBe(true);
+
+  writeFileSync(join(root, "imported.js"), `console.log("second");`);
+  expect(await stdout("second")).toBe(true);
 });

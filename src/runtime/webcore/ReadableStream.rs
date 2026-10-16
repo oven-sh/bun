@@ -322,7 +322,10 @@ impl ReadableStream {
         let webcore::blob::store::Data::File(file) = &store.data else {
             return false;
         };
-        matches!(file.pathlike, webcore::node_types::PathOrFileDescriptor::Fd(_))
+        matches!(
+            file.pathlike,
+            webcore::node_types::PathOrFileDescriptor::Fd(_)
+        )
     }
 
     /// Mark the stream disturbed + locked-without-reader. Called by native

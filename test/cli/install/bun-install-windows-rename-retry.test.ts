@@ -20,7 +20,17 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 const PKG = "av-test-pkg";
@@ -55,6 +65,15 @@ function diag(label: string, dir: string) {
   console.log(
     `DIAG ${label}: readdirSync=${listed.length} [${without(listed)}] existsSync=${present.length} [${without(present)}] cmd=${cmdListed.length} [${without(cmdListed)}]`,
   );
+  const presentSet = new Set(present);
+  for (const name of expectedFiles.filter(name => !presentSet.has(name))) {
+    try {
+      closeSync(openSync(join(dir, name), "r"));
+      console.log(`DIAG ${label}: ${name} opens`);
+    } catch (e) {
+      console.log(`DIAG ${label}: ${name} does not open: ${(e as NodeJS.ErrnoException).code}`);
+    }
+  }
 }
 
 /** The same for every directory named `files` at most `depth` levels below `root`. */
@@ -98,26 +117,26 @@ beforeAll(async () => {
     `DIAG tarball: ${inTarball.length} [${expectedFiles.filter(name => !inTarballSet.has(name)).join(",")}] first=${inTarball[0]} last=${inTarball.at(-1)} bytes=${tgzBytes.length}`,
   );
   console.log(`DIAG tar: ${Bun.which("tar")} ${(await Bun.$`tar --version`.text()).trim()}`);
-  const machine = Bun.spawnSync({
-    cmd: [
-      "pwsh",
-      "-NoProfile",
-      "-Command",
-      [
-        `"boot: " + (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString("o")`,
-        `"now: " + (Get-Date).ToUniversalTime().ToString("o")`,
-        `"cpu: " + (Get-CimInstance Win32_Processor | Select-Object -First 1).Name`,
-        `Get-Content C:\\bun-image.txt -TotalCount 3`,
-        `Get-MpComputerStatus | Select-Object AMRunningMode,AMServiceEnabled,RealTimeProtectionEnabled,OnAccessProtectionEnabled,AMProductVersion,AMEngineVersion,AntivirusSignatureVersion,AntivirusSignatureLastUpdated | Format-List | Out-String`,
-        `fsutil 8dot3name query C:`,
-        `Get-Volume -DriveLetter C | Select-Object FileSystemType,SizeRemaining | Format-List | Out-String`,
-        `Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 Name,Id,CPU,StartTime | Format-Table -AutoSize | Out-String -Width 160`,
-      ].join("; "),
+  for (const commands of [
+    [
+      `"boot: " + (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString("o")`,
+      `"now: " + (Get-Date).ToUniversalTime().ToString("o")`,
+      `"cpu: " + (Get-CimInstance Win32_Processor | Select-Object -First 1).Name`,
+      `Get-Content C:\\bun-image.txt -TotalCount 3`,
+      `Get-MpComputerStatus | Select-Object AMRunningMode,AMServiceEnabled,RealTimeProtectionEnabled,OnAccessProtectionEnabled,AMProductVersion,AMEngineVersion,AntivirusSignatureVersion,AntivirusSignatureLastUpdated | Format-List | Out-String`,
+      `Get-Process | Sort-Object CPU -Descending | Select-Object -First 20 Name,Id,CPU,StartTime | Format-Table -AutoSize | Out-String -Width 160`,
     ],
-    stderr: "pipe",
-  });
-  for (const line of (machine.stdout.toString() + machine.stderr.toString()).split(/\r?\n/)) {
-    if (line.trim()) console.log(`DIAG machine: ${line}`);
+    [
+      `Get-MpPreference | Select-Object DisableRealtimeMonitoring,ExclusionPath | Format-List | Out-String`,
+      `"detections: " + @(Get-MpThreatDetection).Count`,
+      `Get-MpThreatDetection | Select-Object -First 5 InitialDetectionTime,ProcessName,Resources | Format-List | Out-String -Width 200`,
+      `Get-WinEvent -LogName "Microsoft-Windows-Windows Defender/Operational" -MaxEvents 12 | ForEach-Object { "event " + $_.TimeCreated.ToUniversalTime().ToString("o") + " " + $_.Id + " " + ($_.Message -split [char]10)[0] }`,
+    ],
+  ]) {
+    const machine = Bun.spawnSync({ cmd: ["pwsh", "-NoProfile", "-Command", commands.join("; ")], stderr: "pipe" });
+    for (const line of (machine.stdout.toString() + machine.stderr.toString()).split(/\r?\n/)) {
+      if (line.trim()) console.log(`DIAG machine: ${line}`);
+    }
   }
 }, 120_000);
 

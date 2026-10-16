@@ -1644,12 +1644,32 @@ async function darwinBetaQueueIdle(): Promise<boolean> {
 
 const darwinBetaQueue = "test-darwin-beta";
 
-/** Builds of main whose Windows aarch64 binary the test runs with. */
-const diagnosedBuilds = [
-  { number: 126460, id: "01a14358-7531-4c4c-b707-8103ff505bb2", result: "failed" },
-  { number: 126437, id: "01a14339-7e2d-4bba-824f-f27f4fe6019c", result: "failed" },
-  { number: 126396, id: "01a142f6-41d5-42aa-90e0-c81c4eeda789", result: "passed" },
-  { number: 126506, id: "01a143b4-7dee-4205-8fd5-1b5d18e489eb", result: "passed" },
+/** The build of main whose Windows aarch64 binary the test runs with: the test failed there. */
+const diagnosedBuildId = "01a14358-7531-4c4c-b707-8103ff505bb2";
+
+const diagnosedRuns = [
+  {
+    key: "idle",
+    label: "the test every 75 s on an idle machine",
+    files: ["cli/install/bun-install-windows-rename-retry-"],
+  },
+  {
+    key: "natural",
+    label: "after the files that come before it in its shard",
+    files: [
+      "bake/dev/bundle.test.ts",
+      "bake/dev/css.test.ts",
+      "bake/dev/esm.test.ts",
+      "bundler/bundler_edgecase.test.ts",
+      "bundler/transpiler/transpiler.test.js",
+      "cli/check/conformance/1.test.ts",
+      "cli/check/differential-cases-1.test.ts",
+      "cli/format/format-doctor.test.ts",
+      "cli/format/tailwind/tailwind.test.ts",
+      "cli/install/bun-install-env-file.test.ts",
+      "cli/install/bun-install-windows-rename-retry.test.ts",
+    ],
+  },
 ];
 
 async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | undefined> {
@@ -1851,22 +1871,22 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   void prDarwinTestPlatforms, betaDarwinTestPlatforms;
   const testStepKeys: string[] = [];
   {
-    const { skipTests, testFiles } = options;
+    const { skipTests } = options;
     if (!skipTests) {
       steps.push(
-        ...relevantTestPlatforms.flatMap(target => diagnosedBuilds.map(build => ({ target, build }))).map(({ target, build }) => {
-          const step = getTestBunStep(target, options, { testFiles, buildId: build.id });
-          step.key += `-${build.number}`;
-          step.label += ` (binary of main #${build.number}, where the test ${build.result})`;
-          step.parallelism = 4;
+        ...relevantTestPlatforms.flatMap(target => diagnosedRuns.map(build => ({ target, build }))).map(({ target, build }) => {
+          const step = getTestBunStep(target, options, { testFiles: build.files, buildId: diagnosedBuildId });
+          step.key += `-${build.key}`;
+          step.label += ` (${build.label})`;
+          step.parallelism = 6;
           testStepKeys.push(step.key);
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
           const dependsOn = getImageDependsOn(target, baking);
           return getStepWithDependsOn(
             {
-              key: `${getPlatformKey(target)}-${build.number}`,
-              group: `${getPlatformLabel(target)} #${build.number}`,
+              key: `${getPlatformKey(target)}-${build.key}`,
+              group: `${getPlatformLabel(target)} ${build.key}`,
               steps: [step],
             },
             ...dependsOn,

@@ -2825,7 +2825,7 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
         .map(filename => filename.slice("test/".length)),
     );
 
-    if (modifiedTests.size > 0) {
+    if (modifiedTests.size > 0 && false) {
       return filteredTests
         .map(testPath => testPath.replaceAll("\\", "/"))
         .sort((a, b) => {

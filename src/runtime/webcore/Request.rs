@@ -243,19 +243,26 @@ impl Request {
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<&mut HeadersRef> {
-        if self.headers.get().is_some() {
-            // headers is already set
-            return Ok(self.headers_mut().as_mut().unwrap());
+        if self.headers.get().is_none() {
+            let headers = self.default_fetch_headers(global_this)?;
+            self.headers.set(Some(headers));
         }
 
+        Ok(self.headers_mut().as_mut().unwrap())
+    }
+
+    /// What [`Self::ensure_fetch_headers`] attaches to a Request that has no header list, not attached.
+    pub(crate) fn default_fetch_headers(
+        &self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<HeadersRef> {
+        let mut headers;
         if let Some(req) = self.request_context.get_request() {
             // we have a request context, so we can get the headers from it
-            self.headers.set(Some(HeadersRef::create_from_uws(
-                req.cast::<core::ffi::c_void>(),
-            )));
+            headers = HeadersRef::create_from_uws(req.cast::<core::ffi::c_void>());
         } else {
             // we don't have a request context, so we need to create an empty headers object
-            self.headers.set(Some(HeadersRef::create_empty()));
+            headers = HeadersRef::create_empty();
             // Snapshot the pointer first; it stays valid across the field borrow.
             let content_type: Option<*const [u8]> = match self.body_value() {
                 BodyValue::Blob(blob) => {
@@ -282,7 +289,7 @@ impl Request {
                 // call; the bytes are copied into the header map below.
                 let content_type_ = unsafe { &*content_type_ };
                 if !content_type_.is_empty() {
-                    self.headers_mut().as_mut().unwrap().put(
+                    headers.put(
                         HTTPHeaderName::ContentType,
                         &BunString::ascii(content_type_),
                         global_this,
@@ -291,7 +298,7 @@ impl Request {
             }
         }
 
-        Ok(self.headers_mut().as_mut().unwrap())
+        Ok(headers)
     }
 
     pub(crate) fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {

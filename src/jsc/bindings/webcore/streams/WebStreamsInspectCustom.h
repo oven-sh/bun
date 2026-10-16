@@ -22,5 +22,22 @@ WTF::String constructorNameOf(JSC::JSGlobalObject*, JSC::JSValue thisValue, ASCI
 // Installs the host function on a prototype under Symbol.for("nodejs.util.inspect.custom").
 void installInspectCustom(JSC::VM&, JSC::JSObject* prototype, JSC::NativeFunction);
 
+// Methods with a native half, which copies native state, and a JS half: internal/util/inspect_hooks.
+
+// The native formatter (ConsoleObject.rs) does not call or list them. These are the ones from *.classes.ts files.
+extern const JSC::NativeFunction generatedNodeOnlyInspectHooks[];
+extern const size_t generatedNodeOnlyInspectHookCount;
+
+// `this` as a method sees it (undefined for a bare call), or the target when that is a Proxy. Null when not an object.
+JSC::JSObject* inspectHolder(JSC::JSGlobalObject*, JSC::CallFrame*);
+// The first instance of the class on the prototype chain of `holder`, found with no user code. A Proxy ends the search.
+JSC::JSObject* findInspectInstance(JSC::JSObject* holder, const JSC::ClassInfo*);
+template<typename JSClass> JSClass* inspectInstance(JSC::JSObject* holder)
+{
+    return static_cast<JSClass*>(findInspectInstance(holder, JSClass::info()));
+}
+// Calls the JS half with `fields`, the state of `instance`. Both are null when the receiver holds no instance.
+JSC::EncodedJSValue inspectFields(JSC::JSGlobalObject*, JSC::CallFrame*, ASCIILiteral tag, JSC::JSObject* fields, JSC::JSObject* instance);
+
 } // namespace WebStreams
 } // namespace Bun

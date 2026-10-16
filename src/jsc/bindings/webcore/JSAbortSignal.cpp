@@ -53,6 +53,7 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 #include "ErrorCode.h"
+#include "streams/WebStreamsInspectCustom.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -63,6 +64,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalConstructorFunction_abort);
 static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalConstructorFunction_timeout);
 static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalConstructorFunction_any);
 static JSC_DECLARE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_throwIfAborted);
+JSC_DECLARE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_inspectCustom);
 
 // Attributes
 
@@ -143,6 +145,7 @@ void JSAbortSignalPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSAbortSignal::info(), JSAbortSignalPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsAbortSignalPrototypeFunction_inspectCustom);
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
@@ -189,6 +192,21 @@ JSC_DEFINE_CUSTOM_GETTER(jsAbortSignalConstructor, (JSGlobalObject * lexicalGlob
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSAbortSignal::getConstructor(vm, prototype->globalObject()));
+}
+
+// Native half of node's `[nodejs.util.inspect.custom]` method.
+JSC_DEFINE_HOST_FUNCTION(jsAbortSignalPrototypeFunction_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = Bun::WebStreams::inspectInstance<JSAbortSignal>(Bun::WebStreams::inspectHolder(lexicalGlobalObject, callFrame));
+    if (!thisObject)
+        RELEASE_AND_RETURN(scope, Bun::WebStreams::inspectFields(lexicalGlobalObject, callFrame, "AbortSignal"_s, nullptr, nullptr));
+
+    JSObject* fields = constructEmptyObject(lexicalGlobalObject);
+    Bun::putDirectNamed(vm, fields, "aborted"_s, jsBoolean(thisObject->wrapped().aborted()));
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::inspectFields(lexicalGlobalObject, callFrame, "AbortSignal"_s, fields, thisObject));
 }
 
 static inline JSValue jsAbortSignal_abortedGetter(JSGlobalObject& lexicalGlobalObject, JSAbortSignal& thisObject)

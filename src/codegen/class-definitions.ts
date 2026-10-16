@@ -7,7 +7,6 @@ interface PropertyAttribute {
    * from the prototype hash table, instead setting it using `putDirect()`.
    */
   privateSymbol?: string;
-  publicSymbol?: string;
   name?: string;
 }
 
@@ -215,6 +214,7 @@ export class ClassDefinition {
   configurable?: boolean;
   enumerable?: boolean;
   structuredClone?: { transferable: boolean; tag: number; storable: boolean };
+  /** Installs node's `[nodejs.util.inspect.custom]` method, with `inspect_custom` of the struct as its native half. */
   inspectCustom?: boolean;
 
   constructor(options: Partial<ClassDefinition>) {
@@ -248,11 +248,11 @@ export function define(
     proto.inspectCustom = {
       fn: "inspectCustom",
       length: 2,
-      publicSymbol: "inspectCustom",
-      name: "[nodejs.util.inspect.custom]",
+      passThis: true,
     };
   }
   return new ClassDefinition({
+    inspectCustom,
     ...rest,
     // `refCounted` is a kind of finalize as far as the C++ wrapper is concerned.
     finalize: rest.finalize || rest.refCounted,

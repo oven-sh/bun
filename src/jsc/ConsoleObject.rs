@@ -2143,13 +2143,17 @@ pub mod formatter {
                         });
                     }
                     Ok(Some(callback_value)) if callback_value.is_callable() => {
-                        return Ok(TagResult {
-                            tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
-                                function: callback_value,
-                                this: value,
-                            }),
-                            cell: js_type,
-                        });
+                        let callback_value =
+                            inspect_custom_for_formatter(global_this, value, callback_value);
+                        if !callback_value.is_empty() && callback_value.is_callable() {
+                            return Ok(TagResult {
+                                tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
+                                    function: callback_value,
+                                    this: value,
+                                }),
+                                cell: js_type,
+                            });
+                        }
                     }
                     _ => {}
                 }
@@ -3071,7 +3075,7 @@ pub mod formatter {
         ) -> Option<TagResult> {
             // SAFETY: caller passes a valid `*EncodedSlice`.
             let key = unsafe { &*key };
-            if key.eq_ascii(b"constructor") {
+            if key.eq_ascii(b"constructor") || is_unlisted_inspect_method(key, is_symbol, value) {
                 return None;
             }
             if ctx.formatter.failed {
@@ -3203,6 +3207,21 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
+        /// True for node's `[nodejs.util.inspect.custom]` method of a class with native state, which this formatter skips.
+        #[link_name = "Bun__isNodeOnlyInspectHook"]
+        pub safe fn is_node_only_inspect_hook(value: JSValue) -> bool;
+        /// `method`, or the method that `value` has without the node-only ones (empty when there is none).
+        #[link_name = "Bun__inspectCustomForFormatter"]
+        safe fn inspect_custom_for_formatter(
+            global: &JSGlobalObject,
+            value: JSValue,
+            method: JSValue,
+        ) -> JSValue;
+    }
+
+    /// True for the one property that this formatter does not list: a node-only method under its symbol.
+    pub fn is_unlisted_inspect_method(key: &EncodedSlice, is_symbol: bool, value: JSValue) -> bool {
+        is_symbol && key.eq_ascii(b"nodejs.util.inspect.custom") && is_node_only_inspect_hook(value)
     }
 
     // ───────────────────────────────────────────────────────────────────────

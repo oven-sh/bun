@@ -48,6 +48,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "streams/WebStreamsInspectCustom.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -55,6 +56,7 @@ using namespace JSC;
 // Functions
 
 static JSC_DECLARE_HOST_FUNCTION(jsAbortControllerPrototypeFunction_abort);
+JSC_DECLARE_HOST_FUNCTION(jsAbortControllerPrototypeFunction_inspectCustom);
 
 // Attributes
 
@@ -144,6 +146,7 @@ void JSAbortControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSAbortController::info(), JSAbortControllerPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsAbortControllerPrototypeFunction_inspectCustom);
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
@@ -187,6 +190,23 @@ JSC_DEFINE_CUSTOM_GETTER(jsAbortControllerConstructor, (JSGlobalObject * lexical
     if (!prototype) [[unlikely]]
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSAbortController::getConstructor(vm, prototype->globalObject()));
+}
+
+// Native half of node's `[nodejs.util.inspect.custom]` method.
+JSC_DEFINE_HOST_FUNCTION(jsAbortControllerPrototypeFunction_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = Bun::WebStreams::inspectInstance<JSAbortController>(Bun::WebStreams::inspectHolder(lexicalGlobalObject, callFrame));
+    if (!thisObject)
+        RELEASE_AND_RETURN(scope, Bun::WebStreams::inspectFields(lexicalGlobalObject, callFrame, "AbortController"_s, nullptr, nullptr));
+
+    JSValue signal = toJS<IDLInterface<AbortSignal>>(*lexicalGlobalObject, *thisObject->globalObject(), scope, thisObject->wrapped().signal());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* fields = constructEmptyObject(lexicalGlobalObject);
+    Bun::putDirectNamed(vm, fields, "signal"_s, signal);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::inspectFields(lexicalGlobalObject, callFrame, "AbortController"_s, fields, thisObject));
 }
 
 static inline JSValue jsAbortController_signalGetter(JSGlobalObject& lexicalGlobalObject, JSAbortController& thisObject)

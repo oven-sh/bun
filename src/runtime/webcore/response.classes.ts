@@ -13,6 +13,7 @@ export default [
     JSType: "0b11101110",
     estimatedSize: true,
     configurable: false,
+    inspectCustom: true,
     overridesToJS: true,
     memoryCost: true,
     values: ["stream"],
@@ -80,6 +81,7 @@ export default [
     final: false,
     JSType: "0b11101110",
     configurable: false,
+    inspectCustom: true,
     estimatedSize: true,
     overridesToJS: true,
     klass: {
@@ -146,6 +148,7 @@ export default [
     JSType: "0b11101110",
     klass: {},
     configurable: false,
+    inspectCustom: true,
     structuredClone: {
       transferable: false,
       tag: 254,

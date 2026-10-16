@@ -42,7 +42,8 @@ for (const [table, prefix] of [
   for (const [name, field] of Object.entries(table)) {
     // Installed under a private name or a Symbol.for() symbol, or (internal)
     // not installed at all; none of these has a declaration to mirror.
-    if ("internal" in field || "privateSymbol" in field || "publicSymbol" in field) continue;
+    if ("internal" in field || "privateSymbol" in field) continue;
+    if (name === "inspectCustom" && definition.inspectCustom) continue;
     registered.add(prefix + name);
   }
 }

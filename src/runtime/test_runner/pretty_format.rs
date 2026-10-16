@@ -908,7 +908,9 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
         // SAFETY: key_ is non-null per JSC contract for property iteration.
         let key = unsafe { *key_ };
-        if key.eq_ascii(b"constructor") {
+        if key.eq_ascii(b"constructor")
+            || bun_jsc::console_object::formatter::is_unlisted_inspect_method(&key, is_symbol, value)
+        {
             return;
         }
 

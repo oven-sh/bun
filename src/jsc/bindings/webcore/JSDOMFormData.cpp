@@ -55,6 +55,7 @@
 #include <wtf/URL.h>
 #include "ZigGeneratedClasses.h"
 #include "GCDefferalContext.h"
+#include "streams/WebStreamsInspectCustom.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -102,6 +103,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_forEach);
 
 // Non-standard functions
 static JSC_DECLARE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_toJSON);
+JSC_DECLARE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_inspectCustom);
 
 // Attributes
 
@@ -216,6 +218,7 @@ void JSDOMFormDataPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSDOMFormData::info(), JSDOMFormDataPrototypeTableValues, *this);
     putDirect(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().entriesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    Bun::WebStreams::installInspectCustom(vm, this, jsDOMFormDataPrototypeFunction_inspectCustom);
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
@@ -603,6 +606,33 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_forEachCaller(J
 JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_forEach, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     return IDLOperation<JSDOMFormData>::call<jsDOMFormDataPrototypeFunction_forEachCaller>(*lexicalGlobalObject, *callFrame, "forEach");
+}
+
+// Native half of node's `[nodejs.util.inspect.custom]` method: the entries as a flat list, name, value, name, value.
+JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = Bun::WebStreams::inspectInstance<JSDOMFormData>(Bun::WebStreams::inspectHolder(lexicalGlobalObject, callFrame));
+    if (!thisObject)
+        RELEASE_AND_RETURN(scope, Bun::WebStreams::inspectFields(lexicalGlobalObject, callFrame, "FormData"_s, nullptr, nullptr));
+
+    MarkedArgumentBuffer entries;
+    for (auto& entry : thisObject->wrapped().items()) {
+        entries.append(jsString(vm, entry.name));
+        JSValue value = toJS<IDLNullable<IDLUnion<IDLUSVString, IDLInterface<Blob>>>>(*lexicalGlobalObject, *thisObject->globalObject(), scope, entry.data);
+        RETURN_IF_EXCEPTION(scope, {});
+        entries.append(value);
+    }
+    if (entries.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return {};
+    }
+    JSArray* fields = constructArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), entries);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::inspectFields(lexicalGlobalObject, callFrame, "FormData"_s, fields, thisObject));
 }
 
 JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObject, JSDOMFormData* castedThis)

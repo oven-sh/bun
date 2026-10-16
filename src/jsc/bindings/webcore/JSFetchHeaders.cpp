@@ -42,6 +42,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "streams/WebStreamsInspectCustom.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -75,6 +76,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_forEach);
 
 // Non-standard functions
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_toJSON);
+JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_inspectCustom);
 static JSC_DECLARE_CUSTOM_GETTER(jsFetchHeadersPrototypeFunction_size);
 
 // Attributes
@@ -320,6 +322,7 @@ void JSFetchHeadersPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSFetchHeaders::info(), JSFetchHeadersPrototypeTableValues, *this);
     putDirect(vm, vm.propertyNames->iteratorSymbol, getDirect(vm, vm.propertyNames->builtinNames().entriesPublicName()), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    Bun::WebStreams::installInspectCustom(vm, this, jsFetchHeadersPrototypeFunction_inspectCustom);
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
@@ -720,6 +723,40 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
     }
 
     RELEASE_AND_RETURN(throwScope, obj);
+}
+
+// Native half of node's `[nodejs.util.inspect.custom]` method. As in undici, repeated values join with ", ", set-cookie too.
+JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = Bun::WebStreams::inspectInstance<JSFetchHeaders>(Bun::WebStreams::inspectHolder(lexicalGlobalObject, callFrame));
+    if (!thisObject)
+        RELEASE_AND_RETURN(scope, Bun::WebStreams::inspectFields(lexicalGlobalObject, callFrame, "Headers"_s, nullptr, nullptr));
+
+    auto& internal = thisObject->wrapped().internalHeaders();
+    JSObject* fields = constructEmptyObject(lexicalGlobalObject);
+    for (const auto& header : internal.commonHeaders())
+        fields->putDirect(vm, Identifier::fromString(vm, WTF::httpHeaderNameStringImpl(header.key)), jsString(vm, header.value), 0);
+
+    auto& cookies = internal.getSetCookieHeaders();
+    if (!cookies.isEmpty()) {
+        StringBuilder joined;
+        for (size_t i = 0; i < cookies.size(); ++i) {
+            if (i)
+                joined.append(", "_s);
+            joined.append(cookies[i]);
+        }
+        fields->putDirect(vm, Identifier::fromString(vm, WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie)), jsString(vm, joined.toString()), 0);
+    }
+
+    for (const auto& header : internal.uncommonHeaders()) {
+        fields->putDirectMayBeIndex(lexicalGlobalObject, Identifier::fromString(vm, lowercaseHeaderName(header.key)), jsString(vm, header.value));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::inspectFields(lexicalGlobalObject, callFrame, "Headers"_s, fields, thisObject));
 }
 
 template<typename Visitor>

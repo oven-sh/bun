@@ -2723,8 +2723,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             return Ok(());
                         }
                         c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-                            // An fd number is a word of its own: in `a2>f` the `2` belongs to `a2`.
-                            // A tab does not end a word, so a word can still be open after one.
+                            // An fd number starts a word. A tab is whitespace that does not end one, so `a<TAB>2>f` redirects fd 2.
                             let after_whitespace = self.chars.prev.is_some_and(|prev| {
                                 !prev.escaped && ShellCharIter::<ENCODING>::is_whitespace(prev)
                             });
@@ -3072,8 +3071,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             if input.escaped {
                 return None;
             }
-            // fd 1 and 2 can be written to a file, and fd 0 can be read from one.
-            // In `0>f`, `1<f` and `2<f` the digit is a word.
+            // Only fd 1 and 2 are written and only fd 0 is read: in `0>f`, `1<f` and `2<f` the digit is a word.
             match input.char {
                 c if c == u32::from(b'>') && !flags.stdin() => {
                     let _ = self.eat();

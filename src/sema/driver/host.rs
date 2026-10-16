@@ -21,6 +21,7 @@ use bun_sema::resolve::{
     hash_without_case, inside, is_declaration_file_name, is_same_path, join, root_length,
     to_file_name_lower_case, to_path, typescript_path,
 };
+pub use bun_sema::resolve::{PluginImport, PluginImported, PluginImports};
 use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
@@ -280,9 +281,9 @@ pub struct Disk {
     extended_configs: bun_threading::Guarded<FxHashMap<Vec<u8>, Kept>>,
     /// `Host::shared_paths`
     paths: bun_threading::Guarded<FxHashSet<Arc<Paths>>>,
-    pub(crate) scripts_of_page: Option<ScriptsOfPage>,
     /// `Host::plugin_imports`
     pub(crate) plugin_imports: PluginImports,
+    pub(crate) scripts_of_page: Option<ScriptsOfPage>,
 }
 
 /// `Host::share_declaration_files`
@@ -321,17 +322,15 @@ pub type BeforeRead = Box<dyn Fn(&[u8]) + Send + Sync>;
 /// `Host::scripts_of_page`. The paths are in the checker's format.
 pub type ScriptsOfPage = Box<dyn Fn(&[u8]) -> Vec<Vec<u8>> + Send + Sync>;
 
-pub use bun_sema::resolve::{PluginImport, PluginImported, PluginImports};
-
 /// What the caller of a check has for its host.
 #[derive(Default)]
 pub struct Provided {
     pub already_read: AlreadyRead,
     pub before_read: Option<BeforeRead>,
-    pub scripts_of_page: Option<ScriptsOfPage>,
     /// `Host::plugin_imports`, in any order. The paths are in the checker's format, as the caller
     /// has them.
     pub plugin_imports: PluginImports,
+    pub scripts_of_page: Option<ScriptsOfPage>,
     /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
     /// takes it for a blank. `bun lint` has a rule about it, and writes the text back.
     pub keeps_byte_order_marks: bool,
@@ -555,8 +554,8 @@ impl Disk {
             script_kinds: Vec::new(),
             script_kinds_by_extension: Vec::new(),
             before_read: None,
-            scripts_of_page: None,
             plugin_imports: PluginImports::default(),
+            scripts_of_page: None,
         }
     }
 
@@ -1577,12 +1576,12 @@ impl Host for Disk {
     fn is_case_sensitive(&self) -> bool {
         self.case_sensitive
     }
+    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)] {
+        &self.plugin_imports
+    }
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
         let scripts = self.scripts_of_page.as_ref().map(|of| of(page));
         scripts.unwrap_or_default()
-    }
-    fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)] {
-        &self.plugin_imports
     }
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         &self.script_kinds_by_extension

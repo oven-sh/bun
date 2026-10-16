@@ -1423,6 +1423,9 @@ pub fn check_provided_then<R>(
     let mut disk =
         host::Disk::with_already_read(threads, provided.already_read, &project).started_in(&cwd);
     disk.before_read = provided.before_read;
+    if !provided.plugin_imports.is_empty() {
+        disk.take_plugin_imports(provided.plugin_imports);
+    }
     disk.scripts_of_page = provided.scripts_of_page;
     disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
     if let Libs::Bundled(libs) = request.libs {
@@ -1434,9 +1437,6 @@ pub fn check_provided_then<R>(
     });
     disk.script_kinds = script_kinds.collect();
     disk.script_kinds_by_extension = request.script_kinds_by_extension.to_vec();
-    if !provided.plugin_imports.is_empty() {
-        disk.take_plugin_imports(provided.plugin_imports);
-    }
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
@@ -2799,11 +2799,11 @@ impl Host for WithOutputs<'_> {
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
         self.disk.extra_file_extensions()
     }
-    fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
-        self.disk.scripts_of_page(page)
-    }
     fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)] {
         self.disk.plugin_imports()
+    }
+    fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
+        self.disk.scripts_of_page(page)
     }
     fn parse<'s>(
         &self,

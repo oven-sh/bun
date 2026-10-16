@@ -149,15 +149,15 @@ pub trait Host: Sync {
     /// `extraFileExtensions`: the extensions, each with its `.`, of which the host knows the
     /// language, besides those that TypeScript knows. `include` finds the files that have them.
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)];
-    /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
-    /// that imports the page refers to them.
-    fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
     /// The imports that only the bundler can follow, because a plugin of it has loaded the file
     /// that imports or the file that is imported: `main.ts` imports `App.svelte`, which imports
     /// `lib.ts`. A file refers to what such a file imports. See `plugin_imports_of`.
     fn plugin_imports(&self) -> &[(Vec<u8>, Vec<PluginImport>)] {
         &[]
     }
+    /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
+    /// that imports the page refers to them.
+    fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
     /// Several programs are about to be loaded: from here on there is a `shared_file` for a
     /// declaration file. `variants`: a bit for each `variant_of_files` that more than one of them
     /// has. What no other program can use is not kept: nothing is once `programs` more

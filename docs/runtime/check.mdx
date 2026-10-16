@@ -419,6 +419,8 @@ Pass `check: true` to [`Bun.build`](/bundler). A type error fails the build like
 
 The check uses the `conditions` and `loader` options of the build.
 
+A [plugin](/bundler/plugins) can load a file that the type checker cannot read, for example `App.svelte`. If a file that Bun checks imports `App.svelte`, Bun also checks the TypeScript and JavaScript files that `App.svelte` imports. Bun does not check the code in `App.svelte`, or code that only a plugin generates.
+
 ```ts build.ts icon="/icons/typescript.svg"
 const result = await Bun.build({
   entrypoints: ["./src/index.ts"],

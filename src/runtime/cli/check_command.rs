@@ -662,9 +662,9 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         tsconfig,
         conditions,
         loaders,
+        plugin_imports,
         entry_points,
         sources,
-        plugin_imports,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows what it loads each file with. What is installed is what its name says.

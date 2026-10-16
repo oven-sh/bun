@@ -15,6 +15,7 @@ const {
   kDestroyed,
   kAutoDestroy,
   kErrored,
+  kSocketClose,
 } = require("internal/streams/utils");
 
 const ProcessNextTick = process.nextTick;
@@ -97,11 +98,24 @@ function _destroy(self, err, cb) {
     }
 
     if (typeof cb === "function") {
-      cb(err);
+      try {
+        cb(err);
+      } catch (thrown) {
+        if (!self[kSocketClose]) throw thrown;
+        // Node drops what the callback of a net.Socket throws, and emits no 'error': https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/destroy.js#L121-L125
+        ProcessNextTick(emitSocketCloseNT, self, err ? true : false);
+        return;
+      }
     }
 
     if (err) {
-      ProcessNextTick(emitErrorCloseNT, self, err);
+      if (self[kSocketClose]) {
+        // Two ticks: a throw from the 'error' emit cannot skip 'close'.
+        ProcessNextTick(emitErrorNT, self, err);
+        ProcessNextTick(emitSocketCloseNT, self, true);
+      } else {
+        ProcessNextTick(emitErrorCloseNT, self, err);
+      }
     } else {
       ProcessNextTick(emitCloseNT, self);
     }
@@ -131,7 +145,25 @@ function emitCloseNT(self) {
 
   if ((w && (w[kState] & kEmitClose) !== 0) || (r && (r[kState] & kEmitClose) !== 0)) {
     self.emit("close");
+    return;
   }
+  if (self[kSocketClose]) {
+    self.emit("close", false);
+  }
+}
+
+function emitSocketCloseNT(self, hadError) {
+  const r = self._readableState;
+  const w = self._writableState;
+
+  if (w) {
+    w[kState] |= kCloseEmitted;
+  }
+  if (r) {
+    r[kState] |= kCloseEmitted;
+  }
+
+  self.emit("close", hadError);
 }
 
 function emitErrorNT(self, err) {

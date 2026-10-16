@@ -20,6 +20,8 @@ const kIsClosedPromise = SymbolFor("nodejs.webstream.isClosedPromise");
 const kControllerErrorFunction = SymbolFor("nodejs.webstream.controllerErrorFunction");
 
 const kState = Symbol("kState");
+// Bun only. A stream that is a net.Socket in Node.js: destroy() emits its 'close' with hadError, as https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L880-L909 does.
+const kSocketClose = Symbol("kSocketClose");
 const kObjectMode = 1 << 0;
 const kErrorEmitted = 1 << 1;
 const kAutoDestroy = 1 << 2;
@@ -292,6 +294,7 @@ export default {
   willEmitClose,
   isTransformStream,
   kState,
+  kSocketClose,
   // bitfields
   kObjectMode,
   kErrorEmitted,

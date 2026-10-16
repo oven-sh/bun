@@ -1666,6 +1666,7 @@ function getNodeHTTPServerSocket() {
   if (NodeHTTPServerSocket) return NodeHTTPServerSocket;
   const { Socket: NetSocket }: { Socket: NetSocketConstructor } = require("node:net");
   const { getTimerDuration } = require("internal/timers");
+  const { kSocketClose } = require("internal/streams/utils");
   NodeHTTPServerSocket = class Socket extends NetSocket {
     bytesRead = 0;
     connecting = false;
@@ -1695,8 +1696,7 @@ function getNodeHTTPServerSocket() {
     #closeError: Error | undefined = undefined;
     declare encrypted: boolean;
     declare resetAndClosing: boolean;
-    declare _writableState: { emitClose: boolean; decodeStrings: boolean };
-    declare _readableState: { emitClose: boolean };
+    declare _writableState: { decodeStrings: boolean };
     constructor(server: Server, handle, encrypted, listenerGeneration) {
       // allowHalfOpen: node's connectionListener sockets never auto-end the
       // writable side on the peer's FIN (CONNECT/Upgrade tunnels stay writable);
@@ -1708,11 +1708,8 @@ function getNodeHTTPServerSocket() {
       );
       // net.Socket's constructor wires net-handle machinery this class replaces:
       // its 'end' listener installs writeAfterFIN (breaks half-open tunnels), and
-      // it forces emitClose/decodeStrings off while this class relies on the
-      // Duplex defaults (destroy() emits 'close'; _write receives decoded chunks).
+      // it turns decodeStrings off while _write here receives decoded chunks.
       this.removeAllListeners("end");
-      this._writableState.emitClose = true;
-      this._readableState.emitClose = true;
       this._writableState.decodeStrings = true;
       this.server = server;
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
@@ -1832,8 +1829,13 @@ function getNodeHTTPServerSocket() {
       if (closedHandle) {
         // Peer FIN: 'end' before 'close', like Node's net.Socket. read(0) emits it when nothing reads the socket.
         if (closedHandle.peerEnded) {
-          this.push(null);
-          this.read(0);
+          try {
+            this.push(null);
+            this.read(0);
+          } catch (err) {
+            // A 'readable' listener threw. The connection is still released.
+            process.nextTick(rethrowUncaught, err);
+          }
         }
         // With no 'error' listener (a socket handed to 'upgrade') the read error would be an uncaught exception.
         const closeError = this.listenerCount("error") > 0 ? closedHandle.closeError : undefined;
@@ -1915,18 +1917,19 @@ function getNodeHTTPServerSocket() {
       // (abortIncoming + abortOutgoing).
       abortQueuedPipelinedResponses(this, writeFailure);
 
+      // A tunnel write that waited for a drain fails in a tick, like the other write callbacks. Queued here, before destroy() queues 'error' and 'close': on a destroyed socket the failure settles the callbacks of Writable and emits no 'error'.
+      const pendingCallback = this.#pendingCallback;
+      if (pendingCallback) {
+        this.#pendingCallback = null;
+        process.nextTick(pendingCallback, writeFailure);
+      }
+
       // Node's server connection socket emits 'close' whenever the TCP
       // connection closes, even with no request in flight (this also covers
       // tunneled/upgraded sockets, main's kIsTunnel case); reaching here from a
       // native close without a JS-initiated destroy must still surface it.
       if (!this.destroyed) {
         this.destroy(this.#closeError);
-      }
-      // A tunnel write that waited for a drain fails now. After destroy(), it settles the callbacks of Writable and emits no 'error'.
-      const pendingCallback = this.#pendingCallback;
-      if (pendingCallback) {
-        this.#pendingCallback = null;
-        (pendingCallback as Function)(writeFailure);
       }
     }
     // The close of a TLS handle waits for ciphertext that write() reported and a stalled peer does not take, but only once.
@@ -2248,6 +2251,8 @@ function getNodeHTTPServerSocket() {
     }
   } as unknown as typeof import("node:net").Socket;
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
+  // emitClose stays off, as net.Socket sets it. No net handle emits the 'close' of this socket, so destroy() does.
+  NodeHTTPServerSocket.prototype[kSocketClose] = true;
   return NodeHTTPServerSocket;
 }
 

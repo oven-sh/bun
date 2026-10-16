@@ -298,6 +298,23 @@ function addLocalPackage(dir: string, name: string, version: string, bin?: strin
   if (!existsSync(entry)) symlinkSync(join(packageDir, "cli.js"), entry);
 }
 
+/** What an install leaves of `name`, whose `directories.bin` is `bins`: each of `files`, created in that order, and its entry in .bin. */
+function addLocalBinDirectory(dir: string, name: string, files: string[]) {
+  const bins = join(dir, "node_modules", name, "bins");
+  mkdirSync(bins, { recursive: true });
+  mkdirSync(join(dir, "node_modules", ".bin"), { recursive: true });
+  writeFileSync(
+    join(bins, "..", "package.json"),
+    JSON.stringify({ name, version: "1.0.0", directories: { bin: "bins" } }),
+  );
+  for (const file of files) {
+    const script = `console.log(${JSON.stringify(`${file} of ${name}`)});`;
+    writeFileSync(join(bins, file), `#!/usr/bin/env node\n${script}\n`, { mode: 0o755 });
+    if (isWindows) addLocalBin(dir, file, script);
+    else symlinkSync(join(bins, file), join(dir, "node_modules", ".bin", file));
+  }
+}
+
 /** Makes everything below `dir`, and what it shares with the install cache through hard links, `hours` old. */
 function age(dir: string, hours = 25) {
   const then = new Date(Date.now() - hours * 60 * 60 * 1000);
@@ -2669,6 +2686,101 @@ describe("a package in node_modules", () => {
       stderr: expect.stringContaining("error: could not determine executable to run for package css"),
       exitCode: 1,
     });
+  });
+});
+
+// The files of the directory are the commands. When there are several and none is named like the package, npx
+// and `pnpm dlx` refuse to choose. bunx runs the first by name, as it runs the first entry of `bin`.
+describe("a package with `directories.bin`", () => {
+  // File systems list the files of a directory in different orders: by creation, by a hash of the name, by name.
+  // The first file by name of each package is neither the first nor the last created, and a dot-file is before
+  // it by name. A file system that lists by a hash can list it first in one package, hardly in all four. By the
+  // bytes of the names, `S` is before `c`.
+  it.concurrent("runs the first file by name, not the first that the directory lists", async () => {
+    const packages = {
+      nato: ["delta.js", "echo.js", "bravo.js", ".dot", "alpha.js", "hotel.js", "charlie.js", "golf.js", "kilo.js"],
+      greek: ["omega.js", "sigma.js", "kappa.js", ".keep", "beta.js", "theta.js", "gamma.js", "lambda.js", "zeta.js"],
+      colors: ["red.js", "orange.js", "pink.js", ".hidden", "blue.js", "violet.js", "green.js", "indigo.js", "tan.js"],
+      planets: ["venus.js", "earth.js", "mars.js", ".DS_Store", "Saturn.js", "juno.js", "ceres.js", "rhea.js", "io.js"],
+    };
+    const firstByName = [
+      { stdout: "alpha.js of nato\n", stderr: "", exitCode: 0 },
+      { stdout: "beta.js of greek\n", stderr: "", exitCode: 0 },
+      { stdout: "blue.js of colors\n", stderr: "", exitCode: 0 },
+      { stdout: "Saturn.js of planets\n", stderr: "", exitCode: 0 },
+    ];
+    using box = sandbox();
+    for (const [name, files] of Object.entries(packages)) addLocalBinDirectory(box.cwd, name, files);
+    const ran = async () => {
+      const runs = await Promise.all(Object.keys(packages).map(name => box.run(["--no-install", name])));
+      return runs.map(({ stdout, stderr, exitCode }) => ({ stdout, stderr, exitCode }));
+    };
+
+    expect(await ran()).toEqual(firstByName);
+    // Without the entry in .bin, the file in the package runs. On Windows nothing runs without the entry.
+    if (!isWindows) {
+      rmSync(join(box.cwd, "node_modules", ".bin"), { recursive: true });
+      expect(await ran()).toEqual(firstByName);
+    }
+  });
+
+  // When npm publishes, it writes the files of the directory into the `bin` of the registry's manifest, in no
+  // order of names. The package.json in the tarball keeps only `directories.bin`. The install links what the
+  // first says, and bunx chooses from the second.
+  it.concurrent("from the registry, runs the first file by name, the second time from its tree", async () => {
+    const files = ["tango.js", "kilo.js", "papa.js", "echo.js", "lima.js", "xray.js", "quebec.js", "oscar.js"];
+    using registry = await localRegistry({
+      name: "many-files",
+      version: "1.0.0",
+      bin: Object.fromEntries(files.map(file => [file, `bin/${file}`])),
+      files: {
+        "package.json": JSON.stringify({ name: "many-files", version: "1.0.0", directories: { bin: "bin" } }),
+        ...Object.fromEntries(files.map(file => [`bin/${file}`, echoBin(file)])),
+        "bin/.dot": echoBin(".dot"),
+      },
+    });
+    using box = sandbox(registry);
+
+    expect(await box.run(["many-files"])).toMatchObject({ stdout: "echo.js\n", exitCode: 0 });
+    expect(await box.run(["many-files"])).toMatchObject({ stdout: "echo.js\n", stderr: "", exitCode: 0, requests: [] });
+  });
+
+  it.concurrent("the file named like the package comes before the first by name", async () => {
+    using box = sandbox();
+    addLocalBinDirectory(box.cwd, "@corp/tool", ["alpha.js", "tool", "beta.js"]);
+
+    expect(await box.run(["--no-install", "@corp/tool"])).toMatchObject({
+      stdout: "tool of @corp/tool\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `.DS_Store` in a linked package would be the first file by name.
+  it.concurrent("a dot-file is not chosen: a directory with nothing else has no command", async () => {
+    using box = sandbox();
+    addLocalBinDirectory(box.cwd, "dots", [".only"]);
+
+    expect(await box.run(["--no-install", "dots"])).toMatchObject({
+      stdout: "",
+      stderr: expect.stringContaining("error: could not determine executable to run for package dots"),
+      exitCode: 1,
+    });
+  });
+
+  it.concurrent("-p <package> <dot-file> runs that file of the package", async () => {
+    using box = sandbox();
+    addLocalBinDirectory(box.cwd, "nato", ["alpha.js", ".dot", "bravo.js"]);
+    const ran = { stdout: ".dot of nato\n", stderr: "", exitCode: 0 };
+
+    expect(await box.run(["--no-install", "-p", "nato", ".dot"])).toMatchObject(ran);
+    // On Windows the entry is no link, so it does not say whose it is.
+    if (!isWindows) {
+      const entry = join(box.cwd, "node_modules", ".bin", ".dot");
+      rmSync(entry);
+      writeFileSync(entry, `#!/usr/bin/env node\nconsole.log("of another package");\n`, { mode: 0o755 });
+      expect(await box.run(["--no-install", "-p", "nato", ".dot"])).toMatchObject(ran);
+    }
   });
 });
 

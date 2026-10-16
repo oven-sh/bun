@@ -1,7 +1,17 @@
 import { FileSystemRouter } from "bun";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isMacOS,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -1227,6 +1237,7 @@ it.concurrent("checks the string limit only for an origin that is not interned y
   // its copy of the bytes. A router that repeats an origin interned under the
   // old limit finds it in the map and still constructs. A new origin over the
   // limit is refused, and the process does not grow by its 32 MiB.
+  const copyBound = (isASAN || isDebug ? 16 : 8) * 1024 * 1024;
   const code = /* js */ `
     const { setSyntheticAllocationLimitForTesting } = require("bun:internal-for-testing");
     const dir = process.argv[1];
@@ -1260,7 +1271,7 @@ it.concurrent("checks the string limit only for an origin that is not interned y
       JSON.stringify({
         hit: hit instanceof Bun.FileSystemRouter,
         miss,
-        missCopied: after.some((bytes, i) => bytes - before[i] > 8 * 1024 * 1024),
+        missCopied: after.some((bytes, i) => bytes - before[i] > ${copyBound}),
         held: first.origin.length,
         buffers: buffers.length,
       }),

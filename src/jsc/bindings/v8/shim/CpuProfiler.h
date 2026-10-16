@@ -26,8 +26,8 @@ struct CpuProfileNodeImpl {
     unsigned id { 0 };
     // UTF-8 copies kept for the profile's lifetime so GetFunctionNameStr()/
     // GetScriptResourceNameStr() can return stable `const char*`.
-    WTF::CString functionName;
-    WTF::CString scriptResourceName;
+    WTF::UTF8CString functionName;
+    WTF::UTF8CString scriptResourceName;
     int scriptId { 0 };
     // 1-based; 0 == kNoLineNumberInfo / kNoColumnNumberInfo.
     int lineNumber { 0 };
@@ -40,6 +40,7 @@ struct CpuProfileNodeImpl {
 // Plain-C++ backing storage for v8::CpuProfile. Heap-allocated by
 // CpuProfilerImpl::stop() and freed by v8::CpuProfile::Delete().
 struct CpuProfileImpl {
+    WTF::String m_title;
     // Owns every node in the tree (including the root). Child/sample pointers
     // borrow from here.
     WTF::Vector<std::unique_ptr<CpuProfileNodeImpl>> m_nodes;
@@ -55,6 +56,7 @@ struct CpuProfileImpl {
 struct CpuProfilerImpl {
     struct Session {
         uint32_t id;
+        WTF::String title;
         int64_t startTime;
         bool recordSamples;
     };
@@ -64,8 +66,11 @@ struct CpuProfilerImpl {
     {
     }
 
-    uint32_t start(bool recordSamples);
+    uint32_t start(WTF::String&& title, bool recordSamples);
     CpuProfileImpl* stop(uint32_t id);
+    // Running sessions have distinct titles (v8::CpuProfiler::Start refuses a
+    // duplicate), so at most one session matches.
+    const Session* sessionWithTitle(const WTF::String& title) const;
 
     Isolate* m_isolate;
     int m_samplingIntervalUs { 1000 };

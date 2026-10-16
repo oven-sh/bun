@@ -22,7 +22,11 @@ export function App() {
 
       <h1 className="text-5xl font-bold my-4 leading-tight">Bun + React</h1>
       <p>
-        Edit <code className="bg-[#1a1a1a] px-2 py-1 rounded font-mono">src/App.tsx</code> and save to test HMR
+        Edit{" "}
+        <code className="bg-[#1a1a1a] px-2 py-1 rounded font-mono">
+          src/App.tsx
+        </code>{" "}
+        and save to test HMR
       </p>
       <APITester />
     </div>

@@ -91,6 +91,63 @@ describe("S3Client region option", () => {
   });
 });
 
+describe("S3Client endpoint option", () => {
+  const options = {
+    accessKeyId: "test",
+    secretAccessKey: "test",
+    bucket: "bucket",
+    region: "us-east-1",
+  };
+
+  // presign() builds the request URL from the stored endpoint exactly like a
+  // request would, without opening a connection, so the ports below are never dialed.
+  it.each([
+    "http://127.0.0.1:1#@127.0.0.1:2",
+    "http://127.0.0.1:1\\@127.0.0.1:2",
+    "http://127.0.0.1:1?@127.0.0.1:2",
+    "http://user:p@ss@127.0.0.1:1",
+    "http://user:@127.0.0.1:1",
+    "http://user@127.0.0.1:1",
+    "http://127.0.0.1:1/x/../prefix/",
+    "http://127.1:1",
+    "https://acct.supabase.co/storage/v1/s3",
+    "https://[::1]:9000",
+  ])("signs for the origin and path that new URL(%j) names", endpoint => {
+    const expected = new URL(endpoint);
+    const presigned = new S3Client({ ...options, endpoint }).presign("key.txt");
+    // Compared as text: new URL(presigned) would hide a leaked userinfo, a raw
+    // dot-segment or a non-canonical IPv4 spelling again.
+    expect(presigned.split("?")[0]).toBe(`${expected.origin}${expected.pathname.replace(/\/$/, "")}/bucket/key.txt`);
+  });
+
+  it("defaults to https when the endpoint has no scheme", () => {
+    const presigned = new S3Client({ ...options, endpoint: "s3.example.com" }).presign("key.txt");
+    expect(presigned.split("?")[0]).toBe("https://s3.example.com/bucket/key.txt");
+  });
+
+  it("applies the same parsing to S3_ENDPOINT", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(new URL(Bun.s3.presign("key.txt")).host)`],
+      env: {
+        ...bunEnv,
+        AWS_ENDPOINT: undefined,
+        S3_ENDPOINT: "http://127.0.0.1:1#@127.0.0.1:2",
+        S3_ACCESS_KEY_ID: "test",
+        S3_SECRET_ACCESS_KEY: "test",
+        S3_BUCKET: "bucket",
+        S3_REGION: "us-east-1",
+      },
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("127.0.0.1:1\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("S3 endpoints without a region component", () => {
   it("defaults the signing region to us-east-1", async () => {
     await using proc = Bun.spawn({

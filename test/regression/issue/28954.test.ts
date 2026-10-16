@@ -38,7 +38,7 @@ test("Bun.serve receives MKADDRESSBOOK from a raw TCP request", async () => {
 
   // Write a raw HTTP request so the server-side method parser runs
   // independent of fetch()'s client-side method validation.
-  const socket = connect(server.port, "127.0.0.1");
+  const socket = connect(server.port!, "127.0.0.1");
   try {
     const { promise: connected, resolve: resolveConnect, reject: rejectConnect } = Promise.withResolvers<void>();
     socket.once("connect", () => resolveConnect());

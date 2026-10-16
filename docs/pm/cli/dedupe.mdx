@@ -15,12 +15,14 @@ bun dedupe v1.4.0 (abc12345)
 ↳ esbuild 0.15.10 → 0.15.11
 ↳ react 18.2.0 → 18.3.1
 
-2 duplicate versions removed, 3 packages installed (checked 5 packages) [12.00ms]
+2 duplicate versions removed, 3 packages installed (checked 5 packages in bun.lock) [12.00ms]
 ```
 
 Each row is a version Bun removed and the version its dependents now use.
 
 `bun dedupe` only chooses between versions already in the lockfile and never modifies `package.json`. It never fetches new versions from the registry and never moves a dependency outside its range. Use [`bun update`](/pm/cli/update) for that.
+
+`bun install` and `bun update` do the same for the versions they add, so a fresh install has no duplicates that one version could cover. They leave versions already in `bun.lock` alone; only `bun dedupe` removes those.
 
 ### `--check` and `--dry-run`
 
@@ -36,7 +38,7 @@ bun dedupe v1.4.0 (abc12345)
 ↳ esbuild 0.15.10 → 0.15.11
 ↳ react 18.2.0 → 18.3.1
 
-2 duplicate versions can be removed (checked 5 packages) [9.00ms]
+2 duplicate versions can be removed (checked 5 packages in bun.lock) [9.00ms]
   bun dedupe
 ```
 

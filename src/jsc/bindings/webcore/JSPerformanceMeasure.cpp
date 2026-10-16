@@ -27,14 +27,17 @@
 #include "JSDOMBinding.h"
 #include "JSDOMConstructorNotConstructable.h"
 #include "JSDOMConvertAny.h"
+#include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
@@ -48,13 +51,14 @@ using namespace JSC;
 
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceMeasureConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceMeasure_detail);
+static JSC_DECLARE_HOST_FUNCTION(jsPerformanceMeasurePrototypeFunction_toJSON);
 
 class JSPerformanceMeasurePrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceMeasurePrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceMeasurePrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceMeasurePrototype>(vm)) JSPerformanceMeasurePrototype(vm, globalObject, structure);
+        JSPerformanceMeasurePrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceMeasurePrototype))) JSPerformanceMeasurePrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -68,7 +72,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -92,11 +96,7 @@ template<> JSValue JSPerformanceMeasureDOMConstructor::prototypeForStructure(JSC
 
 template<> void JSPerformanceMeasureDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "PerformanceMeasure"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSPerformanceMeasure::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "PerformanceMeasure"_s, JSPerformanceMeasure::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -104,6 +104,7 @@ template<> void JSPerformanceMeasureDOMConstructor::initializeProperties(VM& vm,
 static const HashTableValue JSPerformanceMeasurePrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceMeasureConstructor, 0 } },
     { "detail"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceMeasure_detail, 0 } },
+    { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceMeasurePrototypeFunction_toJSON, 0 } },
 };
 
 const ClassInfo JSPerformanceMeasurePrototype::s_info = { "PerformanceMeasure"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMeasurePrototype) };
@@ -111,8 +112,8 @@ const ClassInfo JSPerformanceMeasurePrototype::s_info = { "PerformanceMeasure"_s
 void JSPerformanceMeasurePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceMeasure::info(), JSPerformanceMeasurePrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceMeasure::info(), JSPerformanceMeasurePrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSPerformanceMeasure::s_info = { "PerformanceMeasure"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMeasure) };
@@ -169,14 +170,36 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMeasure_detail, (JSGlobalObject * lexicalG
     return IDLAttribute<JSPerformanceMeasure>::get<jsPerformanceMeasure_detailGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
+// PerformanceEntry.prototype.toJSON does not know about `detail`; Node's mark and
+// measure entries include it (lib/internal/perf/usertiming.js).
+static inline EncodedJSValue jsPerformanceMeasurePrototypeFunction_toJSONBody(JSGlobalObject* lexicalGlobalObject, CallFrame*, JSPerformanceMeasure* castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    PerformanceEntry& impl = castedThis->wrapped();
+    auto* result = constructEmptyObject(lexicalGlobalObject);
+    auto nameValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.name());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    result->putDirect(vm, vm.propertyNames->name, nameValue);
+    auto entryTypeValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.entryType());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    Bun::putDirectNamed(vm, result, "entryType"_s, entryTypeValue);
+    Bun::putDirectNamed(vm, result, "startTime"_s, jsNumber(impl.startTime()));
+    Bun::putDirectNamed(vm, result, "duration"_s, jsNumber(impl.duration()));
+    auto detailValue = jsPerformanceMeasure_detailGetter(*lexicalGlobalObject, *castedThis);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    Bun::putDirectNamed(vm, result, "detail"_s, detailValue);
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsPerformanceMeasurePrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSPerformanceMeasure>::call<jsPerformanceMeasurePrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
+}
+
 JSC::GCClient::IsoSubspace* JSPerformanceMeasure::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceMeasure, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceMeasure.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceMeasure = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceMeasure.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceMeasure = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceMeasure, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceMeasure, m_subspaceForPerformanceMeasure));
 }
 
 template<typename Visitor>

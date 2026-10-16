@@ -107,7 +107,26 @@ describe.concurrent("bun run --workspaces", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("");
-    expect(stderr).toContain('No workspace packages have script "nonexistent"');
+    expect(stderr.trim()).toMatch(/^error: Script "nonexistent" not found in \d+ workspace packages$/);
     expect(exitCode).toBe(1);
+  });
+
+  test("errors once when there are no workspace packages", async () => {
+    using dir = tempDir("ws-none", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"], scripts: { test: "echo root" } }),
+    });
+    for (const args of [["--workspaces"], ["--parallel", "--workspaces"]]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...args, "test"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr.trim()).toBe("error: No workspace packages found");
+      expect(exitCode).toBe(1);
+    }
   });
 });

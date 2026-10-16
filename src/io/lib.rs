@@ -54,7 +54,7 @@ pub use keep_alive::KeepAlive;
 //                  process object is signaled (i.e. has terminated).
 // Downstream code calls `install()` / `enable()` / `is_enabled()`
 // unconditionally, so both arms expose the same surface.
-#[cfg(not(windows))]
+#[cfg(unix)]
 #[path = "ParentDeathWatchdog.rs"]
 pub mod parent_death_watchdog;
 #[cfg(windows)]
@@ -312,7 +312,7 @@ pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 // `uv_loop_t` whereas the impl bodies
 // (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) hand back the wrapper.
 bun_dispatch::link_interface! {
-    pub EventLoopCtx[Js, Mini] {
+    pub EventLoopCtx[Js, Mini, SpawnSync] {
         fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
         fn file_polls_ptr() -> *mut Store;
         // `alloc_file_poll() -> *mut FilePoll` was removed — it
@@ -326,7 +326,7 @@ bun_dispatch::link_interface! {
             cb: Option<OpaqueCallback>,
             ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
         );
-        fn pipe_read_buffer() -> *mut [u8];
+        fn pipe_read_scratch() -> *const PipeReadScratch;
     }
 }
 
@@ -381,22 +381,11 @@ impl EventLoopCtx {
         // discipline above — see block comment.
         unsafe { &mut *self.file_polls_ptr() }
     }
-    /// Single nonnull-asref accessor for the per-loop pipe-read scratch
-    /// buffer. Same contract as [`loop_mut`]: `pub(crate)`, the buffer is a
-    /// per-thread set-once allocation owned by the VM/Mini loop, and the
-    /// event loop is single-threaded, so no second `&mut [u8]` to it can be
-    /// live. Every in-crate caller (`PipeReader::read_*`) uses it for one
-    /// blocking syscall and drops the borrow before re-entering the loop.
-    /// `'static` matches the unbounded lifetime the inline raw-ptr derefs at
-    /// the call sites already produced; collapses their N identical
-    /// `&mut *ctx.pipe_read_buffer()` derefs into this one block.
+    /// Claims the per-loop pipe-read scratch; `None` while a read further up the stack holds it.
     #[inline]
-    fn pipe_read_buffer_mut(&self) -> &'static mut [u8] {
-        // SAFETY: per-thread set-once scratch buffer (`BackRef`-shaped); the
-        // event loop is single-threaded so this is the sole live `&mut`, and
-        // every crate-internal caller drops the borrow before any path that
-        // could re-derive it — see doc comment above.
-        unsafe { &mut *self.pipe_read_buffer() }
+    fn claim_pipe_read_scratch(&self) -> Option<PipeReadScratchGuard<'static>> {
+        // SAFETY: per-thread scratch owned by the VM/Mini loop, which outlives every read.
+        unsafe { (*self.pipe_read_scratch()).claim() }
     }
     #[inline]
     pub(crate) fn loop_ref(&self) {
@@ -426,10 +415,15 @@ impl EventLoopCtx {
         self.file_polls_mut().get_init(value)
     }
 
+    /// What a `FilePoll` keeps of the ctx it was made with; [`get_vm_ctx`] gives that ctx back.
     #[inline]
     #[cfg(not(windows))]
-    pub(crate) fn is_js(&self) -> bool {
-        self.is(EventLoopCtxKind::Js)
+    pub(crate) fn allocator_type(&self) -> AllocatorType {
+        match self.kind {
+            EventLoopCtxKind::Js => AllocatorType::Js,
+            EventLoopCtxKind::Mini => AllocatorType::Mini,
+            EventLoopCtxKind::SpawnSync => AllocatorType::SpawnSync,
+        }
     }
     #[inline]
     pub fn loop_(&self) -> *mut bun_uws_sys::Loop {
@@ -456,9 +450,6 @@ pub use posix_event_loop::Flags as PollKind;
 pub mod file_poll {
     pub use super::Store;
     pub use super::posix_event_loop::{Flags, FlagsSet};
-    /// Kqueue/epoll watch kind passed to `FilePoll::register`.
-    #[allow(dead_code)]
-    pub(crate) type Pollable = Flags;
 }
 
 // ── bun_io original submodules ──────────────────────────────────────────────
@@ -471,12 +462,14 @@ pub mod heap;
 pub mod max_buf;
 #[path = "openForWriting.rs"]
 pub mod open_for_writing_mod;
+pub mod pipe_read_scratch;
 #[path = "PipeReader.rs"]
 pub mod pipe_reader;
 #[path = "PipeWriter.rs"]
 pub mod pipe_writer;
 #[path = "pipes.rs"]
 pub mod pipes;
+pub use pipe_read_scratch::{PipeReadScratch, PipeReadScratchGuard};
 #[cfg(windows)]
 #[path = "source.rs"]
 pub mod source;
@@ -490,7 +483,7 @@ pub mod write;
 pub use write::{AsFmt, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, Result, Write};
 
 pub use max_buf as MaxBuf;
-pub use pipes::{FileType, ReadState};
+pub use pipes::{Chunk, FileType, ReadState};
 
 // `BufferedReader` parent callback dispatch. Each variant's `link_impl_*!` (in
 // `bun_runtime`/`bun_install`) forwards to that type's `BufferedReaderParent`
@@ -509,10 +502,11 @@ bun_dispatch::link_interface! {
         MultiRunPipeReader,
         TestParallelWorkerPipe,
         LifecycleScript,
+        InstallGit,
         SecurityScan,
     ] {
         fn has_on_read_chunk() -> bool;
-        fn on_read_chunk(chunk: &[u8], has_more: pipes::ReadState) -> bool;
+        fn on_read_chunk(chunk: pipes::Chunk<'_>, has_more: pipes::ReadState) -> bool;
         fn on_reader_done();
         fn on_reader_error(err: bun_sys::Error);
         fn loop_ptr() -> *mut Loop;
@@ -595,7 +589,7 @@ macro_rules! __impl_buffered_reader_parent_body {
                 #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
                 unsafe fn on_read_chunk(
                     $rc_this: *mut Self,
-                    $rc_chunk: &[u8],
+                    $rc_chunk: $crate::Chunk<'_>,
                     $rc_more: $crate::ReadState,
                 ) -> bool {
                     unsafe { $rc }
@@ -687,8 +681,8 @@ use bun_sys::{self as sys, E, Fd};
 
 // `loop` is a Rust keyword, so the static is
 // named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
+#[cfg(not(windows))]
 #[allow(non_upper_case_globals)]
-#[allow(dead_code)]
 pub(crate) static io_loop: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("loop", bun_core::output::Visibility::Visible);
 // All `log!` call sites are inside epoll/kqueue paths (Linux/macOS/FreeBSD); on
@@ -1329,16 +1323,6 @@ macro_rules! intrusive_uv_fs {
             const UV_FS_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
         }
     };
-}
-
-impl Default for Request {
-    fn default() -> Self {
-        Self {
-            next: bun_threading::Link::new(),
-            callback: |_| unreachable!(),
-            scheduled: false,
-        }
-    }
 }
 
 // Intrusive MPSC queue keyed on the `next` field.
@@ -2040,7 +2024,7 @@ pub mod waker {
     #[cfg(target_os = "macos")]
     pub struct KEventWaker {
         kq: i32,
-        machport: bun_core::mach_port,
+        machport: libc::mach_port_t,
         pub machport_buf: Box<[u8]>,
     }
 
@@ -2049,10 +2033,10 @@ pub mod waker {
 
     #[cfg(target_os = "macos")]
     unsafe extern "C" {
-        // Defined in src/io/io_darwin.cpp. `mach_port` is a by-value `u32`;
+        // Defined in src/io/io_darwin.cpp. `mach_port_t` is a by-value `u32`;
         // bad/dead ports are reported by mach return codes, not UB.
-        fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> bun_core::mach_port;
-        safe fn io_darwin_schedule_wakeup(port: bun_core::mach_port) -> bool;
+        fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> libc::mach_port_t;
+        safe fn io_darwin_schedule_wakeup(port: libc::mach_port_t) -> bool;
     }
 
     #[cfg(target_os = "macos")]
@@ -2267,6 +2251,8 @@ pub mod closer {
     #[cfg(windows)]
     use crate::IntrusiveUvFs as _;
     #[cfg(windows)]
+    use bun_sys::ReturnCodeExt as _;
+    #[cfg(windows)]
     use bun_sys::windows::libuv as uv;
     #[cfg(windows)]
     use core::ffi::c_void;
@@ -2294,9 +2280,9 @@ pub mod closer {
                     fd.uv(),
                     Some(Self::on_close),
                 )
-                .err_enum()
+                .errno()
                 {
-                    bun_core::debug_warn!("libuv close() failed = {}", err);
+                    bun_core::debug_warn!("libuv close() failed = {:?}", err);
                     drop(bun_core::heap::take(closer));
                 }
             }
@@ -2316,8 +2302,8 @@ pub mod closer {
                 );
 
                 #[cfg(debug_assertions)]
-                if let Some(err) = (*closer).io_request.result.err_enum() {
-                    bun_core::debug_warn!("libuv close() failed = {}", err);
+                if let Some(err) = (*closer).io_request.result.errno() {
+                    bun_core::debug_warn!("libuv close() failed = {:?}", err);
                 }
 
                 (*req).deinit();

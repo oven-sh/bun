@@ -30,9 +30,9 @@ jobs:
           persist-credentials: false
 
       - name: Run Claude Code slash command
-        uses: anthropics/claude-code-action/base-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
+        uses: anthropics/claude-code-action/base-action@2261fcfc88e7de1b55f179edd588805e12de71f2 # v1.0.228
         env:
-          ANTHROPIC_MODEL: claude-opus-5[1m]
+          ANTHROPIC_MODEL: claude-opus-5
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           prompt: "/dedupe ${{ github.repository }}/issues/${{ github.event.issue.number || inputs.issue_number }}"

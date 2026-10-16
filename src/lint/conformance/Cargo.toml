@@ -1,0 +1,17 @@
+[package]
+name = "bun_lint_conformance"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_lint.workspace = true
+bun_format_conformance.workspace = true
+bun_core.workspace = true
+bun_sys.workspace = true
+bstr.workspace = true
+
+[lints]
+workspace = true

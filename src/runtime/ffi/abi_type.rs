@@ -12,7 +12,7 @@ use bstr::BStr;
 
 #[repr(i32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum ABIType {
+pub(crate) enum ABIType {
     Char = 0,
 
     Int8T = 1,
@@ -53,7 +53,7 @@ bun_core::comptime_string_map! {
     /// option parsing. Associated `static` items aren't allowed in Rust, so the
     /// table lives at module scope and is re-exposed as `ABIType::LABEL` so callers
     /// can keep using `ABIType::LABEL.get(...)` (auto-deref handles the reference).
-    pub static ABI_TYPE_LABEL: ABIType = {
+    pub(crate) static ABI_TYPE_LABEL: ABIType = {
     b"bool" => ABIType::Bool,
     b"c_int" => ABIType::Int32T,
     b"c_uint" => ABIType::Uint32T,
@@ -102,8 +102,7 @@ bun_core::comptime_string_map! {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-variant string table — single source of truth for the four exhaustive
-// matches that previously lived in typename_label / param_typename_label /
+// Per-variant string table — single source of truth for typename_label /
 // ToCFormatter / ToJSFormatter. Indexed by `self as usize`.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -213,7 +212,7 @@ impl ABIType {
         ToCFormatter { tag: self, symbol }
     }
 
-    pub fn to_js(self, symbol: &[u8]) -> ToJSFormatter<'_> {
+    pub(crate) fn to_js(self, symbol: &[u8]) -> ToJSFormatter<'_> {
         ToJSFormatter { tag: self, symbol }
     }
 
@@ -225,17 +224,9 @@ impl ABIType {
     pub(crate) fn typename_label(self) -> &'static [u8] {
         self.row().c_type
     }
-
-    pub(crate) fn param_typename(
-        self,
-        writer: &mut impl std::io::Write,
-    ) -> Result<(), crate::Error> {
-        writer.write_all(self.typename_label())?;
-        Ok(())
-    }
 }
 
-pub struct ToCFormatter<'a> {
+pub(crate) struct ToCFormatter<'a> {
     pub(crate) symbol: &'a [u8],
     pub(crate) tag: ABIType,
 }
@@ -257,7 +248,7 @@ impl fmt::Display for ToCFormatter<'_> {
     }
 }
 
-pub struct ToJSFormatter<'a> {
+pub(crate) struct ToJSFormatter<'a> {
     pub(crate) symbol: &'a [u8],
     pub(crate) tag: ABIType,
 }

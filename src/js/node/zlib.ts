@@ -15,6 +15,7 @@ const ObjectFreeze = Object.freeze;
 const TypedArrayPrototypeFill = Uint8Array.prototype.fill;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const NumberIsNaN = Number.isNaN;
+const NumberIsInteger = Number.isInteger;
 const MathMax = Math.max;
 
 const isArrayBufferView = ArrayBuffer.isView;
@@ -125,7 +126,7 @@ function zlibBufferSync(engine, buffer) {
 function zlibOnError(message, errno, code) {
   const self = this[owner_symbol];
   // There is no way to cleanly recover. Continuing only obscures problems.
-  const error = new Error(message);
+  const error: ZlibError = new Error(message);
   error.errno = errno;
   error.code = code;
   self.destroy(error);
@@ -140,6 +141,42 @@ const FLUSH_BOUND = [
 const FLUSH_BOUND_IDX_NORMAL = 0;
 const FLUSH_BOUND_IDX_BROTLI = 1;
 const FLUSH_BOUND_IDX_ZSTD = 2;
+
+interface ZlibError extends Error {
+  errno?: number;
+}
+
+interface FlushOptions {
+  flush: number;
+  finishFlush: number;
+  fullFlush: number;
+}
+
+interface ZlibHandle {
+  [owner_symbol]: ZlibBase;
+  onerror: typeof zlibOnError;
+  reset(): void;
+  close(): void;
+}
+
+declare class ZlibBase extends Transform {
+  constructor(opts, mode: number, handle: ZlibHandle, flushOptions: FlushOptions);
+  [kError]: ZlibError | null;
+  bytesWritten: number;
+  _handle: ZlibHandle | null;
+  _outBuffer: Buffer;
+  _outOffset: number;
+  _chunkSize: number;
+  _defaultFlushFlag: number;
+  _finishFlushFlag: number;
+  _defaultFullFlushFlag: number;
+  _info: boolean | undefined;
+  _maxOutputLength: number;
+  reset(): void;
+  flush(kind?, callback?): void;
+  close(callback?: () => void): void;
+  _processChunk(chunk: Buffer, flushFlag: number, cb?: () => void): Buffer | undefined;
+}
 
 // The base class for all Zlib-style streams.
 function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
@@ -254,7 +291,7 @@ function maxFlush(a, b) {
 // Set up a list of 'special' buffers that can be written using .write()
 // from the .flush() code as a way of introducing flushing operations into the
 // write sequence.
-const kFlushBuffers: (typeof Buffer)[] = [];
+const kFlushBuffers: (Buffer & { [kFlushFlag]?: number })[] = [];
 {
   const dummyArrayBuffer = new ArrayBuffer();
   for (const flushFlag of kFlushFlagList) {
@@ -307,6 +344,21 @@ ZlibBase.prototype._processChunk = function (chunk, flushFlag, cb) {
   else return processChunkSync(this, chunk, flushFlag);
 };
 
+// Takes `have` bytes at `offset` out of an output chunk, without `slice` where possible. A slice gives
+// the chunk an ArrayBuffer. JSC then counts the chunk as allocated a second time, and only a full
+// collection takes it out of the heap size again, so full collections come often. A slice also keeps
+// the whole chunk alive with the result. nativeDecodePullResult in BunStreamSource.cpp has the same rule.
+function takeOutput(buffer, offset, have) {
+  // A full chunk: hand it over. The caller replaces an exhausted chunk.
+  if (offset === 0 && have === buffer.byteLength) return buffer;
+  // At most one default chunk: copy it out. A fractional chunkSize gives fractional offsets, which
+  // `slice` truncates and `copyBytesFrom` rejects.
+  if (have <= Z_DEFAULT_CHUNK && NumberIsInteger(offset) && NumberIsInteger(have)) {
+    return Buffer.copyBytesFrom(buffer, offset, have);
+  }
+  return buffer.slice(offset, offset + have);
+}
+
 function processChunkSync(self, chunk, flushFlag) {
   let availInBefore = chunk.byteLength;
   let availOutBefore = self._chunkSize - self._outOffset;
@@ -355,7 +407,7 @@ function processChunkSync(self, chunk, flushFlag) {
 
     const have = availOutBefore - availOutAfter;
     if (have > 0) {
-      const out = buffer.slice(offset, offset + have);
+      const out = takeOutput(buffer, offset, have);
       offset += have;
       ArrayPrototypePush.$call(buffers, out);
       nread += out.byteLength;
@@ -441,7 +493,7 @@ function processCallback() {
   const have = handle.availOutBefore - availOutAfter;
   let streamBufferIsFull = false;
   if (have > 0) {
-    const out = self._outBuffer.slice(self._outOffset, self._outOffset + have);
+    const out = takeOutput(self._outBuffer, self._outOffset, have);
     self._outOffset += have;
     streamBufferIsFull = !self.push(out);
   } else {
@@ -650,7 +702,7 @@ function Unzip(opts): void {
 }
 $toClass(Unzip, "Unzip", Zlib);
 
-function createConvenienceMethod(ctor, sync, methodName, isZstd) {
+function createConvenienceMethod(ctor, sync, methodName, isZstd?) {
   if (sync) {
     const fn = function (buffer, opts) {
       return zlibBufferSync(new ctor(opts), buffer);
@@ -713,7 +765,7 @@ function Brotli(opts, mode) {
       if (typeof value !== "number" && typeof value !== "boolean") {
         throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
       }
-      brotliInitParamsArray[key] = value;
+      brotliInitParamsArray[key] = +value;
     });
   }
 
@@ -760,6 +812,8 @@ const zstdDefaultOpts = {
 };
 
 class Zstd extends ZlibBase {
+  declare _writeState: Uint32Array;
+
   constructor(opts, mode, initParamsArray, maxParam) {
     $assert(mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS);
 

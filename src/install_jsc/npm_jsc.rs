@@ -1,7 +1,7 @@
 //! JSC host fns for `bun_install::npm`, kept here so that `install/` has
 //! no `JSValue`/`JSGlobalObject`/`CallFrame` references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
 pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;
@@ -9,14 +9,8 @@ pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> 
     let mut operating_system = npm::OperatingSystem::NONE.negatable();
     let mut iter = arg.array_iterator(global)?;
     while let Some(item) = iter.next()? {
-        let slice = item.to_slice(global)?;
+        let slice = item.to_utf8(global)?;
         operating_system.apply(slice.slice());
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-    }
-    if global.has_exception() {
-        return Ok(JSValue::ZERO);
     }
     Ok(JSValue::js_boolean(
         operating_system
@@ -31,14 +25,8 @@ pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
     let mut architecture = npm::Architecture::NONE.negatable();
     let mut iter = arg.array_iterator(global)?;
     while let Some(item) = iter.next()? {
-        let slice = item.to_slice(global)?;
+        let slice = item.to_utf8(global)?;
         architecture.apply(slice.slice());
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-    }
-    if global.has_exception() {
-        return Ok(JSValue::ZERO);
     }
     Ok(JSValue::js_boolean(
         architecture.combine().is_match(npm::Architecture::CURRENT),
@@ -64,7 +52,7 @@ impl ManifestBindings {
             b"parseManifest",
             JSFunction::create(
                 global,
-                bun_core::String::static_(b"parseManifest"),
+                "parseManifest",
                 // `#[bun_jsc::host_fn]` on the module-scope `js_parse_manifest`
                 // emits this `JSHostFn`-ABI shim.
                 __jsc_host_js_parse_manifest,
@@ -94,13 +82,10 @@ fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         )));
     }
 
-    // `defer manifest_filename_str.deref()` — release the +1 WTFStringImpl ref
-    // returned by `toBunString`; `bun_core::String` has no `Drop` impl.
-    let manifest_filename_str = scopeguard::guard(args[0].to_bun_string(global)?, |s| s.deref());
+    let manifest_filename_str = args[0].to_bun_string(global)?;
     let manifest_filename = manifest_filename_str.to_utf8();
 
-    // `defer registry_str.deref()` — see above.
-    let registry_str = scopeguard::guard(args[1].to_bun_string(global)?, |s| s.deref());
+    let registry_str = args[1].to_bun_string(global)?;
     let registry = registry_str.to_utf8();
 
     let manifest_file = match bun_sys::openat_a(
@@ -169,6 +154,5 @@ fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         }
     }
 
-    let mut result = BunString::borrow_utf8(&buf);
-    bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut result, global)
+    BunString::borrow_utf8(&buf).to_js_by_parse_json(global)
 }

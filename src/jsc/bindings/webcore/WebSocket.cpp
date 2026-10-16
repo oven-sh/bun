@@ -969,6 +969,11 @@ void WebSocket::didReceiveFrame(Opcode opcode, std::span<const uint8_t> payload)
 
 void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData)
 {
+    // Below, a frame without a listener is queued for one that is attached right after. Nobody needs an old ping or
+    // pong, few programs listen for them, and a peer that floods them would grow that queue without limit.
+    if (eventName != eventNames().messageEvent && !hasEventListeners(eventName))
+        return;
+
     switch (m_binaryType) {
     case BinaryType::Blob:
         if (this->hasEventListeners(eventName)) {
@@ -1256,6 +1261,8 @@ void WebSocket::reportFailure(const Failure& failure)
     if (isWsMode()) {
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(error);
+        // Whether the socket connects to a proxy. NO_PROXY can bypass the `proxy` option, so JS can't tell.
+        arguments.append(JSC::jsBoolean(m_connectionType == ConnectionType::ProxyPlain || m_connectionType == ConnectionType::ProxyTLS));
         callHandler(vm.propertyNames->error, arguments);
         return;
     }

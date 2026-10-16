@@ -279,6 +279,12 @@ static void convertOptions(JSGlobalObject* lexicalGlobalObject, JSObject* object
         if (auto* proxyTLS = proxyTLSValue.getObject()) {
             convertTLS(globalObject, proxyTLS, options.proxyTLS.emplace(), "proxy.tls.checkServerIdentity"_s);
             RETURN_IF_EXCEPTION(throwScope, );
+        } else if (proxyTLSValue.isTrue()) {
+            // "TLS with the defaults", as in Bun.connect(). Ignoring it would verify the proxy with `tls` instead.
+            options.proxyTLS.emplace();
+        } else if (proxyTLSValue.toBoolean(lexicalGlobalObject)) {
+            Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "proxy.tls"_s, "object"_s, proxyTLSValue);
+            return;
         }
     }
 }

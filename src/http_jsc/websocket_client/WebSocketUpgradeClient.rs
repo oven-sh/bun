@@ -201,6 +201,8 @@ pub struct HTTPClient<const SSL: bool> {
     to_send_len: Cell<usize>,
     /// Unconsumed bytes received since the last request (CONNECT or upgrade) was sent.
     body: JsCell<Vec<u8>>,
+    /// Bytes of interim 1xx responses skipped since the last final response.
+    interim_len: Cell<usize>,
     /// Created by the `ws` module, which runs its own handshake timer, validates the 101 itself and
     /// reads the body of a non-upgrade response.
     ws_mode: bool,
@@ -467,6 +469,7 @@ where
             input_body_buf: JsCell::new(input_body_buf),
             to_send_len: Cell::new(0),
             body: JsCell::new(Vec::new()),
+            interim_len: Cell::new(0),
             ws_mode: websocket.is_ws_mode(),
             response_body: Cell::new(None),
             hostname: JsCell::new(ZBox::default()),
@@ -847,8 +850,9 @@ where
 
     /// Appends `data` to `body`. Once `body` starts with a complete response head, calls `on_head`
     /// with the parsed response and the bytes after it. Skips interim 1xx responses, and fails the
-    /// connection if the head is malformed or too large. The result depends only on the bytes
-    /// received so far, not on how they were split across reads.
+    /// connection if the head is malformed or too large. Interim responses count toward that size,
+    /// or a server could keep the client parsing them forever. The result depends only on the
+    /// bytes received so far, not on how they were split across reads.
     ///
     /// `on_head` gets a copy and the head stays in `body`: a `handshake` listener can spin the event
     /// loop, and the next read then appends after it.
@@ -861,16 +865,28 @@ where
         let received = this.body.get().clone();
         let mut unparsed: &[u8] = &received;
         let cap = max_response_head_len();
+        let drop_interim = |unparsed: &[u8]| {
+            this.body
+                .with_mut(|b| drop(b.drain(..received.len() - unparsed.len())));
+        };
         loop {
             let window = &unparsed[..unparsed.len().min(cap)];
             let mut slots = header_slots(window);
             let error = match picohttp::Response::parse(window, &mut slots) {
                 Ok(response) if matches!(response.status_code, 100 | 102..=199) => {
                     unparsed = &unparsed[response.bytes_read..];
-                    this.body.with_mut(|b| drop(b.drain(..response.bytes_read)));
-                    continue;
+                    this.interim_len
+                        .set(this.interim_len.get() + response.bytes_read);
+                    if this.interim_len.get() <= cap {
+                        continue;
+                    }
+                    ErrorCode::ResponseHeadersTooLarge
                 }
-                Ok(response) => return on_head(&response, &unparsed[response.bytes_read..]),
+                Ok(response) => {
+                    drop_interim(unparsed);
+                    this.interim_len.set(0);
+                    return on_head(&response, &unparsed[response.bytes_read..]);
+                }
                 Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                     ErrorCode::InvalidResponse
                 }
@@ -883,7 +899,7 @@ where
                 Err(picohttp::ParseResponseError::ShortRead) if unparsed.len() > cap => {
                     ErrorCode::ResponseHeadersTooLarge
                 }
-                Err(picohttp::ParseResponseError::ShortRead) => return,
+                Err(picohttp::ParseResponseError::ShortRead) => return drop_interim(unparsed),
             };
             return Self::terminate(this, error);
         }
@@ -917,8 +933,6 @@ where
         let _guard = RefPtr::from_this(this);
 
         debug_assert!(this.is_same_socket(socket));
-
-        debug_assert!(!socket.is_shutdown());
 
         // Handle proxy handshake response
         if this.state.get() == State::ProxyHandshake {

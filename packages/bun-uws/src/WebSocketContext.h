@@ -371,6 +371,15 @@ private:
         if (webSocketData->isShuttingDown) {
             /* Check if we just now drained completely */
             if (asyncSocket->getBufferedAmount() == 0) {
+                /* The `ws` module runs its send callbacks from the drain handler. Everything was written, so they must
+                 * not be left to fail when the socket closes. */
+                auto *webSocketContextData = getExtS(s);
+                if (webSocketContextData->wsPackage && webSocketContextData->drainHandler) {
+                    webSocketContextData->drainHandler((WebSocket<SSL, isServer, USERDATA> *) s);
+                    if (us_socket_is_closed((us_socket_t *) s) || us_socket_is_shut_down((us_socket_t *) s)) {
+                        return s;
+                    }
+                }
                 /* Now perform the actual TCP/TLS shutdown which was postponed due to backpressure */
                 asyncSocket->shutdown();
             }

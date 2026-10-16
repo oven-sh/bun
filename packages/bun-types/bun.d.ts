@@ -5090,7 +5090,7 @@ declare module "bun" {
           /**
            * TLS options for the connection to an `https://` proxy.
            *
-           * If set, even to `{}`, the proxy uses only these options and the
+           * If set, even to `{}` or `true`, the proxy uses only these options and the
            * target uses only the top-level `tls` option. Otherwise `tls`
            * applies to both connections.
            *
@@ -5109,7 +5109,7 @@ declare module "bun" {
            * });
            * ```
            */
-          tls?: WebSocketOptionsTLS["tls"];
+          tls?: WebSocketOptionsTLS["tls"] | boolean;
         };
   };
 

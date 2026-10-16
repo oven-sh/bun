@@ -72,13 +72,8 @@ pub(crate) fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
         && (url.len() == registry.len() || url[registry.len()] == b'/')
 }
 
-/// Decides which npm tarball URLs the writer replaces with `""`. The parser
-/// rebuilds `""` against the *reader's* registry for the package, so a URL
-/// is dropped only when that rebuild gives the same tarball: under the
-/// default registry, or the exact `build_url` of the writer's top-level
-/// `registry=` for an entry with an integrity hash. A `@scope:registry=`
-/// that names another registry keeps its URL, so a reader without that
-/// scope does not fetch the package from the public registry.
+/// Which npm tarball URLs the writer replaces with `""`: the parser rebuilds
+/// `""` against the reader's registry, so only a URL that rebuild reproduces.
 struct NpmUrlWriter<'a> {
     options: &'a PackageManagerOptions,
     registry: Vec<u8>,
@@ -119,8 +114,7 @@ impl<'a> NpmUrlWriter<'a> {
         if url_is_under_registry(url, &self.registry) {
             return self.is_canonical(url, name, version, buf);
         }
-        // The registry href is WHATWG-normalized (`Scope::set_url`), the
-        // manifest's `dist.tarball` is not (`:443`, upper-case host).
+        // `Scope::set_url` normalizes the registry href; `dist.tarball` is verbatim.
         let normalized = bun_url::whatwg::href_from_string(&bun_core::String::borrow_utf8(url));
         if normalized.tag() == bun_core::string::Tag::Dead {
             return false;
@@ -295,9 +289,8 @@ impl Stringifier {
     /// A walk-clean lockfile with scoped rules is stamped v3 whatever version was
     /// loaded. Without scoped rules a lockfile keeps its loaded v1/v2, and a fresh
     /// or v3-loaded one is walked down to v2, or to v1 on a v2-invariant violation
-    /// (npm tarball without a supported integrity that is not written as `""`,
-    /// unsafe git `.bun-tag`); that decision must not depend on the writer's
-    /// `~/.npmrc`.
+    /// (off-registry npm tarball without a supported integrity, unsafe git
+    /// `.bun-tag`); that decision must not depend on the writer's `~/.npmrc`.
     ///
     /// Walks the package tree the same way the writer does — only packages that
     /// are actually serialized are considered, not every entry in the in-memory
@@ -342,12 +335,19 @@ impl Stringifier {
                         if pkg_metas[i].integrity.tag.is_supported() {
                             continue;
                         }
-                        // No supported integrity: only v2-clean if the writer
-                        // serializes the tarball URL as `""`, which never sets
-                        // the parser's `npm_url_needs_integrity`. A verbatim URL
-                        // is checked against the *reader's* scope config, so a
-                        // v2 stamp could fail to parse for a teammate. Stay at
-                        // v1 for those.
+                        // No supported integrity: only v2-clean if the tarball
+                        // URL is under the *default* registry, the one case the
+                        // writer normalizes to `""` (see the npm URL
+                        // serialization in `save_from_binary`). An empty
+                        // URL never sets the parser's `npm_url_needs_integrity`,
+                        // so that round-trips for any reader. A URL under a
+                        // configured-but-not-default scope is written verbatim,
+                        // and the parser's integrity check is evaluated against
+                        // the *reader's* scope config, so it is not
+                        // config-independent: a writer with a private `@scope`
+                        // registry could stamp v2 on a lockfile a teammate
+                        // without that scope then fails to parse. Stay at v1 for
+                        // those so the file keeps loading everywhere.
                         let npm = res.npm();
                         let url = npm.url.slice(buf);
                         if !npm_url.writes_empty(

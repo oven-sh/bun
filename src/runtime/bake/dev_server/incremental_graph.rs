@@ -1154,6 +1154,20 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     if goal == TraceDependencyGoal::StopAtBoundary {
                         return Ok(());
                     }
+                } else if goal == TraceDependencyGoal::NoStop {
+                    // A failure reaches the server-side importers. A rebuild does not: same asset URL.
+                    let key = bun_ptr::RawSlice::new(
+                        &*self.bundled_files.keys()[file_index.get() as usize],
+                    );
+                    // SAFETY: cross-graph sibling access; `server_graph` disjoint.
+                    let server_graph = unsafe { &mut (*dev).server_graph };
+                    if let Some(index) = server_graph.get_file_index(key.slice()) {
+                        if server_graph.bundled_files.values()[index.get() as usize].kind
+                            == FileKind::Css
+                        {
+                            server_graph.trace_dependencies(index, gts, goal, index)?;
+                        }
+                    }
                 }
             }
         }

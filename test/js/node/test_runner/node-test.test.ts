@@ -291,7 +291,7 @@ describe("node:test", () => {
   test.concurrent(
     "should check the options of a declaration in node's order",
     async () => {
-      const { exitCode, stderr } = await runTests(["41-option-validation.js"]);
+      const { exitCode, stderr } = await runTests(["41-option-validation.mjs"]);
       expect({ exitCode, stderr }).toMatchObject({
         exitCode: 0,
         stderr: expect.stringContaining("\n 20 pass\n 1 skip\n 2 todo\n 0 fail\n"),
@@ -314,7 +314,12 @@ describe("node:test", () => {
     "should check the options of a declaration the same way on node",
     async () => {
       await using proc = Bun.spawn({
-        cmd: [node!, "--test", "--test-reporter=tap", join(import.meta.dirname, "fixtures", "41-option-validation.js")],
+        cmd: [
+          node!,
+          "--test",
+          "--test-reporter=tap",
+          join(import.meta.dirname, "fixtures", "41-option-validation.mjs"),
+        ],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -332,7 +337,7 @@ describe("node:test", () => {
   test.concurrent(
     "should check a truthy plan when the test is declared",
     async () => {
-      const { exitCode, stderr } = await runTests(["42-plan-at-declaration.js"]);
+      const { exitCode, stderr } = await runTests(["42-plan-at-declaration.mjs"]);
       expect({ exitCode, stderr }).toMatchObject({
         exitCode: 0,
         stderr: expect.stringContaining("\n 2 pass\n 0 fail\n"),

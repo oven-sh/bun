@@ -7,8 +7,8 @@
 //   gives it only timeout and signal, run() only concurrency, timeout and signal.
 // - `plan` is not one of those checks. A plan that is not truthy is never
 //   looked at, and a suite never looks at its plan.
-const assert = require("node:assert");
-const { test, it, describe, suite, before, after, beforeEach, afterEach, run } = require("node:test");
+import assert from "node:assert";
+import { after, afterEach, before, beforeEach, describe, it, run, suite, test } from "node:test";
 
 const noop = () => {};
 

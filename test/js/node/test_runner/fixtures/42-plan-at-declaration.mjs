@@ -2,8 +2,8 @@
 // `plan` when the test starts, also for a skipped test, and the count is then
 // an error of the run. Bun does not start every test that it registers, so it
 // checks a truthy plan when the test is declared. The error names `options.plan`.
-const assert = require("node:assert");
-const { test } = require("node:test");
+import assert from "node:assert";
+import { test } from "node:test";
 
 const noop = () => {};
 const expected = `ERR_INVALID_ARG_TYPE: The "options.plan" property must be of type number. Received type string ('x')`;

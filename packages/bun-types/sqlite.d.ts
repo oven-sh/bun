@@ -243,7 +243,37 @@ declare module "bun:sqlite" {
      *
      * @param sql The SQL query to compile
      * @param params Optional values to bind now. An array binds by position. A plain object binds by parameter name, or by index for unnamed `?` parameters. A string, number, bigint, boolean or TypedArray is the one positional value, so the statement must have exactly one parameter. `null` and `undefined` bind nothing. An execution called with no arguments reuses these values. An execution called with arguments discards them, even when it throws.
-     * @param flags Optional flags for `sqlite3_prepare_v3`: a bitwise OR of {@link constants.SQLITE_PREPARE_PERSISTENT}, {@link constants.SQLITE_PREPARE_NORMALIZE} and {@link constants.SQLITE_PREPARE_NO_VTAB}. Defaults to `0`. Any other number throws a `RangeError`.
+     * @param flags Optional flags for `sqlite3_prepare_v3`: a bitwise OR of {@link constants.SQLITE_PREPARE_PERSISTENT}, {@link constants.SQLITE_PREPARE_NORMALIZE} and {@link constants.SQLITE_PREPARE_NO_VTAB}. Defaults to `0`.
+     *
+     * @returns A {@link Statement} instance
+     */
+    prepare<
+      ReturnType,
+      ParamsType extends
+        SQLQueryBindings[] | Record<string, string | bigint | NodeJS.TypedArray | number | boolean | null>,
+    >(
+      sql: string,
+      params: ParamsType,
+      flags?: number,
+    ): Statement<ReturnType, (ParamsType extends any[] ? ParamsType : [ParamsType]) | []>;
+    /**
+     * Compile a SQL query and return a {@link Statement} object.
+     *
+     * This does not cache the compiled query and does not execute the query.
+     *
+     * Internally, this calls `sqlite3_prepare_v3`.
+     *
+     * @example
+     * ```ts
+     * // compile the query
+     * const stmt = db.query("SELECT * FROM foo WHERE bar = ?");
+     * // run the query
+     * stmt.all("baz");
+     * ```
+     *
+     * @param sql The SQL query to compile
+     * @param params Optional values to bind now. An array binds by position. A plain object binds by parameter name, or by index for unnamed `?` parameters. A string, number, bigint, boolean or TypedArray is the one positional value, so the statement must have exactly one parameter. `null` and `undefined` bind nothing. An execution called with no arguments reuses these values. An execution called with arguments discards them, even when it throws.
+     * @param flags Optional flags for `sqlite3_prepare_v3`: a bitwise OR of {@link constants.SQLITE_PREPARE_PERSISTENT}, {@link constants.SQLITE_PREPARE_NORMALIZE} and {@link constants.SQLITE_PREPARE_NO_VTAB}. Defaults to `0`.
      *
      * @returns A {@link Statement} instance
      */

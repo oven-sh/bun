@@ -1396,7 +1396,8 @@ describe("prepare() binds a single non-array parameter", () => {
   ])("prepare() that throws on %s leaves no statement open", (_label, options, sql, params, error) => {
     using dir = tempDir("sqlite-prepare-bind-throws", {});
     const file = path.join(String(dir), "x.sqlite");
-    const db = new Database(file, options);
+    // `using` releases the file if an assertion fails. The close() below is the step under test.
+    using db = new Database(file, options);
     // With this locking mode the connection keeps its file lock until sqlite3 closes it.
     db.exec("PRAGMA locking_mode = EXCLUSIVE; CREATE TABLE t (a)");
 

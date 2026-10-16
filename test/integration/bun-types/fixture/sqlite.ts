@@ -51,24 +51,37 @@ insertManyCats([
   { fail: true },
 ]);
 
-// Values given to prepare() are bound now. They do not set the parameter type of the statement.
+// A single value given to prepare() is bound now. It does not set the parameter type of the statement.
 const bound = db.prepare("select ? as v", "x");
 bound.get();
 bound.all();
 bound.run();
 bound.get("y");
 bound.get(5);
-db.prepare("select ? as v", ["x"]).get();
-db.prepare("select $a as a", { $a: 1 }).get();
 db.prepare("select ? as v", new Uint8Array([7, 8])).all();
 db.prepare("select 1 as x", null).get();
 db.prepare("select ? as v", "x", constants.SQLITE_PREPARE_PERSISTENT).get();
 db.prepare("select 1 as x", undefined, 0).get();
 
+// An array or an object given to prepare() sets the parameter type, and an execution can reuse the values.
+const boundArray = db.prepare("select ? as v", [1]);
+boundArray.get();
+boundArray.get(2);
+// @ts-expect-error - the parameter is a number
+boundArray.get("x");
+const boundNamed = db.prepare("select $a as a", { $a: 1 });
+boundNamed.get();
+boundNamed.get({ $a: 2 });
+// @ts-expect-error - the statement has no such parameter
+boundNamed.get({ wrong: 1 });
+
 const typedBound = db.prepare<{ v: string }, [string]>("select ? as v", "x");
 expectType<{ v: string } | null>(typedBound.get("y"));
 // @ts-expect-error - explicit parameter types still apply at execution
 typedBound.get();
+
+declare const optionalParams: number[] | undefined;
+db.prepare("select ? as v", optionalParams).get();
 
 // @ts-expect-error - flags is a number
 db.prepare("select 1 as x", undefined, "persistent");

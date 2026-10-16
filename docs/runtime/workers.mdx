@@ -229,7 +229,13 @@ A worker can terminate itself with `process.exit()`. This does not terminate the
 
 ### `"close"`
 
-Bun emits the `"close"` event when a worker has been marked as terminated. The worker itself can take some time to fully exit. The `CloseEvent` contains the worker's exit code. That is the code passed to `process.exit()`, or 1 if an uncaught exception or an unhandled rejection ended the worker. Otherwise it is 0.
+Bun emits the `"close"` event when a worker has been marked as terminated. The worker itself can take some time to fully exit. The `CloseEvent` contains the worker's final exit code. The code is `0` unless something sets it:
+
+- `process.exit(code)` and `process.exitCode = code` set it to `code`.
+- An uncaught exception or an unhandled rejection sets it to `1`.
+- A top-level `await` that never settles sets it to `13` if it is still `0`.
+
+An `"exit"` listener runs after these and can set `process.exitCode` again.
 
 ```ts index.ts icon="/icons/typescript.svg"
 const worker = new Worker(new URL("worker.ts", import.meta.url).href);

@@ -45,6 +45,13 @@ export const highwayStringsForTesting: (
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
+/** `sqlite3_limit()` on the connection of a `bun:sqlite` `Database#handle`. A `value` under 0 only reads the limit. */
+export const sqliteLimit: (handle: number, id: number, value: number) => number = $newCppFunction(
+  "JSSQLStatement.cpp",
+  "jsFunctionSQLiteLimitForTesting",
+  3,
+);
+
 export const patchInternals = {
   parse: $newRustFunction("patch.rs", "TestingAPIs.parse", 1),
   apply: $newRustFunction("patch.rs", "TestingAPIs.apply", 2),

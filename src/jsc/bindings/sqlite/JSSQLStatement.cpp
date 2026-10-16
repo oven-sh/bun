@@ -3097,6 +3097,24 @@ void JSSQLStatement::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 template void JSSQLStatement::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
 template void JSSQLStatement::visitOutputConstraints(JSCell*, SlotVisitor&);
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSQLiteLimitForTesting, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue handle = callFrame->argument(0);
+    JSValue id = callFrame->argument(1);
+    JSValue value = callFrame->argument(2);
+    VersionSqlite3* versionDB = handle.isInt32() ? databaseForHandle(handle.asInt32()) : nullptr;
+    sqlite3* db = versionDB ? versionDB->handle() : nullptr;
+    if (!db || !id.isInt32() || !value.isInt32()) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected the handle of an open database, a limit id and a value"_s));
+        return {};
+    }
+
+    return JSValue::encode(jsNumber(sqlite3_limit(db, id.asInt32(), value.asInt32())));
+}
+
 JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();

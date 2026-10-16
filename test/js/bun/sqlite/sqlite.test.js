@@ -1,4 +1,5 @@
 import { spawnSync } from "bun";
+import { sqliteLimit } from "bun:internal-for-testing";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
@@ -3000,6 +3001,71 @@ describe("SQL text reaches SQLite with a NUL at its end, so SQLite parses it in 
         query: { v: selected },
         run: 2,
         rows: [{ v: 1 }, { v: inserted }],
+      });
+    });
+  });
+
+  // SQLite refuses text over SQLITE_LIMIT_SQL_LENGTH before it reads it, unless the text ends in a NUL: then the limit
+  // applies to each statement. bun:sqlite keeps both: it does not copy text over the limit, and passes its length. The
+  // limit here is above 1200 bytes because bun:sqlite reads the limit only for text that it would copy to the heap.
+  describe.each(encodings)("%s text and SQLITE_LIMIT_SQL_LENGTH", encoding => {
+    const SQLITE_LIMIT_SQL_LENGTH = 1;
+    const limit = 2000;
+    const tooLong = "statement too long";
+    const mark = marks[encoding];
+    // One statement for each size in bytes. A comment brings each statement to its size.
+    const text = (statement, sizes) =>
+      sizes
+        .map((bytes, i) => {
+          const sql = statement(i + 1);
+          return sql + "/*" + Buffer.alloc(bytes - Buffer.byteLength(sql + mark) - 5, "x").toString() + mark + "*/;";
+        })
+        .join("");
+    const attempt = fn => {
+      try {
+        return fn();
+      } catch (e) {
+        return e.message;
+      }
+    };
+
+    it.each([
+      ["of the limit runs", { sizes: [700, 700, 600] }, { run: 3, rows: 6, prepare: [1] }],
+      ["of one byte more is refused", { sizes: [700, 700, 601] }, { run: tooLong, rows: 0, prepare: tooLong }],
+      [
+        "over the limit that ends in a NUL runs",
+        { sizes: [700, 700, 700], end: "\0" },
+        { run: 3, rows: 6, prepare: [1] },
+      ],
+      [
+        "over the limit only with the separators before it runs, and prepare() refuses it",
+        { start: Buffer.alloc(30, " ;\n").toString(), sizes: [700, 700, 600] },
+        { run: 3, rows: 6, prepare: tooLong },
+      ],
+    ])("text %s", (_, { start = "", sizes, end = "" }, expected) => {
+      using db = new Database(":memory:");
+      db.run("create table t (v)");
+      sqliteLimit(db.handle, SQLITE_LIMIT_SQL_LENGTH, limit);
+      const inserts = start + text(n => `insert into t values (${n})`, sizes) + end;
+      const selects = start + text(n => `select ${n}`, sizes) + end;
+      const bytes = start.length + sizes.reduce((sum, size) => sum + size, 0) + end.length;
+
+      expect({
+        limit: sqliteLimit(db.handle, SQLITE_LIMIT_SQL_LENGTH, -1),
+        bytes: [Buffer.byteLength(inserts), Buffer.byteLength(selects)],
+        run: attempt(() => db.run(inserts).changes),
+        exec: attempt(() => db.exec(inserts).changes),
+        rows: db.query("select count(*) from t").values()[0][0],
+        prepare: attempt(() => db.prepare(selects).values()[0]),
+        query: attempt(() => db.query(selects).values()[0]),
+      }).toEqual({
+        limit,
+        bytes: [bytes, bytes],
+        run: expected.run,
+        exec: expected.run,
+        rows: expected.rows,
+        prepare: expected.prepare,
+        query: expected.prepare,
       });
     });
   });

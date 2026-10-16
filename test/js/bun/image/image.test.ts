@@ -1356,14 +1356,28 @@ describe("Bun.Image", () => {
       });
 
       test("two alphas of one colour with unequal counts, colors:2", async () => {
-        // Same RGB, so the split runs on the alpha channel and the entries
-        // differ only in tRNS.
+        // Same RGB: the entries differ only in tRNS.
         const src = makePng(40, 40, (_x, y) => (y < 30 ? [100, 100, 100, 255] : [100, 100, 100, 0]));
         const out = await new Bun.Image(src).png({ palette: true, colors: 2 }).bytes();
         expect(pngPalette(out)).toEqual([
           [100, 100, 100, 0],
           [100, 100, 100, 255],
         ]);
+      });
+
+      test("three alphas of one colour, colors:2: the cut is on the alpha channel", async () => {
+        // 60% opaque, 25% alpha 128, 15% alpha 0. Only alpha has error, and
+        // {0, 128} | {255} leaves the least. The mean of 400 pixels at 128 and
+        // 240 at 0 is 80.
+        const alphaOf = (y: number) => (y < 24 ? 255 : y < 34 ? 128 : 0);
+        const src = makePng(40, 40, (_x, y) => [100, 100, 100, alphaOf(y)]);
+        const out = await new Bun.Image(src).png({ palette: true, colors: 2 }).bytes();
+        expect(pngPalette(out)).toEqual([
+          [100, 100, 100, 80],
+          [100, 100, 100, 255],
+        ]);
+        const back = decodePngRaw(await new Bun.Image(out).png().bytes());
+        expect([0, 24, 34].map(y => rgbaAt(back.data, 40, 0, y)[3])).toEqual([255, 80, 80]);
       });
 
       // Black, a middle grey, then white, in 40 rows. The middle run straddles

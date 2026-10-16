@@ -45,7 +45,7 @@ pub(crate) fn quantize(
 ) -> Result<QuantizeResult, AllocError> {
     let (pixels, _) = rgba.as_chunks::<4>();
     // Pixel counts are kept in u32 from here on.
-    let n: usize = u32::try_from(pixels.len()).expect("int cast") as usize;
+    let n: usize = u32::try_from(pixels.len()).map_err(|_| AllocError)? as usize;
     let want: usize = usize::from(opts.max_colors.clamp(1, 256));
 
     let mut indices: Vec<u8> = try_filled(n)?;

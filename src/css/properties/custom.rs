@@ -9,7 +9,9 @@
 use crate as css;
 use crate::PrintResult;
 use crate::Token;
-use crate::css_parser::{self, Delimiters, EnumProperty, Parser, ParserOptions, ParserState};
+use crate::css_parser::{
+    self, Delimiters, EnumProperty, Parser, ParserOptions, ParserState, TokenSerializationType,
+};
 use crate::error::{BasicParseErrorKind, ParseError, ParserError, ParserErrorKind};
 use crate::printer::Printer;
 
@@ -300,20 +302,40 @@ impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
     pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+        self.to_css_after(dest, is_custom_property, TokenSerializationType::Nothing)
+    }
+
+    /// `prev` is the kind of token that the caller printed directly before this list.
+    pub(crate) fn to_css_after(
+        &self,
+        dest: &mut Printer,
+        is_custom_property: bool,
+        mut prev: TokenSerializationType,
+    ) -> PrintResult<()> {
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());
         }
 
-        let mut has_whitespace = false;
+        // The last number that was printed. Its text is looked at only where a `.5` follows it.
+        let mut prev_number: f32 = 0.0;
         for (i, token_or_value) in self.v.iter().enumerate() {
-            match token_or_value {
+            let (first, last) = token_or_value.serialization_types(dest);
+            let after_number = prev == TokenSerializationType::Number
+                && first == TokenSerializationType::LeadingDot;
+            if prev.needs_separator_when_before(first)
+                && !(after_number && prints_point_or_exponent(prev_number))
+            {
+                dest.write_char(token_or_value.separator())?;
+                prev = TokenSerializationType::WhiteSpace;
+            }
+            let wrote_whitespace = match token_or_value {
                 TokenOrValue::Color(color) => {
                     color.to_css(dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::UnresolvedColor(color) => {
                     color.to_css(dest, is_custom_property)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::Url(url) => {
                     if dest.dependencies.is_some()
@@ -331,104 +353,102 @@ impl TokenList {
                         );
                     }
                     ext::url_to_css(url, dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::Var(var) => {
                     var.to_css(dest, is_custom_property)?;
-                    has_whitespace = self.write_whitespace_if_needed(i, dest)?;
+                    self.write_whitespace_if_needed(i, dest)?
                 }
                 TokenOrValue::Env(env) => {
                     env.to_css(dest, is_custom_property)?;
-                    has_whitespace = self.write_whitespace_if_needed(i, dest)?;
+                    self.write_whitespace_if_needed(i, dest)?
                 }
                 TokenOrValue::Function(f) => {
                     f.to_css(dest, is_custom_property)?;
-                    has_whitespace = self.write_whitespace_if_needed(i, dest)?;
+                    self.write_whitespace_if_needed(i, dest)?
                 }
                 TokenOrValue::Length(v) => {
                     // Do not serialize unitless zero lengths in custom properties as it may break calc().
                     let (value, unit) = v.to_unit_value();
                     css_parser::serializer::serialize_dimension(value, unit, dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::Angle(v) => {
                     v.to_css(dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::Time(v) => {
                     v.to_css(dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::Resolution(v) => {
                     v.to_css(dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::DashedIdent(v) => {
                     dest.write_dashed_ident(v, true)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::AnimationName(v) => {
                     v.to_css(dest)?;
-                    has_whitespace = false;
+                    false
                 }
                 TokenOrValue::Token(token) => match token {
                     Token::Delim(d) => {
+                        debug_assert!(*d <= 0x7F);
                         if *d == b'+' as u32 || *d == b'-' as u32 {
                             dest.write_char(b' ')?;
-                            debug_assert!(*d <= 0x7F);
                             dest.write_char(*d as u8)?;
                             dest.write_char(b' ')?;
+                            true
                         } else {
-                            let ws_before =
-                                !has_whitespace && (*d == b'/' as u32 || *d == b'*' as u32);
-                            debug_assert!(*d <= 0x7F);
+                            let ws_before = prev != TokenSerializationType::WhiteSpace
+                                && (*d == b'/' as u32 || *d == b'*' as u32);
                             dest.delim(*d as u8, ws_before)?;
-                            // `delim()` emits no surrounding whitespace when minifying, so
-                            // consecutive `/` and `*` delims would be printed adjacently and
-                            // form a `/*` or `*/` comment delimiter. Emit a real space when
-                            // the next token is the other half of that pair.
-                            if dest.minify && (*d == b'/' as u32 || *d == b'*' as u32) {
-                                let needs_space = match self.v.get(i + 1) {
-                                    Some(TokenOrValue::Token(Token::Delim(next))) => {
-                                        (*d == b'/' as u32 && *next == b'*' as u32)
-                                            || (*d == b'*' as u32 && *next == b'/' as u32)
-                                    }
-                                    Some(TokenOrValue::Token(Token::SubstringMatch)) => {
-                                        *d == b'/' as u32
-                                    }
-                                    _ => false,
-                                };
-                                if needs_space {
-                                    dest.write_char(b' ')?;
-                                }
-                            }
+                            !dest.minify
                         }
-                        has_whitespace = true;
                     }
                     Token::Comma => {
                         dest.delim(b',', false)?;
-                        has_whitespace = true;
+                        !dest.minify
                     }
                     Token::CloseParen | Token::CloseSquare | Token::CloseCurly => {
                         token.to_css(dest)?;
-                        has_whitespace = self.write_whitespace_if_needed(i, dest)?;
+                        self.write_whitespace_if_needed(i, dest)?
                     }
                     Token::Dimension(dim) => {
                         css_parser::serializer::serialize_dimension(dim.num.value, dim.unit, dest)?;
-                        has_whitespace = false;
+                        false
                     }
                     Token::Number(v) => {
                         CSSNumberFns::to_css(v.value, dest)?;
-                        has_whitespace = false;
+                        prev_number = v.value;
+                        false
                     }
                     _ => {
                         token.to_css(dest)?;
-                        has_whitespace = matches!(token, Token::Whitespace(_));
+                        matches!(token, Token::Whitespace(_))
                     }
                 },
-            }
+            };
+            prev = if wrote_whitespace {
+                TokenSerializationType::WhiteSpace
+            } else {
+                last
+            };
         }
         Ok(())
+    }
+
+    /// Prints `/` and then the list: a list that starts with `*` must not open a comment.
+    fn to_css_after_slash(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+        dest.delim(b'/', true)?;
+        let prev = if dest.minify {
+            TokenSerializationType::DelimSlash
+        } else {
+            TokenSerializationType::WhiteSpace
+        };
+        self.to_css_after(dest, is_custom_property, prev)
     }
 
     pub(crate) fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
@@ -492,7 +512,7 @@ impl TokenList {
 
         loop {
             let state = input.state();
-            let Ok(token) = input.next_including_whitespace() else {
+            let Ok(token) = input.next_including_whitespace_and_comments() else {
                 break;
             };
             match token {
@@ -911,8 +931,7 @@ impl UnresolvedColor {
                 css_parser::to_css::integer(conv(*g), dest)?;
                 dest.write_char(b' ')?;
                 css_parser::to_css::integer(conv(*b), dest)?;
-                dest.delim(b'/', true)?;
-                alpha.to_css(dest, is_custom_property)?;
+                alpha.to_css_after_slash(dest, is_custom_property)?;
                 dest.write_char(b')')
             }
             UnresolvedColor::HSL { h, s, l, alpha } => {
@@ -938,8 +957,7 @@ impl UnresolvedColor {
                 Percentage { v: *s }.to_css(dest)?;
                 dest.write_char(b' ')?;
                 Percentage { v: *l }.to_css(dest)?;
-                dest.delim(b'/', true)?;
-                alpha.to_css(dest, is_custom_property)?;
+                alpha.to_css_after_slash(dest, is_custom_property)?;
                 dest.write_char(b')')
             }
             UnresolvedColor::LightDark { light, dark } => {
@@ -1354,6 +1372,93 @@ impl TokenOrValue {
     fn is_whitespace(&self) -> bool {
         matches!(self, TokenOrValue::Token(Token::Whitespace(_)))
     }
+
+    /// The kinds of token that the printed value starts and ends with.
+    fn serialization_types(
+        &self,
+        dest: &Printer,
+    ) -> (TokenSerializationType, TokenSerializationType) {
+        use TokenSerializationType::*;
+        // `serialize_dimension` and a percentage print a negative zero as `-0`. A number prints it as `0`.
+        let minus = |value: f32, signed_zero: bool| {
+            value < 0.0 || (signed_zero && value == 0.0 && value.is_sign_negative())
+        };
+        // A number below 1 is printed with no `0` before its decimal point, unless it has an exponent or rounds to 1.
+        let start = |value: f32, signed_zero: bool, ty| {
+            if minus(value, signed_zero) {
+                DelimMinus
+            } else if (1e-6..0.9999995).contains(&f64::from(value)) {
+                LeadingDot
+            } else {
+                ty
+            }
+        };
+        match self {
+            TokenOrValue::Token(token) => match token {
+                // `to_css` prints these two with a space on each side.
+                Token::Delim(d) if *d == b'+' as u32 || *d == b'-' as u32 => {
+                    (WhiteSpace, WhiteSpace)
+                }
+                Token::Number(n) => (start(n.value, false, Number), Number),
+                Token::Dimension(d) => (start(d.num.value, true, Dimension), Dimension),
+                // A percentage keeps its `+` and the `0` before its decimal point.
+                Token::Percentage {
+                    has_sign: true,
+                    unit_value,
+                    ..
+                } if !unit_value.is_sign_negative() => (DelimPlus, Percentage),
+                Token::Percentage { unit_value, .. } if minus(*unit_value, true) => {
+                    (DelimMinus, Percentage)
+                }
+                _ => {
+                    let ty = token.serialization_type();
+                    (ty, ty)
+                }
+            },
+            TokenOrValue::Color(color) => color.serialization_types(dest),
+            TokenOrValue::UnresolvedColor(_)
+            | TokenOrValue::Var(_)
+            | TokenOrValue::Env(_)
+            | TokenOrValue::Function(_) => (Function, Other),
+            TokenOrValue::Url(_) => (UrlOrBadUrl, Other),
+            TokenOrValue::Length(v) => (start(v.to_unit_value().0, true, Dimension), Dimension),
+            TokenOrValue::Resolution(
+                Resolution::Dpi(v) | Resolution::Dpcm(v) | Resolution::Dppx(v),
+            ) => (start(*v, true, Dimension), Dimension),
+            TokenOrValue::Angle(v) => (start(v.to_unit_value().0, true, Dimension), Dimension),
+            TokenOrValue::Time(v) => (start(v.to_unit_value().0, false, Dimension), Dimension),
+            TokenOrValue::DashedIdent(_) | TokenOrValue::AnimationName(_) => (Ident, Ident),
+        }
+    }
+
+    /// What keeps this value apart from the one before it. An integer written as `+1` prints as `1`, so its sign can do it.
+    fn separator(&self) -> u8 {
+        let num = match self {
+            TokenOrValue::Token(Token::Number(n)) => n,
+            TokenOrValue::Token(Token::Dimension(d)) => &d.num,
+            _ => return b' ',
+        };
+        if num.has_sign && num.int_value.is_some() && !num.value.is_sign_negative() {
+            b'+'
+        } else {
+            b' '
+        }
+    }
+}
+
+/// Whether a number is printed with a `.` or an exponent. A `.5` after it then starts a new number.
+fn prints_point_or_exponent(value: f32) -> bool {
+    // A whole number below 1e21 is printed with digits only.
+    if value.fract() == 0.0 && value.abs() < 1e21 {
+        return false;
+    }
+    // A number that is printed with its decimal point first.
+    if (1e-6..0.9999995).contains(&f64::from(value.abs())) {
+        return true;
+    }
+    let mut buf = [0u8; 129];
+    let (text, _) = css_parser::dtoa_short(&mut buf, value, 6);
+    text.iter().any(|&b| b == b'.' || b == b'e')
 }
 
 // ─── Clone / Debug shims ───────────────────────────────────────────────────

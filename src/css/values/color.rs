@@ -434,67 +434,30 @@ impl CssColor {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             CssColor::CurrentColor => dest.write_str("currentColor"),
-            CssColor::Rgba(color) => {
-                if color.alpha == 255 {
-                    let hex: u32 = ((color.red as u32) << 16)
-                        | ((color.green as u32) << 8)
-                        | (color.blue as u32);
-                    if let Some(name) = short_color_name(hex) {
-                        return dest.write_str(name);
-                    }
-
-                    let compact = compact_hex(hex);
-                    if hex == expand_hex(compact) {
-                        dest.write_fmt(format_args!("#{:03x}", compact))?;
-                    } else {
-                        dest.write_fmt(format_args!("#{:06x}", hex))?;
-                    }
-                } else {
-                    // If the #rrggbbaa syntax is not supported by the browser targets, output rgba()
-                    if dest.targets.should_compile_same(Feature::HexAlphaColors) {
-                        // If the browser doesn't support `#rrggbbaa` color syntax, it is converted to `transparent` when compressed(minify = true).
-                        // https://www.w3.org/TR/css-color-4/#transparent-black
-                        if dest.minify
-                            && color.red == 0
-                            && color.green == 0
-                            && color.blue == 0
-                            && color.alpha == 0
-                        {
-                            return dest.write_str("transparent");
-                        } else {
-                            dest.write_fmt(format_args!("rgba({}", color.red))?;
-                            dest.delim(b',', false)?;
-                            dest.write_fmt(format_args!("{}", color.green))?;
-                            dest.delim(b',', false)?;
-                            dest.write_fmt(format_args!("{}", color.blue))?;
-                            dest.delim(b',', false)?;
-
-                            // Try first with two decimal places, then with three.
-                            let mut rounded_alpha = (color.alpha_f32() * 100.0).round() / 100.0;
-                            let clamped = clamp_unit_f32(rounded_alpha);
-                            if clamped != color.alpha {
-                                rounded_alpha = (color.alpha_f32() * 1000.0).round() / 1000.0;
-                            }
-
-                            CSSNumberFns::to_css(rounded_alpha, dest)?;
-                            dest.write_char(b')')?;
-                            return Ok(());
-                        }
-                    }
-
-                    let hex: u32 = ((color.red as u32) << 24)
-                        | ((color.green as u32) << 16)
-                        | ((color.blue as u32) << 8)
-                        | (color.alpha as u32);
-                    let compact = compact_hex(hex);
-                    if hex == expand_hex(compact) {
-                        dest.write_fmt(format_args!("#{:04x}", compact))?;
-                    } else {
-                        dest.write_fmt(format_args!("#{:08x}", hex))?;
-                    }
+            CssColor::Rgba(color) => match RgbaText::of(*color, dest) {
+                RgbaText::Name(name) => dest.write_str(name),
+                RgbaText::Hex { value, digits } => {
+                    dest.write_fmt(format_args!("#{:01$x}", value, digits))
                 }
-                Ok(())
-            }
+                RgbaText::Function => {
+                    dest.write_fmt(format_args!("rgba({}", color.red))?;
+                    dest.delim(b',', false)?;
+                    dest.write_fmt(format_args!("{}", color.green))?;
+                    dest.delim(b',', false)?;
+                    dest.write_fmt(format_args!("{}", color.blue))?;
+                    dest.delim(b',', false)?;
+
+                    // Try first with two decimal places, then with three.
+                    let mut rounded_alpha = (color.alpha_f32() * 100.0).round() / 100.0;
+                    let clamped = clamp_unit_f32(rounded_alpha);
+                    if clamped != color.alpha {
+                        rounded_alpha = (color.alpha_f32() * 1000.0).round() / 1000.0;
+                    }
+
+                    CSSNumberFns::to_css(rounded_alpha, dest)?;
+                    dest.write_char(b')')
+                }
+            },
             CssColor::Lab(lab) => {
                 let (a, b, c, alpha) = lab.components();
                 write_components(lab.css_name(), a, b, c, alpha, dest)
@@ -527,6 +490,28 @@ impl CssColor {
                 dest.write_char(b')')
             }
             CssColor::System(system) => system.to_css(dest),
+        }
+    }
+
+    /// The kinds of token that `to_css` starts and ends with: `red`, `#f00` or `rgb(…)`.
+    pub(crate) fn serialization_types(
+        &self,
+        dest: &Printer,
+    ) -> (css::TokenSerializationType, css::TokenSerializationType) {
+        use css::TokenSerializationType::*;
+        match self {
+            CssColor::CurrentColor | CssColor::System(_) => (Ident, Ident),
+            CssColor::Rgba(color) => match RgbaText::of(*color, dest) {
+                RgbaText::Name(_) => (Ident, Ident),
+                RgbaText::Hex { .. } => (AtKeywordOrHash, AtKeywordOrHash),
+                RgbaText::Function => (Function, Other),
+            },
+            CssColor::Float(float) => SRGB::from_float_color(float)
+                .into_css_color()
+                .serialization_types(dest),
+            CssColor::Lab(_) | CssColor::Predefined(_) | CssColor::LightDark { .. } => {
+                (Function, Other)
+            }
         }
     }
 
@@ -2556,6 +2541,55 @@ fn rectangular_to_polar(l: f32, a: f32, b: f32) -> LchComponents {
 // ──────────────────────────────────────────────────────────────────────────
 // hex helpers / write helpers
 // ──────────────────────────────────────────────────────────────────────────
+
+/// What an RGBA color prints as: a name, a hex of `digits` digits, or `rgba()`.
+enum RgbaText {
+    Name(&'static str),
+    Hex { value: u32, digits: usize },
+    Function,
+}
+
+impl RgbaText {
+    fn of(color: RGBA, dest: &Printer) -> RgbaText {
+        let (hex, digits) = if color.alpha == 255 {
+            let hex: u32 =
+                ((color.red as u32) << 16) | ((color.green as u32) << 8) | (color.blue as u32);
+            if let Some(name) = short_color_name(hex) {
+                return RgbaText::Name(name);
+            }
+            (hex, 6)
+        } else {
+            // If the #rrggbbaa syntax is not supported by the browser targets, output rgba()
+            if dest.targets.should_compile_same(Feature::HexAlphaColors) {
+                // Transparent black is `transparent` when minified: https://www.w3.org/TR/css-color-4/#transparent-black
+                if dest.minify
+                    && color.red == 0
+                    && color.green == 0
+                    && color.blue == 0
+                    && color.alpha == 0
+                {
+                    return RgbaText::Name("transparent");
+                }
+                return RgbaText::Function;
+            }
+            let hex: u32 = ((color.red as u32) << 24)
+                | ((color.green as u32) << 16)
+                | ((color.blue as u32) << 8)
+                | (color.alpha as u32);
+            (hex, 8)
+        };
+
+        let compact = compact_hex(hex);
+        if hex == expand_hex(compact) {
+            RgbaText::Hex {
+                value: compact,
+                digits: digits / 2,
+            }
+        } else {
+            RgbaText::Hex { value: hex, digits }
+        }
+    }
+}
 
 fn short_color_name(v: u32) -> Option<&'static str> {
     // These names are shorter than their hex codes

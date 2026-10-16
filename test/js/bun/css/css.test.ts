@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -8242,6 +8243,178 @@ describe("css tests", () => {
         `,
         modern,
       );
+    });
+
+    // A value that is kept as tokens is printed token by token. Two tokens that
+    // read back as other tokens when they touch get a separator between them.
+    describe("tokens of an unparsed value stay apart", () => {
+      const cases: [string, string][] = [
+        // A color function that folds to a hex or a name no longer ends in `)`.
+        ["--g:linear-gradient(90deg,rgb(255,0,0)0%,rgb(0,0,255)100%)", "--g:linear-gradient(90deg,red 0%,#00f 100%)"],
+        [
+          "background:linear-gradient(90deg,rgb(255,0,0)0%,var(--c)100%)",
+          "background:linear-gradient(90deg,red 0%,var(--c)100%)",
+        ],
+        ["box-shadow:0 0 0 1px rgb(0 0 0)inset,0 0 var(--x) red", "box-shadow:0 0 0 1px #000 inset,0 0 var(--x)red"],
+        ["color:hwb(from rgb(0 0 0)h w b / var(--o))", "color:hwb(from #000 h w b/var(--o))"],
+        ["--x:rgb(0 0 0)rgb(255 0 0)", "--x:#000 red"],
+        ["--x:rgb(0 0 0)var(--y)", "--x:#000 var(--y)"],
+        ["--x:rgb(0 0 0)calc(1px + 2px)", "--x:#000 calc(1px + 2px)"],
+        ["--x:rgb(0 0 0)--y", "--x:#000 --y"],
+        ["--x:rgb(0 0 0)1px", "--x:#000 1px"],
+        // A color that prints as a name joins the token before it too, and makes a function of `(`.
+        ["border:var(--w) solid#f00", "border:var(--w)solid red"],
+        ["--x:1px#f00", "--x:1px red"],
+        ["--x:rgb(255 0 0)(1px)", "--x:red (1px)"],
+        ["--x:rgb(255 0 0)rgb(0 0 0)", "--x:red#000"],
+        // A color that prints as a hash joins nothing before it.
+        ["border:var(--w) solid#fff", "border:var(--w)solid#fff"],
+        ["--x:1px#fff", "--x:1px#fff"],
+        ["--x:#abc#def", "--x:#abc#def"],
+        ["--x:rgb(0 0 0)(1px)", "--x:#000(1px)"],
+        // Nothing is added where the next token cannot join the color.
+        ["--x:rgb(0 0 0) inset", "--x:#000 inset"],
+        ["--x:rgb(0 0 0),rgb(255 0 0)", "--x:#000,red"],
+        ["--x:rgb(0 0 0)/rgb(255 0 0)", "--x:#000/red"],
+        ["--x:(rgb(255 0 0))", "--x:(red)"],
+        ["--x:f(rgb(255 0 0))", "--x:f(red)"],
+        ["--x:rgb(255 0 0)[a]", "--x:red[a]"],
+        ["--x:rgb(255 0 0)'s'", '--x:red"s"'],
+        // A comment is no token. `a/**/b` is two tokens and printed `ab`.
+        ["--x:a/**/b", "--x:a b"],
+        ["--x:1/**/2 1px/**/2px", "--x:1 2 1px 2px"],
+        ["--x:a/* c *//* d */b", "--x:a b"],
+        ["--x:a,/**/b", "--x:a,b"],
+        ["--x:a/**/:b", "--x:a:b"],
+        ["--x:a/**/(b)", "--x:a (b)"],
+        ["--x:50/**/%", "--x:50 %"],
+        ["--x:#/**/abc", "--x:# abc"],
+        ["--x:1px/**/-2px", "--x:1px -2px"],
+        ["margin:var(--a)/**/var(--b) 1px/**/2px", "margin:var(--a)var(--b)1px 2px"],
+        ["color:rgba(from/**/red/**/r/**/g/**/b / var(--o))", "color:rgba(from red r g b/var(--o))"],
+        // A number prints in its shortest form, which can join the token before it.
+        ["--x:1.0.5", "--x:1 .5"],
+        ["--x:1e1.5", "--x:10 .5"],
+        ["--x:.9999999.5", "--x:1 .5"],
+        ["--x:a.9999999", "--x:a 1"],
+        // A number that starts with its decimal point joins only a number that is printed with digits alone.
+        ["--x:a.5", "--x:a.5"],
+        ["--x:1px.5", "--x:1px.5"],
+        ["--x:1.2.3", "--x:1.2.3"],
+        ["--x:1e30.5", "--x:1e+30.5"],
+        ["--x:theme(colors.gray.8)", "--x:theme(colors.gray.8)"],
+        ["--x:fade-in_1.5s", "--x:fade-in_1.5s"],
+        ["--x:a.5turn", "--x:a.5turn"],
+        // A time can change its unit: `.05s` prints `50ms`, which joins.
+        ["--x:a.05s", "--x:a 50ms"],
+        // A zero with a minus sign keeps the sign in a dimension, and nothing joins a minus sign after a number.
+        ["--x:1-0px", "--x:1-0px"],
+        ["--x:U+0000-00FF", "--x:U+0-0FF"],
+        // A number written with a plus sign prints without it. The sign comes back where it separates.
+        ["--x:+10+20+30", "--x:10+20+30"],
+        ["--x:+1", "--x:1"],
+        ["--x:a+1", "--x:a+1"],
+        ["--x:2n+1", "--x:2n+1"],
+        ["--x:-n+3", "--x:-n+3"],
+        ["--x:U+26", "--x:U+26"],
+        ["--x:u+1f600", "--x:u+1f600"],
+        // Only the sign of an integer comes back: `+4E00` is the number 4, and `-0` prints as `0`.
+        ["--x:U+4E00-9FFF", "--x:U 4-9FFF"],
+        ["--x:1-0", "--x:1 0"],
+        ["--x:a+.5", "--x:a.5"],
+        // Nothing joins a minus sign after a number, a plus sign, or a percentage.
+        ["--x:1-2", "--x:1-2"],
+        ["--x:1-2px", "--x:1-2px"],
+        ["--x:a+50%", "--x:a+50%"],
+        ["--x:50%a", "--x:50%a"],
+        // `/` and `*` stay apart whatever is between them in the source.
+        ["--x:a//**/*b", "--x:a/ *b"],
+        ["color:rgb(1 2 3 / *var(--o))", "color:rgb(1 2 3/ *var(--o))"],
+        // Two bars are two tokens, and stay as written.
+        ["--x:a||b", "--x:a||b"],
+      ];
+      for (const [input, expected] of cases) {
+        minify_test(`.a{${input}}`, `.a{${expected}}`);
+      }
+
+      // Each kind of token before each kind that can follow it. `x`: a space keeps the two apart.
+      test("each pair of token kinds", () => {
+        const after = "b f(1) url(b) -b -1 1 .5 1% 1z .5z .5s --> (1) * / % = *=".split(" ");
+        const before: [string, string, string][] = [
+          ["a", "a", "xxxxxx.xx..xx....."],
+          ["@a", "@a", "xxxxxx.xx..x......"],
+          ["#ab", "#ab", "xxxxxx.xx..x......"],
+          ["1z", "1z", "xxxxxx.xx..x......"],
+          ["1px", "1px", "xxxxxx.xx..x......"],
+          ["#", "#", "xxxxxx.xx..x......"],
+          ["1", "1", "xxxx.xxxxxxx...x.."],
+          ["1.5", "1.5", "xxxx.x.xx..x...x.."],
+          ["1e-7", "1e-7", "xxxx.x.xx..x...x.."],
+          ["@", "@", "xxxxx......x......"],
+          [".", ".", ".....x.xx........."],
+          ["/", "/", ".............x...x"],
+          ["*", "*", "..............x.x."],
+          ["$", "$", "................x."],
+          ["|", "|", "................x."],
+          ["rgb(255 0 0)", "red", "xxxxxx.xx..xx....."],
+          ["rgb(0 0 0)", "#000", "xxxxxx.xx..x......"],
+          ["50%", "50%", ".................."],
+          ["f(1)", "f(1)", ".................."],
+        ];
+        const printed = before.map(([input, first]) => [
+          input,
+          first,
+          after
+            .map(next => {
+              const out = cssInternals.minifyTest(`.a{--x:${input}/**/${next}}`, "");
+              return out === `.a{--x:${first} ${next}}` ? "x" : out === `.a{--x:${first}${next}}` ? "." : "?";
+            })
+            .join(""),
+        ]);
+        expect(printed).toEqual(before);
+      });
+
+      // The block and the prelude of an unknown at-rule are token lists.
+      minify_test("@foo{li:nth-child(2n+1){color:red}}", "@foo{li:nth-child(2n+1){color:red}}");
+      minify_test("@foo{a#bed:hover{color:red}}", "@foo{a#bed:hover{color:red}}");
+      minify_test("@foo{a/**/:hover{color:red}}", "@foo{a:hover{color:red}}");
+      minify_test(".a{@apply py-3.5 px-2.5}", ".a{@apply py-3.5 px-2.5;}");
+      minify_test(
+        ".a{@apply duration-1.5s animate-[fade-in_1.5s]}",
+        ".a{@apply duration-1.5s animate-[fade-in_1.5s];}",
+      );
+
+      // A fallback and an untyped `initial-value` are token lists too.
+      minify_test("@foo a/**/b;", "@foo a b;");
+      minify_test("@foo{x: rgb(255 0 0)inset}", "@foo{x: red inset}");
+      minify_test(".a{--x:var(--a,a/**/b)}", ".a{--x:var(--a,a b)}");
+      minify_test(".a{width:env(safe-area-inset-left,1px/**/2px)}", ".a{width:env(safe-area-inset-left,1px 2px)}");
+      minify_test(
+        "@property --p{syntax:'*';inherits:false;initial-value:a/**/b}",
+        '@property --p{syntax:"*";inherits:false;initial-value:a b}',
+      );
+      minify_test("@container style(--x:a/**/b){.a{color:red}}", "@container style(--x:a b){.a{color:red}}");
+
+      // The arguments of an unknown pseudo-class or pseudo-element keep their comments.
+      minify_test(".a::-webkit-foo(a/**/b){color:red}", ".a::-webkit-foo(a/**/b){color:red}");
+      minify_test(".a:-moz-foo(1/**/2 x/* c */y){color:red}", ".a:-moz-foo(1/**/2 x/* c */y){color:red}");
+
+      test("not minified", () => {
+        const print = (css: string) => cssInternals.prefixTest(css, "", { chrome: 90 << 16 });
+        expect([
+          print(".a{background:linear-gradient(90deg,rgb(255,0,0)0%,var(--c)100%)}"),
+          print(".a{box-shadow:0 0 0 1px rgb(0 0 0)inset,0 0 var(--x) red}"),
+          print(".a{--x:a/**/b}"),
+          print(".a{--x:2n+1}"),
+          print(".a{color:rgb(1 2 3 / *var(--o))}"),
+        ]).toEqual([
+          ".a {\n  background: linear-gradient(90deg, red 0%, var(--c) 100%);\n}\n",
+          ".a {\n  box-shadow: 0 0 0 1px #000 inset, 0 0 var(--x) red;\n}\n",
+          ".a {\n  --x: a b;\n}\n",
+          ".a {\n  --x: 2n+1;\n}\n",
+          ".a {\n  color: rgb(1 2 3 / * var(--o));\n}\n",
+        ]);
+      });
     });
 
     // Deeply nested @keyframes with invalid percentages

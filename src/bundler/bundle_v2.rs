@@ -3142,8 +3142,7 @@ pub mod bv2_impl {
             })
         }
 
-        /// The sqlite loader does not copy the database, so a module for it could only name the
-        /// path on the build machine. The import stays as written and the runtime opens the file.
+        /// The sqlite loader does not copy the database: a module could only name its build path.
         #[inline]
         fn leaves_sqlite_import_to_runtime(
             &self,
@@ -3189,8 +3188,7 @@ pub mod bv2_impl {
                 && path.text[path.text.len() - EXT.len()..].eq_ignore_ascii_case(EXT)
         }
 
-        /// `export * from` an external and a `module.exports = require(x)` shim do not print the
-        /// import as written.
+        /// False for `export * from` and for the require of a `module.exports = require(x)` shim.
         #[inline]
         fn import_prints_as_written(
             import_record_index: u32,
@@ -3229,8 +3227,7 @@ pub mod bv2_impl {
             );
         }
 
-        /// `run_resolver` has the loader of a new file only. This decides for the import an
-        /// onResolve plugin declined before `path` gets a place in the graph.
+        /// For `run_resolver`: it computes a loader only after `path` has a place in the graph.
         #[cold]
         fn leave_declined_sqlite_import_to_runtime(
             &mut self,

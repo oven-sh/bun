@@ -71,6 +71,7 @@ struct node_module;
 #include <js_native_api.h>
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
+#include "Bindgen/AdditionsToGlobalObject.h"
 #include "NativeModuleList.h"
 #include "streams/JSStreamsRuntime.h"
 
@@ -499,6 +500,7 @@ public:
 
 #define FOR_EACH_GLOBALOBJECT_GC_MEMBER(V)                                                                   \
     V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
+    V(public, Bun::Bindgen::AdditionsToGlobalObject, m_bindgenAdditions)                                     \
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
                                                                                                              \
@@ -643,6 +645,8 @@ public:
     V(public, LazyPropertyOfGlobalObject<Bun::JSCommonJSExtensions>, m_lazyRequireExtensionsObject)          \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                 \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \
+    /* Bun::LintHost, for the JavaScript plugins of `bun lint` */                                            \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_lintHost)                                              \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMGlobalObjectStructure)                    \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \

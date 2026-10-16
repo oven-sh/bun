@@ -1,7 +1,8 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { createSocketPair, socketFaultInjection } from "bun:internal-for-testing";
+import { createSocketPair, setSocketOptions, socketFaultInjection } from "bun:internal-for-testing";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
+import { generateKeyPairSync } from "crypto";
 import { closeSync, fstatSync, readFileSync } from "fs";
 import {
   bunEnv,
@@ -1552,7 +1553,7 @@ describe("TLS write() that ends short while another TLS socket is stalled", () =
   // Writes `step` until a write is short. Returns the sum write() reported.
   function fill(socket: Socket<Pair>, step: Buffer) {
     let total = 0;
-    for (let wrote = step.length; wrote === step.length && total < 64 * STEP; ) {
+    for (let wrote = step.length; wrote === step.length && total < 64 * STEP;) {
       wrote = socket.write(step);
       total += Math.max(wrote, 0);
     }
@@ -5589,6 +5590,95 @@ it("a paused socket does not wake the event loop for every segment its peer send
   expect(await child.exited).toBe(0);
 });
 
+// Linux caps SO_RCVBUF and SO_SNDBUF at these limits (208 KB by default) without reporting it.
+function linuxSocketBufferLimit(name: "rmem_max" | "wmem_max") {
+  try {
+    return Number(readFileSync(`/proc/sys/net/core/${name}`, "utf8"));
+  } catch {
+    return 0;
+  }
+}
+const receiveBuffer = 8 * 1024 * 1024;
+const sendBuffer = 1024 * 1024;
+
+// setSocketOptions does nothing on Windows, where a readable event is at most two reads anyway.
+it.skipIf(
+  isWindows ||
+    (isLinux &&
+      (linuxSocketBufferLimit("rmem_max") < receiveBuffer / 2 || linuxSocketBufferLimit("wmem_max") < sendBuffer)),
+)("a socket with more full reads queued than one readable event takes lets the loop turn", async () => {
+  const fullRead = 512 * 1024;
+  const payload = Buffer.alloc(14 * fullRead);
+  let sent = 0;
+  let received = 0;
+  let reads = 0;
+  let readsThisTurn = 0;
+  let mostReadsInOneTurn = 0;
+  let client: Socket | undefined;
+  let peer: Socket | undefined;
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const closedEarly = () => reject(new Error("socket closed before the payload was read"));
+  const failed = (socket: Socket, error: Error) => reject(error);
+
+  // The client only starts reading once the kernel holds the whole payload, so every read is full.
+  function fill() {
+    if (!client || !peer) return;
+    while (sent < payload.length) {
+      const wrote = peer.write(payload.subarray(sent));
+      if (wrote <= 0) return;
+      sent += wrote;
+    }
+    client.resume();
+  }
+
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        peer = socket;
+        // On macOS what waits in the send buffer arrives in small pieces, so most of the payload must not fit in it.
+        setSocketOptions(socket, 1, sendBuffer);
+        fill();
+      },
+      drain: fill,
+      data() {},
+      close: closedEarly,
+      error: failed,
+    },
+  });
+  let immediate = setImmediate(function turn() {
+    readsThisTurn = 0;
+    immediate = setImmediate(turn);
+  });
+  try {
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(socket) {
+          client = socket;
+          setSocketOptions(socket, 2, receiveBuffer);
+          socket.pause();
+          fill();
+        },
+        data(socket, chunk) {
+          reads++;
+          mostReadsInOneTurn = Math.max(mostReadsInOneTurn, ++readsThisTurn);
+          if ((received += chunk.length) === payload.length) resolve();
+        },
+        close: closedEarly,
+        error: failed,
+      },
+    });
+    await promise;
+  } finally {
+    clearImmediate(immediate);
+    client?.end();
+  }
+  expect({ reads, mostReadsInOneTurn }).toEqual({ reads: 14, mostReadsInOneTurn: 11 });
+});
+
 // A paused socket polls for nothing, but a peer reset still reaches it (epoll reports EPOLLERR
 // regardless of interest; kqueue keeps a read knote registered while reads are off, see
 // epoll_kqueue.c). The reset is the end of the connection, so the pause no longer protects
@@ -6455,4 +6545,77 @@ describe.concurrent("Bun.listen() with tls.secureContext and the client certific
       expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
     );
   });
+});
+
+it("socket and tls options are not read from Object.prototype", async () => {
+  const polluted: Record<string, unknown> = {
+    port: 1,
+    hostname: "256.256.256.256",
+    unix: "/nonexistent/socket",
+    tls: true,
+    passphrase: 5,
+    ca: 5,
+  };
+  Object.assign(Object.prototype, polluted);
+  try {
+    expect(() => Bun.listen({ socket: { data() {} } } as any)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: 'Expected either "hostname" or "unix"' }),
+    );
+    using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    expect(server.port).toBeGreaterThan(1);
+    expect(server.hostname).toBe("127.0.0.1");
+    using secure = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { ...tls } });
+    expect(secure.port).toBeGreaterThan(1);
+  } finally {
+    for (const name of Object.keys(polluted)) delete (Object.prototype as any)[name];
+  }
+});
+
+it("a view of part of a buffer as a tls option is read as the view", () => {
+  const { privateKey: otherKey } = generateKeyPairSync("ec", {
+    namedCurve: "P-256",
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    publicKeyEncoding: { type: "spki", format: "pem" },
+  });
+  const listen = (key: unknown) =>
+    Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { key, cert: tls.cert } as any });
+  // OpenSSL reads the first key it finds, which does not go with the certificate.
+  const both = Buffer.concat([Buffer.from(otherKey), Buffer.from(tls.key)]);
+  expect(() => listen(both)).toThrow("KEY_TYPE_MISMATCH");
+  const [offset, length] = [both.byteOffset + Buffer.byteLength(otherKey), Buffer.byteLength(tls.key)];
+  for (const view of [
+    both.subarray(Buffer.byteLength(otherKey)),
+    new Uint8Array(both.buffer, offset, length),
+    new DataView(both.buffer, offset, length),
+  ]) {
+    for (const key of [view, [view]]) {
+      using listener = listen(key);
+      expect(listener.port).toBeGreaterThan(0);
+    }
+  }
+});
+
+it("Array.prototype as a tls option is none of the types one takes", () => {
+  for (const name of ["key", "cert", "ca", "crl"]) {
+    expect(() =>
+      Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { [name]: Array.prototype } as any }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `TLSOptions.${name} must be of type string, ArrayBuffer, Blob, array of <string, ArrayBuffer, or Blob>, or null`,
+      }),
+    );
+  }
+});
+
+it("a view of shared memory as a tls option is refused", () => {
+  const shared = new SharedArrayBuffer(8);
+  const values = [shared, new Uint8Array(shared), new DataView(shared), Buffer.from(shared), [new Uint8Array(shared)]];
+  for (const name of ["key", "cert", "ca", "crl", "ALPNProtocols"]) {
+    for (const value of values) {
+      expect(() =>
+        Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { [name]: value } as any }),
+      ).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
+    }
+  }
 });

@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+function a(this/* 1 */ : B) {}
+function c(
+  this// 2
+  : D,
+) {}
+function e(
+  this// 3
+  : F,
+) {}
+function g(...h/* 4 */ : I[]) {}
+function j(
+  ...k// 5
+  : L[]
+) {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function a(this/* 1 */ : B) {}
+function c(
+  this// 2
+  : D,
+) {}
+function e(
+  this// 3
+  : F,
+) {}
+function g(...h/* 4 */ : I[]) {}
+function j(
+  ...k// 5
+  : L[]
+) {}
+
+===================== End =====================

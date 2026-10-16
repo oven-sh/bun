@@ -1254,10 +1254,8 @@ mod draft {
         }
     }
 
-    /// JavaScriptCore calls this when it cannot set up its Structure heap at startup
-    /// (`StructureAlignedMemoryAllocator.cpp`). `reserved` is 0 when the OS refused every size from
-    /// `largest` down to `smallest`. Otherwise `reserved` bytes fit and mimalloc refused them.
-    /// Exits with an error when the environment explains that. Else returns, and JavaScriptCore crashes.
+    /// JavaScriptCore calls this when it cannot set up its Structure heap. `reserved` is 0 when the
+    /// OS refused every size. Exits with an error, or returns when no limit explains the failure.
     #[unsafe(no_mangle)]
     #[cold]
     pub extern "C" fn Bun__structureHeapReservationFailed(
@@ -1267,8 +1265,7 @@ mod draft {
     ) {
         use bun_core::write_pretty;
 
-        // mimalloc takes no range under its smallest arena, and JavaScriptCore keeps the first
-        // block of the range for itself.
+        // JavaScriptCore keeps the first block, so mimalloc also refuses a range of this size.
         let arena_min = bun_alloc::mimalloc::mi_arena_min_size();
         let mut message = BoundedArray::<u8, 1024>::default();
         let writer = &mut message.writer();
@@ -1283,8 +1280,7 @@ mod draft {
                 HeapSize(smallest),
             )
         } else if reserved > arena_min {
-            // The range is large enough, so mimalloc could not commit its bookkeeping for it. Only
-            // Windows refuses that commit. Anywhere else this is a bug, and it stays a crash.
+            // Only Windows refuses the commit of mimalloc's bookkeeping. Elsewhere this is a bug.
             #[cfg(not(windows))]
             return;
             #[cfg(windows)]

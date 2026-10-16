@@ -204,8 +204,7 @@ pub(crate) mod js_bindings {
         crash_handler::handle_root_error("Unexpected");
     }
 
-    /// Calls what JavaScriptCore calls when it cannot set up its Structure heap, with the sizes
-    /// given as byte counts. Returns when that function does.
+    /// Calls `Bun__structureHeapReservationFailed` with three byte counts. Returns when it does.
     #[bun_jsc::host_fn]
     fn js_structure_heap_reservation_failed(
         global: &JSGlobalObject,

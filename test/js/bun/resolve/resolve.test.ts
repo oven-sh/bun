@@ -2123,25 +2123,32 @@ test.concurrent.each(["import", "require"])(
 );
 
 // The module loader reads a directory again when a specifier that names it did not resolve.
-const directoriesThatDoNotResolve: { name: string; files: Record<string, string> }[] = [
-  { name: "gets an index file", files: { "lib/notes.txt": "" } },
-  { name: "is created", files: {} },
+const directoriesThatDoNotResolve: { name: string; files: Record<string, string>; create: string }[] = [
+  { name: "gets an index file", files: { "lib/notes.txt": "" }, create: "lib/index.js" },
+  { name: "is created", files: {}, create: "lib/index.js" },
+  {
+    name: "gets the file that its package.json names",
+    files: { "lib/package.json": JSON.stringify({ main: "./dist/main.js" }) },
+    create: "lib/dist/main.js",
+  },
 ];
 test.concurrent.each(directoriesThatDoNotResolve)(
   "require() of a directory that did not resolve works after the directory $name",
-  async ({ files }) => {
+  async ({ files, create }) => {
     using dir = tempDir("resolve-directory-again", {
       ...files,
       "main.js": `
         const { mkdirSync, writeFileSync } = require("fs");
+        const { dirname, join } = require("path");
         let first;
         try {
           first = require("./lib");
         } catch (error) {
           first = error.code;
         }
-        mkdirSync(__dirname + "/lib", { recursive: true });
-        writeFileSync(__dirname + "/lib/index.js", "module.exports = 'lib/index.js';");
+        const file = join(__dirname, ${JSON.stringify(create)});
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, "module.exports = 'loaded';");
         console.log(JSON.stringify([first, require("./lib")]));
       `,
     });
@@ -2154,7 +2161,7 @@ test.concurrent.each(directoriesThatDoNotResolve)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify(["MODULE_NOT_FOUND", "lib/index.js"]),
+      stdout: JSON.stringify(["MODULE_NOT_FOUND", "loaded"]),
       stderr: "",
       exitCode: 0,
     });

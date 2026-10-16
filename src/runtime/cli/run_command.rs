@@ -1139,11 +1139,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         .start()
     }
 
-    /// The module key of `entry`, for `vm.main()`. On `None` the module loader reports the failure.
+    /// The main module of `entry`, for `vm.main()`. On `None` the module loader reports the failure.
     fn resolve_entry_path(
         vm: &mut VirtualMachine,
         entry: &'static [u8],
-        preserve_symlinks: bool,
+        preserve_symlinks_main: bool,
     ) -> Option<&'static [u8]> {
         let top_level_dir = vm.top_level_dir();
         // Like the module loader, keep the resolver's messages out of `vm.log`.
@@ -1156,11 +1156,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         };
         // SAFETY: `vm` is borrowed for this call, so nothing else uses its resolver.
         let resolver = unsafe { &mut *resolver };
-        let for_imports =
-            ::core::mem::replace(&mut resolver.opts.preserve_symlinks, preserve_symlinks);
         let resolved = resolver.resolve(top_level_dir, entry, bun_ast::ImportKind::EntryPointRun);
-        resolver.opts.preserve_symlinks = for_imports;
-        Some(resolved.ok()?.path_const()?.text)
+        let path = resolved.ok()?.path_const()?.text;
+        if preserve_symlinks_main || !resolver.opts.preserve_symlinks {
+            return Some(path);
+        }
+        // The resolver cache keeps the symlink rule of the imports for each directory, so this resolve does not change it.
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let mut real_buf = bun_paths::path_buffer_pool::get();
+        let real = sys::realpath(
+            bun_paths::resolve_path::z(path, &mut path_buf),
+            &mut real_buf,
+        );
+        Some(real.map_or(path, |real| &*Box::leak(Box::<[u8]>::from(real))))
     }
 
     /// Node keeps a symlink in the path of the main module only with `--preserve-symlinks-main` (`resolveMainPath`).

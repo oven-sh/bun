@@ -204,15 +204,25 @@ describe("fake node cli", () => {
     });
 
     // Node keeps a symlink in the path of the main module only with `--preserve-symlinks-main`.
-    test("NODE_PRESERVE_SYMLINKS=1: the main module is the real path through a symlinked directory", async () => {
+    test("NODE_PRESERVE_SYMLINKS=1: the main module is the real path, and an import keeps the symlink", async () => {
       using temp = tempDir("fake-node-main", {
         "real/package.json": "{}",
-        "real/entry.js": "console.log(JSON.stringify({ filename: __filename, requireMain: require.main === module }));",
+        "real/entry.js": `console.log(JSON.stringify({
+          filename: __filename,
+          requireMain: require.main === module,
+          imported: require(process.cwd() + "/import.js"),
+        }));`,
+        "real/dep.js": "module.exports = __filename;",
+        "import.js": `module.exports = require("./link/dep.js");`,
       });
       symlinkSync(join(temp, "real"), join(temp, "link"), "dir");
       const result = await runAsNode(String(temp), ["./link/entry.js"], { NODE_PRESERVE_SYMLINKS: "1" });
       expect({ ...result, stdout: parse(result.stdout) }).toEqual({
-        stdout: { filename: join(temp, "real", "entry.js"), requireMain: true },
+        stdout: {
+          filename: join(temp, "real", "entry.js"),
+          requireMain: true,
+          imported: join(temp, "link", "dep.js"),
+        },
         stderr: "",
         exitCode: 0,
       });
@@ -229,10 +239,19 @@ describe("fake node cli", () => {
       expect(result).toEqual({ stdout: join(temp, "link", "entry.js") + "\n", stderr: "", exitCode: 0 });
     });
 
-    test("a preload can create the entry point", async () => {
+    test.each([
+      { name: "the index file of the directory", pkg: {}, file: "pkg/index.js" },
+      { name: "the package.json main in a new directory", pkg: { main: "./dist/main.js" }, file: "pkg/dist/main.js" },
+    ])("a preload can create the entry point: $name", async ({ pkg, file }) => {
       using temp = tempDir("fake-node-main", {
-        "pkg/package.json": "{}",
-        "pre.js": `require("fs").writeFileSync(__dirname + "/pkg/index.js", "console.log('entry ran');");`,
+        "pkg/package.json": JSON.stringify(pkg),
+        "pre.js": `
+          const { mkdirSync, writeFileSync } = require("fs");
+          const { dirname, join } = require("path");
+          const file = join(__dirname, ${JSON.stringify(file)});
+          mkdirSync(dirname(file), { recursive: true });
+          writeFileSync(file, "console.log('entry ran');");
+        `,
       });
       const result = await runAsNode(String(temp), ["-r", "./pre.js", "./pkg"]);
       expect(result).toEqual({ stdout: "entry ran\n", stderr: "", exitCode: 0 });

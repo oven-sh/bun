@@ -2480,6 +2480,30 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
+    /// Busts the directory `path` and what the main fields of its package.json name. The key rules of `bust_dir_cache` apply.
+    pub fn bust_dir_cache_of_directory(&mut self, path: &[u8]) -> bool {
+        let mut busted = false;
+        let package_json = self
+            .dir_cache_mut()
+            .get(path)
+            .and_then(|dir_info| dir_info.package_json());
+        if let Some(package_json) = package_json {
+            let mut buf = ::bun_paths::path_buffer_pool::get();
+            for main in package_json.main_fields.values() {
+                let target = ::bun_paths::resolve_path::join_abs_string_buf::<
+                    ::bun_paths::resolve_path::platform::Auto,
+                >(path, &mut buf.0, &[&main[..]]);
+                let target = strings::without_trailing_slash_windows_path(target);
+                busted |= self.bust_dir_cache(target);
+                if let Some(parent) = ::bun_paths::dirname(target) {
+                    busted |=
+                        self.bust_dir_cache(strings::without_trailing_slash_windows_path(parent));
+                }
+            }
+        }
+        self.bust_dir_cache(path) || busted
+    }
+
     /// bust both the named file and a parent directory, because `./hello` can resolve
     /// to `./hello.js` or `./hello/index.js`
     pub fn bust_dir_cache_from_specifier(

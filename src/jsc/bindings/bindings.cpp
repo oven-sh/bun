@@ -1662,6 +1662,30 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 }
             }
 
+            if (mode.checkPrototypes) {
+                // The walk above takes its names from the left error only. A name that only the right error enumerates is compared here, as the second pass of a Set or a Map did for its members.
+                for (size_t j = 0; j < propertyArrayLength2; j++) {
+                    Identifier i2 = a2[j];
+                    if (i2 == vm.propertyNames->stack || a1.data()->propertyNameVector().contains(i2)) continue;
+                    PropertyName propertyName2 = PropertyName(i2);
+
+                    JSValue prop1 = left->getIfPropertyExists(globalObject, propertyName2);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!prop1) {
+                        return false;
+                    }
+
+                    JSValue prop2 = right->get(globalObject, propertyName2);
+                    RETURN_IF_EXCEPTION(scope, {});
+
+                    bool propertiesEqual = mode.deepEquals(globalObject, prop1, prop2, gcBuffer, stack, scope, true);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!propertiesEqual) {
+                        return false;
+                    }
+                }
+            }
+
             return true;
         }
         break;

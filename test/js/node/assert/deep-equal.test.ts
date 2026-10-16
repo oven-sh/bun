@@ -33,6 +33,16 @@ const inheritedSharedConstructor = () => Object.assign(Object.create(inheritsSha
 const nullPrototypeProxy = () => new Proxy({}, { getPrototypeOf: () => null });
 const sharedObject = { a: 1 };
 const sharedSetMember = ["x"];
+const errorWithEnumerableCode = () => Object.assign(new Error("x"), { code: 1 });
+const errorWithHiddenCode = () =>
+  Object.defineProperty(Object.assign(new Error("x"), { other: 2 }), "code", { value: 1, enumerable: false });
+function outOfRangeError() {
+  try {
+    Buffer.alloc(-1);
+  } catch (error) {
+    return error as RangeError;
+  }
+}
 const sharedArrayBuffer = new ArrayBuffer(4);
 
 function float64WithNaNPayload(bits: bigint) {
@@ -727,6 +737,69 @@ const cases: Case[] = [
     name: "an error with an extra own property",
     a: () => withExtraProperty(new Error("x")),
     b: () => new Error("x"),
+    strict: false,
+    loose: false,
+  },
+  // Each error enumerates a key that the other one does not enumerate.
+  {
+    name: "an error with an own enumerable key and an error that holds the key non-enumerable beside another key",
+    a: errorWithEnumerableCode,
+    b: errorWithHiddenCode,
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "arrays holding such errors",
+    a: () => [errorWithEnumerableCode()],
+    b: () => [errorWithHiddenCode()],
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "maps holding such errors under the same key",
+    a: () => new Map([["k", errorWithEnumerableCode()]]),
+    b: () => new Map([["k", errorWithHiddenCode()]]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "sets holding such errors",
+    a: () => new Set([errorWithEnumerableCode()]),
+    b: () => new Set([errorWithHiddenCode()]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with an own enumerable message and an error with another own enumerable key",
+    a: () => Object.assign(new Error(), { message: "x" }),
+    b: () => Object.assign(new Error("x"), { code: 1 }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error with an own enumerable name and an error with another own enumerable key",
+    a: () => Object.assign(new Error("x"), { name: "Error" }),
+    b: () => Object.assign(new Error("x"), { errno: 1 }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an error that bun creates with a code and an error with its class and message",
+    a: outOfRangeError,
+    b: () => new RangeError(outOfRangeError()!.message),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "sets holding such errors, one each",
+    a: () => new Set([outOfRangeError()]),
+    b: () => new Set([new RangeError(outOfRangeError()!.message)]),
     strict: false,
     loose: false,
   },

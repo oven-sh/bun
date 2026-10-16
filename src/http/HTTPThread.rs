@@ -329,13 +329,6 @@ fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
 }
 
 impl HttpThread {
-    /// Raw uSockets loop for `SocketGroup::init`. Split from `loop_` so
-    /// HTTPContext doesn't need to name the higher-tier MiniEventLoop type.
-    #[inline]
-    pub(crate) fn uws_loop(&self) -> *mut uws::Loop {
-        self.uws_loop
-    }
-
     /// Mutable access to the live uSockets event loop.
     ///
     /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
@@ -357,16 +350,24 @@ impl HttpThread {
         u64::try_from(self.timer.elapsed().as_nanos()).expect("int cast")
     }
 
-    pub(crate) fn deflater(&mut self) -> &mut LibdeflateState {
-        if self.lazy_libdeflater.is_none() {
+    /// The HTTP thread's libdeflate state, made on first use. Called from
+    /// inside socket callbacks, so it touches only its own field.
+    ///
+    /// # Safety
+    /// HTTP thread only, after `init`. Do not hold the result across another
+    /// call to this function.
+    pub(crate) unsafe fn deflater<'a>() -> &'a mut LibdeflateState {
+        // SAFETY: see the function's contract; this borrows one field only.
+        let slot = unsafe { &mut (*crate::http_thread_ptr()).lazy_libdeflater };
+        if slot.is_none() {
             let decompressor = bun_libdeflate_sys::libdeflate::OwnedDecompressor::new()
                 .unwrap_or_else(|| bun_core::out_of_memory());
             let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
             state.decompressor = Some(decompressor);
-            self.lazy_libdeflater = Some(state);
+            *slot = Some(state);
         }
 
-        self.lazy_libdeflater.as_deref_mut().unwrap()
+        slot.as_deref_mut().unwrap()
     }
 
     pub(crate) fn context<const IS_SSL: bool>(&mut self) -> &mut NewHttpContext<IS_SSL> {
@@ -534,8 +535,9 @@ impl HttpThread {
         }
     }
 
-    fn abort_pending_h2_waiter(&mut self, async_http_id: u32) -> bool {
-        if self.https_context.abort_pending_h2_waiter(async_http_id) {
+    fn abort_pending_h2_waiter(this: *mut Self, async_http_id: u32) -> bool {
+        // SAFETY: see `drain_events`.
+        if unsafe { (*this).https_context.abort_pending_h2_waiter(async_http_id) } {
             return true;
         }
         for entry in custom_ssl_context_map().values_mut() {
@@ -546,13 +548,14 @@ impl HttpThread {
         false
     }
 
-    fn drain_queued_shutdowns(&mut self) {
+    fn drain_queued_shutdowns(this: *mut Self) {
         loop {
             // socket.close() can potentially be slow
             // Let's not block other threads while this runs.
-            let queued_shutdowns = {
-                let _guard = self.queued_shutdowns_lock.lock_guard();
-                core::mem::take(&mut self.queued_shutdowns)
+            // SAFETY: see `drain_events`.
+            let queued_shutdowns = unsafe {
+                let _guard = (*this).queued_shutdowns_lock.lock_guard();
+                core::mem::take(&mut (*this).queued_shutdowns)
             };
 
             for http in &queued_shutdowns {
@@ -594,7 +597,7 @@ impl HttpThread {
                     // leader's in-flight h2 TLS connect (parked in `pc.waiters`
                     // with no abort-tracker entry); scan those first so the abort
                     // doesn't wait for the leader's connect to resolve.
-                    if self.abort_pending_h2_waiter(http.async_http_id) {
+                    if Self::abort_pending_h2_waiter(this, http.async_http_id) {
                         continue;
                     }
                     // Or it's on an HTTP/3 session, which has no TCP socket to
@@ -607,7 +610,8 @@ impl HttpThread {
                     // Flag it so `drainEvents` knows to scan the queue for
                     // aborted-but-unstarted tasks even when `active >= max`
                     // would otherwise short-circuit.
-                    self.has_pending_queued_abort = true;
+                    // SAFETY: see `drain_events`.
+                    unsafe { (*this).has_pending_queued_abort = true };
                 }
             }
             let len = queued_shutdowns.len();
@@ -619,11 +623,12 @@ impl HttpThread {
         }
     }
 
-    fn drain_queued_writes(&mut self) {
+    fn drain_queued_writes(this: *mut Self) {
         loop {
-            let queued_writes = {
-                let _guard = self.queued_writes_lock.lock_guard();
-                core::mem::take(&mut self.queued_writes)
+            // SAFETY: see `drain_events`.
+            let queued_writes = unsafe {
+                let _guard = (*this).queued_writes_lock.lock_guard();
+                core::mem::take(&mut (*this).queued_writes)
             };
             for write in &queued_writes {
                 let message = write.kind;
@@ -676,11 +681,12 @@ impl HttpThread {
         }
     }
 
-    fn drain_queued_cert_check_resumes(&mut self) {
+    fn drain_queued_cert_check_resumes(this: *mut Self) {
         loop {
-            let queued_cert_check_resumes = {
-                let _guard = self.queued_cert_check_resumes_lock.lock_guard();
-                core::mem::take(&mut self.queued_cert_check_resumes)
+            // SAFETY: see `drain_events`.
+            let queued_cert_check_resumes = unsafe {
+                let _guard = (*this).queued_cert_check_resumes_lock.lock_guard();
+                core::mem::take(&mut (*this).queued_cert_check_resumes)
             };
             for resume in &queued_cert_check_resumes {
                 // Both arms are required: an HTTPS target behind a plaintext
@@ -721,20 +727,24 @@ impl HttpThread {
         }
     }
 
-    fn drain_queued_pool_closes(&mut self) {
+    fn drain_queued_pool_closes(this: *mut Self) {
+        // SAFETY: see `drain_events`.
+        let has_queued = unsafe { &(*this).has_queued_pool_closes };
         // Read before writing so an idle tick leaves the cache line shared. The
         // flag is a hint: the queue is published by its lock, and the producer
         // wakes the loop after raising the flag.
-        while self.has_queued_pool_closes.load(Ordering::Relaxed)
-            && self.has_queued_pool_closes.swap(false, Ordering::Acquire)
-        {
-            let queued = {
-                let _guard = self.queued_pool_closes_lock.lock_guard();
-                core::mem::take(&mut self.queued_pool_closes)
+        while has_queued.load(Ordering::Relaxed) && has_queued.swap(false, Ordering::Acquire) {
+            // SAFETY: see `drain_events`.
+            let queued = unsafe {
+                let _guard = (*this).queued_pool_closes_lock.lock_guard();
+                core::mem::take(&mut (*this).queued_pool_closes)
             };
             for pool_id in queued {
-                self.http_context.close_idle_sockets(pool_id);
-                self.https_context.close_idle_sockets(pool_id);
+                // SAFETY: see `drain_events`.
+                unsafe {
+                    (*this).http_context.close_idle_sockets(pool_id);
+                    (*this).https_context.close_idle_sockets(pool_id);
+                }
                 for entry in custom_ssl_context_map().values_mut() {
                     entry.ctx_mut().close_idle_sockets(pool_id);
                 }
@@ -743,11 +753,12 @@ impl HttpThread {
         }
     }
 
-    fn drain_queued_receive_resumes(&mut self) {
+    fn drain_queued_receive_resumes(this: *mut Self) {
         loop {
-            let queued = {
-                let _guard = self.queued_receive_resumes_lock.lock_guard();
-                core::mem::take(&mut self.queued_receive_resumes)
+            // SAFETY: see `drain_events`.
+            let queued = unsafe {
+                let _guard = (*this).queued_receive_resumes_lock.lock_guard();
+                core::mem::take(&mut (*this).queued_receive_resumes)
             };
             if queued.is_empty() {
                 return;
@@ -812,19 +823,33 @@ impl HttpThread {
         self.deferred_tasks.insert(first_that_yields, http);
     }
 
-    pub(crate) fn drain_events(&mut self) {
+    /// Takes a raw pointer, not `&mut self`: the requests and sockets this
+    /// starts or wakes call back into `crate::http_thread_ptr()` and use other
+    /// fields while this runs. So every access here borrows a single field
+    /// and lets it go before calling out.
+    ///
+    /// SAFETY (for every `unsafe` block in `drain_events` and the
+    /// `drain_queued_*` functions): `this` is `crate::http_thread_ptr()`, used
+    /// only on the HTTP thread, and no borrow made from it is held across a
+    /// call that can run request or socket callbacks.
+    fn drain_events(this: *mut Self) {
         // Process any pending writes **before** aborting.
-        self.drain_queued_receive_resumes();
-        self.drain_queued_writes();
-        self.drain_queued_shutdowns();
+        Self::drain_queued_receive_resumes(this);
+        Self::drain_queued_writes(this);
+        Self::drain_queued_shutdowns(this);
         // After shutdowns: an abort or cert-rejection scheduled in the same JS
         // turn removes the abort-tracker entry first, so the resume becomes a
         // no-op and the request is never transmitted after a same-tick abort.
-        self.drain_queued_cert_check_resumes();
-        self.drain_queued_pool_closes();
+        Self::drain_queued_cert_check_resumes(this);
+        Self::drain_queued_pool_closes(this);
         h3::PendingConnect::drain_resolved();
 
-        self.queued_threadlocal_proxy_derefs.clear();
+        // Take the list before dropping it: a tunnel's drop can run code
+        // that reaches this thread state again.
+        // SAFETY: see above.
+        drop(core::mem::take(unsafe {
+            &mut (*this).queued_threadlocal_proxy_derefs
+        }));
 
         let mut count: usize = 0;
         let mut active = ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);
@@ -836,7 +861,8 @@ impl HttpThread {
         // `has_pending_queued_abort` for any id it couldn't find in the socket
         // tracker. If that's clear, there's nothing to fail-fast and nothing can
         // start, so don't walk the lists.
-        if active >= max && !self.has_pending_queued_abort {
+        // SAFETY: see above.
+        if active >= max && !unsafe { (*this).has_pending_queued_abort } {
             return;
         }
 
@@ -860,9 +886,11 @@ impl HttpThread {
         // out before iterating so the field reflects only tasks still waiting, and
         // reload `active` from the atomic after every start rather than tracking
         // it locally.
-        self.has_pending_queued_abort = false;
+        // SAFETY: see above.
+        unsafe { (*this).has_pending_queued_abort = false };
         {
-            let pending = core::mem::take(&mut self.deferred_tasks);
+            // SAFETY: see above.
+            let pending = core::mem::take(unsafe { &mut (*this).deferred_tasks });
             for http in pending {
                 // AsyncHttp is heap-owned by the caller and alive until its
                 // completion callback; while parked in `deferred_tasks` no other
@@ -872,19 +900,21 @@ impl HttpThread {
                     .signals
                     .get(crate::signals::Field::Aborted);
                 if aborted || active < max {
-                    start_queued_task(http.as_ptr(), &mut self.in_flight);
+                    start_queued_task(http.as_ptr(), this);
                     if cfg!(debug_assertions) {
                         count += 1;
                     }
                     active = ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);
                 } else {
-                    self.deferred_tasks.push(http);
+                    // SAFETY: see above.
+                    unsafe { (*this).deferred_tasks.push(http) };
                 }
             }
         }
 
         loop {
-            let Some(http) = NonNull::new(self.queued_tasks.pop()) else {
+            // SAFETY: see above.
+            let Some(http) = NonNull::new(unsafe { (*this).queued_tasks.pop() }) else {
                 break;
             };
             // AsyncHttp is heap-owned by the caller and alive until its
@@ -898,10 +928,11 @@ impl HttpThread {
                 // Can't start this one yet. Defer it (preserves FIFO relative to
                 // later pops) and keep draining — there may be aborted tasks
                 // behind it that we can fail-fast right now.
-                self.defer(http);
+                // SAFETY: see above; `defer` runs no callbacks.
+                unsafe { (*this).defer(http) };
                 continue;
             }
-            start_queued_task(http.as_ptr(), &mut self.in_flight);
+            start_queued_task(http.as_ptr(), this);
             if cfg!(debug_assertions) {
                 count += 1;
             }
@@ -970,18 +1001,26 @@ impl HttpThread {
         self.wakeup();
     }
 
-    pub(crate) fn schedule_proxy_deref(&mut self, proxy: RefPtr<ProxyTunnel>) {
-        // this is always called on the http thread,
-        self.queued_threadlocal_proxy_derefs.push(proxy);
-        self.wakeup();
+    /// HTTP thread only. Called from inside socket callbacks, so it touches
+    /// only the fields it needs.
+    pub(crate) fn schedule_proxy_deref(proxy: RefPtr<ProxyTunnel>) {
+        let this = crate::http_thread_ptr();
+        // SAFETY: HTTP thread; borrows one field, which nothing up the stack
+        // holds (`drain_events` takes the list out before dropping it).
+        unsafe { (*this).queued_threadlocal_proxy_derefs.push(proxy) };
+        Self::wakeup_from_http_thread();
     }
 
     /// Everything this thread runs is inside `drain_events` or `tick`, and
     /// this runs between the two, so no socket callback is on the stack.
-    fn free_dead_ssl_contexts(&mut self) {
+    ///
+    /// Raw pointer for the same reason as `drain_events`: that close handler
+    /// pushes onto `dead_ssl_contexts` through `crate::http_thread_ptr()`.
+    fn free_dead_ssl_contexts(this: *mut Self) {
         // One at a time: a context's `Drop` closes its sockets, and a close
         // handler is free to drop the last ref of another context.
-        while let Some(ctx) = self.dead_ssl_contexts.pop() {
+        // SAFETY: HTTP thread; the borrow of the list ends before the drop.
+        while let Some(ctx) = unsafe { (*this).dead_ssl_contexts.pop() } {
             // SAFETY: `HTTPContext::destroy_between_ticks` pushed it at
             // refcount zero, so this is the sole owner of the `RefPtr::new`
             // allocation.
@@ -1001,12 +1040,17 @@ impl HttpThread {
     /// took for the in-flight callback — without it the `ctx` ⇄
     /// `Box<AsyncHTTP>` cycle is unreachable from any root and LSan reports
     /// the whole chain as indirect leaks.
-    fn dealloc_in_flight_for_exit(&mut self) {
+    ///
+    /// Raw pointer for the same reason as `drain_events`: the release
+    /// callbacks and tunnel closes below can reach this thread state again.
+    fn dealloc_in_flight_for_exit(this: *mut Self) {
+        // SAFETY (all blocks below): HTTP thread; each borrow of a field ends
+        // before any callback runs.
         bun_core::scoped_log!(
             HTTPThread,
             "dealloc_in_flight_for_exit: in_flight={} deferred={}",
-            self.in_flight.len(),
-            self.deferred_tasks.len()
+            unsafe { (*this).in_flight.len() },
+            unsafe { (*this).deferred_tasks.len() }
         );
         // Requests handed to us but never started (concurrency-deferred, or
         // still on the incoming queue): the JS-side owner is waiting to get
@@ -1021,13 +1065,13 @@ impl HttpThread {
                 unsafe { f(release.ctx) };
             }
         };
-        for http in core::mem::take(&mut self.deferred_tasks) {
+        for http in core::mem::take(unsafe { &mut (*this).deferred_tasks }) {
             release_unstarted(http);
         }
-        while let Some(http) = NonNull::new(self.queued_tasks.pop()) {
+        while let Some(http) = NonNull::new(unsafe { (*this).queued_tasks.pop() }) {
             release_unstarted(http);
         }
-        for nn in core::mem::take(&mut self.in_flight) {
+        for nn in core::mem::take(unsafe { &mut (*this).in_flight }) {
             // SAFETY: every entry is the `heap::release` allocation pushed by
             // `start_queued_task`; HTTP-thread-only and removed at the
             // callback dealloc site, so each is still live and uniquely
@@ -1057,6 +1101,18 @@ impl HttpThread {
                     nn.as_ptr().cast::<u8>(),
                     std::alloc::Layout::new::<crate::ThreadlocalAsyncHttp<'static>>(),
                 );
+            }
+        }
+    }
+
+    /// [`wakeup`](Self::wakeup) for HTTP-thread code that may run inside a
+    /// callback. Reads the two fields it needs without borrowing the rest.
+    pub(crate) fn wakeup_from_http_thread() {
+        let this = crate::http_thread_ptr();
+        // SAFETY: HTTP thread; reads two fields that are set once in `on_start`.
+        unsafe {
+            if (*this).has_awoken.load(Ordering::Acquire) {
+                uws::us_wakeup_loop((*this).uws_loop);
             }
         }
     }
@@ -1139,10 +1195,9 @@ fn evict_oldest_ssl_context() {
     map.swap_remove_at(oldest_idx);
 }
 
-fn start_queued_task(
-    http: *mut AsyncHttp,
-    in_flight: &mut Vec<NonNull<crate::ThreadlocalAsyncHttp<'static>>>,
-) {
+/// `this` is a raw pointer because `on_start` below can finish the request
+/// at once, and that removes it from `in_flight` again.
+fn start_queued_task(http: *mut AsyncHttp, this: *mut HttpThread) {
     // SAFETY: http points to a live AsyncHttp queued by the caller thread.
     let cloned = crate::ThreadlocalAsyncHttp::new(unsafe { core::ptr::read(http) });
     // Note: AsyncHttp is byte-copied here
@@ -1154,7 +1209,12 @@ fn start_queued_task(
     // reborrow would be frozen by the first of them.
     let cloned_ptr = bun_core::heap::into_raw(cloned);
     let cloned_nn = NonNull::new(cloned_ptr).expect("freshly leaked Box is non-null");
-    in_flight.push(cloned_nn.cast::<crate::ThreadlocalAsyncHttp<'static>>());
+    // SAFETY: HTTP thread; the borrow of `in_flight` ends here.
+    unsafe {
+        (*this)
+            .in_flight
+            .push(cloned_nn.cast::<crate::ThreadlocalAsyncHttp<'static>>())
+    };
     // SAFETY: freshly leaked; this thread is its sole owner until the request
     // completes and `in_flight` gives the pointer back.
     let cloned = unsafe { &mut *cloned_ptr };
@@ -1343,12 +1403,16 @@ mod _event_loop_draft {
         // Release: publishes `uws_loop`/`loop_` to cross-thread `wakeup()`
         // readers (which Acquire-load `has_awoken`).
         thread.has_awoken.store(true, Ordering::Release);
-        thread.process_events();
+        HttpThread::process_events(crate::http_thread_ptr());
     }
 
     impl HttpThread {
-        fn process_events(&mut self) -> ! {
-            let uws_loop = self.uws_loop_mut();
+        /// Runs forever. Takes a raw pointer, not `&mut self`, because the
+        /// code it runs reaches this state again through
+        /// `crate::http_thread_ptr()`; see `drain_events`.
+        fn process_events(this: *mut Self) -> ! {
+            // SAFETY: HTTP thread; a shared borrow that ends here.
+            let uws_loop = unsafe { (*this).uws_loop_mut() };
             #[cfg(unix)]
             {
                 uws_loop.num_polls = uws_loop.num_polls.max(2);
@@ -1360,7 +1424,7 @@ mod _event_loop_draft {
 
             loop {
                 if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
-                    self.dealloc_in_flight_for_exit();
+                    Self::dealloc_in_flight_for_exit(this);
                     {
                         let mut done = SHUTDOWN_DONE.0.lock();
                         *done = true;
@@ -1373,12 +1437,13 @@ mod _event_loop_draft {
                         std::thread::park();
                     }
                 }
-                self.drain_events();
-                self.free_dead_ssl_contexts();
+                Self::drain_events(this);
+                Self::free_dead_ssl_contexts(this);
                 assert_abort_tracker_sockets_alive();
                 Output::flush();
 
-                let uws_loop = self.uws_loop_mut();
+                // SAFETY: HTTP thread; a shared borrow that ends here.
+                let uws_loop = unsafe { (*this).uws_loop_mut() };
                 uws_loop.inc();
                 uws_loop.tick();
                 uws_loop.dec();
@@ -1390,7 +1455,7 @@ mod _event_loop_draft {
                 // the C `us_loop_t` behind `uws_loop`, and no other `&`/`&mut`
                 // to this `MiniEventLoop` is live here (`uws_loop` re-derived
                 // per iteration, last used above).
-                unsafe { (*self.loop_.cast_mut()).on_after_event_loop() };
+                unsafe { (*(*this).loop_.cast_mut()).on_after_event_loop() };
                 assert_abort_tracker_sockets_alive();
 
                 if cfg!(debug_assertions) {
@@ -1427,8 +1492,8 @@ pub fn shutdown_for_exit() -> bool {
     // SAFETY: `HTTP_THREAD_INIT == true` ⇒ `HTTP_THREAD` is fully written.
     // `get_unchecked` so the `ThreadCell` owner assert is skipped on this
     // cross-thread caller; `ParentRef` so only a shared `&HttpThread` is
-    // materialised — `process_events(&mut self)` is live on the HTTP thread,
-    // so a `&mut` here would alias. Same shape as `schedule()` above.
+    // materialised — the HTTP thread is running its loop and using this
+    // state, so a `&mut` here would alias. Same shape as `schedule()` above.
     let thread = unsafe {
         bun_ptr::ParentRef::<HttpThread>::from_raw(
             (*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr(),

@@ -518,7 +518,7 @@ fn on_close(ctx: *mut HTTPClient) {
             Ok(()) => {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.
                 progress_update_for_proxy_socket(ctx, proxy_nn);
-                crate::http_thread().schedule_proxy_deref(keepalive);
+                crate::HTTPThread::schedule_proxy_deref(keepalive);
                 return;
             }
             Err(e) => fail_err = Some(e),
@@ -543,7 +543,7 @@ fn on_close(ctx: *mut HTTPClient) {
         }
     }
     ProxyTunnel::set_socket(proxy_nn, Socket::None);
-    crate::http_thread().schedule_proxy_deref(keepalive);
+    crate::HTTPThread::schedule_proxy_deref(keepalive);
 }
 
 /// `ctx` and `proxy` must be live. Caller must not hold `&mut HTTPClient` or

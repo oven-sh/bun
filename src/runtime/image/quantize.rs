@@ -169,7 +169,7 @@ fn scan(pixels: &[[u8; 4]], want: usize, indices: &mut [u8]) -> Scan {
     Scan::Fits(seen)
 }
 
-/// One distinct colour and the number of pixels that have it.
+/// A colour and a number of pixels that have it.
 #[derive(Clone, Copy)]
 struct Bin {
     rgba: [u8; 4],
@@ -186,7 +186,7 @@ fn table_room(want: usize) -> usize {
     TABLE_COLORS_PER_ENTRY * want
 }
 
-/// Pixel counts by colour. A photo has too many colours for a table to pay: its pixels are sorted.
+/// Pixel counts by colour. A photo has too many colours for a table to pay: its runs are the bins.
 struct Counts {
     /// Each `val` is the pixel count of `key`. At most half full.
     slots: Vec<Slot>,
@@ -233,7 +233,7 @@ impl Counts {
     }
 }
 
-/// Every distinct colour with its pixel count, and the table when they fit it (`val` = count).
+/// The colours with their pixel counts, and the table when it took them all (`val` = count).
 fn count_colors(
     pixels: &[[u8; 4]],
     seen: &[u8],
@@ -245,7 +245,7 @@ fn count_colors(
     let (seen, _) = seen.as_chunks::<4>();
     // There are more colours than `seen`: they cannot all fit.
     if seen.len() >= most {
-        return Ok((count_sorted(pixels)?, None));
+        return Ok((count_runs(pixels)?, None));
     }
     let mut table = Counts {
         slots: try_filled(1024)?,
@@ -272,7 +272,7 @@ fn count_colors(
     for (key, count) in seeds.chain(runs) {
         if !table.add(key, count)? {
             drop(table);
-            return Ok((count_sorted(pixels)?, None));
+            return Ok((count_runs(pixels)?, None));
         }
     }
 
@@ -292,18 +292,13 @@ fn count_colors(
     Ok((bins, Some(table.slots)))
 }
 
-/// `count_colors` without the table: sort a copy of the pixels, count each run of equal ones.
-fn count_sorted(pixels: &[[u8; 4]]) -> Result<Vec<Bin>, AllocError> {
-    let mut keys: Vec<u32> = Vec::new();
-    keys.try_reserve_exact(pixels.len())
-        .map_err(|_| AllocError)?;
-    keys.extend(pixels.iter().map(|p| u32::from_le_bytes(*p)));
-    keys.sort_unstable();
+/// `count_colors` without the table: one bin per run of equal pixels, so a colour can have several.
+fn count_runs(pixels: &[[u8; 4]]) -> Result<Vec<Bin>, AllocError> {
     let mut bins: Vec<Bin> = Vec::new();
-    bins.try_reserve_exact(keys.chunk_by(|a, b| a == b).count())
+    bins.try_reserve_exact(pixels.chunk_by(|a, b| a == b).count())
         .map_err(|_| AllocError)?;
-    bins.extend(keys.chunk_by(|a, b| a == b).map(|run| Bin {
-        rgba: run[0].to_le_bytes(),
+    bins.extend(pixels.chunk_by(|a, b| a == b).map(|run| Bin {
+        rgba: run[0],
         count: u32::try_from(run.len()).expect("int cast"),
     }));
     Ok(bins)

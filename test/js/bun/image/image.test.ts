@@ -1601,9 +1601,8 @@ describe("Bun.Image", () => {
       // quantizer counts colours in a table and writes each pixel from it.
       // The table takes 1024 colours per palette entry. Past that it takes
       // a new colour while the colours so far cover 8 pixels each. It never
-      // takes more colours than half the pixel count. When it gives up, the
-      // pixels are sorted to count them and each run of equal pixels is
-      // searched in the palette.
+      // takes more colours than half the pixel count. When it gives up, each
+      // run of equal pixels is counted by itself and searched in the palette.
       test.each([
         ["counted in the table", 128, 128, 8192, 4000, 16],
         ["more than 1024 colours per entry, and they repeat", 400, 375, 130000, 17000, 16],
@@ -1622,7 +1621,7 @@ describe("Bun.Image", () => {
       test("the palette does not depend on the order of the pixels", async () => {
         // The same colours in the same amounts, in reverse. With most of the
         // white first the colours repeat from the start and are counted in
-        // the table. With most of it last they do not: the pixels are sorted.
+        // the table. With most of it last they do not: the table gives up.
         const [w, h] = [400, 375];
         const whiteFirst = whiteThenDark(w * h, 130000, 17000);
         const whiteLast = whiteFirst.slice();
@@ -1650,7 +1649,7 @@ describe("Bun.Image", () => {
       // Every colour below has the same few slots at every table size, so
       // each one walks past all the others: about 2 billion slots for this
       // image. Probes may pass 4 slots per pixel in all. Past that budget
-      // the colours are counted by sorting.
+      // the table gives up.
       test("colours that collide in the table do not stall the encode", async () => {
         const [r, g, b, a] = withHash(1);
         expect(Math.imul(0x9e3779b1, r | (g << 8) | (b << 16) | (a << 24)) >>> 0).toBe(1);

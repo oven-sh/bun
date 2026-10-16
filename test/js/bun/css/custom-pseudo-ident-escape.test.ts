@@ -26,6 +26,7 @@ test("ordinary unknown pseudo names are unchanged", () => {
   expect(minifyTest(":unknown-pseudo {color: red}", "")).toBe(":unknown-pseudo{color:red}");
   expect(minifyTest("::-webkit-unknown {color: red}", "")).toBe("::-webkit-unknown{color:red}");
   expect(minifyTest(":-custom-fn(x) {color: red}", "")).toBe(":-custom-fn(x){color:red}");
+  expect(minifyTest(":-custom-fn(1/2) {color: red}", "")).toBe(":-custom-fn(1/2){color:red}");
 });
 
 test("unknown at-rule names are re-escaped when printed", () => {

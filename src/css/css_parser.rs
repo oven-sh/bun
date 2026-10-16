@@ -16,6 +16,7 @@ use bun_core::strings;
 //
 // Cross-module re-exports + parser core live here.
 
+use crate::AsciiByte;
 /// `bun.ast.Index` — bundler source-file index. Hoisted into
 /// `bun_options_types` to keep css below the parser tier.
 use bun_ast::Index as SrcIndex;
@@ -3334,7 +3335,7 @@ impl<'a> Parser<'a> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Delim(d) = tok {
-            if *d == delim as u32 {
+            if *d == delim {
                 return Ok(());
             }
         }
@@ -3979,10 +3980,10 @@ pub mod nth {
         };
 
         if let Token::Delim(d) = tok {
-            if *d == u32::from(b'+') {
+            if *d == b'+' {
                 return parse_signless_b(input, a, 1);
             }
-            if *d == u32::from(b'-') {
+            if *d == b'-' {
                 return parse_signless_b(input, a, -1);
             }
         }
@@ -4180,7 +4181,7 @@ impl<'a> Tokenizer<'a> {
                 {
                     Token::UnrestrictedHash(self.consume_name())
                 } else {
-                    Token::Delim(u32::from(b'#'))
+                    Token::Delim(AsciiByte::of::<b'#'>())
                 }
             }
             b'$' => {
@@ -4189,7 +4190,7 @@ impl<'a> Tokenizer<'a> {
                     Token::SuffixMatch
                 } else {
                     self.advance(1);
-                    Token::Delim(u32::from(b'$'))
+                    Token::Delim(AsciiByte::of::<b'$'>())
                 }
             }
             b'\'' => self.consume_string::<true>(),
@@ -4207,7 +4208,7 @@ impl<'a> Tokenizer<'a> {
                     Token::SubstringMatch
                 } else {
                     self.advance(1);
-                    Token::Delim(u32::from(b'*'))
+                    Token::Delim(AsciiByte::of::<b'*'>())
                 }
             }
             b'+' => {
@@ -4219,7 +4220,7 @@ impl<'a> Tokenizer<'a> {
                     self.consume_numeric()
                 } else {
                     self.advance(1);
-                    Token::Delim(u32::from(b'+'))
+                    Token::Delim(AsciiByte::of::<b'+'>())
                 }
             }
             b',' => {
@@ -4240,7 +4241,7 @@ impl<'a> Tokenizer<'a> {
                     self.consume_ident_like()
                 } else {
                     self.advance(1);
-                    Token::Delim(u32::from(b'-'))
+                    Token::Delim(AsciiByte::of::<b'-'>())
                 }
             }
             b'.' => {
@@ -4248,7 +4249,7 @@ impl<'a> Tokenizer<'a> {
                     self.consume_numeric()
                 } else {
                     self.advance(1);
-                    Token::Delim(u32::from(b'.'))
+                    Token::Delim(AsciiByte::of::<b'.'>())
                 }
             }
             b'/' => {
@@ -4256,7 +4257,7 @@ impl<'a> Tokenizer<'a> {
                     Token::Comment(self.consume_comment())
                 } else {
                     self.advance(1);
-                    Token::Delim(u32::from(b'/'))
+                    Token::Delim(AsciiByte::of::<b'/'>())
                 }
             }
             b'0'..=b'9' => self.consume_numeric(),
@@ -4274,7 +4275,7 @@ impl<'a> Tokenizer<'a> {
                     Token::Cdo
                 } else {
                     self.advance(1);
-                    Token::Delim(u32::from(b'<'))
+                    Token::Delim(AsciiByte::of::<b'<'>())
                 }
             }
             b'@' => {
@@ -4282,7 +4283,7 @@ impl<'a> Tokenizer<'a> {
                 if self.is_ident_start() {
                     Token::AtKeyword(self.consume_name())
                 } else {
-                    Token::Delim(u32::from(b'@'))
+                    Token::Delim(AsciiByte::of::<b'@'>())
                 }
             }
             b'a'..=b'z' | b'A'..=b'Z' | b'_' | 0 => self.consume_ident_like(),
@@ -4295,7 +4296,7 @@ impl<'a> Tokenizer<'a> {
                     self.consume_ident_like()
                 } else {
                     self.advance(1);
-                    Token::Delim(u32::from(b'\\'))
+                    Token::Delim(AsciiByte::of::<b'\\'>())
                 }
             }
             b']' => {
@@ -4308,7 +4309,7 @@ impl<'a> Tokenizer<'a> {
                     Token::PrefixMatch
                 } else {
                     self.advance(1);
-                    Token::Delim(u32::from(b'^'))
+                    Token::Delim(AsciiByte::of::<b'^'>())
                 }
             }
             b'{' => {
@@ -4321,7 +4322,7 @@ impl<'a> Tokenizer<'a> {
                     Token::DashMatch
                 } else {
                     self.advance(1);
-                    Token::Delim(u32::from(b'|'))
+                    Token::Delim(AsciiByte::of::<b'|'>())
                 }
             }
             b'}' => {
@@ -4334,17 +4335,16 @@ impl<'a> Tokenizer<'a> {
                     Token::IncludeMatch
                 } else {
                     self.advance(1);
-                    Token::Delim(u32::from(b'~'))
+                    Token::Delim(AsciiByte::of::<b'~'>())
                 }
             }
-            _ => {
-                if !b.is_ascii() {
-                    self.consume_ident_like()
-                } else {
+            _ => match AsciiByte::new(b) {
+                Some(d) => {
                     self.advance(1);
-                    Token::Delim(b as u32)
+                    Token::Delim(d)
                 }
-            }
+                None => self.consume_ident_like(),
+            },
         };
 
         Ok(token)
@@ -5274,10 +5274,7 @@ impl Token {
                 serializer::serialize_unquoted_url(x, writer)?;
                 writer.write_all(b")")
             }
-            Token::Delim(x) => {
-                debug_assert!(*x <= 0x7F);
-                writer.write_byte(*x as u8)
-            }
+            Token::Delim(x) => writer.write_byte(x.get()),
             Token::Number(n) => serializer::write_numeric(n.value, n.int_value, n.has_sign, writer),
             Token::Percentage {
                 unit_value,

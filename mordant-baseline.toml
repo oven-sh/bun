@@ -29,8 +29,6 @@
 "unused_pub:src/bun_core/lib.rs" = 1
 
 [bun_css]
-"bound_checked_only_in_debug:src/css/css_parser.rs" = 1
-"bound_checked_only_in_debug:src/css/properties/custom.rs" = 2
 "generic_body_not_generic:src/css/media_query.rs" = 2
 "generic_body_not_generic:src/css/values/color.rs" = 3
 

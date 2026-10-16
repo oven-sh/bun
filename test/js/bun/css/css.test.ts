@@ -111,6 +111,9 @@ describe("css tests", () => {
     minify_test(":root { --a: 16 / 9 }", ":root{--a:16/9}");
     minify_test(":root { --a: x * y }", ":root{--a:x*y}");
     minify_test(":root { --a: x / / y }", ":root{--a:x//y}");
+    // A control character is a delim token. A non-ASCII code point starts an ident.
+    minify_test("a{--x:1 \x01 2 \x7f 3}", "a{--x:1\x012\x7f3}");
+    minify_test("a{--x:1 × 2}", "a{--x:1 × 2}");
     // Non-minified output is unchanged.
     cssTest(":root { --a: x / * y }", ":root {\n  --a: x / * y;\n}\n");
 

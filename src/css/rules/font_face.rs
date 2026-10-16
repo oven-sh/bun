@@ -228,7 +228,7 @@ impl UnicodeRange {
                     }
                 };
 
-                if matches!(*token, css::Token::Delim(c) if c == '?' as u32) {
+                if matches!(*token, css::Token::Delim(c) if c == b'?') {
                     return Self::parse_question_marks(input);
                 }
                 if matches!(*token, css::Token::Delim(_) | css::Token::Number { .. }) {
@@ -237,10 +237,10 @@ impl UnicodeRange {
                 return Ok(());
             }
             css::Token::Delim(c) => {
-                if c == '+' as u32 {
+                if c == b'+' {
                     let next = *input.next_including_whitespace()?;
                     if !(matches!(next, css::Token::Ident(_))
-                        || matches!(next, css::Token::Delim(d) if d == '?' as u32))
+                        || matches!(next, css::Token::Delim(d) if d == b'?'))
                     {
                         return Err(input.new_basic_unexpected_token_error(next));
                     }
@@ -257,7 +257,7 @@ impl UnicodeRange {
         loop {
             let start = input.state();
             if let Ok(tok) = input.next_including_whitespace() {
-                if matches!(*tok, css::Token::Delim(c) if c == '?' as u32) {
+                if matches!(*tok, css::Token::Delim(c) if c == b'?') {
                     continue;
                 }
             }

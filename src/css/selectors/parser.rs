@@ -593,10 +593,8 @@ fn parse_selector<Impl: BunSelectorImpl>(
                     any_whitespace = true;
                     continue;
                 }
-                // `Token::Delim` carries `u32` codepoint; cast to
-                // `u8` for ASCII match (all CSS combinator delims are ASCII).
-                Token::Delim(d) => match u8::try_from(*d).ok() {
-                    Some(b'>') => {
+                Token::Delim(d) => match d.get() {
+                    b'>' => {
                         if parser.deep_combinator_enabled()
                             && input
                                 .try_parse(|i: &mut CssParser| -> CResult<()> {
@@ -611,15 +609,15 @@ fn parse_selector<Impl: BunSelectorImpl>(
                         }
                         break;
                     }
-                    Some(b'+') => {
+                    b'+' => {
                         combinator = Combinator::NextSibling;
                         break;
                     }
-                    Some(b'~') => {
+                    b'~' => {
                         combinator = Combinator::LaterSibling;
                         break;
                     }
-                    Some(b'/') => {
+                    b'/' => {
                         if parser.deep_combinator_enabled() {
                             if input
                                 .try_parse(|i: &mut CssParser| -> CResult<()> {
@@ -824,10 +822,10 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
     let combinator: Option<Combinator> = 'combinator: {
         let tok = input.next()?;
         if let Token::Delim(c) = tok {
-            match u8::try_from(*c).ok() {
-                Some(b'>') => break 'combinator Some(Combinator::Child),
-                Some(b'+') => break 'combinator Some(Combinator::NextSibling),
-                Some(b'~') => break 'combinator Some(Combinator::LaterSibling),
+            match c.get() {
+                b'>' => break 'combinator Some(Combinator::Child),
+                b'+' => break 'combinator Some(Combinator::NextSibling),
+                b'~' => break 'combinator Some(Combinator::LaterSibling),
                 _ => {}
             }
         }
@@ -3348,12 +3346,12 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                 return Ok(Some(S::SimpleSelector(pseudo_class)));
             }
         }
-        Token::Delim(d) => match u8::try_from(d).ok() {
-            Some(b'.') => {
+        Token::Delim(d) => match d.get() {
+            b'.' => {
                 if state.after_any_pseudo() {
                     return Err(token_location.new_custom_error(
                         SelectorParseErrorKind::UnexpectedSelectorAfterPseudoElement(Token::Delim(
-                            b'.' as u32,
+                            css::AsciiByte::of::<b'.'>(),
                         ))
                         .into_default_parser_error(),
                     ));
@@ -3370,7 +3368,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                     parser.new_local_identifier(input, css::CssRefTag::CLASS, class, token_loc),
                 ))));
             }
-            Some(b'&') => {
+            b'&' => {
                 if parser.is_nesting_allowed() {
                     state.insert(SelectorParsingState::AFTER_NESTING);
                     return Ok(Some(S::SimpleSelector(GenericComponent::Nesting)));
@@ -3456,7 +3454,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
 
         match tok {
             // [foo=bar]
-            Token::Delim(d) if d == b'=' as u32 => {
+            Token::Delim(d) if d == b'=' => {
                 break 'operator attrs::AttrSelectorOperator::Equal;
             }
             // [foo~=bar]
@@ -3881,7 +3879,7 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
             let value = *value;
             let after_ident = input.state();
             let n = if let Ok(t) = input.next_including_whitespace() {
-                matches!(t, Token::Delim(d) if *d == b'|' as u32)
+                matches!(t, Token::Delim(d) if *d == b'|')
             } else {
                 false
             };
@@ -3917,12 +3915,12 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
                 ));
             }
         }
-        Token::Delim(c) => match u8::try_from(*c).ok() {
-            Some(b'*') => {
+        Token::Delim(c) => match c.get() {
+            b'*' => {
                 let after_star = input.state();
                 let result = input.next_including_whitespace();
                 if let Ok(t) = &result {
-                    if matches!(t, Token::Delim(d) if *d == b'|' as u32) {
+                    if matches!(t, Token::Delim(d) if *d == b'|') {
                         return parse_qualified_name_eplicit_namespace_helper::<Impl>(
                             input,
                             QNamePrefix::ExplicitAnyNamespace,
@@ -3944,7 +3942,7 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
                     ));
                 }
             }
-            Some(b'|') => {
+            b'|' => {
                 return parse_qualified_name_eplicit_namespace_helper::<Impl>(
                     input,
                     QNamePrefix::ExplicitNoNamespace,
@@ -3982,7 +3980,7 @@ fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(
         Token::Ident(local_name) => return Ok(OptionalQName::Some(namespace, Some(*local_name))),
         // `*` is only a valid local name outside of attribute selectors;
         // `[ns|*]` must fall through to the `InvalidQualNameInAttr` error below.
-        Token::Delim(c) if *c == b'*' as u32 && !in_attr_selector => {
+        Token::Delim(c) if *c == b'*' && !in_attr_selector => {
             return Ok(OptionalQName::Some(namespace, None));
         }
         _ => {}
@@ -4191,7 +4189,7 @@ impl ViewTransitionPartSelector {
             let loc = input.position();
             let is_dot = matches!(
                 input.next_including_whitespace(),
-                Ok(Token::Delim(d)) if *d == u32::from(b'.')
+                Ok(Token::Delim(d)) if *d == b'.'
             );
             if !is_dot {
                 input.reset(&start);

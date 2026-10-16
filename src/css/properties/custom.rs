@@ -258,7 +258,7 @@ impl CssHash for Token {
             Ident(v) | Function(v) | AtKeyword(v) | UnrestrictedHash(v) | IdHash(v)
             | QuotedString(v) | BadString(v) | UnquotedUrl(v) | BadUrl(v) | Whitespace(v)
             | Comment(v) => hasher.update(v),
-            Delim(d) => hasher.update(&d.to_ne_bytes()),
+            Delim(d) => hasher.update(&u32::from(d.get()).to_ne_bytes()),
             Number(n) => n.hash(hasher),
             Dimension(d) => d.hash(hasher),
             Percentage {
@@ -373,29 +373,24 @@ impl TokenList {
                 }
                 TokenOrValue::Token(token) => match token {
                     Token::Delim(d) => {
-                        if *d == b'+' as u32 || *d == b'-' as u32 {
+                        if *d == b'+' || *d == b'-' {
                             dest.write_char(b' ')?;
-                            debug_assert!(*d <= 0x7F);
-                            dest.write_char(*d as u8)?;
+                            dest.write_char(d.get())?;
                             dest.write_char(b' ')?;
                         } else {
-                            let ws_before =
-                                !has_whitespace && (*d == b'/' as u32 || *d == b'*' as u32);
-                            debug_assert!(*d <= 0x7F);
-                            dest.delim(*d as u8, ws_before)?;
+                            let ws_before = !has_whitespace && (*d == b'/' || *d == b'*');
+                            dest.delim(d.get(), ws_before)?;
                             // `delim()` emits no surrounding whitespace when minifying, so
                             // consecutive `/` and `*` delims would be printed adjacently and
                             // form a `/*` or `*/` comment delimiter. Emit a real space when
                             // the next token is the other half of that pair.
-                            if dest.minify && (*d == b'/' as u32 || *d == b'*' as u32) {
+                            if dest.minify && (*d == b'/' || *d == b'*') {
                                 let needs_space = match self.v.get(i + 1) {
                                     Some(TokenOrValue::Token(Token::Delim(next))) => {
-                                        (*d == b'/' as u32 && *next == b'*' as u32)
-                                            || (*d == b'*' as u32 && *next == b'/' as u32)
+                                        (*d == b'/' && *next == b'*')
+                                            || (*d == b'*' && *next == b'/')
                                     }
-                                    Some(TokenOrValue::Token(Token::SubstringMatch)) => {
-                                        *d == b'/' as u32
-                                    }
+                                    Some(TokenOrValue::Token(Token::SubstringMatch)) => *d == b'/',
                                     _ => false,
                                 };
                                 if needs_space {

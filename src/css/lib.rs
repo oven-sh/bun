@@ -323,6 +323,42 @@ impl Location {
     }
 }
 
+mod ascii_byte {
+    /// One ASCII byte (0x00..=0x7F), checked once at construction.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    // 4 bytes wide like the `u32` it replaces: a 1-byte slot adds 4 instructions to every `Token` that `Tokenizer::next_impl` returns on x86-64.
+    #[repr(align(4))]
+    pub struct AsciiByte(u8);
+
+    impl AsciiByte {
+        #[inline]
+        pub(crate) const fn new(b: u8) -> Option<Self> {
+            if b.is_ascii() { Some(Self(b)) } else { None }
+        }
+
+        /// The byte is a const parameter, so the call has no run-time form.
+        pub(crate) const fn of<const B: u8>() -> Self {
+            const { assert!(B.is_ascii()) };
+            Self(B)
+        }
+
+        #[inline]
+        pub const fn get(self) -> u8 {
+            self.0
+        }
+    }
+
+    impl PartialEq<u8> for AsciiByte {
+        #[inline]
+        fn eq(&self, other: &u8) -> bool {
+            self.0 == *other
+        }
+    }
+}
+pub use ascii_byte::AsciiByte;
+
+const _: () = assert!(size_of::<AsciiByte>() == 4 && size_of::<Token>() == 32);
+
 #[derive(Clone, Copy, Debug)]
 pub struct Num {
     pub(crate) has_sign: bool,
@@ -345,7 +381,7 @@ pub struct Dimension {
 // must not outlive the arena; `&'static` is the crate-wide placeholder until the
 // bumpalo arena lifetime is plumbed through.
 // `Copy`: every payload is a borrowed slice or scalar, and with `Copy` the
-// derived `clone()` is a plain 24-byte copy instead of a per-variant match.
+// derived `clone()` is a plain 32-byte copy instead of a per-variant match.
 #[derive(Clone, Copy, Debug)]
 pub enum Token {
     Ident(&'static [u8]),
@@ -357,8 +393,8 @@ pub enum Token {
     BadString(&'static [u8]),
     UnquotedUrl(&'static [u8]),
     BadUrl(&'static [u8]),
-    /// A `<delim-token>` — single codepoint. In practice always ASCII.
-    Delim(u32),
+    /// A `<delim-token>`: one ASCII byte. A non-ASCII byte starts an ident-like token instead.
+    Delim(AsciiByte),
     Number(Num),
     Percentage {
         has_sign: bool,

@@ -1757,7 +1757,7 @@ fn consume_operation_or_colon(
     allow_colon: bool,
 ) -> Result<Option<MediaFeatureComparison>> {
     let location = input.current_source_location();
-    let first_delim: u32 = {
+    let first_delim: css::AsciiByte = {
         let loc = input.current_source_location();
         let next_token = *input.next()?;
         match next_token {
@@ -1767,15 +1767,15 @@ fn consume_operation_or_colon(
         }
     };
 
-    match first_delim {
-        d if d == u32::from(b'=') => Ok(Some(MediaFeatureComparison::Equal)),
-        d if d == u32::from(b'>') => {
+    match first_delim.get() {
+        b'=' => Ok(Some(MediaFeatureComparison::Equal)),
+        b'>' => {
             if input.try_parse(|i| i.expect_delim(b'=')).is_ok() {
                 return Ok(Some(MediaFeatureComparison::GreaterThanEqual));
             }
             Ok(Some(MediaFeatureComparison::GreaterThan))
         }
-        d if d == u32::from(b'<') => {
+        b'<' => {
             if input.try_parse(|i| i.expect_delim(b'=')).is_ok() {
                 return Ok(Some(MediaFeatureComparison::LessThanEqual));
             }

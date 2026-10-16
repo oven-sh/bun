@@ -543,10 +543,10 @@ impl<V: CalcValue> Calc<V> {
                     break; // allow trailing whitespace
                 }
                 let next_tok = *input.next()?;
-                if matches!(next_tok, css::Token::Delim(c) if c == b'+' as u32) {
+                if matches!(next_tok, css::Token::Delim(c) if c == b'+') {
                     let next = Self::parse_product(input, parse_ident)?;
                     cur = cur.add(next, input)?;
-                } else if matches!(next_tok, css::Token::Delim(c) if c == b'-' as u32) {
+                } else if matches!(next_tok, css::Token::Delim(c) if c == b'-') {
                     let mut rhs = Self::parse_product(input, parse_ident)?;
                     rhs = rhs.mul_f32(-1.0);
                     cur = cur.add(rhs, input)?;
@@ -578,7 +578,7 @@ impl<V: CalcValue> Calc<V> {
                 }
             };
 
-            if matches!(tok, css::Token::Delim(c) if *c == b'*' as u32) {
+            if matches!(tok, css::Token::Delim(c) if *c == b'*') {
                 // At least one of the operands must be a number.
                 let rhs = Self::parse_value(input, parse_ident)?;
                 if let Calc::Number(n) = rhs {
@@ -587,9 +587,11 @@ impl<V: CalcValue> Calc<V> {
                     node = rhs;
                     node = node.mul_f32(val);
                 } else {
-                    return Err(input.new_unexpected_token_error(css::Token::Delim(b'*' as u32)));
+                    return Err(input.new_unexpected_token_error(css::Token::Delim(
+                        crate::AsciiByte::of::<b'*'>(),
+                    )));
                 }
-            } else if matches!(tok, css::Token::Delim(c) if *c == b'/' as u32) {
+            } else if matches!(tok, css::Token::Delim(c) if *c == b'/') {
                 let rhs = Self::parse_value(input, parse_ident)?;
                 if let Calc::Number(val) = rhs {
                     if val != 0.0 {

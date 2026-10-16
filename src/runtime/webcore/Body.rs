@@ -413,6 +413,7 @@ impl PendingValue {
                 | Action::GetBlob
                 | Action::GetArrayBuffer
                 | Action::GetBytes => {
+                    let shared_fd_stream = readable.is_shared_fd_stream();
                     let promise = match &mut self.action {
                         Action::GetJSON => global_this.readable_stream_to_json(readable.value),
                         Action::GetArrayBuffer => {
@@ -436,7 +437,7 @@ impl PendingValue {
                         _ => unreachable!(),
                     };
                     self.readable.deinit();
-                    if promise.is_ok() {
+                    if promise.is_ok() && !shared_fd_stream {
                         // The consumer holds its reader now; keep the lock once it lets go.
                         readable.mark_consumed_as_body(global_this);
                     }

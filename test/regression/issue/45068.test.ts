@@ -58,14 +58,17 @@ test.concurrent("process.stdin works after Bun.spawn took a Response over Bun.st
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("process.stdin works after a Response over Bun.stdin.stream() is consumed", async () => {
-  const [stdout, stderr, exitCode] = await runWithStdin(`
-    const response = new Response(Bun.stdin.stream());
-    console.log(JSON.stringify(Buffer.from(await response.bytes()).toString()), response.bodyUsed);
-    process.stdin.resume();
-    console.log("resume ok");
-  `);
-  expect(stderr).toBe("");
-  expect(stdout).toBe('"from parent\\n" true\nresume ok\n');
-  expect(exitCode).toBe(0);
-});
+// bytes() lifts the fd out as a Blob. text() reads through the stream itself.
+for (const method of ["bytes", "text"]) {
+  test.concurrent(`process.stdin works after Response.${method}() over Bun.stdin.stream()`, async () => {
+    const [stdout, stderr, exitCode] = await runWithStdin(`
+      const response = new Response(Bun.stdin.stream());
+      console.log(JSON.stringify(Buffer.from(await response.${method}()).toString()), response.bodyUsed);
+      process.stdin.resume();
+      process.stdin.on("end", () => console.log("stdin end"));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('"from parent\\n" true\nstdin end\n');
+    expect(exitCode).toBe(0);
+  });
+}

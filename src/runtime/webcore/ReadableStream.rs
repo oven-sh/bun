@@ -193,7 +193,7 @@ impl ReadableStream {
     }
 
     /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked),
-    /// except a stream over an fd store: that one is a per-Blob singleton and only lends its fd.
+    /// except a shared fd stream ([`Self::is_shared_fd_stream`]), which only lends its fd.
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
         if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
@@ -224,13 +224,9 @@ impl ReadableStream {
                 }
                 // it should be lazy, file shouldn't have opened yet.
                 debug_assert!(!blobby.started.get());
-                // A stream over an fd (`Bun.stdin.stream()`) is one cached object per
-                // Blob (`get_stream_with_cache`). The caller takes the fd, not the
-                // stream's bytes, so the stream stays unread for its next user.
-                if let webcore::blob::store::Data::File(file) = &store.data {
-                    if let webcore::node_types::PathOrFileDescriptor::Fd(_) = file.pathlike {
-                        return Some(webcore::blob::Any::Blob(blob));
-                    }
+                // The caller takes the fd, not the stream's bytes.
+                if self.is_shared_fd_stream() {
+                    return Some(webcore::blob::Any::Blob(blob));
                 }
                 webcore::blob::Any::Blob(blob)
             }
@@ -311,6 +307,22 @@ impl ReadableStream {
     /// A Body consumer owns this stream now; it stays disturbed and locked (the spec reader is never released).
     pub(crate) fn mark_consumed_as_body(&self, global_object: &JSGlobalObject) {
         ReadableStream__markConsumedAsBody(self.value, global_object);
+    }
+
+    /// A stream over an fd store (`Bun.stdin.stream()`) is one cached object per Blob
+    /// (`get_stream_with_cache`), so a consumer must not leave it spent. Ask before the
+    /// source starts: `FileReader::on_start` moves the store out.
+    pub(crate) fn is_shared_fd_stream(&self) -> bool {
+        let Some(reader) = self.ptr.file() else {
+            return false;
+        };
+        let webcore::file_reader::Lazy::Blob(store) = reader.lazy.get() else {
+            return false;
+        };
+        let webcore::blob::store::Data::File(file) = &store.data else {
+            return false;
+        };
+        matches!(file.pathlike, webcore::node_types::PathOrFileDescriptor::Fd(_))
     }
 
     /// Mark the stream disturbed + locked-without-reader. Called by native

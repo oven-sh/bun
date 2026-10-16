@@ -952,11 +952,13 @@ for (let credentials of allCredentials) {
 
         it("should allow ending with forward slash", async () => {
           const options = { ...s3Options, bucket: S3Bucket };
-          const s3file = s3(`${randomUUID()}/`, options);
+          const name = randomUUID();
+          const s3file = s3(`${name}/`, options);
           await s3file.write("Hello Bun!");
-          await s3file.exists();
+          // The `/` is part of the key: the object without it was not written.
+          const stored = { text: await s3file.text(), withoutSlash: await s3(name, options).exists() };
           await s3file.unlink();
-          expect().pass();
+          expect(stored).toEqual({ text: "Hello Bun!", withoutSlash: false });
         });
 
         it("should allow ending with backslash", async () => {

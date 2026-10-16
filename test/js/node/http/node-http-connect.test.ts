@@ -2074,6 +2074,14 @@ describe.concurrent.each(["bun", "node"])("%s: what keeps the process alive afte
     });
   });
 
+  // The proxy ends TLS itself: a TLS socket is on the tunnel, and nothing reads it.
+  test.skipIf(!exe).each(["TLSSocket", "emit"])("a TLS socket on a tunnel that nothing reads (%s)", async mode => {
+    expect(await runTunnelFixture(exe!, "node-http-connect-tls-fixture.js", { MODE: mode })).toEqual({
+      stdout: { handshake: true },
+      ...exitedByItself,
+    });
+  });
+
   // pipe() pauses the client's socket while the upstream is slow, and it does not resume it when
   // the upstream goes away.
   test.skipIf(!exe)("a CONNECT proxy by pipes exits when its upstream went away", async () => {

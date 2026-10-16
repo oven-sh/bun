@@ -84,9 +84,16 @@ interface ScanOptions {
 }
 ```
 
-Another process can remove a directory, or replace it with a file, while a scan runs. The open of that directory then fails with `ENOENT` or `ENOTDIR`. The scan leaves out the contents of that directory and continues. The scan does the same for a directory that still exists and fails to open with `ENOENT`.
+Another process can remove a directory, or replace it with a file, while a scan runs. The scan leaves out the contents of that directory and continues. It keeps the matches that it already found there.
 
-Two cases still fail the scan with that error: the directory is the one the scan starts in, or the pattern has a `..` component.
+The scan still fails in these cases:
+
+- The scan cannot open or read the directory that it starts in.
+- A directory fails with an error other than `ENOENT` or `ENOTDIR`, such as `EACCES`.
+- A directory that still exists fails to open.
+- A directory fails to open, and the pattern has a `..` component. The same applies when `absolute` is `true` and `cwd` has a `..` component.
+
+For a directory behind a symbolic link, an error of the open fails the scan only with `throwErrorOnBrokenSymlink`.
 
 ## Supported Glob Patterns
 

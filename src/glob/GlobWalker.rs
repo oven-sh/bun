@@ -41,6 +41,11 @@ fn dummy_filter_false(_val: &[u8]) -> bool {
     false
 }
 
+/// ENOENT or ENOTDIR: nothing is at the path, or what is there is no directory.
+fn is_gone(err: &SysError) -> bool {
+    matches!(err.get_errno(), E::ENOENT | E::ENOTDIR)
+}
+
 #[cfg(windows)]
 pub(crate) fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     use bun_paths::resolve_path::{self, platform};
@@ -74,11 +79,10 @@ pub trait Accessor {
     /// symlinked directory is reported as `Directory`, never `SymLink`), so the
     /// Directory descent arm must run the followed-link ancestor check itself.
     const ENTRY_KIND_FOLLOWS_SYMLINKS: bool = true;
-    /// Skip a directory that a listing reported and that is gone when the walk reaches it.
-    /// For an accessor over the live file system, where another process can remove the
-    /// directory in between. Elsewhere the same error says that the walker asked for a
-    /// path that was never there.
-    const SKIP_GONE_DIRECTORIES: bool = false;
+    /// Continue the walk without a directory or a symlink that a listing reported and that
+    /// is gone when the walk opens it. For `SyscallAccessor`, where another process can
+    /// remove an entry in between.
+    const SKIP_GONE_ENTRIES: bool = false;
     type Handle: AccessorHandle;
     type DirIter: AccessorDirIter<Handle = Self::Handle>;
 
@@ -168,7 +172,7 @@ impl Accessor for SyscallAccessor {
     // readdir / lstat report symlinks as `SymLink`, so every symlinked
     // directory flows through the (already checked) Symlink work-item arm.
     const ENTRY_KIND_FOLLOWS_SYMLINKS: bool = false;
-    const SKIP_GONE_DIRECTORIES: bool = true;
+    const SKIP_GONE_ENTRIES: bool = true;
     type Handle = SyscallHandle;
     type DirIter = SyscallDirIter;
 
@@ -501,36 +505,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         Ok(Ok(()))
     }
 
-    /// The open of `dir_path`, which a listing reported, failed with `err`. `None` when the
-    /// directory is gone: with ENOENT or ENOTDIR it does not open through `cwd_fd`, the
-    /// directory the walk started in. A relative path went through `cwd_fd`. An absolute
-    /// path did not, so it is opened again as a path below `cwd_fd`.
-    #[cold]
-    #[inline(never)]
-    fn open_listed_again(
-        &mut self,
-        err: &SysError,
-        dir_path: &ZStr,
-    ) -> Result<Maybe<Option<A::Handle>>, Error> {
-        let is_gone = |err: &SysError| matches!(err.get_errno(), E::ENOENT | E::ENOTDIR);
-        if A::SKIP_GONE_DIRECTORIES && is_gone(err) && !self.walker.has_dot_dot() {
-            if !bun_paths::is_absolute(dir_path.as_bytes()) {
-                return Ok(Ok(None));
-            }
-            if let Some(below) = self.walker.below_start(dir_path.as_bytes()) {
-                let mut buf = bun_paths::path_buffer_pool::get();
-                buf[..below.len()].copy_from_slice(below);
-                buf[below.len()] = 0;
-                match A::openat(self.cwd_fd, ZStr::from_buf(&buf[..], below.len()))? {
-                    Ok(fd) => return Ok(Ok(Some(fd))),
-                    Err(again) if is_gone(&again) => return Ok(Ok(None)),
-                    Err(_) => {}
-                }
-            }
-        }
-        Ok(Err(self.walker.handle_sys_err_with_path(err, dir_path)))
-    }
-
     pub(crate) fn close_cwd_fd(&mut self) {
         if self.cwd_fd.is_empty() {
             return;
@@ -657,10 +631,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             }
 
             match A::openat(self.cwd_fd, dir_path)? {
-                Err(err) => match self.open_listed_again(&err, dir_path)? {
+                Err(err) => match self.walker.open_listed_again(self.cwd_fd, &err, dir_path)? {
                     Err(err) => return Ok(Err(err)),
-                    // A listing reported this directory. It was removed, or replaced by a
-                    // file, before the walk reached it.
                     Ok(None) => {
                         self.iter_state = IterState::GetNext;
                         return Ok(Ok(()));
@@ -920,7 +892,13 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         if err.get_errno() == E::ENOTDIR {
                                             break 'brk None;
                                         }
-                                        if self.walker.error_on_broken_symlinks {
+                                        if self.walker.error_on_broken_symlinks
+                                            && !self.walker.listed_link_is_gone(
+                                                self.cwd_fd,
+                                                &err,
+                                                work_item_path,
+                                            )
+                                        {
                                             return Ok(Err(self.walker.handle_sys_err_with_path(
                                                 &err,
                                                 symlink_full_path_z,
@@ -1019,9 +997,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 IterState::Directory(dir) => {
                     let entry = match dir.iter.next() {
                         // A listing reported this directory, and it was removed after the
-                        // walk opened it: Linux fails the read with ENOENT.
+                        // walk opened it: Linux fails the read with ENOENT. libc's readdir
+                        // reports the end of the directory for it.
                         Err(err)
-                            if A::SKIP_GONE_DIRECTORIES
+                            if A::SKIP_GONE_ENTRIES
                                 && !dir.is_root
                                 && err.get_errno() == E::ENOENT =>
                         {
@@ -1542,8 +1521,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         }
     }
 
-    /// The directory a walk starts in: `cwd`, or what an absolute pattern names before its
-    /// first component with glob syntax.
+    /// The directory a walk starts in: `cwd`, or the leading plain names of an absolute
+    /// pattern.
     fn start_path(&self) -> &[u8] {
         if !self.is_pattern_absolute() {
             return &self.cwd;
@@ -1566,6 +1545,67 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             .iter()
             .any(|component| component.syntax_hint == SyntaxHint::DotBack)
             || (self.absolute && strings::split_any(&self.cwd, b"/\\").any(|name| name == b".."))
+    }
+
+    /// The open of `dir_path`, which a listing reported as a directory, failed with `err`.
+    /// With ENOENT or ENOTDIR, a stat through `cwd_fd` says what is there now. `None` when
+    /// it is no directory: another process removed it, or replaced it with a file. When a
+    /// directory is there, the same open runs once more. If that fails too, the error stays.
+    #[cold]
+    #[inline(never)]
+    fn open_listed_again(
+        &mut self,
+        cwd_fd: A::Handle,
+        err: &SysError,
+        dir_path: &ZStr,
+    ) -> Result<Maybe<Option<A::Handle>>, Error> {
+        if A::SKIP_GONE_ENTRIES && is_gone(err) {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            if let Some(path) = self.through_start(dir_path.as_bytes(), &mut buf) {
+                match A::statat(cwd_fd, path) {
+                    Ok(now) if S::ISDIR(now.st_mode as u32) => {
+                        if let Ok(fd) = A::openat(cwd_fd, dir_path)? {
+                            return Ok(Ok(Some(fd)));
+                        }
+                    }
+                    Ok(_) => return Ok(Ok(None)),
+                    Err(now) if is_gone(&now) => return Ok(Ok(None)),
+                    Err(_) => {}
+                }
+            }
+        }
+        Ok(Err(self.handle_sys_err_with_path(err, dir_path)))
+    }
+
+    /// Whether `path`, which a listing reported as a symlink, is gone: its open failed with
+    /// `err`, and an lstat through `cwd_fd` finds nothing there. Such a link is not a broken
+    /// link. Not on Windows, where the accessor's `lstatat` follows the link and so fails
+    /// for a broken link too.
+    #[cold]
+    #[inline(never)]
+    fn listed_link_is_gone(&self, cwd_fd: A::Handle, err: &SysError, path: &[u8]) -> bool {
+        if !A::SKIP_GONE_ENTRIES || cfg!(windows) || err.get_errno() != E::ENOENT {
+            return false;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        self.through_start(path, &mut buf)
+            .is_some_and(|path| A::lstatat(cwd_fd, path).is_err_and(|now| is_gone(&now)))
+    }
+
+    /// `path`, which this walk queued, as a path that the kernel resolves through the
+    /// directory the walk started in. `None` when the walk has no such path for it.
+    fn through_start<'b>(&self, path: &[u8], buf: &'b mut PathBuffer) -> Option<&'b ZStr> {
+        if self.has_dot_dot() {
+            return None;
+        }
+        let below = if bun_paths::is_absolute(path) {
+            self.below_start(path)?
+        } else {
+            path
+        };
+        buf[..below.len()].copy_from_slice(below);
+        buf[below.len()] = 0;
+        Some(ZStr::from_buf(&buf[..], below.len()))
     }
 
     /// `path`, an absolute path that this walk queued, as a path below the directory the

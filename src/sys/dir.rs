@@ -387,6 +387,35 @@ impl Dir {
         Ok(File::from_fd(fd))
     }
 
+    /// Create `sub_path` as a new file (`O_CREAT | O_EXCL`, mode 0o666). Whatever is at that
+    /// name first (a file with any mode, a symlink, a directory) is removed and the file created
+    /// again. The existing file is never opened or truncated in place: it can be a hardlink of the
+    /// file about to be copied into it, and `O_TRUNC` would empty both.
+    pub fn create_fresh_file_z(&self, sub_path: &ZStr) -> Maybe<File> {
+        let open = || {
+            openat(
+                self.fd,
+                sub_path,
+                O::WRONLY | O::CREAT | O::EXCL | O::CLOEXEC,
+                0o666,
+            )
+        };
+        match open() {
+            Err(err) if err.get_errno() == E::EEXIST => {
+                match unlinkat(self.fd, sub_path) {
+                    Ok(()) => {}
+                    // A directory at the name: Linux says EISDIR, other POSIX systems EPERM.
+                    Err(err) if matches!(err.get_errno(), E::EISDIR | E::EPERM) => {
+                        self.delete_tree(sub_path.as_bytes())?;
+                    }
+                    Err(err) => return Err(err),
+                }
+                open().map(File::from_fd)
+            }
+            result => result.map(File::from_fd),
+        }
+    }
+
     /// `unlinkat(self.fd, sub_path, 0)`.
     #[inline]
     pub fn delete_file_z(&self, sub_path: &ZStr) -> Maybe<()> {

@@ -1752,25 +1752,7 @@ impl PackageFiles<'_> {
                     destination_dir_.fd(),
                     bstr::BStr::new(entry.path.as_bytes())
                 );
-                // The file can be a hardlink of `in_file`, and O_TRUNC would empty both.
-                let create = |path: &ZStr| {
-                    let open = || {
-                        sys::openat(
-                            destination_dir_.fd(),
-                            path,
-                            sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
-                            0o666,
-                        )
-                    };
-                    match open() {
-                        Err(err) if err.get_errno() == sys::E::EEXIST => {
-                            let _ = sys::unlinkat(destination_dir_, path);
-                            open()
-                        }
-                        result => result,
-                    }
-                };
-                let outfile = match create(entry.path) {
+                let outfile = match destination_dir_.create_fresh_file_z(entry.path) {
                     Ok(f) => f,
                     Err(_) => {
                         let entry_dirname = bun_paths::resolve_path::dirname::<
@@ -1782,19 +1764,24 @@ impl PackageFiles<'_> {
                                 entry_dirname,
                             );
                         }
-                        create(entry.path).map_err(|err| {
-                            copy_failed(err.into(), entry.path.as_bytes(), failed_file)
-                        })?
+                        destination_dir_
+                            .create_fresh_file_z(entry.path)
+                            .map_err(|err| {
+                                copy_failed(err.into(), entry.path.as_bytes(), failed_file)
+                            })?
                     }
                 };
-                let _close_out = sys::CloseOnDrop::new(outfile);
 
                 let stat = sys::fstat(in_file)?;
                 // Best effort: filesystems without permission bits reject fchmod.
-                let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
+                let _ = sys::fchmod(outfile.handle(), stat.st_mode as bun_sys::Mode);
 
-                bun_sys::copy_file::copy_file_with_state(in_file, outfile, &mut copy_file_state)
-                    .map_err(|err| copy_failed(err.into(), entry.path.as_bytes(), failed_file))?;
+                bun_sys::copy_file::copy_file_with_state(
+                    in_file,
+                    outfile.handle(),
+                    &mut copy_file_state,
+                )
+                .map_err(|err| copy_failed(err.into(), entry.path.as_bytes(), failed_file))?;
             }
 
             Ok(())
@@ -1802,28 +1789,8 @@ impl PackageFiles<'_> {
 
         #[cfg(windows)]
         let result = walk_install_dir_windows(&mut state, &mut |dest, src, entry_path| {
-            use bun_sys::windows;
-            // `dest` can be a hardlink of `src`, which CopyFileW cannot overwrite.
-            // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
-            let copy_file = || unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 1) } != 0;
-            if copy_file() {
-                return Ok(());
-            }
-            if matches!(
-                windows::Win32Error::get(),
-                windows::Win32Error::FILE_EXISTS | windows::Win32Error::ALREADY_EXISTS
-            ) {
-                // SAFETY: FFI — dest is a valid NUL-terminated WStr buffer.
-                unsafe { windows::DeleteFileW(dest.as_ptr()) };
-                if copy_file() {
-                    return Ok(());
-                }
-            }
-            Err(copy_failed(
-                windows::last_system_errno().into(),
-                entry_path,
-                &mut failed_file,
-            ))
+            bun_sys::copy_file::copy_file_replacing(src, dest)
+                .map_err(|err| copy_failed(err.into(), entry_path, &mut failed_file))
         });
         #[cfg(not(windows))]
         let result = copy(&state.subdir, &mut state.walker, &mut failed_file);

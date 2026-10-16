@@ -1266,7 +1266,8 @@ pub struct ReactCompilerState {
     /// where the body of that function starts. The place says which function the name is for.
     declarator: (Loc, Ref),
     /// Where the bodies of the functions start that are arguments of a call of `memo()` or
-    /// `forwardRef()`, and that the parser has not entered yet.
+    /// `forwardRef()`, and that the parser has not entered yet. The next one that it enters
+    /// is the last.
     wrapper_callbacks: Vec<Loc>,
 }
 
@@ -1344,6 +1345,7 @@ impl ReactCompilerState {
     }
 
     /// The function whose body starts at `body` is an argument of `memo()` or `forwardRef()`.
+    /// Of the arguments of one call, the one that the parser enters first is noted last.
     pub fn note_wrapper_callback(&mut self, body: Loc) {
         self.wrapper_callbacks.push(body);
     }

@@ -98,7 +98,10 @@ fn lower_function(
 
     let func_id = builder.environment_mut().add_function(hir_func);
     if reads_enclosing_binding {
-        builder.environment_mut().functions_kept_inline.push(func_id);
+        builder
+            .environment_mut()
+            .functions_kept_inline
+            .push(func_id);
     }
     Ok(LoweredFunction { func: func_id })
 }

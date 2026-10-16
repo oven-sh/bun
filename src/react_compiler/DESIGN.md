@@ -49,7 +49,7 @@ rewritten) or an **AST-boundary port** (re-typed onto `bun_ast`).
 | `react_compiler_lowering/identifier_loc_index.rs`                               | — (not ported)                         | Ref already provides binding identity; lookup is by `Ref`, not `(u32, String)`         |
 | `react_compiler_reactive_scopes/codegen_reactive_function.rs`                   | `codegen.rs`                           | AST-boundary — emits `bun_ast::{Expr,Stmt,Binding}`                                    |
 | `react_compiler/entrypoint/pipeline.rs`                                         | `pipeline.rs`                          | AST-boundary — calls our `lower` + HIR passes + our `codegen`                          |
-| `react_compiler/entrypoint/program.rs`                                          | `program.rs`                           | AST-boundary — walks `&[Stmt]`, finds candidate components/hooks                       |
+| `react_compiler/entrypoint/program.rs`                                          | `program.rs`                           | AST-boundary — says which functions to compile, as the parser enters them              |
 | `react_compiler/entrypoint/{imports,compile_result}.rs`                         | same names                             | AST-boundary — small; emit/read `bun_ast`                                              |
 | `react_compiler/entrypoint/gating.rs`                                           | — (folded into `program.rs`)           | dynamic-gating directive parsing lives alongside candidate selection                   |
 | `react_compiler/entrypoint/suppression.rs`                                      | — (not ported)                         | eslint-disable detected in `js_parser/lexer.rs`, consumed in `program.rs`              |
@@ -151,13 +151,43 @@ of the source asks `Environment::has_stack()`, and the pipeline asks after each 
 
 ## Hook placement
 
-The compiler runs **per-function, post-visit** at the `S::Function` /
-`S::Local` / `S::ExportDefault` arms of `visit_stmt.rs` (the same hook sites
-as React Fast Refresh). At that point the visit pass has already consumed all
-`scopes_in_order` entries for the function's interior, every `Ref` is a
-resolved `RefTag::Symbol`, and JSX has been lowered to
-`E::Call { was_jsx_element: true }`. Lowering reads that call shape and
-codegen emits it, so the compiled body needs no further visiting.
+Upstream finds the functions to compile in one traversal of the program
+(`find_functions_to_compile`), before it compiles any. Bun has no traversal
+of its own for that: the parser's visit pass is the traversal.
+
+**Discovery, at the entry of a function.** `visit_func` and the arrow visit
+call `P::enter_react_compiler_function` before they visit the parameters.
+`ReactCompilerState::enter_function` answers for the function as the parser
+made it, which is what upstream's enter hooks read. The answer is `Search`
+(not a React function: the functions inside it are asked about in turn),
+`Skip` (a React function that stays as written: nothing inside it is asked
+about) or `Compile`. `P::react_compiler_search` holds the answer while the
+function is visited. Nothing in a class is asked about.
+
+The code around a function supplies context and decides nothing.
+`visit_decls` notes the binding that a function initializes, and `e_call`
+notes the function arguments of `memo()` / `forwardRef()`. A note is keyed by
+the place where the body of its function starts, so no other function can
+take it.
+
+**Compile, post-visit.** A queued function is compiled inside
+`visit_stmts(FnBody)`, between the visit phase and the mangle phase. At that
+point the visit pass has already consumed all `scopes_in_order` entries for
+the function's interior, every `Ref` is a resolved `RefTag::Symbol`, and JSX
+has been lowered to `E::Call { was_jsx_element: true }`. Lowering reads that
+call shape and codegen emits it, so the compiled body needs no further
+visiting.
+
+**A function inside a function.** The compiled function can be at any depth.
+A binding that it does not declare is a non-local, whether the module
+declares it or a function or block around the compiled function
+(`HirBuilder::is_bound_outside`, upstream's
+`is_scope_within_compiled_function`). It keeps its `Ref`. An outlined
+function is declared at module level, so a function expression that reads a
+binding that is not in scope there is not outlined
+(`Environment::functions_kept_inline`). Upstream outlines it all the same
+when the compiled function is an arrow or a function expression, and declares
+it at module level.
 
 The visit pass emits two call shapes. The automatic runtime calls
 `jsx(type, {...props, children}, key)` (or `jsxs` / `jsxDEV`). The classic

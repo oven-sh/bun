@@ -8,9 +8,9 @@
 
 use bun_ast as js_ast;
 use bun_collections::VecExt;
+use bun_react_compiler::Discovery;
 use bun_react_compiler::hir::ReactFunctionType;
 use bun_react_compiler::lowering::FunctionNode;
-use bun_react_compiler::Discovery;
 
 use crate::JSXImport;
 use crate::p::P;
@@ -327,7 +327,9 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         let Some(rc) = self.react_compiler.as_deref_mut() else {
             return;
         };
-        for arg in call.args.slice() {
+        // The last argument first: the arguments are visited in order, and the compiler takes
+        // the note that was added last first.
+        for arg in call.args.slice().iter().rev() {
             match &arg.data {
                 Data::EArrow(arrow) => rc.note_wrapper_callback(arrow.body.loc),
                 Data::EFunction(function) => rc.note_wrapper_callback(function.func.body.loc),

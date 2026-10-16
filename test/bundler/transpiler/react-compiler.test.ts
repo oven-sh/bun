@@ -3581,7 +3581,7 @@ describe("bundler", () => {
   const reactStub = {
     "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
     "/node_modules/react/index.js": /* js */ `
-      exports.memo = (...args) => args.find(arg => typeof arg === "function");
+      exports.memo = (...args) => (exports.memo.functions = args.filter(arg => typeof arg === "function"))[0];
       exports.forwardRef = exports.memo;
       exports.useState = value => [value, () => {}];
       exports.useEffect = effect => void effect();
@@ -3826,6 +3826,8 @@ describe("bundler", () => {
           reg("memo(): a declarator", Memo);
           reg("memo(): in another call", wrap(memo(({ color }) => { const style = { color }; return <q style={style} />; })));
           reg("memo(): the second argument", memo(undefined, ({ color }) => { const style = { color }; return <q style={style} />; }));
+          reg("memo(): the first of two functions", memo(({ color }) => { const style = { color }; return <q style={style} />; }, ({ color }) => { const style = { color }; return <q style={style} />; }));
+          reg("memo(): the second of two functions", memo.functions[1]);
           function makeMemo() {
             return memo(({ color }) => { const style = { color }; return <q style={style} />; });
           }
@@ -3982,6 +3984,8 @@ describe("bundler", () => {
           1 memo(): a declarator
           1 memo(): in another call
           1 memo(): the second argument
+          1 memo(): the first of two functions
+          1 memo(): the second of two functions
           1 memo(): returned from a function
           1 memo(): a property value
           1 forwardRef(): a call argument

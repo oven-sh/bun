@@ -503,6 +503,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
+    /// `a++` is an UpdateExpression: no member access, call, template or `!` can continue it.
+    /// Every suffix loop checks `after_arrow_body_loc`. `forbid_suffix_after_as_loc` is only
+    /// checked for TypeScript.
+    fn sfx_end_after_update(p: &mut Self) {
+        if matches!(
+            p.lexer.token,
+            T::TOpenBracket
+                | T::TOpenParen
+                | T::TDot
+                | T::TQuestionDot
+                | T::TNoSubstitutionTemplateLiteral
+                | T::TTemplateHead
+                | T::TExclamation
+        ) {
+            p.after_arrow_body_loc = p.lexer.loc();
+        }
+    }
+
     fn sfx_t_minus_minus(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
         if p.lexer.has_newline_before || level.gte(Level::Postfix) {
             return Ok(Continuation::Done);
@@ -519,6 +537,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
+        Self::sfx_end_after_update(p);
         Ok(Continuation::Next)
     }
 
@@ -538,6 +557,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
+        Self::sfx_end_after_update(p);
         Ok(Continuation::Next)
     }
 

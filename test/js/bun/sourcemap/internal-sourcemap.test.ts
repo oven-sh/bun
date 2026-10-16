@@ -173,6 +173,43 @@ describe("InternalSourceMap", () => {
     expect(exited).toBe(1);
   });
 
+  // https://github.com/oven-sh/bun/issues/45218
+  // The runtime transpiler inlines a `const` literal (and an enum-valued
+  // const) at each use. The printed literal must map to the use site, not to
+  // the declaration.
+  test("an inlined const maps to its use site, not its declaration", async () => {
+    const fixture = [
+      `enum Kind { Callee = "callee" }`,
+      `const NOT_A_FUNCTION = null;`,
+      `const ENUM_VALUE = Kind.Callee;`,
+      `type Unused = { a: number };`,
+      ``,
+      `function callLiteral(): void {`,
+      `  NOT_A_FUNCTION();`,
+      `}`,
+      `function callEnum(): void {`,
+      `  ENUM_VALUE();`,
+      `}`,
+      `for (const fn of [callLiteral, callEnum]) {`,
+      `  try {`,
+      `    fn();`,
+      `  } catch (e) {`,
+      `    console.log((e as Error).stack);`,
+      `  }`,
+      `}`,
+      ``,
+    ].join("\n");
+
+    const { stdout, stderr, exited } = await run({ "index.ts": fixture });
+
+    expect(stderr).toBe("");
+    const frames = [...stdout.matchAll(/at (callLiteral|callEnum) \(.*index\.ts:(\d+):(\d+)\)/g)].map(
+      m => `${m[1]} ${m[2]}:${m[3]}`,
+    );
+    expect(frames).toEqual(["callLiteral 7:3", "callEnum 10:3"]);
+    expect(exited).toBe(0);
+  });
+
   // 200 single-expression lines so the map has well over `sync_interval` (64)
   // mappings and lookup must bsearch past sync_points[0].
   test("remaps frames past multiple sync points", async () => {

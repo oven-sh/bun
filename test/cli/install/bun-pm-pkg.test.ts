@@ -290,24 +290,33 @@ describe.concurrent("bun pm pkg", () => {
       });
     });
 
-    // The keys 0xFE and 0xFF both print as U+FFFD. They are one member with the later value, as in npm.
-    it.skipIf(isWindows)("should print one member for two non-UTF-8 keys that share a label", async () => {
+    // The keys 0xFE, 0xFF and U+FFFD all print as U+FFFD. Keys that print as one label are one member
+    // with the value of the later key.
+    it.skipIf(isWindows)("should print one member for keys that share a label", async () => {
       using dir = tempDir("pm-pkg-get-bytes", {
-        "package.json": Buffer.from('{"\xfe":1,"\xff":2}', "latin1"),
+        "package.json": Buffer.from('{"\xfe":1,"\xff":2,"\xef\xbf\xbd":3}', "latin1"),
       });
-      await using proc = spawn({
-        cmd: ["sh", "-c", `exec "$0" pm pkg get "$(printf '\\376')" "$(printf '\\377')"`, bunExe()],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: pretty({ "\uFFFD": 2 }),
-        stderr: "",
-        exitCode: 0,
-      });
+      const get = async (...keys: string[]) => {
+        await using proc = spawn({
+          cmd: ["sh", "-c", `exec "$0" pm pkg get ${keys.map(key => `"$(printf '${key}')"`).join(" ")}`, bunExe()],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const one = (value: number) => ({ stdout: pretty({ "\uFFFD": value }), stderr: "", exitCode: 0 });
+      expect(
+        await Promise.all([
+          // Two keys that are not UTF-8.
+          get("\\376", "\\377"),
+          // A key that is not UTF-8, then U+FFFD as typed, and the reverse.
+          get("\\376", "\\357\\277\\275"),
+          get("\\357\\277\\275", "\\376"),
+        ]),
+      ).toEqual([one(2), one(3), one(1)]);
     });
 
     it("should handle boolean values", async () => {

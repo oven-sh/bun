@@ -1379,7 +1379,7 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     auto* obj = JSC::constructEmptyObject(globalObject);
     obj->putDirect(vm, builtinNames.statusCodePublicName(), JSC::jsNumber(statusCode));
     obj->putDirect(vm, builtinNames.statusMessagePublicName(),
-        JSC::jsString(vm, WTF::String({ statusMessage.data(), statusMessage.size() })));
+        JSC::jsString(vm, WTF::String(byteCast<Latin1Character>(statusMessage))));
 
     auto* rawHeaders = JSC::constructEmptyArray(globalObject, nullptr, headers.size() * 2);
     if (!rawHeaders || scope.exception()) [[unlikely]] {
@@ -1388,10 +1388,10 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     }
     for (size_t i = 0; i < headers.size(); i++) {
         rawHeaders->putDirectIndex(globalObject, i * 2,
-            JSC::jsString(vm, WTF::String(headers[i].name.span())));
+            JSC::jsString(vm, WTF::String(byteCast<Latin1Character>(headers[i].name.span()))));
         RETURN_IF_EXCEPTION(scope, );
         rawHeaders->putDirectIndex(globalObject, i * 2 + 1,
-            JSC::jsString(vm, WTF::String(headers[i].value.span())));
+            JSC::jsString(vm, WTF::String(byteCast<Latin1Character>(headers[i].value.span()))));
         RETURN_IF_EXCEPTION(scope, );
     }
     obj->putDirect(vm, builtinNames.rawHeadersPublicName(), rawHeaders);
@@ -1799,11 +1799,21 @@ extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
     return webSocket->rejectUnauthorized();
 }
 
+extern "C" bool WebSocket__isProxyTLS(WebCore::WebSocket* webSocket)
+{
+    return webSocket->isProxyTLS();
+}
+
 // The Rust half of the context of the script that made the WebSocket. Called from connect(),
 // which has the context.
 extern "C" void* WebSocket__bunContext(WebCore::WebSocket* webSocket)
 {
     return webSocket->scriptExecutionContext()->bunContext();
+}
+
+extern "C" JSC::EncodedJSValue WebSocket__checkServerIdentity(WebCore::WebSocket* webSocket)
+{
+    return JSC::JSValue::encode(webSocket->checkServerIdentity().getValue(JSC::jsUndefined()));
 }
 
 // The native client keeps this object (and its wrapper) alive across work it has queued that will

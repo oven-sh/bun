@@ -774,41 +774,12 @@ mod private {
             data: *mut c_void,
         ) -> JSValue;
 
-        pub(super) safe fn Bun__CreateFFIFunctionValue(
-            global_object: &JSGlobalObject,
-            symbol_name: Option<&EncodedSlice>,
-            arg_count: u32,
-            function: JsHostFn,
-            add_ptr_field: bool,
-            input_function_ptr: *mut c_void, // ?*anyopaque
-        ) -> JSValue;
-
         // safe: `JSValue` is a by-value tagged i64; `data` is an opaque
         // round-trip pointer the C++ side stores in the JSFunction's private
         // slot without dereferencing it as Rust data.
         pub(super) safe fn Bun__FFIFunction_getDataPtr(value: JSValue) -> *mut c_void;
         pub(super) safe fn Bun__FFIFunction_setDataPtr(value: JSValue, data: *mut c_void);
     }
-}
-
-#[track_caller]
-pub fn new_runtime_function(
-    global_object: &JSGlobalObject,
-    symbol_name: Option<&EncodedSlice>,
-    arg_count: u32,
-    function_pointer: JsHostFn,
-    add_ptr_property: bool,
-    input_function_ptr: Option<*mut c_void>,
-) -> JSValue {
-    jsc::mark_binding();
-    private::Bun__CreateFFIFunctionValue(
-        global_object,
-        symbol_name,
-        arg_count,
-        function_pointer,
-        add_ptr_property,
-        input_function_ptr.unwrap_or(core::ptr::null_mut()),
-    )
 }
 
 #[track_caller]

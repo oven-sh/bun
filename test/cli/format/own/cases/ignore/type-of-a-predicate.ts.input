@@ -1,0 +1,5 @@
+function f(a): a is /* prettier-ignore */ B  |  C {}
+function g(a): asserts a is /* prettier-ignore */ B  |  C {}
+function h(a): a is
+  // prettier-ignore
+  B  |  C {}

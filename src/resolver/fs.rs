@@ -236,7 +236,7 @@ impl Entry {
         self.cache().kind
     }
 
-    /// The real path that [`Entry::kind`] cached: a symlink's target. Empty: no link, or no known target.
+    /// The real path the resolver cached for this entry: where a symlink leads. Empty: none is known.
     #[inline]
     pub fn symlink_target(&self) -> &'static [u8] {
         self.cache().symlink.as_bytes()

@@ -42,7 +42,7 @@ pub fn parse(text: &[u8]) -> Option<Json> {
     let _scope = allocator.enter();
     let source = Source::init_path_string(b"".as_slice(), text);
     let mut log = Log::init();
-    let parsed = ParsedJson::parse_jsonc_document(&source, &mut log).ok()?;
+    let parsed = ParsedJson::parse_jsonc(&source, &mut log).ok()?;
     let root = match parsed.root.data {
         Data::ENull(_) => JsonValue::Null,
         Data::EBoolean(it) => JsonValue::Boolean(it.value),

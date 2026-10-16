@@ -450,8 +450,8 @@ describe.concurrent("bun pm pkg", () => {
       ["[1,]", "JSON does not support trailing commas"],
       ['{"a":1,}', "JSON does not support trailing commas"],
       ["//c 1", "JSON does not support comments"],
-      ["1 2", "Unexpected 2"],
-      ["[1] {}", "Unexpected {"],
+      ["1 2", 'Expected end of file but found "2"'],
+      ["[1] {}", 'Expected end of file but found "{"'],
     ])("should reject the invalid JSON value %s with --json flag", async (value, message) => {
       using dir = makeTestDir();
       const before = await readRaw(dir);

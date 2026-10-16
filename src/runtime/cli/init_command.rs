@@ -475,9 +475,10 @@ impl InitCommand {
                 let package_json_expr: bun_ast::Expr =
                     match json::parse_package_json_utf8(&source, &mut log, &bump) {
                         Ok(e) => e,
-                        Err(_) => {
-                            package_json_file = None;
-                            break 'process_package_json;
+                        Err(err) => {
+                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                            Output::err_generic("Failed to parse package.json: {s}", (err.name(),));
+                            Global::exit(1);
                         }
                     };
 

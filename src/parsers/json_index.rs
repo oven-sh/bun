@@ -145,6 +145,9 @@ impl<'c> StructuralIndex<'c> {
             // SAFETY: the kernel initialized `n` entries of the spare capacity it was given.
             unsafe { self.win.set_len(filled + n) };
             self.src_off += chunk_len;
+            if self.src_off >= len {
+                self.finish();
+            }
             return;
         }
         self.scalar_refill();

@@ -20,7 +20,7 @@ pub(crate) struct Parser<'a, 's, 'i> {
     source: &'s Source,
     log: &'a mut Log,
     idx: &'i mut StructuralIndex<'s>,
-    pub cursor: usize,
+    cursor: usize,
     opts: JSONOptions,
     token_start: usize,
     prev_error_loc: Loc,
@@ -130,7 +130,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    pub(crate) fn take_tape(&mut self) -> Option<Box<E::JsonTape>> {
+    fn take_tape(&mut self) -> Option<Box<E::JsonTape>> {
         let tape = self.tape.take()?;
         if !self.tape_owned {
             return None;
@@ -344,7 +344,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         false
     }
 
-    pub(crate) fn at_trailing_end(&mut self) -> bool {
+    fn at_trailing_end(&mut self) -> bool {
         loop {
             let p = self.pos_at(self.cursor);
             if p >= self.contents.len() {
@@ -360,11 +360,17 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
     }
 
-    pub(crate) fn unexpected_here(&mut self) -> crate::Error {
-        self.unexpected(self.cursor)
+    /// The root value, then end of input. Whitespace and comments can follow the value.
+    pub(crate) fn parse_document(mut self) -> PResult<(Expr, Option<Box<E::JsonTape>>)> {
+        let root = self.parse_value()?;
+        if !self.at_trailing_end() {
+            self.expected(self.cursor, "end of file");
+            return Err(crate::Error::ParserError);
+        }
+        Ok((root, self.take_tape()))
     }
 
-    pub(crate) fn parse_value(&mut self) -> PResult<Expr> {
+    fn parse_value(&mut self) -> PResult<Expr> {
         let cursor = self.cursor;
         let start = self.pos_at(cursor);
         if start >= self.contents.len() {

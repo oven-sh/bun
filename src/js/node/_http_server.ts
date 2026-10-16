@@ -121,22 +121,33 @@ const DateNow = Date.now;
 
 let cluster;
 
-function emitCloseServer(self: Server) {
+// Whether the pending close() is complete. If it is, its 'close' is due and the pending state is cleared.
+function takePendingClose(self: Server) {
   // A native close promise belongs to one listener; Node's Server 'close' spans overlapping listeners and handed-off sockets (net.js _emitCloseIfDrained).
-  if (!self[kPendingDrainClose]) return;
+  if (!self[kPendingDrainClose]) return false;
   const pendingGenerations = self[kPendingCloseGenerations];
   let drainedAtClose = true;
   for (const generation of pendingGenerations) {
-    if (!generation.nativeClosed) return;
+    if (!generation.nativeClosed) return false;
     drainedAtClose &&= generation.drainedAtClose;
   }
   const relistened = !!self[serverSymbol];
   // Node queues 'close' inside a close() that leaves no connection open. A listen() after it, or a connection to that listener, cannot hold the event back.
-  if ((relistened || self[kTrackedConnections].size > 0) && !drainedAtClose) return;
+  if ((relistened || self[kTrackedConnections].size > 0) && !drainedAtClose) return false;
   self[kPendingDrainClose] = false;
   pendingGenerations.clear();
   if (!relistened) self[kListenerGeneration] = undefined;
+  return true;
+}
+function emitCloseServer(self: Server) {
+  if (takePendingClose(self)) self.emit("close");
+}
+function emitServerClose(self: Server) {
   self.emit("close");
+}
+// Node emits a plaintext socket's 'error' ahead of the server's 'close': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L906-L918
+function emitCloseServerAfterSocketError(self: Server) {
+  if (takePendingClose(self)) process.nextTick(emitServerClose, self);
 }
 function markListenerGenerationClosed(self: Server, generation) {
   generation.nativeClosed = true;
@@ -1848,8 +1859,11 @@ function getNodeHTTPServerSocket() {
       if (tracked) {
         tracked.delete(this);
         if (tracked.size === 0 && server[kPendingDrainClose]) {
-          // The server 'close' follows this socket's own 'close' event.
-          this.once("close", () => process.nextTick(emitCloseServer, server));
+          // Not a listener on the socket. Over TLS Node destroys the counted raw socket before the 'error': https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L684-L687
+          process.nextTick(
+            (errored || this.#closeError) && !this.encrypted ? emitCloseServerAfterSocketError : emitCloseServer,
+            server,
+          );
         }
       }
       const timer = this[kSocketTimeoutTimer];

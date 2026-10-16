@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import path from "node:path";
 import { connect as tlsConnect } from "node:tls";
 
 // Node's net.Server#close callback (and the 'close' event) only fires once
@@ -1011,3 +1012,89 @@ test("no 'close' is emitted on a re-listened server when an earlier connection e
     server.closeAllConnections();
   }
 });
+
+// Node queues the server's 'close' when the last socket is destroyed, not from that socket's events: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L906-L918
+// Node v26.3.0 prints the same line for each row, except where a comment gives its line.
+test(
+  "server.close(cb) calls back, whatever the program does to the events of the last connection",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "node-http-server-close-last-connection-fixture.js")],
+      // The fixture ends itself before the test can time out, so that a row that hangs shows in the rows it prints.
+      env: { ...bunEnv, DEADLINE_MS: isCI || isASAN || isDebug ? "60000" : "4000" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "a response 'close' listener throws": ["server close", "close callback", "response close", "uncaught boom"],
+      "a response 'close' listener throws (https)": [
+        "server close",
+        "close callback",
+        "response close",
+        "uncaught boom",
+      ],
+      "a socket 'close' listener throws": ["server close", "close callback", "uncaught boom"],
+      "the 'close' listener of an upgraded socket throws": ["server close", "close callback", "uncaught boom"],
+      // Node: server close, close callback, uncaught boom. Node emits this socket's 'close' a turn of the loop after its 'error'.
+      "the 'close' listener of a socket that sent one byte throws": ["uncaught boom", "server close", "close callback"],
+      // Node: server close, disposed, uncaught boom. Node emits the socket's 'close' a turn of the loop later.
+      "server[Symbol.asyncDispose]() waits and a socket 'close' listener throws": [
+        "server close",
+        "uncaught boom",
+        "disposed",
+      ],
+      "an 'aborted' listener removes the socket's 'close' listeners": ["server close", "close callback"],
+      "the program's socket.emit swallows 'close'": ["server close", "close callback"],
+      "the 'error' listener of a socket destroyed with an error throws": [
+        "uncaught boom",
+        "server close",
+        "close callback",
+      ],
+      "closeAllConnections() closes the idle last connection": ["server close", "close callback", "uncaught boom"],
+      "closeIdleConnections() closes the idle last connection": ["server close", "close callback", "uncaught boom"],
+      "the peer closes the idle last connection": ["server close", "close callback", "uncaught boom"],
+      // Node: server close, close callback, uncaught boom. Here the listener's own close is delivered after this socket's.
+      "closeIdleConnections() and then socket.destroy() close the idle last connection": [
+        "uncaught boom",
+        "server close",
+        "close callback",
+      ],
+      "a socket 'end' listener removes every listener of the socket": ["server close", "close callback"],
+      "a socket 'error' listener removes the 'close' listeners at the peer's reset": [
+        "socket error ECONNRESET",
+        "server close",
+        "close callback",
+      ],
+      "the peer ends the idle last connection": ["socket end", "server close", "close callback", "socket close"],
+      "the peer ends the idle last connection (https)": [
+        "socket end",
+        "server close",
+        "close callback",
+        "socket close",
+      ],
+      // Node: server close, close callback, socket close. Here the listener's own close is delivered after this socket's.
+      "close() itself closes the idle last connection": ["socket close", "server close", "close callback"],
+      "a tunnel that is idle after the peer's FIN is destroyed": ["server close", "close callback"],
+      "the response is destroyed with an error": ["clientError", "server close", "close callback"],
+      "the response is destroyed with an error (https)": ["server close", "close callback", "clientError"],
+      "the peer resets a connection that sent part of a request head": [
+        "clientError ECONNRESET",
+        "server close",
+        "close callback",
+      ],
+      "the peer resets a connection that sent part of a request head (https)": [
+        "server close",
+        "close callback",
+        "clientError ECONNRESET",
+      ],
+      "a 'clientError' listener listens again": ["server close", "close callback", "listening again"],
+      "the socket's 'error' listener listens again": ["server close", "close callback", "listening again"],
+      "the socket's 'close' listener listens again": ["server close", "close callback", "listening again"],
+    });
+    expect(exitCode).toBe(0);
+  },
+  // CI has its own time for each test. A local debug or ASAN build needs several seconds to start the fixture.
+  (isASAN || isDebug) && !isCI ? 90_000 : undefined,
+);

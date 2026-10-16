@@ -5492,7 +5492,13 @@ describe("HTTP server transport shutdown", () => {
       await release.promise;
       res.end("done");
     });
-    server.on("connection", socket => socket.once("close", () => events.push("socket close")));
+    const socketClosed = Promise.withResolvers<void>();
+    server.on("connection", socket =>
+      socket.once("close", () => {
+        events.push("socket close");
+        socketClosed.resolve();
+      }),
+    );
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
@@ -5533,9 +5539,9 @@ describe("HTTP server transport shutdown", () => {
 
       client.destroy();
       expect(await closed.promise).toBeUndefined();
-      await clientClosed.promise;
-      expect(events[0]).toBe("socket close");
-      expect(events.indexOf("socket close")).toBeLessThan(events.indexOf("close callback"));
+      await Promise.all([clientClosed.promise, socketClosed.promise]);
+      // The order Node v26.3.0 prints: net.Server queues its 'close' when the last socket is destroyed, ahead of that socket's own 'close'.
+      expect(events).toEqual(["close callback", "socket close"]);
       expect(wire).toContain("Content-Length: 4\r\n");
       expect(wire).toEndWith("\r\n\r\ndone");
     } finally {

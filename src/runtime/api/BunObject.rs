@@ -92,10 +92,9 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 
-/// Bindgen-generated option-structs for this module (`BunObject.bind.ts`).
-pub(crate) mod r#gen {
-    pub(crate) use bun_jsc::generated::bun_object::BracesOptions;
-}
+use crate::generated_bindgen::bun_object::BracesOptions;
+use crate::generated_bindgen::glob::GlobClass as _;
+use bun_jsc::bindgen::{JsScope, PossiblySharedBytes};
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
 // `#[bun_jsc::host_fn(static)]` is not yet emitted,
@@ -256,7 +255,6 @@ pub(crate) mod bun_object {
         BunObject_callback_file => crate::webcore::blob::construct_bun_file,
         BunObject_callback_gunzipSync => JSZlib::gunzip_sync,
         BunObject_callback_gzipSync => JSZlib::gzip_sync,
-        BunObject_callback_indexOfLine => super::index_of_line,
         BunObject_callback_inflateSync => JSZlib::inflate_sync,
         BunObject_callback_jest => Jest::call,
         BunObject_callback_listen => super::static_adapters::listener_listen,
@@ -387,19 +385,27 @@ fn shell_escape(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     Ok(jsval)
 }
 
+/// `Bun.gc(force)`: heap size after the collection.
+pub(crate) fn gc_from_js(cx: &mut JsScope<'_>, force: bool) -> usize {
+    cx.global().bun_vm().as_mut().garbage_collect_from_js(force)
+}
+
+#[allow(clippy::needless_pass_by_value)] // the generated thunk hands over the string it owns
 pub(crate) fn braces(
-    global: &JSGlobalObject,
-    brace_str: &BunString,
-    opts: r#gen::BracesOptions,
+    cx: &mut JsScope<'_>,
+    brace_str: BunString,
+    opts: BracesOptions,
 ) -> JsResult<JSValue> {
-    let brace_slice = brace_str.to_utf8();
+    let global = cx.global();
+    let brace_utf8 = brace_str.to_utf8();
+    let brace_slice = brace_utf8.slice();
 
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
     let mut lexer_output = 'lexer_output: {
-        if strings::is_all_ascii(brace_slice.slice()) {
-            break 'lexer_output match Braces::Lexer::tokenize(brace_slice.slice()) {
+        if strings::is_all_ascii(brace_slice) {
+            break 'lexer_output match Braces::Lexer::tokenize(brace_slice) {
                 Ok(v) => v,
                 Err(err) => {
                     return Err(
@@ -409,7 +415,7 @@ pub(crate) fn braces(
             };
         }
 
-        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice.slice()) {
+        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice) {
             Ok(v) => break 'lexer_output v,
             Err(err) => {
                 return Err(
@@ -444,7 +450,7 @@ pub(crate) fn braces(
     }
 
     if expansion_count == 0 {
-        return bun_string_jsc::to_js_array(global, core::slice::from_ref(brace_str));
+        return bun_string_jsc::to_js_array(global, core::slice::from_ref(&brace_str));
     }
 
     // Hard cap before preallocation: `calculate_expanded_amount` saturates to
@@ -1319,35 +1325,17 @@ pub(crate) fn bun_resolve_sync_with_source_if_exists(
     })
 }
 
-#[bun_jsc::host_fn]
-fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-    if arguments.is_empty() {
-        return Ok(JSValue::js_number_from_int32(-1));
-    }
-
-    let mut offset: usize = 0;
-    if arguments.len() > 1 {
-        let offset_value = arguments[1].coerce_to_int64(global_this)?;
-        offset = offset_value.max(0) as usize;
-    }
-
-    let Some(buffer) = arguments[0].as_array_buffer(global_this) else {
-        return Ok(JSValue::js_number_from_int32(-1));
-    };
-
-    let bytes = buffer.byte_slice();
-    if offset >= bytes.len() {
-        return Ok(JSValue::js_number_from_int32(-1));
-    }
-
+pub(crate) fn index_of_line(buffer: PossiblySharedBytes<'_>, offset: f64) -> f64 {
+    // The cast saturates: NaN and a negative offset are 0.
+    let offset = offset as usize;
     // 0x0A never appears inside a multi-byte UTF-8 sequence.
-    Ok(
-        match strings::index_of_char_usize(&bytes[offset..], b'\n') {
-            Some(i) => JSValue::js_number((offset + i) as f64),
-            None => JSValue::js_number_from_int32(-1),
-        },
-    )
+    match buffer
+        .get(offset..)
+        .and_then(|rest| rest.index_of_char(b'\n'))
+    {
+        Some(i) => (offset + i) as f64,
+        None => -1.0,
+    }
 }
 
 #[bun_jsc::host_fn]
@@ -1738,7 +1726,12 @@ fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValu
 }
 
 fn get_glob_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::api::glob::Glob>(global_this)
+    // SAFETY: a lazy property callback, entered from JSC with no `JsScope` borrowed.
+    unsafe {
+        JsScope::with(global_this.as_mut_ptr(), |cx| {
+            crate::api::glob::Glob::get_constructor(&cx.heap).to_js()
+        })
+    }
 }
 
 fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

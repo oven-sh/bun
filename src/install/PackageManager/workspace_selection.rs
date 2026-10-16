@@ -5,7 +5,9 @@ use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_glob::Prepared;
 use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_paths::resolve_path::{
+    join_abs_string_buf, join_abs_string_buf_checked, platform, platform_to_posix_in_place,
+};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
@@ -69,6 +71,38 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
         remain = rest;
     }
     (remain, negated)
+}
+
+/// The `!` entries of a `workspaces` array: one rule for `bun install` and `bun run --filter`.
+#[derive(Default)]
+pub struct NegatedWorkspaces(Vec<Box<[u8]>>);
+
+impl NegatedWorkspaces {
+    /// Whether `entry` is negated: it is kept, in the shape of a matched directory, and not walked.
+    pub fn take(&mut self, entry: &[u8]) -> bool {
+        let (glob, negated) = strip_negations(entry);
+        if negated {
+            let mut glob = glob.to_vec();
+            platform_to_posix_in_place::<u8>(&mut glob);
+            let mut remain: &[u8] = &glob;
+            while let Some(rest) = remain.strip_prefix(b"./") {
+                remain = rest;
+            }
+            self.0.push(strings::without_trailing_slash(remain).into());
+        }
+        negated
+    }
+
+    /// For a `dir` that a glob entry matched. One listed by its path stays a member: do not ask.
+    pub fn excludes(&self, dir: &[u8]) -> bool {
+        // `dir/**` also removes `dir` itself, as in npm.
+        self.0.iter().any(|glob| {
+            bun_glob::r#match(glob, dir).matches()
+                || glob
+                    .strip_suffix(b"/**")
+                    .is_some_and(|base| bun_glob::r#match(base, dir).matches())
+        })
+    }
 }
 
 /// Accepted shapes: `!`* then `...`/`...^` prefix and/or `...`/`^...` suffix around `*`, `{dir}`, `./path` or a name glob.
@@ -354,6 +388,55 @@ impl WorkspaceGraph {
         graph
     }
 
+    /// Candidate indices, each after those it depends on. A cycle is broken at one of its members.
+    pub(crate) fn dependency_order(&self) -> Vec<u32> {
+        let n = self.dependencies.len();
+        let mut remaining: Vec<usize> = self.dependencies.iter().map(Vec::len).collect();
+        let mut order: Vec<u32> = Vec::with_capacity(n);
+        let mut queued = bitset(n);
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for i in 0..n {
+            if remaining[i] == 0 {
+                queued.set(i);
+                queue.push_back(i as u32);
+            }
+        }
+
+        loop {
+            while let Some(u) = queue.pop_front() {
+                order.push(u);
+                for &v in &self.dependents[u as usize] {
+                    if queued.is_set(v as usize) {
+                        continue;
+                    }
+                    remaining[v as usize] -= 1;
+                    if remaining[v as usize] == 0 {
+                        queued.set(v as usize);
+                        queue.push_back(v);
+                    }
+                }
+            }
+            if order.len() == n {
+                return order;
+            }
+            // Stalled on a cycle. Follow unmet edges until one repeats: that candidate is on it.
+            let mut on_walk = bitset(n);
+            let mut cur = (0..n)
+                .find(|&i| !queued.is_set(i))
+                .expect("order.len() < n");
+            while !on_walk.is_set(cur) {
+                on_walk.set(cur);
+                cur = self.dependencies[cur]
+                    .iter()
+                    .map(|&d| d as usize)
+                    .find(|&d| !queued.is_set(d))
+                    .expect("remaining[cur] > 0");
+            }
+            queued.set(cur);
+            queue.push_back(cur as u32);
+        }
+    }
+
     pub fn from_dependency_names<D, I>(names: &[&[u8]], mut dependency_names: D) -> WorkspaceGraph
     where
         D: FnMut(usize) -> I,
@@ -424,11 +507,15 @@ pub fn select_lockfile_workspaces(
                 ResolutionTag::Workspace => res.workspace().slice(string_buf),
                 _ => b".",
             };
-            strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
-                top_level_dir,
-                &mut path_buf.0,
-                &[rel],
-            ))
+            // A path out of bun.lock that fits no path buffer is selected by its name only.
+            strings::without_trailing_slash(
+                join_abs_string_buf_checked::<platform::Posix>(
+                    top_level_dir,
+                    &mut path_buf.0,
+                    &[rel],
+                )
+                .unwrap_or_default(),
+            )
             .into()
         })
         .collect();

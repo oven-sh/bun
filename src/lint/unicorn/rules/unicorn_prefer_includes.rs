@@ -27,7 +27,9 @@ fn is_negative_one(e: Expr) -> bool {
 }
 
 impl Rule for PreferIncludes {
-    const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-includes", Kind::Suggestion).has_suggestions();
+    const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-includes", Kind::Suggestion)
+        .has_suggestions()
+        .with_types("prefer-includes");
     const ON: On = On::new().binaries(&[
         BinOp::NotEqEq,
         BinOp::NotEq,
@@ -68,7 +70,7 @@ impl Rule for PreferIncludes {
         let Some((callee_span, _)) = call_expr_method_callee_info(call) else {
             return;
         };
-        cx.report(callee_span, PREFER_INCLUDES).suggest(PREFER_INCLUDES, |fixer| {
+        cx.report(callee_span, PREFER_INCLUDES).unless_claimed(e).suggest(PREFER_INCLUDES, |fixer| {
             let (file, member) = (fixer.file(), get_inner_expression(call.callee()));
             let has_optional_chain = call.is_optional() || member.is_optional();
             let mut replacement = Vec::new();

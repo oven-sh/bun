@@ -376,7 +376,7 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
         return {};
     }
 
-    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, Generated::BunObject::jsBraces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, Bun::Bindgen::Generated::BunObject::jsBraces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
     bunShell->putDirect(vm, JSC::Identifier::fromString(vm, "ShellError"_s), ShellError.getObject(), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
@@ -965,12 +965,12 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     fetch                                          constructBunFetchObject                                             ReadOnly|DontDelete|PropertyCallback
     file                                           BunObject_callback_file                                             DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
-    gc                                             Generated::BunObject::jsGc                                          DontDelete|Function 1
+    gc                                             Bun::Bindgen::Generated::BunObject::jsGc                            DontDelete|Function 1
     generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 2
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1
     hash                                           BunObject_lazyPropCb_wrap_hash                                      DontDelete|PropertyCallback
-    indexOfLine                                    BunObject_callback_indexOfLine                                      DontDelete|Function 1
+    indexOfLine                                    Bun::Bindgen::Generated::BunObject::jsIndexOfLine                   DontDelete|Function 1
     inflateSync                                    BunObject_callback_inflateSync                                      DontDelete|Function 1
     inspect                                        BunObject_lazyPropCb_wrap_inspect                                   DontDelete|PropertyCallback
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback

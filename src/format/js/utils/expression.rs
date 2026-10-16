@@ -99,8 +99,4 @@ impl<'a> ExpressionLeftSide<'a> {
             .filter(|it| !it.is_assignment_target)
             .map(|it| it.expr)
     }
-
-    pub(crate) fn span(self) -> Span {
-        self.expr.span()
-    }
 }

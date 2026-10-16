@@ -59,7 +59,7 @@ pub(crate) enum ModifiersOf {
     ClassMember,
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn start(&self) -> Start {
         Start {
@@ -77,6 +77,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         modifiers: Span<ModifierId>,
     ) -> StmtId {
         let id = StmtId(self.f.stmts.len() as u32);
+        self.finish_statement(id, &kind, start.pos, self.prev_end());
         self.f.stmts.push(Stmt {
             kind,
             start: start.pos,
@@ -90,6 +91,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     }
 
     /// `parseStatement`
+    ///
+    /// What needs much of the stack is not inlined into this: it would be taken at each level of `if (a) if (b) ..`.
     pub(crate) fn statement(&mut self) -> StmtId {
         if self.is_too_deep() {
             return StmtId::NONE;
@@ -1132,7 +1135,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
                 (name, name_pos) = (ModuleName::String(self.lx.atom), self.pos());
                 specifies_module = false;
-                self.next();
+                self.next_after_string();
             }
         }
         let (body, has_body) = match self.token() {
@@ -1186,6 +1189,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             let flags = flags & Flags::AMBIENT | Flags::EXPORT;
             let inner =
                 self.namespace_declaration(inner, Span::EMPTY, flags, specifies_module, nested);
+            // ESTree has one declaration for `a.b`.
+            self.unfinish_node(NodeData::Stmt(inner));
             if self.options.is_javascript {
                 self.check_js_statement(inner);
             }
@@ -1327,7 +1332,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.expect(T::While);
         let test = self.parenthesized_condition();
         // "do;while(0)x will have a semicolon inserted before x."
-        self.eat(T::Semicolon);
+        self.eat_semicolon();
         self.add_stmt(StmtKind::DoWhile { body, test }, start, Span::EMPTY)
     }
 
@@ -1340,6 +1345,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     }
 
     /// `parseWithStatement`: a block of the expression, as a statement, and the body.
+    #[inline(never)]
     fn with_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
@@ -1361,6 +1367,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     }
 
     /// `parseForOrForInOrForOfStatement`
+    #[inline(never)]
     fn for_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
@@ -1498,6 +1505,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_stmt(kind, start, Span::EMPTY)
     }
 
+    #[inline(never)]
     fn break_or_continue(&mut self) -> StmtId {
         let start = self.start();
         let is_break = self.token() == T::Break;
@@ -1571,7 +1579,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             false => self.expression_allowing_in(),
         };
-        if !self.eat(T::Semicolon) && !self.can_parse_semicolon() {
+        if !self.eat_semicolon() && !self.can_parse_semicolon() {
             match self.recovers() {
                 true => self.missing_semicolon_after(value),
                 false => self.fail(),
@@ -1580,6 +1588,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_stmt(StmtKind::Throw(value), start, Span::EMPTY)
     }
 
+    #[inline(never)]
     fn switch_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
@@ -1648,6 +1657,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_stmt(StmtKind::Switch { expr, cases }, start, Span::EMPTY)
     }
 
+    #[inline(never)]
     fn try_statement(&mut self) -> StmtId {
         let start = self.start();
         self.expect(T::Try);
@@ -1730,20 +1740,19 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             && let Some(&Expr {
                 kind: ExprKind::Ident(label),
                 pos,
-                ..
+                end,
             }) = self.f.exprs.last()
             && pos == start.pos
         {
-            self.f.exprs.pop();
+            self.pop_expr();
+            self.finish_name(pos, end);
             self.next();
             let body = self.embedded_statement();
             self.f.rare_syntax |= rare::ODD_JUMP;
             return self.add_stmt(StmtKind::Labeled { label, body }, start, Span::EMPTY);
         }
         // `parseSemicolon`
-        if self.token() == T::Semicolon {
-            self.next();
-        } else if !self.can_parse_semicolon() {
+        if !self.eat_semicolon() && !self.can_parse_semicolon() {
             return self.statement_without_semicolon(start, expression);
         }
         self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY)

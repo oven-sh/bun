@@ -501,12 +501,12 @@ impl<S: RuleSet> Linter<S> {
             true => file.config_comments(),
             false => &[],
         };
-        // ESLint takes `oxlint-disable` and the like for ordinary comments.
+        // ESLint takes `oxlint-disable` and the like for ordinary comments. Without a configuration of either, those of both count.
         let is_understood = |it: &&ConfigComment| {
             let is_called_oxlint = file.slice(it.label_span).starts_with(b"oxlint");
             match config.understands_oxlint_comments {
                 true => is_called_oxlint || options.respects_eslint_comments,
-                false => !is_called_oxlint && !it.is_only_of_oxlint,
+                false => config.has_every_rule || (!is_called_oxlint && !it.is_only_of_oxlint),
             }
         };
         let prepared = config.prepared.get_or_init(|| self.prepare(config));
@@ -802,6 +802,34 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
+        // See `Pairs`. Where the rule without types is the more severe, both report as they are: a report less would be a
+        // milder one.
+        let pairs = S::PAIRS;
+        if file.types.is_some()
+            && file.language().is_oxlint
+            && (!is_plain || prepared.on.intersects(&pairs.without_types))
+        {
+            let mut paired = file.sink.paired.borrow_mut();
+            for (index, it) in enabled.iter().enumerate() {
+                let number = it.rule.number();
+                if it.severity == Severity::Off || !pairs.without_types.has(number) {
+                    continue;
+                }
+                let typed = pairs.typed[number as usize];
+                let with_types = (enabled.iter()).position(|other| {
+                    other.rule.number() == typed && other.severity >= it.severity
+                });
+                if let Some(with_types) = with_types {
+                    let with_types = with_types as u16;
+                    let known = paired.iter().find(|it| it.0 == with_types).map(|it| it.1);
+                    let pair = known.unwrap_or(paired.len() as u8);
+                    if known.is_none() {
+                        paired.push((with_types, pair, true));
+                    }
+                    paired.push((index as u16, pair, false));
+                }
+            }
+        }
         let wants_places = options.wants_places || wants_fixes || has_directives;
         let of_js = problems.len() - before_js;
         for (it, reported) in problems.iter_mut().skip(before_js).zip(1..) {
@@ -930,6 +958,7 @@ impl<S: RuleSet> Linter<S> {
             let Some(rule) = ran(diagnostic.rule as usize) else {
                 continue;
             };
+            let claim = diagnostic.details.as_deref().and_then(|it| it.claim);
             let changes_something = diagnostic.fix.is_some() || !diagnostic.suggestions.is_empty();
             let follows_oxlint = changes_something && file.language().is_oxlint;
             let key = Some((diagnostic.rule, diagnostic.message_id));
@@ -944,6 +973,7 @@ impl<S: RuleSet> Linter<S> {
                     true => step + before_in_run(step),
                     false => ranks.get(at as usize).copied().unwrap_or(0),
                 },
+                claim,
                 ..to_message(diagnostic, rule.reported_as(), places)
             });
             let Some(message) =
@@ -1033,6 +1063,10 @@ impl<S: RuleSet> Linter<S> {
             if problems.iter().any(is_thrown_error) {
                 problems.retain(|it| !it.rule_id.as_ref().is_some_and(stands_for_js_rule));
             }
+        }
+        // Before the comments, which are compared with a report where it's shown.
+        if file.language().stands_alone {
+            problems.iter_mut().for_each(LintMessage::stay_in_file);
         }
         if wants_places && !in_run_order {
             LintMessage::sort(&mut problems);
@@ -1170,6 +1204,7 @@ fn to_message(
             None => end,
         }),
         is_fatal: false,
+        claim: None,
         fix: diagnostic.fix.take(),
         suggestions: match diagnostic.suggestions.is_empty() {
             true => Vec::new(),
@@ -1208,6 +1243,7 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) ->
         column: report.column.unwrap_or(0),
         end: report.end,
         is_fatal: false,
+        claim: None,
         fix: report.fix.filter(|_| wants_fixes),
         suggestions: (report.suggestions.into_iter().filter(|_| wants_fixes))
             .map(Into::into)
@@ -1297,6 +1333,7 @@ impl ThrownError<'_> {
             column: 0,
             end: None,
             is_fatal: true,
+            claim: None,
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),
@@ -1805,6 +1842,10 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             names,
             justification: self.file.slice(comment.justification),
             start,
+            tool: match self.file.slice(comment.label_span).starts_with(b"oxlint") {
+                true => "oxlint",
+                false => "eslint",
+            },
         });
     }
 }

@@ -1,23 +1,38 @@
-import { fn, t } from "bindgen";
+import * as b from "../../codegen/bindgen-lib.ts";
 
-export const BracesOptions = t.dictionary({
-  tokenize: t.boolean.default(false),
-  parse: t.boolean.default(false),
+export default b.module({ rustPath: "crate::api::bun_object" });
+
+export const BracesOptions = b.dictionary(
+  {
+    tokenize: b.bool.loose.default(false),
+    parse: b.bool.loose.default(false),
+  },
+  { allowArray: true },
+);
+
+export const braces = b.fn({
+  args: {
+    input: b.string.loose,
+    options: BracesOptions.nullable.default({}),
+  },
+  returns: b.any,
+  capability: "js",
+  throws: true,
 });
 
-export const braces = fn({
+export const gc = b.fn({
   args: {
-    global: t.globalObject,
-    input: t.DOMString,
-    options: BracesOptions.default({}),
+    force: b.bool.loose.default(false),
   },
-  ret: t.any,
+  returns: b.usize,
+  capability: "js",
+  rustPath: "crate::api::bun_object::gc_from_js",
 });
 
-export const gc = fn({
+export const indexOfLine = b.fn({
   args: {
-    vm: t.virtualMachine,
-    force: t.boolean.default(false),
+    buffer: b.bufferSource.bytes.allowShared,
+    offset: b.f64.loose.default(0),
   },
-  ret: t.usize,
+  returns: b.f64,
 });

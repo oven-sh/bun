@@ -55,12 +55,12 @@ String lowercaseHeaderName(const String& name)
     if (name.is8Bit()) {
         auto span = name.span8();
         size_t length = span.size();
-        if (highway_index_of_first_ascii_upper(span.data(), length) == length)
+        if (highway_index_of_first_ascii_upper(byteCast<uint8_t>(span.data()), length) == length)
             return name;
 
         std::span<Latin1Character> data;
         String result = String::createUninitialized(static_cast<unsigned>(length), data);
-        highway_lower_ascii(span.data(), length, data.data());
+        highway_lower_ascii(byteCast<uint8_t>(span.data()), length, byteCast<uint8_t>(data.data()));
         return result;
     }
 

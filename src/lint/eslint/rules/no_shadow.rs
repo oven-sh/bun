@@ -1,8 +1,8 @@
 use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ts_scope::reference_contains_type_query;
 use bun_lint::utils::ts_utils;
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// Disallow variable declarations from shadowing variables declared in the outer scope.
@@ -73,9 +73,9 @@ struct Known<'a> {
     /// [`functions_without_body`], once they are asked for.
     without_body: Option<Vec<Span>>,
     /// Whether the file uses what it imports only as a type.
-    only_types: FxHashMap<Symbol<'a>, bool>,
+    only_types: IdMap<Symbol<'a>, bool>,
     /// [`Known::is_namespace_of_types`]
-    namespaces_of_types: FxHashMap<Symbol<'a>, bool>,
+    namespaces_of_types: IdMap<Symbol<'a>, bool>,
 }
 
 impl<'a> Known<'a> {
@@ -85,8 +85,9 @@ impl<'a> Known<'a> {
             && symbol
                 .declaration_kinds()
                 .contains(DeclarationKinds::TS_MODULE_NAME)
-            && *(self.namespaces_of_types.entry(symbol))
-                .or_insert_with(|| utils::oxlint::is_namespace_of_types(symbol))
+            && *self
+                .namespaces_of_types
+                .get_or_insert_with(symbol, || utils::oxlint::is_namespace_of_types(symbol))
     }
 }
 
@@ -289,11 +290,11 @@ fn is_function_name_initializer_exception<'a>(
 fn oxlint_is_import_used_only_as_type<'a>(
     variable: &Variable<'a>,
     shadowed: &Variable<'a>,
-    known: &mut FxHashMap<Symbol<'a>, bool>,
+    known: &mut IdMap<Symbol<'a>, bool>,
 ) -> bool {
     variable.is_value
         && import_of(shadowed.definition).is_some()
-        && *known.entry(shadowed.symbol).or_insert_with(|| {
+        && *known.get_or_insert_with(shadowed.symbol, || {
             let mut references = shadowed.symbol.references().peekable();
             let is_type = |it: Reference<'a>| {
                 it.is_type() && !it.is_value() || reference_contains_type_query(it)
@@ -691,8 +692,8 @@ impl Checker {
         let mut known = Known {
             global_augmentations,
             without_body: None,
-            only_types: FxHashMap::default(),
-            namespaces_of_types: FxHashMap::default(),
+            only_types: IdMap::default(),
+            namespaces_of_types: IdMap::default(),
         };
         // By the last bits of the number of a name: the outermost of the scopes around the one that is looked at that declare
         // such a name. The scopes come in the order they start, so what is not around one is around none that follows. A

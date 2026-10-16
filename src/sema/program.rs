@@ -4636,6 +4636,8 @@ impl<'s> Files<'s> {
                 false => Self::load_ahead(session, run, host, &resolver, options, &atoms, seeds),
             };
         files_are_found(resolving.allocated_bytes());
+        // A `Module` is large, and growing copies them all.
+        modules.reserve(ahead.len());
         // `Module::edges` of one file. Reused for the next.
         let mut edges: Vec<FileId> = Vec::new();
         // `Loaded::traces`, indexed by `FileId`.
@@ -7793,9 +7795,16 @@ impl<'s> Files<'s> {
                 let held = bound.lookup(s.locals, name).map(|id| self.sym(file, id));
                 let is_export_value_only =
                     held.is_some_and(|sym| self.refused_exports.contains(&sym));
-                let meaning = match is_export_value_only {
-                    true => meaning & SymFlags::VALUE,
-                    false => meaning,
+                // `meaning&ast.SymbolFlagsType`: a type parameter of a class or an interface is one symbol with the member of
+                // its name, which is not in scope.
+                let is_type_parameter =
+                    matches!(s.kind, ScopeKind::Class(_) | ScopeKind::Interface(_))
+                        && held
+                            .is_some_and(|sym| self.flags(sym).contains(SymFlags::TYPE_PARAMETER));
+                let meaning = match (is_export_value_only, is_type_parameter) {
+                    (true, _) => meaning & SymFlags::VALUE,
+                    (false, true) => meaning & SymFlags::TYPE,
+                    (false, false) => meaning,
                 };
                 if let Some(sym) = lookup(SymbolTable::Locals(file, scope), held, meaning)
                     && bound.is_seen_from(from, self.flags(sym), meaning)

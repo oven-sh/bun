@@ -128,9 +128,6 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
         } else {
           columnNumber++;
         }
-        if (i === pos) {
-          break;
-        }
       }
       const lineEndPos = lineStartPos + originalContents.slice(lineStartPos).indexOf("\n");
       throw new SyntaxError(
@@ -619,11 +616,6 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
     `;
     }
-    bundledHeader += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_DATA(macro) \\\n`;
-    for (const fn of functions) {
-      bundledHeader += `    macro(${fn.name}, ${lowerBasename}${cap(fn.name)}, ${fn.params.length}) \\\n`;
-    }
-    bundledHeader += "\n";
     bundledHeader += `#define WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(macro) \\\n`;
     for (const fn of functions) {
       const name = `${lowerBasename}${cap(fn.name)}Code`;

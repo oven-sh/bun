@@ -338,7 +338,18 @@ impl FileSystemRouter {
         Ok(fs_router)
     }
 
-    pub(crate) fn bust_dir_cache_recursive(&self, global_this: &JSGlobalObject, input_path: &[u8]) {
+    /// Drops every route directory directly in `input_path` from the resolver's directory
+    /// cache.
+    /// - `reread == false`: then drops `input_path` too.
+    /// - `reread == true`: the caller dropped `input_path` just before, so the listing used
+    ///   here is read from disk. Recurses into each directory it dropped, and leaves
+    ///   `input_path` and everything below it cached for `load_routes`.
+    fn bust_dir_cache_recursive(
+        &self,
+        global_this: &JSGlobalObject,
+        input_path: &[u8],
+        reread: bool,
+    ) {
         // SAFETY: `bun_vm()` returns the live VM raw pointer for this global. Re-derive the
         // `&mut` per use site so the recursive call (which does the same) doesn't pop our
         // SB tag mid-loop.
@@ -410,23 +421,34 @@ impl FileSystemRouter {
                         let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(&full_path),
                         );
-                        self.bust_dir_cache_recursive(global_this, &full_path);
+                        if reread {
+                            self.bust_dir_cache_recursive(global_this, &full_path, true);
+                        }
                     }
                 }
             }
+            if reread {
+                return;
+            }
         }
 
+        // Also when the read found no directory: this drops the "not found" it cached.
         let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
     }
 
-    pub(crate) fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
+    /// Replaces what the resolver cached for `dir` and the route directories below it with
+    /// what is on disk now. Each directory is read one time, after its parent.
+    pub(crate) fn refresh_dir_cache(&self, global_this: &JSGlobalObject) {
         let dir =
             strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
         // Note: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
         // recursive walk re-derives the path from the resolver per-iteration so a one-time
         // copy is sufficient.
         let dir = dir.to_vec();
-        self.bust_dir_cache_recursive(global_this, &dir);
+        // Only the cached listing of `dir` still names a directory that was deleted since
+        // the last load.
+        self.bust_dir_cache_recursive(global_this, &dir, false);
+        self.bust_dir_cache_recursive(global_this, &dir, true);
     }
 
     #[bun_jsc::host_fn(method)]
@@ -451,8 +473,8 @@ impl FileSystemRouter {
             )
         };
 
-        this.bust_dir_cache(global_this);
-        // Note: `bust_dir_cache` re-derives the VM borrow internally; rebind here so
+        this.refresh_dir_cache(global_this);
+        // Note: `refresh_dir_cache` re-derives the VM borrow internally; rebind here so
         // our `vm` borrow is fresh under Stacked Borrows.
         let vm = global_this.bun_vm().as_mut();
 

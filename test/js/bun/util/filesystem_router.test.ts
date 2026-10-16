@@ -473,6 +473,26 @@ it("reload() works with new dirs/files", () => {
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
 });
 
+it("reload() finds a directory that was deleted and created again", () => {
+  const { dir } = make(["a/b/one.tsx", "keep.tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(Object.keys(router.routes).sort()).toEqual(["/a/b/one", "/keep"]);
+
+  rmSync(`${dir}/a`, { recursive: true, force: true });
+  router.reload();
+  expect(Object.keys(router.routes)).toEqual(["/keep"]);
+
+  createTree(dir, ["a/b/two.tsx"]);
+  router.reload();
+  expect(Object.keys(router.routes).sort()).toEqual(["/a/b/two", "/keep"]);
+  expect(router.match("/a/b/one")).toBe(null);
+  expect(router.match("/a/b/two")!.filePath).toBe(`${dir}/a/b/two.tsx`);
+
+  // Nothing changed since the last load.
+  router.reload();
+  expect(Object.keys(router.routes).sort()).toEqual(["/a/b/two", "/keep"]);
+});
+
 it("a MatchedRoute stays readable after reload() and after its router is collected", () => {
   const { dir } = make(["index.tsx", "posts/[id].tsx", "Mixed/Case.tsx", "docs/[...rest].tsx"]);
   const urls = ["/", "/posts/123?tab=a", "/mixed/case", "/docs/a/b/c"];

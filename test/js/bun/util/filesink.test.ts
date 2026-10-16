@@ -1468,7 +1468,8 @@ describe("a FileSink ends its writer before its parked promise settles", () => {
         }
         return { fd, filled };
       }
-      // How many bytes the FIFO holds. It is empty again afterwards.
+      // How many bytes the FIFO holds. It is empty again afterwards. Exact on Linux only: a
+      // macOS FIFO takes more in one write than in the chunks that filled it here.
       function capacity() {
         const { fd, filled } = fill();
         fs.closeSync(fd);
@@ -1491,6 +1492,10 @@ describe("a FileSink ends its writer before its parked promise settles", () => {
       });
       return await output(proc);
     }
+
+    // Linux only: the bodies that call `capacity()`, and those in which the reader goes away.
+    // macOS does not wake the writer of a FIFO when its last reader closes.
+    const itOnLinux = it.concurrent.skipIf(!isLinux);
 
     it.concurrent("end() after a write() that backed up", async () => {
       expect(
@@ -1685,7 +1690,7 @@ describe("a FileSink ends its writer before its parked promise settles", () => {
     // Here the task is owed: a flush wrote the rest of the first chunk, and the task settles the
     // promise of that write(). Before it runs, a second chunk backs up behind the same promise
     // and end() is called. The promise now stands for bytes that are still buffered.
-    it.concurrent("a flush that drained one write() does not settle the next one behind it", async () => {
+    itOnLinux("a flush that drained one write() does not settle the next one behind it", async () => {
       expect(
         await run(`
           const size = capacity();
@@ -1750,7 +1755,7 @@ describe("a FileSink ends its writer before its parked promise settles", () => {
 
     // The writer reports a small chunk that it only buffers as written. With a promise parked
     // that report used to settle it, with the bytes of both chunks still in the sink.
-    it.concurrent("a small write() behind a write() that backed up does not settle it", async () => {
+    itOnLinux("a small write() behind a write() that backed up does not settle it", async () => {
       expect(
         await run(`
           const size = capacity();
@@ -1804,7 +1809,7 @@ describe("a FileSink ends its writer before its parked promise settles", () => {
     // The cases in which the flush after a callback still queues its task.
     //
     // A promise is parked, and the flush wrote the last of its bytes: only the task settles it.
-    it.concurrent("a write() whose last bytes a flush writes resolves", async () => {
+    itOnLinux("a write() whose last bytes a flush writes resolves", async () => {
       expect(
         await run(`
           const size = capacity();
@@ -1857,7 +1862,7 @@ describe("a FileSink ends its writer before its parked promise settles", () => {
     // The flush resumes a native source (the output of HTMLRewriter), and nothing is parked. The
     // next step of the source is a microtask, and nothing else is alive: the task is the loop
     // turn that runs it. Without the task the process exits with the promise pending.
-    it.concurrent("a native source that a flush resumes runs to its end", async () => {
+    itOnLinux("a native source that a flush resumes runs to its end", async () => {
       expect(
         await run(`
           const half = capacity() / 2;
@@ -1891,7 +1896,7 @@ describe("a FileSink ends its writer before its parked promise settles", () => {
 
     // The promise that the early task used to resolve is still parked when the reader goes
     // away: it rejects. The error used to arrive with nothing parked, and was dropped.
-    it.concurrent("end() rejects when the reader goes away with the chunk still buffered", async () => {
+    itOnLinux("end() rejects when the reader goes away with the chunk still buffered", async () => {
       expect(
         await run(`
           const sink = Bun.file(fifo).writer();
@@ -1923,7 +1928,7 @@ describe("a FileSink ends its writer before its parked promise settles", () => {
     // The reader goes away while the writer is idle, and end() keeps the flush that follows each
     // callback away from the sink: only the sink's poll can find the error. The sink closes
     // (Bun.write() rejects) and then rejects the parked promise. It used to reject first.
-    it.concurrent("a write error the poll finds closes the sink before it rejects the parked promise", async () => {
+    itOnLinux("a write error the poll finds closes the sink before it rejects the parked promise", async () => {
       using dir = tempDir("filesink-settle-error", {});
       const path = join(String(dir), "sink.fifo");
       mkfifo(path, 0o666);

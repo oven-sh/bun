@@ -521,6 +521,8 @@ fn is_hardlinked_copy(root: &mut FolderRoot<'_>, rel: &mut Vec<u8>, src: &Dir, d
             };
             entries.push([name, &ino.to_ne_bytes()[..]].concat().into_boxed_slice());
         }
+        // A folder that was removed is not an empty folder.
+        iter.fail_if_removed().ok()?;
         crate::prune::sort_names(&mut entries);
         Some(entries)
     }

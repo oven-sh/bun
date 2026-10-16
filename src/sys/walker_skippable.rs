@@ -192,6 +192,8 @@ impl Walker {
                             kind,
                         }));
                     } else {
+                        // Every consumer copies or links the tree: what a removed directory held is not there.
+                        self.stack[top_idx].iter.fail_if_removed()?;
                         let item = self.stack.pop().unwrap();
                         if !self.stack.is_empty() {
                             item.iter.dir().close();

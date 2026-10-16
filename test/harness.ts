@@ -2511,6 +2511,62 @@ export const dtUnknownReaddir = {
 };
 
 /**
+ * Runs bun beside something that removes the directories bun reads, with no
+ * race: `env(log)` preloads a shim that acts from inside `getdents64`. It
+ * removes a directory named `vanish-before-read`, `vanish-mid-read` or
+ * `vanish-after-listing` (with `REMOVED_DIR_READDIR_AFTER` in the env), so that
+ * the kernel fails the read with ENOENT. It fails every read of a directory
+ * named `read-fails-eio` with EIO, and of one named `read-fails-enoent` with
+ * ENOENT while the directory stays. The header of
+ * test/fixtures/removed-dir-readdir-shim.c says when each one acts. The shim
+ * appends a line to `log` each time; assert on `actions()` or `trace()`,
+ * otherwise a test here passes vacuously if bun ever stops issuing `getdents64`
+ * through libc's `syscall()` wrapper.
+ */
+export const removedDirReaddir = {
+  /** Linux with a C compiler; `skipIf(!removedDirReaddir.available)`. */
+  get available(): boolean {
+    return isLinux && !!(which("cc") || which("clang") || which("gcc"));
+  },
+  /**
+   * Compiles the shim the first time it is called. Call it from `beforeAll`
+   * with a timeout: a C compiler on a busy machine can take several seconds.
+   */
+  compile(): string {
+    return compileFixture(join(import.meta.dir, "fixtures", "removed-dir-readdir-shim.c"), { flags: ["-ldl"] });
+  },
+  /** The env to spawn bun with: the shim is preloaded and writes to `log`. */
+  env(log: string): NodeJS.Dict<string> {
+    const shim = this.compile();
+    return {
+      ...bunEnv,
+      LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,
+      REMOVED_DIR_READDIR_LOG: log,
+    };
+  },
+  /**
+   * Every listing below `root` that bun started (`list <path>`) and what the
+   * shim did (`<name of the directory> <path>`), in the order of the reads.
+   * Paths are relative to `root`.
+   */
+  trace(log: string, root: string): string[] {
+    if (!fs.existsSync(log)) return [];
+    const prefix = fs.realpathSync(root) + sep;
+    return fs
+      .readFileSync(log, "utf8")
+      .split("\n")
+      .filter(line => line.includes(" " + prefix))
+      .map(line => line.replace(prefix, ""));
+  },
+  /** What the shim did below `root`, sorted: `<name of the directory> <path>`. */
+  actions(log: string, root: string): string[] {
+    return this.trace(log, root)
+      .filter(line => !line.startsWith("list "))
+      .sort();
+  },
+};
+
+/**
  * Hexadecimal, octal and binary integers as text, each with its exact value. Most lie between two
  * doubles: 600 from a fixed seed, then ties, neighbours of ties and the edge of `Infinity`.
  */

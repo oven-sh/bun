@@ -4387,6 +4387,7 @@ pub(crate) mod __gated_printer {
                     let wrap = level.gte(Level::Assign);
                     if wrap {
                         self.print(b"(");
+                        flags.remove(ExprFlag::ForbidIn);
                     }
 
                     self.print_space_before_identifier();
@@ -4398,7 +4399,9 @@ pub(crate) mod __gated_printer {
                             self.print(b"*");
                         }
                         self.print_space();
-                        self.print_expr(*val, Level::Yield, ExprFlag::none());
+                        // `yield AssignmentExpression[?In]`: in a `for` initializer the operand
+                        // cannot hold a bare `in` either. esbuild passes no flags here.
+                        self.print_expr(*val, Level::Yield, flags & ExprFlag::ForbidIn);
                     }
 
                     if wrap {

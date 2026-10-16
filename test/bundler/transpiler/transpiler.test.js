@@ -3686,6 +3686,152 @@ console.log(resolve.length)
       expectPrintedNoTrim("for (const {a} of y) ;", "for (const { a } of y)\n  ;\n");
     });
 
+    it("`in` below `yield` in a for loop initializer", () => {
+      // `for (var x = yield a in b;;)` is a syntax error: the initializer of a `for (;;)` loop cannot
+      // hold a bare `in`, and `yield AssignmentExpression[?In]` hands that rule to its operand.
+      const js = code => parsed(code, false, false);
+      const generator = body => `function* g() { ${body} }`;
+      // Prints `code`, and keeps the printed text for the last check of this test.
+      const printed = [];
+      const print = (code, transform = js) => {
+        const out = transform(code);
+        printed.push([transform, out]);
+        return out;
+      };
+      // Prints `for (<init>;;) break;` in a generator and returns the printed <init>.
+      const init = (code, transform = js, wrap = generator) => {
+        const out = print(wrap(`for (${code};;) break;`), transform);
+        return out.slice(out.indexOf("for (") + "for (".length, out.indexOf(";; )"));
+      };
+      // Prints a statement in a generator and returns its first printed line.
+      const line = code => print(generator(code)).split("\n")[1].trim();
+
+      // The parentheses stay where the operand of the `yield` reaches the `in`.
+      const kept = [
+        "var x = yield (a in b)",
+        "let x = yield (a in b)",
+        "const x = yield (a in b)",
+        "using x = yield (a in b)",
+        "x = yield (a in b)",
+        "yield (a in b)",
+        "var x = yield* (a in b)",
+        "var x = yield yield (a in b)",
+        "var x = 1, y = yield (a in b)",
+        "x = 1, yield (a in b)",
+        "yield (a in b), x = 1",
+        "var x = c ? d : yield (a in b)",
+        "var x = yield (a in b) ? c : d",
+        "var x = yield c ? d : (a in b)",
+        "var x = yield c ?? (a in b)",
+        "var x = yield c || (a in b)",
+        "var x = yield c && (a in b)",
+        "var x = yield y = (a in b)",
+        "var x = yield (a in b) instanceof c",
+        "var x = yield (a in b) < c",
+        "var x = yield () => (a in b)",
+      ];
+      expect(kept.map(code => init(code))).toEqual(kept);
+
+      // Every kind of generator.
+      for (const wrap of [
+        body => `async function* g() { ${body} }`,
+        body => `x = { *g() { ${body} } };`,
+        body => `class C { static async *g() { ${body} } }`,
+      ]) {
+        expect(init("var x = yield (a in b)", js, wrap)).toBe("var x = yield (a in b)");
+      }
+      expect(init("var x = yield (#p in a)", js, body => `class C { #p; *g(a) { ${body} } }`)).toBe(
+        "var x = yield (#p in a)",
+      );
+
+      // A loop in a function inside an initializer starts the rule again.
+      expect(print(generator("for (var f = function* () { for (var x = yield (a in b);;) break; };;) break;"))).toBe(
+        "function* g() {\n  for (var f = function* () {\n    for (var x = yield (a in b);; )\n      break;\n  };; )\n    break;\n}\n",
+      );
+
+      // TypeScript syntax that prints nothing leaves the `in` directly below the `yield`.
+      const erased = [
+        "var x = yield (a in b) as any",
+        "var x = yield <any>(a in b)",
+        "var x = yield (a in b)!",
+        "var x = yield (a in b) satisfies boolean",
+      ];
+      expect(erased.map(code => init(code, code => ts.parsed(code, false, false)))).toEqual(
+        erased.map(() => "var x = yield (a in b)"),
+      );
+
+      // The same with whitespace and syntax minified.
+      const minifier = new Bun.Transpiler({ loader: "js", minify: { whitespace: true, syntax: true } });
+      const minified = code => print(generator(code), code => minifier.transformSync(code));
+      expect(minified("for (var x = yield (a in b);;) break;")).toBe("function*g(){for(var x=yield(a in b);;)break}");
+      expect(minified("for (x = c ? d : yield* (a in b);;) break;")).toBe(
+        "function*g(){for(x=c?d:yield*(a in b);;)break}",
+      );
+      expect(minified("for (var x = 1 + (yield (a in b));;) break;")).toBe(
+        "function*g(){for(var x=1+(yield a in b);;)break}",
+      );
+
+      // A bracket, or the parentheses of the `yield` itself, end the rule: the `in` prints bare.
+      const bare = {
+        "var x = 1 + (yield (a in b))": "var x = 1 + (yield a in b)",
+        "var x = (yield (a in b)).p": "var x = (yield a in b).p",
+        "var x = (yield (a in b)) || c": "var x = (yield a in b) || c",
+        "var x = c ? yield (a in b) : d": "var x = c ? yield a in b : d",
+        "var x = [yield (a in b)]": "var x = [yield a in b]",
+        "var x = f(yield (a in b))": "var x = f(yield a in b)",
+        "var x = `${yield (a in b)}`": "var x = `${yield a in b}`",
+        "var x = { k: yield (a in b) }": "var x = { k: yield a in b }",
+      };
+      expect(Object.keys(bare).map(code => init(code))).toEqual(Object.values(bare));
+
+      const statements = {
+        // The other parts of a loop head, and a statement, allow `in`.
+        "for (; yield (a in b); yield (a in b)) break;": "for (;yield a in b; yield a in b)",
+        "for (var x of yield (a in b)) break;": "for (var x of yield a in b)",
+        "for (var x in yield (a in b)) break;": "for (var x in yield a in b)",
+        "x = yield (a in b);": "x = yield a in b;",
+        // The operand of the `yield` takes only the `in` rule from the expression around it.
+        "new (yield f())();": "new (yield f());",
+        "(yield a?.b).c;": "(yield a?.b).c;",
+        // Valid with or without these parentheses: the alternate of a conditional, and the operands
+        // of a binary expression in parentheses, never print a bare `in`.
+        "x = c ? d : yield (a in b);": "x = c ? d : yield (a in b);",
+        "x = (f(), yield (a in b));": "x = (f(), yield (a in b));",
+      };
+      expect(Object.keys(statements).map(line)).toEqual(Object.values(statements));
+
+      // Without a `yield`, for comparison.
+      const plain = ["var x = (a in b)", "x = (a in b) || c || d", "var x = () => (a in b)"];
+      expect(plain.map(code => init(code))).toEqual(plain);
+
+      // Every printed text parses again and prints the same way.
+      for (const [transform, out] of printed) expect(transform(out)).toBe(out);
+    });
+
+    it.concurrent.each(["mjs", "cjs"])(
+      "a generator with `yield (a in b)` in a for loop initializer runs (.%s)",
+      async extension => {
+        const file = `steps.${extension}`;
+        using dir = tempDir("yield-in-for-initializer", {
+          [file]: `
+            const limits = { max: 3 };
+            function* steps() {
+              for (var ok = yield ("max" in limits); ok; ok = false) console.log("resumed with", ok);
+            }
+            const it = steps();
+            console.log("yielded", it.next().value);
+            it.next("go");
+          `,
+        });
+        expect(await bunRun(join(String(dir), file))).toEqual({
+          stdout: "yielded true\nresumed with go",
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      },
+    );
+
     it("regexp", () => {
       expectPrinted("/x/g", "/x/g");
       expectPrinted("/x/i", "/x/i");

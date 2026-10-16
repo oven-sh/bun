@@ -1031,19 +1031,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
-            let body_ref = if class.should_lower_standard_decorators
-                && class.ts_decorators.len_u32() > 0
-            {
-                let inner_name =
+            let body_ref =
+                if class.should_lower_standard_decorators && class.ts_decorators.len_u32() > 0 {
+                    let inner_name =
                     bun_alloc::arena_format!(in self.arena, "_{}", bstr::BStr::new(original_name))
                         .into_bump_str()
                         .as_bytes();
-                let inner_ref = self.generate_temp_var(inner_name);
-                class.inner_class_ref = inner_ref;
-                inner_ref
-            } else {
-                name_ref
-            };
+                    let inner_ref = self.generate_temp_var(inner_name);
+                    class.inner_class_ref = inner_ref;
+                    inner_ref
+                } else {
+                    name_ref
+                };
             // SAFETY: `original_name` is an AST-arena slice.
             unsafe {
                 self.vis_scope().members.put(

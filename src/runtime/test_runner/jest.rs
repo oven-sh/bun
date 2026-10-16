@@ -123,7 +123,7 @@ pub(crate) struct TestRunner<'a> {
     /// Borrowed view over `ctx.test_options.concurrent_test_glob` (owned
     /// `Vec<Box<[u8]>>` with process lifetime); see the detach in
     /// `test_command.rs` where this is populated.
-    pub(crate) concurrent_test_glob: Option<&'a [&'a [u8]]>,
+    pub(crate) concurrent_test_glob: Option<&'a [bun_glob::Prepared<&'a [u8]>]>,
     pub(crate) bail: u32,
     pub(crate) max_concurrency: u32,
 
@@ -229,7 +229,7 @@ impl<'a> TestRunner<'a> {
 
         // Check if the file path matches any of the glob patterns
         for pattern in glob_patterns {
-            if bun_glob::matcher::r#match(pattern, file_path).matches() {
+            if pattern.r#match(file_path).matches() {
                 return true;
             }
         }

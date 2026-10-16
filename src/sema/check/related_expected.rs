@@ -120,7 +120,7 @@ impl Checker<'_, '_> {
         name: Atom,
     ) -> Option<Place> {
         let ty = self.reduced_apparent_type(target);
-        let members = self.members(ty)?;
+        let members = self.structured_members(ty)?;
         let key_type = self.key_type_of_name(name)?;
         let info = self.applicable_index_info(&members, key_type)?;
         let (file, m) = info.declaration?;

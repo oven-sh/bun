@@ -9,11 +9,11 @@ test("delete() and stat() should work with unicode paths", async () => {
   });
   const filename = join(dir, "🌟.txt");
 
-  expect(async () => {
+  await expect(async () => {
     await Bun.file(filename).delete();
   }).toThrow(`ENOENT: no such file or directory, unlink '${filename}'`);
 
-  expect(async () => {
+  await expect(async () => {
     await Bun.file(filename).stat();
   }).toThrow(`ENOENT: no such file or directory, stat '${filename}'`);
 

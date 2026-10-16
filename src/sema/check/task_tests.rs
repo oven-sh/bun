@@ -1290,6 +1290,8 @@ fn a_borrowed_key_finds_the_type_that_was_interned_with_its_lists() {
         is_enum: true,
         stored_under: None,
         is_array_literal: false,
+        is_array_pattern: false,
+        has_other_instantiation: false,
     };
     let id = types.intern_key_with(TypeKey::Union(&members), &borrowed);
     let owned = Provenance {
@@ -1298,6 +1300,8 @@ fn a_borrowed_key_finds_the_type_that_was_interned_with_its_lists() {
         is_enum: true,
         stored_under: None,
         is_array_literal: false,
+        is_array_pattern: false,
+        has_other_instantiation: false,
     };
     assert_eq!(types.intern_with(TypeData::Union(list()), owned), id);
     assert_ne!(types.intern_key(TypeKey::Union(&members)), id);

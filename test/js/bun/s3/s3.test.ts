@@ -1,11 +1,11 @@
-import type { S3Options } from "bun";
+import type { S3File, S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
 import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 import { spawnServer } from "s3-server";
-const s3 = (...args) => defaultS3.file(...args);
+const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
 type S3Credentials = S3Options & {
@@ -316,7 +316,7 @@ for (let credentials of allCredentials) {
                   try {
                     const file = bucket.file(tmp_filename, options!);
                     await file.unlink();
-                  } catch (e) {
+                  } catch (e: any) {
                     // if error with NoSuchKey, it means the file does not exist and its fine
                     expect(e?.code || e).toBe("NoSuchKey");
                   }
@@ -601,20 +601,20 @@ for (let credentials of allCredentials) {
             it("should be able to set content-type", async () => {
               await using tmpfile = await tmp();
               {
-                const s3file = file(tmpfile.name, { ...options, type: "text/css" });
+                const s3file = file(tmpfile.name, { ...options, type: "text/css" }) as unknown as S3File;
                 await s3file.write("Hello Bun!");
                 const response = await fetch(s3file.presign());
                 expect(response.headers.get("content-type")).toStartWith("text/css");
               }
               {
-                const s3file = file(tmpfile.name, options);
+                const s3file = file(tmpfile.name, options) as unknown as S3File;
                 await s3file.write("Hello Bun!", { type: "text/plain" });
                 const response = await fetch(s3file.presign());
                 expect(response.headers.get("content-type")).toStartWith("text/plain");
               }
 
               {
-                const s3file = file(tmpfile.name, options);
+                const s3file = file(tmpfile.name, options) as unknown as S3File;
                 const writer = s3file.writer({ type: "application/json" });
                 writer.write("Hello Bun!");
                 await writer.end();
@@ -1076,6 +1076,7 @@ for (let credentials of allCredentials) {
               });
 
               try {
+                // @ts-expect-error
                 await s3file.presign({ method: "OPTIONS" });
                 expect.unreachable();
               } catch (e: any) {
@@ -1616,7 +1617,7 @@ describe("Archive with S3", () => {
 
     await Bun.write(s3Url, archive, {
       ...credentials,
-    });
+    } as any);
 
     // Verify by downloading
     const s3File = Bun.file(s3Url, credentials);

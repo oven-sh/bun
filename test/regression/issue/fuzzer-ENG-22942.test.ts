@@ -8,6 +8,7 @@ test("expect.extend with jest object should throw TypeError, not crash", () => {
   const jest = Bun.jest(import.meta.path);
 
   expect(() => {
+    // @ts-expect-error
     jest.expect.extend(jest);
   }).toThrow(TypeError);
 });
@@ -17,7 +18,7 @@ test("expect.extend with object containing non-function values should throw", ()
 
   expect(() => {
     jest.expect.extend({
-      notAFunction: "string value",
+      notAFunction: "string value" as any,
     });
   }).toThrow("expect.extend: `notAFunction` is not a valid matcher");
 });
@@ -26,7 +27,7 @@ test("expect.extend with valid matchers still works", () => {
   const jest = Bun.jest(import.meta.path);
 
   jest.expect.extend({
-    toBeEven(received: number) {
+    toBeEven(received: any) {
       const pass = received % 2 === 0;
       return {
         message: () => `expected ${received} ${pass ? "not " : ""}to be even`,

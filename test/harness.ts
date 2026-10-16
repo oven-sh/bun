@@ -31,6 +31,17 @@ export const isWindows = process.platform === "win32";
  * on Windows, where `process.getuid` does not exist.
  */
 export const isRoot = process.getuid?.() === 0;
+let canMountCached: boolean | undefined;
+/**
+ * Whether a test can mount file systems. It mounts in a private user and mount
+ * namespace (`unshare -Urm`). Those are turned off in most containers.
+ */
+export function canMount(): boolean {
+  return (canMountCached ??=
+    isLinux &&
+    which("unshare") !== null &&
+    spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0);
+}
 /**
  * Size of bun's fixed path buffers (`MAX_PATH_BYTES` in `src/bun_core/util.rs`). A path longer than this does not
  * fit in one, which code taking a path from the user has to report rather than overflow the buffer.

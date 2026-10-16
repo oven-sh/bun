@@ -915,6 +915,31 @@ pub fn lstatat(fd: impl AsFd, path: &ZStr) -> Result<Stat> {
         }
     }
 }
+
+/// Whether `path`, whose removal just failed with `EROFS`, does not exist.
+/// Linux and FreeBSD check that the mount is writable before they look up the name.
+#[cold]
+pub fn removal_target_is_missing(dir: Fd, path: &[u8]) -> bool {
+    #[cfg(not(windows))]
+    {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if path.len() >= buf.0.len() {
+            return false;
+        }
+        buf.0[..path.len()].copy_from_slice(path);
+        buf.0[path.len()] = 0;
+        // SAFETY: NUL-terminated above.
+        let path = ZStr::from_buf(&buf.0[..], path.len());
+        matches!(lstatat(dir, path), Err(err) if err.get_errno() == E::ENOENT)
+    }
+    // A removal opens the entry first on Windows, and that fails with `ENOENT` for a missing one.
+    #[cfg(windows)]
+    {
+        let _ = (dir, path);
+        false
+    }
+}
+
 /// Read cwd into a stack
 /// `PathBuffer`, then duplicate into a heap-owned NUL-terminated `ZBox`.
 pub fn getcwd_alloc() -> Maybe<bun_core::ZBox> {

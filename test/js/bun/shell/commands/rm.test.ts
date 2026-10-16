@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, canMount, isWindows, tempDir } from "harness";
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
@@ -481,6 +481,66 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
     overJoinBuffer: { exitCode: 1, stderr: tooLong(longer) },
     mixed: { exitCode: 1, stderr: tooLong(long), shortRemoved: true },
     ...(isWindows ? {} : { upToRoot: { exitCode: 1, stderr: 'rm: "/" may not be removed\n' } }),
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Linux checks that the mount is writable before it looks up the name to remove.
+// So on a read-only mount, unlinkat(2) of a missing name fails with EROFS, not ENOENT.
+test.skipIf(!canMount())("a missing operand on a read-only mount is missing, not read-only", async () => {
+  using dir = tempDir("rm-read-only-mount", {
+    "ro/file.txt": "",
+    "tree/a/b.txt": "",
+    // `rm -f missing` runs in `ro`. A lookup from the cwd of the process finds this file instead.
+    "missing": "",
+    "fixture.ts": /* ts */ `
+      import { $ } from "bun";
+      import { existsSync } from "node:fs";
+      $.nothrow();
+      const run = async (args: string[], cwd = ".") => {
+        const { exitCode, stderr } = await $\`rm \${args}\`.cwd(cwd).quiet();
+        return { exitCode, stderr: stderr.toString() };
+      };
+      const results = {
+        force: await run(["-f", "ro/missing"]),
+        recursiveForce: await run(["-rf", "ro/missing"]),
+        beforeAnotherOperand: { ...(await run(["-rf", "ro/missing", "tree"])), treeRemoved: !existsSync("tree") },
+        noForce: await run(["ro/missing"]),
+        existing: await run(["-f", "ro/file.txt"]),
+        inShellCwd: await run(["-f", "missing"], "ro"),
+        existingInShellCwd: await run(["-f", "file.txt"], "ro"),
+        existingInTree: await run(["-rf", "ro"]),
+      };
+      console.log(JSON.stringify(results));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [
+      "unshare",
+      "-Urm",
+      "/bin/sh",
+      "-c",
+      'mount -o bind ro ro && mount -o remount,bind,ro ro && exec "$0" fixture.ts',
+      bunExe(),
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  expect(JSON.parse(stdout)).toEqual({
+    force: { exitCode: 0, stderr: "" },
+    recursiveForce: { exitCode: 0, stderr: "" },
+    beforeAnotherOperand: { exitCode: 0, stderr: "", treeRemoved: true },
+    noForce: { exitCode: 1, stderr: "rm: ro/missing: No such file or directory\n" },
+    existing: { exitCode: 1, stderr: "rm: ro/file.txt: Read-only file system\n" },
+    inShellCwd: { exitCode: 0, stderr: "" },
+    existingInShellCwd: { exitCode: 1, stderr: "rm: file.txt: Read-only file system\n" },
+    existingInTree: { exitCode: 1, stderr: "rm: ro/file.txt: Read-only file system\n" },
   });
   expect(exitCode).toBe(0);
 });

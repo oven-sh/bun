@@ -211,6 +211,15 @@ impl Loader {
         self.get_node_env() == Some(b"test")
     }
 
+    pub fn override_node_env(&mut self, value: &[u8]) -> Result<(), AllocError> {
+        // load_process() replaces keys that exist, so it runs before the writes.
+        self.load_process()?;
+        if self.map.get(b"BUN_ENV").is_some() {
+            self.map.put(b"BUN_ENV", value)?;
+        }
+        self.map.put(b"NODE_ENV", value)
+    }
+
     pub fn get_node_path<'b>(
         &mut self,
         fs: &bun_paths::fs::FileSystem,

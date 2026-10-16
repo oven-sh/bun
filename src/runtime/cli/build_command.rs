@@ -482,8 +482,7 @@ impl BuildCommand {
             .clone_from(&ctx.bundler_options.env_prefix);
 
         if ctx.bundler_options.production {
-            // SAFETY: `env` is a process-lifetime singleton set in `Transpiler::init`.
-            unsafe { (*this_transpiler.env).map.put(b"NODE_ENV", b"production")? };
+            this_transpiler.env_mut().override_node_env(b"production")?;
         }
 
         this_transpiler.configure_defines()?;

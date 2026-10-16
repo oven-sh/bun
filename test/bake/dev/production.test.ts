@@ -780,4 +780,55 @@ export default function IndexPage() {
     expect(indexHtml).toContain("readyState=<!-- -->" + WebSocket.CONNECTING);
     expect(buildProc.exitCode).toBe(0);
   });
+
+  test("an exported NODE_ENV does not change the mode that the bundles inline", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-ambient-node-env", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import ClientMode from "../components/ClientMode";
+
+export default function IndexPage() {
+  return (
+    <div>
+      <p>server-mode={process.env.NODE_ENV}</p>
+      <ClientMode />
+    </div>
+  );
+}`,
+      "components/ClientMode.tsx": `"use client";
+
+export default function ClientMode() {
+  return <p>client-mode={process.env.NODE_ENV}</p>;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { BUN_ENV: _, ...env } = bunEnv;
+    const buildProc = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env({ ...env, NODE_ENV: "development" })
+      .throws(false);
+
+    const indexHtml = await Bun.file(path.join(dir, "dist", "index.html"))
+      .text()
+      .catch(() => buildProc.stderr.toString());
+    const clientJs = (
+      await Promise.all(
+        Array.from(new Bun.Glob("dist/_bun/*.js").scanSync(dir), file => Bun.file(path.join(dir, file)).text()),
+      )
+    ).join("\n");
+
+    expect({
+      serverMode: indexHtml.match(/server-mode=(?:<!-- -->)?(\w+)/)?.[1],
+      clientMode: clientJs.match(/"client-mode=",\s*"(\w+)"/)?.[1],
+      clientUsesJsxDEV: clientJs.includes("jsxDEV"),
+    }).toEqual({ serverMode: "production", clientMode: "production", clientUsesJsxDEV: false });
+    expect(buildProc.exitCode).toBe(0);
+  });
 });

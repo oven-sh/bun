@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { itBundled, type BundlerTestInput } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1043,7 +1044,7 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("import.meta.hot");
     },
   });
-  itBundled("minify/ProductionMode", {
+  const productionMode: BundlerTestInput = {
     files: {
       "/entry.jsx": `
         import {foo} from 'dev-trap';
@@ -1092,6 +1093,122 @@ describe("bundler", () => {
       // Check JSX uses production runtime
       expect(output).toContain("jsx-runtime");
     },
+  };
+  itBundled("minify/ProductionMode", productionMode);
+  // `--production` sets NODE_ENV=production. It outranks a NODE_ENV or a
+  // BUN_ENV that is exported in the environment of the build.
+  for (const name of ["NODE_ENV", "BUN_ENV"]) {
+    for (const value of ["development", "test", "staging", ""]) {
+      itBundled(`minify/ProductionModeOver_${name}_${value || "empty"}`, {
+        ...productionMode,
+        env: { NODE_ENV: undefined, BUN_ENV: undefined, [name]: value },
+      });
+    }
+  }
+  itBundled("minify/ProductionModeNoBundle", {
+    files: {
+      "/entry.js": `capture(process.env.NODE_ENV);`,
+    },
+    bundling: false,
+    production: true,
+    env: { NODE_ENV: "development", BUN_ENV: undefined },
+    capture: ['"production"'],
+  });
+  // A server entry with an HTML import builds its browser chunk with a second transpiler.
+  itBundled("minify/ProductionModeFullstackHtmlImport", {
+    outdir: "/out",
+    entryPoints: ["/server.ts"],
+    files: {
+      "/server.ts": `
+        import index from "./index.html";
+        if (process.env.NODE_ENV !== "production") console.log("SERVER-DEV-BRANCH");
+        console.log("server-mode", process.env.NODE_ENV, process.env.BUN_ENV, typeof index);
+      `,
+      "/index.html": `<!DOCTYPE html><html><head><script type="module" src="./client.jsx"></script></head><body></body></html>`,
+      "/client.jsx": `
+        if (process.env.NODE_ENV !== "production") console.log("CLIENT-DEV-BRANCH");
+        console.log("client-mode", process.env.NODE_ENV, process.env.BUN_ENV, <div />);
+      `,
+      "/node_modules/react/jsx-runtime.js": `export function jsx() { return "PROD-JSX"; }`,
+      "/node_modules/react/jsx-dev-runtime.js": `export function jsxDEV() { return "DEV-JSX"; }`,
+      "/node_modules/react/package.json": `{"name":"react","version":"18.0.0"}`,
+    },
+    target: "bun",
+    production: true,
+    env: { NODE_ENV: "development", BUN_ENV: undefined },
+    onAfterBundle(api) {
+      const chunks = readdirSync(api.outdir)
+        .filter(f => f.endsWith(".js"))
+        .map(f => api.readFile("/out/" + f));
+      const server = chunks.find(c => c.includes("server-mode")) ?? "";
+      const client = chunks.find(c => c.includes("client-mode")) ?? "";
+      expect({
+        server: server.match(/"server-mode","(\w+)","(\w+)"/)?.slice(1),
+        serverKeepsDevBranch: server.includes("SERVER-DEV-BRANCH"),
+        client: client.match(/"client-mode","(\w+)","(\w+)"/)?.slice(1),
+        clientKeepsDevBranch: client.includes("CLIENT-DEV-BRANCH"),
+        clientUsesJsxDEV: client.includes("DEV-JSX"),
+      }).toEqual({
+        server: ["production", "production"],
+        serverKeepsDevBranch: false,
+        client: ["production", "production"],
+        clientKeepsDevBranch: false,
+        clientUsesJsxDEV: false,
+      });
+    },
+  });
+  // A build-time macro reads the mode of the build. The flag does not add a BUN_ENV.
+  for (const exported of ["development", undefined]) {
+    itBundled(`minify/ProductionModeMacroReadsSameMode_NODE_ENV_${exported ?? "unset"}`, {
+      files: {
+        "/entry.js": `
+          import { mode } from "./macro.ts" with { type: "macro" };
+          capture(mode());
+        `,
+        "/macro.ts": "export function mode() { return `${Bun.env.NODE_ENV},${Bun.env.BUN_ENV}`; }",
+      },
+      production: true,
+      env: { NODE_ENV: exported, BUN_ENV: undefined },
+      capture: ['"production,undefined"'],
+    });
+  }
+  for (const exported of ["development", "test"]) {
+    itBundled(`minify/ProductionModeSelectsDotEnvProductionOver_NODE_ENV_${exported}`, {
+      files: {
+        "/entry.js": `
+          capture(process.env.WHICH_FILE);
+          capture(process.env.NODE_ENV);
+          capture(process.env.BUN_ENV);
+        `,
+        "/.env.production": `WHICH_FILE=dotenv-production`,
+        "/.env.development": `WHICH_FILE=dotenv-development`,
+        "/.env.test": `WHICH_FILE=dotenv-test`,
+      },
+      production: true,
+      dotenv: "inline",
+      env: { NODE_ENV: exported, BUN_ENV: undefined },
+      capture: ['"dotenv-production"', '"production"', '"production"'],
+    });
+  }
+  // Without `--env`, a define outranks the flag for its own expression.
+  itBundled("minify/ProductionModeDefineOutranksFlag", {
+    files: {
+      "/entry.js": `capture(process.env.NODE_ENV);`,
+    },
+    production: true,
+    define: { "process.env.NODE_ENV": '"development"' },
+    env: { NODE_ENV: undefined, BUN_ENV: undefined },
+    capture: ['"development"'],
+  });
+  itBundled("minify/ProductionModeKeepsBunEnvDefineUnderEnvInline", {
+    files: {
+      "/entry.js": `capture(process.env.BUN_ENV);`,
+    },
+    production: true,
+    dotenv: "inline",
+    define: { "process.env.BUN_ENV": '"staging"' },
+    env: { NODE_ENV: undefined, BUN_ENV: undefined },
+    capture: ['"staging"'],
   });
   itBundled("minify/UnusedInCommaExpression", {
     files: {

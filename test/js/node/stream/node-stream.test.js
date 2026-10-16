@@ -754,6 +754,7 @@ describe.concurrent("Readable.fromWeb over a native stream ends the web stream",
     for (let turns = 0; turns < 100 && received < payload.length && !ended; turns++) {
       await new Promise(resolve => setImmediate(resolve));
     }
+    // One abort: the helper marks the Readable after it aborts `req`, so the end of the source does not abort `req` again.
     expect({ ended, aborts, received, destroyed: node.destroyed }).toEqual({
       ended: false,
       aborts: 1,
@@ -868,6 +869,17 @@ it("Readable.fromWeb rejects an invalid signal before it takes the web stream", 
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
     );
     expect(web.locked).toBe(false);
+  }
+});
+
+// Node's Readable constructor adds `options.signal` only when it is truthy.
+it("Readable.fromWeb takes a falsy signal for no signal", () => {
+  for (const signal of [null, false, 0, ""]) {
+    for (const web of [new ReadableStream({}), new Blob(["payload"]).stream()]) {
+      const r = Readable.fromWeb(web, { signal });
+      expect(r.destroyed).toBe(false);
+      r.destroy();
+    }
   }
 });
 

@@ -12,7 +12,7 @@ use bun_install::package_manager::workspace_selection::{
 use bun_parsers::json;
 use bun_paths::path_buffer_pool;
 use bun_paths::{PathBuffer, platform, resolve_path};
-use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
+use bun_resolver::package_json::IncludeScripts;
 
 use crate::cli::Command;
 
@@ -190,7 +190,7 @@ pub(crate) fn select_packages(
         if ctx.workspaces && dir == &*root_dir {
             continue;
         }
-        let Some(json) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
+        let Some(json) = bun_resolver::PackageJSON::parse(
             resolver,
             dir,
             bun_sys::Fd::invalid(),
@@ -238,9 +238,7 @@ pub(crate) fn select_packages(
         workspace_selection::first_relational(&patterns).map(|_| {
             let names: Vec<&[u8]> = discovered.iter().map(|p| &p.json.name[..]).collect();
             WorkspaceGraph::from_dependency_names(&names, |i| {
-                let deps = &discovered[i].json.dependencies;
-                let buf: &[u8] = &deps.source_buf;
-                deps.map.keys().iter().map(move |k| k.slice(buf))
+                discovered[i].json.dependency_names().into_iter()
             })
         });
 

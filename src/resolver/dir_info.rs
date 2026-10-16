@@ -106,8 +106,8 @@ pub struct DirInfo {
     // Fields with write sites are `Option<NonNull<T>>` so
     // mut-provenance from the allocation site is preserved through to the
     // write/drop sites (a `*const→*mut` cast there would be UB under Stacked
-    // Borrows). Read sites use the `.package_json()` / `.tsconfig_json()` /
-    // `.package_json_for_dependencies()` accessors.
+    // Borrows). Read sites use the `.package_json()` / `.tsconfig_json()`
+    // accessors.
     pub(crate) package_json_for_browser_field: Option<&'static PackageJSON>,
     pub(crate) enclosing_tsconfig_json: Option<&'static TSConfigJSON>,
 
@@ -127,11 +127,6 @@ pub struct DirInfo {
     /// skips a nameless package.json.
     pub package_json_for_module_type: Option<&'static PackageJSON>,
 
-    // `NonNull` (not `&'static`) so `enqueue_dependency_to_resolve` can write
-    // `package_manager_package_id` back through it without a const→mut
-    // provenance cast. Read via `.package_json_for_dependencies()`.
-    pub(crate) package_json_for_dependencies: Option<NonNull<PackageJSON>>,
-
     // lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_path: &'static [u8],
     pub(crate) entries: Index,
@@ -148,6 +143,10 @@ pub struct DirInfo {
     pub(crate) flags: Flags,
 }
 
+// The directory cache has one slot for every directory that a resolver reads.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<DirInfo>() <= 96);
+
 impl Default for DirInfo {
     fn default() -> Self {
         Self {
@@ -157,7 +156,6 @@ impl Default for DirInfo {
             enclosing_tsconfig_json: None,
             enclosing_package_json: None,
             package_json_for_module_type: None,
-            package_json_for_dependencies: None,
             abs_path: b"",
             entries: Index::default(),
             package_json: None,
@@ -170,9 +168,9 @@ impl Default for DirInfo {
 
 /// Dereference an arena-interned `NonNull<T>` to `&'static T`.
 ///
-/// Single deref site for the three `Option<NonNull<_>>` read accessors on
-/// [`DirInfo`] (`package_json` / `package_json_for_dependencies` /
-/// `tsconfig_json`). The pointee is interned in the resolver's process-lifetime
+/// Single deref site for the two `Option<NonNull<_>>` read accessors on
+/// [`DirInfo`] (`package_json` / `tsconfig_json`). The pointee is interned in
+/// the resolver's process-lifetime
 /// PackageJSON / TSConfigJSON arena (see `intern_package_json` / the tsconfig
 /// merge loop); never freed for the life of the process.
 #[inline]
@@ -206,15 +204,6 @@ impl DirInfo {
     #[inline]
     pub fn package_json(&self) -> Option<&'static PackageJSON> {
         self.package_json.map(arena_ref)
-    }
-
-    /// Read-only view of `package_json_for_dependencies`. The field stores
-    /// `NonNull` to preserve mut-provenance for the write in
-    /// `enqueue_dependency_to_resolve`;
-    /// callers that only read go through here.
-    #[inline]
-    pub(crate) fn package_json_for_dependencies(&self) -> Option<&'static PackageJSON> {
-        self.package_json_for_dependencies.map(arena_ref)
     }
 
     /// Read-only view of `tsconfig_json`. See `package_json()`.

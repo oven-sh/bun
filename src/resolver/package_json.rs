@@ -1,11 +1,10 @@
 use bun_ast as js_ast;
-use bun_collections::{ArrayHashMap, StringArrayHashMap};
+use bun_collections::StringArrayHashMap;
 use bun_core::Output;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, PathBuffer, SEP_STR};
 use bun_semver as Semver;
-use bun_semver::String as SemverString;
 
 use bun_options_types::bundle_enums::ModuleType;
 use bun_sys::Fd;
@@ -46,33 +45,6 @@ type ScriptsMap = StringArrayHashMap<&'static [u8]>;
 
 type MainFieldMap = StringMap;
 
-#[derive(Default)]
-pub struct DependencyMap {
-    pub map: DependencyHashMap,
-    // Borrows the package.json source contents; lifetime-erased to 'static,
-    // kept alive by `PackageJSON::source_contents`. Owned if a name or version has a JSON escape.
-    pub source_buf: std::borrow::Cow<'static, [u8]>,
-}
-
-/// Returns `text` as a slice of `buf`. With `copied`, `buf` holds each string in visiting order.
-fn slice_in_source_buf<'a>(
-    buf: &'a [u8],
-    copied: bool,
-    cursor: &mut usize,
-    text: &'a [u8],
-) -> &'a [u8] {
-    if !copied {
-        return text;
-    }
-    let start = *cursor;
-    *cursor += text.len();
-    &buf[start..*cursor]
-}
-
-// Inherent impls cannot carry associated type aliases (stable), so use a free alias.
-type DependencyHashMap =
-    ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
-
 pub struct PackageJSON {
     pub name: Box<[u8]>,
     pub source: bun_ast::Source,
@@ -93,11 +65,10 @@ pub struct PackageJSON {
     pub config: Option<Box<StringArrayHashMap<&'static [u8]>>>,
 
     pub(crate) package_manager_package_id: PackageID,
-    pub dependencies: DependencyMap,
-    /// Used instead of `dependencies` for a package in node_modules, so that auto-install only
-    /// parses the row it looks up. Each range is where a group's rows are in `json_tape`.
-    pub(crate) installed_dependency_rows:
-        [core::ops::Range<u32>; INSTALLED_DEPENDENCY_GROUPS.len()],
+    /// Where the rows of each group of `DEPENDENCY_GROUPS` are in `json_tape`. Every parse records
+    /// the ranges and parses no row, so the record does not depend on which resolver cached the
+    /// file. Auto-install parses the one row it looks up.
+    pub(crate) dependency_rows: [core::ops::Range<u32>; DEPENDENCY_GROUPS.len()],
 
     pub(crate) side_effects: SideEffects,
 
@@ -132,6 +103,10 @@ pub struct PackageJSON {
     pub(crate) imports: Option<ExportsMap>,
 }
 
+// One is interned for every package.json that a resolver reads. 640 is an allocator size class.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<PackageJSON>() <= 640);
+
 // hand-rolled `Default` because `#[derive(Default)]` would zero
 // `package_manager_package_id` (a valid lockfile id — typically the root
 // package). The field defaults to `Install.invalid_package_id` (= `u32::MAX`);
@@ -150,8 +125,7 @@ impl Default for PackageJSON {
             scripts: None,
             config: None,
             package_manager_package_id: INVALID_PACKAGE_ID,
-            dependencies: DependencyMap::default(),
-            installed_dependency_rows: Default::default(),
+            dependency_rows: Default::default(),
             side_effects: SideEffects::default(),
             browser_map: BrowserMap::default(),
             exports: None,
@@ -166,46 +140,79 @@ pub enum IncludeScripts {
     IncludeScripts,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum IncludeDependencies {
-    Main,
-    Local,
-    None,
-}
-
 const NODE_MODULES_PATH: &str = const_format::concatcp!(SEP_STR, "node_modules", SEP_STR);
 
 /// If a name is in several groups, the last group wins, as it does in `bun install`.
-const INSTALLED_DEPENDENCY_GROUPS: [DependencyGroup; 2] =
-    [DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL];
+const DEPENDENCY_GROUPS: [DependencyGroup; 4] = [
+    DependencyGroup::PEER,
+    DependencyGroup::DEPENDENCIES,
+    DependencyGroup::DEV,
+    DependencyGroup::OPTIONAL,
+];
 
 impl PackageJSON {
-    /// Whether auto-install can look up the version of an imported package in this package.json.
-    pub(crate) fn lists_dependencies(&self) -> bool {
-        self.dependencies.map.count() > 0
-            || self.package_manager_package_id != INVALID_PACKAGE_ID
-            || self
-                .installed_dependency_rows
-                .iter()
-                .any(|rows| !rows.is_empty())
+    /// One of the project's own package.json files, not that of a package in node_modules.
+    pub(crate) fn is_project_file(&self) -> bool {
+        !strings::contains(self.source.path.text, NODE_MODULES_PATH.as_bytes())
     }
 
-    /// The versions that a package in node_modules declares for `name`, highest precedence first.
-    pub(crate) fn installed_dependency_versions<'a>(
+    /// The rows of each dependency group, lowest precedence first. A package in node_modules has
+    /// no `devDependencies` or `peerDependencies` for the packages it loads.
+    fn dependency_groups(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = (DependencyBehavior, &[js_ast::E::PropertyJSON])> {
+        let is_project_file = self.is_project_file();
+        DEPENDENCY_GROUPS
+            .iter()
+            .zip(&self.dependency_rows)
+            .filter(move |(group, _)| {
+                is_project_file || !(group.behavior.is_dev() || group.behavior.is_peer())
+            })
+            .map(|(group, rows)| {
+                let tape = self.json_tape.as_deref().filter(|_| !rows.is_empty());
+                let rows = tape.map_or(&[][..], |tape| tape.properties(rows.clone()));
+                (group.behavior, rows)
+            })
+    }
+
+    /// The rows that declare `name`, highest precedence first.
+    pub(crate) fn dependency_rows_of<'a>(
         &'a self,
         name: &'a [u8],
-    ) -> impl Iterator<Item = (&'a [u8], DependencyBehavior)> {
-        let groups = INSTALLED_DEPENDENCY_GROUPS
-            .iter()
-            .zip(&self.installed_dependency_rows);
-        groups.rev().flat_map(move |(group, rows)| {
-            let tape = self.json_tape.as_deref().filter(|_| !rows.is_empty());
-            let rows = tape.map_or(&[][..], |tape| tape.properties(rows.clone()));
-            rows.iter()
-                .rev()
-                .filter(move |row| row.key.slice() == name)
-                .filter_map(move |row| Some((row.value.as_str()?, group.behavior)))
-        })
+    ) -> impl Iterator<Item = (&'a js_ast::E::PropertyJSON, DependencyBehavior)> {
+        self.dependency_groups()
+            .rev()
+            .flat_map(move |(behavior, rows)| {
+                rows.iter()
+                    .rev()
+                    .filter(move |row| row.key.slice() == name)
+                    .map(move |row| (row, behavior))
+            })
+    }
+
+    /// Every dependency that is an `npm:` alias, as its name and version.
+    pub(crate) fn npm_aliases(&self) -> impl Iterator<Item = (&[u8], &[u8])> {
+        self.dependency_groups()
+            .flat_map(|(_, rows)| rows)
+            .filter_map(|row| Some((row.key.slice(), row.value.as_str()?)))
+            .filter(|(_, version)| version.starts_with(b"npm:"))
+    }
+
+    /// The names in `dependencies`, `devDependencies` and `optionalDependencies`, each once.
+    pub fn dependency_names(&self) -> Vec<&[u8]> {
+        let mut names: Vec<&[u8]> = Vec::new();
+        for (behavior, rows) in self.dependency_groups() {
+            if behavior.is_peer() {
+                continue;
+            }
+            for row in rows.iter().filter(|row| row.value.as_str().is_some()) {
+                let name = row.key.slice();
+                if !names.contains(&name) {
+                    names.push(name);
+                }
+            }
+        }
+        names
     }
 
     /// Normalize path separators to forward slashes for glob matching
@@ -381,7 +388,7 @@ impl PackageJSON {
         macro_map
     }
 
-    pub fn parse<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
+    pub fn parse(
         r: &mut resolver::Resolver<'_>,
         input_path: &[u8],
         dirname_fd: Fd,
@@ -523,8 +530,7 @@ impl PackageJSON {
             scripts: None,
             config: None,
             package_manager_package_id: INVALID_PACKAGE_ID,
-            dependencies: DependencyMap::default(),
-            installed_dependency_rows: Default::default(),
+            dependency_rows: Default::default(),
             side_effects: SideEffects::Unspecified,
             exports: None,
             imports: None,
@@ -804,187 +810,28 @@ impl PackageJSON {
             }
         }
 
-        if INCLUDE_DEPENDENCIES == IncludeDependencies::Main
-            || INCLUDE_DEPENDENCIES == IncludeDependencies::Local
-        {
-            'update_dependencies: {
-                if let Some(pkg) = package_id {
-                    package_json.package_manager_package_id = pkg;
-                    break 'update_dependencies;
+        if let Some(pkg) = package_id {
+            package_json.package_manager_package_id = pkg;
+        }
+
+        // This runs for every package.json that any resolver loads, so it only records where the
+        // rows are. The first key of a name counts, as for `Expr::get`.
+        if let js_ast::ExprData::EObjectJSON(root) = &json.data {
+            let mut seen = [false; DEPENDENCY_GROUPS.len()];
+            for row in root.get().properties() {
+                let key = row.key.slice();
+                // Most keys are shorter than "dependencies", the shortest of the four.
+                if key.len() < DependencyGroup::DEPENDENCIES.prop.len() {
+                    continue;
                 }
-
-                // // if there is a name & version, check if the lockfile has the package
-                if !package_json.name.is_empty() && !package_json.version.is_empty() {
-                    if let Some(pm) = r.auto_installer() {
-                        let tag = pm.infer_dependency_tag(&package_json.version);
-
-                        if tag == DependencyVersionTag::Npm {
-                            let sliced = Semver::SlicedString::init(
-                                &package_json.version,
-                                &package_json.version,
-                            );
-                            if let Some(dependency_version) = pm.parse_dependency_with_tag(
-                                SemverString::init(&package_json.name, &package_json.name),
-                                Semver::semver_string::Builder::string_hash(&package_json.name),
-                                &package_json.version,
-                                DependencyVersionTag::Npm,
-                                &sliced,
-                                Some(&mut *r_log),
-                            ) {
-                                if dependency_version.is_exact_npm() {
-                                    if let Some(resolved) = pm.lockfile_resolve(
-                                        &package_json.name,
-                                        &dependency_version,
-                                        &package_json.version,
-                                    ) {
-                                        package_json.package_manager_package_id = resolved;
-                                        if resolved > 0 {
-                                            break 'update_dependencies;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // If a name is in several groups, the last group wins, as it does in `bun install`.
-                let dependency_groups: &[DependencyGroup] =
-                    if INCLUDE_DEPENDENCIES == IncludeDependencies::Main {
-                        &[
-                            DependencyGroup::DEPENDENCIES,
-                            DependencyGroup::DEV,
-                            DependencyGroup::OPTIONAL,
-                        ]
-                    } else if !strings::contains(package_json_path, NODE_MODULES_PATH.as_bytes()) {
-                        // One of the project's own package.json files. A package.json in the cache
-                        // has a `package_id`, which is handled above.
-                        &[
-                            DependencyGroup::PEER,
-                            DependencyGroup::DEPENDENCIES,
-                            DependencyGroup::DEV,
-                            DependencyGroup::OPTIONAL,
-                        ]
-                    } else {
-                        // This runs for every package loaded from node_modules, so it only records
-                        // where the rows are and parses nothing.
-                        for (group, rows) in INSTALLED_DEPENDENCY_GROUPS
-                            .iter()
-                            .zip(&mut package_json.installed_dependency_rows)
-                        {
-                            if let Some(group_json) = json.get(group.prop)
-                                && let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data
-                            {
-                                *rows = group_obj.get().rows();
-                            }
-                        }
-                        break 'update_dependencies;
-                    };
-
-                let mut total_dependency_count: usize = 0;
-                for group in dependency_groups {
-                    if let Some(group_json) = json.get(group.prop) {
-                        total_dependency_count += group_json.property_count();
-                    }
-                }
-
-                if total_dependency_count > 0 {
-                    package_json.dependencies.map = DependencyHashMap::default();
-                    // source_buf borrows json_source.contents (lifetime-erased;
-                    // owned by `package_json.source_contents` on the success path).
-                    package_json.dependencies.source_buf = contents_static.into();
-                    // A JSON escape is decoded outside the file's text, where offsets can't point.
-                    let for_each_string = |visit: &mut dyn FnMut(&[u8])| {
-                        for group in dependency_groups {
-                            let Some(group_json) = json.get(group.prop) else {
-                                continue;
-                            };
-                            if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
-                                for prop in group_obj.get().properties() {
-                                    visit(prop.key.slice());
-                                    if let Some(version) = prop.value.as_str() {
-                                        visit(version);
-                                    }
-                                }
-                            }
-                        }
-                    };
-                    let mut copied = false;
-                    for_each_string(&mut |text| {
-                        copied |= !bun_alloc::is_slice_in_buffer(text, contents_static);
-                    });
-                    if copied {
-                        let mut owned = Vec::new();
-                        for_each_string(&mut |text| owned.extend_from_slice(text));
-                        package_json.dependencies.source_buf = owned.into();
-                    }
-                    let source_buf: &[u8] = &package_json.dependencies.source_buf;
-                    let mut cursor = 0usize;
-                    // ArrayHashMap has no `*_context` variant yet — the
-                    // generic `put_assume_capacity` path is sufficient because keys are
-                    // `SemverString` (offset+len into `source_buf`, hashed by content).
-                    package_json
-                        .dependencies
-                        .map
-                        .ensure_total_capacity(total_dependency_count)
-                        .expect("unreachable");
-
-                    for group in dependency_groups {
-                        if let Some(group_json) = json.get(group.prop) {
-                            if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
-                                for prop in group_obj.get().properties() {
-                                    let name_str = slice_in_source_buf(
-                                        source_buf,
-                                        copied,
-                                        &mut cursor,
-                                        prop.key.slice(),
-                                    );
-                                    let name_hash =
-                                        Semver::semver_string::Builder::string_hash(name_str);
-                                    let name = SemverString::init(source_buf, name_str);
-                                    let Some(version_str) = prop.value.as_str() else {
-                                        continue;
-                                    };
-                                    let version_str = slice_in_source_buf(
-                                        source_buf,
-                                        copied,
-                                        &mut cursor,
-                                        version_str,
-                                    );
-                                    let sliced_str =
-                                        Semver::SlicedString::init(source_buf, version_str);
-
-                                    if let Some(dependency_version) = r.parse_dependency(
-                                        name,
-                                        name_hash,
-                                        version_str,
-                                        &sliced_str,
-                                        Some(&mut *r_log),
-                                        !strings::contains(
-                                            package_json_path,
-                                            NODE_MODULES_PATH.as_bytes(),
-                                        ),
-                                    ) {
-                                        let dependency = Dependency {
-                                            name,
-                                            version: dependency_version,
-                                            name_hash,
-                                            behavior: group.behavior,
-                                        };
-                                        let ctx = Semver::semver_string::ArrayHashContext {
-                                            arg_buf: source_buf,
-                                            existing_buf: source_buf,
-                                        };
-                                        package_json.dependencies.map.put_assume_capacity_context(
-                                            dependency.name,
-                                            dependency,
-                                            |k| ctx.hash(*k),
-                                            |a, b, i| ctx.eql(*a, *b, i),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
+                let Some(group) = DEPENDENCY_GROUPS.iter().position(|group| group.prop == key)
+                else {
+                    continue;
+                };
+                if !core::mem::replace(&mut seen[group], true)
+                    && let Some(rows) = row.value.as_object()
+                {
+                    package_json.dependency_rows[group] = rows.rows();
                 }
             }
         }

@@ -3533,7 +3533,7 @@ pub mod formatter {
             self.write_with_formatting::<C>(writer_, slice, self.global_this)
         }
 
-        /// `%s` of a Symbol or an object: `String(value)`, or the inspected value when that throws.
+        /// `%s` of a Symbol or an object. An object that `String()` cannot convert is inspected.
         #[cold]
         #[inline(never)]
         fn print_string_substitution<const C: bool>(
@@ -3562,15 +3562,10 @@ pub mod formatter {
                 return self.print_as::<C>(Tag::String, writer_, value, js_type);
             }
 
-            let prev_quote_strings = self.quote_strings;
             let prev_single_line = self.single_line;
             let prev_max_depth = self.max_depth;
-            let prev_indent = self.indent;
-            let _restore_quote_strings = defer_restore!(self.quote_strings, prev_quote_strings);
             let _restore_single_line = defer_restore!(self.single_line, prev_single_line);
             let _restore_max_depth = defer_restore!(self.max_depth, prev_max_depth);
-            let _restore_indent = defer_restore!(self.indent, prev_indent);
-            self.quote_strings = true;
             self.single_line = true;
             self.max_depth = self.depth;
             self.format::<false>(Tag::get(value, global)?, writer_, value, global)
@@ -5531,9 +5526,9 @@ pub mod formatter {
                 }
             } else {
                 self.depth -= 1;
+                self.indent = self.indent.saturating_sub(1);
 
                 if iter_always_newline {
-                    self.indent = self.indent.saturating_sub(1);
                     self.print_comma::<C>(writer_).expect("unreachable");
                     let _ = writer_.write_all(b"\n");
                     let _ = self.write_indent(writer_);

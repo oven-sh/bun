@@ -212,6 +212,36 @@ describe.concurrent("console %s", () => {
     });
   });
 
+  it("prints an object that String() cannot convert as Bun.inspect(value, { compact: true, depth: 0 }) returns it", async () => {
+    const { stdout, exitCode } = await run(`
+      import util from "node:util";
+      const dictionary = properties => Object.assign(Object.create(null), properties);
+      const cyclic = Object.create(null);
+      cyclic.self = cyclic;
+      const values = [
+        dictionary({ error: new RangeError("boom") }),
+        dictionary({ response: new Response("body"), date: new Date(0), map: new Map([[1, { a: 1 }]]) }),
+        dictionary({ [Symbol("key")]: 1, text: 'two\\nlines and "quotes"' }),
+        dictionary({ [util.inspect.custom](depth, options) { return "hook " + depth + " " + options.depth + " " + options.colors; } }),
+        Object.create(null, { getter: { get() { return 1; }, enumerable: true } }),
+        cyclic,
+      ];
+      console.log(JSON.stringify(values.map(value => Bun.inspect(value, { compact: true, depth: 0 }))));
+      for (const value of values) console.log("%s", value);
+    `);
+    const newline = stdout.indexOf("\n");
+    const inspected: string[] = JSON.parse(stdout.slice(0, newline));
+    expect({ printed: stdout.slice(newline + 1), exitCode }).toEqual({
+      printed: inspected.map(text => text + "\n").join(""),
+      exitCode: 0,
+    });
+    expect(inspected.slice(3)).toEqual([
+      "hook 0 0 false",
+      "[Object: null prototype] { getter: [Getter] }",
+      "[Object: null prototype] { self: [Circular] }",
+    ]);
+  });
+
   it("prints String(value) for every value that String() converts, and runs the same code", async () => {
     const { stdout, exitCode } = await run(`
       import util from "node:util";
@@ -230,6 +260,8 @@ describe.concurrent("console %s", () => {
         /re/g, new Number(-0), new Boolean(false), Object(10n),
         new Money(), { [Symbol.toPrimitive]() { return "primitive"; } },
         Object.assign(Object.create(null), { valueOf: () => "from valueOf" }),
+        Object.assign(Object.create(null), { [Symbol.toPrimitive]: () => "from Symbol.toPrimitive" }),
+        Object.create(null, { valueOf: { get() { log.push("valueOf getter"); return () => "from a valueOf getter"; } } }),
         { get toString() { log.push("getter"); return () => "from a getter"; } },
         counted("first", "1st"), counted("second", "2nd"),
         trapped(), Object.create(trapped()), new Proxy(new Money(), {}), new Proxy(function target() {}, {}),
@@ -251,10 +283,10 @@ describe.concurrent("console %s", () => {
     expect(lines.join("\n")).toBe(
       ["Symbol(start)", ...expected.map((text: string) => `<${text}>`), '<[String: "text"]>'].join("\n"),
     );
-    expect({ sameCode, calls, exitCode }).toEqual({ sameCode: true, calls: 7, exitCode: 0 });
+    expect({ sameCode, calls, exitCode }).toEqual({ sameCode: true, calls: 8, exitCode: 0 });
   });
 
-  it("passes on what a conversion throws, and reads an object that has none without running its code", async () => {
+  it("passes on what a conversion throws, and prints an accessor of an object that has none as [Getter]", async () => {
     const { stdout, exitCode } = await run(`
       let calls = 0;
       try {
@@ -369,4 +401,12 @@ it("an object past the depth has one space before it on one line", () => {
   expect(Bun.inspect({ a: { b: 1 }, z: 1 }, { compact: true, depth: 0 })).toBe("{ a: [Object ...], z: 1 }");
   expect(Bun.inspect([{ b: 1 }, { c: 2 }], { compact: true, depth: 0 })).toBe("[ [Object ...], [Object ...] ]");
   expect(Bun.inspect(new Map([["k", { b: 1 }]]), { compact: true, depth: 0 })).toBe('Map(1) { "k": [Object ...] }');
+});
+
+it("an object on one line gives back the indent that it takes", () => {
+  const alone = Bun.inspect({ r: new Response("") }, { compact: true });
+  expect(alone).toContain("\n    ok: true,\n");
+  expect(Bun.inspect({ a: { x: 1 }, b: { y: 2 }, r: new Response("") }, { compact: true })).toBe(
+    alone.replace("{ r:", "{ a: { x: 1 }, b: { y: 2 }, r:"),
+  );
 });

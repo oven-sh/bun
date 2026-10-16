@@ -435,9 +435,7 @@ template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, boo
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
 namespace Bun {
-/// Asymmetric matchers that passed in `Bun__deepMatch`, written over the
-/// matched property by `apply` once the whole match has passed. The first
-/// matcher recorded for a property wins.
+/// Matchers that passed in `Bun__deepMatch`, written over the matched property by `apply`. First one per property wins.
 struct DeferredMatcherWrites {
     JSC::MarkedArgumentBuffer values; // (target object, matcher) pairs
     Vector<JSC::Identifier, 4> keys;
@@ -456,10 +454,7 @@ struct DeferredMatcherWrites {
 };
 }
 
-/// `Bun.deepMatch(a, b)`. `object` and `subset` must be objects. `stack` holds
-/// the (object, subset) pairs on the current recursion path, as in
-/// `Bun__deepEquals`, and `gcBuffer` keeps them alive. Throws a JS exception
-/// and returns false on stack overflow.
+/// `Bun.deepMatch(a, b)`. Both must be objects. `stack` is the recursion path, as in `Bun__deepEquals`.
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSC::JSValue object,

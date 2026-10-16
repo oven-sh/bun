@@ -2278,6 +2278,9 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // An `import` inside the CommonJS function wrapper is a syntax error.
+        let wrap_in_commonjs = wrap_mode == WrapMode::BunCommonjs;
+
         if p.has_called_runtime {
             let mut runtime_imports: [u8; RuntimeImports::ALL.len()] =
                 [0; RuntimeImports::ALL.len()];
@@ -2302,17 +2305,28 @@ impl<'a> Parser<'a> {
                 // never touches `self.runtime_imports`, so the clone is purely a
                 // borrow-checker workaround.
                 let symbols = p.runtime_imports.clone();
-                p.generate_import_stmt(
-                    RuntimeImports::NAME,
-                    &runtime_imports[0..i],
-                    &mut before,
-                    &symbols,
-                    None,
-                    b"import_",
-                    true,
-                    js_ast::PartTag::Runtime,
-                )
-                .expect("unreachable");
+                if wrap_in_commonjs {
+                    p.generate_require_stmt(
+                        RuntimeImports::NAME,
+                        &runtime_imports[0..i],
+                        &mut before,
+                        &symbols,
+                        js_ast::PartTag::Runtime,
+                    )
+                    .expect("unreachable");
+                } else {
+                    p.generate_import_stmt(
+                        RuntimeImports::NAME,
+                        &runtime_imports[0..i],
+                        &mut before,
+                        &symbols,
+                        None,
+                        b"import_",
+                        true,
+                        js_ast::PartTag::Runtime,
+                    )
+                    .expect("unreachable");
+                }
             }
         }
 
@@ -2335,8 +2349,6 @@ impl<'a> Parser<'a> {
             let runtime_import_names = jsx_imports.runtime_import_names(&mut buf);
             let source_import_names = jsx_imports.source_import_names();
 
-            // An `import` inside the CommonJS function wrapper is a syntax error.
-            let wrap_in_commonjs = wrap_mode == WrapMode::BunCommonjs;
             for (path, names) in [
                 (import_source, runtime_import_names),
                 (package_name, source_import_names),

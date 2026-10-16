@@ -65,6 +65,21 @@ function scopeDir(scope: Scope) {
     "dynamic-import.mjs": `for (const file of ${JSON.stringify(fixtures)}) await import("./" + file);\n`,
     "require-all.cjs": fixtures.map(file => `require("./${file}");`).join("\n") + "\n",
     "empty.mjs": "",
+    // An onLoad plugin that hands back each fixture's own contents.
+    "plugin.mjs": `
+      import { plugin } from "bun";
+      import { readFileSync } from "node:fs";
+      const loaders = { js: "js", cjs: "js", mjs: "js", jsx: "jsx", ts: "ts", cts: "ts", mts: "ts", tsx: "tsx" };
+      plugin({
+        name: "passthrough",
+        setup(build) {
+          build.onLoad({ filter: /hello\\.[a-z]+$/ }, ({ path }) => ({
+            contents: readFileSync(path, "utf8"),
+            loader: loaders[path.slice(path.lastIndexOf(".") + 1)],
+          }));
+        },
+      });
+    `,
   });
 }
 
@@ -89,6 +104,31 @@ function formats(stdout: string): Record<string, string> {
       .map(line => line.split(" ")),
   );
 }
+
+// Not concurrent with the tests below: a Worker starts its own VM, which costs
+// about a second on a debug build when it has a CPU to itself.
+test("module format as a Worker's main module", async () => {
+  using dir = tempDir("module-type-worker", {
+    "esm/package.json": packageJson.module,
+    "esm/hello.cjs": fixture("hello.cjs"),
+    "cjs/package.json": packageJson.commonjs,
+    "cjs/hello.mjs": fixture("hello.mjs"),
+    "workers.mjs": `
+      import { Worker } from "node:worker_threads";
+      await Promise.all(["./esm/hello.cjs", "./cjs/hello.mjs"].map(file => {
+        const worker = new Worker(new URL(file, import.meta.url));
+        return new Promise((resolve, reject) => {
+          worker.on("exit", resolve);
+          worker.on("error", reject);
+        });
+      }));
+    `,
+  });
+  const { stdout, stderr, exitCode } = await run(String(dir), "workers.mjs");
+  expect(formats(stdout)).toEqual({ "hello.cjs": "commonjs", "hello.mjs": "module" });
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
 
 describe.concurrent("module format follows the extension, then the nearest package.json", () => {
   for (const scope of Object.keys(packageJson) as Scope[]) {
@@ -133,34 +173,19 @@ describe.concurrent("module format follows the extension, then the nearest packa
         expect(stderr).toBe("");
         expect(exitCode).toBe(0);
       });
+
+      test("source from an onLoad plugin still runs", async () => {
+        // The loader evaluates an onLoad plugin's source as an ES module
+        // whatever the parser decides. A CommonJS wrapper from the path hint
+        // would never be called, so that source gets no hint.
+        using dir = scopeDir(scope);
+        const { stdout, stderr, exitCode } = await run(String(dir), "--preload", "./plugin.mjs", "static-import.mjs");
+        expect(Object.keys(formats(stdout)).sort()).toEqual([...fixtures].sort());
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      });
     });
   }
-
-  test("as a Worker's main module", async () => {
-    // A Worker starts its own VM and transpiles its entry on that thread.
-    // Two workers, not the whole table: each one costs about a second on a
-    // debug build.
-    using dir = tempDir("module-type-worker", {
-      "esm/package.json": packageJson.module,
-      "esm/hello.cjs": fixture("hello.cjs"),
-      "cjs/package.json": packageJson.commonjs,
-      "cjs/hello.mjs": fixture("hello.mjs"),
-      "workers.mjs": `
-        import { Worker } from "node:worker_threads";
-        await Promise.all(["./esm/hello.cjs", "./cjs/hello.mjs"].map(file => {
-          const worker = new Worker(new URL(file, import.meta.url));
-          return new Promise((resolve, reject) => {
-            worker.on("exit", resolve);
-            worker.on("error", reject);
-          });
-        }));
-      `,
-    });
-    const { stdout, stderr, exitCode } = await run(String(dir), "workers.mjs");
-    expect(formats(stdout)).toEqual({ "hello.cjs": "commonjs", "hello.mjs": "module" });
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  });
 });
 
 describe.concurrent("the nearest package.json decides, with or without a name", () => {
@@ -239,6 +264,68 @@ describe.concurrent("JSX in a CommonJS module", () => {
   });
 });
 
+test.concurrent("a decorated class in a CommonJS module", async () => {
+  // The decorator helpers come from "bun:wrap". Inside the CommonJS function
+  // wrapper they have to be required, like the JSX runtime.
+  const decorated = (file: string) => `function dec(target) {\n  return target;\n}\n@dec\nclass A {}\n${fixture(file)}`;
+  using dir = tempDir("module-type-decorators", {
+    "package.json": packageJson.commonjs,
+    "hello.ts": decorated("hello.ts"),
+    "hello.tsx": decorated("hello.tsx"),
+    "hello.cts": decorated("hello.cts"),
+    ...jsxRuntimeStub,
+    "import.mjs": `import "./hello.ts";\nimport "./hello.tsx";\nimport "./hello.cts";\n`,
+  });
+  const all = { "hello.ts": "commonjs", "hello.tsx": "commonjs", "hello.cts": "commonjs" };
+  for (const file of Object.keys(all)) {
+    expect(await run(String(dir), file)).toEqual({ stdout: `${file} commonjs\n`, stderr: "", exitCode: 0 });
+  }
+  const imported = await run(String(dir), "import.mjs");
+  expect({ ...imported, stdout: formats(imported.stdout) }).toEqual({ stdout: all, stderr: "", exitCode: 0 });
+});
+
+describe.concurrent('package.json "type" does not apply to', () => {
+  // "type" governs .js and its TypeScript and JSX forms. These entries have no
+  // such extension, so their contents decide, whatever the package.json says.
+  const detect = `console.log(eval("typeof module") === "undefined" ? "module" : "commonjs");`;
+  const usesRequire = `require("node:os");\n${detect}`;
+
+  async function inEveryScope(files: Record<string, string>, args: string[], stdin?: string) {
+    const result: Record<string, unknown> = {};
+    for (const scope of Object.keys(packageJson) as Scope[]) {
+      using dir = tempDir(`module-type-no-ext-${scope}`, { "package.json": packageJson[scope], ...files });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      result[scope] = { stdout, stderr, exitCode };
+    }
+    return result;
+  }
+  const everyScope = (stdout: string) => {
+    const one = { stdout, stderr: "", exitCode: 0 };
+    return { commonjs: one, module: one, untyped: one };
+  };
+
+  test("bun -e", async () => {
+    expect(await inEveryScope({}, ["-e", detect])).toEqual(everyScope("module\n"));
+  });
+
+  test("a script on stdin", async () => {
+    expect(await inEveryScope({}, ["run", "-"], detect)).toEqual(everyScope("module\n"));
+  });
+
+  test("a script with no extension", async () => {
+    expect(await inEveryScope({ "cli": detect }, ["cli"])).toEqual(everyScope("module\n"));
+    expect(await inEveryScope({ "cli": usesRequire }, ["cli"])).toEqual(everyScope("commonjs\n"));
+  });
+});
+
 test("the transpiler cache keys on the module type, not only the file contents", async () => {
   // The on-disk cache file is named after a hash of the source bytes and only
   // applies to files of 4 KiB or more. Identical bytes under "type":"module"
@@ -252,7 +339,12 @@ test("the transpiler cache keys on the module type, not only the file contents",
     "cjs/package.json": `{ "type": "commonjs" }`,
     "cjs/hello.js": padding + fixture("hello.js"),
   });
-  const env = { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(String(dir), "cache") };
+  const env = {
+    ...bunEnv,
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(String(dir), "cache"),
+    // A debug build only serves a cached entry with this set.
+    BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+  };
   for (const [subdir, format] of [
     ["esm", "module"],
     ["cjs", "commonjs"],

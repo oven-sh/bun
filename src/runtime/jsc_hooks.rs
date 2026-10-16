@@ -4566,6 +4566,8 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     let mut extra = TranspileExtra {
         path,
         loader,
+        // The caller evaluates this source as an ES module whatever the
+        // parser decides, so it must not get the CommonJS wrapper from a hint.
         module_type: ModuleType::Unknown,
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(), // null forbids async resolution

@@ -6918,8 +6918,16 @@ pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
 
 /// The runtime's rule. `package_json` is `DirInfo::package_json_for_module_type`.
 pub fn module_type_for_file(ext: &[u8], package_json: Option<&PackageJSON>) -> options::ModuleType {
-    module_type_from_ext(ext)
-        .unwrap_or_else(|| package_json.map_or(options::ModuleType::Unknown, |pkg| pkg.module_type))
+    if let Some(module_type) = module_type_from_ext(ext) {
+        return module_type;
+    }
+    match ext {
+        b".js" | b".ts" | b".jsx" | b".tsx" => {
+            package_json.map_or(options::ModuleType::Unknown, |pkg| pkg.module_type)
+        }
+        // No extension, `[eval]`, `[stdin]`, a custom extension: the contents decide.
+        _ => options::ModuleType::Unknown,
+    }
 }
 
 /// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This

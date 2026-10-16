@@ -394,10 +394,13 @@ plugin({
       hot.write("main.js", `console.log("main ran");`);
       expect(await hot.stderr('preload not found "./first.js"')).toContain('preload not found "./first.js"');
       hot.create("first.js", `console.log("first ran");`);
-      hot.write("main.js", `console.log("main ran");`);
+      hot.write("main.js", `console.log("main ran"); console.error("main done");`);
       expect(await hot.stdout("main ran\n")).toContain("first ran\nsecond ran\nmain ran\n");
-      // The error of the load before is not reported again.
-      expect((await hot.stderr("")).split("error: from first.js")).toHaveLength(2);
+      // stderr is in order: all that the loads before reported is in front of the line of main.js.
+      const stderr = await hot.stderr("main done");
+      expect(stderr).toContain("main done");
+      // The error of the first load is not reported again.
+      expect(stderr.split("error: from first.js")).toHaveLength(2);
     });
 
     concurrentTest("a reload that fails reports what it logged, and not what an earlier reload logged", async () => {

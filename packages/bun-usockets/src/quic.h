@@ -132,7 +132,8 @@ void us_quic_socket_context_on_stream_close(us_quic_socket_context_t *ctx,
 /* Stream I/O. Read happens via on_stream_data; write returns bytes accepted
  * (may be < len under flow-control backpressure). */
 int us_quic_stream_write(us_quic_stream_t *s, const char *data, unsigned int len);
-void us_quic_stream_want_read(us_quic_stream_t *s, int want);
+/* Receive backpressure: lsquic_stream_hold_window() in lsquic.h. */
+void us_quic_stream_hold_window(us_quic_stream_t *s, int hold);
 void us_quic_stream_want_write(us_quic_stream_t *s, int want);
 int us_quic_stream_send_headers(us_quic_stream_t *s,
     const struct us_quic_header_t *headers, unsigned int count, int end_stream);

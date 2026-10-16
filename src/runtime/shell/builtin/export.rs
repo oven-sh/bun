@@ -52,22 +52,20 @@ impl Export {
 
     /// `NAME=v export NAME`: the prefix on this command assigns the operand.
     fn assign_prefixes(interp: &Interpreter, cmd: NodeId, argc: usize) {
-        let assigns = interp.as_cmd(cmd).ast_node().assigns;
-        for assign in assigns {
-            let is_operand = (0..argc).any(|i| {
-                let s = Builtin::of(interp, cmd).arg_bytes(i);
-                let eq = bun_core::strings::index_of_char_usize(s, b'=').unwrap_or(s.len());
-                &s[..eq] == assign.label
-            });
-            if !is_operand {
+        for i in 0..argc {
+            let Some(prefixes) = interp.as_cmd(cmd).prefix_env.as_deref() else {
+                return;
+            };
+            let s = Builtin::of(interp, cmd).arg_bytes(i);
+            let eq = bun_core::strings::index_of_char_usize(s, b'=').unwrap_or(s.len());
+            let Some(value) = prefixes.get(EnvStr::init_slice(&s[..eq])) else {
                 continue;
-            }
-            let name = EnvStr::init_slice(assign.label);
-            let me = interp.as_cmd_mut(cmd);
-            if let Some(value) = me.prefix_env.as_ref().and_then(|p| p.get(name)) {
-                me.base.shell_mut().vars.set(name, value);
-                value.deref();
-            }
+            };
+            let label = EnvStr::dupe_ref_counted(&s[..eq]);
+            let shell = interp.as_cmd_mut(cmd).base.shell_mut();
+            shell.vars.set(label, value);
+            label.deref();
+            value.deref();
         }
     }
 

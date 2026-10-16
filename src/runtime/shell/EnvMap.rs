@@ -218,9 +218,9 @@ impl VarTable {
         &'a self,
         prefixes: Option<&'a EnvMap>,
     ) -> impl core::iter::Iterator<Item = (&'a EnvStr, &'a EnvStr)> {
-        let replaced = move |name: &EnvStr| prefixes.is_some_and(|p| p.map.contains(name));
         let (names, values): (&[EnvStr], &[EnvStr]) =
             prefixes.map_or((&[], &[]), |p| (p.map.keys(), p.map.values()));
+        let replaced = move |name: &EnvStr| names.iter().any(|p| EnvMapContext.eql(p, name, 0));
         self.map
             .iter()
             .filter_map(move |(name, var)| match var {

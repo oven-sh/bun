@@ -2106,6 +2106,14 @@ pub(crate) fn exit_on_empty_package_json(path: &[u8]) -> ! {
 }
 
 #[cold]
+fn frozen_lockfile_had_changes(log_level: Options::LogLevel) -> ! {
+    if log_level != Options::LogLevel::Silent {
+        bun_core::pretty_errorln!("<r><red>error<r>: lockfile had changes, but lockfile is frozen");
+    }
+    Global::crash();
+}
+
+#[cold]
 #[inline(never)]
 fn create_new_lockfile_and_enqueue(
     manager: &mut PackageManager,
@@ -2131,17 +2139,10 @@ fn create_new_lockfile_and_enqueue(
         manager.lockfile.text_lockfile_version = version;
     }
 
-    // A lockfile that loaded (its root has no dependencies) is compared after the resolve, like
-    // every other frozen install. One that failed to load has nothing to compare.
-    if manager.options.enable.frozen_lockfile()
-        && matches!(load_result, lockfile::LoadResult::Err(_))
-    {
-        if log_level != Options::LogLevel::Silent {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: lockfile had changes, but lockfile is frozen"
-            );
-        }
-        Global::crash();
+    let frozen = manager.options.enable.frozen_lockfile();
+    // A frozen install cannot replace a lockfile that failed to load.
+    if frozen && matches!(load_result, lockfile::LoadResult::Err(_)) {
+        frozen_lockfile_had_changes(log_level);
     }
 
     // A loaded lockfile describes the project; a pnpm migration imports the yaml itself.
@@ -2176,6 +2177,12 @@ fn create_new_lockfile_and_enqueue(
             &mut resolver,
             Features::main(),
         )?;
+    }
+    // The root of the lockfile that loaded has no dependencies, so it matches only a package.json
+    // without dependencies. The frozen check after the resolve accepts that one.
+    if frozen && root.dependencies.len > 0 && matches!(load_result, lockfile::LoadResult::Ok { .. })
+    {
+        frozen_lockfile_had_changes(log_level);
     }
     if PackageJSONEditor::steers_catalogs_to_latest(manager) {
         PackageJSONEditor::steer_used_catalogs_to_latest(manager, None)?;

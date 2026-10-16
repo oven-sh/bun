@@ -2012,12 +2012,22 @@ impl<'a> Printer<'a> {
 
 impl Lockfile {
     /// Returns false when the lockfile on disk already had exactly these bytes and was left untouched.
+    #[inline]
     pub fn save_to_disk(
         &mut self,
         load_result: &LoadResult<'_>,
         options: &PackageManagerOptions,
     ) -> bool {
-        let save_format = load_result.save_format(options);
+        self.save_to_disk_as(load_result.save_format(options), load_result, options)
+    }
+
+    /// [`save_to_disk`](Self::save_to_disk) into the lockfile of `save_format`.
+    pub(crate) fn save_to_disk_as(
+        &mut self,
+        save_format: LockfileFormat,
+        load_result: &LoadResult<'_>,
+        options: &PackageManagerOptions,
+    ) -> bool {
         // Only `bun install` sets the option. `self` is `load_result`'s lockfile.
         let config_version = options.config_version.unwrap_or_else(|| {
             load_result
@@ -2131,7 +2141,31 @@ impl Default for Lockfile {
     }
 }
 
-/// A temporary file (`mode` less the umask) renamed over `filename`. False: it had these bytes.
+/// Linux refuses to rename onto or unlink a mount point (a bind-mounted file) with EBUSY; on
+/// Windows EBUSY is a sharing violation.
+pub(crate) fn is_mount_point_error(err: &sys::Error) -> bool {
+    cfg!(any(target_os = "linux", target_os = "android")) && err.get_errno() == sys::E::EBUSY
+}
+
+/// Writes `bytes` over the existing file `filename`, whose directory entry cannot be replaced. It
+/// truncates last, so a concurrent reader never finds the file empty. A write that fails puts the
+/// old bytes back.
+fn write_in_place(filename: &ZStr, bytes: &[u8]) -> sys::Result<()> {
+    let file = File::openat(Fd::cwd(), filename.as_bytes(), sys::O::RDWR, 0)?;
+    let old = file.read_to_end()?;
+    let overwrite = |bytes: &[u8]| {
+        file.pwrite_all(bytes, 0)?;
+        sys::ftruncate(file.handle, bytes.len() as i64)
+    };
+    let written = overwrite(bytes);
+    if written.is_err() {
+        let _ = overwrite(&old);
+    }
+    written
+}
+
+/// A temporary file (`mode` less the umask) renamed over `filename`, or `bytes` written into
+/// `filename` when it is a mount point. False: it had these bytes.
 pub(crate) fn replace_in_cwd(filename: &ZStr, bytes: &[u8], mode: sys::Mode) -> bool {
     if File::read_from(Fd::cwd(), filename.as_bytes()).is_ok_and(|existing| existing == bytes) {
         return false;
@@ -2171,11 +2205,18 @@ pub(crate) fn replace_in_cwd(filename: &ZStr, bytes: &[u8], mode: sys::Mode) -> 
         Global::crash();
     }
 
-    if let Err(e) = file.close_and_move_to(tmpname, filename) {
+    if let Err(mut e) = file.close_and_move_to(tmpname, filename) {
         bun_core::handle_error_return_trace(&e);
 
         // note: file is already closed here.
         let _ = sys::unlink(tmpname);
+
+        if is_mount_point_error(&e) {
+            match write_in_place(filename, bytes) {
+                Ok(()) => return true,
+                Err(in_place) => e = in_place,
+            }
+        }
 
         Output::err(
             &e,

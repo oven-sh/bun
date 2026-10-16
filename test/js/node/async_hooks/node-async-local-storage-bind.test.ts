@@ -161,6 +161,50 @@ describe("AsyncLocalStorage.bind", () => {
   });
 });
 
+// Node's snapshot() is AsyncLocalStorage.bind((cb, ...args) => cb(...args)): a
+// function named "bound" whose arrow never hands a receiver to cb.
+describe("AsyncLocalStorage.snapshot", () => {
+  test("returns a function named 'bound' that calls fn without a receiver", () => {
+    const runInSnapshot = AsyncLocalStorage.snapshot();
+    const holder = { runInSnapshot };
+    assert.deepStrictEqual(
+      {
+        name: runInSnapshot.name,
+        length: runInSnapshot.length,
+        bare: runInSnapshot(receiver),
+        method: holder.runInSnapshot(receiver),
+      },
+      { name: "bound", length: 1, bare: undefined, method: undefined },
+    );
+  });
+
+  test("restores the frame it was taken in when called there", () => {
+    const als = new AsyncLocalStorage<string>();
+    als.run("A", () => {
+      const seen = AsyncLocalStorage.snapshot()(() => {
+        als.enterWith("C");
+        return als.getStore();
+      });
+      assert.deepStrictEqual([seen, als.getStore()], ["C", "A"]);
+    });
+  });
+});
+
+// Node: ReflectApply(fn, null, args) on every path of run().
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/async_local_storage/async_context_frame.js#L57-L69
+test("AsyncLocalStorage run() and exit() call the callback with this === null", () => {
+  const als = new AsyncLocalStorage<string>();
+  assert.deepStrictEqual(
+    {
+      run: als.run("s", receiver),
+      sameValue: als.run("s", () => als.run("s", receiver)),
+      exit: als.run("s", () => als.exit(receiver)),
+      exitSameValue: als.exit(receiver),
+    },
+    { run: null, sameValue: null, exit: null, exitSameValue: null },
+  );
+});
+
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
   const { bunEnv, nodeExe } = await import("harness");

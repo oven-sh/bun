@@ -1,8 +1,8 @@
 use core::hash::{BuildHasher, Hash, Hasher};
 use core::ptr::NonNull;
 
+use bun_collections::hashbrown::{self, hash_map::RawEntryMut};
 use bun_paths::fs::Path;
-use hashbrown::hash_map::RawEntryMut;
 
 use crate::IndexStringMap::IndexInt;
 

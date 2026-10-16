@@ -274,7 +274,6 @@ dependencies = [
  "bun_zstd",
  "bytemuck",
  "enum-map",
- "hashbrown 0.15.5",
  "lol_html",
  "scopeguard",
  "strum",

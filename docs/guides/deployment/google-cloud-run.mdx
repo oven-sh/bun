@@ -19,7 +19,7 @@ This guide deploys a Bun HTTP server to Google Cloud Run using a `Dockerfile`.
 
 ---
 
-<Steps> 
+<Steps>
 <Step title={<span>Initialize <code>gcloud</code> by selecting or creating a project</span>}>
 
 Make sure that you've initialized the Google Cloud CLI. `gcloud init` logs you in and prompts you to either select an existing project or create a new one.
@@ -63,7 +63,7 @@ echo $PROJECT_ID $PROJECT_NUMBER
 my-bun-app [PROJECT_NUMBER]
 ```
 
-</Step> 
+</Step>
 <Step title="Link a billing account">
 List your available billing accounts and link one to your project:
 
@@ -89,8 +89,8 @@ name: projects/my-bun-app/billingInfo
 projectId: my-bun-app
 ```
 
-</Step> 
-<Step title="Enable APIs and configure IAM roles"> 
+</Step>
+<Step title="Enable APIs and configure IAM roles">
 Activate the necessary services and grant Cloud Build permissions:
 
 ```bash terminal icon="terminal"
@@ -100,7 +100,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
   --role=roles/run.builder
 ```
 
-<Note>  
+<Note>
 These commands enable Cloud Run (`run.googleapis.com`) and Cloud Build (`cloudbuild.googleapis.com`). Deploying from source requires both. Cloud Run runs your containerized app, while Cloud Build builds and packages it.
 
 The IAM binding grants the Compute Engine service account (`$PROJECT_NUMBER-compute@developer.gserviceaccount.com`) permission to build and deploy images on your behalf.
@@ -151,7 +151,7 @@ LICENSE
 ```
 
 </Step>
-<Step title="Deploy your service"> 
+<Step title="Deploy your service">
 Make sure you're in the directory containing your `Dockerfile`, then deploy directly from your local source:
 
 <Note>Update the `--region` flag to your preferred region, or omit it to select a region interactively.</Note>

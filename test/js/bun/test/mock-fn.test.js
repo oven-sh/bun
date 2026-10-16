@@ -1175,6 +1175,21 @@ describe("spyOn", () => {
       expect(Object.isSealed(sealed)).toBe(true);
     });
 
+    test("restores through a Proxy that nothing else keeps alive", () => {
+      const original = () => 1;
+      const first = Object.seal({ fn: original });
+      const second = Object.seal({ fn: original });
+      const spy = (() => spyOn(new Proxy(first, {}), "fn"))();
+      (() => spyOn(new Proxy(second, {}), "fn"))();
+      Bun.gc(true);
+      expect(first.fn).toBe(spy);
+
+      spy.mockRestore();
+      expect(first.fn).toBe(original);
+      jest.restoreAllMocks();
+      expect(second.fn).toBe(original);
+    });
+
     test("a Proxy that is not extensible gets back the attributes and the value that its target held", () => {
       const original = () => 1;
       const wrapper = () => original() + 1;

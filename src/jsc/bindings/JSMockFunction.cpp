@@ -298,11 +298,12 @@ public:
     mutable JSC::WriteBarrier<JSC::JSArray> returnValues;
 
     JSC::Weak<JSObject> spyTarget;
+    // Set when defineOwnProperty() of spyTarget stored the spy. The spy is then in another object, which can outlive spyTarget.
+    mutable JSC::WriteBarrier<JSC::JSObject> spyTargetForDefine;
     JSC::Identifier spyIdentifier;
     unsigned spyAttributes = 0;
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
-    static constexpr unsigned SpyAttributeDefineOwnProperty = 1 << 29;
 
     JSString* jsName()
     {
@@ -403,7 +404,7 @@ public:
 
             bool restored = true;
             if (!isExport)
-                restored = putOwnPropertyStorage(globalObject, target, this->spyIdentifier, original, attributes & ~SpyAttributeDefineOwnProperty, attributes & SpyAttributeDefineOwnProperty);
+                restored = putOwnPropertyStorage(globalObject, target, this->spyIdentifier, original, attributes, !!this->spyTargetForDefine);
             else if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target))
                 restored = moduleNamespaceObject->overrideExportValue(globalObject, this->spyIdentifier, original);
             RETURN_IF_EXCEPTION(scope, );
@@ -415,6 +416,7 @@ public:
 
         this->reset();
         this->spyTarget.clear();
+        this->spyTargetForDefine.clear();
         this->spyIdentifier = JSC::Identifier();
         this->spyAttributes = 0;
     }
@@ -505,6 +507,7 @@ void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
     visitor.append(fn->returnValues);
     visitor.append(fn->invocationCallOrder);
     visitor.append(fn->spyOriginal);
+    visitor.append(fn->spyTargetForDefine);
     fn->mock.visit(visitor);
 }
 
@@ -1589,7 +1592,7 @@ static void installSpy(Zig::GlobalObject* globalObject, JSMockFunction* mock, JS
         return;
     }
     if (throughDefineOwnProperty)
-        mock->spyAttributes |= JSMockFunction::SpyAttributeDefineOwnProperty;
+        mock->spyTargetForDefine.set(vm, mock, target);
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))

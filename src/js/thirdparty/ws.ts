@@ -1763,6 +1763,10 @@ const serverHandlers: ServerHandlers = {
   close(code, reason) {
     if (code < 0) receiverOnError(this, createReceiverError(serverFailures[-code]!, reason.toString()));
     else receiverOnConclude(this, code, reason);
+
+    // The native side has just written its Close frame. If that flushed everything, it shut the socket down at once
+    // and no drain event follows.
+    if (code !== 1006) serverHandlers.drain.$call(this);
   },
 };
 

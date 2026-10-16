@@ -42,6 +42,7 @@ fn arena_dup<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
 /// `npm:@foo/bar@~1.2.3` -> (`npm:@foo/bar`, `~1.2.3`); `npm:foo` -> (`npm:foo`, `""`).
 fn split_npm_alias(literal: &[u8]) -> Option<(&[u8], &[u8])> {
     let literal = strings::trim(literal, &strings::WHITESPACE_CHARS);
+    let literal = dependency::without_npm_protocol(literal);
     let (name, version) = Dependency::split_name_and_maybe_version(literal.strip_prefix(b"npm:")?);
     if name.is_empty() || name == b"@" {
         return None;
@@ -132,7 +133,7 @@ fn keeps_declared_range(version_literal: &[u8]) -> bool {
 }
 
 /// `resolved` in the pin style of the declared literal (None = the literal is kept as written); --latest rewrites dist-tags too.
-fn updated_version_literal(
+pub fn updated_version_literal(
     original_version_literal: &[u8],
     resolved: semver::Version,
     resolved_buf: &[u8],
@@ -145,7 +146,7 @@ fn updated_version_literal(
             write!(&mut v, "{}@", bstr::BStr::new(alias)).expect("infallible: in-memory write");
             version_literal
         }
-        None => original_version_literal,
+        None => dependency::without_npm_protocol(original_version_literal),
     };
     if !update_to_latest && keeps_declared_range(version_literal) {
         return None;
@@ -483,12 +484,22 @@ pub(crate) fn edit_update_entries(
                 continue;
             }
 
+            // A peer range states which versions the package works with, so `--exact` never pins
+            // it, and `--latest` leaves it alone when it already allows the resolved version.
+            let is_peer = group.prop == DependencyGroup::PEER.prop;
+            let resolved = resolution.npm().version;
+            let allowed = is_peer
+                && workspace_dep.version.try_npm().is_some_and(|npm_version| {
+                    npm_version
+                        .version
+                        .satisfies(resolved, string_buf, string_buf)
+                });
             let Some(new_version) = updated_version_literal(
                 &entry.original_version_literal,
-                resolution.npm().version,
+                resolved,
                 string_buf,
-                options.exact_versions,
-                update_to_latest,
+                options.exact_versions && !is_peer,
+                update_to_latest && !allowed,
             )
             .filter(|new_version| new_version.as_slice() != value_literal) else {
                 continue;
@@ -541,6 +552,27 @@ pub(crate) fn for_each_catalog_object(
     }
 
     Ok(())
+}
+
+/// Returns the catalog object in the root package.json that `catalog:<catalog_name>` reads
+/// `dep_name` from. Like `CatalogMap::locate`, it prefers the exact spelling of `catalog_name`.
+pub fn catalog_object_of(
+    root_package_json: &Expr,
+    catalog_name: &[u8],
+    dep_name: &[u8],
+) -> Option<bun_ast::StoreRef<E::Object>> {
+    let mut found = None;
+    let _ = for_each_catalog_object(root_package_json, |name, catalog| {
+        if CatalogMap::same_name(name, catalog_name)
+            && (found.is_none() || name == catalog_name)
+            && let Some(entries) = catalog.data.e_object()
+            && entries.has_property(dep_name)
+        {
+            found = Some(entries);
+        }
+        Ok(())
+    });
+    found
 }
 
 /// Records the declared version of every catalog entry a bare `bun update` may rewrite.
@@ -832,6 +864,18 @@ fn resolve_catalog_literals(
             }
         }
 
+        // `--exact` does not pin a catalog entry that a `catalog:` peer dependency uses, because
+        // publishing copies the entry into that peer range.
+        let exact_versions = exact_versions
+            && !lockfile.buffers.dependencies.iter().any(|row| {
+                row.behavior.is_peer()
+                    && row.version.tag == dependency::Tag::Catalog
+                    && by_name.pick(
+                        infos,
+                        row.name.slice(string_buf),
+                        row.version.catalog().slice(string_buf),
+                    ) == Some(index)
+            });
         if let Some(new_literal) = updated_version_literal(
             &infos[index].original_version_literal,
             resolution.npm().version,
@@ -958,6 +1002,13 @@ pub(crate) fn edit(
     let mut replacing: usize = 0;
     let only_add_missing = manager.options.enable.only_missing();
     let move_to_target = moves_to_target(manager);
+    // `--latest` resolves every entry for a name to `latest`. Only the first match is rewritten, so
+    // the groups are scanned in the order that finds the entry an install uses.
+    let lists = if update_to_latest {
+        DEPENDENCY_GROUPS
+    } else {
+        DependencyGroup::FOUR
+    };
     // `package_json_write_back::fold_resolved_positionals` did this to the lockfile rows.
     let fold_positionals = !options.before_install
         && manager.subcommand == Subcommand::Add
@@ -1027,8 +1078,8 @@ pub(crate) fn edit(
                         continue 'loop_;
                     }
                 }
-                // Without `move_to_target` the first match ends the scan, so `FOUR` is fine here.
-                'dependency_group: for list in DependencyGroup::FOUR.map(|g| g.prop) {
+                // Unless `move_to_target` is set, the scan stops at the first group with the name.
+                'dependency_group: for list in lists.map(|g| g.prop) {
                     if let Some(query) = current_package_json.as_property(list) {
                         if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
                             let name = request.get_name();
@@ -1466,11 +1517,19 @@ pub(crate) fn edit(
                                 ),
                                 None => original,
                             };
+                            // `--exact` never pins a peer range, as in `edit_update_entries`.
+                            let is_peer = request.e_string
+                                == string_entry(
+                                    current_package_json,
+                                    DependencyGroup::PEER.prop,
+                                    request.name,
+                                )
+                                .map(|slot| slot.as_ptr());
                             match updated_version_literal(
                                 original,
                                 resolved,
                                 string_buf,
-                                options.exact_versions,
+                                options.exact_versions && !is_peer,
                                 update_to_latest,
                             ) {
                                 Some(new_version) => break 'npm arena_dup(arena, &new_version),
@@ -1492,7 +1551,7 @@ pub(crate) fn edit(
                         split_npm_alias(installed).is_some_and(|(_, version)| version.is_empty());
                     if request.version.tag == dependency::Tag::DistTag
                         || bare_alias
-                        || (manager.subcommand == Subcommand::Update
+                        || ((manager.subcommand == Subcommand::Update || options.exact_versions)
                             && request.version.tag == dependency::Tag::Npm
                             && !request.version.npm().version.is_exact())
                     {
@@ -1515,6 +1574,9 @@ pub(crate) fn edit(
                 // Not the bound row: an unchanged resolution keeps the old row's literal.
                 resolution::Tag::Workspace => match literal_tag(e_string.data.slice()) {
                     dependency::Tag::Workspace => e_string.data.slice(),
+                    // An `npm:` alias stays as written. `workspace:*` would look the workspace up
+                    // by the entry's key, which is the alias and not the workspace's name.
+                    _ if split_npm_alias(e_string.data.slice()).is_some() => e_string.data.slice(),
                     _ => b"workspace:*",
                 },
                 _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),
@@ -1535,6 +1597,31 @@ pub(crate) fn edit(
                     name,
                 )),
             );
+        }
+    }
+    // `bun add` without a group flag writes the new spec to every non-peer group that declares the
+    // package. If this install skips one of those groups, only the entry chosen above is rewritten.
+    if !move_to_target && manager.subcommand == Subcommand::Add {
+        let features = manager.options.local_package_features;
+        for request in updates.iter() {
+            let name = request.get_resolved_name(&manager.lockfile);
+            let groups = [
+                (DependencyGroup::DEPENDENCIES, true),
+                (DependencyGroup::DEV, features.dev_dependencies),
+                (DependencyGroup::OPTIONAL, features.optional_dependencies),
+            ];
+            let entry =
+                |group: &DependencyGroup| string_entry(current_package_json, group.prop, name);
+            if (groups.iter()).any(|(group, followed)| !*followed && entry(group).is_some()) {
+                continue;
+            }
+            let mut declared = groups.iter().filter_map(|(group, _)| entry(group));
+            if let Some(slot) = declared
+                .next()
+                .filter(|slot| request.e_string == Some(slot.as_ptr()))
+            {
+                also_declared.extend(declared.map(|other| (slot, other)));
+            }
         }
     }
     for (slot, mut other) in also_declared {

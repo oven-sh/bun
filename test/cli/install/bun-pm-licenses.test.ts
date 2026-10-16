@@ -109,7 +109,7 @@ const monorepoFiles: Files = {
 // Only a devDependency, so `--prod` has nothing to list.
 const devOnlyFiles: Files = { "package.json": pkg({ devDependencies: { "no-deps": "1.0.0" } }) };
 
-// pnpm#8589: the lockfile's resolvable tree hoists the dev subtree's a-dep@1.0.9, but `--production` installs a-dep@1.0.10 there.
+// pnpm#8589: the lockfile's tree hoists the dev subtree's a-dep@1.0.9. Older versions of bun installed a-dep@1.0.10 there with `--production`.
 const outHoistedFiles: Files = {
   "package.json": pkg({
     dependencies: { "uses-a-dep-10": "1.0.0" },
@@ -142,6 +142,9 @@ async function setupProductionInstall(files: Files) {
   const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
   await install(packageDir, "hoisted", "--lockfile-only");
   await install(packageDir, "hoisted", "--production");
+  // What those versions laid.
+  renameSync(nm(packageDir, "uses-a-dep-10", "node_modules", "a-dep"), nm(packageDir, "a-dep"));
+  rmSync(nm(packageDir, "uses-a-dep-10", "node_modules"), { recursive: true });
   return packageDir;
 }
 
@@ -1767,6 +1770,34 @@ describe("bun pm licenses", () => {
       expect(stripPaths(parsed)).toStrictEqual({ Unknown: [u("bundled-1", "1.0.0"), u("no-deps", "1.0.0")] });
     },
   );
+
+  test.concurrent.each(["hoisted", "isolated"] as Linker[])(
+    "a bundled copy with another version than bun.lock is listed under its own version (%s)",
+    async linker => {
+      const dir = await setup(linker, { "package.json": pkg({ dependencies: { "bundled-1": "1.0.0" } }) });
+      const manifest = nm(dir, "bundled-1", "node_modules", "no-deps", "package.json");
+      rmSync(manifest);
+      writeFileSync(manifest, JSON.stringify({ name: "no-deps", version: "0.9.0", license: "MIT" }));
+
+      expect(await licensesJson(dir)).toStrictEqual({
+        MIT: [{ name: "no-deps", versions: ["0.9.0"], license: "MIT" }],
+        Unknown: [u("bundled-1", "1.0.0")],
+      });
+      expect(normalizeBunSnapshot(await licensesText(dir, "--no-summary"))).toBe(
+        "MIT (1)\n└── no-deps@0.9.0\n\nUnknown (1)\n└── bundled-1@1.0.0",
+      );
+    },
+  );
+
+  test.concurrent("a package that spells its version another way than bun.lock is listed", async () => {
+    const dir = clone(hoistedDir);
+    patchInstalledManifest(dir, "a-dep", { version: "1.0.1+build.7", license: "MIT" });
+
+    expect(await licensesJson(dir)).toStrictEqual({
+      MIT: [{ name: "a-dep", versions: ["1.0.1+build.7"], license: "MIT" }, ...fullJson.MIT],
+      Unknown: fullJson.Unknown.slice(1),
+    });
+  });
 
   // pnpm#8739: git dependencies are looked up the same way the installer wrote them.
   test.concurrent.each(["hoisted", "isolated"] as Linker[])("git dependency is listed (%s)", async linker => {

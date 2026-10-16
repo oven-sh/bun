@@ -4267,14 +4267,19 @@ impl VirtualMachine {
         // allocated it first, `__bun_macro_context_deinit` must not free it.
         SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
 
-        if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
-            self.hide_bun_stackframes = false;
-        }
-
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER::get()
             .unwrap_or(false)
         {
             self.transpiler_store.enabled = false;
+        }
+
+        // Process settings from the launch environment. A worker's map is its own env: it inherits these.
+        if !self.is_main_thread() {
+            return;
+        }
+
+        if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
+            self.hide_bun_stackframes = false;
         }
 
         if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {

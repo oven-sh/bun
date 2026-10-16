@@ -7350,9 +7350,8 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "onNativeRead");
         let _keepalive = self.keepalive();
         if let RejectedSend::Errno(_) = self.rejected_send.get() {
-            // The peer answered before it left. The flush counts what waits as sent.
+            // The peer answered before it left.
             self.rejected_send.set(RejectedSend::Dropped);
-            self.register_auto_flush();
         }
         let outer = self.in_native_read.replace(true);
         // Engine-driven inbound: all reads flow through the rewritten connection engine.

@@ -564,9 +564,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// path which also pushes a scope, so this flag is redundant for those.)
     pub(crate) is_inside_single_stmt_body: bool,
 
-    /// We must be careful to avoid revisiting nodes that have scopes.
-    pub(crate) is_revisit_for_substitution: bool,
-
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
 
     // Inside a TypeScript namespace, an "export declare" statement can be used
@@ -1270,7 +1267,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// One use of `ns` (counted by `record_usage`) is an accounted-for read.
     pub(crate) fn note_tracked_namespace_use(&mut self, ns: Ref) {
-        if self.is_revisit_for_substitution || self.is_control_flow_dead {
+        if self.is_control_flow_dead {
             return;
         }
         let n = self.namespace_tracked_uses.entry(ns).or_default();
@@ -2093,9 +2090,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// another binding (an unbound global, whose name every scope already
     /// avoids), so `scope_uses` skips it.
     pub(crate) fn record_usage_impl(&mut self, ref_: Ref, scope_use: bool) {
-        if self.is_revisit_for_substitution {
-            return;
-        }
         // The use count stored in the symbol is used for generating symbol names
         // during minification. These counts shouldn't include references inside dead
         // code regions since those will be culled.
@@ -2750,28 +2744,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             replacement_can_be_removed,
         ) {
             Substitution::Success(result) => {
-                if matches!(
-                    result.data,
-                    js_ast::ExprData::EBinary(_)
-                        | js_ast::ExprData::EUnary(_)
-                        | js_ast::ExprData::EIf(_)
-                ) {
-                    let prev_substituting = self.is_revisit_for_substitution;
-                    self.is_revisit_for_substitution = true;
-                    // O(n^2) and we will need to think more carefully about
-                    // this once we implement syntax compression
-                    *expr = result;
-                    self.visit_expr(expr);
-                    self.is_revisit_for_substitution = prev_substituting;
-                } else {
-                    *expr = result;
-                }
-                return true;
+                *expr = result;
+                true
             }
-            _ => {}
+            _ => false,
         }
-
-        false
     }
 
     fn substitute_single_use_symbol_in_expr(
@@ -5892,17 +5869,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if opts.is_call_target() || opts.is_template_tag() {
             self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
-            if !self.is_revisit_for_substitution {
-                let call = self
-                    .import_symbol_property_uses
-                    .get_or_put_value(self.exports_ref, Default::default())
-                    .expect("OOM")
-                    .value_ptr
-                    .get_or_put_value(name, Default::default())
-                    .expect("OOM");
-                call.count_estimate += 1;
-                call.is_call_target = true;
-            }
+            let call = self
+                .import_symbol_property_uses
+                .get_or_put_value(self.exports_ref, Default::default())
+                .expect("OOM")
+                .value_ptr
+                .get_or_put_value(name, Default::default())
+                .expect("OOM");
+            call.count_estimate += 1;
+            call.is_call_target = true;
         }
     }
 
@@ -6628,10 +6603,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             return false;
         }
-        // Same node visited again (const inlining); already counted.
-        if self.is_revisit_for_substitution {
-            return true;
-        }
         let Some(use_) = self.existing_part_use(base) else {
             return false;
         };
@@ -6652,7 +6623,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn ignore_usage(&mut self, r#ref: Ref) {
-        if !self.is_control_flow_dead && !self.is_revisit_for_substitution {
+        if !self.is_control_flow_dead {
             debug_assert!((r#ref.inner_index() as usize) < self.symbols.len());
             self.symbols[r#ref.inner_index() as usize].use_count_estimate = self.symbols
                 [r#ref.inner_index() as usize]
@@ -9807,7 +9778,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scope_uses: Vec::new(),
             span_uses: Vec::new(),
             is_inside_single_stmt_body: false,
-            is_revisit_for_substitution: false,
             method_call_must_be_replaced_with_undefined: false,
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,

@@ -1455,4 +1455,28 @@ describe("bundler", () => {
       run: { stdout: "1" },
     });
   });
+
+  // The signature of a hook is made from the hooks that it calls. A single-use
+  // value that the minifier moves into the statement of a hook call does not
+  // add a call, so the signature is the same with and without minifySyntax.
+  for (const minifySyntax of [false, true]) {
+    itBundled(`jsx/FastRefreshSignatureNextToSingleUse${minifySyntax ? "MinifySyntax" : ""}`, {
+      files: {
+        "/index.tsx": /* js */ `
+          globalThis.$RefreshSig$ = () => fn => fn;
+          globalThis.$RefreshReg$ = () => {};
+          function useThing() { return 1; }
+          function useCounter(g) { const v = g(); return v + useThing(); }
+          console.log(useCounter(() => 1));
+        `,
+      },
+      backend: "cli",
+      reactFastRefresh: true,
+      minifySyntax,
+      onAfterBundle(api) {
+        expect(api.readFile("out.js").match(/_s\(useCounter, "([^"]+)"/)?.[1]).toBe("yRI4DTW2zYY=");
+      },
+      run: { stdout: "2" },
+    });
+  }
 });

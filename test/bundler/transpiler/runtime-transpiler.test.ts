@@ -290,6 +290,29 @@ test.skipIf(isDebug || isASAN)(
 // The runtime transpiler moves a single-use `let`/`const` into the statement
 // after it.
 describe.concurrent("a single-use declaration moved into the next statement", () => {
+  const indirectEval = /* js */ `
+    const results = {};
+    function movedValue(code) { var secret = 1; const r = (0, eval)(code); return r + "!"; }
+    results.movedValue = movedValue("typeof secret");
+    function movedCallee(code) { var secret = 1; const e = eval; return e(code) + "!"; }
+    results.movedCallee = movedCallee("typeof secret");
+    function inTarget(code) { var secret = 1; const s = [1]; return s + (0, eval)(code); }
+    results.inTarget = inTarget("typeof secret");
+    function foldedCallee(code) { var secret = 1; const r = (1 ? eval : 0)(code); return r + "!"; }
+    results.foldedCallee = foldedCallee("typeof secret");
+    function calleeFoldsAfterMove(code) { var secret = 1; const k = 1; const r = (k ? eval : 0)(code); return r + "!"; }
+    results.calleeFoldsAfterMove = calleeFoldsAfterMove("typeof secret");
+    function write() { var local = 1; const r = (0, eval)("local = 2"); return r + ":" + local; }
+    results.write = write();
+    results.writeMadeGlobal = globalThis.local;
+    function thisValue(fallback) { const r = (0, eval)("this"); return r || fallback; }
+    results.thisIsGlobal = thisValue("fallback") === globalThis;
+    function declares() { const r = (0, eval)("var declaredByEval = 5; 1"); return !r; }
+    results.declares = [declares(), typeof globalThis.declaredByEval];
+    function direct(code) { var secret = 1; const r = eval(code); return r + "!"; }
+    results.direct = direct("typeof secret");
+    console.log(JSON.stringify(results));
+  `;
   const shortCircuit = /* js */ `
     let calls = 0;
     const fn = () => ++calls;
@@ -330,6 +353,17 @@ describe.concurrent("a single-use declaration moved into the next statement", ()
       sameCase: attempt(() => sameCase(0)),
     }));
   `;
+  // A define replaces the expression that the source names. The move does not
+  // make a new one, so a function body gives the same answer as the module scope.
+  const defineThroughAlias = /* js */ `
+    function viaEnv() { const e = process.env; return e.ALIASED_DEFINE + "!"; }
+    function viaProcess() { const p = process; return p.env.ALIASED_DEFINE + "!"; }
+    const env = process.env;
+    const atModuleScope = env.ALIASED_DEFINE + "!";
+    const direct = process.env.ALIASED_DEFINE + "!";
+    console.log(JSON.stringify({ viaEnv: viaEnv(), viaProcess: viaProcess(), atModuleScope, direct }));
+  `;
+
   async function run(source: string, how: "mjs" | "cjs" | "-e", flags: string[] = []) {
     using dir = tempDir("transpiler-single-use", how === "-e" ? {} : { [`fixture.${how}`]: source });
     await using proc = Bun.spawn({
@@ -342,6 +376,25 @@ describe.concurrent("a single-use declaration moved into the next statement", ()
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout: stdout.trim() && JSON.parse(stdout), stderr, exitCode };
   }
+
+  test.each(["mjs", "cjs", "-e"] as const)("an indirect eval runs in the global scope (%s)", async how => {
+    expect(await run(indirectEval, how)).toEqual({
+      stdout: {
+        movedValue: "undefined!",
+        movedCallee: "undefined!",
+        inTarget: "1undefined",
+        foldedCallee: "undefined!",
+        calleeFoldsAfterMove: "undefined!",
+        write: "2:1",
+        writeMadeGlobal: 2,
+        thisIsGlobal: true,
+        declares: [false, "number"],
+        direct: "number!",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 
   test.each(["mjs", "cjs", "-e"] as const)(
     "a call still runs when a literal moves in front of && || ?? (%s)",
@@ -374,4 +427,12 @@ describe.concurrent("a single-use declaration moved into the next statement", ()
       });
     },
   );
+
+  test.each(["mjs", "cjs", "-e"] as const)("--define does not apply through an alias (%s)", async how => {
+    expect(await run(defineThroughAlias, how, ["--define", 'process.env.ALIASED_DEFINE:"DEFINED"'])).toEqual({
+      stdout: { viaEnv: "undefined!", viaProcess: "undefined!", atModuleScope: "undefined!", direct: "DEFINED!" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

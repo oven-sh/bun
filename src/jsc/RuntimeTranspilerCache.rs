@@ -65,7 +65,7 @@ bun_core::declare_scope!(cache, visible);
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
 /// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
-/// Version 36: A `switch` case is minified after every case is visited.
+/// Version 36: A statement is visited once, and a `switch` case is minified after every case is visited.
 const EXPECTED_VERSION: u32 = 36;
 
 /// Source files smaller than this are not written to / read from the on-disk

@@ -23,6 +23,9 @@
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/TypedArrayAdaptersForwardDeclarations.h"
+#include <JavaScriptCore/ObjectInitializationScope.h>
+#include <bit>
+#include <cmath>
 
 namespace Bun {
 using namespace JSC;
@@ -57,13 +60,17 @@ typedef struct DataCellRaw {
     uint64_t length;
 } DataCellRaw;
 
-typedef struct TypedArrayDataCell {
-    void* headPtr;
-    void* data;
+enum class PackedArrayElem : uint8_t {
+    Int4 = 0,
+    Float4 = 1,
+};
+
+// A 1-D binary int4[]/float4[] with no NULL, still in the wire buffer.
+typedef struct PackedArrayDataCell {
+    const uint8_t* data;
     uint32_t length;
-    uint32_t byteLength;
-    JSC::JSType type;
-} TypedArrayDataCell;
+    PackedArrayElem elem;
+} PackedArrayDataCell;
 
 typedef union DataCellValue {
     uint8_t null_value;
@@ -78,7 +85,7 @@ typedef union DataCellValue {
     size_t bytea[2];
     WTF::StringImpl* json;
     DataCellArray array;
-    TypedArrayDataCell typed_array;
+    PackedArrayDataCell packed_array;
     DataCellRaw raw;
     uint32_t unsigned_integer;
 } DataCellValue;
@@ -95,7 +102,7 @@ enum class DataCellTag : uint8_t {
     Bytea = 8,
     Json = 9,
     Array = 10,
-    TypedArray = 11,
+    PackedArray = 11,
     Raw = 12,
     UnsignedInteger = 13,
     UnsignedBigint = 14,
@@ -118,6 +125,10 @@ typedef struct DataCell {
     bool isNamedColumn() const { return _indexedColumnFlag == 0; }
     bool isDuplicateColumn() const { return _indexedColumnFlag == 2; }
 } DataCell;
+
+// Rust declares the same layout (`SQLDataCell` in src/sql_jsc/shared/SQLDataCell.rs).
+static_assert(sizeof(DataCell) == 32, "DataCell layout must match the Rust SQLDataCell");
+static_assert(sizeof(PackedArrayDataCell) == 16, "PackedArrayDataCell layout must match the Rust PackedArray");
 
 class BunStructureFlags {
 public:
@@ -218,79 +229,58 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         }
         RELEASE_AND_RETURN(scope, JSC::constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), args));
     }
-    case DataCellTag::TypedArray: {
-        JSC::JSType type = static_cast<JSC::JSType>(cell.value.typed_array.type);
-        uint32_t length = cell.value.typed_array.length;
-        switch (type) {
-        case JSC::JSType::Int32ArrayType: {
-            JSC::JSInt32Array* array = JSC::JSInt32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt32>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
+    case DataCellTag::PackedArray: {
+        const uint8_t* data = cell.value.packed_array.data;
+        uint32_t length = cell.value.packed_array.length;
+        bool isFloat = cell.value.packed_array.elem == PackedArrayElem::Float4;
 
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(int32_t));
+        auto readBits = [data](uint32_t i) -> uint32_t {
+            uint32_t bigEndian;
+            memcpy(&bigEndian, data + static_cast<size_t>(i) * 8 + 4, sizeof(bigEndian));
+            return __builtin_bswap32(bigEndian);
+        };
+        // purifyNaN: a float NaN with payload bits widens to a NaN that is not
+        // the one JSValue boxes.
+        auto readFloat = [&](uint32_t i) -> double {
+            return purifyNaN(static_cast<double>(std::bit_cast<float>(readBits(i))));
+        };
+
+        // A double array cannot hold NaN (the hole value).
+        IndexingType indexingType = ArrayWithInt32;
+        if (isFloat) {
+            indexingType = ArrayWithDouble;
+            for (uint32_t i = 0; i < length; i++) {
+                if (std::isnan(readFloat(i))) {
+                    indexingType = ArrayWithContiguous;
+                    break;
+                }
             }
-
-            return array;
         }
-        case JSC::JSType::Uint32ArrayType: {
-            JSC::JSUint32Array* array = JSC::JSUint32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeUint32>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
 
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(uint32_t));
+        JSC::JSArray* array = nullptr;
+        {
+            JSC::ObjectInitializationScope initializationScope(vm);
+            array = JSC::JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), length);
+            if (array) {
+                // The structure can be ArrayStorage when JSC is "having a bad time".
+                IndexingType actual = array->indexingType();
+                if (hasInt32(actual)) {
+                    for (uint32_t i = 0; i < length; i++)
+                        array->initializeIndexWithoutBarrier(initializationScope, i, jsNumber(static_cast<int32_t>(readBits(i))), actual);
+                } else if (hasDouble(actual)) {
+                    for (uint32_t i = 0; i < length; i++)
+                        array->initializeIndexWithoutBarrier(initializationScope, i, jsDoubleNumber(readFloat(i)), actual);
+                } else {
+                    for (uint32_t i = 0; i < length; i++)
+                        array->initializeIndexWithoutBarrier(initializationScope, i, isFloat ? jsNumber(readFloat(i)) : jsNumber(static_cast<int32_t>(readBits(i))), actual);
+                }
             }
-            return array;
         }
-        case JSC::JSType::Int16ArrayType: {
-            JSC::JSInt16Array* array = JSC::JSInt16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt16>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(int16_t));
-            }
-
-            return array;
+        if (!array) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
         }
-        case JSC::JSType::Uint16ArrayType: {
-            JSC::JSUint16Array* array = JSC::JSUint16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeUint16>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(uint16_t));
-            }
-            return array;
-        }
-        case JSC::JSType::Float16ArrayType: {
-            JSC::JSFloat16Array* array = JSC::JSFloat16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat16>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * 2); // sizeof(float16_t)
-            }
-            return array;
-        }
-        case JSC::JSType::Float32ArrayType: {
-            JSC::JSFloat32Array* array = JSC::JSFloat32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat32>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(float));
-            }
-            return array;
-        }
-        case JSC::JSType::Float64ArrayType: {
-            JSC::JSFloat64Array* array = JSC::JSFloat64Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat64>(), length);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            if (length > 0) {
-                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * sizeof(double));
-            }
-            return array;
-        }
-        default: {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: implement this typed array type");
-        }
-        }
+        return array;
     }
     default: {
         RELEASE_ASSERT_NOT_REACHED();

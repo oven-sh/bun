@@ -78,10 +78,6 @@ pub(crate) fn postgres_error_to_js_with_hint(
         InvalidQueryBinding => b"ERR_POSTGRES_INVALID_QUERY_BINDING",
         InvalidServerKey => b"ERR_POSTGRES_INVALID_SERVER_KEY",
         InvalidServerSignature => b"ERR_POSTGRES_INVALID_SERVER_SIGNATURE",
-        MultidimensionalArrayNotSupportedYet => {
-            b"ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET"
-        }
-        NullsInArrayNotSupportedYet => b"ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET",
         Overflow => b"ERR_POSTGRES_OVERFLOW",
         PBKDFD2 => b"ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2",
         SASL_SIGNATURE_MISMATCH => b"ERR_POSTGRES_SASL_SIGNATURE_MISMATCH",

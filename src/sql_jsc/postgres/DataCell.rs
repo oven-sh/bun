@@ -11,7 +11,9 @@ use bun_sql::shared::data::Data;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 pub(crate) use crate::shared::sql_data_cell::SQLDataCell;
-pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value};
+pub use crate::shared::sql_data_cell::{
+    Array, Flags, PackedArray, PackedArrayElem, Raw, Tag, Value,
+};
 
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
@@ -126,6 +128,9 @@ fn try_slice(slice: &[u8], count: usize) -> &[u8] {
 }
 
 const MAX_ARRAY_NESTING_DEPTH: usize = 100;
+/// `MAXDIM` in the Postgres server. A nesting level costs no wire bytes, so
+/// this bounds how many arrays a binary value can make per element.
+const PG_MAX_ARRAY_DIMENSIONS: usize = 6;
 
 // PERF: `array_type` and `is_json_sub_array` are only used in value
 // position (branch selectors), never type position. Profile if it shows up on a hot path.
@@ -617,128 +622,218 @@ fn parse_array(
     }
 
     // disarm errdefer
-    let mut array = core::mem::ManuallyDrop::new(scopeguard::ScopeGuard::into_inner(array));
-    let len = array.len() as u32;
-    let cap = array.capacity() as u32;
-    let ptr = array.as_mut_ptr();
-    Ok(SQLDataCell {
+    Ok(make_array_cell(scopeguard::ScopeGuard::into_inner(array)))
+}
+
+/// Hands an owned `Vec<SQLDataCell>` to C++ as a `Tag::Array` cell.
+fn make_array_cell(cells: Vec<SQLDataCell>) -> SQLDataCell {
+    if cells.is_empty() {
+        return SQLDataCell {
+            tag: Tag::Array,
+            value: Value {
+                array: Array::default(),
+            },
+            ..Default::default()
+        };
+    }
+    let mut cells = core::mem::ManuallyDrop::new(cells);
+    let len = cells.len() as u32;
+    let cap = cells.capacity() as u32;
+    let ptr = cells.as_mut_ptr();
+    SQLDataCell {
         tag: Tag::Array,
         value: Value {
             array: Array { ptr, len, cap },
         },
         free_value: 1,
         ..Default::default()
-    })
+    }
 }
 
-// Helper: typed-array binary path shared by .int4_array / .float4_array.
-// Monomorphized over the element type.
-fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
-    tag: types::Tag,
+/// Element types of the binary `int4[]` / `float4[]` decoders.
+trait BinaryArrayElem: Copy {
+    const PACKED: PackedArrayElem;
+    fn from_wire(bytes: [u8; 4]) -> Self;
+    fn into_cell(self) -> SQLDataCell;
+}
+
+impl BinaryArrayElem for i32 {
+    const PACKED: PackedArrayElem = PackedArrayElem::Int4;
+    fn from_wire(bytes: [u8; 4]) -> Self {
+        i32::from_be_bytes(bytes)
+    }
+    fn into_cell(self) -> SQLDataCell {
+        SQLDataCell::int4(self)
+    }
+}
+
+impl BinaryArrayElem for f32 {
+    const PACKED: PackedArrayElem = PackedArrayElem::Float4;
+    fn from_wire(bytes: [u8; 4]) -> Self {
+        f32::from_bits(u32::from_be_bytes(bytes))
+    }
+    fn into_cell(self) -> SQLDataCell {
+        SQLDataCell::float8(self as f64)
+    }
+}
+
+/// One element at `*cursor`: a 4-byte length (`-1` for NULL) and the payload.
+fn decode_binary_array_elem<Elem: BinaryArrayElem>(
     bytes: &[u8],
+    cursor: &mut usize,
 ) -> Result<SQLDataCell> {
+    let len_end = cursor
+        .checked_add(4)
+        .ok_or(AnyPostgresError::InvalidBinaryData)?;
+    if len_end > bytes.len() {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+    let elem_len = i32::from_be_bytes(
+        bytes[*cursor..len_end]
+            .try_into()
+            .expect("infallible: size matches"),
+    );
+    *cursor = len_end;
+    if elem_len == -1 {
+        return Ok(SQLDataCell::null());
+    }
+    let elem_size = size_of::<Elem>();
+    if usize::try_from(elem_len).ok() != Some(elem_size) {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+    let elem_end = len_end + elem_size;
+    if elem_end > bytes.len() {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+    let value = Elem::from_wire(
+        bytes[len_end..elem_end]
+            .try_into()
+            .expect("infallible: size matches"),
+    );
+    *cursor = elem_end;
+    Ok(value.into_cell())
+}
+
+/// One dimension: `dims[0]` nested arrays, or elements when `dims` has one entry.
+fn decode_binary_array_level<Elem: BinaryArrayElem>(
+    bytes: &[u8],
+    dims: &[usize],
+    cursor: &mut usize,
+) -> Result<SQLDataCell> {
+    let (count, rest) = dims.split_first().expect("dims is never empty here");
+    // errdefer: SQLDataCell has FFI-side resources that Vec::drop won't release.
+    let mut cells = scopeguard::guard(Vec::<SQLDataCell>::with_capacity(*count), |mut a| {
+        for cell in a.iter_mut() {
+            cell.deinit();
+        }
+    });
+    for _ in 0..*count {
+        let cell = if rest.is_empty() {
+            decode_binary_array_elem::<Elem>(bytes, cursor)?
+        } else {
+            decode_binary_array_level::<Elem>(bytes, rest, cursor)?
+        };
+        cells.push(cell);
+    }
+    Ok(make_array_cell(scopeguard::ScopeGuard::into_inner(cells)))
+}
+
+/// Binary array with NULL elements or more than one dimension, as a `Tag::Array`
+/// tree like the text path makes. Wire layout (`array_send`): ndim(4) flags(4)
+/// elemtype(4), per dimension size(4) lbound(4), per element len(4) + payload.
+fn decode_binary_array_cells<Elem: BinaryArrayElem>(
+    bytes: &[u8],
+    ndim: u32,
+) -> Result<SQLDataCell> {
+    // Every count is server-controlled: bound it against `bytes` before it sizes anything.
+    let ndim = ndim as usize;
+    if ndim > PG_MAX_ARRAY_DIMENSIONS {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+    if ndim == 0 {
+        return Ok(make_array_cell(Vec::new()));
+    }
+    let header_len = 12 + ndim * 8;
+    if bytes.len() < header_len {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+
+    let mut dims: Vec<usize> = Vec::with_capacity(ndim);
+    let mut total: usize = 1;
+    for d in 0..ndim {
+        let off = 12 + d * 8;
+        let dim_len = i32::from_be_bytes(
+            bytes[off..off + 4]
+                .try_into()
+                .expect("infallible: size matches"),
+        );
+        let dim_len = usize::try_from(dim_len).map_err(|_| AnyPostgresError::InvalidBinaryData)?;
+        dims.push(dim_len);
+        total = total
+            .checked_mul(dim_len)
+            .ok_or(AnyPostgresError::InvalidBinaryData)?;
+    }
+    if total == 0 {
+        return Ok(make_array_cell(Vec::new()));
+    }
+    // Each element carries at least its 4-byte length prefix.
+    if total > (bytes.len() - header_len) / 4 {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+
+    let mut cursor = header_len;
+    decode_binary_array_level::<Elem>(bytes, &dims, &mut cursor)
+}
+
+/// Binary `int4[]` / `float4[]`. A 1-D value with no NULL stays in the wire
+/// buffer as a `PackedArray` cell. Every other shape is decoded per element.
+fn from_bytes_binary_array<Elem: BinaryArrayElem>(bytes: &[u8]) -> Result<SQLDataCell> {
     if bytes.len() < 12 {
         return Err(AnyPostgresError::InvalidBinaryData);
     }
     // https://github.com/postgres/postgres/blob/master/src/backend/utils/adt/arrayfuncs.c#L1549-L1645
-    let dimensions_raw: types::int4 =
-        u32::from_ne_bytes(bytes[0..4].try_into().expect("infallible: size matches"));
-    let contains_nulls: types::int4 =
-        u32::from_ne_bytes(bytes[4..8].try_into().expect("infallible: size matches"));
-
-    let dimensions = dimensions_raw.swap_bytes();
-    if dimensions > 1 {
-        return Err(AnyPostgresError::MultidimensionalArrayNotSupportedYet);
+    let dimensions = u32::from_be_bytes(bytes[0..4].try_into().expect("infallible: size matches"));
+    let contains_nulls =
+        u32::from_be_bytes(bytes[4..8].try_into().expect("infallible: size matches"));
+    if dimensions > 1 || contains_nulls != 0 {
+        return decode_binary_array_cells::<Elem>(bytes, dimensions);
     }
 
-    if contains_nulls != 0 {
-        return Err(AnyPostgresError::NullsInArrayNotSupportedYet);
-    }
-
-    let js_typed_array_type = crate::postgres::types::tag_jsc::to_js_typed_array_type(tag)
-        .map_err(|_| AnyPostgresError::InvalidBinaryData)?;
-
-    if dimensions == 0 {
-        return Ok(SQLDataCell {
-            tag: Tag::TypedArray,
-            value: Value {
-                typed_array: TypedArray {
-                    head_ptr: core::ptr::null_mut(),
-                    ptr: core::ptr::null_mut(),
-                    len: 0,
-                    byte_len: 0,
-                    type_: js_typed_array_type,
-                },
-            },
-            ..Default::default()
-        });
-    }
-
-    // dimensions == 1 here. The 1-D binary array header is 20 bytes:
-    // ndim(4) + flags(4) + elemtype(4) + len(4) + lbound(4), followed by
-    // `len` elements each prefixed by a 4-byte length. `len` is
-    // server-controlled, so validate it against bytes.len before
-    // slice() iterates to avoid reading/writing past the buffer.
-    if bytes.len() < 20 {
-        return Err(AnyPostgresError::InvalidBinaryData);
-    }
-    let array_len: i32 =
-        i32::from_ne_bytes(bytes[12..16].try_into().expect("infallible: size matches"))
-            .swap_bytes();
-    if array_len < 0 {
-        return Err(AnyPostgresError::InvalidBinaryData);
-    }
-    // slice() consumes 2 * @sizeOf(element) bytes per element (the
-    // 4-byte length prefix + the 4-byte value for int4/float4).
-    let element_stride: usize = size_of::<Elem>() * 2;
-    let max_elements = (bytes.len() - 20) / element_stride;
-    if usize::try_from(array_len).expect("int cast") > max_elements {
-        return Err(AnyPostgresError::InvalidBinaryData);
-    }
-
-    // In-place byte-swapping of the wire header and elements inside the
-    // recv buffer is unsound here: we
-    // cannot mutate through a pointer derived from `bytes: &[u8]`
-    // — the `readonly` LLVM parameter attribute lets the optimizer elide
-    // those writes, which in the release-asan build left the header `len`
-    // un-byte-swapped (3 → 0x03000000) and produced a 192MB OOB memcpy in
-    // SQLClient.cpp. Parse into an owned buffer instead; freed via
-    // `free_value = 1` after C++ has copied it into the JS typed array.
-    let array_len = array_len as usize;
-    let elem_size = size_of::<Elem>();
-    let out_bytes = array_len * elem_size;
-    let (head_ptr, free_value) = if array_len == 0 {
-        (core::ptr::null_mut::<u8>(), 0u8)
+    let (ptr, array_len) = if dimensions == 0 {
+        (bytes[12..].as_ptr(), 0usize)
     } else {
-        let mut out: Box<[u8]> = vec![0u8; out_bytes].into_boxed_slice();
-        for i in 0..array_len {
-            // Wire layout per element for the 4-byte types this path
-            // supports (int4/float4): [elem_size length prefix][elem_size value]
-            let src_off = 20 + i * element_stride + (element_stride - elem_size);
-            // `bytes.len() >= 20 + array_len*element_stride` was validated
-            // above; `out` has `array_len*elem_size` bytes. The trait's
-            // `from_unaligned_ne_bytes`/`write_unaligned_ne_bytes` are safe
-            // `from_ne_bytes`/`to_ne_bytes` round-trips (bounds-checked), so
-            // the per-element POD cast needs no raw-pointer access.
-            let val: Elem = Elem::from_unaligned_ne_bytes(&bytes[src_off..src_off + elem_size])
-                .wire_byte_swap();
-            val.write_unaligned_ne_bytes(&mut out[i * elem_size..(i + 1) * elem_size]);
+        if bytes.len() < 20 {
+            return Err(AnyPostgresError::InvalidBinaryData);
         }
-        (Box::into_raw(out).cast::<u8>(), 1u8)
+        let array_len =
+            i32::from_be_bytes(bytes[12..16].try_into().expect("infallible: size matches"));
+        let array_len =
+            usize::try_from(array_len).map_err(|_| AnyPostgresError::InvalidBinaryData)?;
+        // `len` is server-controlled. C++ reads `len` elements of this stride.
+        let element_stride = size_of::<Elem>() * 2;
+        if array_len > (bytes.len() - 20) / element_stride {
+            return Err(AnyPostgresError::InvalidBinaryData);
+        }
+        let elem_size = size_of::<Elem>() as u32;
+        for prefix in bytes[20..20 + array_len * element_stride].chunks_exact(element_stride) {
+            if u32::from_be_bytes(prefix[..4].try_into().expect("infallible: size matches"))
+                != elem_size
+            {
+                return Err(AnyPostgresError::InvalidBinaryData);
+            }
+        }
+        (bytes[20..].as_ptr(), array_len)
     };
 
     Ok(SQLDataCell {
-        tag: Tag::TypedArray,
+        tag: Tag::PackedArray,
         value: Value {
-            typed_array: TypedArray {
-                head_ptr,
-                ptr: head_ptr,
+            packed_array: PackedArray {
+                ptr,
                 len: array_len as u32,
-                byte_len: out_bytes as u32,
-                type_: js_typed_array_type,
+                elem: Elem::PACKED,
             },
         },
-        free_value,
         ..Default::default()
     })
 }
@@ -755,14 +850,14 @@ fn from_bytes(
         // TODO: .int2_array, .float8_array
         T::int4_array => {
             if binary {
-                from_bytes_typed_array::<i32>(T::int4_array, bytes)
+                from_bytes_binary_array::<i32>(bytes)
             } else {
                 parse_array(bytes, bigint, T::int4_array, global_object, None, false, 0)
             }
         }
         T::float4_array => {
             if binary {
-                from_bytes_typed_array::<f32>(T::float4_array, bytes)
+                from_bytes_binary_array::<f32>(bytes)
             } else {
                 parse_array(bytes, bigint, T::float4_array, global_object, None, false, 0)
             }

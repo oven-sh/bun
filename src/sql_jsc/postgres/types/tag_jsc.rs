@@ -5,23 +5,6 @@
 use crate::jsc::{JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sql::postgres::types::tag::Tag;
 
-// `Tag` is a runtime arg rather than a const generic: it is a
-// `#[repr(transparent)] struct Tag(Short)` with associated consts (non-exhaustive
-// OID space), so it can't be `ConstParamTy`. The body
-// is a plain match and the only caller (DataCell) computes the tag at runtime
-// anyway.
-// `UnsupportedArrayType` is reported via the crate-wide
-// `crate::Error`.
-pub(crate) fn to_js_typed_array_type(t: Tag) -> crate::Result<JSType> {
-    match t {
-        Tag::int4_array => Ok(JSType::Int32Array),
-        // Tag::int2_array => Ok(JSType::Uint2Array),
-        Tag::float4_array => Ok(JSType::Float32Array),
-        // Tag::float8_array => Ok(JSType::Float64Array),
-        _ => Err(crate::Error::UnsupportedArrayType),
-    }
-}
-
 pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(Tag::numeric);

@@ -10,6 +10,7 @@
 // before iterating; otherwise slice() reads and writes past the read buffer.
 import { SQL } from "bun";
 import { afterAll, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import {
   listeningServer,
   pgAuthenticationOk,
@@ -27,6 +28,16 @@ const i32 = (n: number): Buffer => {
   b.writeInt32BE(n, 0);
   return b;
 };
+const i16 = (n: number): Buffer => {
+  const b = Buffer.alloc(2);
+  b.writeInt16BE(n, 0);
+  return b;
+};
+const f32 = (n: number): Buffer => {
+  const b = Buffer.alloc(4);
+  b.writeFloatBE(n, 0);
+  return b;
+};
 
 // Binary int4[]/float4[] column payload header — PostgreSQL array_send():
 // Int32 ndim, Int32 flags, Int32 elemtype, then per dim: Int32 len, Int32 lbound.
@@ -39,6 +50,22 @@ function binaryArrayHeader(opts: {
 }): Buffer {
   return Buffer.concat([i32(opts.ndim), i32(opts.flags), i32(opts.elemtype), i32(opts.len), i32(opts.lbound)]);
 }
+
+// Same header with one (len, lbound = 1) pair per entry of `dims`.
+function multiDimArrayHeader(opts: { flags: number; elemtype: number; dims: number[] }): Buffer {
+  return Buffer.concat([
+    i32(opts.dims.length),
+    i32(opts.flags),
+    i32(opts.elemtype),
+    ...opts.dims.map(len => Buffer.concat([i32(len), i32(1)])),
+  ]);
+}
+
+// Element payloads: a 4-byte length prefix per element, -1 for NULL.
+const int4Elems = (values: (number | null)[]): Buffer =>
+  Buffer.concat(values.map(v => (v === null ? i32(-1) : Buffer.concat([i32(4), i32(v)]))));
+const float4Elems = (values: (number | null)[]): Buffer =>
+  Buffer.concat(values.map(v => (v === null ? i32(-1) : Buffer.concat([i32(4), f32(v)]))));
 
 // One mock server for the file; each test sets `current` before connecting and
 // the accept handler latches it per connection. A per-test server flaked on
@@ -130,6 +157,98 @@ const malformed: { name: string; oid: number; col: Buffer }[] = [
     oid: FLOAT4_ARRAY,
     col: binaryArrayHeader({ ndim: 1, flags: 0, elemtype: FLOAT4, len: 1 << 20, lbound: 1 }),
   },
+  // The has-nulls flag and ndim > 1 take the plain-array decoder. Its counts
+  // are server-controlled too.
+  {
+    name: "int4[] with nulls and len = INT32_MAX",
+    oid: INT4_ARRAY,
+    col: binaryArrayHeader({ ndim: 1, flags: 1, elemtype: INT4, len: 0x7fffffff, lbound: 1 }),
+  },
+  {
+    // 65536 x 65536 elements claimed, no element bytes follow.
+    name: "int4[] with two dimensions whose product exceeds column bytes",
+    oid: INT4_ARRAY,
+    col: multiDimArrayHeader({ flags: 0, elemtype: INT4, dims: [65536, 65536] }),
+  },
+  {
+    // Postgres never sends more than 6 dimensions (MAXDIM).
+    name: "int4[] with ndim above MAXDIM",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      i32(7),
+      i32(0),
+      i32(INT4),
+      ...Array.from({ length: 7 }, () => Buffer.concat([i32(1), i32(1)])),
+    ]),
+  },
+  {
+    // ndim=2 but only one dimension pair follows.
+    name: "int4[] with ndim=2 and a truncated header",
+    oid: INT4_ARRAY,
+    col: binaryArrayHeader({ ndim: 2, flags: 0, elemtype: INT4, len: 1, lbound: 1 }),
+  },
+  {
+    name: "int4[] with a negative second dimension",
+    oid: INT4_ARRAY,
+    col: multiDimArrayHeader({ flags: 0, elemtype: INT4, dims: [1, -1] }),
+  },
+  {
+    // No has-nulls flag, but the second element is NULL (length -1).
+    name: "int4[] without the has-nulls flag and a NULL element",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 2, lbound: 1 }),
+      i32(4),
+      i32(1),
+      i32(-1),
+      i32(2),
+    ]),
+  },
+  {
+    name: "int4[] without the has-nulls flag and an element of the wrong size",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 1, lbound: 1 }),
+      i32(2),
+      i16(7),
+      i16(0),
+    ]),
+  },
+  {
+    // Element length 2 in an int4[] that has the has-nulls flag set.
+    name: "int4[] with nulls and an element of the wrong size",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 1, elemtype: INT4, len: 2, lbound: 1 }),
+      i32(-1),
+      i32(2),
+      i16(7),
+    ]),
+  },
+  {
+    // The second element's length prefix says 4 bytes but the column ends.
+    name: "int4[] with nulls and a truncated element",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 1, elemtype: INT4, len: 2, lbound: 1 }),
+      i32(-1),
+      i32(4),
+      i16(7),
+    ]),
+  },
+  {
+    // 2 x 2 claimed, the 3rd element's payload is missing.
+    name: "int4[] with two dimensions and a missing element",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      multiDimArrayHeader({ flags: 0, elemtype: INT4, dims: [2, 2] }),
+      i32(4),
+      i32(1),
+      i32(4),
+      i32(2),
+      i32(4),
+    ]),
+  },
 ];
 
 test.each(malformed)("binary $name is rejected", async ({ oid, col }) => {
@@ -154,5 +273,172 @@ test("well-formed binary int4[] still parses", async () => {
     i32(3),
   ]);
   const result: any = await runMockQuery(col, INT4_ARRAY);
-  expect(result[0].arr).toEqual(new Int32Array([1, 2, 3]));
+  expect(result[0].arr).toEqual([1, 2, 3]);
+});
+
+// A binary int4[]/float4[] reads as a plain array, like the text path. A 1-D
+// value with no NULL is built straight from the wire bytes. Every other shape
+// goes through the per-element decoder.
+const plainArrays: { name: string; oid: number; col: Buffer; expected: unknown }[] = [
+  {
+    name: "float4[] with NaN, -0 and Infinity",
+    oid: FLOAT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: FLOAT4, len: 4, lbound: 1 }),
+      float4Elems([1.5, NaN, -0, Infinity]),
+    ]),
+    expected: [1.5, NaN, -0, Infinity],
+  },
+  {
+    // The sign and payload bits of a float NaN survive the widening to double.
+    name: "float4[] with a NaN that has payload bits",
+    oid: FLOAT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: FLOAT4, len: 3, lbound: 1 }),
+      i32(4),
+      Buffer.from([0xff, 0xff, 0xff, 0xff]),
+      i32(4),
+      Buffer.from([0x7f, 0xc0, 0x00, 0x01]),
+      i32(4),
+      f32(2.5),
+    ]),
+    expected: [NaN, NaN, 2.5],
+  },
+  {
+    name: "float4[] with a NaN that has payload bits and a NULL",
+    oid: FLOAT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 1, elemtype: FLOAT4, len: 2, lbound: 1 }),
+      i32(4),
+      Buffer.from([0xff, 0xff, 0xff, 0xff]),
+      i32(-1),
+    ]),
+    expected: [NaN, null],
+  },
+  {
+    name: "int4[] with ndim = 0",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([i32(0), i32(0), i32(INT4)]),
+    expected: [],
+  },
+  {
+    name: "int4[] with len = 0",
+    oid: INT4_ARRAY,
+    col: binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 0, lbound: 1 }),
+    expected: [],
+  },
+  {
+    name: "int4[] with a NULL element",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 1, elemtype: INT4, len: 3, lbound: 1 }),
+      int4Elems([1, null, 3]),
+    ]),
+    expected: [1, null, 3],
+  },
+  {
+    name: "float4[] with a NULL element",
+    oid: FLOAT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 1, elemtype: FLOAT4, len: 3, lbound: 1 }),
+      float4Elems([1.5, null, 3.5]),
+    ]),
+    expected: [1.5, null, 3.5],
+  },
+  {
+    // A subscript update leaves the flag set after the last NULL is gone.
+    name: "int4[] with the has-nulls flag and no NULL element",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 1, elemtype: INT4, len: 2, lbound: 1 }),
+      int4Elems([1, 2]),
+    ]),
+    expected: [1, 2],
+  },
+  {
+    name: "int4[] with two dimensions",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([multiDimArrayHeader({ flags: 0, elemtype: INT4, dims: [2, 2] }), int4Elems([1, 2, 3, 4])]),
+    expected: [
+      [1, 2],
+      [3, 4],
+    ],
+  },
+  {
+    name: "float4[] with two dimensions and a NULL element",
+    oid: FLOAT4_ARRAY,
+    col: Buffer.concat([
+      multiDimArrayHeader({ flags: 1, elemtype: FLOAT4, dims: [2, 2] }),
+      float4Elems([1.5, null, 3.5, 4.5]),
+    ]),
+    expected: [
+      [1.5, null],
+      [3.5, 4.5],
+    ],
+  },
+  {
+    name: "int4[] with three dimensions",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([multiDimArrayHeader({ flags: 0, elemtype: INT4, dims: [2, 1, 2] }), int4Elems([1, 2, 3, 4])]),
+    expected: [[[1, 2]], [[3, 4]]],
+  },
+  {
+    // A zero dimension holds no element, whatever the other dimensions say.
+    name: "int4[] with a zero dimension",
+    oid: INT4_ARRAY,
+    col: multiDimArrayHeader({ flags: 0, elemtype: INT4, dims: [0x7fffffff, 0] }),
+    expected: [],
+  },
+];
+
+test.each(plainArrays)("binary $name decodes to a plain array", async ({ oid, col, expected }) => {
+  const result: any = await runMockQuery(col, oid);
+  expect(result[0].arr).toEqual(expected);
+});
+
+// An indexed accessor on a prototype puts JSC in "having a bad time" mode: every
+// new array gets ArrayStorage, whatever indexing type was asked for. The packed
+// fill must follow the array's real storage. A subprocess, so this process stays sane.
+test.each([
+  {
+    name: "int4[]",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 4, lbound: 1 }),
+      int4Elems([1, 2, 3, 4]),
+    ]),
+    expected: "[1,2,3,4] true 4\n",
+  },
+  {
+    name: "float4[]",
+    oid: FLOAT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: FLOAT4, len: 4, lbound: 1 }),
+      float4Elems([1.5, 2.5, 3.5, 4.5]),
+    ]),
+    expected: "[1.5,2.5,3.5,4.5] true 4.5\n",
+  },
+])("binary $name decodes while JSC is having a bad time", async ({ oid, col, expected }) => {
+  current = { oid, col };
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      Object.defineProperty(Object.prototype, "123456", { get() { return 0; }, configurable: true });
+      delete Object.prototype["123456"];
+      const { SQL } = require("bun");
+      const sql = new SQL({ url: "postgres://u@127.0.0.1:${port}/db", max: 1, idleTimeout: 5, connectionTimeout: 5 });
+      const rows = await sql\`select x\`.simple();
+      console.log(JSON.stringify(rows[0].arr), Array.isArray(rows[0].arr), rows[0].arr[3]);
+      await sql.close();
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(expected);
+  expect(exitCode).toBe(0);
 });

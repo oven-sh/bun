@@ -18,8 +18,6 @@ pub enum Error {
     InvalidServerKey,
     #[error("InvalidServerSignature")]
     InvalidServerSignature,
-    #[error("UnsupportedArrayType")]
-    UnsupportedArrayType,
     #[error("JSError")]
     JSError,
     #[error("InvalidBinaryValue")]
@@ -49,7 +47,6 @@ impl Error {
             Self::PBKDFD2 => "PBKDFD2",
             Self::InvalidServerKey => "InvalidServerKey",
             Self::InvalidServerSignature => "InvalidServerSignature",
-            Self::UnsupportedArrayType => "UnsupportedArrayType",
             Self::JSError => "JSError",
             Self::InvalidBinaryValue => "InvalidBinaryValue",
             Self::Thrown => "Thrown",

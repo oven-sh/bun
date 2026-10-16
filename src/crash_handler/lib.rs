@@ -1336,7 +1336,7 @@ mod draft {
                 );
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            if limits.iter().all(|(_, limit)| limit.is_none()) {
+            {
                 // Mode 2 charges a reservation to the commit limit, `MAP_NORESERVE` or not.
                 let mut mode = [0u8; 1];
                 let strict = bun_sys::File::open(
@@ -1346,19 +1346,19 @@ mod draft {
                 )
                 .and_then(|file| file.read(&mut mode))
                 .is_ok_and(|read| read == 1 && mode[0] == b'2');
-                let _ = if strict {
-                    write_pretty!(
+                if strict {
+                    let _ = write_pretty!(
                         writer,
                         colors,
                         "<blue>note<r><d>:<r> vm.overcommit_memory is 2, which refuses a reservation over the commit limit: free memory, add swap or raise vm.overcommit_ratio\n",
-                    )
-                } else {
-                    write_pretty!(
+                    );
+                } else if limits.iter().all(|(_, limit)| limit.is_none()) {
+                    let _ = write_pretty!(
                         writer,
                         colors,
                         "<blue>note<r><d>:<r> 'ulimit -v' and 'ulimit -d' are unlimited, check the sandbox this process runs in\n",
-                    )
-                };
+                    );
+                }
             }
         }
 

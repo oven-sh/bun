@@ -153,6 +153,17 @@ describe("heapStats() mimalloc integration", () => {
       ...argv,
     ];
 
+    // Linux also names what refuses a reservation with no limit involved: mode 2 of vm.overcommit_memory, on every
+    // failure, or else a sandbox, when no limit is set.
+    const strict = isLinux && readFileSync("/proc/sys/vm/overcommit_memory", "utf8").trim() === "2";
+    const strictNote = strict
+      ? "note: vm.overcommit_memory is 2, which refuses a reservation over the commit limit: free memory, add swap or raise vm.overcommit_ratio\n"
+      : "";
+    const noLimit =
+      isLinux && !strict
+        ? "note: 'ulimit -v' and 'ulimit -d' are unlimited, check the sandbox this process runs in\n"
+        : strictNote;
+
     // Release builds only: JSC's allocator is mimalloc there, and an ASAN build does not start under these limits.
     describe.skipIf(isASAN || isDebug)("in JSC", () => {
       // From 2048 GB the smallest size is 16 GB, which an 8 GB limit refuses on every architecture. Linux only: the
@@ -163,7 +174,8 @@ describe("heapStats() mimalloc integration", () => {
           expect(await run(underLimits(limits, "-e", "1"), { BUN_JSC_structureHeapSizeInKB: "2147483648" })).toEqual({
             stderr:
               "error: could not reserve 16 GB of address space for the JavaScript heap (tried 2048 GB down to 16 GB)\n" +
-              flags.map(flag => `note: 'ulimit -${flag}' is 8388608 KB, raise or remove that limit\n`).join(""),
+              flags.map(flag => `note: 'ulimit -${flag}' is 8388608 KB, raise or remove that limit\n`).join("") +
+              strictNote,
             exitCode: 1,
             signalCode: null,
           });
@@ -178,7 +190,8 @@ describe("heapStats() mimalloc integration", () => {
         expect(await run(underLimits("ulimit -d 131072", "-e", "1"))).toEqual({
           stderr:
             "error: could not reserve 64 MB of address space for the JavaScript heap (tried 4 GB down to 32 MB, and 32 MB is too small to use)\n" +
-            "note: 'ulimit -d' is 131072 KB, raise or remove that limit\n",
+            "note: 'ulimit -d' is 131072 KB, raise or remove that limit\n" +
+            strictNote,
           exitCode: 1,
           signalCode: null,
         });
@@ -205,6 +218,14 @@ describe("heapStats() mimalloc integration", () => {
           signalCode: null,
         });
       });
+
+      test.concurrent("starts with the size that the note names", async () => {
+        expect(await run([bunExe(), "-e", "1"], { BUN_JSC_structureHeapSizeInKB: "65536" })).toEqual({
+          stderr: "",
+          exitCode: 0,
+          signalCode: null,
+        });
+      });
     });
 
     // What bun prints for each failure JSC can report, on every build. The child exits with 7 when the function returns.
@@ -214,13 +235,6 @@ describe("heapStats() mimalloc integration", () => {
         "-e",
         `require("bun:internal-for-testing").crash_handler.structureHeapReservationFailed(${largest}, ${smallest}, ${reserved}); process.exit(7);`,
       ]);
-    // No limit is set on these children. Linux then names what else refuses a reservation.
-    const noLimit = !isLinux
-      ? ""
-      : readFileSync("/proc/sys/vm/overcommit_memory", "utf8").trim() === "2"
-        ? "note: vm.overcommit_memory is 2, which refuses a reservation over the commit limit: free memory, add swap or raise vm.overcommit_ratio\n"
-        : "note: 'ulimit -v' and 'ulimit -d' are unlimited, check the sandbox this process runs in\n";
-
     test.concurrent("the OS refused every size", async () => {
       expect(await report(4 * GB, 32 * MB, 0)).toEqual({
         stderr:

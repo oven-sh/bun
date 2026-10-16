@@ -602,6 +602,45 @@ describe("bundler files option", () => {
     expect(output).toContain("injected by plugin");
   });
 
+  // A plugin module in another namespace can have the path of an in-memory
+  // file. It is another module: the namespaced onLoad gives its contents.
+  test("in-memory file and a plugin module with the same path in another namespace", async () => {
+    const loads: string[] = [];
+    const result = await Bun.build({
+      entrypoints: ["/entry.js"],
+      throw: false,
+      files: {
+        "/entry.js": `
+          import memory from "/virtual/x.js";
+          import virt from "virt:x";
+          export default { memory, virt };
+        `,
+        "/virtual/x.js": `export default "FROM_FILES";`,
+      },
+      plugins: [
+        {
+          name: "virt",
+          setup(build) {
+            build.onResolve({ filter: /^virt:x$/ }, () => ({ path: "/virtual/x.js", namespace: "virt" }));
+            build.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+              loads.push("virt");
+              return { contents: `export default "FROM_VIRT";`, loader: "js" };
+            });
+          },
+        },
+      ],
+    });
+
+    expect({ success: result.success, logs: result.logs.map(log => log.message), loads }).toEqual({
+      success: true,
+      logs: [],
+      loads: ["virt"],
+    });
+    const output = await result.outputs[0].text();
+    expect(output).toContain(`"FROM_FILES"`);
+    expect(output).toContain(`"FROM_VIRT"`);
+  });
+
   // Specifiers are joined onto the importer's directory to find a matching
   // in-memory file. A specifier longer than a path buffer (4096 bytes on
   // Linux, 1024 on macOS, 98302 on Windows) used to abort the process. These

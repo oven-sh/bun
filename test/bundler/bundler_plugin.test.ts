@@ -365,6 +365,193 @@ describe("bundler", () => {
       },
     };
   });
+  // A module is its namespace plus its path, as in esbuild. Two plugin modules
+  // with one path in two namespaces are two modules, in either import order.
+  for (const first of ["nsa", "nsb"] as const) {
+    itBundled(`plugin/NamespaceSamePathDistinctModules${first === "nsa" ? "" : "Reversed"}`, () => {
+      const loads: string[] = [];
+      const second = first === "nsa" ? "nsb" : "nsa";
+      return {
+        files: {
+          "index.ts": /* ts */ `
+            import ${first[2]} from "${first}:m";
+            import ${second[2]} from "${second}:m";
+            console.log(JSON.stringify({ a, b }));
+          `,
+        },
+        plugins(builder) {
+          builder.onResolve({ filter: /^nsa:/ }, () => ({ path: "SAMEPATH", namespace: "nsa" }));
+          builder.onResolve({ filter: /^nsb:/ }, () => ({ path: "SAMEPATH", namespace: "nsb" }));
+          builder.onLoad({ filter: /.*/, namespace: "nsa" }, () => {
+            loads.push("nsa");
+            return { contents: `export default "FROM_NSA";`, loader: "js" };
+          });
+          builder.onLoad({ filter: /.*/, namespace: "nsb" }, () => {
+            loads.push("nsb");
+            return { contents: `export default "FROM_NSB";`, loader: "js" };
+          });
+        },
+        run: {
+          stdout: `{"a":"FROM_NSA","b":"FROM_NSB"}`,
+        },
+        onAfterBundle() {
+          expect(loads.sort()).toEqual(["nsa", "nsb"]);
+        },
+      };
+    });
+  }
+  // A plugin module whose path is the path of a file on disk, in another
+  // namespace, is not that file. The namespaced onLoad gives its contents.
+  itBundled("plugin/NamespaceModuleWithThePathOfAFile", ({ root }) => {
+    const loads: string[] = [];
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import disk from "./real.ts";
+          import virt from "virt:real";
+          console.log(JSON.stringify({ disk, virt }));
+        `,
+        "real.ts": `export default "FROM_DISK";`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^virt:real$/ }, () => ({ path: join(root, "real.ts"), namespace: "virt" }));
+        builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+          loads.push("virt");
+          return { contents: `export default "FROM_VIRT";`, loader: "js" };
+        });
+      },
+      run: {
+        stdout: `{"disk":"FROM_DISK","virt":"FROM_VIRT"}`,
+      },
+      onAfterBundle() {
+        expect(loads).toEqual(["virt"]);
+      },
+    };
+  });
+  // The same two modules, registered in the other order: late.ts is loaded only
+  // after the plugin module is on its way into the bundle, so the file is
+  // resolved second.
+  itBundled("plugin/NamespaceModuleWithThePathOfAFileReversed", ({ root }) => {
+    const answered = Promise.withResolvers<void>();
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import virt from "virt:real";
+          import "./late.ts";
+          console.log(virt);
+        `,
+        "late.ts": ``,
+        "real.ts": `export default "FROM_DISK";`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^virt:real$/ }, () => {
+          answered.resolve();
+          return { path: join(root, "real.ts"), namespace: "virt" };
+        });
+        builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+          return { contents: `export default "FROM_VIRT";`, loader: "js" };
+        });
+        builder.onLoad({ filter: /late\.ts$/ }, async () => {
+          await answered.promise;
+          return { contents: `import disk from "./real.ts"; console.log(disk);`, loader: "ts" };
+        });
+      },
+      run: {
+        stdout: "FROM_DISK\nFROM_VIRT",
+      },
+    };
+  });
+  // Two specifiers that resolve to one namespace and one path are one module.
+  itBundled("plugin/NamespaceSamePathSameNamespaceIsOneModule", () => {
+    let loads = 0;
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import a from "ns:one";
+          import b from "ns:two";
+          console.log(a === b, a.tag);
+        `,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^ns:/ }, () => ({ path: "SAMEPATH", namespace: "ns" }));
+        builder.onLoad({ filter: /.*/, namespace: "ns" }, () => {
+          loads++;
+          return { contents: `export default { tag: "shared" };`, loader: "js" };
+        });
+      },
+      run: {
+        stdout: "true shared",
+      },
+      onAfterBundle() {
+        expect(loads).toBe(1);
+      },
+    };
+  });
+  // The resolver puts a data: URL in the "dataurl" namespace. A plugin answer
+  // with the same URL in that namespace is the same module.
+  itBundled("plugin/NamespaceDataUrlFromResolverAndFromPluginIsOneModule", () => {
+    const url = `data:text/javascript,export default "unused"`;
+    let loads = 0;
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import a from ${JSON.stringify(url)};
+          import b from "via-plugin";
+          console.log(a === b, a.tag);
+        `,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^via-plugin$/ }, () => ({ path: url, namespace: "dataurl" }));
+        builder.onLoad({ filter: /.*/, namespace: "dataurl" }, () => {
+          loads++;
+          return { contents: `export default { tag: "shared" };`, loader: "js" };
+        });
+      },
+      run: {
+        stdout: "true shared",
+      },
+      onAfterBundle() {
+        expect(loads).toBe(1);
+      },
+    };
+  });
+  // An import that stays external has its specifier as its path. A plugin
+  // module with that path in another namespace is not what it imports.
+  // late.ts is loaded only after the plugin module is on its way into the
+  // bundle, so the plugin module is registered first.
+  itBundled("plugin/NamespaceModuleWithThePathOfAnExternalImport", () => {
+    const answered = Promise.withResolvers<void>();
+    return {
+      files: {
+        "index.ts": /* ts */ `
+          import { x } from "virt";
+          import "./late.ts";
+          console.log(x);
+        `,
+        "late.ts": ``,
+      },
+      external: ["ext-pkg"],
+      plugins(builder) {
+        builder.onResolve({ filter: /^virt$/ }, () => {
+          answered.resolve();
+          return { path: "ext-pkg", namespace: "virt" };
+        });
+        builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+          return { contents: `export const x = "from-virt"; export default "virt-default";`, loader: "js" };
+        });
+        builder.onLoad({ filter: /late\.ts$/ }, async () => {
+          await answered.promise;
+          return { contents: `import pkg from "ext-pkg"; console.log(pkg);`, loader: "ts" };
+        });
+      },
+      onAfterBundle(api) {
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(`import pkg from "ext-pkg";`);
+        expect(contents).toContain(`var x = "from-virt";`);
+        expect(contents).not.toContain(`virt-default`);
+      },
+    };
+  });
   itBundled("plugin/ResolveAndLoadNamespaceNested", ({ root }) => {
     let counter1 = 0;
     let counter2 = 0;

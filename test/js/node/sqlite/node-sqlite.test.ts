@@ -1872,6 +1872,26 @@ describe("enableDefensive()", () => {
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
     );
   });
+
+  test("enableDefensive() persists across close() and open()", () => {
+    const pragma = (db: any) => db.prepare("PRAGMA journal_mode").get().journal_mode;
+
+    const on = new DatabaseSync(":memory:", { defensive: false });
+    on.enableDefensive(true);
+    on.close();
+    on.open();
+    on.exec("PRAGMA journal_mode=OFF");
+    expect(pragma(on)).toBe("memory");
+    on.close();
+
+    const off = new DatabaseSync(":memory:", { defensive: true });
+    off.enableDefensive(false);
+    off.close();
+    off.open();
+    off.exec("PRAGMA journal_mode=OFF");
+    expect(pragma(off)).toBe("off");
+    off.close();
+  });
 });
 
 describe("row-shape structure caching", () => {

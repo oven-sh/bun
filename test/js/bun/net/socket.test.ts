@@ -4590,8 +4590,9 @@ Reo=
           open(socket) {
             setImmediate(() => socket.shutdown());
           },
-          handshake(_socket, success) {
-            events.push(`handshake success=${success}`);
+          handshake(_socket, success, authorizationError) {
+            const code = (authorizationError as NodeJS.ErrnoException | null)?.code ?? null;
+            events.push(`handshake success=${success} code=${code}`);
           },
           data() {},
           close() {
@@ -4611,7 +4612,8 @@ Reo=
         expect(events).toEqual([]);
         client.end();
         await closed.promise;
-        expect(events).toEqual(["handshake success=false", "close"]);
+        // The client read the certificate of the server in that flight, so the failure reports that check.
+        expect(events).toEqual(["handshake success=false code=UNABLE_TO_VERIFY_LEAF_SIGNATURE", "close"]);
       } finally {
         client.terminate();
         relay.close();

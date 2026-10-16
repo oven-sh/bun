@@ -765,10 +765,10 @@ declare module "bun:sqlite" {
      * const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?");
      *
      * stmt.raw("baz");
-     * // => [[Uint8Array(24)]]
+     * // => [[Uint8Array(3)]]
      *
      * stmt.raw();
-     * // => [[Uint8Array(24)]]
+     * // => [[Uint8Array(3)]]
      * ```
      */
     raw(...params: ParamsType): Array<Array<Uint8Array | null>>;

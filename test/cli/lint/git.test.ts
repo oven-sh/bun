@@ -565,3 +565,27 @@ test.concurrent("bun fmt --staged doesn't count a file it skips", async () => {
   expect(stderr).toContain("partly.js has both staged and unstaged changes, so it was not formatted\n");
   expect(exitCode).toBe(2);
 });
+
+test.concurrent("bun lint --staged and --changed don't warn that many files were loaded for a few", async () => {
+  using repo = await repository({
+    // Without `include` it includes everything.
+    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, lib: ["es2022"], types: [] } }),
+    ...Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`other/${i}.ts`, "export {};\n"])),
+    "sub/a.ts": "export {};\n",
+  });
+  const { root } = repo;
+  write(root, "sub/a.ts", "async function f() {}\nf();\nexport {};\n");
+  await git(root, "add", "-A");
+  const warnings = async (...args: string[]) => {
+    const { stderr, exitCode } = await bun(root, ["lint", "--type-aware", ...args]);
+    expect(exitCode).toBe(1);
+    return stderr.split("\n").filter(it => it.startsWith("warn: "));
+  };
+  // The same file, found in a directory.
+  expect(await warnings("sub")).toEqual([
+    expect.stringMatching(/^warn: Loaded 1,001 files in \S+ to lint sub\/a\.ts$/),
+  ]);
+  expect(await warnings("--staged")).toEqual([]);
+  expect(await warnings("--changed")).toEqual([]);
+  expect(await warnings("--staged", "sub")).toEqual([]);
+});

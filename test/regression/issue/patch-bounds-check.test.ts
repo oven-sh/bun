@@ -99,7 +99,10 @@ test("patch application should handle deletion beyond file bounds", async () => 
   expect(exitCode).toBe(1);
   expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
     "Resolving dependencies
+    3 | @@ -1,5 +1,3 @@
+        ^
     error: failed to parse patchfile: hunk_header_integrity_check_failed
+        at patches/lodash+4.17.21.patch:3:1
     error: failed to apply patchfile (patches/lodash+4.17.21.patch)"
   `);
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);

@@ -943,6 +943,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         bstr::BStr::new(&self.package_name),
                         exit.code,
                     );
+                    // Git dependencies are the only dependencies whose `prepare` scripts run.
+                    if self.scripts.is_dependency && self.script_name().ends_with(b"prepare") {
+                        bun_core::note!(
+                            "devDependencies of a git dependency are not installed before its prepare scripts"
+                        );
+                    }
                     self.discard_packages_with_unfinished_scripts();
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                     unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };

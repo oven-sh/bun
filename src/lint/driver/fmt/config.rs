@@ -199,7 +199,7 @@ impl Scope {
 
 /// An element of oxc's `GlobSet`.
 pub(crate) fn glob_of_oxc(pattern: &[u8]) -> bun_glob::Pattern {
-    bun_glob::Pattern::of_oxc_glob_set(pattern)
+    bun_glob::Pattern::of_oxfmt(pattern)
 }
 
 /// Parses a pattern from Prettier's `overrides` or command line.
@@ -2133,9 +2133,10 @@ impl<'c> Configs<'c> {
             }
             (None, None) => (b"false".to_vec(), SetBy::Bun(&self.start_of_bunfig)),
         };
-        if value != b"false" {
-            let places = (set_by, directory);
-            let mut tailwind = tailwind::for_file(&self.classes, &value, places);
+        if value != b"false"
+            && let Some(mut tailwind) =
+                tailwind::for_file(&self.classes, &value, (set_by, directory))
+        {
             tailwind.oxc = self.oxc_for(scope, path, resolved.options.parser.as_deref());
             resolved.options.tailwind = Some(Arc::new(tailwind));
         }

@@ -22,8 +22,10 @@ fn is_thenable_expression(node: Expr) -> bool {
     is_thenable(node, node.ty())
 }
 
+/// Upstream asks about the `expression` of the `ts.ReturnStatement`, which has the parentheses.
 fn is_thenable_return(statement: Stmt) -> bool {
-    matches!(statement.kind(), StmtKind::Return(Some(argument)) if is_thenable_expression(argument))
+    matches!(statement.kind(), StmtKind::Return(Some(argument))
+        if is_thenable(argument, argument.ts_node_with_parentheses().get_type_at_location()))
 }
 
 /// Whether `func` returns something thenable.

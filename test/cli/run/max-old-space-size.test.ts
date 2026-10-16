@@ -53,14 +53,18 @@ test.concurrent("--max-old-space-size does not abort workloads that fit under th
 // Worker bootstrap alone takes ~5s under debug+ASAN (with or without the
 // flag), so this test needs more than the 5s default timeout.
 test.concurrent(
-  "--max-old-space-size does not kill the process when a worker exceeds the limit",
+  "--max-old-space-size never aborts the whole process from a worker",
   async () => {
-    // The limit only aborts for the main thread VM; Node's model for workers is
-    // resourceLimits + a worker-scoped error, never a process-wide abort.
+    // In Node a worker over the limit dies worker-scoped (the parent sees
+    // ERR_WORKER_OUT_OF_MEMORY on "error") and the process carries on. Bun does
+    // not cap worker heaps yet, so the worker currently completes. Either way
+    // the fatal process abort must never fire from a worker VM, which is what
+    // this pins; the fixture handles "error" so both outcomes exit 0.
     using dir = tempDir("max-old-space-size-worker", {
       "main.js": `
       const { Worker } = require("node:worker_threads");
       const worker = new Worker("./worker.js");
+      worker.on("error", err => console.log("worker error " + err.code));
       worker.on("exit", code => console.log("worker exited " + code));
     `,
       "worker.js": `
@@ -78,9 +82,8 @@ test.concurrent(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("JavaScript heap out of memory");
-    expect(stdout).toContain("worker reached 96MB");
-    expect(stdout).toContain("worker exited 0");
+    expect(stderr).not.toContain("FATAL ERROR");
+    expect(stdout).toContain("worker exited");
     expect(exitCode).toBe(0);
   },
   30_000,

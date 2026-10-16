@@ -39,7 +39,7 @@ function tryTransferToNativeReadable(stream, options) {
   if (!ptr || ptr === -1) {
     return undefined;
   }
-  return require("internal/streams/native-readable").constructNativeReadable(stream, options);
+  return require("internal/streams/native-readable").constructNativeReadableFromWeb(stream, options);
 }
 
 class ReadableFromWeb extends Readable {

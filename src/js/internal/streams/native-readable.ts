@@ -88,6 +88,7 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   // Define the own property directly: an ordinary put would walk the prototype
   // chain, which user code can graft onto ReadableStream.prototype's accessors.
   $putByIdDirectPrivate(stream, "bunNativePtr", bunNativePtr);
+  stream[kWebStream] = undefined;
   stream[kRefCount] = 0;
   stream[kConstructed] = false;
   stream[kPendingRead] = false;
@@ -110,12 +111,18 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   // We can't update those handles to point to the NativeReadable from JS
   // So we instead mark it as no longer usable, and create a new NativeReadable
   transferToNativeReadable(readableStream);
-  stream[kWebStream] = readableStream;
-  // Node: `reader.closed` rejects and the Readable fails with that error, for example the abort reason of a fetch().
-  $webStreamClosedPromise(readableStream).$then(undefined, error => fail(stream, error));
 
   $debug(`[${stream.debugId}] constructed!`);
 
+  return stream;
+}
+
+// Readable.fromWeb(): the caller still holds the web stream. node:child_process never hands out the stream of a child's stdio, so it skips this.
+function constructNativeReadableFromWeb(readableStream: ReadableStream, options): NativeReadable {
+  const stream = constructNativeReadable(readableStream, options);
+  stream[kWebStream] = readableStream;
+  // Node: `reader.closed` rejects and the Readable fails with that error, for example the abort reason of a fetch().
+  $webStreamClosedPromise(readableStream).$then(undefined, error => fail(stream, error));
   return stream;
 }
 
@@ -356,4 +363,4 @@ function unref(this: NativeReadable) {
   }
 }
 
-export default { constructNativeReadable };
+export default { constructNativeReadable, constructNativeReadableFromWeb };

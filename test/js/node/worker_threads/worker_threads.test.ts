@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -303,7 +303,7 @@ test("support require in eval for a file that doesnt exist", async () => {
     `require('worker_threads').parentPort.postMessage(require('./fixture-invalid.js').argv[0])`,
     { eval: true },
   );
-  const result = await new Promise(resolve => {
+  const result = await new Promise<any>(resolve => {
     worker.on("message", resolve);
     worker.on("error", resolve);
   });
@@ -313,7 +313,7 @@ test("support require in eval for a file that doesnt exist", async () => {
 
 test("support worker eval that throws", async () => {
   const worker = new Worker(`postMessage(throw new Error("boom"))`, { eval: true });
-  const result = await new Promise(resolve => {
+  const result = await new Promise<any>(resolve => {
     worker.on("message", resolve);
     worker.on("error", resolve);
   });
@@ -1577,7 +1577,7 @@ describe("postMessage transfer list", () => {
             *[Symbol.iterator]() {
               throw new Error("user boom");
             },
-          },
+          } as any,
         },
       ),
     ).toThrow("user boom");
@@ -1853,7 +1853,7 @@ test("close(cb) interleaves with other close listeners in registration order", a
   const { port1 } = new MessageChannel();
   const order: string[] = [];
   port1.on("close", () => order.push("A"));
-  port1.close(() => order.push("B"));
+  (port1 as any).close(() => order.push("B"));
   port1.on("close", () => order.push("C"));
   order.push("sync");
   await new Promise(r => setImmediate(() => setImmediate(r)));
@@ -1862,7 +1862,7 @@ test("close(cb) interleaves with other close listeners in registration order", a
   // A listener added AFTER close(cb) fires after cb.
   const { port1: p2 } = new MessageChannel();
   const order2: string[] = [];
-  p2.close(() => order2.push("B"));
+  (p2 as any).close(() => order2.push("B"));
   p2.on("close", () => order2.push("C"));
   await new Promise(r => setImmediate(() => setImmediate(r)));
   expect(order2).toEqual(["B", "C"]);
@@ -2021,6 +2021,42 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     });
   });
 
+  it("array methods read a hole from a shared process.env in the prototype chain", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, SHARE_ENV } = require("worker_threads");
+         const w = new Worker(
+           \`process.env[1] = "inherited";
+             const holey = Object.setPrototypeOf([0, , 2], process.env);
+             require("worker_threads").parentPort.postMessage({
+               index: holey[1],
+               join: Array.prototype.join.call(holey),
+               slice: Array.prototype.slice.call(holey),
+               concat: Array.prototype.concat.call([], holey),
+             });\`,
+           { eval: true, env: SHARE_ENV },
+         );
+         w.on("message", result => console.log(JSON.stringify(result)));
+         w.on("error", e => { console.error("worker error: " + (e && e.stack || e)); process.exit(1); });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ parsed: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+      parsed: {
+        index: "inherited",
+        join: "0,inherited,2",
+        slice: [0, "inherited", 2],
+        concat: [0, "inherited", 2],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // node roots a main-founded SHARE_ENV tree at its RealEnvStore, so a worker writing
   // through it reaches the real environment a child process inherits; a snapshot
   // worker's store is private and never does. (child_process enumerates the JS
@@ -2053,6 +2089,41 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe(want);
     expect(exitCode).toBe(0);
+  });
+
+  it("a write to an object that inherits from the shared process.env is that object's", async () => {
+    // Without the fetch this script prints the same on Node.js v26.3.0.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, SHARE_ENV } = require("worker_threads");
+         const worker = new Worker('require("worker_threads").parentPort.once("message", () => {})', { eval: true, env: SHARE_ENV });
+         worker.once("online", async () => {
+           const child = Object.create(process.env);
+           child.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+           child.OTHER = "child";
+           const out = {
+             child: [Object.hasOwn(child, "NODE_TLS_REJECT_UNAUTHORIZED"), Object.hasOwn(child, "OTHER")],
+             env: [process.env.NODE_TLS_REJECT_UNAUTHORIZED ?? null, process.env.OTHER ?? null],
+           };
+           if (typeof Bun !== "undefined") {
+             using server = Bun.serve({ port: 0, tls: ${JSON.stringify(tls)}, fetch: () => new Response("ok") });
+             out.fetch = await fetch(server.url).then(() => "not verified", error => error.code);
+           }
+           console.log(JSON.stringify(out));
+           worker.postMessage("done");
+         });`,
+      ],
+      env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: undefined },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ parsed: stdout ? JSON.parse(stdout) : stdout, stderr, exitCode }).toEqual({
+      parsed: { child: [true, true], env: [null, null], fetch: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // Integer-like keys reach JSC through the indexed hooks; without ByIndex overrides
@@ -2114,7 +2185,7 @@ test("postMessage with a non-object transfer element throws DataCloneError", () 
   ] as const) {
     let err: any;
     try {
-      port1.postMessage(...args);
+      (port1 as any).postMessage(...args);
     } catch (e) {
       err = e;
     }
@@ -2125,7 +2196,7 @@ test("postMessage with a non-object transfer element throws DataCloneError", () 
 });
 
 test("MessageEvent ports validation walks the iterator once and gives a detailed error for any iterable", () => {
-  expect(() => new MessageEvent("message", { ports: new Set([{}]) })).toThrow(
+  expect(() => new MessageEvent("message", { ports: new Set([{}]) } as any)).toThrow(
     /Expected eventInitDict\.ports\[0\] \("\{\}"\) to be an instance of MessagePort/,
   );
   expect(
@@ -2134,12 +2205,12 @@ test("MessageEvent ports validation walks the iterator once and gives a detailed
         ports: (function* () {
           yield {};
         })(),
-      }),
+      } as any),
   ).toThrow(/Expected eventInitDict\.ports\[0\]/);
   const { port1 } = new MessageChannel();
   const traps: string[] = [];
   const proxy = new Proxy([port1], { get: (t, k) => (traps.push(String(k)), (t as any)[k]) });
-  expect(() => new MessageEvent("message", { ports: proxy })).not.toThrow();
+  expect(() => new MessageEvent("message", { ports: proxy } as any)).not.toThrow();
   // Symbol.iterator is read exactly once.
   expect(traps.filter(k => k.includes("Symbol")).length).toBe(1);
   port1.close();
@@ -2412,7 +2483,7 @@ test("parent messages are delivered after the worker's entry evaluated; exit han
     { eval: true },
   );
   const errors: string[] = [];
-  w.on("error", e => errors.push(e.message));
+  w.on("error", e => errors.push((e as Error).message));
   const exited = new Promise<number>(resolve => w.on("exit", resolve));
   w.postMessage(0);
   expect(await exited).toBe(0);
@@ -2721,7 +2792,7 @@ test("a worker with a preload is not started before its entry module runs", asyn
 import { parentPort } from "worker_threads";
 parentPort.on("message", m => parentPort.postMessage(["got", m, dep, globalThis.setupRan === true]));`,
   });
-  const w = new Worker(join(String(dir), "w.mjs"), { preload: join(String(dir), "setup.js") });
+  const w = new Worker(join(String(dir), "w.mjs"), { preload: join(String(dir), "setup.js") } as any);
   const reply = new Promise(resolve => w.on("message", resolve));
   w.postMessage("hi");
   expect(await reply).toEqual(["got", "hi", 1, true]);

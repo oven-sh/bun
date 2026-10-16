@@ -308,9 +308,6 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             us_internal_socket_group_link_connecting_socket(group, c);
         }
     }
-    if (old_group != group && new_s->ssl) {
-        us_internal_ssl_socket_left_group(new_s);
-    }
     new_s->group = group;
     new_s->kind = kind;
     new_s->timeout = 255;
@@ -359,8 +356,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     ls->accept_kind = kind;
     ls->ssl_ctx = ssl_ctx;
     if (ssl_ctx) us_internal_ssl_ctx_up_ref(ssl_ctx);
-    ls->sni = NULL;
-    ls->on_server_name = NULL;
+    ls->server_names = NULL;
     ls->socket_ext_size = socket_ext_size;
     ls->deferred_accept = 0;
     ls->accept_paused = (options & LIBUS_SOCKET_OPEN_PAUSED) && !ssl_ctx;

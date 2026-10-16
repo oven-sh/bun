@@ -1148,12 +1148,6 @@ impl<'a, K, V, C, A: MapAllocator> VacantEntry<'a, K, V, C, A> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> MapEntry<'a, K, V, C, A> {
-    pub fn or_insert(self, default: V) -> &'a mut V {
-        match self {
-            MapEntry::Occupied(o) => o.into_mut(),
-            MapEntry::Vacant(v) => v.insert(default),
-        }
-    }
     pub fn or_insert_with<F: FnOnce() -> V>(self, f: F) -> &'a mut V {
         match self {
             MapEntry::Occupied(o) => o.into_mut(),

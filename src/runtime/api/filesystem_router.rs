@@ -45,9 +45,9 @@ use crate::webcore::{Request, Response};
 // Note: `FrameworkFileSystemRouter` is declared in this file's
 // `filesystem_router.classes.ts`, so codegen looks for the backing struct here
 // (`crate::api::filesystem_router::FrameworkFileSystemRouter`). The
-// implementation is `bake::framework_router::JSFrameworkRouter`; re-export the
+// implementation is `bake::router::JSFrameworkRouter`; re-export the
 // real type so the codegen-generated thunks resolve without a stub.
-pub(crate) use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemRouter;
+pub(crate) use crate::bake::router::JSFrameworkRouter as FrameworkFileSystemRouter;
 
 const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
 

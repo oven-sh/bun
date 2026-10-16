@@ -31,7 +31,7 @@ use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{inside, to_file_name_lower_case};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema_driver::host::{AlreadyRead, Provided, from_native, is_bundled, to_native};
-use bun_sema_driver::{Category, Diagnostic, Libs, Refused};
+use bun_sema_driver::{Category, Diagnostic, Libs, Refused, WithoutInclude};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
 
@@ -228,8 +228,12 @@ fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
 
 /// What tinyglobby finds for `pattern` below `root`, sorted: it has them in the order in which it reads the directories.
 /// A link to a directory is not followed.
-fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>> {
-    let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
+fn files_matching(mut root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>> {
+    let mut pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
+    // It starts as far up as the pattern goes.
+    while let Some(rest) = pattern.strip_prefix(b"../") {
+        (root, pattern) = (crate::paths::dirname(root), rest);
+    }
     let read = |it: &[u8]| {
         bun_glob::Pattern::with_dots(
             &bun_lint::glob::from_picomatch(it, Picomatch::Micromatch),
@@ -473,7 +477,7 @@ fn check_and_lint_in(
         keeps_byte_order_marks: true,
         ..Default::default()
     };
-    let (is_case_sensitive, unreadable, diagnostics, incomplete, refused) =
+    let (is_case_sensitive, unreadable, diagnostics, incomplete, refused, without_include) =
         bun_sema_driver::check_provided_then(&request, provided, |report| {
             (
                 report.is_case_sensitive,
@@ -481,8 +485,32 @@ fn check_and_lint_in(
                 report.diagnostics,
                 report.incomplete,
                 report.refused,
+                report.without_include,
             )
         });
+    let mut noted = context.without_include.lock();
+    for program in without_include {
+        let config_path = to_native(&program.config_path).to_vec();
+        // As they are spelled by who named them.
+        let places = (program.files.iter()).filter_map(|it| by_path.get(it, is_case_sensitive));
+        let linted = places.map(|at| files[indices[at]].path);
+        // A pass of `--fix` loads it again for the files that have changed, and so does each kind of configuration for its own.
+        match noted.iter_mut().find(|it| it.config_path == config_path) {
+            Some(known) => {
+                for path in linted {
+                    if !known.files.iter().any(|it| it == path) {
+                        known.files.push(path.to_vec());
+                    }
+                }
+            }
+            None => noted.push(WithoutInclude {
+                config_path,
+                files: linted.map(<[u8]>::to_vec).collect(),
+                ..program
+            }),
+        }
+    }
+    drop(noted);
     // They are of a project, so they are not of the program of those that no project includes. They are linted without types.
     let mut is_refused = vec![false; indices.len()];
     for refused in &refused {
@@ -519,6 +547,12 @@ fn check_and_lint_in(
         }
     }
     (results, is_refused)
+}
+
+/// Whether nearly all of the time went into files that nobody asked about: a thousand or more, and a hundred for each
+/// that was linted. A `tsconfig.json` at the top of a repository is like that for a file that its own package leaves out.
+pub(crate) fn is_out_of_proportion(program: &WithoutInclude) -> bool {
+    program.included >= 1000 && program.included >= 100 * program.files.len()
 }
 
 /// What oxlint makes of each error for which tsgolint makes no program (`CreateProgram`): "Invalid tsconfig", with TypeScript's
@@ -747,7 +781,11 @@ pub(crate) fn lint(
             }
             // oxlint fixes once.
             if file.config.language.is_oxlint {
-                if !was_refused && !context.parses(file.path, &fixed.output, file.config) {
+                // A file that oxc refuses keeps what tsgolint fixes in it.
+                if !was_refused
+                    && !context.parses(file.path, &fixed.output, file.config)
+                    && context.parses(file.path, text, file.config)
+                {
                     context.note_broken_fixes(file.path, fixed.applied);
                     *state = Fixing {
                         current: file.text.clone(),

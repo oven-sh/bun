@@ -256,6 +256,7 @@ fn is_task_independent(q: Query) -> bool {
         | Query::TypeNode(..)
         | Query::Enum(..)
         | Query::Expr(..)
+        | Query::ExprInFlowLoop(..)
         | Query::Call(..)
         | Query::InitializerIsUndefined(..)
         | Query::AliasTarget(_)
@@ -677,6 +678,14 @@ impl Checker<'_, '_> {
     pub(super) fn log_reported_from(&mut self, from: usize) {
         for diagnostic in self.reported.split_off(from) {
             self.log_diagnostic(None, diagnostic);
+        }
+    }
+
+    /// The diagnostics reported from index `from` on are kept whatever the frames in progress do with theirs. See
+    /// `Query::ExprInFlowLoop`.
+    pub(super) fn log_reported_in_flow_loop(&mut self, from: usize, file: FileId, e: ExprId) {
+        for diagnostic in self.reported.split_off(from) {
+            self.log_diagnostic(Some(Query::ExprInFlowLoop(file, e)), diagnostic);
         }
     }
 

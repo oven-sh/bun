@@ -94,6 +94,8 @@ pub struct InitOptions {
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
+    /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
+    pub global_cache: bun_options_types::global_cache::GlobalCache,
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
@@ -118,6 +120,7 @@ impl Default for InitOptions {
             log: None,
             env_loader: None,
             graph: None,
+            global_cache: bun_options_types::global_cache::GlobalCache::disable,
             smol: false,
             eval_mode: false,
             is_main_thread: false,
@@ -4869,6 +4872,12 @@ impl VirtualMachine {
         VirtualMachine::get().as_mut().ref_strings.remove(&hash);
     }
 
+    /// Whether what is made of a file on disk is static code (`ResolvedSource::is_static`). A standalone executable is
+    /// stored in itself, so to it a file on disk is not part of the program.
+    pub fn is_file_on_disk_static(in_standalone_executable: bool, path: &[u8]) -> bool {
+        !in_standalone_executable && !path.starts_with(b"data:")
+    }
+
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
     pub fn ref_counted_resolved_source(
         &mut self,
@@ -5498,21 +5507,16 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
             global_cache,
         );
-        if let Err(err_) = resolve_result {
-            let err = err_;
+        if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
-            let msg = log
+            let resolve_msg_index = log
                 .msgs
                 .iter()
-                .find_map(|m| {
-                    if let bun_ast::Metadata::Resolve(_) = &m.metadata {
-                        Some(m.clone())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| {
+                .position(|m| matches!(m.metadata, bun_ast::Metadata::Resolve(_)));
+            let mut msg = match resolve_msg_index {
+                Some(i) => log.msgs[i].clone(),
+                None => {
                     let printed = crate::ResolveMessage::fmt(
                         specifier_utf8.slice(),
                         source_utf8.slice(),
@@ -5528,7 +5532,20 @@ impl VirtualMachine {
                         }),
                         ..Default::default()
                     }
-                });
+                }
+            };
+            // `log` dies with this frame. Deduplicated: `_resolve`'s retry can log a failure twice.
+            let mut notes = core::mem::take(&mut msg.notes).into_vec();
+            for (i, logged) in log.msgs.iter().enumerate() {
+                if Some(i) == resolve_msg_index
+                    || !matches!(logged.kind, bun_ast::Kind::Err | bun_ast::Kind::Warn)
+                    || notes.iter().any(|note| note.text == logged.data.text)
+                {
+                    continue;
+                }
+                notes.push(logged.data.clone());
+            }
+            msg.notes = notes.into_boxed_slice();
             return Ok(Err(crate::ResolveMessage::create(
                 global,
                 &msg,

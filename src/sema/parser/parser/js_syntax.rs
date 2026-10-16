@@ -25,7 +25,7 @@ fn error_of_js_declaration(
     })
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `jsErrorAtRange`. An end of 0: the end of the token at the start. `what`: the `{0}` of the
     /// message, if it has one. Nothing inside a type is reported.
     #[cold]

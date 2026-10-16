@@ -107,6 +107,8 @@ The plugin's options are those of 4.1.1: `svelteSortOrder`, `svelteAllowShorthan
 
 Svelte files also go to your installed Prettier with `rangeStart`, `rangeEnd`, or `cursorOffset`, as flags or in the config.
 
+[`svelte` in `bunfig.toml`](/runtime/bunfig#format-svelte) overrides all of this: with `svelte = true` Bun formats the files whichever version is installed, and with `svelte = false` nothing does.
+
 ---
 
 Astro and other languages that come from a plugin go to your installed Prettier. So does `package.json` if you use `prettier-plugin-packagejson`. Keep `prettier` and every plugin in `plugins` installed. `--doctor` shows which files those are.

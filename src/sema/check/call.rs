@@ -3007,7 +3007,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let mapper = self.inference_mapper_comparing(&inference, compare);
-        self.instantiate_sig(sig, mapper)
+        let instantiated = self.instantiate_sig(sig, mapper);
+        // `getSignatureInstantiation` erases the type parameters. One that is a clone and is inferred to be itself
+        // (`wrap(id)` where `Id<string>` is both the type of `id` and what is expected) leaves the mapper as it is.
+        if self.sig_type_params(instantiated).is_empty() {
+            instantiated
+        } else {
+            self.without_filling_in_type_arguments(instantiated)
+        }
     }
 
     /// The name of the type parameter `param`: the name `unique_type_params` gave it, or else the declared name.

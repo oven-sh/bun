@@ -6,11 +6,10 @@ use crate::util_components_list::At;
 use crate::util_is_create_element::is_member_called;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::{estree_span, normalize};
-use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
-use std::collections::hash_map::Entry;
 
 /// Disallows JSX context provider values from taking values that will cause needless rerenders
 pub struct JsxNoConstructedContextValues;
@@ -40,7 +39,7 @@ pub struct State<'a> {
     /// 1 for a variable that is made anew each time the function that declares it runs.
     constructed_variables: FlagsOfVariables<'a>,
     /// What such a variable is in the end, for upstream.
-    ends: FxHashMap<Symbol<'a>, Option<End<'a>>>,
+    ends: IdMap<Symbol<'a>, Option<End<'a>>>,
     /// What upstream reports if the element is in a component.
     constructions: Vec<Construction<'a>>,
 }
@@ -245,10 +244,14 @@ impl<'a> State<'a> {
         let mut ask = |it| is_constructed(&mut self.constructed_variables, it, is_oxlint);
         let mut path: SmallVec<[Step<'a>; 4]> = SmallVec::new();
         let mut end = loop {
-            match self.ends.entry(variable) {
-                Entry::Occupied(known) => break *known.get(),
-                Entry::Vacant(unknown) => unknown.insert(None),
-            };
+            let mut is_new = false;
+            let known = *self.ends.get_or_insert_with(variable, || {
+                is_new = true;
+                None
+            });
+            if !is_new {
+                break known;
+            }
             let init = match definition_of(variable, is_oxlint) {
                 None => break None,
                 Some(Definition::Made(node)) => {

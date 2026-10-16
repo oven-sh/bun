@@ -384,7 +384,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       "a.svelte",
     ]);
     // Once for each file: the configuration is one too.
-    const error = "error: Invalid svelteSortOrder value: a-b.\n";
+    const error = "error: Invalid svelte.sortOrder value: a-b.\n";
     expect(wrong).toMatchObject({
       stderr: `${error}${error}Error occurred when checking code style in the above files.\n`,
       files: [input],
@@ -567,9 +567,9 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<script></script>\n\n<p>y</p>\n\n<style>\n  b {\n    content: "<script>";\n  }\n</style>\n',
       ],
       [
-        '<div><script type = "y">let  b = 2</script></div>\n',
-        '<div>\n  <script type="y">\n    let b = 2;\n  </script>\n</div>\n',
-        '<div><script type="y"></script></div>\n',
+        '<div><script type = "module">let  b = 2</script></div>\n',
+        '<div>\n  <script type="module">\n    let b = 2;\n  </script>\n</div>\n',
+        '<div><script type="module"></script></div>\n',
       ],
       [
         '<svelte:head><style media = "screen">b{c:d}</style></svelte:head>\n',
@@ -601,7 +601,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<template lang="pug">\np\n  <script>b</script>\n</template>\n',
         '<template lang="pug">\np\n  <script ✂prettier:content✂="0">{}</script>\n</template>\n',
       ],
-      ["{`<script>y</script\n>`}\n", "{`<script>y</script\n>`}\n", "{`<script>y</script>`}\n", false],
+      ["{`<script>y</script\n>`}\n", "{`<script>y</script\n>`}\n", "{`<script>y</script>`}\n"],
       ["<p>{'<script>b</script>'}</p>\n", '<p>{"<script>b</script>"}</p>\n', '<p>{"<script>b</script>"}</p>\n'],
       ['{@html "<style>" + css + "</style>"}\n', '{@html "<style>" + css + "</style>"}\n', null],
       [
@@ -801,7 +801,453 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["{#each b as { c = (d, e) }}{c}{/each}\n", "{#each b as { c = (d, e) }}{c}{/each}\n", null],
     ],
   };
-  describe.each(Object.entries(damaged))("%s", (_, rows) => {
+  const typescript = '<script lang="ts"></script>\n\n';
+  // By what Svelte is strict about: the text, what Bun makes of it, and what must not become of it, which Svelte refuses or
+  // reads as something else. `null`: nothing in particular.
+  const strict: typeof damaged = {
+    "no comment is behind a declaration": [
+      ["{const sum = (b // c\n)}\n", "{const sum = (b // c\n)}\n", "{const sum =\n  b // c\n}\n"],
+      ["{const sum = // c\n  1}\n", "{const sum = // c\n  1}\n", "{const sum = 1 // c\n}\n"],
+      ["{let sum = (b /* c */)}\n", "{let sum = (b /* c */)}\n", "{let sum = b /* c */}\n"],
+      ["{const sum = b + (c /* d */)}\n", "{const sum = b + (c /* d */)}\n", "{const sum = b + c /* d */}\n"],
+      ["{let sum /* c */;}\n", "{let sum /* c */;}\n", "{let sum /* c */}\n"],
+      [
+        `${typescript}{const sum = b as C[/* d */]}\n`,
+        `${typescript}{const sum = b as C[/* d */]}\n`,
+        `${typescript}{const sum = b as C[] /* d */}\n`,
+      ],
+      // This one stays where it is: something follows it that does not close anything.
+      ["{const  sum = [1 /* c */,2]}\n", "{const sum = [1 /* c */, 2]}\n", null],
+    ],
+    "no comment is behind the expression of an each block without `as`": [
+      ["{#each rows[0 // c\n]}y{/each}\n", "{#each rows[0 // c\n]}y{/each}\n", "{#each rows[0] // c\n}y{/each}\n"],
+      [
+        "{#each rows[0 // c\n], i}y{/each}\n",
+        "{#each rows[0 // c\n], i}y{/each}\n",
+        "{#each rows[0] // c\n, i}y{/each}\n",
+      ],
+      ["{#each b + (c /* d */)}y{/each}\n", "{#each b + (c /* d */)}y{/each}\n", "{#each b + c /* d */}y{/each}\n"],
+      ["{#each  f(b /* c */)}y{/each}\n", "{#each f(b /* c */)}y{/each}\n", null],
+    ],
+    "an each block without `as` gets none": [
+      [
+        `${typescript}{#each (b: C) => (b as D)}y{/each}\n`,
+        `${typescript}{#each (b: C) => (b as D)}y{/each}\n`,
+        `${typescript}{#each (b: C) => b as D}y{/each}\n`,
+      ],
+      [
+        `${typescript}{#each b = (c as D), i}y{/each}\n`,
+        `${typescript}{#each b = (c as D), i}y{/each}\n`,
+        `${typescript}{#each b = c as D, i}y{/each}\n`,
+      ],
+      // With one of its own, the last is that.
+      [
+        `${typescript}{#each (b: C) => (b as D) as e}y{/each}\n`,
+        `${typescript}{#each (b: C) => b as D as e}y{/each}\n`,
+        null,
+      ],
+    ],
+    "no comment is behind the name of a snippet": [
+      [
+        "{#snippet row(/* c */\n  b)}y{/snippet}\n",
+        "{#snippet row(/* c */\n  b)}y{/snippet}\n",
+        "{#snippet row /* c */(b)}y{/snippet}\n",
+      ],
+      [
+        `${typescript}{#snippet row</* c */\n  T>(b: T)}y{/snippet}\n`,
+        `${typescript}{#snippet row</* c */\n  T>(b: T)}y{/snippet}\n`,
+        `${typescript}{#snippet row /* c */<T>(b: T)}y{/snippet}\n`,
+      ],
+      // The line ends behind another comment.
+      [
+        "{#snippet row(/* c */ // d\n  b)}y{/snippet}\n",
+        "{#snippet row(/* c */ // d\n  b)}y{/snippet}\n",
+        "{#snippet row /* c */( // d\n  b,\n)}y{/snippet}\n",
+      ],
+      ["{#snippet  row(b   /* c */)}y{/snippet}\n", "{#snippet row(b /* c */)}y{/snippet}\n", null],
+      // On a line of its own it is printed before the parameter.
+      ["{#snippet row(\n  /* c */\n  b)}y{/snippet}\n", "{#snippet row(\n  /* c */\n  b,\n)}y{/snippet}\n", null],
+      [
+        "{#snippet row(\n  /** c */\n  b, d)}y{/snippet}\n",
+        "{#snippet row(\n  /** c */\n  b,\n  d,\n)}y{/snippet}\n",
+        null,
+      ],
+      [
+        "{#snippet row(\n/* c */ // d\n b)}y{/snippet}\n",
+        "{#snippet row(\n  /* c */ // d\n  b,\n)}y{/snippet}\n",
+        null,
+      ],
+    ],
+    "no comment is behind the parameters of a snippet": [
+      // The only parameter is a pattern, so no line ends before the `)`.
+      [
+        "{#snippet row({ b } // c\n = {})}y{/snippet}\n",
+        "{#snippet row({ b } // c\n = {})}y{/snippet}\n",
+        "{#snippet row({\n  b,\n} = {}) // c\n}y{/snippet}\n",
+      ],
+      [
+        "{#snippet row([b] = // c\n [])}y{/snippet}\n",
+        "{#snippet row([b] = // c\n [])}y{/snippet}\n",
+        "{#snippet row([\n  b,\n] = []) // c\n}y{/snippet}\n",
+      ],
+      [
+        `${typescript}{#snippet row({ b } // c\n : D)}y{/snippet}\n`,
+        `${typescript}{#snippet row({ b } // c\n : D)}y{/snippet}\n`,
+        `${typescript}{#snippet row({\n  b,\n}: D) // c\n}y{/snippet}\n`,
+      ],
+      [
+        `${typescript}{#snippet row({ b }: D[E // c\n])}y{/snippet}\n`,
+        `${typescript}{#snippet row({ b }: D[E // c\n])}y{/snippet}\n`,
+        `${typescript}{#snippet row({\n  b,\n}: D[E]) // c\n}y{/snippet}\n`,
+      ],
+      // With a second one there is a line for it.
+      [
+        "{#snippet row(\n  { b }   = {}, // c\n  d,\n)}y{/snippet}\n",
+        "{#snippet row(\n  { b } = {}, // c\n  d,\n)}y{/snippet}\n",
+        null,
+      ],
+      // So there is behind the parameter, which is not hugged then, and between its brackets and braces.
+      ["{#snippet row({ b } // c\n)}y{/snippet}\n", "{#snippet row(\n  { b }, // c\n)}y{/snippet}\n", null],
+      [
+        "{#snippet row({\n  id,   // the id\n  name,\n})}\n<p>y</p>\n{/snippet}\n",
+        "{#snippet row({\n  id, // the id\n  name,\n})}\n  <p>y</p>\n{/snippet}\n",
+        null,
+      ],
+      [
+        "{#snippet row({\n  /** The id. */\n  id,\n    name,\n})}\n<p>y</p>\n{/snippet}\n",
+        "{#snippet row({\n  /** The id. */\n  id,\n  name,\n})}\n  <p>y</p>\n{/snippet}\n",
+        null,
+      ],
+      [
+        "{#snippet row([\n  id,   // the id\n  name,\n])}\n<p>y</p>\n{/snippet}\n",
+        "{#snippet row([\n  id, // the id\n  name,\n])}\n  <p>y</p>\n{/snippet}\n",
+        null,
+      ],
+      [
+        `${typescript}{#snippet row({ id, name }: {\n  id: string;   // the id\n  name: string;\n})}\n<p>y</p>\n{/snippet}\n`,
+        `${typescript}{#snippet row({\n  id,\n  name,\n}: {\n  id: string; // the id\n  name: string;\n})}\n  <p>y</p>\n{/snippet}\n`,
+        null,
+      ],
+    ],
+    "a comment that Prettier moves each time stays where it is in the head of a snippet": [
+      [
+        `${typescript}{#snippet row(b = // c\n(d as E).f)}y{/snippet}\n`,
+        `${typescript}{#snippet row(b = // c\n(d as E).f)}y{/snippet}\n`,
+        null,
+      ],
+      [
+        `${typescript}{#snippet row({ b = // c\n(d as E)[0] })}y{/snippet}\n`,
+        `${typescript}{#snippet row({ b = // c\n(d as E)[0] })}y{/snippet}\n`,
+        null,
+      ],
+      // These it does not move.
+      ["{#snippet row(b = // c\n (1))}y{/snippet}\n", "{#snippet row(\n  b = 1, // c\n)}y{/snippet}\n", null],
+      [
+        "{#snippet row(b = c == // d\n (1))}y{/snippet}\n",
+        "{#snippet row(\n  b = c == // d\n    1,\n)}y{/snippet}\n",
+        null,
+      ],
+    ],
+    "a vertical tab next to a comment is white space": [
+      [
+        "{#snippet row(b\v/* c */)}y{/snippet}\n",
+        "{#snippet row(b /* c */)}y{/snippet}\n",
+        "{#snippet row(b)}y{/snippet}\n",
+      ],
+      [
+        "{#snippet row(/* c */\vb)}y{/snippet}\n",
+        "{#snippet row(/* c */ b)}y{/snippet}\n",
+        "{#snippet row /* c */(b)}y{/snippet}\n",
+      ],
+      [
+        "{#if b}{@const c = /* d */\ve}{/if}\n",
+        "{#if b}{@const c = /* d */ e}{/if}\n",
+        "{#if b}{@const c /* d */ = e}{/if}\n",
+      ],
+    ],
+    "a `{:then}` with nothing in it stays if there is a comment in its head": [
+      // What the plugin prints is the third.
+      [
+        "{#await b}wait{:then { c /* d */ }}{/await}\n",
+        "{#await b}wait{:then { c /* d */ }}{/await}\n",
+        "{#await b}wait{/await}\n",
+      ],
+      ["{#await b then { c /* d */ }}{/await}\n", "{#await b then { c /* d */ }}{/await}\n", "{#await b}{/await}\n"],
+      [
+        "{#await b then { c /* d */ }}  {:catch e}y{/await}\n",
+        "{#await b then { c /* d */ }}{:catch e}y{/await}\n",
+        "{#await b catch e}y{/await}\n",
+      ],
+      [
+        `${typescript}{#await b}wait{:then c: /* d */ E}{/await}\n`,
+        `${typescript}{#await b}wait{:then c: /* d */ E}{/await}\n`,
+        `${typescript}{#await b}wait{/await}\n`,
+      ],
+      [
+        `${typescript}{#await b}wait{:then c: E</* d */ F>}{/await}\n`,
+        `${typescript}{#await b}wait{:then c: E</* d */ F>}{/await}\n`,
+        `${typescript}{#await b}wait{/await}\n`,
+      ],
+      // Without one it goes as before.
+      ["{#await b}wait{:then c}{/await}\n", "{#await b}wait{/await}\n", null],
+      ["{#await b}wait{:then { c = 1 / 2 }}{/await}\n", "{#await b}wait{/await}\n", null],
+      ["{#await b}wait{:then { c = /d/ }}{/await}\n", "{#await b}wait{/await}\n", null],
+      ['{#await b}wait{:then { c = "/* d */" }}{/await}\n', "{#await b}wait{/await}\n", null],
+      ["{#await b then { c = `// d` }}{/await}\n", "{#await b}{/await}\n", null],
+      [`${typescript}{#await b}wait{:then c: "d/e"}{/await}\n`, `${typescript}{#await b}wait{/await}\n`, null],
+    ],
+    "the parameters of a snippet end where their parentheses do": [
+      [
+        "{#snippet row(b /* () */)}y{/snippet}\n",
+        "{#snippet row(b /* () */)}y{/snippet}\n",
+        "{#snippet row(b /* ()}y{/snippet}\n",
+      ],
+    ],
+    "a comment before a type": [
+      [
+        `${typescript}{#each rows as row : /* c */ T}y{/each}\n`,
+        `${typescript}{#each rows as row: /* c */ T}y{/each}\n`,
+        `${typescript}{#each rows as row : /* c */: T}y{/each}\n`,
+      ],
+      [
+        `${typescript}{#each rows as row : // c\n  T}y{/each}\n`,
+        `${typescript}{#each rows as row: // c\n  T}y{/each}\n`,
+        `${typescript}{#each rows as row : // c: T}y{/each}\n`,
+      ],
+      [
+        `${typescript}{#each rows as { b } : /* c */ T}y{/each}\n`,
+        `${typescript}{#each rows as { b }: /* c */ T}y{/each}\n`,
+        // What the plugin prints.
+        `${typescript}{#each rows as { b }: T}y{/each}\n`,
+      ],
+      [
+        `${typescript}{#await b then row : /* c */ T}y{/await}\n`,
+        `${typescript}{#await b then row: /* c */ T}y{/await}\n`,
+        `${typescript}{#await b then row : /* c */: T}y{/await}\n`,
+      ],
+      [
+        `${typescript}{#await b}y{:then row : /* c */ T}z{:catch e : /* d */ U}w{/await}\n`,
+        `${typescript}{#await b}y{:then row: /* c */ T}z{:catch e: /* d */ U}w{/await}\n`,
+        `${typescript}{#await b}y{:then row : /* c */: T}z{:catch e : /* d */: U}w{/await}\n`,
+      ],
+    ],
+    "the string of `this` keeps its quotes": [
+      [
+        "<svelte:element this={'b\"c'}>y</svelte:element>\n",
+        "<svelte:element this={'b\"c'}>y</svelte:element>\n",
+        // What the plugin prints.
+        '<svelte:element this={"b"c"}>y</svelte:element>\n',
+      ],
+      [
+        "<svelte:element this={'b\\'c'}>y</svelte:element>\n",
+        '<svelte:element this={"b\'c"}>y</svelte:element>\n',
+        null,
+      ],
+      [
+        "<svelte:element this='b\"c'>y</svelte:element>\n",
+        "<svelte:element this='b\"c'>y</svelte:element>\n",
+        '<svelte:element this="b"c">y</svelte:element>\n',
+      ],
+      ["<svelte:element this={'b'}>y</svelte:element>\n", '<svelte:element this={"b"}>y</svelte:element>\n', null],
+      // Not right behind the `{`, the plugin makes a text of the string.
+      ["<svelte:element this={ 'b' }>y</svelte:element>\n", '<svelte:element this="b">y</svelte:element>\n', null],
+      [
+        "<svelte:element this={ 'b\"c' }>y</svelte:element>\n",
+        "<svelte:element this={'b\"c'}>y</svelte:element>\n",
+        '<svelte:element this="b"c">y</svelte:element>\n',
+      ],
+      [
+        "<svelte:element this={('b\"c')}>y</svelte:element>\n",
+        "<svelte:element this={'b\"c'}>y</svelte:element>\n",
+        '<svelte:element this=b"c>y</svelte:element>\n',
+      ],
+      [
+        "<svelte:element this={\n  'b\"c'}>y</svelte:element>\n",
+        "<svelte:element this={'b\"c'}>y</svelte:element>\n",
+        '<svelte:element this=b"c>y</svelte:element>\n',
+      ],
+      // One backslash in the string would be two in the text, and an entity in the text is none in the string.
+      [
+        '<svelte:element this={ "b\\\\c" }>y</svelte:element>\n',
+        '<svelte:element this={"b\\\\c"}>y</svelte:element>\n',
+        '<svelte:element this="b\\\\c">y</svelte:element>\n',
+      ],
+      [
+        '<svelte:element this={ "b&amp;c" }>y</svelte:element>\n',
+        '<svelte:element this={"b&amp;c"}>y</svelte:element>\n',
+        '<svelte:element this="b&amp;c">y</svelte:element>\n',
+      ],
+    ],
+    "a value with a comment in it is not left out": [
+      // What the plugin prints is the third.
+      ["<Row item={/* keep */ item} />\n", "<Row item={/* keep */ item} />\n", "<Row {item} />\n"],
+      [
+        "<Row\n  item={\n    // keep this\n    item\n  }\n/>\n",
+        "<Row\n  item={// keep this\n  item}\n/>\n",
+        "<Row {item} />\n",
+      ],
+      ["<Row item={/** @type {Item} */ item} />\n", "<Row item={/** @type {Item} */ item} />\n", "<Row {item} />\n"],
+      ['<Row item="{/* c */ item}" />\n', "<Row item={/* c */ item} />\n", "<Row {item} />\n"],
+      ["<input bind:value={/* c */ value} />\n", "<input bind:value={/* c */ value} />\n", "<input bind:value />\n"],
+      [
+        "<p class:on={/* c */ on} style:top={/* d */ top}>y</p>\n",
+        "<p class:on={/* c */ on} style:top={/* d */ top}>y</p>\n",
+        "<p class:on style:top>y</p>\n",
+      ],
+      ["<Row let:item={/* c */ item} />\n", "<Row let:item={/* c */ item} />\n", "<Row let:item />\n"],
+      [
+        '<svelte:element this={/* c */ "b"}>y</svelte:element>\n',
+        '<svelte:element this={/* c */ "b"}>y</svelte:element>\n',
+        '<svelte:element this="b">y</svelte:element>\n',
+      ],
+      // The parentheses go, the comment does not go with them the next time.
+      ["<Row item={/* c */ (item)} />\n", "<Row item={/* c */ item} />\n", "<Row {item} />\n"],
+      // Without a comment it is left out as before.
+      ["<Row item={ (item) } />\n", "<Row {item} />\n", null],
+    ],
+    "a declaration ends behind its `;`": [
+      ["{const sum = 1;}\n", "{const sum = 1}\n", null],
+      ["{let sum ;}\n", "{let sum}\n", null],
+    ],
+    "a script that is not code stays as it is": [
+      [
+        '<script type="text/template"><p   >{{b}}</p></script>\n',
+        '<script type="text/template"><p   >{{b}}</p></script>\n',
+        // What the plugin prints: it is JSX.
+        '<script type="text/template">\n  <p>{{ b }}</p>;\n</script>\n',
+        false,
+      ],
+      [
+        '<div><script type="text/x-template">\n  <b   >{{c}}</b>\n</script></div>\n',
+        '<div>\n  <script type="text/x-template">\n  <b   >{{c}}</b>\n</script>\n</div>\n',
+        null,
+      ],
+      // Whether it can be read as JavaScript or not.
+      [
+        '<script type="math/tex">x^2 + y^2</script>\n',
+        '<script type="math/tex">x^2 + y^2</script>\n',
+        '<script type="math/tex">\n  x ^ (2 + y) ^ 2;\n</script>\n',
+        false,
+      ],
+      [
+        '<script type="text/yaml">a: 1\nb: 2</script>\n',
+        '<script type="text/yaml">a: 1\nb: 2</script>\n',
+        '<script type="text/yaml">\n  a: 1;\n  b: 2;\n</script>\n',
+        false,
+      ],
+      [
+        '<script type="text/x-mustache">{{x}}</script>\n',
+        '<script type="text/x-mustache">{{x}}</script>\n',
+        '<script type="text/x-mustache">\n  {\n    {\n      x;\n    }\n  }\n</script>\n',
+        false,
+      ],
+      [
+        '<script type="text/plain">hello</script>\n',
+        '<script type="text/plain">hello</script>\n',
+        '<script type="text/plain">\n  hello;\n</script>\n',
+        false,
+      ],
+      [
+        '<script type="x-shader/x-vertex">attribute vec4 b;</script>\n',
+        '<script type="x-shader/x-vertex">attribute vec4 b;</script>\n',
+        null,
+      ],
+      [
+        '<script type="speculationrules">{"prerender":[]}</script>\n',
+        '<script type="speculationrules">{"prerender":[]}</script>\n',
+        null,
+      ],
+      // These are code.
+      ...[
+        "",
+        "module",
+        "text/javascript",
+        "TEXT/JavaScript",
+        "text/javascript; charset=utf-8",
+        " text/javascript1.5 ",
+        "text/babel",
+        "text/jsx",
+        "application/javascript",
+        "application/x-javascript",
+        "application/ecmascript",
+        "application/x-ecmascript",
+        "text/ecmascript",
+        "text/x-ecmascript",
+        "text/x-javascript",
+        "text/jscript",
+        "text/livescript",
+        "text/partytown",
+        "application/x-typescript",
+        "application/typescript",
+        "Text/TypeScript",
+        "TS",
+        "text/ts; charset=utf-8",
+        "js",
+        "javascript",
+        "jsx",
+      ].map((type): [string, string, null] => [
+        `<script type="${type}">let  b=1</script>\n`,
+        `<script type="${type}">\n  let b = 1;\n</script>\n`,
+        null,
+      ]),
+      // In whatever letters the name of the attribute is written, and as a string between braces.
+      ...['TYPE="math/tex"', 'type={"math/tex"}'].flatMap((type): [string, string, string, false][] => [
+        [
+          `<script ${type}>x^2 + y^2</script>\n`,
+          `<script ${type}>x^2 + y^2</script>\n`,
+          `<script ${type}>\n  x ^ (2 + y) ^ 2;\n</script>\n`,
+          false,
+        ],
+        [
+          `<p><script ${type}>x^2 + y^2</script></p>\n`,
+          `<p><script ${type}>x^2 + y^2</script></p>\n`,
+          `<p>\n  <script ${type}>\n    x ^ (2 + y) ^ 2;\n  </script>\n</p>\n`,
+          false,
+        ],
+      ]),
+      // What another expression gives is not known.
+      ...['TYPE="module"', 'type={"module"}', "type={kind}"].map((type): [string, string, null] => [
+        `<p><script ${type}>let  b=1</script></p>\n`,
+        `<p>\n  <script ${type}>\n    let b = 1;\n  </script>\n</p>\n`,
+        null,
+      ]),
+      // A `lang` counts for more.
+      [
+        '<script type="math/tex" lang="js">let  b=1</script>\n',
+        '<script type="math/tex" lang="js">\n  let b = 1;\n</script>\n',
+        null,
+      ],
+      [
+        '<script type="application/ld+json">{"a":1}</script>\n',
+        '<script type="application/ld+json">\n  { "a": 1 }\n</script>\n',
+        null,
+      ],
+    ],
+    "a style sheet ends between two rules": [
+      [
+        '<style>p::after{content:"</style>"}</style>\n',
+        '<style>\n  p::after {\n    content: "</style>";\n  }\n</style>\n',
+        null,
+      ],
+      [
+        "<style>/* </style> */p{margin:0}</style>\n",
+        "<style>\n  /* </style> */\n  p {\n    margin: 0;\n  }\n</style>\n",
+        null,
+      ],
+      [
+        '<style>p[title="</style>"]{margin:0}</style>\n',
+        '<style>\n  p[title="</style>"] {\n    margin: 0;\n  }\n</style>\n',
+        null,
+      ],
+      ['<style>@import "</style>";</style>\n', '<style>\n  @import "</style>";\n</style>\n', null],
+      [
+        "<style>p{background:url(</style>)}</style>\n",
+        "<style>\n  p {\n    background: url(</style>);\n  }\n</style>\n",
+        null,
+      ],
+    ],
+  };
+  describe.each(Object.entries({ ...damaged, ...strict }))("%s", (_, rows) => {
     const names = rows.map((_, index) => `${index}.svelte`);
     const files = (which: 0 | 1) => Object.fromEntries(rows.map((it, index) => [names[index], it[which]]));
 
@@ -813,7 +1259,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       expect(checked).toMatchObject({ stderr: "", files: rows.map(it => it[0]), exitCode: 0 });
     });
 
-    test.skipIf(!hasRunner)("--debug-check would not let what the plugin prints pass", async () => {
+    test.skipIf(!hasRunner)("--debug-check would not let the other pass", async () => {
       const seen = rows.filter(it => it[2] !== null && it[2] !== it[1]);
       using dir = tempDir("bun-format-svelte", {
         ...Object.fromEntries(
@@ -849,7 +1295,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ],
       [
         "<button onclick={() => (\n  open = true\n  // and more\n)}>Open</button>\n",
-        "<button\n  onclick={() =>\n    (open = true)\n  // and more\n  }>Open</button\n>\n",
+        "<button\n  onclick={() =>\n    (open = true)\n    // and more\n  }>Open</button\n>\n",
         "<button\n  onclick={() => (open = true)\n  // and more\n  }>Open</button\n>\n",
         "<button\n  onclick={() => (open = true)}>Open</button\n  // and more\n>\n",
       ],
@@ -953,6 +1399,392 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const expected = seen.map(it => `same\nsame\n${it[4] === false ? "same" : "different"}\n`).join("");
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    });
+  });
+
+  test("a style sheet ends at the first end tag with a `lang`, or if that is not in a string, a comment or `url()`", async () => {
+    const refused: [string, string][] = [
+      // A preprocessor cuts it out before Svelte reads it.
+      [
+        '<style lang="scss">b::after{content:"</style>"}</style>\n',
+        '1 | <style lang="scss">b::after{content:"</style>"}</style>\n' +
+          "                                                   ^\nerror: This end tag has no start tag\n    at 0.svelte:1:48\n\n",
+      ],
+      [
+        "<style>b{margin:0}</style>\n<i>'</style>'</i>\n",
+        "2 | <i>'</style>'</i>\n        ^\nerror: This end tag has no start tag\n    at 1.svelte:2:5\n\n",
+      ],
+      // To Svelte this is a comment, to who formats the style sheet it is a selector.
+      [
+        "<style><!-- </style> -->b{margin:0}</style>\n",
+        "1 | <style><!-- </style> -->b{margin:0}</style>\n" +
+          '                                    ^\nerror: Expected "}"\n    at 2.svelte:1:33\n\n',
+      ],
+      [
+        "<style>b{c:</style>}</style>\n",
+        "1 | <style>b{c:</style>}</style>\n                        ^\nerror: This end tag has no start tag\n    at 3.svelte:1:21\n\n",
+      ],
+      // To Svelte `--c:` is a selector that is not finished.
+      [
+        '<style>b{--c:{d:"</style>"}}</style>\n',
+        '1 | <style>b{--c:{d:"</style>"}}</style>\n                                ^\nerror: This end tag has no start tag\n    at 4.svelte:1:29\n\n',
+      ],
+      // In a string `url(` starts nothing, and with a quote in it `url(..)` is written anew.
+      [
+        '<style>b{content:"url("}c{:</style>)}</style>\n',
+        '1 | <style>b{content:"url("}c{:</style>)}</style>\n                                         ^\nerror: This end tag has no start tag\n    at 5.svelte:1:38\n\n',
+      ],
+      [
+        '<style>b{c:url(d"e"</style>)}</style>\n',
+        '1 | <style>b{c:url(d"e"</style>)}</style>\n                                 ^\nerror: This end tag has no start tag\n    at 6.svelte:1:30\n\n',
+      ],
+      // Neither is `url(..)`.
+      [
+        "<style>b{@url(</style>)}</style>\n",
+        "1 | <style>b{@url(</style>)}</style>\n                            ^\nerror: This end tag has no start tag\n    at 7.svelte:1:25\n\n",
+      ],
+      [
+        "<style>b{curl(</style>)}</style>\n",
+        "1 | <style>b{curl(</style>)}</style>\n                            ^\nerror: This end tag has no start tag\n    at 8.svelte:1:25\n\n",
+      ],
+    ];
+    const names = refused.map((_, index) => `${index}.svelte`);
+    const files = Object.fromEntries(refused.map((it, index) => [names[index], it[0]]));
+    expect(await format(files, names, ["--threads=1"])).toMatchObject({
+      stderr: refused.map(it => it[1]).join(""),
+      files: refused.map(it => it[0]),
+      exitCode: 2,
+    });
+
+    const formatted: [string, string][] = [
+      // The same as the first above, without the `lang`.
+      [
+        '<style>b::after{content:"</style>"}</style>\n',
+        '<style>\n  b::after {\n    content: "</style>";\n  }\n</style>\n',
+      ],
+      // An apostrophe in a comment of SCSS starts nothing.
+      [
+        "<style lang=\"scss\">// don't\nb{margin:0}</style>\n<p>it's</p>\n",
+        "<p>it's</p>\n\n<style lang=\"scss\">\n  // don't\n  b {\n    margin: 0;\n  }\n</style>\n",
+      ],
+      [
+        "<style>@media (width<600px){b{margin:0}}</style>\n",
+        "<style>\n  @media (width<600px) {\n    b {\n      margin: 0;\n    }\n  }\n</style>\n",
+      ],
+      // What cannot be read stays as it is, up to the first end tag.
+      ["<style>b{margin:0</style>\n<p>y</p>\n", "<p>y</p>\n\n<style>\nb{margin:0\n</style>\n"],
+      [
+        "<style>b</style>\n<p>{c}</p>\n<svelte:head><style>d{margin:0}</style></svelte:head>\n",
+        "<p>{c}</p>\n<svelte:head\n  ><style>\n    d {\n      margin: 0;\n    }\n  </style></svelte:head\n>\n\n<style>\nb\n</style>\n",
+      ],
+      // What is not closed does not go on in the markup, up to what closes it there and to the end of another style sheet.
+      [
+        "<style>\n  b { background: url(it's.png) }\n</style>\n<p>don't</p>\n<svg><style>c:d}</style></svg>\n",
+        "<p>don't</p>\n<svg\n  ><style>\nc:d}\n  </style></svg\n>\n\n<style>\n  b {\n    background: url(it's.png);\n  }\n</style>\n",
+      ],
+      [
+        "<style>\n  b { content: 'c }\n</style>\n<p>don't</p>\n<svg><style>d}</style></svg>\n",
+        "<p>don't</p>\n<svg\n  ><style>\nd}\n  </style></svg\n>\n\n<style>\n  b { content: 'c }\n</style>\n",
+      ],
+      [
+        "<style>\n  b { background: url(c\n</style>\n<p>y</p>\n<div><style>d) }</style></div>\n",
+        "<p>y</p>\n<div>\n  <style>\nd) }\n  </style>\n</div>\n\n<style>\n  b { background: url(c\n</style>\n",
+      ],
+      [
+        "<style>\n  /* b\n</style>\n<p>y</p>\n<svg><style>c */d{e:f}</style></svg>\n",
+        "<p>y</p>\n<svg\n  ><style>\n    c */d {\n      e: f;\n    }\n  </style></svg\n>\n\n<style>\n  /* b\n</style>\n",
+      ],
+      ["<style>b{c:url( '</style>' )}</style>\n", '<style>\n  b {\n    c: url("</style>");\n  }\n</style>\n'],
+      // A string goes on in the next line behind a backslash.
+      [
+        '<style>b{content:"c\\\nd </style>"}</style>\n',
+        '<style>\n  b {\n    content: "c\\\nd </style>";\n  }\n</style>\n',
+      ],
+    ];
+    const others = formatted.map((_, index) => `${index}.svelte`);
+    const texts = Object.fromEntries(formatted.map((it, index) => [others[index], it[0]]));
+    expect(await format(texts, others, ["--threads=1"])).toMatchObject({
+      stderr:
+        "1 | <style>b{margin:0</style>\n           ^\nwarn: Unclosed block\n   at 3.svelte:1:8\n\n" +
+        "1 | <style>b</style>\n           ^\nwarn: Expected a declaration or a rule\n   at 4.svelte:1:8\n\n" +
+        '5 | <svg><style>c:d}</style></svg>\n                   ^\nwarn: Unexpected "}"\n   at 5.svelte:5:16\n\n' +
+        "2 |   b { content: 'c }\n                   ^\nwarn: Unclosed string\n   at 6.svelte:2:16\n\n" +
+        "5 | <svg><style>d}</style></svg>\n                ^\nwarn: Expected a declaration or a rule\n   at 6.svelte:5:13\n\n" +
+        "2 |   b { background: url(c\n                         ^\nwarn: Unclosed bracket\n   at 7.svelte:2:22\n\n" +
+        "5 | <div><style>d) }</style></div>\n                ^\nwarn: Expected a declaration or a rule\n   at 7.svelte:5:13\n\n" +
+        "2 |   /* b\n      ^\nwarn: Unclosed comment\n   at 8.svelte:2:3\n\n",
+      files: formatted.map(it => it[1]),
+      exitCode: 0,
+    });
+  });
+
+  describe("every comment next to a value that is named like its attribute is kept", () => {
+    const sites = [
+      "<Row b={V} />",
+      "<a b={V}>y</a>",
+      '<a b="{V}">y</a>',
+      "<input bind:b={V} />",
+      "<a class:b={V}>y</a>",
+      "<a style:b={V}>y</a>",
+      '<a style:b="{V}">y</a>',
+      "<Row let:b={V} />",
+      "<svelte:element this={V}>y</svelte:element>",
+      "<a on:b={V}>y</a>",
+      "<a use:b={V}>y</a>",
+    ];
+    const forms = [
+      "/* C1 */ b",
+      "/* C1 */b",
+      "/** C1 */ b",
+      "// C1\nb",
+      "\n// C1\nb\n",
+      "/* C1 */\nb",
+      "\n/* C1 */\nb",
+      "b /* C1 */",
+      "b/* C1 */",
+      "b // C1\n",
+      "b\n// C1\n",
+      "b\n/* C1 */\n",
+      "/* C1 */ (b)",
+      "(/* C1 */ b)",
+      "(b /* C1 */)",
+      "(b) /* C1 */",
+      "/* C1 */ b /* C2 */",
+      "/* C1 *//* C2 */ b",
+    ];
+    const texts = sites.flatMap(site =>
+      forms.map(form => site.replace("V", site.includes("this=") ? form.replace(/\bb\b/, '"b"') : form) + "\n"),
+    );
+    const names = texts.map((_, index) => `${index}.svelte`);
+    const comments = (text: string) => text.match(/C\d/g)!.sort();
+
+    test.each([true, false])("svelteAllowShorthand: %p", async svelteAllowShorthand => {
+      using dir = tempDir("bun-format-svelte", {
+        ".prettierrc": JSON.stringify({ plugins, svelteAllowShorthand }),
+        ...Object.fromEntries(texts.map((text, index) => [names[index], text])),
+      });
+      let before = texts;
+      for (const pass of [1, 2, 3]) {
+        const result = await formatIn(String(dir), names);
+        expect({ pass, stderr: result.stderr, exitCode: result.exitCode }).toEqual({ pass, stderr: "", exitCode: 0 });
+        // What has lost or doubled one, with what it was.
+        const wrong = result.files.flatMap((text, index) =>
+          Bun.deepEquals(text.match(/C\d/g)?.sort(), comments(texts[index])) ? [] : [[pass, before[index], text]],
+        );
+        expect(wrong).toEqual([]);
+        before = result.files;
+      }
+      // It has settled by then.
+      expect((await formatIn(String(dir), names)).files).toEqual(before);
+    });
+  });
+
+  describe("--debug-check", () => {
+    // The text, what becomes of it, and what becomes of that, which stays.
+    const right: [string, string, string?][] = [
+      ["{#snippet row(b = // c\n  1)}y{/snippet}\n", "{#snippet row(\n  b = 1, // c\n)}y{/snippet}\n"],
+      [
+        "{#if b}{@const c = // d\n  class { e = 1 }}{c}{/if}\n",
+        "{#if b}{@const c = class { // d\n    e = 1;\n  }}{c}{/if}\n",
+        "{#if b}{@const c = class {\n    // d\n    e = 1;\n  }}{c}{/if}\n",
+      ],
+      ["{#each ( /* c */b + c ) * d, i}y{/each}\n", "{#each /* c */ (b + c) * d, i}y{/each}\n"],
+      ["{#snippet f(b =\n/* c */\n`${d}`)}y{/snippet}\n", "{#snippet f(\n  /* c */\n  b = `${d}`,\n)}y{/snippet}\n"],
+      // A name without its escape, modifiers in the usual order, a name that is written twice.
+      [`${typescript}{b\\u{63}}\n`, `${typescript}{bc}\n`],
+      [`${typescript}{class{static private b}}\n`, `${typescript}{class {\n  private static b;\n}}\n`],
+      ["{#each b as { c = {d,e} }}y{/each}\n", "{#each b as { c = { d: d, e: e } }}y{/each}\n"],
+      // The value of a `style:` directive is broken into lines like text.
+      [
+        '<p style:background="linear-gradient(red, orange, yellow, green, blue, indigo, violet, white)">y</p>\n',
+        '<p\n  style:background="linear-gradient(red, orange, yellow, green, blue, indigo,\n  violet, white)"\n>\n  y\n</p>\n',
+      ],
+    ];
+    test("says nothing about what is right", async () => {
+      const names = right.map((_, index) => `${index}.svelte`);
+      const files = (which: (row: (typeof right)[0]) => string) =>
+        Object.fromEntries(right.map((it, index) => [names[index], which(it)]));
+      const printed = (which: (row: (typeof right)[0]) => string) => ({
+        stderr: "",
+        files: right.map(which),
+        exitCode: 0,
+      });
+      expect(
+        await format(
+          files(it => it[0]),
+          names,
+        ),
+      ).toMatchObject(printed(it => it[1]));
+      expect(
+        await format(
+          files(it => it[1]),
+          names,
+        ),
+      ).toMatchObject(printed(it => it[2] ?? it[1]));
+      expect(
+        await format(
+          files(it => it[0]),
+          names,
+          ["--debug-check"],
+        ),
+      ).toMatchObject(printed(it => it[0]));
+      expect(
+        await format(
+          files(it => it[1]),
+          names,
+          ["--debug-check"],
+        ),
+      ).toMatchObject(printed(it => it[1]));
+    });
+
+    // What a word or a string is does not depend on the `,`, the `;` or the line break next to it, which change.
+    const words = [
+      "{x as { b: T, readonly [k: string]: U }}",
+      "{x as { b: T\n readonly [k: string]: U }}",
+      "{() => { interface A { b: T, readonly [k: string]: U } }}",
+      "{class { b\nstatic [c] = 1 }}",
+      "{class { b\nreadonly [c] = 1 }}",
+      "{class { b\npublic [c] = 1 }}",
+      "{class { b\naccessor [c] = 1 }}",
+      "{class { b; static [c] = 1 }}",
+      "{class { public\nb }}",
+      "{class { readonly; b }}",
+      "{() => { b\nstatic[0] }}",
+      "{() => { enum A { 'b', c } }}",
+      "{() => { enum A { 'b' } }}",
+      "{() => { enum A { 'b-c', d } }}",
+      '{x as { "b"; c }}',
+      '{x as { "b" }}',
+      '{x as { readonly "b" }}',
+      '{() => { interface A { "b" } }}',
+      '{class { accessor "b" }}',
+      '{class { "b-c"; d }}',
+      '{class { 1; "2" }}',
+    ].map(code => `${typescript}${code}\n`);
+    test.each([{}, { semi: false }, { quoteProps: "consistent" }])(
+      "says nothing about words and keys: %j",
+      async options => {
+        const names = words.map((_, index) => `${index}.svelte`);
+        const files = {
+          ".prettierrc": JSON.stringify({ plugins, ...options }),
+          ...Object.fromEntries(words.map((text, index) => [names[index], text])),
+        };
+        expect(await format(files, names, ["--debug-check"])).toMatchObject({ stderr: "", files: words, exitCode: 0 });
+      },
+    );
+
+    const different: [string, string][] = [
+      // Code that has become a comment.
+      ["{@html raw + more}\n", "{@html raw // + more\n}\n"],
+      ["{@html raw + more}\n", "{@html raw /* + more */}\n"],
+      ["{#if q}{@const c = b + 1}{c}{/if}\n", "{#if q}{@const c = b /* + 1 */}{c}{/if}\n"],
+      // A comment that is lost.
+      ["{f(b /* c */)}\n", "{f(b)}\n"],
+      // A string between brackets is a value.
+      ['{{ ["b"]: 1 }}\n', "{{ [b]: 1 }}\n"],
+      ["<Row item={/* c */ item} />\n", "<Row {item} />\n"],
+      ["<input bind:value={/* c */ value} />\n", "<input bind:value />\n"],
+      ["{#await b}wait{:then { c /* d */ }}{/await}\n", "{#await b}wait{/await}\n"],
+      // A string is no name.
+      ['{"name"}\n', "{name}\n"],
+      ['{f("x")}\n', "{f(x)}\n"],
+      ['{f(b, "x", c)}\n', "{f(b, x, c)}\n"],
+      ['{b["c"]}\n', "{b[c]}\n"],
+      ['{"1"}\n', "{1}\n"],
+      ['{b ? "c" : d}\n', "{b ? c : d}\n"],
+      ['<p b={"c"}>y</p>\n', "<p b={c}>y</p>\n"],
+      ['<svelte:element this={"b"}>y</svelte:element>\n', "<svelte:element this={b}>y</svelte:element>\n"],
+      ['<svelte:element this={ "b\\\\c" }>y</svelte:element>\n', '<svelte:element this="b\\\\c">y</svelte:element>\n'],
+      // A template that is in no other language, whatever is before it.
+      ["{() => { return `b  c` }}\n", "{() => { return `b c` }}\n"],
+      ["{typeof `b  c`}\n", "{typeof `b c`}\n"],
+      ["{b in `b  c`}\n", "{b in `b c`}\n"],
+      ["{async () => await `b  c`}\n", "{async () => await `b c`}\n"],
+      ["{() => { if (b) `b  c` }}\n", "{() => { if (b) `b c` }}\n"],
+      ["{f`b  c`}\n", "{f`b c`}\n"],
+      // A name that is spelled like a modifier.
+      ["{f(public, b)}\n", "{f(b, public)}\n"],
+      ["{static + b}\n", "{b + static}\n"],
+      // What is no letter.
+      ["{row(1, 2)}\n", "{row(1)}\n"],
+      ["{b + 1}\n", "{b}\n"],
+      ["{b + 1}\n", "{b - 1}\n"],
+      ["{b + 1}\n", "{b + 2}\n"],
+      ["{b | c}\n", "{b & c}\n"],
+      ["{b.c}\n", "{b?.c}\n"],
+      ["{#snippet f(b = 1)}y{/snippet}\n", "{#snippet f(b = 2)}y{/snippet}\n"],
+      ["{#each b as { c = 1 }}y{/each}\n", "{#each b as { c = 2 }}y{/each}\n"],
+      ["{const b = 1}\n", "{const b = 2}\n"],
+      // The order.
+      ["{x}{y}\n", "{y}{x}\n"],
+      ["{b ? c : d}\n", "{b ? d : c}\n"],
+      ["{#each b as c, i}y{/each}\n", "{#each b as i, c}y{/each}\n"],
+      ["{@debug b, c}\n", "{@debug c, b}\n"],
+      ["<p on:click={b} on:keyup={c}>y</p>\n", "<p on:click={c} on:keyup={b}>y</p>\n"],
+      ['<p title="x y">z</p>\n', '<p title="y x">z</p>\n'],
+      ['<p class="b c">y</p>\n', '<p class="c b">y</p>\n'],
+      // White space that is not between two tokens.
+      ['<p title="x  y">z</p>\n', '<p title="x y">z</p>\n'],
+      ['{"b  c"}\n', '{"b c"}\n'],
+      ["{`b\nc`}\n", "{`b c`}\n"],
+    ];
+    const same: [string, string][] = [
+      ["{(b)}\n", "{b}\n"],
+      ["{'b'}\n", '{"b"}\n'],
+      ['{"b\\\'c"}\n', '{"b\'c"}\n'],
+      ["{f(b,)}\n", "{f(b)}\n"],
+      ["{0XAB + 1.50 + .5 + 1E5}\n", "{0xab + 1.5 + 0.5 + 1e5}\n"],
+      ["{({'b': 1})}\n", "{{ b: 1 }}\n"],
+      ["{(/b/ig).test(c)}\n", "{(/b/gi).test(c)}\n"],
+      ["{new B}\n", "{new B()}\n"],
+      ["{b => b}\n", "{(b) => b}\n"],
+      ["{() => {b;c}}\n", "{() => {\n  b;\n  c;\n}}\n"],
+      ["{css`b{}`}\n", "{css`\n  b {\n  }\n`}\n"],
+      ["{/* HTML */ `<p   >b</p>`}\n", "{/* HTML */ `<p>b</p>`}\n"],
+      ["{({'b': 1, 'c': 2})}\n", "{{ b: 1, c: 2 }}\n"],
+      ["{({'1': b})}\n", "{{ 1: b }}\n"],
+      ["{class{'b'(){}}}\n", "{class {\n  b() {}\n}}\n"],
+      ["{#each b as {'c': d}}y{/each}\n", "{#each b as { c: d }}y{/each}\n"],
+      [`${typescript}{b as {'c'?:D}}\n`, `${typescript}{b as { c?: D }}\n`],
+      [`${typescript}{class{readonly static [b] = 1}}\n`, `${typescript}{class {\n  static readonly [b] = 1;\n}}\n`],
+      ['<svelte:element this={ "b" }>y</svelte:element>\n', '<svelte:element this="b">y</svelte:element>\n'],
+      ["{b ? c : (d // e\n)}\n", "{b ? c : d // e\n}\n"],
+      ["{const b = 1;}\n", "{const b = 1}\n"],
+      ["{#each b as { c: c }}y{/each}\n", "{#each b as { c }}y{/each}\n"],
+      ["<p b={b}>y</p>\n", "<p {b}>y</p>\n"],
+      ['<p class="b  c">y</p>\n', '<p class="b c">y</p>\n'],
+      ['<p style:b="c d">y</p>\n', '<p style:b="c\n  d">y</p>\n'],
+      [`${typescript}{b as | C | D}\n`, `${typescript}{b as C | D}\n`],
+      [
+        `${typescript}{#snippet f(b: C | D)}y{/snippet}\n`,
+        `${typescript}{#snippet f(\n  b:\n    | C\n    | D,\n)}y{/snippet}\n`,
+      ],
+      // It does not tell these apart: a string that is no value could be a key, which can lose its quotes.
+      [`${typescript}{b as "c"}\n`, `${typescript}{b as c}\n`],
+      // Nor these: it looks at tokens, not at the tree, and at neither parentheses nor commas.
+      ["{(b + c) * d}\n", "{b + c * d}\n"],
+      ["{[b, , c]}\n", "{[b, c]}\n"],
+    ];
+    test.skipIf(!hasRunner)("tells what is something else from what is only written differently", async () => {
+      const rows = [...different, ...same];
+      using dir = tempDir(
+        "bun-format-svelte",
+        Object.fromEntries(rows.flatMap((it, index) => it.map((text, which) => [`${index}.${which}`, text]))),
+      );
+      await using proc = spawn({
+        cmd: [bunExe(), "fmt", "--debug-check-svelte", ...rows.flatMap((_, index) => [`${index}.0`, `${index}.1`])],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const said = stdout.trimEnd().split("\n");
+      expect(rows.map((it, index) => [...it, said[index]])).toEqual([
+        ...different.map(it => [...it, "different"]),
+        ...same.map(it => [...it, "same"]),
+      ]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     });
   });
 
@@ -1314,6 +2146,18 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         warning("Unexpected token", [1, 48, '<div   ><script type="application/json">{ "a": }</script></div>']),
       ],
       [
+        "a script whose type is another name of JavaScript",
+        '<script type="text/ecmascript">function (</script>\n',
+        '<script type="text/ecmascript">\nfunction (\n</script>\n',
+        warning("Identifier expected.", [1, 41, '<script type="text/ecmascript">function (</script>']),
+      ],
+      [
+        "a script for Partytown",
+        '<script type="text/partytown">let a = ;</script>\n',
+        '<script type="text/partytown">\nlet a = ;\n</script>\n',
+        warning("Expression expected.", [1, 39, '<script type="text/partytown">let a = ;</script>']),
+      ],
+      [
         "behind a byte order mark and letters of two bytes",
         '\uFEFF<script>let é = "é"; let b = ;</script>\n',
         '\uFEFF<script>\nlet é = "é"; let b = ;\n</script>\n',
@@ -1441,7 +2285,10 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       // In a default.
       [each("{ x = c ? a : a }"), each("{ x = c ? a : 1 }"), "different"],
       [each("{ x = c ? a : a }"), each("{ x = c ? a }"), "different"],
-      [each("{ x = { a: a } }"), each("{ x = { a } }"), "different"],
+      // In an object it is one: the second is printed as the first.
+      [each("{ x = { a: a } }"), each("{ x = { a } }"), "same"],
+      [each("{ x = { a: b } }"), each("{ x = { b } }"), "different"],
+      [each("{ x = { [a]: a } }"), each("{ x = { a } }"), "different"],
       // A computed key.
       [each("{ [a]: a }"), each("{ a }"), "different"],
     ];

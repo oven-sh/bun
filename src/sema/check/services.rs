@@ -112,7 +112,6 @@ pub struct Services<'c, 'p, 's> {
     read_library: Option<ReadLibrary<'c>>,
     /// What the queries must not change for the files that the task checks next.
     flow_analysis_was_disabled: Vec<FileId>,
-    had_run_out_of_stack: bool,
 }
 
 impl<'p, 's> Checker<'p, 's> {
@@ -133,7 +132,6 @@ impl<'p, 's> Checker<'p, 's> {
         let flow_analysis_was_disabled = std::mem::take(&mut self.flow_analysis_disabled);
         let mut services = Services {
             flow_analysis_was_disabled,
-            had_run_out_of_stack: self.ran_out_of_stack.get(),
             c: self,
             file,
             arena: &arena,
@@ -159,7 +157,6 @@ impl<'p, 's> Checker<'p, 's> {
 impl Drop for Services<'_, '_, '_> {
     fn drop(&mut self) {
         self.c.flow_analysis_disabled = std::mem::take(&mut self.flow_analysis_was_disabled);
-        self.c.ran_out_of_stack.set(self.had_run_out_of_stack);
         self.c.rechecked_exprs.clear();
         self.c.rechecked_members.clear();
     }
@@ -556,6 +553,18 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Atom::NONE => b"",
             text => self.c.atoms().bytes(text),
         }
+    }
+
+    /// `checker.getAccessedPropertyName(node)`: of a property access the name as it is written, of
+    /// an element access what `tryGetElementAccessExpressionName` finds for its key.
+    pub fn accessed_property_name(&mut self, node: NodeRef) -> Option<&'p [u8]> {
+        let e = self.expr_of(node)?;
+        let name = match self.c.hir(node.file)[e].kind {
+            hir::ExprKind::Dot { name, .. } => name,
+            hir::ExprKind::Index { index, .. } => self.c.literal_key(node.file, index)?,
+            _ => return None,
+        };
+        Some(crate::atom::written_name(self.c.atoms().bytes(name)))
     }
 
     /// The text of the file from the first token of `node` to the end of its last.

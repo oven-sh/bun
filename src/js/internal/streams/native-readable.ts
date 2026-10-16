@@ -187,14 +187,6 @@ function getRemainingChunk(stream: NativeReadable, maxToRead?: number) {
 
 // start() and pull() throw when the source fails.
 function read(this: NativeReadable, maxToRead: number) {
-  try {
-    return readFromHandle.$call(this, maxToRead);
-  } catch (error) {
-    fail(this, error);
-  }
-}
-
-function readFromHandle(this: NativeReadable, maxToRead: number) {
   $debug(`[${this.debugId}] read${this[kPendingRead] ? ", is already pending" : ""}`);
   var ptr = this.$bunNativePtr;
   // Readable called `_read`, so it wants data: make sure the native reader is
@@ -211,7 +203,12 @@ function readFromHandle(this: NativeReadable, maxToRead: number) {
     return;
   }
   if (!this[kConstructed]) {
-    const result: any = ptr.start(this[kHighWaterMark]);
+    let result: any;
+    try {
+      result = ptr.start(this[kHighWaterMark]);
+    } catch (error) {
+      return fail(this, error);
+    }
     $debug(`[${this.debugId}] start, initial hwm:`, result);
     if (typeof result === "number" && result > 1) {
       this[kHasResized] = true;
@@ -228,7 +225,12 @@ function readFromHandle(this: NativeReadable, maxToRead: number) {
     }
   }
   const chunk = getRemainingChunk(this, maxToRead);
-  var result = ptr.pull(chunk, this[kCloseState]);
+  var result: any;
+  try {
+    result = ptr.pull(chunk, this[kCloseState]);
+  } catch (error) {
+    return fail(this, error);
+  }
   $assert(result !== undefined);
   $debug(
     `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${$isPromise(result) ? "<pending>" : $isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,

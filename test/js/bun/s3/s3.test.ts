@@ -2265,6 +2265,46 @@ describe("presigned url signature", () => {
     },
   );
 
+  // A JavaScript string is always text, so only a credential from the environment can have
+  // such a byte. The signer takes it as text too, and both sources sign in the same way.
+  it("signs with U+FFFD for a byte of a secretAccessKey in .env that is not UTF-8", async () => {
+    using dir = tempDir("s3-env-secret", {
+      ".env": Buffer.concat([
+        Buffer.from(
+          [
+            `S3_ACCESS_KEY_ID=${signing.accessKeyId}`,
+            `S3_BUCKET=${signing.bucket}`,
+            `S3_REGION=${signing.region}`,
+            `S3_ENDPOINT=${signing.endpoint}`,
+            "S3_SECRET_ACCESS_KEY=caf",
+          ].join("\n"),
+        ),
+        Buffer.from([0xe9, 0x0a]),
+      ]),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(Bun.s3.presign("key.txt"))`],
+      env: {
+        ...bunEnv,
+        S3_SESSION_TOKEN: undefined,
+        AWS_SESSION_TOKEN: undefined,
+        AWS_ACCESS_KEY_ID: undefined,
+        AWS_SECRET_ACCESS_KEY: undefined,
+        AWS_ENDPOINT: undefined,
+        AWS_REGION: undefined,
+        AWS_BUCKET: undefined,
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const presigned = stdout.trim();
+    expect(stderr).toBe("");
+    expect(presigned).toBe(presignedUrlFromSpec(presigned, { ...signing, secretAccessKey: "caf\uFFFD" }, "key.txt"));
+    expect(exitCode).toBe(0);
+  });
+
   it("derives the signing key from each credential's own region and secret", () => {
     const commonOptions = {
       accessKeyId: "test-access-key",

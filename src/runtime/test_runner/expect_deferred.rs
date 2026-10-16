@@ -446,7 +446,7 @@ impl Pass {
                     answered.get(),
                 ]);
             }
-            self.journal.set(bun_jsc::JSArray::create(
+            self.journal.set(JSValue::create_array_from_slice(
                 global,
                 &elements[..recorded * Self::STRIDE as usize],
             )?);

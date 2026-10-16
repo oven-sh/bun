@@ -714,9 +714,11 @@ scopes."@other" = "https://registry.other.com/"
         }
       }
     }
-    // The generator must reach both outcomes, or the check says nothing.
-    expect(parsed).toBeGreaterThan(fuzzIters / 4);
-    expect(parsed).toBeLessThan(fuzzIters);
+    // The generator must reach both outcomes, or the check says nothing. A short replay can miss one.
+    if (fuzzIters >= 100) {
+      expect(parsed).toBeGreaterThan(fuzzIters / 4);
+      expect(parsed).toBeLessThan(fuzzIters);
+    }
   });
 });
 

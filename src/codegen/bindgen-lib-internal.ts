@@ -620,8 +620,12 @@ const sharedBuffers = "shared buffers";
 
 /** The bytes of a typed array, `DataView` or `ArrayBuffer`, as `&[u8]`. */
 export class BytesType extends Type {
-  readonly idlType = "Bun::Bindgen::IDLBufferSourceBytes";
-  readonly tsType = "ArrayBuffer | ArrayBufferView";
+  readonly idlType: string = "Bun::Bindgen::IDLBufferSourceBytes";
+  readonly tsType: string = "ArrayBuffer | ArrayBufferView";
+  /** WebIDL's `[AllowShared]`: a `SharedArrayBuffer` and a view of one too, as a `PossiblySharedBytes<'a>`. */
+  get allowShared(): PossiblySharedBytesType {
+    return new PossiblySharedBytesType();
+  }
   get valueKinds(): ValueKinds {
     return bufferSourceKinds;
   }
@@ -642,6 +646,18 @@ export class BytesType extends Type {
   }
   rustFromExtern(expr: string): string {
     return `${expr}.get(heap)`;
+  }
+}
+
+/** Bytes that another thread may be writing, so not as `&[u8]`. */
+export class PossiblySharedBytesType extends BytesType {
+  readonly idlType = "WebCore::IDLAllowSharedAdaptor<Bun::Bindgen::IDLBufferSourceBytes>";
+  readonly tsType = "ArrayBuffer | SharedArrayBuffer | ArrayBufferView";
+  rustType(): string {
+    return "bindgen::PossiblySharedBytes<'a>";
+  }
+  rustFromExtern(expr: string): string {
+    return `${expr}.get_possibly_shared(heap)`;
   }
 }
 
@@ -848,6 +864,7 @@ export class OptionalType extends Type {
     assert(!(inner instanceof AnyType), "b.any already accepts undefined and null");
     assert(!(inner instanceof WithValueType), "put .withValue last");
     assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
+    assert(!(inner instanceof PossiblySharedBytesType), ".allowShared is for an argument that is always there");
     this.inner = inner;
     this.modifier = modifier;
   }
@@ -1460,7 +1477,9 @@ export class Signature {
     for (const { name, type } of this.args) {
       assert(
         !type.borrowsHeap || this.capability !== "js",
-        `${name}: JavaScript can detach a buffer; take b.bufferSource without .bytes and use with_bytes`,
+        type instanceof PossiblySharedBytesType
+          ? `${name}: JavaScript can detach a buffer; .allowShared is for a function that cannot run it`
+          : `${name}: JavaScript can detach a buffer; take b.bufferSource without .bytes and use with_bytes`,
       );
     }
     assert(!(this.returns instanceof DefaultType), "a result has no default");

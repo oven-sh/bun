@@ -331,6 +331,37 @@ impl<'a> JsLocal<'a, BufferSource> {
     }
 }
 
+/// The bytes of a buffer that may be a `SharedArrayBuffer`'s, which another thread can write at any time. There is no
+/// `&[u8]` of them: a byte can differ each time it is read, and only what is written for that reads them.
+#[derive(Clone, Copy)]
+pub struct PossiblySharedBytes<'a> {
+    data: *const u8,
+    length: usize,
+    lifetime: PhantomData<&'a ()>,
+}
+
+impl PossiblySharedBytes<'_> {
+    /// `None` if `range` starts beyond the end.
+    #[inline]
+    pub fn get(self, range: core::ops::RangeFrom<usize>) -> Option<Self> {
+        let length = self.length.checked_sub(range.start)?;
+        // SAFETY: at most one past the end.
+        let data = unsafe { self.data.add(range.start) };
+        Some(Self {
+            data,
+            length,
+            ..self
+        })
+    }
+
+    /// The byte there can have changed by the time this returns.
+    #[inline]
+    pub fn index_of_char(self, needle: u8) -> Option<usize> {
+        // SAFETY: readable for `'a`.
+        unsafe { bun_highway::index_of_char_raw(self.data, self.length, needle) }
+    }
+}
+
 /// An argument converted for use now, and the value itself for whatever holds it longer.
 #[derive(Clone, Copy)]
 pub struct WithValue<'a, T> {

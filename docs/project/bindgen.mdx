@@ -173,6 +173,7 @@ any other: nothing looks at how many there are.
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
 | `b.bufferSource.bytes`                           | `&'a [u8]`                       | the same; see [Buffers](#buffers)                             |
+| `b.bufferSource.bytes.allowShared`               | `PossiblySharedBytes<'a>`        | the same, and a shared one                                    |
 | `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
@@ -313,6 +314,13 @@ let after = buffer.with_bytes(&cx.heap, sum);
 
 Calling `callback.call(cx, ..)` inside the closure does not compile. A detached or
 out-of-bounds view is empty.
+
+Another thread can write the bytes of a `SharedArrayBuffer` at any time, which a `&[u8]` says
+cannot happen, so these types refuse one. `.allowShared`, WebIDL's `[AllowShared]`, takes it,
+and the body gets a `PossiblySharedBytes<'a>` whether the buffer is shared or not. There is no
+way from it to a slice. What reads the bytes is a method of it, written for a byte that can
+differ each time it is read: `index_of_char` hands the pointer to a kernel that uses nothing
+it reads as an index or a length. Such an argument is always there: it is not `.optional`.
 
 ### Keeping the original value
 

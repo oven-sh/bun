@@ -231,8 +231,7 @@ async function fails(dir: string, linker: Linker, cmd: string[], errors: string[
 const frozenInstall = ["install", "--frozen-lockfile"];
 const frozen = (dir: string, linker: Linker, notes: string[]) => passes(dir, linker, frozenInstall, notes);
 const frozenFails = (dir: string, linker: Linker, errors: string[]) => fails(dir, linker, frozenInstall, errors);
-const install = (dir: string, linker: Linker, notes: string[] = []) =>
-  passes(dir, linker, ["install"], [...notes, savedLockfile]);
+const install = (dir: string, linker: Linker) => passes(dir, linker, ["install"], [savedLockfile]);
 
 const lockText = (dir: string) => file(join(dir, "bun.lock")).text();
 
@@ -240,14 +239,14 @@ type Fixture = { fullDir: string; full: string };
 const fixtures = new Map<string, Promise<Fixture>>();
 
 // A full install of `tree`, done once per linker and shared by every test that starts from its bun.lock.
-function fullInstall(linker: Linker, tree: Tree, notes: string[] = []): Promise<Fixture> {
+function fullInstall(linker: Linker, tree: Tree): Promise<Fixture> {
   const key = JSON.stringify([linker, tree]);
   let fixture = fixtures.get(key);
   if (!fixture) {
     fixture = (async () => {
       const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
       await writeTree(packageDir, tree);
-      await install(packageDir, linker, notes);
+      await install(packageDir, linker);
       return { fullDir: packageDir, full: await lockText(packageDir) };
     })();
     fixtures.set(key, fixture);
@@ -268,9 +267,9 @@ function fullLockb(): Promise<Uint8Array<ArrayBuffer>> {
 }
 
 // A second checkout with only `keep` of `checkout`'s workspaces on disk and the full install's bun.lock copied verbatim.
-async function verbatimScenario(linker: Linker, tree: Tree, keep: string[], checkout = tree, notes?: string[]) {
+async function verbatimScenario(linker: Linker, tree: Tree, keep: string[], checkout = tree) {
   const [{ fullDir, full }, { packageDir }] = await Promise.all([
-    fullInstall(linker, tree, notes),
+    fullInstall(linker, tree),
     registry.createTestDir({ bunfigOpts: { linker } }),
   ]);
   await writeTree(packageDir, checkout, keep);
@@ -842,14 +841,7 @@ describe.each(linkers)("linker: %s", linker => {
       ["dependencies, as *,", { dependencies: { "no-deps": "*" } }],
     ] as [string, PackageJson][])("in a survivor's %s fails", async (_, app) => {
       const tree = linkedRangeTree({}, app);
-      const unmetPeer = (app.peerDependencies as Record<string, string> | undefined)?.["no-deps"] === "^2.0.0";
-      const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"], tree, [
-        ...(unmetPeer
-          ? [
-              'warn: incorrect peer dependency "no-deps@workspace:packages/no-deps": "app@workspace:packages/app" requires "no-deps@^2.0.0"',
-            ]
-          : []),
-      ]);
+      const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
       expect(full).toContain("no-deps@workspace:packages/no-deps");
       expect(full).not.toContain('"no-deps@1.');
 
@@ -884,6 +876,23 @@ describe.each(linkers)("linker: %s", linker => {
   });
 
   describe("a range on the name of a pruned workspace that bun.lock binds to the registry still passes", () => {
+    // hoisted: at its bun.lock key, `app/no-deps`. The place at the root is the workspace's, pruned or not.
+    const expectAppGets = async (packageDir: string, version: string) => {
+      const app = join(packageDir, "packages", "app");
+      const manifest = byLinker(
+        linker,
+        join(app, "node_modules", "no-deps", "package.json"),
+        installedPath(packageDir, linker, "no-deps", version),
+      );
+      expect(await file(manifest).json()).toMatchObject({ version });
+      const script = "require('no-deps/package.json').version";
+      expect(await spawnBun(packageDir, ["--no-install", "-p", script], app)).toEqual({
+        stdout: `${version}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    };
+
     // bun.lock is written with `linkWorkspacePackages = false`. The pruned checkout keeps that bunfig line only when
     // `keepSetting` is set (a Docker context often copies no bunfig.toml).
     test.concurrent.each([
@@ -908,9 +917,7 @@ describe.each(linkers)("linker: %s", linker => {
       await frozen(packageDir, linker, [skippedNote("no-deps")]);
 
       expect(await lockText(packageDir)).toBe(full);
-      expect(await file(installedPath(packageDir, linker, "no-deps", "1.1.0")).json()).toMatchObject({
-        version: "1.1.0",
-      });
+      await expectAppGets(packageDir, "1.1.0");
     });
 
     test.concurrent("a range the workspace does not satisfy", async () => {
@@ -921,9 +928,7 @@ describe.each(linkers)("linker: %s", linker => {
       await frozen(packageDir, linker, [skippedNote("no-deps")]);
 
       expect(await lockText(packageDir)).toBe(full);
-      expect(await file(installedPath(packageDir, linker, "no-deps", "2.0.0")).json()).toMatchObject({
-        version: "2.0.0",
-      });
+      await expectAppGets(packageDir, "2.0.0");
     });
   });
 

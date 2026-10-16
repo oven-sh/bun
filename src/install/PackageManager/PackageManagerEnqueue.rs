@@ -27,8 +27,8 @@ use crate::package_manager_real::directories::{
 };
 use crate::package_manager_real::options::{Do, OfflineMode};
 use crate::package_manager_real::{
-    self, HeldAbout, PackageManager, SuccessFn, TaskCallbackList, Wanted, get_cache_directory,
-    get_temporary_directory, run_tasks,
+    self, HeldAbout, PackageManager, RemoteTurn, SuccessFn, TaskCallbackList, Wanted,
+    get_cache_directory, get_temporary_directory, run_tasks,
 };
 use crate::package_manager_task as Task;
 use crate::patch_install::EnqueueAfterState;
@@ -69,6 +69,14 @@ fn task_callback_list(this: &mut PackageManager, task_id: Task::Id) -> &mut Task
         .get_or_put(task_id)
         .expect("unreachable")
         .value_ptr
+}
+
+/// Makes a git, GitHub or tarball dependency wait for the task that fetches its package.
+fn wait_for_remote_task(this: &mut PackageManager, task_id: Task::Id, waiter: TaskCallbackContext) {
+    task_callback_list(this, task_id).push(waiter);
+    if !this.remote_packages.tasks.contains(&task_id) {
+        this.remote_packages.tasks.push(task_id);
+    }
 }
 
 /// False when `task_id` already had a list: the task was started before.
@@ -169,33 +177,45 @@ pub(crate) fn advance(this: &mut PackageManager) {
     }
     this.lockfile.scratch.dependency_list_queue.waits_for = None;
 
-    while let Some(head) = this.lockfile.scratch.dependency_list_queue.head() {
-        for id in head.rows.begin()..head.rows.end() {
-            let dependency = queued_row(this, id, head).clone();
-            let resolution = this.lockfile.buffers.resolutions[id as usize];
-            match bind_row(
-                this,
-                id,
-                &dependency,
-                resolution,
-                head.install_peer,
-                PackageManager::assign_resolution,
-                false,
-            ) {
-                Ok(Row::Done) => {}
-                Ok(Row::Waiting(task_id)) => {
-                    let queue = &mut this.lockfile.scratch.dependency_list_queue;
-                    queue.finish_rows_before(head, id);
-                    queue.waits_for = Some(task_id);
-                    request_ahead(this);
-                    return;
+    loop {
+        while let Some(head) = this.lockfile.scratch.dependency_list_queue.head() {
+            for id in head.rows.begin()..head.rows.end() {
+                let dependency = queued_row(this, id, head).clone();
+                let resolution = this.lockfile.buffers.resolutions[id as usize];
+                match bind_row(
+                    this,
+                    id,
+                    &dependency,
+                    resolution,
+                    head.install_peer,
+                    PackageManager::assign_resolution,
+                    false,
+                ) {
+                    Ok(Row::Done) => {}
+                    Ok(Row::Waiting(task_id)) => {
+                        let queue = &mut this.lockfile.scratch.dependency_list_queue;
+                        queue.finish_rows_before(head, id);
+                        queue.waits_for = Some(task_id);
+                        request_ahead(this);
+                        return;
+                    }
+                    Err(err) if head.from_command => add_dependency_error(this, &dependency, err),
+                    // It stays unresolved, which `verify_resolutions` reports if it matters.
+                    Err(_) => {}
                 }
-                Err(err) if head.from_command => add_dependency_error(this, &dependency, err),
-                // The dependency stays unresolved, which `verify_resolutions` reports if it matters.
-                Err(_) => {}
             }
+            (this.lockfile.scratch.dependency_list_queue).finish_rows_before(head, head.rows.end());
         }
-        (this.lockfile.scratch.dependency_list_queue).finish_rows_before(head, head.rows.end());
+
+        // The queue is empty, so it is the turn of the next git, GitHub or tarball package.
+        if this.remote_packages.tasks.is_empty() {
+            return;
+        }
+        if !this.append_next_remote_package(RemoteTurn::InOrder) {
+            // While the queue waits for that package, the look-ahead goes on from the others.
+            request_ahead(this);
+            return;
+        }
     }
 }
 
@@ -1242,7 +1262,6 @@ fn look_ahead(this: &mut PackageManager, first: Wanted) {
 /// Pushes what the version that `wanted` most likely resolves to depends on, except for the
 /// packages that were looked at before. The manifest of `wanted` is in memory.
 fn follow_likely_version(this: &mut PackageManager, wanted: &Wanted, stack: &mut Vec<Wanted>) {
-    use crate::package_installer::alias_is_safe_install_target as is_safe_name;
     use dependency::version::Tag;
     let name_hash = wanted.name_hash;
     let Some(version) = wanted.version() else {
@@ -1291,6 +1310,12 @@ fn follow_likely_version(this: &mut PackageManager, wanted: &Wanted, stack: &mut
     }
 
     let bundled = package.bundled_dependencies.get(&manifest.bundled_deps_buf);
+    let mut follow = Follow {
+        lockfile,
+        known_npm_aliases: &this.known_npm_aliases,
+        look_ahead: &mut this.look_ahead,
+        follows_peers: wanted.follows_peers,
+    };
     // Only the first entry of a name is followed. An optional dependency goes first because it
     // replaces a dependency of the same name.
     for (group, is_peer) in [
@@ -1310,52 +1335,110 @@ fn follow_likely_version(this: &mut PackageManager, wanted: &Wanted, stack: &mut
         let names = group.name.get(&manifest.external_strings);
         let ranges = group.value.get(&manifest.external_strings_for_versions);
         for (alias, range) in names.iter().zip(ranges).skip(optional_peers) {
-            let alias_hash = alias.hash;
-            let alias = alias.slice(&manifest.string_buf);
+            // A bundled dependency comes in the tarball of its parent.
+            if bundled.contains(&alias.hash) {
+                continue;
+            }
             let range = range.slice(&manifest.string_buf);
-            let is_npm_alias = dependency::trim_literal(range).starts_with(b"npm:");
-            if !is_npm_alias && this.look_ahead.seen.contains_key(&alias_hash) {
-                continue;
-            }
-            // A bundled dependency comes in the tarball of its parent. A name that the project
-            // aliases, overrides or has a workspace for is left to the queued dependency, because
-            // those rules depend on which package the dependency belongs to.
-            if bundled.contains(&alias_hash)
-                || this.known_npm_aliases.contains_key(&alias_hash)
-                || lockfile.workspace_paths.contains(&alias_hash)
-                || lockfile.overrides.contains_name(alias_hash, alias, buf)
-                // The running runtime is the `bun` that a package asks for.
-                || (is_peer && (alias == b"bun" || !lockfile.packages_named(alias_hash).is_empty()))
-            {
-                continue;
-            }
-            let follows_peers = wanted.follows_peers;
-            let next = if is_npm_alias {
-                // Only the parser knows where the name in `npm:name@range` ends.
-                let unnamed = Wanted::new(alias, range, b"", 0, follows_peers);
-                let Some(version) = unnamed.version() else {
-                    continue;
-                };
-                let name = match version.tag {
-                    Tag::Npm => version.npm().name.slice(&unnamed.text),
-                    Tag::DistTag => version.dist_tag().name.slice(&unnamed.text),
-                    _ => continue,
-                };
-                let name_hash = Semver::string::Builder::string_hash(name);
-                Wanted::new(alias, range, name, name_hash, follows_peers)
-            } else if Tag::infer(dependency::trim_literal(range)).is_npm() {
-                Wanted::new(alias, range, alias, alias_hash, follows_peers)
-            } else {
-                // Only the registry is asked on a guess, never a git host or a tarball's server.
-                continue;
-            };
-            // The name comes from a registry manifest, so it is checked as `unsafe_name` does.
-            if is_safe_name(next.name())
-                && (this.look_ahead.seen.insert(next.name_hash, ())).is_none()
-            {
-                stack.push(next);
-            }
+            let name = alias.slice(&manifest.string_buf);
+            stack.extend(follow.dependency(name, alias.hash, range, is_peer));
         }
+    }
+}
+
+/// Decides which of the dependencies that a package lists `look_ahead` follows.
+struct Follow<'a> {
+    lockfile: &'a Lockfile::Lockfile,
+    known_npm_aliases: &'a package_manager_real::NpmAliasMap,
+    look_ahead: &'a mut package_manager_real::LookAhead,
+    /// See `Wanted::follows_peers`.
+    follows_peers: bool,
+}
+
+impl Follow<'_> {
+    /// Returns the dependency `alias@range` if it is worth following, and then marks its package
+    /// as looked at.
+    fn dependency(
+        &mut self,
+        alias: &[u8],
+        alias_hash: PackageNameHash,
+        range: &[u8],
+        is_peer: bool,
+    ) -> Option<Wanted> {
+        use crate::package_installer::alias_is_safe_install_target as is_safe_name;
+        use dependency::version::Tag;
+        let lockfile = self.lockfile;
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let is_npm_alias = dependency::trim_literal(range).starts_with(b"npm:");
+        if !is_npm_alias && self.look_ahead.seen.contains_key(&alias_hash) {
+            return None;
+        }
+        // A name that the project aliases, overrides or has a workspace for is left to the queued
+        // dependency, because those rules depend on which package the dependency belongs to.
+        if self.known_npm_aliases.contains_key(&alias_hash)
+            || lockfile.workspace_paths.contains(&alias_hash)
+            || lockfile.overrides.contains_name(alias_hash, alias, buf)
+            // The running runtime is the `bun` that a package asks for.
+            || (is_peer && (alias == b"bun" || !lockfile.packages_named(alias_hash).is_empty()))
+        {
+            return None;
+        }
+        let follows_peers = self.follows_peers;
+        let next = if is_npm_alias {
+            // Only the parser knows where the name in `npm:name@range` ends.
+            let unnamed = Wanted::new(alias, range, b"", 0, follows_peers);
+            let version = unnamed.version()?;
+            let name = match version.tag {
+                Tag::Npm => version.npm().name.slice(&unnamed.text),
+                Tag::DistTag => version.dist_tag().name.slice(&unnamed.text),
+                _ => return None,
+            };
+            let name_hash = Semver::string::Builder::string_hash(name);
+            Wanted::new(alias, range, name, name_hash, follows_peers)
+        } else if Tag::infer(dependency::trim_literal(range)).is_npm() {
+            Wanted::new(alias, range, alias, alias_hash, follows_peers)
+        } else {
+            // Only the registry is asked on a guess, never a git host or a tarball's server.
+            return None;
+        };
+        // The name comes from somebody else's package, so it is checked as `unsafe_name` does.
+        let is_new = is_safe_name(next.name())
+            && (self.look_ahead.seen.insert(next.name_hash, ())).is_none();
+        is_new.then_some(next)
+    }
+}
+
+/// Looks ahead from the dependencies of a git, GitHub or tarball package that waits for its turn.
+/// The strings of `rows` are in the lockfile's buffer.
+#[cold]
+pub(crate) fn look_ahead_from_rows(this: &mut PackageManager, rows: &[Dependency]) {
+    let follows_peers = this.look_ahead.in_peer_pass;
+    let lockfile = &*this.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let mut follow = Follow {
+        lockfile,
+        known_npm_aliases: &this.known_npm_aliases,
+        look_ahead: &mut this.look_ahead,
+        follows_peers,
+    };
+    let wanted: Vec<Wanted> = rows
+        .iter()
+        .filter(|row| {
+            !row.behavior.is_bundled()
+                && !row.behavior.is_optional_peer()
+                && (follows_peers || !row.behavior.is_peer())
+        })
+        .filter_map(|row| {
+            follow.dependency(
+                row.name.slice(buf),
+                row.name_hash,
+                row.version.literal.slice(buf),
+                row.behavior.is_peer(),
+            )
+        })
+        .collect();
+    for wanted in wanted {
+        look_ahead(this, wanted);
     }
 }
 
@@ -1854,7 +1937,7 @@ pub(crate) fn bind_row(
 }
 
 /// Resolves a git, GitHub, tarball, `link:` or `workspace:` dependency. One that has to be
-/// downloaded is bound when its task finishes, so it never keeps the queue waiting.
+/// downloaded does not keep the queue waiting: `append_next_remote_package` resolves it later.
 fn bind_row_without_manifest(
     this: &mut PackageManager,
     id: DependencyID,
@@ -1927,7 +2010,7 @@ fn bind_row_without_manifest(
                 let resolved = match this.git_commits.get(&commit_id) {
                     Some(resolved) => resolved.clone(),
                     None => {
-                        task_callback_list(this, commit_id).push(waiter());
+                        wait_for_remote_task(this, commit_id, waiter());
 
                         if dependency.behavior.is_peer() && !install_peer {
                             this.peer_dependencies.write_item(id)?;
@@ -1955,9 +2038,9 @@ fn bind_row_without_manifest(
                     }
                 }
 
-                let waiters = task_callback_list(this, checkout_id);
+                task_callback_list(this, checkout_id);
                 if needs_ctx {
-                    waiters.push(waiter());
+                    wait_for_remote_task(this, checkout_id, waiter());
                 }
 
                 if dependency.behavior.is_peer() && !install_peer {
@@ -1981,7 +2064,7 @@ fn bind_row_without_manifest(
                 );
                 this.enqueue_git_task(task);
             } else {
-                task_callback_list(this, clone_id).push(waiter());
+                wait_for_remote_task(this, clone_id, waiter());
 
                 if dependency.behavior.is_peer() && !install_peer {
                     this.peer_dependencies.write_item(id)?;
@@ -2128,7 +2211,7 @@ fn bind_row_without_manifest(
                 }
             }
 
-            task_callback_list(this, task_id).push(waiter());
+            wait_for_remote_task(this, task_id, waiter());
 
             if dependency.behavior.is_peer() && !install_peer {
                 this.peer_dependencies.write_item(id)?;

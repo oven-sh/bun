@@ -388,6 +388,34 @@ pub(crate) struct LookAhead {
     pub(crate) deferred_peers_seen: usize,
 }
 
+/// A git, GitHub or tarball package that is downloaded and waits for its turn. See `RemotePackages`.
+pub(crate) struct ArrivedPackage {
+    pub(crate) resolution: crate::Resolution,
+    pub(crate) data: crate::ExtractData,
+}
+
+/// The git, GitHub and tarball packages. What such a package depends on is only known once it is
+/// downloaded. If it were added to the lockfile on arrival, the place of its dependencies in the
+/// queue would depend on how fast its server is. So each one is added when the queue is empty, in
+/// the order of the dependencies that ask for them: `append_next_remote_package`.
+#[derive(Default)]
+pub(crate) struct RemotePackages {
+    /// Every task that a dependency on such a package has waited for.
+    pub(crate) tasks: Vec<Task::Id>,
+    /// The downloaded packages whose turn has not come, by the task that fetched them.
+    pub(crate) arrived:
+        HashMap<Task::Id, ArrivedPackage, bun_collections::IdentityContext<Task::Id>>,
+}
+
+/// Which package `append_next_remote_package` may add.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RemoteTurn {
+    /// Only the one that the lowest waiting dependency asks for.
+    InOrder,
+    /// No task is running, so a package that has not arrived never will. The lowest one that has.
+    NothingElseArrives,
+}
+
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
 // if a proxy IS specified, default to 64. We have different values because we might change this in the future.
 // https://github.com/npm/cli/issues/7072
@@ -567,6 +595,7 @@ pub struct PackageManager {
     pub(crate) manifest_failures:
         HashMap<Task::Id, ManifestFailure, bun_collections::IdentityContext<Task::Id>>,
     pub(crate) look_ahead: LookAhead,
+    pub(crate) remote_packages: RemotePackages,
 
     // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.
     pub(crate) dedupe_report: Option<crate::dedupe::Report>,
@@ -1720,6 +1749,7 @@ fn allocate_package_manager(
         wr!(held_messages, None);
         wr!(manifest_failures, HashMap::default());
         wr!(look_ahead, LookAhead::default());
+        wr!(remote_packages, RemotePackages::default());
         wr!(dedupe_report, None);
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);

@@ -10,7 +10,8 @@ use crate::dependency::{TagExt as _, VersionTag};
 use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext};
 use crate::lockfile_real::{DependencySlice, PackageIDSlice, QueuedRows, StringBuilder};
 use crate::package_manager_real::options::LogLevel;
-use crate::package_manager_real::{PackageManager, enqueue};
+use crate::package_manager_real::{ArrivedPackage, PackageManager, RemoteTurn, enqueue, run_tasks};
+use crate::package_manager_task as Task;
 use crate::repository_real::{RepositoryExt as _, locked_scp_like};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
@@ -27,7 +28,7 @@ pub struct GitResolver<'a> {
     pub(crate) resolution: &'a Resolution,
     /// Copied out of the lockfile string buffer, which parsing appends to.
     pub(crate) fallback_name: &'a [u8],
-    /// Recorded in place of a `host:path` `repo`, so that a lockfile reads back as the same text.
+    /// Written to the lockfile in place of a `host:path` repository. See `locked_scp_like`.
     pub(crate) locked_repo: Option<Vec<u8>>,
 }
 
@@ -108,7 +109,8 @@ impl<'a> ResolverContext for TarballResolver<'a> {
     }
 }
 
-/// `<package_dir>/<folder>/package.json`. A package can ship links that lead out of it: none is followed.
+/// Reads `<package_dir>/<folder>/package.json` without following any symlink, so the file that is
+/// read is always inside the package.
 fn read_contained_package_json(package_dir: &[u8], folder: &[u8]) -> bun_sys::Maybe<Vec<u8>> {
     use bun_sys::O;
     let mut dir = bun_sys::Dir::open(package_dir)?;
@@ -211,7 +213,7 @@ impl PackageManager {
         }
     }
 
-    /// The package.json of an extracted package, with what its `file:` folders depend on.
+    /// Parses the package.json of an extracted package and adds what its `file:` folders depend on.
     fn parse_with_folders<R: ResolverContext>(
         &mut self,
         package: &mut Package,
@@ -228,10 +230,9 @@ impl PackageManager {
         })
     }
 
-    /// A `file:` folder inside a package is part of it, and Node looks up what the folder imports
-    /// in the `node_modules` of the package: the folder's dependencies become rows of the package.
-    /// `package` is parsed and not appended yet, so its rows end the buffer. `parse` returns the
-    /// rows of a folder's package.json, parsed with the resolver that `package` was parsed with.
+    /// Adds the dependencies of the `file:` folders inside `package` to its own rows, because Node
+    /// resolves what such a folder imports from the package's `node_modules`. `package` is parsed
+    /// but not appended yet, so its rows are the last in the buffer. `parse` returns a folder's rows.
     fn adopt_contained_folders(
         &mut self,
         package: &mut Package,
@@ -243,7 +244,7 @@ impl PackageManager {
         debug_assert_eq!(off + own_len, self.lockfile.buffers.dependencies.len());
         let package_dir = bun_paths::dirname(package_json_path).unwrap_or_default();
 
-        // An adopted row is walked too: a folder can depend on the one next to it.
+        // The added rows are visited too, because a folder can depend on the folder next to it.
         let mut next = off;
         while next < self.lockfile.buffers.dependencies.len() {
             let row = self.lockfile.buffers.dependencies[next].clone();
@@ -256,7 +257,7 @@ impl PackageManager {
                 continue;
             }
             let folder = row.version.folder().slice(buf).to_vec();
-            // The resolver refuses the row.
+            // The resolver rejects a folder outside the package, so its package.json is not read.
             if crate::bin::bin_target_escapes_package_dir(&folder) {
                 continue;
             }
@@ -445,6 +446,165 @@ impl PackageManager {
         }
     }
 
+    /// Whether a downloaded package with this resolution waits for its turn, see `RemotePackages`.
+    /// The runtime's auto-install writes no lockfile, and an import waits for its package alone.
+    pub(crate) fn defers_remote_package(&self, resolution: &Resolution) -> bool {
+        !self.options.runtime_auto_install
+            && matches!(
+                resolution.tag,
+                ResolutionTag::Git
+                    | ResolutionTag::Github
+                    | ResolutionTag::LocalTarball
+                    | ResolutionTag::RemoteTarball
+            )
+    }
+
+    /// Keeps a downloaded package until `append_next_remote_package` adds it to the lockfile.
+    /// Until then the manifests that its dependencies need are requested.
+    #[cold]
+    pub(crate) fn keep_arrived_package(
+        &mut self,
+        task_id: Task::Id,
+        resolution: &Resolution,
+        data: &ExtractData,
+    ) {
+        let rows = self.rows_of_arrived_package(resolution, data);
+        enqueue::look_ahead_from_rows(self, &rows);
+        let data = ExtractData {
+            url: data.url.clone(),
+            resolved: data.resolved.clone(),
+            json: data.json.as_ref().map(|json| ExtractDataJson {
+                path: json.path.clone(),
+                buf: json.buf.clone(),
+            }),
+            integrity: data.integrity,
+        };
+        let arrived = ArrivedPackage {
+            resolution: *resolution,
+            data,
+        };
+        let _ = self.remote_packages.arrived.insert(task_id, arrived);
+    }
+
+    /// The dependencies in the package.json of a downloaded package. Their rows are taken out of
+    /// the lockfile again, so that the ids of later rows do not depend on when the package arrived.
+    fn rows_of_arrived_package(
+        &mut self,
+        resolution: &Resolution,
+        data: &ExtractData,
+    ) -> Vec<Dependency> {
+        let Some(json) = &data.json else {
+            return Vec::new();
+        };
+        let source = bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
+        let log_mark = self.log_mut().msgs.len();
+        let start = self.lockfile.buffers.dependencies.len();
+        let parsed = match resolution.tag {
+            ResolutionTag::Git | ResolutionTag::Github => {
+                let fallback_name: Vec<u8> = resolution
+                    .repository()
+                    .fallback_package_name(self.lockfile.buffers.string_bytes.as_slice())
+                    .to_vec();
+                let repo = self.lockfile.str(&resolution.repository().repo);
+                let mut resolver = GitResolver {
+                    resolved: &data.resolved,
+                    resolution,
+                    fallback_name: &fallback_name,
+                    locked_repo: locked_scp_like(repo),
+                };
+                self.parse_extracted(&mut Package::default(), &source, &mut resolver)
+            }
+            _ => {
+                let mut resolver = TarballResolver {
+                    url: &data.url,
+                    resolution,
+                };
+                self.parse_extracted(&mut Package::default(), &source, &mut resolver)
+            }
+        };
+        self.lockfile.buffers.resolutions.truncate(start);
+        let rows = self.lockfile.buffers.dependencies.split_off(start);
+        // The package.json is parsed again when the package is added, and reported then.
+        drop(self.take_log_since(log_mark));
+        if parsed.is_ok() { rows } else { Vec::new() }
+    }
+
+    /// For each task that fetches a git, GitHub or tarball package: the lowest dependency that
+    /// waits for it. A task that has failed is skipped, and so is one that was never started,
+    /// which is what a deferred peer waits for.
+    fn remote_rows_waiting(&self) -> impl core::iter::Iterator<Item = (DependencyID, Task::Id)> {
+        self.remote_packages.tasks.iter().filter_map(|&task_id| {
+            if !self.network_dedupe_map.contains_key(&task_id)
+                || self.network_task_has_failed(task_id)
+            {
+                return None;
+            }
+            let lowest = (self.task_queue.get(&task_id)?.iter())
+                .filter_map(|waiter| match *waiter {
+                    TaskCallbackContext::Dependency(id) => Some(id),
+                    _ => None,
+                })
+                .min()?;
+            Some((lowest, task_id))
+        })
+    }
+
+    /// Whether a git, GitHub or tarball package is still to be added to the lockfile.
+    pub(crate) fn waits_for_remote_package(&self) -> bool {
+        !self.remote_packages.tasks.is_empty()
+            // With nothing running and nothing downloaded, none of them can be added any more.
+            && (self.pending_task_count() > 0 || !self.remote_packages.arrived.is_empty())
+            && self.remote_rows_waiting().next().is_some()
+    }
+
+    /// Adds the git, GitHub or tarball package whose turn it is to the lockfile, and resolves the
+    /// dependencies that waited for it. Call this when the queue is empty: what the package
+    /// depends on is queued. Returns false if no package was added.
+    #[cold]
+    pub(crate) fn append_next_remote_package(&mut self, turn: RemoteTurn) -> bool {
+        if self.remote_packages.arrived.is_empty() {
+            return false;
+        }
+        let has_arrived = |task_id: &Task::Id| self.remote_packages.arrived.contains_key(task_id);
+        let next = self
+            .remote_rows_waiting()
+            .filter(|(_, task_id)| turn == RemoteTurn::InOrder || has_arrived(task_id))
+            .min_by_key(|&(row, _)| row);
+        let Some((row, task_id)) = next else {
+            return false;
+        };
+        let Some(arrived) = self.remote_packages.arrived.remove(&task_id) else {
+            return false;
+        };
+
+        let mut package_id = INVALID_PACKAGE_ID;
+        let log_level = self.options.log_level;
+        let Some(package) = self.process_extracted_tarball_package(
+            &mut package_id,
+            &arrived.resolution,
+            &arrived.data,
+            log_level,
+        ) else {
+            return true;
+        };
+        let install_peer = self.look_ahead.in_peer_pass;
+        if let Err(err) = run_tasks::resolve_waiters_of_appended_package(
+            self,
+            task_id,
+            &package,
+            install_peer,
+            &Cell::new(false),
+        ) {
+            let dependency = self.lockfile.buffers.dependencies[row as usize].clone();
+            enqueue::add_dependency_error(self, &dependency, err);
+        }
+        // A git checkout is not a tarball that the linker would otherwise extract again.
+        if arrived.resolution.tag != ResolutionTag::Git {
+            self.set_preinstall_state(package_id, crate::PreinstallState::Done);
+        }
+        true
+    }
+
     pub(crate) fn process_dependency_list_item(
         &mut self,
         item: &TaskCallbackContext,
@@ -498,9 +658,11 @@ impl PackageManager {
 
     /// Whether `process_peer_dependency_list` has something to do. The peers that were found while
     /// the queue was being resolved wait until it is empty, so that they all see the same tree.
+    /// A git, GitHub or tarball package brings dependencies of its own, so they wait for it too.
     pub(crate) fn has_peers_to_process(&self) -> bool {
         self.peer_dependencies.readable_length() > 0
             && self.lockfile.scratch.dependency_list_queue.is_empty()
+            && !self.waits_for_remote_package()
     }
 
     /// Whether the deferred peers are all that is left to resolve, and are worth resolving.
@@ -508,13 +670,6 @@ impl PackageManager {
         self.has_peers_to_process()
             // An error ends the install, so the peers are not worth their requests.
             && !self.log_mut().has_errors()
-            // A git or tarball dependency is resolved when its task finishes, and then brings
-            // dependencies of its own. The rows in the list of a failed manifest wait for nothing.
-            && !self.task_queue.iter().any(|(task_id, waiting)| {
-                !self.manifest_failures.contains_key(task_id)
-                    && (waiting.iter())
-                        .any(|waiter| matches!(waiter, TaskCallbackContext::Dependency(_)))
-            })
     }
 
     /// Queues the deferred peers for `drain_dependency_list`, in `peer_batch_order`: the first row

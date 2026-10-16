@@ -20,8 +20,8 @@ use bun_install::{
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
 use super::{
-    Command, ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, Subcommand,
-    TaskCallbackList,
+    Command, ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn,
+    Subcommand, TaskCallbackList,
 };
 use super::{directories, enqueue};
 use crate::isolated_install::installer as store_installer;
@@ -358,8 +358,8 @@ impl Drop for ReturnNetworkTask {
     }
 }
 
-/// Names and resolves the rows that waited for `task_id`. What a linker queued stays in the list.
-fn resolve_waiters_of_appended_package(
+/// `resolve_waiters_of_appended_package`, then tells the runtime if one of its imports was resolved.
+fn resolve_waiters_and_notify(
     cb: &ErasedCallbacks,
     manager: &mut PackageManager,
     extract_ctx: *mut (),
@@ -367,12 +367,29 @@ fn resolve_waiters_of_appended_package(
     pkg: &Package,
     install_peer: bool,
 ) -> crate::Result<()> {
+    let any_root = Cell::new(false);
+    let result =
+        resolve_waiters_of_appended_package(manager, task_id, pkg, install_peer, &any_root);
+    if cb.has_on_resolve && any_root.get() {
+        (cb.on_resolve)(extract_ctx);
+    }
+    result
+}
+
+/// Names and resolves the rows that waited for `task_id`. What a linker queued stays in the list.
+/// Sets `any_root` if an import of the runtime was resolved.
+pub(crate) fn resolve_waiters_of_appended_package(
+    manager: &mut PackageManager,
+    task_id: Task::Id,
+    pkg: &Package,
+    install_peer: bool,
+    any_root: &Cell<bool>,
+) -> crate::Result<()> {
     // For a dependency enqueued later on the same task; see `AppendedTaskPackageMap`.
     manager.appended_task_packages.insert(task_id, pkg.meta.id);
     let Some(entry) = manager.task_queue.get_mut(&task_id) else {
         return Ok(());
     };
-    let any_root = Cell::new(false);
     // The dependencies are resolved before the onExtract callback is called
     let mut result = Ok(());
     for dep in core::mem::take(entry) {
@@ -384,7 +401,7 @@ fn resolve_waiters_of_appended_package(
                     pkg.name,
                     &pkg.resolution,
                 );
-                result = manager.process_dependency_list_item(&dep, Some(&any_root), install_peer);
+                result = manager.process_dependency_list_item(&dep, Some(any_root), install_peer);
                 if result.is_err() {
                     break;
                 }
@@ -392,9 +409,6 @@ fn resolve_waiters_of_appended_package(
             // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
             _ => manager.task_queue.get_mut(&task_id).unwrap().push(dep),
         }
-    }
-    if cb.has_on_resolve && any_root.get() {
-        (cb.on_resolve)(extract_ctx);
     }
     result
 }
@@ -1363,6 +1377,10 @@ fn run_tasks_erased(
                     } else {
                         unreachable!("unexpected context type");
                     }
+                } else if manager.defers_remote_package(resolution) {
+                    manager.keep_arrived_package(task.id, resolution, task.data_extract());
+                    name_progress(manager, alias, EXTRACT);
+                    continue;
                 } else if let Some(pkg) = manager.process_extracted_tarball_package(
                     &mut package_id,
                     resolution,
@@ -1372,7 +1390,7 @@ fn run_tasks_erased(
                     task.data_extract(),
                     log_level,
                 ) {
-                    resolve_waiters_of_appended_package(
+                    resolve_waiters_and_notify(
                         cb,
                         manager,
                         extract_ctx,
@@ -1654,6 +1672,8 @@ fn run_tasks_erased(
                     } else {
                         unreachable!("unexpected context type");
                     }
+                } else if manager.defers_remote_package(resolution) {
+                    manager.keep_arrived_package(task.id, resolution, task.data_git_checkout());
                 } else if let Some(pkg) = manager.process_extracted_tarball_package(
                     &mut package_id,
                     resolution,
@@ -1663,7 +1683,7 @@ fn run_tasks_erased(
                     task.data_git_checkout(),
                     log_level,
                 ) {
-                    resolve_waiters_of_appended_package(
+                    resolve_waiters_and_notify(
                         cb,
                         manager,
                         extract_ctx,
@@ -2227,6 +2247,11 @@ impl PackageManager {
             }
             let queue = &mut self.lockfile.scratch.dependency_list_queue;
             let Some(head) = queue.head() else {
+                // A package can be downloaded while the one whose turn comes first has failed in
+                // a way that left its dependency waiting. Nothing else arrives, so it is added now.
+                if self.append_next_remote_package(RemoteTurn::NothingElseArrives) {
+                    continue;
+                }
                 break;
             };
             // However a request ends, it leaves a manifest or a `ManifestFailure` for `bind_row` to

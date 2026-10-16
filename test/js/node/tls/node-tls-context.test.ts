@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "bun:test";
 
+import { sslCtxLiveCount } from "bun:internal-for-testing";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { X509Certificate } from "node:crypto";
 import { once } from "node:events";
@@ -10,7 +11,7 @@ import { readFileSync } from "node:fs";
 import http2 from "node:http2";
 import net, { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { Duplex } from "node:stream";
+import { Duplex, duplexPair } from "node:stream";
 import tls from "node:tls";
 
 function loadPEM(filename: string) {
@@ -860,6 +861,278 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("ALPN after SNI selected a Secure
     request.on("data", chunk => (body += chunk));
     await Promise.race([once(request, "end"), failed]);
     expect(body).toBe("over h2");
+  });
+});
+
+// A server-side TLSSocket asks its SNICallback over any transport, like in Node. The TLS engine adopts the fd of a
+// fresh socket. Nothing else has an fd to adopt: a Duplex, a TLSSocket, a socket that has read already, or a socket
+// with writes that it has not flushed.
+describe("SNICallback on a server-side socket", () => {
+  const defaults = { key: agent1Key, cert: agent1Cert };
+  const selected = { key: agent2Key, cert: agent2Cert };
+  type SNICb = (err: Error | null, ctx?: unknown) => void;
+  type Report = { asked: string[]; client?: string; refusedWith?: string };
+
+  const answers: Record<string, (cb: SNICb) => void> = {
+    "a SecureContext": cb => cb(null, tls.createSecureContext(selected)),
+    "a SecureContext, later": cb => void setImmediate(cb, null, tls.createSecureContext(selected)),
+    "the native context": cb => cb(null, tls.createSecureContext(selected).context),
+    "null": cb => cb(null, null),
+    "undefined, later": cb => void setImmediate(cb, null, undefined),
+    "false": cb => cb(null, false),
+    "a primitive": cb => cb(null, 1),
+    "an error": cb => cb(new Error("boom")),
+    "an error, later": cb => void setImmediate(cb, new Error("boom")),
+    "a throw": () => {
+      throw new Error("thrown");
+    },
+    "an object that is no context": cb => cb(null, {}),
+  };
+  // What node v26.3.0 reports for each answer, over every transport.
+  const connects = (cn: string): Report => ({ asked: ["sni.test"], client: cn });
+  const refuses = (refusedWith: string): Report => ({ asked: ["sni.test"], client: "ECONNRESET", refusedWith });
+  const expected: Record<string, Report> = {
+    "a SecureContext": connects("agent2"),
+    "a SecureContext, later": connects("agent2"),
+    "the native context": connects("agent2"),
+    "null": connects("agent1"),
+    "undefined, later": connects("agent1"),
+    "false": connects("agent1"),
+    "a primitive": connects("agent1"),
+    "an error": refuses("boom"),
+    "an error, later": refuses("boom"),
+    "a throw": refuses("thrown"),
+    "an object that is no context": refuses("Invalid SNI context"),
+    "no server_name": { asked: [], client: "agent1" },
+  };
+
+  const listening = async (server: net.Server, stack: DisposableStack) => {
+    stack.defer(() => void server.close());
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return (server.address() as AddressInfo).port;
+  };
+  // Hands the server side its transport through `wrap`, and returns the client.
+  type Transport = (
+    wrap: (transport: Duplex) => void,
+    clientOptions: tls.ConnectionOptions,
+    stack: DisposableStack,
+  ) => Promise<tls.TLSSocket>;
+  const transports: Record<string, Transport> = {
+    "a socket": async (wrap, clientOptions, stack) =>
+      tls.connect({ port: await listening(net.createServer(wrap), stack), host: "127.0.0.1", ...clientOptions }),
+    "a Duplex": async (wrap, clientOptions) => {
+      const [serverSide, clientSide] = duplexPair();
+      wrap(serverSide);
+      return tls.connect({ socket: clientSide, ...clientOptions });
+    },
+    "a socket that read the ClientHello": async (wrap, clientOptions, stack) => {
+      const server = net.createServer(raw =>
+        raw.once("data", hello => {
+          raw.pause();
+          raw.unshift(hello);
+          wrap(raw);
+        }),
+      );
+      return tls.connect({ port: await listening(server, stack), host: "127.0.0.1", ...clientOptions });
+    },
+    "a socket with unflushed writes": async (wrap, clientOptions, stack) => {
+      const server = net.createServer(raw => {
+        raw.cork();
+        raw.write("220 ready\r\n");
+        wrap(raw);
+        raw.uncork();
+      });
+      const raw = net.connect(await listening(server, stack), "127.0.0.1");
+      raw.on("error", () => {});
+      await once(raw, "data");
+      return tls.connect({ socket: raw, ...clientOptions });
+    },
+    "a TLSSocket": async (wrap, clientOptions, stack) => {
+      const outer = tls.createServer(defaults, wrap);
+      const tunnel = tls.connect({ port: await listening(outer, stack), host: "127.0.0.1", rejectUnauthorized: false });
+      tunnel.on("error", () => {});
+      stack.defer(() => void tunnel.destroy());
+      await once(tunnel, "secureConnect");
+      return tls.connect({ socket: tunnel, ...clientOptions });
+    },
+  };
+
+  async function handshake(
+    transport: string,
+    answer: string,
+    viaServer: boolean,
+    clientOptions: tls.ConnectionOptions = { servername: "sni.test" },
+  ) {
+    using stack = new DisposableStack();
+    const report: Report = { asked: [] };
+    const refusal = Promise.withResolvers<void>();
+    // What the server side reports until the client knows how its handshake ended.
+    let connected = false;
+    const refused = (err: Error) => {
+      if (connected) return;
+      report.refusedWith ??= err.message;
+      refusal.resolve();
+    };
+    const SNICallback = (name: string, cb: SNICb) => {
+      report.asked.push(name);
+      answers[answer](cb);
+    };
+    const wrap = (raw: Duplex) => {
+      raw.on("error", () => {});
+      if (viaServer) {
+        const server = tls.createServer({ ...defaults, SNICallback }, socket => void socket.on("error", () => {}));
+        server.on("tlsClientError", refused);
+        server.emit("connection", raw);
+      } else {
+        const socket = new tls.TLSSocket(raw, { isServer: true, ...defaults, SNICallback });
+        socket.on("error", refused);
+        stack.defer(() => void socket.destroy());
+      }
+    };
+    const client = await transports[transport](wrap, { rejectUnauthorized: false, ...clientOptions }, stack);
+    stack.defer(() => void client.destroy());
+    report.client = await new Promise<string>(resolve => {
+      client.on("secureConnect", () => {
+        connected = true;
+        resolve(client.getPeerCertificate().subject.CN);
+      });
+      client.on("error", err => resolve((err as NodeJS.ErrnoException).code!));
+    });
+    // The refusal reaches the listeners of the server side after the client sees the reset.
+    if (!connected) await refusal.promise;
+    return report;
+  }
+
+  const cases = Object.keys(transports).flatMap(transport => [
+    [`new TLSSocket(x, { isServer: true }), x is ${transport}`, transport, false] as const,
+    [`server.emit("connection", x), x is ${transport}`, transport, true] as const,
+  ]);
+  it.each(cases)("%s", async (_, transport, viaServer) => {
+    const reports: Record<string, Report> = {};
+    for (const answer of Object.keys(answers)) reports[answer] = await handshake(transport, answer, viaServer);
+    reports["no server_name"] = await handshake(transport, "a SecureContext", viaServer, {});
+    expect(reports).toEqual(expected);
+  });
+
+  // A Duplex that counts what the server side writes to it.
+  function counted() {
+    const [serverSide, clientSide] = duplexPair();
+    let bytes = 0;
+    const write = serverSide.write;
+    serverSide.write = function (this: Duplex, chunk: any, ...rest: any[]) {
+      bytes += chunk.length;
+      return write.call(this, chunk, ...rest);
+    } as typeof write;
+    return { serverSide, clientSide, wrote: () => bytes };
+  }
+  const ticks = async (count: number) => {
+    for (let i = 0; i < count; i++) await new Promise(resolve => setImmediate(resolve));
+  };
+
+  it.each(["TLSv1.2", "TLSv1.3"] as const)(
+    "the server writes nothing before the answer, and nothing when the answer is an error (%s)",
+    async version => {
+      const { serverSide, clientSide, wrote } = counted();
+      const beforeAnswer = Promise.withResolvers<number>();
+      const socket = new tls.TLSSocket(serverSide, {
+        isServer: true,
+        ...defaults,
+        SNICallback: (_: string, cb: SNICb) =>
+          void ticks(3).then(() => {
+            beforeAnswer.resolve(wrote());
+            cb(new Error("boom"));
+          }),
+      });
+      const failed = once(socket, "error");
+      const client = tls.connect({
+        socket: clientSide,
+        servername: "sni.test",
+        rejectUnauthorized: false,
+        minVersion: version,
+        maxVersion: version,
+      });
+      const [[clientError], [serverError]] = await Promise.all([once(client, "error"), failed]);
+      expect({
+        beforeAnswer: await beforeAnswer.promise,
+        afterRefusal: wrote(),
+        client: clientError.code,
+        server: serverError.message,
+      }).toEqual({ beforeAnswer: 0, afterRefusal: 0, client: "ECONNRESET", server: "boom" });
+    },
+  );
+
+  it("two handshakes that wait at once get their own answers", async () => {
+    using stack = new DisposableStack();
+    const pending = new Map<string, SNICb>();
+    const bothAsked = Promise.withResolvers<void>();
+    const SNICallback = (name: string, cb: SNICb) => {
+      pending.set(name, cb);
+      if (pending.size === 2) bothAsked.resolve();
+    };
+    const clients = ["one.test", "two.test"].map(servername => {
+      const [serverSide, clientSide] = duplexPair();
+      const socket = new tls.TLSSocket(serverSide, { isServer: true, ...defaults, SNICallback });
+      socket.on("error", () => {});
+      const client = tls.connect({ socket: clientSide, servername, rejectUnauthorized: false });
+      stack.defer(() => void (client.destroy(), socket.destroy()));
+      return client;
+    });
+    const connected = clients.map(client => once(client, "secureConnect"));
+    await bothAsked.promise;
+    pending.get("two.test")!(null, tls.createSecureContext({ key: agent3Key, cert: agent3Cert }));
+    await connected[1];
+    pending.get("one.test")!(null, tls.createSecureContext(selected));
+    await connected[0];
+    expect(clients.map(client => client.getPeerCertificate().subject.CN)).toEqual(["agent2", "agent3"]);
+  });
+
+  it("keeps no SecureContext once the socket that it answered for is gone", async () => {
+    const settle = async () => {
+      Bun.gc(true);
+      await Bun.sleep(1);
+    };
+    // One handshake whose callback answers with a context of its own. Nothing of it outlives the call.
+    async function answered(when: string, id: number) {
+      const [serverSide, clientSide] = duplexPair();
+      const given = Promise.withResolvers<void>();
+      const socket = new tls.TLSSocket(serverSide, {
+        isServer: true,
+        ...defaults,
+        SNICallback(_: string, cb: SNICb) {
+          const context = tls.createSecureContext({ ...selected, sessionTimeout: 7000 + id });
+          const answer = () => (cb(null, context), given.resolve());
+          if (when === "at once") answer();
+          else if (when === "later") setImmediate(answer);
+          else if (when === "after it destroyed the socket") (socket.destroy(), answer());
+          else setImmediate(() => (socket.destroy(), setImmediate(answer)));
+        },
+      });
+      socket.on("error", () => {});
+      const client = tls.connect({ socket: clientSide, servername: "sni.test", rejectUnauthorized: false });
+      const outcome = await new Promise<string>(resolve => {
+        client.on("secureConnect", () => resolve(client.getPeerCertificate().subject.CN));
+        client.on("error", err => resolve((err as NodeJS.ErrnoException).code!));
+      });
+      await given.promise;
+      client.destroy();
+      socket.destroy();
+      return outcome;
+    }
+
+    // Earlier tests left contexts for the GC: count from a heap that has settled.
+    for (let i = 0; i < 3; i++) await settle();
+    const before = sslCtxLiveCount();
+    const outcomes: string[] = [];
+    for (const [id, when] of ["at once", "later", "after it destroyed the socket", "after the socket is gone"].entries()) {
+      outcomes.push(await answered(when, id));
+    }
+    // Finalizers run on GC, so wait for the condition.
+    for (let i = 0; i < 20 && sslCtxLiveCount() > before; i++) await settle();
+    expect({ outcomes, left: sslCtxLiveCount() - before }).toEqual({
+      outcomes: ["agent2", "agent2", "ECONNRESET", "ECONNRESET"],
+      left: 0,
+    });
   });
 });
 

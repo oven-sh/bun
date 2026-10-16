@@ -919,6 +919,39 @@ test.concurrent.skipIf(isWindows)(
   },
 );
 
+// The staging name is longer than most package names. PATH_MAX is 4096 on Linux.
+test.concurrent.skipIf(!isLinux)(
+  "isolated linker: a project so deep that only the staging directory's absolute path exceeds PATH_MAX",
+  async () => {
+    const tgz = await new Bun.Archive(
+      { "package/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }) },
+      { compress: "gzip" },
+    ).bytes();
+    using registry = serveRegistry({ pkg: { tgz } });
+    using dir = tempDir("staging-deep-project", {});
+    const staging = "/node_modules/.bun/pkg@1.0.0/node_modules/.bun-tmp-0123456789abcdef";
+    const rootBytes = 4096 + 1 - staging.length;
+    let root = String(dir);
+    // The last name has to stay under NAME_MAX (255).
+    while (rootBytes - root.length > 256) root = join(root, Buffer.alloc(200, "d").toString());
+    root = join(root, Buffer.alloc(rootBytes - root.length - 1, "d").toString());
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, "package.json"), JSON.stringify({ name: "app", dependencies: { pkg: "1.0.0" } }));
+    writeFileSync(
+      join(root, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: { registry: registry.url.href, cache: join(String(dir), ".bun-cache"), linker: "isolated" },
+      }),
+    );
+
+    const { stderr, exitCode } = await install(root);
+    expect(stderr).toContain("Saved lockfile");
+    expect(stderr).not.toContain("error");
+    expect(JSON.parse(readFileSync(join(root, "node_modules", "pkg", "package.json"), "utf8")).name).toBe("pkg");
+    expect(exitCode).toBe(0);
+  },
+);
+
 // The hoisted linker links the packages of the cache on the thread pool, several at a time. All
 // else about them happens on the main thread, in the order in which it links them itself where
 // few files can be open.

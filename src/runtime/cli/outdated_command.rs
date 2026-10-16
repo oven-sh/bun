@@ -5,7 +5,7 @@ use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::package_manager::workspace_manifests::{
-    BrokenMember, DeclaredDependencies, DeclaredDependency,
+    BrokenMember, DeclaredDependencies, DeclaredDependency, is_outdated,
 };
 use bun_install::package_manager::{Subcommand, WorkspaceFilter, populate_manifest_cache};
 use bun_install::{CommandLineArguments, PackageID, PackageManager};
@@ -309,9 +309,13 @@ impl OutdatedCommand {
 
             // `DeclaredDependencies` only has rows installed from npm.
             let current_version = resolution.npm().version;
-            if current_version.order(actual_latest.version, string_buf, &manifest.string_buf)
-                != core::cmp::Ordering::Less
-            {
+            if !is_outdated(
+                current_version,
+                string_buf,
+                update_version.unwrap(),
+                actual_latest,
+                manifest,
+            ) {
                 continue;
             }
 
@@ -410,18 +414,21 @@ impl OutdatedCommand {
         table.print_top_line_separator();
         table.print_column_names();
 
-        for group_behavior in [
+        let groups = [
             Behavior::PROD,
             Behavior::DEV,
             Behavior::PEER,
             Behavior::OPTIONAL,
-        ] {
+        ];
+        for group_behavior in groups {
             for item in &outdated.rows {
                 let package_id = item.dep.package_id;
 
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
                 let dep = declared.dependency(&item.dep);
-                if !dep.behavior.includes(group_behavior) {
+                // An optional peer has both the `PEER` and `OPTIONAL` bits. Print it only once.
+                let first_group = groups.into_iter().find(|&g| dep.behavior.includes(g));
+                if first_group != Some(group_behavior) {
                     continue;
                 }
 
@@ -471,15 +478,17 @@ impl OutdatedCommand {
                     start_cell();
                     let filtered = found.latest_is_filtered();
                     let mut version_len = if let Some(found) = found.unwrap() {
-                        bun_core::pretty!(
-                            "{}",
-                            found.version.diff_fmt(
-                                current_version,
-                                &manifest.string_buf,
-                                string_buf
-                            )
-                        );
-                        count(format_args!("{}", found.version.fmt(&manifest.string_buf)))
+                        let (version, buf) = (found.version, &*manifest.string_buf);
+                        // A `latest` that is older than the installed version is not an update.
+                        if column == 3 && version.order(current_version, buf, string_buf).is_lt() {
+                            bun_core::pretty!("<d>{}<r>", version.fmt(buf));
+                        } else {
+                            bun_core::pretty!(
+                                "{}",
+                                version.diff_fmt(current_version, buf, string_buf)
+                            );
+                        }
+                        count(format_args!("{}", version.fmt(buf)))
                     } else {
                         bun_core::pretty!("<d>{}<r>", current);
                         current.len()

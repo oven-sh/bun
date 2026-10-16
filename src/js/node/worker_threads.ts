@@ -810,6 +810,8 @@ function moveMessagePortToContext(port, _context) {
 }
 
 class Worker extends EventEmitter {
+  declare _events: Record<string | symbol, unknown>;
+  declare _eventsCount: number;
   #worker: WebWorker;
   #performance;
   #name: string;
@@ -822,6 +824,8 @@ class Worker extends EventEmitter {
   #stdin;
   #stdout;
   #stderr;
+  #refHook;
+  #unrefHook;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -978,12 +982,18 @@ class Worker extends EventEmitter {
     this.#publicPort.addEventListener("messageerror", this.#onMessageError.bind(this));
     this.#publicPort.unref();
     const publicPort = this.#publicPort;
-    this.on("newListener", function (this: Worker, name) {
-      if (name === "message" && this.listenerCount("message") === 0) publicPort.ref();
-    });
-    this.on("removeListener", function (this: Worker, name) {
-      if (name === "message" && this.listenerCount("message") === 0) publicPort.unref();
-    });
+    this.on(
+      "newListener",
+      (this.#refHook = function (this: Worker, name) {
+        if (name === "message" && this.listenerCount("message") === 0) publicPort.ref();
+      }),
+    );
+    this.on(
+      "removeListener",
+      (this.#unrefHook = function (this: Worker, name) {
+        if (name === "message" && this.listenerCount("message") === 0) publicPort.unref();
+      }),
+    );
     // A worker may also use the Web Worker global `postMessage()` / `self.onmessage`
     // pair, which travels through the Worker object itself; surface those too.
     this.#worker.addEventListener("message", this.#onMessage.bind(this));
@@ -1213,7 +1223,19 @@ class Worker extends EventEmitter {
     }
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
-    this.removeAllListeners();
+    // Keep the internal port hooks: removing them delays transferred-buffer release on Windows ARM64.
+    const names = this.eventNames().filter(name => name !== "removeListener");
+    names.push("removeListener");
+    for (const name of names) {
+      const listeners = this.rawListeners(name);
+      for (let i = listeners.length - 1; i >= 0; i--) {
+        const listener = listeners[i];
+        if (listener !== this.#refHook && listener !== this.#unrefHook) this.removeListener(name, listener);
+      }
+    }
+    // Like removeAllListeners(), discard listeners added by removal callbacks.
+    this._events = { __proto__: null, newListener: this.#refHook, removeListener: this.#unrefHook };
+    this._eventsCount = 2;
   }
 
   #onError(event: ErrorEvent) {

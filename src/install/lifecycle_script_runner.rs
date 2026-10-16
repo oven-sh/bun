@@ -7,7 +7,7 @@ use crate::isolated_install::store::{EntryColumns, entry};
 use crate::lockfile_real::Scripts as LockfileScripts;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::ProgressStrings;
-use bun_core::{Global, Output};
+use bun_core::{Global, Output, SignalCode};
 use bun_io::BufferedReader;
 use bun_io::heap as io_heap;
 #[cfg(unix)]
@@ -929,13 +929,30 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // fields (`heap`/`manager`) — see `ensure_not_in_heap` doc.
         unsafe { Self::ensure_not_in_heap(std::ptr::from_mut::<Self>(self)) };
 
+        if self.optional {
+            let failed = match &status {
+                Status::Exited(exit) => exit.code > 0,
+                // A request to stop is not a failed script: where bun outlives the signal
+                // (ignored on entry, PID 1), the re-raise below is what ends the install.
+                Status::Signaled(_) => {
+                    use SignalCode::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
+                    !matches!(
+                        status.signal_code(),
+                        Some(SIGINT | SIGTERM | SIGHUP | SIGQUIT)
+                    )
+                }
+                Status::Err(_) => true,
+                Status::Running => false,
+            };
+            if failed {
+                self.discard_failed_optional_package();
+                return;
+            }
+        }
+
         match status {
             Status::Exited(exit) => {
                 if exit.code > 0 {
-                    if self.optional {
-                        self.discard_failed_optional_package();
-                        return;
-                    }
                     self.print_output();
                     bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" exited with {}<r>",
@@ -1061,11 +1078,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(signal));
             }
             Status::Err(err) => {
-                if self.optional {
-                    self.discard_failed_optional_package();
-                    return;
-                }
-
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: Failed to run <b>{}<r> script from \"<b>{}<r>\" due to\n{}",
                     bstr::BStr::new(self.script_name()),

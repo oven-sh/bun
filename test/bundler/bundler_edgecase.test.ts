@@ -2505,7 +2505,7 @@ describe("bundler", () => {
       `,
       "/decorate.ts": `
         export function decorate(target: any, context: ClassDecoratorContext) {
-          console.log("decorate", String(context.name));
+          console.log("decorate", context.kind, typeof target);
           target.decorated = true;
         }
       `,
@@ -2523,9 +2523,13 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout: ["decorate Named", "dispose named", "decorate anonymous_default", "dispose anonymous", "true true"].join(
-        "\n",
-      ),
+      stdout: [
+        "decorate class function",
+        "dispose named",
+        "decorate class function",
+        "dispose anonymous",
+        "true true",
+      ].join("\n"),
     },
   });
 

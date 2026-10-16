@@ -196,7 +196,7 @@ describe("FormData", () => {
         const formData = await response.formData();
         expect(formData instanceof FormData).toBe(true);
 
-        const request = await new Response(formData).formData();
+        const request = await new Response(formData as FormData).formData();
         expect(request instanceof FormData).toBe(true);
 
         const aKeys = Array.from(formData.keys());
@@ -233,7 +233,7 @@ describe("FormData", () => {
               expect(b instanceof Blob).toBe(true);
               expect(await c.text()).toBe(await (b as Blob).text());
             } else {
-              expect(c).toBe(b);
+              expect(c).toBe(b as string);
             }
           }
         }
@@ -417,7 +417,7 @@ describe("FormData", () => {
       },
     });
 
-    const reqBody = new Request(server.url, {
+    const reqBody = new Request(server.url as any, {
       body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n\r\n',
       headers: {
         "Content-Type": "multipart/form-data; boundary=foo",
@@ -436,11 +436,11 @@ describe("FormData", () => {
       development: false,
       async fetch(req) {
         const formData = await req.formData();
-        return new Response(formData);
+        return new Response(formData as FormData);
       },
     });
 
-    const reqBody = new Request(server.url, {
+    const reqBody = new Request(server.url as any, {
       body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n\r\n',
       headers: {
         "Content-Type": "multipart/form-data; boundary=foo",
@@ -481,7 +481,7 @@ describe("FormData", () => {
               async fetch(req) {
                 const formData = await req.formData();
                 contentType = req.headers.get("Content-Type")!;
-                return new Response(formData);
+                return new Response(formData as FormData);
               },
             });
 
@@ -512,7 +512,7 @@ describe("FormData", () => {
               async fetch(req) {
                 const formData = await req.formData();
                 contentType = req.headers.get("Content-Type")!;
-                return new Response(formData);
+                return new Response(formData as FormData);
               },
             });
 
@@ -547,7 +547,7 @@ describe("FormData", () => {
               async fetch(req) {
                 const formData = await req.formData();
                 contentType = req.headers.get("Content-Type")!;
-                return new Response(formData);
+                return new Response(formData as FormData);
               },
             });
 
@@ -744,8 +744,8 @@ describe("FormData", () => {
       let formData = new FormData();
       formData.append("foo", file);
       formData.get("foo");
-      formData.get("foo")!.name;
-      formData.get("foo")!.type;
+      (formData.get("foo") as File).name;
+      (formData.get("foo") as File).type;
       return formData;
     }
     // Release needs 100k iterations so the freed name string's memory is actually
@@ -798,7 +798,7 @@ describe("Content-Type header propagation", () => {
           return new Response("Missing multipart/form-data content-type", { status: 400 });
         }
         const body = await req.formData();
-        expect(body.get("foo")!.size).toBe(3);
+        expect((body.get("foo") as File).size).toBe(3);
         return new Response("Success", { status: 200 });
       },
     });
@@ -807,7 +807,7 @@ describe("Content-Type header propagation", () => {
   // Custom Request subclass for testing inheritance
   class CustomRequest extends Request {
     constructor(input: string | URL | Request, init?: RequestInit) {
-      super(input, init);
+      super(input as any, init);
     }
   }
 

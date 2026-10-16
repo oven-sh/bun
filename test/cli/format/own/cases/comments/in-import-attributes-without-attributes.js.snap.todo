@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+import a from "a" // comment // comment
+with {};
+
+import b from "b" // comment
+with {};
+
+export * from "c" // comment // comment
+with {};
+
+import d from "d" /* comment */ // comment
+with {};
+
+import e from "e" // comment // comment
+with {};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+import a from "a" // comment // comment
+with {};
+
+import b from "b" // comment
+with {};
+
+export * from "c" // comment // comment
+with {};
+
+import d from "d" /* comment */ // comment
+with {};
+
+import e from "e" // comment // comment
+with {};
+
+===================== End =====================

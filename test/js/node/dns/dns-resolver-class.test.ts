@@ -19,7 +19,7 @@ describe.each([
       }
     }
 
-    const resolver = new PinnedResolver({ timeout: 1000, tries: 1 });
+    const resolver = new (PinnedResolver as any)({ timeout: 1000, tries: 1 });
     expect(Object.getPrototypeOf(resolver)).toBe(PinnedResolver.prototype);
     expect(resolver).toBeInstanceOf(Resolver);
 

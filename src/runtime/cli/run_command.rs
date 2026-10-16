@@ -11,7 +11,7 @@ use std::io::Write as _;
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
 use bun_collections::{ArrayHashMap, StringHashMap};
-use bun_core::{self as core, Environment, Global, Output, ZStr};
+use bun_core::{self as core, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
 use bun_jsc::js_promise::Status as PromiseStatus;
@@ -135,9 +135,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                         prettyln!("\n");
                         prettyln!(
                             "  <d>$</r> bun run<r> <blue>{}<r>\n",
-                            bstr::BStr::new(key.as_ref())
+                            bun_core::fmt::escape_control_chars(key.as_ref())
                         );
-                        prettyln!("  <d>  {}<r>\n", bstr::BStr::new(value));
+                        prettyln!("  <d>  {}<r>\n", bun_core::fmt::escape_control_chars(value));
                     }
                     prettyln!("\n");
                 } else {
@@ -259,6 +259,41 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         )
     }
 
+    /// Like [`Self::run_package_script_foreground`], but puts the `node_modules/.bin` of `cwd` and
+    /// of its parents at the front of `PATH` while the script runs.
+    pub(crate) fn run_lifecycle_script_foreground(
+        ctx: &mut ContextData,
+        script: &[u8],
+        name: &[u8],
+        cwd: &[u8],
+        env: &mut DotEnv::Loader,
+        silent: bool,
+    ) -> crate::Result<()> {
+        let mut original_path: Vec<u8> = Vec::new();
+        let path = Self::path_for_run(
+            env,
+            b"",
+            Some(&mut original_path),
+            cwd,
+            ctx.debug.run_in_bun,
+        )?;
+        env.map.put(b"PATH", &path)?;
+        let use_system_shell = ctx.debug.use_system_shell;
+        let result = Self::run_package_script_foreground_with_shell_path(
+            ctx,
+            script,
+            name,
+            cwd,
+            env,
+            &[],
+            silent,
+            use_system_shell,
+            Some(original_path.as_slice()),
+        );
+        env.map.put(b"PATH", &original_path)?;
+        result
+    }
+
     /// Like [`Self::run_package_script_foreground`], but resolves the shell
     /// interpreter from `shell_path` instead of the loader's `PATH`.
     pub(crate) fn run_package_script_foreground_with_shell_path(
@@ -281,6 +316,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env.map
             .put(b"npm_lifecycle_script", original_script)
             .expect("unreachable");
+        crate::cli::script_or_command::note_package_script(env, name, cwd);
 
         let mut copy_script_capacity: usize = original_script.len();
         for part in passthrough {
@@ -604,6 +640,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = opts.store_root_fd;
+        // The VM inherits this dir cache; only an auto-installing resolver records version ranges.
+        this_transpiler.options.global_cache = ctx.debug.global_cache;
+        this_transpiler.resolver.opts.global_cache = ctx.debug.global_cache;
 
         // Bundler-linker + JSX-runtime config: only callers that actually
         // transpile through this `Transpiler` need it. `configure_linker`'s
@@ -676,78 +715,32 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // remaining env-var seeding.
         let env_loader = this_transpiler.env_mut();
 
+        // This and `npm_package_*` describe this run, over whatever an outer `bun run` exported.
         env_loader
             .map
-            .put_default(b"npm_config_local_prefix", top_level_dir)
+            .put(b"npm_config_local_prefix", top_level_dir)
             .expect("unreachable");
 
-        // Propagate --no-orphans / [run] noOrphans to the script's env so any
-        // Bun process the script spawns enables its own watchdog. The env
-        // loader snapshots `environ` before flag parsing runs, so the
-        // `setenv()` in `enable()` isn't reflected here.
-        if bun_io::ParentDeathWatchdog::is_enabled() {
-            env_loader
-                .map
-                .put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")
-                .expect("unreachable");
-        }
-
-        // we have no way of knowing what version they're expecting without running the node executable
-        // running the node executable is too slow
-        // so we will just hardcode it to LTS
-        env_loader
-            .map
-            .put_default(
-                b"npm_config_user_agent",
-                // the use of npm/? is copying yarn
-                // e.g.
-                // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
-                const_format::concatcp!(
-                    "bun/",
-                    Global::package_json_version,
-                    " npm/? node/v",
-                    Environment::REPORTED_NODEJS_VERSION,
-                    " ",
-                    Global::os_name,
-                    " ",
-                    Global::arch_name
-                )
-                .as_bytes(),
-            )
-            .expect("unreachable");
-
-        if env_loader.get(b"npm_execpath").is_none() {
-            // we don't care if this fails
-            if let Ok(self_exe_path) = bun_core::self_exe_path() {
-                env_loader
-                    .map
-                    .put_default(b"npm_execpath", self_exe_path.as_bytes())
-                    .expect("unreachable");
-            }
-        }
+        bun_install::RunCommand::seed_script_env(env_loader);
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
             if !package_json.name.is_empty() {
-                if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
-                    env_loader
-                        .map
-                        .put(NpmArgs::PACKAGE_NAME, &package_json.name)
-                        .expect("unreachable");
-                }
+                env_loader
+                    .map
+                    .put(NpmArgs::PACKAGE_NAME, &package_json.name)
+                    .expect("unreachable");
             }
 
             env_loader
                 .map
-                .put_default(b"npm_package_json", package_json.source.path.text)
+                .put(b"npm_package_json", package_json.source.path.text)
                 .expect("unreachable");
 
             if !package_json.version.is_empty() {
-                if env_loader.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
-                    env_loader
-                        .map
-                        .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
-                        .expect("unreachable");
-                }
+                env_loader
+                    .map
+                    .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
+                    .expect("unreachable");
             }
 
             if let Some(config) = package_json.config.as_deref() {
@@ -772,6 +765,44 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_bundler::options::DEFAULT_LOADERS
             .get(paths::extension(target))
             .copied()
+    }
+
+    /// `--check`: whether the main module at `path` and what it imports have no type errors.
+    /// `loader`: that of `boot`. `arguments`: those of the program.
+    fn check_main(
+        ctx: &ContextData,
+        path: &[u8],
+        loader: Option<Loader>,
+        arguments: &[Box<[u8]>],
+        before_read: Option<bun_sema_driver::host::BeforeRead>,
+    ) -> bool {
+        use crate::cli::check_command::{EntryPoint, check_before};
+        let main = EntryPoint {
+            path,
+            loader: Some(Self::loader_of_main(ctx, path, loader)),
+            // `[eval]`, `[stdin]`
+            text: Some(&ctx.runtime_options.eval.script[..]).filter(|it| !it.is_empty()),
+        };
+        // src/js/internal/html.ts serves every argument that is a page.
+        let is_page = |path: &&[u8]| path.ends_with(b".html");
+        let more = arguments.iter().map(|it| &it[..]).filter(is_page);
+        let more = more.filter(|_| is_page(&path)).map(EntryPoint::file);
+        let entry_points: Vec<EntryPoint> = std::iter::once(main).chain(more).collect();
+        check_before(&entry_points, before_read)
+    }
+
+    /// What the module loader loads the main module at `path` with, where `boot` is given `loader`.
+    fn loader_of_main(ctx: &ContextData, path: &[u8], loader: Option<Loader>) -> Loader {
+        use bun_bundler::options::loaders_from_transform_options;
+        let by_name = || {
+            let loaders = ctx.args.loaders.as_ref();
+            let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun).ok()?;
+            crate::jsc_hooks::loader_for_path(&bun_resolver::fs::Path::init(path), &loaders)
+        };
+        let is_in_memory = !ctx.runtime_options.eval.script.is_empty();
+        let named = (!is_in_memory).then(|| loader.or_else(by_name)).flatten();
+        // `[eval]`, `[stdin]`, and a name that says nothing.
+        named.unwrap_or(Loader::Tsx)
     }
 
     /// Shared ctx→transpiler/resolver option projection used by [`boot`] and
@@ -937,8 +968,24 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
+            // It has no entry point to start from, like a script of a package.json.
+            if ctx.runtime_options.check && !crate::cli::check_command::check_project_before() {
+                Global::exit(1);
+            }
             let exit_code = Self::boot_bun_shell(ctx, &entry_path)?;
             Global::exit(exit_code as u32);
+        }
+
+        // The code of the REPL is not the user's.
+        let is_checked =
+            ctx.runtime_options.check && ctx.runtime_options.eval.interactive_script.is_none();
+        // `Run::start` does it then, once there is a file watcher.
+        let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
+        if is_checked
+            && !watches
+            && !Self::check_main(ctx, &entry_path, loader, &ctx.passthrough, None)
+        {
+            Global::exit(1);
         }
 
         // `bun_jsc::initialize`
@@ -957,6 +1004,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             transform_options: ctx.args.clone(),
             log: ::core::ptr::NonNull::new(ctx.log),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
+            global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
             mini_mode: ctx.runtime_options.smol,
             eval_mode: ctx.runtime_options.eval.eval_and_print,
@@ -1101,6 +1149,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: run_entry,
+            unchecked: (is_checked && watches).then_some(loader),
         }
         .start()
     }
@@ -1220,6 +1269,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: entry,
+            unchecked: None,
         }
         .start()
     }
@@ -1240,6 +1290,9 @@ pub(crate) struct Run<'a> {
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
     /// the runner arena).
     entry_path: &'static [u8],
+    /// `--check` under `--watch`: `loader` of `boot`. With errors the program is not run, and the
+    /// process waits for a change.
+    unchecked: Option<Option<Loader>>,
 }
 
 // `on_unhandled_rejection_before_close` is a plain fn pointer stored on the
@@ -1289,6 +1342,7 @@ impl Run<'_> {
             ctx,
             vm,
             entry_path: mut entry,
+            unchecked,
         } = self;
         let _api_lock = vm.global().vm().get_api_lock();
 
@@ -1421,8 +1475,18 @@ impl Run<'_> {
             }
         }
 
-        match vm.load_entry_point(entry) {
-            Ok(promise) => {
+        let has_type_errors = unchecked.is_some_and(|loader| {
+            let watching = crate::cli::check_command::watching(vm);
+            !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching)
+        });
+        if has_type_errors {
+            // It is not read if the options are wrong.
+            vm.add_main_to_watcher_if_needed();
+        }
+        let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
+        match loaded {
+            None => {}
+            Some(Ok(promise)) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
                 if promise.status() == PromiseStatus::Rejected {
@@ -1460,7 +1524,7 @@ impl Run<'_> {
                     log_clear_msgs(vm);
                 }
             }
-            Err(err) => entry_point_load_failed(vm, &err.into()),
+            Some(Err(err)) => entry_point_load_failed(vm, &err.into()),
         }
 
         // Drop what transpiling and linking the entry graph left behind before settling into the event loop. A
@@ -1581,7 +1645,6 @@ impl Run<'_> {
         // (Rust-defined `#[no_mangle]` exports don't need this; the imported
         // C symbols do.)
         crate::napi::fix_dead_code_elimination();
-        crate::webcore::bake_response::fix_dead_code_elimination();
         bun_crash_handler::fix_dead_code_elimination();
         vm.global_exit();
     }
@@ -1738,55 +1801,29 @@ impl RunCommand {
         Global::exit(1);
     }
 
-    // This path is almost always a path to a user directory. So it cannot be
-    // inlined like our uses of /tmp. On Windows use `GetTempPathW` /
-    // `RealFS.platformTempDir` instead — this const is POSIX-only and
-    // referencing it on Windows is a compile error.
-    //
-    // Canonical definition lives in `bun_install::RunCommand` (lower tier so
-    // the package manager can use it without depending on `bun_runtime`).
-    #[cfg(not(windows))]
-    pub(crate) const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
-
     /// Returns the path to the
     /// fake `node` shim that points back at the running `bun` binary.
     pub(crate) fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {
-            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
-            Ok(ZStr::from_static(BUN_NODE_DIR_Z.as_bytes()))
+            Ok(bun_install::RunCommand::bun_node_dir())
         }
         #[cfg(windows)]
         {
-            let mut temp_path_buffer = bun_paths::w_path_buffer_pool::get();
+            let mut shim_dir_buffer = bun_paths::w_path_buffer_pool::get();
             let mut target_path_buffer = bun_paths::path_buffer_pool::get();
-            // SAFETY: FFI Win32 `GetTempPathW`. `temp_path_buffer` is a valid
-            // writable WCHAR[MAX_PATH+] buffer and `nBufferLength` is its
-            // capacity in WCHARs; the call writes at most that many wide chars.
-            let len = unsafe {
-                sys::windows::GetTempPathW(
-                    u32::try_from(temp_path_buffer.len()).expect("int cast"),
-                    temp_path_buffer.as_mut_ptr(),
-                )
-            };
-            if len == 0 {
+            let Some(len) =
+                bun_install::RunCommand::windows_node_shim_dir(&mut shim_dir_buffer[..])
+            else {
                 return Err(crate::Error::FailedToGetTempPath);
-            }
+            };
 
             let converted = strings::convert_utf16_to_utf8_in_buffer(
                 &mut target_path_buffer,
-                &temp_path_buffer[..len as usize],
+                &shim_dir_buffer[..len],
             );
 
-            const FILE_NAME: &str = const_format::concatcp!(
-                "bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                } else {
-                    ""
-                },
-                "\\node.exe"
-            );
+            const FILE_NAME: &str = "\\node.exe";
             let conv_len = converted.len();
             let total = conv_len + FILE_NAME.len();
             target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
@@ -1824,7 +1861,6 @@ impl RunCommand {
     /// `.bin` dirs + the bun-node shim dir to `PATH` and writes the original
     /// PATH back through `original_path`.
     pub(crate) fn configure_path_for_run(
-        ctx: &mut ContextData,
         root_dir_info: bun_resolver::DirInfoRef,
         this_transpiler: &mut Transpiler<'static>,
         original_path: Option<&mut Vec<u8>>,
@@ -1841,10 +1877,9 @@ impl RunCommand {
             }
         }
 
-        let new_path = Self::configure_path_for_run_with_package_json_dir(
-            ctx,
+        let new_path = Self::path_for_run(
+            this_transpiler.env_mut(),
             package_json_dir,
-            this_transpiler,
             original_path,
             cwd,
             force_using_bun,
@@ -1861,15 +1896,13 @@ impl RunCommand {
     /// (plus `package_json_dir` and the bun-node shim dir) prepended, returns
     /// it as an owned buffer, and writes the original PATH out via
     /// `original_path`.
-    pub(crate) fn configure_path_for_run_with_package_json_dir(
-        _ctx: &mut ContextData,
+    pub(crate) fn path_for_run(
+        env_loader: &mut DotEnv::Loader,
         package_json_dir: &[u8],
-        this_transpiler: &mut Transpiler<'static>,
         original_path: Option<&mut Vec<u8>>,
         cwd: &[u8],
         force_using_bun: bool,
     ) -> crate::Result<Vec<u8>> {
-        let env_loader = this_transpiler.env_mut();
         // Snapshot PATH up front. The env
         // map owns `Box<[u8]>` values, so a borrow would dangle once the
         // caller (`configure_path_for_run`) overwrites PATH. Own a copy instead.
@@ -1938,7 +1971,7 @@ impl RunCommand {
             }
 
             if !force_using_bun {
-                let env_mut = this_transpiler.env_mut();
+                let env_mut = &mut *env_loader;
                 env_mut
                     .map
                     .put(b"NODE", bun_node_exe.as_bytes())
@@ -2361,7 +2394,6 @@ impl RunCommand {
         let force_using_bun = ctx.debug.run_in_bun;
         let mut original_path: Vec<u8> = Vec::new();
         Self::configure_path_for_run(
-            ctx,
             root_dir_info,
             this_transpiler,
             Some(&mut original_path),
@@ -2422,10 +2454,12 @@ impl RunCommand {
                         temp_script_buffer.extend_from_slice(target_name);
 
                         let package_json_dir =
-                            strings::without_trailing_slash(strings::without_suffix_comptime(
-                                package_json.source.path.text,
-                                b"package.json",
-                            ));
+                            paths::string_paths::without_trailing_slash_windows_path(
+                                strings::without_suffix_comptime(
+                                    package_json.source.path.text,
+                                    b"package.json",
+                                ),
+                            );
                         bun_core::scoped_log!(
                             RUN_LOG,
                             "Running in dir `{}`",
@@ -2438,6 +2472,13 @@ impl RunCommand {
                         let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
                         let silent = ctx.debug.silent;
                         let use_system_shell = ctx.debug.use_system_shell;
+
+                        // A script has no entry point to start from: the project is checked, as by `bun check`.
+                        if ctx.runtime_options.check
+                            && !crate::cli::check_command::check_project_before()
+                        {
+                            Global::exit(1);
+                        }
 
                         if let Some(&prescript) = scripts.get(&temp_script_buffer[1..]) {
                             Self::run_package_script_foreground_with_shell_path(
@@ -2575,8 +2616,9 @@ impl RunCommand {
         }
 
         // ── Windows .bunx fast-path ──────────────────────────────────────────
+        // With `--check` the way below is taken, on which the project is checked.
         #[cfg(windows)]
-        if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
+        if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH && !ctx.runtime_options.check {
             // SAFETY: process-lifetime static, single-threaded CLI dispatch.
             let buf = unsafe { &mut *bunx_fast_path_buffers::DIRECT_LAUNCH_BUFFER.get() };
             // NT object-manager prefix (`\??\`), NOT the Win32 long-path
@@ -2633,6 +2675,12 @@ impl RunCommand {
                 if let Some(destination) =
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
+                    // It has no entry point to start from, like a script of a package.json.
+                    if ctx.runtime_options.check
+                        && !crate::cli::check_command::check_project_before()
+                    {
+                        Global::exit(1);
+                    }
                     let out = destination.as_bytes();
                     let stored = fs.dirname_store.append_slice(out)?;
                     let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
@@ -2688,6 +2736,9 @@ impl RunCommand {
                         "<r><red>error<r><d>:<r> <b>Script not found \"<b>{}<r>\"",
                         bstr::BStr::new(target_name),
                     );
+                    if target_name == b"format" {
+                        pretty_errorln!("<r><d>note<r><d>:<r> The formatter is <b>bun fmt<r>");
+                    }
                 }
             }
             Global::exit(1);
@@ -3344,6 +3395,49 @@ impl RunCommand {
         Global::exit(code);
     }
 
+    /// Width of stdout's terminal in columns. Uses `COLUMNS` if it's set, then asks the terminal, then falls back to 80.
+    pub(crate) fn columns_of_stdout() -> u16 {
+        // Honor COLUMNS so piped output and tests can pin a width.
+        if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
+            if let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10) {
+                if n > 0 {
+                    return n;
+                }
+            }
+        }
+        #[cfg(unix)]
+        {
+            // SAFETY: all-zero is a valid winsize (#[repr(C)] POD).
+            let mut size: libc::winsize = bun_core::ffi::zeroed();
+            // SAFETY: ioctl with valid winsize ptr
+            if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &raw mut size) } == 0 {
+                if size.ws_col > 0 {
+                    return size.ws_col;
+                }
+            }
+        }
+        #[cfg(windows)]
+        {
+            if let Some(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
+                // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
+                let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
+                    unsafe { bun_core::ffi::zeroed_unchecked() };
+                // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`. `handle`
+                // is a valid console output HANDLE from GetStdHandle and
+                // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.
+                if unsafe { sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
+                    != sys::windows::FALSE
+                {
+                    let w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+                    if w > 0 {
+                        return u16::try_from(w).expect("int cast");
+                    }
+                }
+            }
+        }
+        80
+    }
+
     /// Renders `path` to stdout. Returns the process exit code.
     fn render_markdown_file(path: &[u8]) -> u32 {
         let contents = match sys::File::read_from(Fd::cwd(), path) {
@@ -3358,49 +3452,7 @@ impl RunCommand {
         // Theme selection: colors when stdout is a TTY (or forced on),
         // hyperlinks when colors are on. Light/dark detected from env.
         let colors = Output::enable_ansi_colors_stdout();
-        let columns: u16 = 'brk: {
-            // Honor COLUMNS so piped output and tests can pin a width.
-            if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
-                if let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10) {
-                    if n > 0 {
-                        break 'brk n;
-                    }
-                }
-            }
-            #[cfg(unix)]
-            {
-                // SAFETY: all-zero is a valid winsize (#[repr(C)] POD).
-                let mut size: libc::winsize = bun_core::ffi::zeroed();
-                // SAFETY: ioctl with valid winsize ptr
-                if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &raw mut size) } == 0
-                {
-                    if size.ws_col > 0 {
-                        break 'brk size.ws_col;
-                    }
-                }
-            }
-            #[cfg(windows)]
-            {
-                if let Some(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
-                    // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
-                    let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
-                        unsafe { bun_core::ffi::zeroed_unchecked() };
-                    // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`. `handle`
-                    // is a valid console output HANDLE from GetStdHandle and
-                    // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.
-                    if unsafe {
-                        sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi)
-                    } != sys::windows::FALSE
-                    {
-                        let w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-                        if w > 0 {
-                            break 'brk u16::try_from(w).expect("int cast");
-                        }
-                    }
-                }
-            }
-            80
-        };
+        let columns = Self::columns_of_stdout();
         let is_tty = Output::is_stdout_tty();
         let kitty_graphics = colors && is_tty && md::detect_kitty_graphics();
 

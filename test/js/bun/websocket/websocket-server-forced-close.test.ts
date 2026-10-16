@@ -23,7 +23,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: forced close with a peer t
   }
 
   // The server settles `pending` first when a test passes. A client that fails or closes before that rejects it.
-  function connect(port: number, pending: PromiseWithResolvers<unknown>) {
+  function connect(port: number, pending: PromiseWithResolvers<void>) {
     const client = new WebSocket(`${scheme}://127.0.0.1:${port}`, { tls: { rejectUnauthorized: false } });
     client.onerror = event => pending.reject(new Error(`client error: ${(event as ErrorEvent).message}`));
     client.onclose = event => pending.reject(new Error(`client closed early: ${event.code}`));
@@ -48,7 +48,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: forced close with a peer t
       },
     });
 
-    const client = connect(server.port, terminated);
+    const client = connect(server.port!, terminated);
     try {
       client.onmessage = () => {
         client.pause();
@@ -80,7 +80,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: forced close with a peer t
       },
     });
 
-    const client = connect(server.port, terminated);
+    const client = connect(server.port!, terminated);
     try {
       client.onopen = () => {
         client.pause();
@@ -117,7 +117,7 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: forced close with a peer t
     let head = "";
     const socket = await Bun.connect({
       hostname: "127.0.0.1",
-      port: server.port,
+      port: server.port!,
       ...(secure ? { tls: { rejectUnauthorized: false } } : {}),
       socket: {
         open(socket) {

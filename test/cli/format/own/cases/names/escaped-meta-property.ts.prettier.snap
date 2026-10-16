@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+function f() {
+  new.target;
+  new.target;
+  new.target;
+}
+import.meta;
+import.defer("a");
+
+-------------------
+{ printWidth: 100 }
+-------------------
+function f() {
+  new.target;
+  new.target;
+  new.target;
+}
+import.meta;
+import.defer("a");
+
+===================== End =====================

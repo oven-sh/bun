@@ -162,13 +162,11 @@ const {
   isDataView,
   isExternal,
   isMap,
-  isMapIterator,
   isModuleNamespaceObject,
   isNativeError,
   isNumberObject,
   isPromise,
   isSet,
-  isSetIterator,
   isStringObject,
   isWeakMap,
   isWeakSet,
@@ -176,6 +174,10 @@ const {
   isDate,
   isTypedArray,
 } = require("node:util/types");
+
+// previewEntries() reads internal fields of whatever these two accept, so a script must not be able to replace them.
+const isMapIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator", 1);
+const isSetIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator", 1);
 
 // We need this duplicate here to avoid a circular dependency between node:assert and node:util.
 class AssertionError extends Error {

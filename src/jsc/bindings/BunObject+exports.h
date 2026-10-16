@@ -7,6 +7,7 @@
     macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
+    macro(FetchSession) \
     macro(FileSystemRouter) \
     macro(Glob) \
     macro(Image) \
@@ -54,7 +55,6 @@
     macro(file) \
     macro(gunzipSync) \
     macro(gzipSync) \
-    macro(indexOfLine) \
     macro(inflateSync) \
     macro(jest) \
     macro(listen) \

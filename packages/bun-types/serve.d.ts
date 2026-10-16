@@ -335,17 +335,7 @@ declare module "bun" {
    * Compression options for WebSocket messages.
    */
   type WebSocketCompressor =
-    | "disable"
-    | "shared"
-    | "dedicated"
-    | "3KB"
-    | "4KB"
-    | "8KB"
-    | "16KB"
-    | "32KB"
-    | "64KB"
-    | "128KB"
-    | "256KB";
+    "disable" | "shared" | "dedicated" | "3KB" | "4KB" | "8KB" | "16KB" | "32KB" | "64KB" | "128KB" | "256KB";
 
   /**
    * Server-side {@link ServerWebSocket} event handlers for {@link Bun.serve}

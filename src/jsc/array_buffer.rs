@@ -364,6 +364,8 @@ impl ArrayBuffer {
         value.as_array_buffer(ctx).unwrap()
     }
 
+    /// Ownership of `bytes` transfers to JSC either way: above
+    /// `MAX_ARRAY_BUFFER_SIZE` the C++ side frees them and throws a RangeError.
     pub fn from_default_allocator(
         global: &JSGlobalObject,
         typed_array_type: JSType,
@@ -372,7 +374,7 @@ impl ArrayBuffer {
         match typed_array_type {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `bytes` is
             // a mimalloc-backed buffer whose ownership transfers to JSC.
-            JSType::ArrayBuffer => Ok(unsafe {
+            JSType::ArrayBuffer => crate::call_zero_is_throw(global, || unsafe {
                 JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len())
             }),
             // `JSUint8Array::from_bytes` takes `Box<[u8]>`; reconstruct

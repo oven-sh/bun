@@ -16,6 +16,11 @@ describe("bun exec", () => {
     .stderr("bun: command not found: sldkfjslkdjflksdjflj\n")
     .runAsTest("it works on command fail");
 
+  TestBuilder.command`${BUN} exec ${'EMPTY_VAR=; echo a "$EMPTY_VAR" "$UNSET_VAR" "$(true)" b $UNSET_VAR c'}`
+    .env(bunEnv)
+    .stdout("a    b c\n")
+    .runAsTest("a quoted expansion that is empty stays one empty word");
+
   TestBuilder.command`${BUN} exec`
     .env(bunEnv)
     .stdout(

@@ -128,8 +128,8 @@ pub(crate) mod test {
         CmdSubstEnd,
         OpenParen,
         CloseParen,
-        Var(&'a [u8]),
-        VarArgv(u8),
+        Var(&'a [u8], bool),
+        VarArgv(u8, bool),
         Text(&'a [u8]),
         SingleQuotedText(&'a [u8]),
         DoubleQuotedText(&'a [u8]),
@@ -143,8 +143,10 @@ pub(crate) mod test {
     impl<'a> TestToken<'a> {
         pub(crate) fn from_real(the_token: Token, buf: &'a [u8]) -> TestToken<'a> {
             match the_token {
-                Token::Var(txt) => TestToken::Var(&buf[txt.start as usize..txt.end as usize]),
-                Token::VarArgv(int) => TestToken::VarArgv(int),
+                Token::Var(txt, quoted) => {
+                    TestToken::Var(&buf[txt.start as usize..txt.end as usize], quoted)
+                }
+                Token::VarArgv(int, quoted) => TestToken::VarArgv(int, quoted),
                 Token::Text(txt) => TestToken::Text(&buf[txt.start as usize..txt.end as usize]),
                 Token::SingleQuotedText(txt) => {
                     TestToken::SingleQuotedText(&buf[txt.start as usize..txt.end as usize])
@@ -211,12 +213,17 @@ pub(crate) mod test {
                 T::CmdSubstEnd => unit!("CmdSubstEnd"),
                 T::OpenParen => unit!("OpenParen"),
                 T::CloseParen => unit!("CloseParen"),
-                T::Var(s) => {
-                    w.write_str("{\"Var\":")?;
+                T::Var(s, quoted) => {
+                    w.write_str(if *quoted {
+                        "{\"DoubleQuotedVar\":"
+                    } else {
+                        "{\"Var\":"
+                    })?;
                     encode_json_string(w, s)?;
                     w.write_char('}')
                 }
-                T::VarArgv(n) => write!(w, "{{\"VarArgv\":{}}}", n),
+                T::VarArgv(n, false) => write!(w, "{{\"VarArgv\":{}}}", n),
+                T::VarArgv(n, true) => write!(w, "{{\"DoubleQuotedVarArgv\":{}}}", n),
                 T::Text(s) => {
                     w.write_str("{\"Text\":")?;
                     encode_json_string(w, s)?;

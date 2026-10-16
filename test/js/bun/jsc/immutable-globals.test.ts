@@ -481,6 +481,7 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
             new Headers().entries();
             new FormData().entries();
             new Bun.CookieMap().entries();
+            new Bun.Glob("*");
             console.log("done");
           `,
         ],
@@ -488,7 +489,7 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
         undefined,
         { BUN_JSC_logImmutableGlobals: "1" },
       );
-      expect({ stdout, log: stderr.split("\n").filter(Boolean), exitCode }).toEqual({
+      expect({ stdout, log: stderr.split(/\r?\n/).filter(Boolean), exitCode }).toEqual({
         stdout: "done\n",
         log: [
           "immutableGlobals: noSuchGlobal is not the name of an object in this global object",
@@ -496,6 +497,7 @@ describe.concurrent("BUN_JSC_immutableGlobals", () => {
           "immutableGlobals: left mutable: the prototype of FormData Iterator, which belongs to FormData",
           "immutableGlobals: left mutable: the prototype of CookieMap, which belongs to Bun",
           "immutableGlobals: left mutable: the prototype of CookieMap Iterator, which belongs to Bun",
+          "immutableGlobals: left mutable: the prototype of Glob, which belongs to Bun",
         ],
         exitCode: 0,
       });

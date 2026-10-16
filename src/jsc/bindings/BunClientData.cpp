@@ -251,6 +251,9 @@ static bool isGlobalImmutable(JSC::VM& vm, JSC::JSGlobalObject* globalObject, AS
 // Not asked of the global object's properties alone: a script can define a global with the name of any class.
 static bool isPrototypeOfGlobal(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype, ASCIILiteral className)
 {
+    // (The name of a plain object made to be the prototype of plain objects.)
+    if (StringView(className) == "Object"_s)
+        return false;
     auto name = JSC::Identifier::fromString(vm, className);
     if (globalObject->findPropertyHashEntry(name))
         return true;
@@ -259,6 +262,11 @@ static bool isPrototypeOfGlobal(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
 }
 
 void didCreatePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
+{
+    didCreatePrototype(vm, globalObject, prototype, prototype->classInfo()->className);
+}
+
+void didCreatePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype, ASCIILiteral className)
 {
     if (!globalObject->hasImmutableGlobals()) [[likely]]
         return;
@@ -290,15 +298,13 @@ void didCreatePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSO
         { "SocketAddress"_s, "node:quic"_s },
     };
 
-    ASCIILiteral className = prototype->classInfo()->className;
     // Buffer.prototype has that class name for Object.prototype.toString().
     if (StringView(className) == "Uint8Array"_s)
         className = "Buffer"_s;
 
     ASCIILiteral owner;
     bool ownerIsImmutable = false;
-    // (A plain object made to be a prototype has the class name of Object.prototype.)
-    if (prototype->classInfo() != JSC::JSFinalObject::info() && isPrototypeOfGlobal(vm, globalObject, prototype, className)) {
+    if (isPrototypeOfGlobal(vm, globalObject, prototype, className)) {
         // Its property may be materializing, so this does not read it.
         owner = className;
         ownerIsImmutable = JSC::JSGlobalObject::immutableGlobalsOptionLists(owner) || globalObject->hasImmutableProperties();
@@ -334,9 +340,12 @@ void didCreateConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::J
 JSC::Structure* createClassStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype, JSC::TypeInfo typeInfo, const JSC::ClassInfo* classInfo, JSC::IndexingType indexingType, unsigned inlineCapacity)
 {
     if (globalObject->hasImmutableGlobals() && prototype.isObject()) [[unlikely]] {
-        // The structure of a class's instances: its prototype has the class's name, or the instances are plain objects (fs.Stats).
+        // The structure of a class's instances: its prototype has the class's name, unless the one or the other is a plain object.
+        auto* plainObject = JSC::JSFinalObject::info();
         auto* prototypeClassInfo = asObject(prototype)->classInfo();
-        if (StringView(prototypeClassInfo->className) == StringView(classInfo->className) || (classInfo == JSC::JSFinalObject::info() && prototypeClassInfo != classInfo))
+        if (prototypeClassInfo == plainObject)
+            didCreatePrototype(vm, globalObject, asObject(prototype), classInfo->className);
+        else if (classInfo == plainObject || StringView(prototypeClassInfo->className) == StringView(classInfo->className))
             didCreatePrototype(vm, globalObject, asObject(prototype));
     }
     return JSC::Structure::create(vm, globalObject, prototype, typeInfo, classInfo, indexingType, inlineCapacity);

@@ -2131,8 +2131,6 @@ void initLazyClassStructures(GlobalObject* globalObject)
         auto& classStructure = *reinterpret_cast<LazyClassStructure*>(reinterpret_cast<uint8_t*>(globalObject) + entry.offset);
         classStructure.initLater([](LazyClassStructure::Initializer& init) {
             lazyTableEntry<table>(&init.classStructure, init.global).init(init);
-            // createClassStructure() does not recognize a prototype that is a plain object.
-            Bun::didCreatePrototype(init.vm, init.global, init.prototype);
         });
     }
 }

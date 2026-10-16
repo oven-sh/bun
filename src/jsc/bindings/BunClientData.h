@@ -141,6 +141,7 @@ namespace Bun {
 JSC::Structure* createClassStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype, JSC::TypeInfo, const JSC::ClassInfo*, JSC::IndexingType = JSC::NonArray, unsigned inlineCapacity = 0);
 // BUN_JSC_immutableGlobals covers what exists when the global object is created, and Bun creates most classes on first use: immutable if the global the class belongs to is.
 void didCreatePrototype(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype);
+void didCreatePrototype(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* prototype, ASCIILiteral className);
 // For a constructor that its prototype does not hold as a value (a getter creates it): immutable if the prototype is.
 void didCreateConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* constructor);
 void reifyStaticPropertyTable(JSC::VM&, const JSC::ClassInfo*, std::span<const JSC::HashTableValue>, JSC::JSObject&);

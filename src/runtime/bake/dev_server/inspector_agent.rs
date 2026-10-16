@@ -8,10 +8,10 @@
 //! `Bun__InspectorBunFrontendDevServerAgent__setEnabled`, `slot.sequence` is
 //! `next_inspector_connection_id`.
 
+use super::*;
 use bun_core::String as BunString;
 use bun_jsc::debugger::{DebuggerId, ErasedAgentSlot};
 use bun_jsc::virtual_machine::VirtualMachine;
-use super::*;
 
 bun_opaque::opaque_ffi! {
     /// Opaque C++ `InspectorBunFrontendDevServerAgent` handle.

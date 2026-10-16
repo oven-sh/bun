@@ -51,10 +51,7 @@ impl DevServer {
             .map_err(crate::Error::from)?;
         self.route_lookup.put(
             index,
-            RouteIndexAndRecurseFlag::new(
-                associated_route,
-                file_kind == router::FileKind::Layout,
-            ),
+            RouteIndexAndRecurseFlag::new(associated_route, file_kind == router::FileKind::Layout),
         )?;
         Ok(to_opaque_file_id::<{ bake::Side::Server }>(index))
     }

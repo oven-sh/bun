@@ -1,11 +1,11 @@
 use core::mem::size_of;
 
+use super::*;
 use crate::api::server::html_bundle::HTMLBundleRoute;
 use crate::bake::dev_server::{
     DevServer, HmrSocket, IncrementalResult, TestingBatchEvents, deferred_request, packed_map,
 };
 use bun_collections::ArrayHashMap;
-use super::*;
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct MemoryCost {

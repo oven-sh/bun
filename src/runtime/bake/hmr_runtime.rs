@@ -1,8 +1,8 @@
 //! The HMR runtime code embedded in the binary, per side.
 #![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS (scripts/build/rust.ts) for release/CI builds.
 
-use bun_core::{ZStr, strings};
 use crate::bake::Side;
+use bun_core::{ZStr, strings};
 
 /// `bake.HmrRuntime` — embedded HMR runtime code + precomputed line count.
 pub(crate) struct HmrRuntime {

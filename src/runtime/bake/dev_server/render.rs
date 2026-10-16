@@ -45,8 +45,7 @@ impl DevServer {
         };
         // SAFETY: held raw; deref per-access. `router.types` is a `Box<[Type]>` —
         // never reallocated for the lifetime of `DevServer`.
-        let router_type: *mut router::Type =
-            unsafe { (*this).router.type_ptr(route_type_idx) };
+        let router_type: *mut router::Type = unsafe { (*this).router.type_ptr(route_type_idx) };
         // SAFETY: scalar copy — `route_bundles[i]` is otherwise only read (via
         // `generate_css_js_array`, which takes `&RouteBundle`).
         let client_script_generation: u32 = unsafe {

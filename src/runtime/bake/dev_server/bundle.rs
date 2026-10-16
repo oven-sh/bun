@@ -145,10 +145,7 @@ impl DevServer {
 pub(crate) struct RouteIndexAndRecurseFlag(pub u32);
 
 impl RouteIndexAndRecurseFlag {
-    pub(crate) fn new(
-        route_index: router::RouteIndex,
-        should_recurse_when_visiting: bool,
-    ) -> Self {
+    pub(crate) fn new(route_index: router::RouteIndex, should_recurse_when_visiting: bool) -> Self {
         RouteIndexAndRecurseFlag(
             (route_index.get() & 0x7FFF_FFFF) | ((should_recurse_when_visiting as u32) << 31),
         )

@@ -5,7 +5,10 @@ use super::*;
 impl DevServer {
     /// `extra_client_bits` is specified if it is possible that the client graph may
     /// increase in size while the bits are being used.
-    pub(super) fn init_graph_trace_state(&self, extra_client_bits: usize) -> crate::Result<GraphTraceState> {
+    pub(super) fn init_graph_trace_state(
+        &self,
+        extra_client_bits: usize,
+    ) -> crate::Result<GraphTraceState> {
         let server_bits = DynamicBitSet::init_empty(self.server_graph.bundled_files.len())?;
         let client_bits =
             DynamicBitSet::init_empty(self.client_graph.bundled_files.len() + extra_client_bits)?;
@@ -15,7 +18,6 @@ impl DevServer {
         })
     }
 }
-
 
 impl DevServer {
     pub(super) fn trace_all_route_imports(

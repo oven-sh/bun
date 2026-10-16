@@ -1,6 +1,5 @@
 //! `DeferredRequest`: a request waiting for a bundle to finish.
 
-
 /// When requests are waiting on a bundle, the relevant request information is
 /// prepared and stored in a linked list.
 pub(crate) struct DeferredRequest {
@@ -43,7 +42,6 @@ pub(crate) enum HandlerKind {
     ServerHandler,
     BundledHtmlPage,
 }
-
 
 impl DeferredRequest {
     pub(crate) const MAX_PREALLOCATED: usize = MAX_PREALLOCATED;
@@ -100,9 +98,7 @@ impl DeferredRequest {
     /// Actually free the underlying allocation for the node, does not deinitialize children
     fn __free(&mut self) {
         // SAFETY: self is the .data field of a Node in deferred_request_pool
-        let node = unsafe {
-            bun_core::from_field_ptr!(Node, data, std::ptr::from_mut(self))
-        };
+        let node = unsafe { bun_core::from_field_ptr!(Node, data, std::ptr::from_mut(self)) };
         // SAFETY: dev backref is valid while the pool entry exists; `node` is a
         // fully-initialized hive slot. `pool::Node<T>` has no drop glue (`data`
         // is `MaybeUninit`), so `put`'s in-place drop is a no-op — `__deinit`

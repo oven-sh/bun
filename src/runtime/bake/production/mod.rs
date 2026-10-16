@@ -11,14 +11,14 @@ use std::sync::OnceLock;
 
 use bstr::BStr;
 
-use crate::bake::router::PatternBuffer;
 use crate::bake;
+use crate::bake::router::PatternBuffer;
 use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
 use bun_alloc::Arena;
 use bun_bundler::BundleV2;
 use bun_bundler::Transpiler;
-use bun_bundler::options::{self as bundler_options, OutputFile};
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
+use bun_bundler::options::{self as bundler_options, OutputFile};
 use bun_bundler::output_file::Index as OutputFileIndex;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
@@ -48,8 +48,8 @@ mod ffi;
 mod per_thread;
 
 pub(crate) use entry_points::EntryPointMap;
-pub(crate) use per_thread::{PerThread, TypeAndFlags};
 use ffi::*;
+pub(crate) use per_thread::{PerThread, TypeAndFlags};
 
 /// Local shim: `crate::Error` has no `From<bun_jsc::JsError>` (tier-0 cannot
 /// depend on tier-6). Map every JS-side failure to the `"JSError"` sentinel the

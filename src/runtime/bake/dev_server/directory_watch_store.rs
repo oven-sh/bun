@@ -273,8 +273,7 @@ impl DirectoryWatchStore {
 
         // Note: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
         // map via raw ptr so it doesn't conflict with `&mut self` below.
-        let watches_ptr: *mut StringArrayHashMap<Entry> =
-            &raw mut self.watches;
+        let watches_ptr: *mut StringArrayHashMap<Entry> = &raw mut self.watches;
         let watches_guard = scopeguard::guard(gop_index, move |idx| {
             // SAFETY: `watches_ptr` points into the heap-allocated DevServer; on
             // the error path no other borrow of `self.watches` is outstanding.

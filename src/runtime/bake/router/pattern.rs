@@ -466,9 +466,7 @@ impl PatternBuffer {
                 self.prepend(text);
                 self.prepend(b"/");
             }
-            Part::Param(name)
-            | Part::CatchAll(name)
-            | Part::CatchAllOptional(name) => {
+            Part::Param(name) | Part::CatchAll(name) | Part::CatchAllOptional(name) => {
                 self.prepend(name);
                 self.prepend(b"/:");
             }

@@ -534,4 +534,3 @@ pub(super) fn extract_pathname_from_url(url: &[u8]) -> &[u8] {
 
     pathname
 }
-

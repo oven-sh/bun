@@ -1,11 +1,11 @@
 //! The built-in presets: `auto` (what `bun index.html` uses) and the React framework.
 #![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS (scripts/build/rust.ts) for release/CI builds.
 
-use std::borrow::Cow;
+use super::{FileSystemRouterType, Framework, ReactFastRefresh, ServerComponents};
+use crate::bake::{BuiltInModule, router};
 use bun_collections::StringArrayHashMap;
 use bun_core::Utf8Bytes;
-use crate::bake::{BuiltInModule, router};
-use super::{FileSystemRouterType, Framework, ReactFastRefresh, ServerComponents};
+use std::borrow::Cow;
 
 use super::framework::{literals, resolve_path};
 

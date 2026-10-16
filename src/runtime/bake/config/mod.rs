@@ -1,10 +1,10 @@
 //! The Bake config: one type for both `bun index.html` (no config) and `bun ./app.ts` (an `app` export).
 
+use crate::api::js_bundler::Plugin;
+use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 use bun_alloc::Arena;
 use bun_core::{ZBox, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use crate::api::js_bundler::Plugin;
-use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 
 mod bundler;
 mod defaults;

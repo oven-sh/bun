@@ -1,9 +1,9 @@
 //! Turning the config into bundler setup: transpilers and `import.meta` defines.
 
+use super::{BuildConfigSubset, Framework};
+use crate::bake::{Graph, Mode, Side, dev_server};
 use bun_alloc::Arena;
 use bun_options_types::schema as bun_schema;
-use crate::bake::{Graph, Mode, Side, dev_server};
-use super::{BuildConfigSubset, Framework};
 
 impl Framework {
     /// Returns the arena slot for the `bake_types::Framework` projection, which the arena does not drop.

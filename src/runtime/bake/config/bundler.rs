@@ -1,11 +1,11 @@
 //! Per-graph bundler settings (client, server, SSR) and the shared plugin.
 
-use core::ptr::NonNull;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::api::js_bundler::Plugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
-use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
 use crate::bake::jsc;
+use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use core::ptr::NonNull;
 
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
 #[derive(Default)]

@@ -5,7 +5,6 @@
 
 use bun_core::Output;
 
-
 pub(crate) mod router;
 
 pub(crate) mod production;
@@ -78,4 +77,6 @@ pub(crate) fn print_warning() {
 // ══════════════════════════════════════════════════════════════════════════
 pub(crate) mod dev_server;
 pub(crate) use dev_server as DevServer;
-pub(crate) use dev_server::{get_deinit_count_for_testing, is_allowed_dev_host, is_allowed_host_header};
+pub(crate) use dev_server::{
+    get_deinit_count_for_testing, is_allowed_dev_host, is_allowed_host_header,
+};

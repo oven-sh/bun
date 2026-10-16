@@ -1,6 +1,5 @@
 //! C++ functions for hot-reloading server-side modules.
 
-
 use super::*;
 
 pub(super) fn bake_load_server_hmr_patch(
@@ -36,12 +35,7 @@ pub(super) fn bake_load_server_hmr_patch_with_source_map(
     // the sole caller's `ManuallyDrop<Vec<u8>>` (valid for `len`, ownership
     // ceded to C++) — discharges the ptr+len precondition above.
     jsc::from_js_host_call(global, || unsafe {
-        BakeLoadServerHmrPatchWithSourceMap(
-            global,
-            code,
-            source_map_json_ptr,
-            source_map_json_len,
-        )
+        BakeLoadServerHmrPatchWithSourceMap(global, code, source_map_json_ptr, source_map_json_len)
     })
 }
 

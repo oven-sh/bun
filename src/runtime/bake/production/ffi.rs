@@ -44,7 +44,10 @@ pub(super) fn load_module(
 // extern apis:
 
 unsafe extern "C" {
-    pub(super) safe fn BakeGetDefaultExportFromModule(global: &JSGlobalObject, key: JSValue) -> JSValue;
+    pub(super) safe fn BakeGetDefaultExportFromModule(
+        global: &JSGlobalObject,
+        key: JSValue,
+    ) -> JSValue;
     safe fn BakeGetModuleNamespace(global: &JSGlobalObject, key: JSValue) -> JSValue;
     safe fn BakeLoadModuleByKey(global: &JSGlobalObject, key: JSValue) -> JSValue;
 }

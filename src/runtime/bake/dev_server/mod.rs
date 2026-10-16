@@ -62,45 +62,47 @@ use bun_sys::FdExt as _;
 use super::{Graph, Side};
 
 // ─── submodules ──────────────────────────────────────────────────────────────
-pub(crate) mod error_report_request;
-pub(crate) mod hmr_socket;
-mod js_escape;
-pub(crate) mod memory_cost;
-mod bundler_vtable;
 mod bundle;
+mod bundler_vtable;
 pub(crate) mod deferred_request;
+pub(crate) mod directory_watch_store;
 mod ensure_route;
+pub(crate) mod error_report_request;
 mod failures;
 mod finalize;
+pub(crate) mod hmr_socket;
+mod hot_reload_event;
 mod http;
+mod js_escape;
 mod lifecycle;
+pub(crate) mod memory_cost;
+mod protocol;
 mod render;
 mod router_glue;
 mod server_hmr_ffi;
 mod trace;
-pub(crate) mod directory_watch_store;
-mod hot_reload_event;
-mod protocol;
 mod watch;
 mod watcher_atomics;
 
-pub(crate) use directory_watch_store::DirectoryWatchStore;
-pub(crate) use hot_reload_event::HotReloadEvent;
-pub(crate) use protocol::{ConsoleLogKind, HmrTopic, HmrTopicBits, IncomingMessageId, MessageId};
-pub(crate) use bundle::EntryPointList;
-pub(crate) use finalize::{CachedFileIndex, HotUpdateContext};
-pub(crate) use http::{is_allowed_dev_host, is_allowed_host_header};
-pub(crate) use lifecycle::init;
 pub(super) use crate::server::SavedRequestUnion;
+pub(crate) use bundle::EntryPointList;
 use bundle::{RouteIndexAndRecurseFlag, TestingBatch};
 use deferred_request::{DeferredRequest, Handler, ResponseAndMethod};
+pub(crate) use directory_watch_store::DirectoryWatchStore;
 use ensure_route::{HTMLRouter, ReqOrSaved, RequestEnsureRouteBundledCtx, ensure_route_is_bundled};
 use failures::mark_all_route_children;
+pub(crate) use finalize::{CachedFileIndex, HotUpdateContext};
 use hmr_socket::hmr_socket_behavior;
-use http::{DevHandlerId, dev_route_tramp, extract_pathname_from_url, host_forbidden, is_allowed_dev_origin, origin_forbidden};
+pub(crate) use hot_reload_event::HotReloadEvent;
+use http::{
+    DevHandlerId, dev_route_tramp, extract_pathname_from_url, host_forbidden,
+    is_allowed_dev_origin, origin_forbidden,
+};
+pub(crate) use http::{is_allowed_dev_host, is_allowed_host_header};
+pub(crate) use lifecycle::init;
+pub(crate) use protocol::{ConsoleLogKind, HmrTopic, HmrTopicBits, IncomingMessageId, MessageId};
 use router_glue::{OpaqueFileIdOrOptional, from_opaque_file_id, to_opaque_file_id};
 pub(crate) use watcher_atomics::{NextEvent, WatcherAtomics};
-
 
 /// `DevServer.FileKind` — kept in lockstep with `bun_bundler::bake_types::CacheKind`
 /// (the vtable boundary maps between them via an exhaustive match).
@@ -211,7 +213,6 @@ impl GraphTraceState {
             .expect("freeing memory can not fail");
     }
 }
-
 
 pub(crate) mod assets;
 pub(crate) mod incremental_graph;

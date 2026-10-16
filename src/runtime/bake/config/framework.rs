@@ -1,11 +1,11 @@
 //! `Framework`: what a framework (or the config-less default) tells Bake, and how it is read from JS.
 
-use std::borrow::Cow;
+use super::SplitBundlerOptions;
+use crate::bake::{BuiltInModule, router};
 use bun_collections::StringArrayHashMap;
 use bun_core::Utf8Bytes;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use crate::bake::{BuiltInModule, router};
-use super::SplitBundlerOptions;
+use std::borrow::Cow;
 
 /// `bake.Framework.ServerComponents`.
 ///

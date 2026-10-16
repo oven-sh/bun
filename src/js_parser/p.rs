@@ -284,7 +284,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) import_meta_ref: Ref,
     pub(crate) hmr_api_ref: Ref,
 
-
     /// Used to track the `feature` function from `import { feature } from "bun:bundle"`.
     /// When visiting e_call, if the target ref matches this, we replace the call with
     /// a boolean based on whether the feature flag is enabled.

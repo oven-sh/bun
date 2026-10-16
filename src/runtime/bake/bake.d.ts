@@ -239,8 +239,7 @@ declare module "bun" {
     }
 
     type ReactRefreshSignatureFunction = () =>
-      | void
-      | ((func: Function, hash: string, force?: bool, customHooks?: () => Function[]) => void);
+      void | ((func: Function, hash: string, force?: bool, customHooks?: () => Function[]) => void);
 
     /** This API is similar, but unrelated to `Bun.FileSystemRouter`  */
     interface FrameworkFileSystemRouterType {
@@ -462,6 +461,10 @@ declare module "bun" {
        * The loaded module of the page itself.
        */
       readonly pageModule: any;
+      /**
+       * The request, when the page module exports `mode = "ssr"`; `undefined` for every other mode.
+       */
+      readonly request?: Request;
       /**
        * The loaded module of all of the route layouts. The first one is the
        * inner-most, the last is the root layout.

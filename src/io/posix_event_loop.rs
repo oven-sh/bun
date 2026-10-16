@@ -1,6 +1,8 @@
 #[cfg(unix)]
 use core::ffi::c_int;
+#[cfg(not(windows))]
 use core::ffi::c_void;
+#[cfg(not(windows))]
 use core::fmt;
 #[cfg(unix)]
 use core::ptr;
@@ -278,6 +280,8 @@ pub enum AllocatorType {
     #[default]
     Js,
     Mini,
+    /// The loop `Bun.spawnSync` waits on. Only what that call makes for its own child lives there.
+    SpawnSync,
 }
 
 // `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
@@ -321,6 +325,9 @@ impl FilePoll {
         let flags = self.flags;
         if flags.contains(Flags::Socket) {
             return FileType::Socket;
+        }
+        if flags.contains(Flags::Tty) {
+            return FileType::File;
         }
         if flags.contains(Flags::Nonblocking) {
             return FileType::NonblockingPipe;
@@ -515,7 +522,7 @@ impl FilePoll {
             flags,
             owner,
             next_to_free: ptr::null_mut(),
-            allocator_type: if vm.is_js() { AllocatorType::Js } else { AllocatorType::Mini },
+            allocator_type: vm.allocator_type(),
             #[cfg(all(target_os = "macos", debug_assertions))]
             // Single-threaded event loop so `Relaxed` ordering is sufficient.
             generation_number: MAX_GENERATION_NUMBER
@@ -1210,6 +1217,7 @@ pub enum Flags {
     IgnoreUpdates,
 
     Socket,
+    Tty,
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
@@ -1270,9 +1278,10 @@ impl Flags {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(not(windows))]
 pub(crate) struct FlagsFormatter(pub FlagsSet);
 
+#[cfg(not(windows))]
 impl fmt::Display for FlagsFormatter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut is_first = true;
@@ -1411,19 +1420,18 @@ impl Store {
 // `impl TypeList for (FilePoll,)`, which trips the orphan rule (foreign trait
 // on a tuple). Since the union has exactly one variant, wrap the raw
 // `TaggedPtr` directly with the same tag scheme (`1024 - index`).
+#[cfg(not(windows))]
 #[derive(Copy, Clone)]
-#[allow(dead_code)]
 pub(crate) struct Pollable {
     repr: bun_collections::TaggedPtr,
 }
 
+#[cfg(not(windows))]
 impl Pollable {
     /// Tag value for `FilePoll` (index 0 → `1024 - 0`).
-    #[allow(dead_code)]
     pub(crate) const FILE_POLL_TAG: u16 = 1024;
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn init(ptr: *const crate::FilePoll) -> Self {
         Self {
             repr: bun_collections::TaggedPtr::init(ptr, Self::FILE_POLL_TAG),
@@ -1431,7 +1439,6 @@ impl Pollable {
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn from(val: *mut c_void) -> Self {
         Self {
             repr: bun_collections::TaggedPtr::from(val),
@@ -1439,19 +1446,16 @@ impl Pollable {
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn tag(self) -> u16 {
         self.repr.data()
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn as_file_poll(self) -> *mut crate::FilePoll {
         self.repr.get::<crate::FilePoll>()
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn ptr(self) -> *mut c_void {
         self.repr.to()
     }

@@ -208,7 +208,7 @@ impl Imports {
 
     /// Rust stable cannot sort in `const`; precomputed here and verified by
     /// the test in `tests` below.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     const ALL_SORTED: [&'static [u8]; 27] = [
         b"$$typeof",
         b"__EARLY_RETURN_SENTINEL",

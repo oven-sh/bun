@@ -4,6 +4,7 @@ import { bunEnv, bunExe } from "harness";
 import crypto from "node:crypto";
 import { PassThrough, Readable } from "node:stream";
 import util from "node:util";
+import vm from "node:vm";
 
 it("crypto.randomBytes should return a Buffer", () => {
   expect(crypto.randomBytes(1) instanceof Buffer).toBe(true);
@@ -766,6 +767,39 @@ describe("DiffieHellman", () => {
       threw: true,
       value: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
     });
+  });
+
+  it.each([
+    [
+      "the main realm",
+      () =>
+        class MyDH extends crypto.DiffieHellman {
+          publicKeyHex() {
+            return this.getPublicKey("hex");
+          }
+        },
+    ],
+    [
+      "a node:vm context",
+      () =>
+        vm.runInContext(
+          `(class MyDH extends DiffieHellman { publicKeyHex() { return this.getPublicKey("hex"); } })`,
+          vm.createContext({ DiffieHellman: crypto.DiffieHellman }),
+        ),
+    ],
+  ])("a subclass declared in %s has the subclass prototype and working keys", (_realm, declare) => {
+    const MyDH = declare();
+    const bob = crypto.getDiffieHellman("modp5");
+
+    const alice = new MyDH(bob.getPrime(), bob.getGenerator());
+    expect(Object.getPrototypeOf(alice)).toBe(MyDH.prototype);
+    expect(alice).toBeInstanceOf(crypto.DiffieHellman);
+
+    expect(alice.verifyError).toBe(bob.verifyError);
+    alice.generateKeys();
+    bob.generateKeys();
+    expect(alice.publicKeyHex()).toBe(alice.getPublicKey("hex"));
+    expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
   });
 });
 

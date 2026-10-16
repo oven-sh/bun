@@ -567,6 +567,23 @@ macro_rules! zstr {
     }};
 }
 
+/// The path of the null device, as a literal that `concat!` accepts. Use it for paths handed to a
+/// child process, because most Windows programs treat `/dev/null` as an ordinary path.
+#[cfg(not(windows))]
+#[macro_export]
+macro_rules! null_device {
+    () => {
+        "/dev/null"
+    };
+}
+#[cfg(windows)]
+#[macro_export]
+macro_rules! null_device {
+    () => {
+        "NUL"
+    };
+}
+
 /// Nomicon-style opaque FFI handle. Expands to a zero-sized `#[repr(C)]`
 /// struct whose address is the only thing Rust ever observes.
 ///
@@ -2197,20 +2214,45 @@ impl StackCheck {
     pub fn update(&mut self) {
         self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize;
     }
+    /// Stack reserved for the work a frame does before the next check. One
+    /// `WTF::StringBuilder` growth reallocates through libpas, a ~35 frame
+    /// path that measures ~160 KB under a sanitizer and a few KB without one.
+    const THRESHOLD: usize = if cfg!(windows) {
+        256 * 1024
+    } else {
+        128 * 1024
+    } + if cfg!(bun_asan) { 384 * 1024 } else { 0 };
+
     /// Is there enough stack space to safely recurse?
-    /// Threshold: `> 256K` on Windows, `> 128K` elsewhere.
     #[inline]
     pub fn is_safe_to_recurse(self) -> bool {
         // Saturating sub: if probe < end (already past limit),
         // result saturates to 0 → "not safe". wrapping_sub would yield a huge
         // positive and incorrectly return true.
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
-        let threshold: usize = if cfg!(windows) {
-            256 * 1024
-        } else {
-            128 * 1024
-        };
-        remaining > threshold
+        remaining > Self::THRESHOLD
+    }
+
+    /// How many bytes of stack this thread has left before `is_safe_to_recurse` says no.
+    #[inline]
+    pub fn remaining(self) -> usize {
+        Self::frame_address()
+            .saturating_sub(self.cached_stack_end)
+            .saturating_sub(Self::THRESHOLD)
+    }
+
+    /// The same check, which says no after at most `bytes` more of stack
+    /// than are in use here. For what builds a tree that other code walks
+    /// afterwards: that code needs stack for each level too, its frames can
+    /// be larger, and a derived `Drop` cannot ask.
+    #[inline]
+    pub fn with_at_most(self, bytes: usize) -> Self {
+        let end = Self::frame_address()
+            .saturating_sub(Self::THRESHOLD)
+            .saturating_sub(bytes);
+        Self {
+            cached_stack_end: self.cached_stack_end.max(end),
+        }
     }
 
     /// Like [`is_safe_to_recurse`] but reserves `extra` bytes of additional
@@ -2221,12 +2263,7 @@ impl StackCheck {
     #[inline]
     pub fn is_safe_to_recurse_with_extra(self, extra: usize) -> bool {
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
-        let threshold: usize = if cfg!(windows) {
-            256 * 1024
-        } else {
-            128 * 1024
-        };
-        remaining > threshold.saturating_add(extra)
+        remaining > Self::THRESHOLD.saturating_add(extra)
     }
 
     /// Approximate the current stack position. Reads the stack-pointer
@@ -3410,10 +3447,6 @@ macro_rules! impl_native_endian_int {
     )*};
 }
 impl_native_endian_int!(u8, i8, u16, i16, u32, i32, u64, i64);
-
-// ── mach_port ─────────────────────────────────────────────────────────────
-#[cfg(target_os = "macos")]
-pub type mach_port = libc::mach_port_t;
 
 // ── rand ──────────────────────────────────────────────────────────────────
 // xoshiro256++; the exact algorithm keeps `bun.fastRandom()` output

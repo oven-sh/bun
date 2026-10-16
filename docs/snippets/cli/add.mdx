@@ -30,6 +30,10 @@ bun add <package> <@version>
   Add dependency to <code>peerDependencies</code>
 </ParamField>
 
+<ParamField path="--save-prod" type="boolean">
+  Add dependency to <code>dependencies</code>, also when another group lists it
+</ParamField>
+
 <ParamField path="--exact" type="boolean">
   Add the exact version instead of the <code>^</code> range. Alias: <code>-E</code>
 </ParamField>
@@ -80,8 +84,8 @@ bun add <package> <@version>
 ### Installation Control
 
 <ParamField path="--dry-run" type="boolean">
-  Resolve the packages but don't install them, update <code>package.json</code>, or save a lockfile (the project's own
-  lifecycle scripts still run)
+  Resolve the packages but don't install them, update an existing <code>package.json</code>, save a lockfile, or run the
+  project's lifecycle scripts
 </ParamField>
 
 <ParamField path="--force" type="boolean">
@@ -116,7 +120,7 @@ bun add <package> <@version>
   variables
 </ParamField>
 
-<ParamField path="--network-concurrency" type="number" default="48">
+<ParamField path="--network-concurrency" type="number" default="64">
   Maximum number of concurrent network requests
 </ParamField>
 
@@ -167,6 +171,14 @@ bun add <package> <@version>
 
 <ParamField path="--cwd" type="string">
   Set a specific current working directory
+</ParamField>
+
+<ParamField path="--env-file" type="string">
+  Load environment variables from the specified file(s)
+</ParamField>
+
+<ParamField path="--no-env-file" type="boolean">
+  Disable automatic loading of .env files
 </ParamField>
 
 ### Help

@@ -124,7 +124,7 @@ pub fn lint_function(
     for (ref_, binding) in import_bindings {
         bindings.insert(*ref_, binding.clone());
     }
-    let mut context = ProgramContext::new(ReactCompilerOptions::default(), None, None, false);
+    let mut context = ProgramContext::new(&ReactCompilerOptions::default(), None, None);
     context.output_mode = OutputMode::Lint;
     let mut env = Environment::with_config(config);
     env.fn_type = fn_type;
@@ -154,7 +154,8 @@ fn run(
     late_passes: LatePasses,
     wants_thrown: bool,
 ) -> Result<(), CompilerError> {
-    let mut hir = lowering::lower(func, None, host, env, import_bindings)?;
+    // Where the name is one from outside, the host says so.
+    let mut hir = lowering::lower(func, func.name_ref(), host, env, import_bindings)?;
     pipeline::dump_lowered(&hir, env);
     if env.has_invariant_errors() {
         return Err(env.take_invariant_errors());

@@ -3,7 +3,7 @@ use crate::Error;
 use crate::lexer as js_lexer;
 use crate::p::{P, ReactRefreshExportKind};
 use crate::parser::{
-    PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
+    FnKind, PrependTempRefsOpts, ReactRefresh, Ref, RelocateVarsMode, SideEffects, StmtsKind,
     statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
@@ -414,15 +414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     p.decorator_class_name = Some(js_ast::ClauseItem::DEFAULT_ALIAS);
                 }
-                if p.react_compiler.is_some()
-                    && let Some(in_hoc) = p.react_compiler_candidate_expr(expr)
-                {
-                    p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
-                    p.react_compiler_in_react_hoc = in_hoc;
-                }
                 p.visit_expr(expr);
-                p.react_compiler_candidate_name = None;
-                p.react_compiler_in_react_hoc = false;
                 p.decorator_class_name = prev_decorator_class_name;
 
                 if p.is_control_flow_dead {
@@ -582,11 +574,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 match s2_data {
                     StmtData::SFunction(mut func_ref) => {
                         let func: &mut S::Function = &mut *func_ref;
-                        let name: &'a [u8] = if let Some(func_loc) = func.func.name {
-                            p.load_name_from_ref(func_loc.ref_)
+                        let (name, kind): (&'a [u8], _) = if let Some(func_loc) = func.func.name {
+                            (p.load_name_from_ref(func_loc.ref_), FnKind::Decl)
                         } else {
                             func.func.name = Some(data.default_name);
-                            js_ast::ClauseItem::DEFAULT_ALIAS
+                            (js_ast::ClauseItem::DEFAULT_ALIAS, FnKind::AnonymousDefault)
                         };
 
                         let mut react_hook_data: Option<crate::parser::HookContext> = None;
@@ -594,19 +586,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.react_refresh.hook_ctx_storage =
                             Some(core::ptr::NonNull::from(&mut react_hook_data));
 
-                        if p.react_compiler.is_some() {
-                            p.react_compiler_candidate_name = Some(
-                                func.func
-                                    .name
-                                    .filter(|_| name != js_ast::ClauseItem::DEFAULT_ALIAS)
-                                    .map(|n| n.ref_)
-                                    .unwrap_or(js_ast::Ref::NONE),
-                            );
-                        }
                         let open_parens_loc = func.func.open_parens_loc;
                         func.func =
-                            p.visit_func(core::mem::take(&mut func.func), open_parens_loc, false);
-                        p.react_compiler_candidate_name = None;
+                            p.visit_func(core::mem::take(&mut func.func), open_parens_loc, kind);
 
                         if p.is_control_flow_dead {
                             p.react_refresh.hook_ctx_storage = prev;
@@ -904,13 +886,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_hook_storage = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
-        if p.react_compiler.is_some() && p.current_scope == p.module_scope {
-            p.react_compiler_candidate_name = data.func.name.map(|n| n.ref_);
-        }
         let open_parens_loc = data.func.open_parens_loc;
         let this_expr_count_before = p.this_expr_count;
-        data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc, false);
-        p.react_compiler_candidate_name = None;
+        data.func = p.visit_func(
+            core::mem::take(&mut data.func),
+            open_parens_loc,
+            FnKind::Decl,
+        );
 
         let name_ref = data.func.name.expect("infallible: name checked").ref_;
         debug_assert!(name_ref.is_symbol());
@@ -1376,17 +1358,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
-        if is_top_level
-            && p.react_compiler.is_some()
-            && let Some(in_hoc) = p.react_compiler_candidate_expr(&data.value)
-        {
-            p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
-            p.react_compiler_in_react_hoc = in_hoc;
-        }
         let this_expr_count_before = p.this_expr_count;
         p.visit_expr(&mut data.value);
-        p.react_compiler_candidate_name = None;
-        p.react_compiler_in_react_hoc = false;
 
         // `import(x);` / `await import(x);` / `[await] import(x).catch(..);` /
         // `require(x);` / `await require(x);` as a statement: the namespace is

@@ -9,9 +9,9 @@ pub(crate) mod visit_stmt;
 use crate::lexer as js_lexer;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
-    ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
-    Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    VisitDeclOpts, is_eval_or_arguments,
+    ExprIn, FnKind, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap,
+    PrependTempRefsOpts, Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature,
+    StringVoidMap, VisitArgsOpts, VisitDeclOpts, is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -81,7 +81,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         mut func: G::Fn,
         open_parens_loc: bun_ast::Loc,
-        is_expr: bool,
+        kind: FnKind,
     ) -> G::Fn {
         debug_assert!(
             !SCAN_ONLY,
@@ -100,7 +100,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(name) = func.name {
             if let Some(name_ref) = name.ref_.to_nullable() {
-                self.record_declared_symbol_in(name_ref, is_expr);
+                self.record_declared_symbol_in(name_ref, kind == FnKind::Expr);
                 let symbol_name = self.load_name_from_ref(name_ref);
                 if is_eval_or_arguments(symbol_name) {
                     self.mark_strict_mode_feature(
@@ -115,11 +115,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = func.body.loc;
         let body_stmts: &'a [Stmt] = func.body.stmts.slice();
-        let prev_may_replace_body = self.enter_react_compiler_candidate(
-            func.name.map(|n| n.ref_),
-            func.flags
-                .contains(flags::Function::HasReactHooksSuppression),
-            body_stmts,
+        // The name of `export default function () {}` is the parser's, and that of a function
+        // expression is bound in the function's own scope: neither names a React function.
+        let rc_name = func
+            .name
+            .filter(|_| kind == FnKind::Decl)
+            .and_then(|name| name.ref_.to_nullable());
+        let rc = self.enter_react_compiler_function(
+            bun_react_compiler::lowering::FunctionNode::Function(&func),
+            rc_name,
         );
 
         self.push_scope_for_visit_pass(ScopeKind::FunctionArgs, open_parens_loc)
@@ -142,29 +146,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
         };
-        let rc_binding = self.react_compiler_candidate_name.take();
-        if rc_binding.is_some() {
+        if let Some(fn_type) = rc.fn_type {
             self.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: func.args,
                 flags: func.flags,
                 body_loc,
                 args_loc: func.open_parens_loc,
-                binding: func
+                own_name: func
                     .name
-                    .map(|n| n.ref_)
-                    .filter(|r| r.is_valid())
-                    .or(rc_binding),
-                in_react_hoc: core::mem::take(&mut self.react_compiler_in_react_hoc),
+                    .filter(|_| kind == FnKind::Expr)
+                    .and_then(|name| name.ref_.to_nullable()),
+                fn_type,
             });
         }
         self.visit_stmts_and_prepend_temp_refs(&mut stmts, &mut temp_opts)
             .expect("unreachable");
-        self.react_compiler_pending = None;
-        if let Some(result) = self.react_compiler_result.take() {
+        if rc.fn_type.is_some()
+            && let Some(result) = self.react_compiler_result.take()
+        {
             func.args = result.args;
             func.flags = result.flags;
-            if let Some(b) = rc_binding.filter(|r| *r != js_ast::Ref::NONE) {
-                self.record_usage(b);
+            if rc.name.is_valid() {
+                self.record_usage(rc.name);
             }
         }
 
@@ -211,7 +214,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.pop_scope();
         self.pop_scope();
 
-        self.react_compiler_may_replace_body = prev_may_replace_body;
+        self.leave_react_compiler_function(rc);
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
 
@@ -345,13 +348,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 }
-                if self.react_compiler.is_some()
-                    && self.current_scope == self.module_scope
+                // The React Compiler names a function by the binding that it initializes.
+                if let Some(rc) = self.react_compiler.as_deref_mut()
                     && let BData::BIdentifier(id) = decl.binding.data
-                    && let Some(in_hoc) = self.react_compiler_candidate_expr(&val)
                 {
-                    self.react_compiler_candidate_name = Some(id.r#ref);
-                    self.react_compiler_in_react_hoc = in_hoc;
+                    match val.data {
+                        ExprData::EArrow(arrow) => rc.note_declarator(arrow.body.loc, id.r#ref),
+                        ExprData::EFunction(function) => {
+                            rc.note_declarator(function.func.body.loc, id.r#ref)
+                        }
+                        _ => {}
+                    }
                 }
                 self.visit_expr_in_out(
                     &mut val,
@@ -362,8 +369,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     },
                 );
-                self.react_compiler_candidate_name = None;
-                self.react_compiler_in_react_hoc = false;
                 decl.value = Some(val);
                 self.decorator_class_name = prev_decorator_class_name;
 
@@ -1001,7 +1006,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
-        self.visit_ts_decorators(&mut class.ts_decorators);
+        if class.ts_decorators.len_u32() > 0 {
+            // The React Compiler does not search a class, its decorators included.
+            let search = self.skip_react_compiler_search();
+            self.visit_ts_decorators(&mut class.ts_decorators);
+            self.react_compiler_search = search;
+        }
 
         if let Some(name) = class.class_name {
             self.record_declared_symbol_in(name.ref_, is_expr);
@@ -1498,8 +1508,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let p = self;
 
         // Consume before recursing so a nested function body's `visit_stmts`
-        // doesn't compile the wrong target.
-        let rc_pending = if kind == StmtsKind::FnBody {
+        // doesn't compile the wrong target. The frame of a function sets it right
+        // before it visits the function's body.
+        let rc_pending = if kind == StmtsKind::FnBody && p.react_compiler_pending.is_some() {
             p.react_compiler_pending.take()
         } else {
             None
@@ -1774,13 +1785,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         debug_assert!(p.current_scope == initial_scope);
 
         if let Some(pending) = rc_pending
-            && p.react_compiler_may_replace_body
             && let Some(mut rc) = p.react_compiler.take()
         {
-            let name = pending
-                .binding
-                .filter(|r| *r != js_ast::Ref::NONE)
-                .map(|r| p.load_name_from_ref(r));
             // `Host::new_local` appends the locals of the compiled function here.
             let generated_len = p.current_scope().generated.len();
             let compiled = {
@@ -1790,7 +1796,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     host,
                     &pending,
                     stmts.as_mut_slice(),
-                    name,
                 )
             };
             p.react_compiler = Some(rc);
@@ -1798,7 +1803,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts.clear();
                 stmts.extend(new_body);
                 p.react_compiler_result = Some(result);
-                p.drop_symbols_of_replaced_function(pending.binding);
+                p.drop_symbols_of_replaced_function(pending.own_name);
             } else {
                 p.current_scope_mut().generated.truncate(generated_len);
             }

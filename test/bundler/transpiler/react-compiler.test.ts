@@ -3574,6 +3574,638 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // A stub of React for the tests that run what the compiler makes. `c()` keeps one cache per
+  // component, as React keeps one per fiber, and counts its calls: a function that is compiled
+  // takes one cache when it is called.
+  const reactStub = {
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": /* js */ `
+      exports.memo = (...args) => args.find(arg => typeof arg === "function");
+      exports.forwardRef = exports.memo;
+      exports.useState = value => [value, () => {}];
+      exports.useEffect = effect => void effect();
+    `,
+    "/node_modules/react/jsx-runtime.js": /* js */ `
+      exports.jsx = (type, props) => ({ type, props });
+      exports.jsxs = exports.jsx;
+    `,
+    "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+      exports.jsxDEV = (type, props) => ({ type, props });
+    `,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      const caches = new Map();
+      exports.c = size => {
+        globalThis.calls++;
+        if (globalThis.rendering === undefined) throw new Error("Invalid hook call");
+        if (!caches.has(globalThis.rendering))
+          caches.set(globalThis.rendering, new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+        return caches.get(globalThis.rendering);
+      };
+    `,
+    "/reg.js": /* js */ `
+      export const found = [];
+      // \`inner\` picks, from what \`fn\` renders, the function to ask about.
+      export const reg = (label, fn, inner) => (found.push([label, fn, inner]), fn);
+      export const wrap = fn => fn;
+      export const utils = { memo: fn => fn };
+      export const log = [];
+      // Calls \`fn\` as React renders a component. \`globalThis.calls\` then says how often that took a memo cache.
+      export function render(fn, ...args) {
+        globalThis.calls = 0;
+        globalThis.rendering = fn;
+        try {
+          return fn(...args);
+        } finally {
+          globalThis.rendering = undefined;
+        }
+      }
+    `,
+  };
+
+  // The compiler is asked about each function that the parser enters, at every depth, as
+  // upstream's traversal does: a function that is a component or a hook is compiled and not
+  // searched, any other function is searched, and nothing in a class is. What a function is
+  // named by, and what makes a callback of memo() and forwardRef(), are upstream's rules too.
+  //
+  // Each line is how many memo caches a call of the function takes: 1 is compiled, 0 is not.
+  // It is the table that babel-plugin-react-compiler gives for the same files, with one
+  // difference. Upstream declares the effect callback that reads the enum at module level,
+  // where the enum is not in scope, and that component throws.
+  for (const [backend, minify] of [
+    ["cli", false],
+    ["api", false],
+    ["cli", true],
+  ] as const) {
+    itBundled(`react-compiler/FunctionsAreFoundAtEveryDepth-${backend}${minify ? "-minify" : ""}`, {
+      files: {
+        ...reactStub,
+        "/entry.js": /* js */ `
+          import "./forms.jsx";
+          import "./ns.tsx";
+          import App from "./App.jsx";
+          import "./already.jsx";
+          import "./optout.jsx";
+          import "./decorated.tsx";
+          import { found, log, reg, render } from "./reg";
+
+          reg("an anonymous default export of App.jsx", App);
+          const lines = [];
+          for (const [label, fn, inner] of found) {
+            try {
+              const target = inner ? inner(render(fn, { color: "red" })) : fn;
+              render(target, { color: "red" });
+              lines.push(globalThis.calls + " " + label);
+            } catch (error) {
+              lines.push("threw " + error.message + ": " + label);
+            }
+          }
+          console.log(lines.join("\\n"));
+          console.log(log.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          import React, { forwardRef, memo, useEffect, useState } from "react";
+          import * as R from "react";
+          import { reg, utils, wrap } from "./reg";
+
+          const items = [1];
+
+          // ---- at the top level ----
+          function TopDeclaration({ color }) { const style = { color }; return <div style={style} />; }
+          reg("top level: declaration", TopDeclaration);
+          const TopArrow = ({ color }) => { const style = { color }; return <div style={style} />; };
+          reg("top level: arrow", TopArrow);
+          function useTopHook(title) { const options = { title }; useEffect(() => {}, [options]); return options; }
+          reg("top level: hook", useTopHook);
+
+          // ---- in a function that is no component ----
+          function withBorder(Inner) {
+            function Declaration({ color }) { const style = { color }; return <Inner style={style} />; }
+            const Arrow = ({ color }) => { const style = { color }; return <Inner style={style} />; };
+            const FunctionExpression = function ({ color }) { const style = { color }; return <Inner style={style} />; };
+            function useHook(title) { const options = { title }; useEffect(() => {}, [options]); return options; }
+            reg("in a function: declaration", Declaration);
+            reg("in a function: arrow", Arrow);
+            reg("in a function: function expression", FunctionExpression);
+            reg("in a function: hook", useHook);
+          }
+          withBorder("i");
+
+          // ---- in a block ----
+          if (items.length) {
+            function InIf({ color }) { const style = { color }; return <b style={style} />; }
+            const InIfArrow = ({ color }) => { const style = { color }; return <b style={style} />; };
+            reg("in an if block: declaration", InIf);
+            reg("in an if block: arrow", InIfArrow);
+          }
+          for (const item of items) {
+            const InFor = ({ color }) => { const style = { color, item }; return <b style={style} />; };
+            reg("in a for-of body: arrow", InFor);
+          }
+          try {
+            function InTry({ color }) { const style = { color }; return <b style={style} />; }
+            reg("in a try block: declaration", InTry);
+          } catch {}
+          switch (items.length) {
+            case 1: {
+              const InSwitch = ({ color }) => { const style = { color }; return <b style={style} />; };
+              reg("in a switch case: arrow", InSwitch);
+            }
+          }
+          {
+            function InBlock({ color }) { const style = { color }; return <b style={style} />; }
+            reg("in a block: declaration", InBlock);
+          }
+
+          // ---- in a callback, an IIFE, an object ----
+          items.forEach(function () {
+            function InCallback({ color }) { const style = { color }; return <i style={style} />; }
+            reg("in a callback: declaration", InCallback);
+          });
+          items.forEach(() => {
+            const InArrowCallback = ({ color }) => { const style = { color }; return <i style={style} />; };
+            reg("in an arrow callback: arrow", InArrowCallback);
+          });
+          (() => {
+            function InIife({ color }) { const style = { color }; return <u style={style} />; }
+            reg("in an IIFE: declaration", InIife);
+          })();
+          const object = {
+            method() {
+              function InMethod({ color }) { const style = { color }; return <s style={style} />; }
+              reg("in an object method: declaration", InMethod);
+            },
+            property: function () {
+              const InPropertyFunction = ({ color }) => { const style = { color }; return <s style={style} />; };
+              reg("in a property function: arrow", InPropertyFunction);
+            },
+            get getter() {
+              function InGetter({ color }) { const style = { color }; return <s style={style} />; }
+              return reg("in a getter: declaration", InGetter);
+            },
+            PropertyValue: ({ color }) => { const style = { color }; return <s style={style} />; },
+            Method({ color }) { const style = { color }; return <s style={style} />; },
+            memoMethod(x) { "use memo"; return [x]; },
+            get memoGetter() { "use memo"; return [1]; },
+          };
+          object.method();
+          object.property();
+          object.getter;
+          reg("an object property value", object.PropertyValue);
+          reg("an object method", object.Method);
+          reg("an object method with 'use memo'", object.memoMethod);
+          reg("a getter with 'use memo'", () => object.memoGetter);
+
+          // ---- in a class ----
+          class Klass {
+            method() {
+              function InClassMethod({ color }) { const style = { color }; return <p style={style} />; }
+              return InClassMethod;
+            }
+            Property = ({ color }) => { const style = { color }; return <p style={style} />; };
+            static {
+              function InStaticBlock({ color }) { const style = { color }; return <p style={style} />; }
+              reg("in a class static block: declaration", InStaticBlock);
+            }
+          }
+          reg("in a class method: declaration", new Klass().method());
+          reg("a class property: arrow", new Klass().Property);
+          const klassExpression = class {
+            method() {
+              const InClassExpression = ({ color }) => { const style = { color }; return <p style={style} />; };
+              return InClassExpression;
+            }
+          };
+          reg("in a method of a class expression: arrow", new klassExpression().method());
+
+          // ---- a function that is queued is not searched ----
+          function Outer({ color }) {
+            function Inner({ size }) { const style = { size }; return <a style={style} />; }
+            const style = { color };
+            return <Inner style={style} />;
+          }
+          reg("a component", Outer);
+          reg("the inner component of a component", Outer, element => element.type);
+          function OuterWithoutJsx(pick) {
+            function Inner({ color }) { const style = { color }; return <a style={style} />; }
+            return pick(Inner);
+          }
+          reg("a component-named function without JSX or a hook call of its own", () => OuterWithoutJsx(inner => inner));
+          reg("the inner component of that function", OuterWithoutJsx(inner => inner));
+          function OuterThatFails({ color }) {
+            function Inner({ size }) { const style = { size }; return <a style={style} />; }
+            if (color) { useState(0); }
+            return <Inner />;
+          }
+          reg("a component that calls a hook in a condition", OuterThatFails);
+          reg("the inner component of that component", OuterThatFails, element => element.type);
+          function OuterThatOptsOut({ color }) {
+            "use no memo";
+            function Inner({ size }) { const style = { size }; return <a style={style} />; }
+            const style = { color };
+            return <Inner style={style} />;
+          }
+          reg("a component with 'use no memo'", OuterThatOptsOut);
+          reg("the inner component of that component", OuterThatOptsOut, element => element.type);
+          function plainThatOptsOut() {
+            "use no memo";
+            function Inner({ color }) { const style = { color }; return <a style={style} />; }
+            return Inner;
+          }
+          reg("the inner component of a plain function with 'use no memo'", plainThatOptsOut());
+          function useOuter(value) {
+            function useInner(title) { const options = { title }; useEffect(() => {}, [options]); return options; }
+            const [state] = useState(value);
+            return [state, useInner];
+          }
+          reg("a hook that declares a hook", useOuter);
+          reg("the hook that it declares", useOuter, result => result[1]);
+
+          // ---- memo() and forwardRef() ----
+          const Memo = memo(({ color }) => { const style = { color }; return <q style={style} />; });
+          reg("memo(): a declarator", Memo);
+          reg("memo(): in another call", wrap(memo(({ color }) => { const style = { color }; return <q style={style} />; })));
+          reg("memo(): the second argument", memo(undefined, ({ color }) => { const style = { color }; return <q style={style} />; }));
+          function makeMemo() {
+            return memo(({ color }) => { const style = { color }; return <q style={style} />; });
+          }
+          reg("memo(): returned from a function", makeMemo());
+          const table = { K: memo(({ color }) => { const style = { color }; return <q style={style} />; }) };
+          reg("memo(): a property value", table.K);
+          reg("forwardRef(): a call argument", forwardRef(({ color }, ref) => { const style = { color }; return <q ref={ref} style={style} />; }));
+          reg("memo(forwardRef())", memo(forwardRef(({ color }, ref) => { const style = { color }; return <q ref={ref} style={style} />; })));
+          reg("React.memo(), React a default import", React.memo(({ color }) => { const style = { color }; return <q style={style} />; }));
+          reg("React.m\\\\u0065mo()", React.m\\u0065mo(({ color }) => { const style = { color }; return <q style={style} />; }));
+          reg("utils.memo()", utils.memo(({ color }) => { const style = { color }; return <q style={style} />; }));
+          reg("R.memo(), R a namespace import", R.memo(({ color }) => { const style = { color }; return <q style={style} />; }));
+          reg("memo?.()", memo?.(({ color }) => { const style = { color }; return <q style={style} />; }));
+
+          // ---- "use memo" ----
+          reg("'use memo': an arrow that is a call argument", () => { "use memo"; return [1, 2, 3]; });
+          function plain() {
+            function inner(x) { "use memo"; return [x]; }
+            return inner;
+          }
+          reg("'use memo': a declaration in a function", plain());
+
+          // ---- a function expression is named by its declarator ----
+          const lower = function Upper({ color }) { const style = { color }; return <div style={style} />; };
+          reg("const lower = function Upper", lower);
+          const Upper = function lower({ color }) { const style = { color }; return <div style={style} />; };
+          reg("const Upper = function lower", Upper);
+
+          // ---- a function in a default value is not the component ----
+          function DefaultArrow({ draw = () => <p>1</p> }) { const [m] = useState(0); return <b>{draw()}{m}</b>; }
+          reg("a default value: an arrow, of a declaration", DefaultArrow);
+          const DefaultOfArrow = ({ draw = () => <p>2</p> }) => { const [m] = useState(0); return <b>{draw()}{m}</b>; };
+          reg("a default value: an arrow, of an arrow", DefaultOfArrow);
+          const DefaultFunction = function ({ draw = function () { return <p>3</p>; } }) { const [m] = useState(0); return <b>{draw()}{m}</b>; };
+          reg("a default value: a function expression", DefaultFunction);
+          const DefaultOfMemo = memo(({ draw = () => <p>4</p> }) => { const [m] = useState(0); return <b>{draw()}{m}</b>; });
+          reg("a default value: an arrow, of a memo() callback", DefaultOfMemo);
+          function DefaultNested({ a: { draw = () => <p>5</p> } = {} }) { const [m] = useState(0); return <b>{draw()}{m}</b>; }
+          reg("a default value: in a nested pattern", DefaultNested);
+          const DefaultOfForwardRef = forwardRef((props, draw = () => <p>6</p>) => { const [m] = useState(0); return <b>{draw()}{m}</b>; });
+          reg("a default value: of the second parameter", DefaultOfForwardRef);
+          function NoDefault({ draw }) { const [m] = useState(0); return <b>{draw}{m}</b>; }
+          reg("no default value", NoDefault);
+        `,
+        "/ns.tsx": /* tsx */ `
+          import * as React from "react";
+          import { log, reg } from "./reg";
+
+          reg("React.memo(), React a namespace import", React.memo(({ color }) => { const style = { color }; return <q style={style} />; }));
+          reg("React.forwardRef(), React a namespace import", React.forwardRef(({ color }, ref) => { const style = { color }; return <q ref={ref} style={style} />; }));
+
+          export namespace NS {
+            export function InNamespace({ color }) { const style = { color }; return <em style={style} />; }
+            export const InNamespaceArrow = ({ color }) => { const style = { color }; return <em style={style} />; };
+          }
+          reg("in a TypeScript namespace: declaration", NS.InNamespace);
+          reg("in a TypeScript namespace: arrow", NS.InNamespaceArrow);
+
+          function makeWithEnum() {
+            enum Mode { On = "on" }
+            return ({ color }) => {
+              "use memo";
+              React.useEffect(() => { log.push("enum " + Mode.On); }, []);
+              const style = { color };
+              return <em style={style} />;
+            };
+          }
+          reg("an effect that reads an enum of the function around the component", makeWithEnum());
+        `,
+        "/App.jsx": /* jsx */ `
+          import { reg } from "./reg";
+          export default function ({ color }) { const style = { color }; return <div style={style} />; }
+          export function Named({ color }) { const style = { color }; return <div style={style} />; }
+          reg("a declaration in App.jsx", Named);
+        `,
+        "/already.jsx": /* jsx */ `
+          import { c as _c } from "react/compiler-runtime";
+          import { reg } from "./reg";
+          function InCompiledFile({ color }) { const style = { color }; return <div style={style} />; }
+          reg("a component in a file that imports c from the compiler runtime", InCompiledFile);
+          export const cache = _c;
+        `,
+        "/optout.jsx": /* jsx */ `
+          "use no memo";
+          import { reg } from "./reg";
+          function InFileThatOptsOut({ color }) { const style = { color }; return <div style={style} />; }
+          function outer() {
+            function Inner({ color }) { const style = { color }; return <div style={style} />; }
+            return Inner;
+          }
+          reg("a component in a file with 'use no memo'", InFileThatOptsOut);
+          reg("a component in a function in that file", outer());
+        `,
+        "/decorated.tsx": /* tsx */ `
+          import { reg } from "./reg";
+
+          // Nothing in a class is searched, and that takes in its decorators.
+          const withSetup = (setup: () => void) => () => setup();
+          @withSetup(() => {
+            function InDecorator({ color }) { const style = { color }; return <p style={style} />; }
+            reg("in a decorator of a class: declaration", InDecorator);
+          })
+          class Decorated {}
+          reg("a class with a decorator", () => new Decorated());
+        `,
+      },
+      entryPoints: ["/entry.js"],
+      reactCompiler: true,
+      target: "browser",
+      backend,
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      run: {
+        stdout: `
+          1 top level: declaration
+          1 top level: arrow
+          1 top level: hook
+          1 in a function: declaration
+          1 in a function: arrow
+          1 in a function: function expression
+          1 in a function: hook
+          1 in an if block: declaration
+          1 in an if block: arrow
+          1 in a for-of body: arrow
+          1 in a try block: declaration
+          1 in a switch case: arrow
+          1 in a block: declaration
+          1 in a callback: declaration
+          1 in an arrow callback: arrow
+          1 in an IIFE: declaration
+          1 in an object method: declaration
+          1 in a property function: arrow
+          1 in a getter: declaration
+          0 an object property value
+          0 an object method
+          0 an object method with 'use memo'
+          0 a getter with 'use memo'
+          0 in a class static block: declaration
+          0 in a class method: declaration
+          0 a class property: arrow
+          0 in a method of a class expression: arrow
+          1 a component
+          0 the inner component of a component
+          0 a component-named function without JSX or a hook call of its own
+          1 the inner component of that function
+          0 a component that calls a hook in a condition
+          0 the inner component of that component
+          0 a component with 'use no memo'
+          0 the inner component of that component
+          1 the inner component of a plain function with 'use no memo'
+          0 a hook that declares a hook
+          0 the hook that it declares
+          1 memo(): a declarator
+          1 memo(): in another call
+          1 memo(): the second argument
+          1 memo(): returned from a function
+          1 memo(): a property value
+          1 forwardRef(): a call argument
+          1 memo(forwardRef())
+          1 React.memo(), React a default import
+          1 React.m\\u0065mo()
+          0 utils.memo()
+          0 R.memo(), R a namespace import
+          0 memo?.()
+          1 'use memo': an arrow that is a call argument
+          1 'use memo': a declaration in a function
+          0 const lower = function Upper
+          1 const Upper = function lower
+          0 a default value: an arrow, of a declaration
+          0 a default value: an arrow, of an arrow
+          0 a default value: a function expression
+          0 a default value: an arrow, of a memo() callback
+          0 a default value: in a nested pattern
+          0 a default value: of the second parameter
+          1 no default value
+          1 React.memo(), React a namespace import
+          1 React.forwardRef(), React a namespace import
+          1 in a TypeScript namespace: declaration
+          1 in a TypeScript namespace: arrow
+          1 an effect that reads an enum of the function around the component
+          1 a declaration in App.jsx
+          0 a component in a file that imports c from the compiler runtime
+          0 a component in a file with 'use no memo'
+          0 a component in a function in that file
+          0 in a decorator of a class: declaration
+          0 a class with a decorator
+          0 an anonymous default export of App.jsx
+          enum on
+        `,
+      },
+    });
+  }
+
+  // A component or a hook inside a function reads the bindings of that function as it reads
+  // those of the module: they are no dependencies, and a write to one leaves the function as
+  // written. The compiler declares a callback that it outlines at module level. A callback that
+  // reads a binding of the function around the component is not in scope there, so it stays in
+  // the component. So does an arrow that reads the `arguments` of the component. Upstream
+  // outlines both: its arrow logger throws, and its arrow reads the `arguments` of the
+  // outlined function.
+  //
+  // `Form` is not compiled, because of its default value. The function in that default value
+  // is no component: it is called from a handler, where there is no memo cache to take.
+  for (const [backend, minify] of [
+    ["cli", false],
+    ["api", false],
+    ["cli", true],
+  ] as const) {
+    itBundled(`react-compiler/FunctionsThatReadTheCodeAroundThem-${backend}${minify ? "-minify" : ""}`, {
+      files: {
+        ...reactStub,
+        "/entry.js": /* js */ `
+          import { render } from "./reg";
+          import * as forms from "./runtime.jsx";
+
+          const lines = [];
+          const log = line => lines.push(line);
+          const calls = () => " (" + globalThis.calls + ")";
+
+          const button = render(forms.Form, {});
+          lines.push("Form" + calls());
+          try {
+            button.props.onClick();
+            lines.push("click ok");
+          } catch (error) {
+            lines.push("click threw " + error.message);
+          }
+
+          for (const make of [forms.makeLoggerDeclaration, forms.makeLoggerArrow]) {
+            try {
+              render(make(log), { message: "hi" });
+              lines.push("logger" + calls());
+            } catch (error) {
+              lines.push("logger threw " + error.message);
+            }
+          }
+
+          const [Counter, increment] = forms.makeCounter();
+          const props = { step: 1 };
+          const first = render(Counter, props).props.style.count;
+          increment();
+          const second = render(Counter, props).props.style.count;
+          const third = render(Counter, { step: 2 }).props.style.count;
+          lines.push("counter " + [first, second, third] + calls());
+
+          const Mutator = forms.makeMutator();
+          lines.push("mutator " + [render(Mutator, { step: 2 }).props.children, render(Mutator, { step: 2 }).props.children] + calls());
+
+          render(forms.ReadsArguments, { id: 1 }, "second");
+          lines.push("arguments " + globalThis.argumentsOfTheComponent + calls());
+
+          const Label = forms.makeLabel();
+          lines.push("label " + [render(Label, { label: "a" }), render(Label, { label: "b" })] + calls());
+
+          console.log(lines.join("\\n"));
+        `,
+        "/runtime.jsx": /* jsx */ `
+          import { memo, useEffect, useState } from "react";
+
+          // A function in a default value is not the component: it is called from a handler, outside of a render.
+          export function Form({ onSubmit = () => <p>sent</p> }) {
+            const [message, setMessage] = useState(null);
+            return <button onClick={() => setMessage(onSubmit())}>{message}</button>;
+          }
+
+          // A binding of the function around a component is read as one of the module is.
+          export function makeLoggerDeclaration(log) {
+            function Logger({ message }) {
+              useEffect(() => { log("declaration mounted"); }, []);
+              return <div>{message}</div>;
+            }
+            return Logger;
+          }
+          export function makeLoggerArrow(log) {
+            const Logger = ({ message }) => {
+              useEffect(() => { log("arrow mounted"); }, []);
+              return <div>{message}</div>;
+            };
+            return Logger;
+          }
+          export function makeCounter() {
+            let count = 0;
+            function Counter({ step }) {
+              const style = { step, count };
+              return <div style={style} />;
+            }
+            return [Counter, () => count++];
+          }
+          export function makeMutator() {
+            let count = 0;
+            function Mutator({ step }) {
+              count += step;
+              return <div>{count}</div>;
+            }
+            return Mutator;
+          }
+
+          // An arrow has the \`arguments\` of the function around it.
+          export function ReadsArguments(props) {
+            useEffect(() => { globalThis.argumentsOfTheComponent = arguments.length; }, []);
+            return <div>{props.id}</div>;
+          }
+
+          // The callback of memo() is the component. The hook inside it has the props of each render.
+          export function makeLabel() {
+            return memo(function ({ label }) {
+              function useLabel() { const [state] = useState(0); return [label, state]; }
+              return useLabel()[0];
+            });
+          }
+        `,
+      },
+      entryPoints: ["/entry.js"],
+      reactCompiler: true,
+      target: "browser",
+      backend,
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      run: {
+        stdout: `
+          Form (0)
+          click ok
+          declaration mounted
+          logger (1)
+          arrow mounted
+          logger (1)
+          counter 0,0,1 (1)
+          mutator 2,4 (0)
+          arguments 2 (1)
+          label a,b (0)
+        `,
+      },
+    });
+  }
+
+  // A function with the name of a component that neither creates JSX nor calls a hook is no
+  // React function. Its locals are not made new, so a local that holds an export of a
+  // `require()` is bound to that export, and the module needs no namespace object.
+  itBundled("react-compiler/AFunctionThatIsNotCompiledKeepsItsImportsBound", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as forms from "./forms";
+        console.log(Object.entries(forms).map(([name, form]) => name + "=" + form()).join(" "));
+      `,
+      "/forms.tsx": /* tsx */ `
+        export function NotAComponent() {
+          const { onlyTopLevel } = require("./only-top-level");
+          return onlyTopLevel();
+        }
+        export function factory() {
+          function NotAComponentEither() {
+            const { onlyNested } = require("./only-nested");
+            return onlyNested();
+          }
+          return NotAComponentEither();
+        }
+      `,
+      "/only-top-level.ts": /* ts */ `
+        export function onlyTopLevel() {
+          return "top level";
+        }
+      `,
+      "/only-nested.ts": /* ts */ `
+        export function onlyNested() {
+          return "nested";
+        }
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "NotAComponent=top level factory=nested" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("exports_only_top_level");
+      expect(out).not.toContain("exports_only_nested");
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting

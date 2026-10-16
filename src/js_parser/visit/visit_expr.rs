@@ -8,7 +8,7 @@ use bun_core::strings;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
+    ExprIn, FnKind, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
     StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
 };
 use crate::scan::scan_side_effects::SideEffects;
@@ -1950,123 +1950,125 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
 
-        // `Promise.all([import("a"), …]).then(([{x}, ns]) => …)`
-        'promise_all_then: {
-            if !p.options.bundle {
-                break 'promise_all_then;
-            }
-            let Data::EDot(dot) = e_.target.data else {
-                break 'promise_all_then;
-            };
-            if dot.name.slice() != b"then" || dot.optional_chain.is_some() {
-                break 'promise_all_then;
-            }
-            let Data::ECall(inner) = dot.target.data else {
-                break 'promise_all_then;
-            };
-            let Some(items) = p.promise_all_import_items(&inner) else {
-                break 'promise_all_then;
-            };
-            let args = e_.args.slice();
-            if args.is_empty() || args.len() > 2 {
-                break 'promise_all_then;
-            }
-            let Data::EArrow(arrow) = args[0].data else {
-                break 'promise_all_then;
-            };
-            if arrow.has_rest_arg {
-                break 'promise_all_then;
-            }
-            let fn_args = arrow.args.slice();
-            match fn_args.first() {
-                None => {
-                    for item in items.items.slice() {
-                        if let Data::EImport(im) = item.data {
-                            if im.namespace_ref.is_valid() {
-                                p.note_tracked_namespace_use(im.namespace_ref);
+        // What only the bundler has a use for.
+        if p.options.bundle {
+            // `Promise.all([import("a"), …]).then(([{x}, ns]) => …)`
+            'promise_all_then: {
+                let Data::EDot(dot) = e_.target.data else {
+                    break 'promise_all_then;
+                };
+                if dot.name.slice() != b"then" || dot.optional_chain.is_some() {
+                    break 'promise_all_then;
+                }
+                let Data::ECall(inner) = dot.target.data else {
+                    break 'promise_all_then;
+                };
+                let Some(items) = p.promise_all_import_items(&inner) else {
+                    break 'promise_all_then;
+                };
+                let args = e_.args.slice();
+                if args.is_empty() || args.len() > 2 {
+                    break 'promise_all_then;
+                }
+                let Data::EArrow(arrow) = args[0].data else {
+                    break 'promise_all_then;
+                };
+                if arrow.has_rest_arg {
+                    break 'promise_all_then;
+                }
+                let fn_args = arrow.args.slice();
+                match fn_args.first() {
+                    None => {
+                        for item in items.items.slice() {
+                            if let Data::EImport(im) = item.data {
+                                if im.namespace_ref.is_valid() {
+                                    p.note_tracked_namespace_use(im.namespace_ref);
+                                }
                             }
                         }
                     }
-                }
-                Some(first) => {
-                    if first.default.is_some() {
-                        break 'promise_all_then;
+                    Some(first) => {
+                        if first.default.is_some() {
+                            break 'promise_all_then;
+                        }
+                        let js_ast::binding::Data::BArray(pattern) = first.binding.data else {
+                            break 'promise_all_then;
+                        };
+                        p.track_promise_all_destructure(items, &pattern);
                     }
-                    let js_ast::binding::Data::BArray(pattern) = first.binding.data else {
-                        break 'promise_all_then;
-                    };
-                    p.track_promise_all_destructure(items, &pattern);
                 }
             }
-        }
 
-        // `import("str").then(<fn>)` — record which exports the callback
-        // observes so the linker can drop the rest. The call is left as written.
-        'dyn_import_then: {
-            if !p.options.bundle {
-                break 'dyn_import_then;
-            }
-            let Data::EDot(dot) = e_.target.data else {
-                break 'dyn_import_then;
-            };
-            if dot.name.slice() != b"then" {
-                break 'dyn_import_then;
-            }
-            let Data::EImport(im) = dot.target.data else {
-                break 'dyn_import_then;
-            };
-            if !im.namespace_ref.is_valid() {
-                break 'dyn_import_then;
-            }
-            let args = e_.args.slice();
-            if args.is_empty() || args.len() > 2 {
-                break 'dyn_import_then;
-            }
-            // Only arrows are safe: a `function(m){…}` body can reach the
-            // namespace via `arguments[0]` without ever referencing `m`.
-            let Data::EArrow(arrow) = args[0].data else {
-                break 'dyn_import_then;
-            };
-            // `(...ns) => …` binds `ns` to `[namespace]`, not the namespace.
-            if arrow.has_rest_arg {
-                break 'dyn_import_then;
-            }
-            match arrow.args.slice().first() {
-                None => {
-                    // `.then(() => …)` — no exports observed.
-                    p.note_tracked_namespace_use(im.namespace_ref);
+            // `import("str").then(<fn>)` — record which exports the callback
+            // observes so the linker can drop the rest. The call is left as written.
+            'dyn_import_then: {
+                let Data::EDot(dot) = e_.target.data else {
+                    break 'dyn_import_then;
+                };
+                if dot.name.slice() != b"then" {
+                    break 'dyn_import_then;
                 }
-                Some(first_param) => {
-                    if first_param.default.is_some() {
-                        break 'dyn_import_then;
+                let Data::EImport(im) = dot.target.data else {
+                    break 'dyn_import_then;
+                };
+                if !im.namespace_ref.is_valid() {
+                    break 'dyn_import_then;
+                }
+                let args = e_.args.slice();
+                if args.is_empty() || args.len() > 2 {
+                    break 'dyn_import_then;
+                }
+                // Only arrows are safe: a `function(m){…}` body can reach the
+                // namespace via `arguments[0]` without ever referencing `m`.
+                let Data::EArrow(arrow) = args[0].data else {
+                    break 'dyn_import_then;
+                };
+                // `(...ns) => …` binds `ns` to `[namespace]`, not the namespace.
+                if arrow.has_rest_arg {
+                    break 'dyn_import_then;
+                }
+                match arrow.args.slice().first() {
+                    None => {
+                        // `.then(() => …)` — no exports observed.
+                        p.note_tracked_namespace_use(im.namespace_ref);
                     }
-                    match first_param.binding.data {
-                        js_ast::binding::Data::BObject(obj) => {
-                            if p.try_track_dynamic_import_destructure(
-                                im.namespace_ref,
-                                &[im.import_record_index],
-                                obj.properties(),
-                                false,
-                            )
-                            .is_some()
-                            {
-                                p.note_tracked_namespace_use(im.namespace_ref);
-                                p.note_destructured_locals(obj.properties());
+                    Some(first_param) => {
+                        if first_param.default.is_some() {
+                            break 'dyn_import_then;
+                        }
+                        match first_param.binding.data {
+                            js_ast::binding::Data::BObject(obj) => {
+                                if p.try_track_dynamic_import_destructure(
+                                    im.namespace_ref,
+                                    &[im.import_record_index],
+                                    obj.properties(),
+                                    false,
+                                )
+                                .is_some()
+                                {
+                                    p.note_tracked_namespace_use(im.namespace_ref);
+                                    p.note_destructured_locals(obj.properties());
+                                }
                             }
+                            js_ast::binding::Data::BIdentifier(id) => {
+                                // The body is visited *after* this block so the
+                                // registration is observed there.
+                                p.register_dynamic_import_namespace_local(
+                                    id.r#ref,
+                                    first_param.binding.loc,
+                                    im.import_record_index,
+                                );
+                                p.note_tracked_namespace_use(im.namespace_ref);
+                            }
+                            _ => {}
                         }
-                        js_ast::binding::Data::BIdentifier(id) => {
-                            // The body is visited *after* this block so the
-                            // registration is observed there.
-                            p.register_dynamic_import_namespace_local(
-                                id.r#ref,
-                                first_param.binding.loc,
-                                im.import_record_index,
-                            );
-                            p.note_tracked_namespace_use(im.namespace_ref);
-                        }
-                        _ => {}
                     }
                 }
+            }
+
+            // The arguments are visited after this.
+            if p.react_compiler.is_some() {
+                p.note_react_wrapper_callbacks(&e_);
             }
         }
 
@@ -2579,11 +2581,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ..Default::default()
         };
 
+        let rc = p.enter_react_compiler_function(
+            bun_react_compiler::lowering::FunctionNode::Arrow(&e_),
+            None,
+        );
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
-        let prev_may_replace_body =
-            p.enter_react_compiler_candidate(None, e_.has_react_hooks_suppression, dupe);
 
         let args_mut: &mut [G::Arg] = e_.args.slice_mut();
         p.visit_args(
@@ -2610,8 +2614,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
-        let rc_binding = p.react_compiler_candidate_name.take();
-        if rc_binding.is_some() {
+        if let Some(fn_type) = rc.fn_type {
             let mut flags = bun_ast::flags::FUNCTION_NONE;
             if e_.is_async {
                 flags |= bun_ast::flags::Function::IsAsync;
@@ -2619,34 +2622,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if e_.has_rest_arg {
                 flags |= bun_ast::flags::Function::HasRestArg;
             }
-            if e_.has_react_hooks_suppression {
-                flags |= bun_ast::flags::Function::HasReactHooksSuppression;
-            }
             p.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: e_.args,
                 flags,
                 body_loc: e_.body.loc,
                 args_loc: e_.body.loc,
-                binding: rc_binding,
-                in_react_hoc: core::mem::take(&mut p.react_compiler_in_react_hoc),
+                own_name: None,
+                fn_type,
             });
         }
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
             .expect("unreachable");
-        p.react_compiler_pending = None;
-        if let Some(result) = p.react_compiler_result.take() {
+        if rc.fn_type.is_some()
+            && let Some(result) = p.react_compiler_result.take()
+        {
             e_.args = result.args;
             e_.is_async = result.flags.contains(bun_ast::flags::Function::IsAsync);
             e_.has_rest_arg = result.flags.contains(bun_ast::flags::Function::HasRestArg);
             e_.prefer_expr = false;
-            if let Some(b) = rc_binding.filter(|r| *r != js_ast::Ref::NONE) {
-                p.record_usage(b);
+            if rc.name.is_valid() {
+                p.record_usage(rc.name);
             }
         }
         p.pop_scope();
         p.pop_scope();
 
-        p.react_compiler_may_replace_body = prev_may_replace_body;
+        p.leave_react_compiler_function(rc);
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
         // Restore before any further `p.*` call so the stack-local pointer
@@ -2718,7 +2719,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // For function *expressions* the .function_args scope is pushed at the
         // `function` keyword loc, not at open_parens_loc. (s_function correctly
         // uses open_parens_loc.)
-        e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc, true);
+        e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc, FnKind::Expr);
 
         // Restore now so the stack-local pointer never escapes this frame.
         p.react_refresh.hook_ctx_storage = prev_hook_ctx;

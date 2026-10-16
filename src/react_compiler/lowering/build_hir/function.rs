@@ -60,11 +60,13 @@ fn lower_function(
     let import_bindings = builder.import_bindings();
 
     // Gather captured context
-    let captured_context = gather_captured_context(
+    let declared = Rc::clone(builder.declared());
+    let (captured_context, reads_enclosing_binding) = gather_captured_context(
         builder.host(),
         &func,
         builder.current_scope(),
         component_scope,
+        &declared,
     )?;
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
@@ -87,6 +89,7 @@ fn lower_function(
         parent_function_scope,
         component_scope,
         context_ids,
+        declared,
         import_bindings,
         false, // nested function
     )?;
@@ -94,6 +97,9 @@ fn lower_function(
     builder.put_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
+    if reads_enclosing_binding {
+        builder.environment_mut().functions_kept_inline.push(func_id);
+    }
     Ok(LoweredFunction { func: func_id })
 }
 
@@ -117,11 +123,13 @@ pub(super) fn lower_function_declaration(
     let import_bindings = builder.import_bindings();
 
     // Gather captured context
-    let captured_context = gather_captured_context(
+    let declared = Rc::clone(builder.declared());
+    let (captured_context, _) = gather_captured_context(
         builder.host(),
         &func,
         builder.current_scope(),
         component_scope,
+        &declared,
     )?;
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
@@ -143,6 +151,7 @@ pub(super) fn lower_function_declaration(
         parent_function_scope,
         component_scope,
         context_ids,
+        declared,
         import_bindings,
         false, // nested function
     )?;
@@ -241,11 +250,13 @@ fn lower_function_for_object_method(
     let context_ids = Rc::clone(builder.context_identifiers());
     let import_bindings = builder.import_bindings();
 
-    let captured_context = gather_captured_context(
+    let declared = Rc::clone(builder.declared());
+    let (captured_context, _) = gather_captured_context(
         builder.host(),
         &func,
         builder.current_scope(),
         component_scope,
+        &declared,
     )?;
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
@@ -267,6 +278,7 @@ fn lower_function_for_object_method(
         parent_function_scope,
         component_scope,
         context_ids,
+        declared,
         import_bindings,
         false, // nested function
     )?;

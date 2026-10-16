@@ -28,6 +28,10 @@ type RefSet = crate::collections::FxHashSet<Ref>;
 )]
 type RefMap<V> = crate::collections::FxHashMap<Ref, V>;
 
+/// Every binding that a function declares: its parameters, its locals, and what the functions
+/// inside it declare. A binding that is not in it is bound outside of the function.
+pub(crate) type DeclaredRefs = RefMap<u32>;
+
 #[derive(Default)]
 struct BindingInfo {
     reassigned: bool,
@@ -660,11 +664,13 @@ fn is_captured_by_function(decl_depth: Option<u32>, fn_depth: u32) -> bool {
 ///   (`reassigned && referencedByInnerFn`)
 ///
 /// This is the Rust equivalent of the TypeScript `FindContextIdentifiers` pass.
+///
+/// The second value is what the walk saw declared inside the function.
 pub(crate) fn find_context_identifiers(
     func: &FunctionNode<'_>,
     host: &dyn Host,
     env: &mut Environment,
-) -> Result<RefSet, CompilerError> {
+) -> Result<(RefSet, DeclaredRefs), CompilerError> {
     let mut visitor = ContextIdentifierVisitor {
         host,
         env,
@@ -713,12 +719,13 @@ pub(crate) fn find_context_identifiers(
     }
 
     // Collect results
-    Ok(visitor
+    let context_identifiers = visitor
         .binding_info
         .into_iter()
         .filter(|(_, info)| {
             info.reassigned_by_inner_fn || (info.reassigned && info.referenced_by_inner_fn)
         })
         .map(|(id, _)| id)
-        .collect())
+        .collect();
+    Ok((context_identifiers, visitor.decl_depth))
 }

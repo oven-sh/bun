@@ -28,10 +28,10 @@ use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as ast, Expr, G, Loc, Ref, Stmt, StmtOrExpr, b};
 
-use super::find_context_identifiers::find_context_identifiers;
+use super::find_context_identifiers::{DeclaredRefs, find_context_identifiers};
 use super::hir_builder::{
     HirBuilder, convert_loc, create_temporary_place, is_always_reserved_word,
-    reserved_identifier_diagnostic,
+    is_generated_at_module_level, reserved_identifier_diagnostic,
 };
 use crate::program::Host;
 use std::rc::Rc;
@@ -54,9 +54,12 @@ pub(super) use super::hir_builder::FunctionNode;
 type RefSet = crate::collections::FxHashSet<Ref>;
 
 /// Port of upstream `lower()` (build_hir.rs:4257).
+///
+/// `own_name` is the name that a function expression binds in its own scope, when the caller
+/// knows it: `func` is without its name when it comes from the parser.
 pub(crate) fn lower(
     func: &FunctionNode<'_>,
-    _id: Option<&str>,
+    own_name: Option<Ref>,
     host: &dyn Host,
     env: &mut Environment,
     import_bindings: &IndexMap<Ref, VariableBinding>,
@@ -70,11 +73,13 @@ pub(crate) fn lower(
         .name_ref()
         .map(|r| host.symbols()[r.inner_index() as usize].original_name);
 
-    // Bun has no `node_id`-keyed scope table; the top-level function's scope
-    // is a child of `module_scope`, and `G::Fn` does not retain a back-link.
-    // The only consumers of `function_scope`/`component_scope` on the builder
-    // are the fbt-name local-binding check and `is_scope_within_compiled_function`,
-    // both of which behave correctly with `module_scope` for a top-level call.
+    // Bun has no `node_id`-keyed scope table, and `G::Fn` does not retain a
+    // back-link to its scope. The only consumer of `function_scope` /
+    // `component_scope` on the builder is the seed of the scope stack, which
+    // resolves the references that the visit pass has not resolved. What
+    // upstream asks `is_scope_within_compiled_function` is answered by
+    // `HirBuilder::is_bound_outside`, also for a function that is not a child
+    // of the module scope.
     let scope = host.module_scope();
 
     // `validate_ts_this_parameters_in_function_range`: Bun's parser strips
@@ -85,7 +90,11 @@ pub(crate) fn lower(
     // read `Ref` + `Loc` straight off the AST node via `convert_loc`.
 
     // Pre-compute context identifiers: variables captured across function boundaries
-    let context_identifiers = Rc::new(find_context_identifiers(func, host, env)?);
+    let (context_identifiers, mut declared) = find_context_identifiers(func, host, env)?;
+    if let Some(own_name) = own_name {
+        declared.insert(own_name, 0);
+    }
+    let context_identifiers = Rc::new(context_identifiers);
 
     // For top-level functions, context is empty (no captured refs)
     let context_map: IndexMap<Ref, Option<SourceLocation>> = IndexMap::new();
@@ -101,6 +110,7 @@ pub(crate) fn lower(
         scope,
         scope, // component_scope = function_scope for top-level
         context_identifiers,
+        Rc::new(declared),
         import_bindings,
         true, // is_top_level
     )?;
@@ -124,6 +134,7 @@ pub(super) fn lower_inner<'h>(
     function_scope: &'h ast::Scope,
     component_scope: &'h ast::Scope,
     context_identifiers: Rc<RefSet>,
+    declared: Rc<DeclaredRefs>,
     import_bindings: &'h IndexMap<Ref, VariableBinding>,
     is_top_level: bool,
 ) -> Result<(HirFunction, IndexMap<Ref, IdentifierId>), CompilerError> {
@@ -142,6 +153,7 @@ pub(super) fn lower_inner<'h>(
         function_scope,
         component_scope,
         context_identifiers,
+        declared,
         parent_bindings,
         import_bindings,
         None,
@@ -379,12 +391,20 @@ fn arrow_expression_body<'a>(func: &FunctionNode<'a>) -> Option<&'a Expr> {
 /// site (the outer builder's `current_scope()`); it seeds the walker's scope
 /// stack so `RefTag::SourceContentsSlice` references resolve to the same
 /// `Symbol` refs the outer builder sees.
+///
+/// `declared` is what the function that is compiled declares
+/// (`HirBuilder::is_bound_outside`). The second value says whether the
+/// function reads a binding that is not in scope at module level: one of a
+/// function or block around the compiled function, or the `arguments` of a
+/// function around an arrow. Such a function must not be outlined, because an
+/// outlined function is declared at module level.
 pub(super) fn gather_captured_context<'h>(
     host: &'h dyn Host,
     func: &FunctionNode<'_>,
     enclosing_scope: &'h ast::Scope,
     _component_scope: &ast::Scope,
-) -> Result<IndexMap<Ref, Option<SourceLocation>>, CompilerDiagnostic> {
+    declared: &DeclaredRefs,
+) -> Result<(IndexMap<Ref, Option<SourceLocation>>, bool), CompilerDiagnostic> {
     let mut walker = CaptureWalker {
         host,
         stack: bun_core::StackCheck::init(),
@@ -413,6 +433,7 @@ pub(super) fn gather_captured_context<'h>(
     )]
     let mut captured: crate::collections::FxHashMap<Ref, (i32, Option<SourceLocation>)> =
         crate::collections::FxHashMap::default();
+    let mut reads_enclosing_binding = false;
 
     for (ref_, ref_loc) in walker.referenced {
         if !ref_.is_symbol() {
@@ -425,13 +446,24 @@ pub(super) fn gather_captured_context<'h>(
             continue;
         };
         use ast::symbol::Kind as Sk;
-        if matches!(
-            sym.kind,
-            Sk::Unbound | Sk::Arguments | Sk::Import | Sk::TsEnum | Sk::TsNamespace
-        ) {
-            continue;
+        match sym.kind {
+            Sk::Unbound | Sk::Import => continue,
+            // A function that is not an arrow has its own, which the walk declared.
+            Sk::Arguments => {
+                reads_enclosing_binding |= matches!(func, FunctionNode::Arrow(_));
+                continue;
+            }
+            Sk::TsEnum | Sk::TsNamespace => {
+                reads_enclosing_binding |= !host.is_module_level(ref_);
+                continue;
+            }
+            _ => {}
         }
         if host.is_module_level(ref_) {
+            continue;
+        }
+        if !declared.contains_key(&ref_) {
+            reads_enclosing_binding |= !is_generated_at_module_level(host, ref_);
             continue;
         }
         let pos = ref_loc.start;
@@ -452,10 +484,13 @@ pub(super) fn gather_captured_context<'h>(
     let mut sorted: Vec<_> = captured.into_iter().collect();
     sorted.sort_unstable_by_key(|(ref_, (pos, _))| (*pos, ref_.inner_index()));
 
-    Ok(sorted
-        .into_iter()
-        .map(|(ref_, (_, loc))| (ref_, loc))
-        .collect())
+    Ok((
+        sorted
+            .into_iter()
+            .map(|(ref_, (_, loc))| (ref_, loc))
+            .collect(),
+        reads_enclosing_binding,
+    ))
 }
 
 struct CaptureWalker<'h> {

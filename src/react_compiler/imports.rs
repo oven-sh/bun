@@ -31,12 +31,10 @@ pub(crate) struct NonLocalImportSpecifier {
 /// Tracks compiled functions, generated names, and import requirements.
 /// Equivalent to ProgramContext class in Imports.ts.
 pub(crate) struct ProgramContext {
-    pub(crate) opts: ReactCompilerOptions,
     pub(crate) filename: Option<String>,
     pub(crate) code: Option<String>,
     pub(crate) react_runtime_module: &'static str,
     pub(crate) output_mode: OutputMode,
-    pub(crate) has_module_scope_opt_out: bool,
 
     // Pre-resolved import local names for codegen
     pub(crate) instrument_fn_name: Option<String>,
@@ -57,19 +55,16 @@ pub(crate) struct ProgramContext {
 
 impl ProgramContext {
     pub(crate) fn new(
-        opts: ReactCompilerOptions,
+        opts: &ReactCompilerOptions,
         filename: Option<String>,
         code: Option<String>,
-        has_module_scope_opt_out: bool,
     ) -> Self {
         let react_runtime_module = get_react_compiler_runtime_module(opts.target.as_deref());
         Self {
-            opts,
             filename,
             code,
             react_runtime_module,
             output_mode: OutputMode::Client,
-            has_module_scope_opt_out,
             instrument_fn_name: None,
             instrument_gating_name: None,
             hook_guard_name: None,
@@ -322,7 +317,7 @@ fn is_hook_name(name: &str) -> bool {
 /// Upstream's `CompilerTarget::MetaInternal { runtime_module }` arm is
 /// intentionally not ported — `ReactCompilerOptions.target` only accepts a
 /// version string.
-fn get_react_compiler_runtime_module(target: Option<&str>) -> &'static str {
+pub(crate) fn get_react_compiler_runtime_module(target: Option<&str>) -> &'static str {
     match target {
         Some("19") => "react/compiler-runtime",
         Some("17") | Some("18") => "react-compiler-runtime",

@@ -55,8 +55,6 @@ use crate::program::{Host, JsxImportKind};
 /// Result of code generation for a single function.
 pub struct CodegenFunction {
     pub(crate) id: Option<LocRef>,
-    #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-    pub(crate) name_hint: Option<String>,
     pub(crate) params: Vec<G::Arg>,
     pub(crate) has_rest_arg: bool,
     pub(crate) body: Vec<Stmt>,
@@ -522,8 +520,6 @@ fn codegen_reactive_function(
 
     Ok(CodegenFunction {
         id: None,
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-        name_hint: func.name_hint.clone(),
         params,
         has_rest_arg,
         body,

@@ -22,6 +22,7 @@ use crate::hir::environment::Environment;
 use crate::hir::*;
 use bun_ast::{self as ast, E, G, Loc, Ref, Symbol, symbol};
 
+use super::find_context_identifiers::DeclaredRefs;
 use crate::program::Host;
 use std::rc::Rc;
 
@@ -304,6 +305,8 @@ pub(crate) struct HirBuilder<'h> {
     /// and any inner function scope, that are referenced from an inner function scope.
     /// These need StoreContext/LoadContext instead of StoreLocal/LoadLocal.
     context_identifiers: Rc<RefSet>,
+    /// What the function that is compiled declares. See [`Self::is_bound_outside`].
+    declared: Rc<DeclaredRefs>,
     /// ES-module import bindings keyed by clause-item `Ref`. Populated from the
     /// module's `SImport` statements before lowering so `resolve_identifier`
     /// can return `ImportSpecifier`/`ImportDefault`/`ImportNamespace` (and thus
@@ -324,6 +327,7 @@ impl<'h> HirBuilder<'h> {
         function_scope: &'h ast::Scope,
         component_scope: &'h ast::Scope,
         context_identifiers: Rc<RefSet>,
+        declared: Rc<DeclaredRefs>,
         bindings: Option<IndexMap<Ref, IdentifierId>>,
         import_bindings: &'h IndexMap<Ref, VariableBinding>,
         entry_block_kind: Option<BlockKind>,
@@ -348,6 +352,7 @@ impl<'h> HirBuilder<'h> {
             component_scope,
             scope_stack: vec![function_scope],
             context_identifiers,
+            declared,
             import_bindings,
         }
     }
@@ -456,6 +461,19 @@ impl<'h> HirBuilder<'h> {
     pub(crate) fn add_context_identifier(&mut self, ref_: Ref) {
         let ref_ = self.resolve_ref(ref_);
         Rc::make_mut(&mut self.context_identifiers).insert(ref_);
+    }
+
+    /// Shared with the builders of nested functions.
+    pub(crate) fn declared(&self) -> &Rc<DeclaredRefs> {
+        &self.declared
+    }
+
+    /// Whether `ref_` is bound outside of the function that is compiled: in the module, or in a
+    /// function or a block around that function. Upstream's `!is_scope_within_compiled_function`.
+    /// A binding that the walk of `find_context_identifiers` did not see declared is outside, so
+    /// a write to it is an error and the function stays as written.
+    pub(crate) fn is_bound_outside(&self, ref_: Ref) -> bool {
+        self.host.is_module_level(ref_) || !self.declared.contains_key(&ref_)
     }
 
     pub(crate) fn host_and_env_mut(&mut self) -> (&'h dyn Host, &mut Environment) {
@@ -1025,14 +1043,20 @@ impl<'h> HirBuilder<'h> {
         if self.host.is_module_level(ref_) {
             return Ok(VariableBinding::ModuleLocal { name });
         }
-        // Module-scope generated symbols (jsx-runtime `jsx`/`jsxDEV`/`Fragment`,
-        // compiler-runtime `c`, etc.) are minted by the parser's visit pass after
-        // `collect_import_bindings` runs, so they are absent from both `members`
-        // and `import_bindings`. They are module-level imports, not locals —
-        // classify them as Global so inference initializes them as Frozen instead
-        // of tripping the "Expected value kind to be initialized" invariant.
-        if self.host.module_scope().generated.contains(&ref_) {
-            return Ok(VariableBinding::Global { name });
+        if !self.declared.contains_key(&ref_) {
+            // Module-scope generated symbols (jsx-runtime `jsx`/`jsxDEV`/`Fragment`,
+            // compiler-runtime `c`, etc.) are minted by the parser's visit pass after
+            // `collect_import_bindings` runs, so they are absent from both `members`
+            // and `import_bindings`. They are module-level imports, not locals —
+            // classify them as Global so inference initializes them as Frozen instead
+            // of tripping the "Expected value kind to be initialized" invariant.
+            if is_generated_at_module_level(self.host, ref_) {
+                return Ok(VariableBinding::Global { name });
+            }
+            // A binding of a function or a block around the compiled function is a
+            // non-local, like one of the module. It keeps its `Ref`, which is what
+            // codegen prints.
+            return Ok(VariableBinding::ModuleLocal { name });
         }
 
         let binding_kind = convert_binding_kind(sym.kind);
@@ -1047,7 +1071,7 @@ impl<'h> HirBuilder<'h> {
     /// enclosing function scope).
     pub(crate) fn is_context_identifier(&self, ref_: Ref) -> bool {
         let ref_ = self.resolve_ref(ref_);
-        if ref_.is_symbol() && self.host.is_module_level(ref_) {
+        if ref_.is_symbol() && self.is_bound_outside(ref_) {
             return false;
         }
         self.context_identifiers.contains(&ref_)
@@ -1061,6 +1085,12 @@ impl<'h> HirBuilder<'h> {
 // ---------------------------------------------------------------------------
 // Public helper functions
 // ---------------------------------------------------------------------------
+
+/// Whether the parser's visit pass made `ref_` for the module: the JSX runtime, an outlined
+/// function. Such a symbol is in no scope's members.
+pub(crate) fn is_generated_at_module_level(host: &dyn Host, ref_: Ref) -> bool {
+    host.module_scope().generated.contains(&ref_)
+}
 
 pub(crate) fn create_temporary_place(env: &mut Environment, loc: Option<SourceLocation>) -> Place {
     let id = env.next_identifier_id();

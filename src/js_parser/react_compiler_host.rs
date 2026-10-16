@@ -1,14 +1,51 @@
 //! `bun_react_compiler::Host` adapter over `&mut P`, kept in this crate so
 //! `bun_react_compiler` stays free of a `bun_js_parser` dependency.
 //!
-//! Constructed inline at each post-visit hook site (`visit_stmt.rs`) around the
-//! single `maybe_compile_*` call, then dropped — it owns no state of its own.
+//! Constructed inline around a call into the compiler, then dropped — it owns
+//! no state of its own. The calls are the question at the entry of a function
+//! (`P::enter_react_compiler_function`), the compile hook in `visit_stmts`, and
+//! `finish`.
 
 use bun_ast as js_ast;
 use bun_collections::VecExt;
+use bun_react_compiler::hir::ReactFunctionType;
+use bun_react_compiler::lowering::FunctionNode;
+use bun_react_compiler::Discovery;
 
 use crate::JSXImport;
 use crate::p::P;
+
+/// Where the visit pass is, for the React Compiler.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReactCompilerSearch {
+    /// In no function that the compiler has taken: a function that is entered is asked about.
+    Search,
+    /// In a React function that stays as written, or in the decorators of a class. Upstream
+    /// does not search these, so no function in here is asked about.
+    Skip,
+    /// In a function whose body the compiler replaces once it is visited, with its locals
+    /// re-declared as new symbols. No function in here is asked about.
+    Replace,
+}
+
+/// What [`P::enter_react_compiler_function`] did, for the frame that visits the function.
+#[derive(Clone, Copy)]
+pub(crate) struct ReactCompilerEntered {
+    /// What `react_compiler_search` was before the function changed it.
+    outer: Option<ReactCompilerSearch>,
+    /// Set for a function that is compiled once its body is visited.
+    pub(crate) fn_type: Option<ReactFunctionType>,
+    /// The binding that names such a function, or `Ref::NONE`.
+    pub(crate) name: js_ast::Ref,
+}
+
+impl ReactCompilerEntered {
+    const NOTHING: Self = Self {
+        outer: None,
+        fn_type: None,
+        name: js_ast::Ref::NONE,
+    };
+}
 
 pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
     p: &'p mut P<'a, TS, SCAN_ONLY>,
@@ -34,10 +71,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         self.p.import_records.items()
     }
     fn namespace_of_import_item(&self, item: js_ast::Ref) -> Option<js_ast::Ref> {
-        let symbol = self.p.symbols.get(item.inner_index() as usize)?;
-        let name = symbol.original_name.slice();
-        let mut all = self.p.import_items_for_namespace.iter();
-        all.find_map(|(namespace, items)| (items.get(name)?.ref_ == item).then_some(*namespace))
+        self.p.namespace_of_import_item(item)
     }
     fn source(&self) -> &[u8] {
         &self.p.source.contents
@@ -189,67 +223,144 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         }
     }
 
-    /// Sets `react_compiler_may_replace_body` for the visit of the pending candidate. Returns the old value.
-    pub(crate) fn enter_react_compiler_candidate(
+    /// Visiting a function that the React Compiler compiles, which re-declares its locals as
+    /// new symbols.
+    #[inline]
+    pub(crate) fn react_compiler_replaces_body(&self) -> bool {
+        self.react_compiler_search == ReactCompilerSearch::Replace
+    }
+
+    /// The namespace import that `item` is a member of: the visit pass makes an import of its
+    /// own of `ns.member`.
+    fn namespace_of_import_item(&self, item: js_ast::Ref) -> Option<js_ast::Ref> {
+        let symbol = self.symbols.get(item.inner_index() as usize)?;
+        let name = symbol.original_name.slice();
+        let mut all = self.import_items_for_namespace.iter();
+        all.find_map(|(namespace, items)| (items.get(name)?.ref_ == item).then_some(*namespace))
+    }
+
+    /// Asks the React Compiler about a function that the visit pass enters, before anything of
+    /// the function is visited: see `ReactCompilerState::enter_function`. `name` is the name of
+    /// a function declaration. The scope is the one around the function.
+    #[inline]
+    pub(crate) fn enter_react_compiler_function(
         &mut self,
+        func: FunctionNode<'_>,
         name: Option<js_ast::Ref>,
-        has_react_hooks_suppression: bool,
-        body: &[js_ast::Stmt],
-    ) -> bool {
-        let prev = self.react_compiler_may_replace_body;
-        if !prev
-            && let Some(candidate) = self.react_compiler_candidate_name
-            && let Some(rc) = self.react_compiler.as_deref()
+    ) -> ReactCompilerEntered {
+        if self.react_compiler.is_none() {
+            return ReactCompilerEntered::NOTHING;
+        }
+        self.discover_react_function(func, name)
+    }
+
+    #[inline]
+    pub(crate) fn leave_react_compiler_function(&mut self, entered: ReactCompilerEntered) {
+        if let Some(outer) = entered.outer {
+            self.react_compiler_search = outer;
+        }
+    }
+
+    /// For what upstream does not search: no function in it is asked about. Gives what to put
+    /// back after it.
+    pub(crate) fn skip_react_compiler_search(&mut self) -> ReactCompilerSearch {
+        let outer = self.react_compiler_search;
+        if outer == ReactCompilerSearch::Search {
+            self.react_compiler_search = ReactCompilerSearch::Skip;
+        }
+        outer
+    }
+
+    #[inline(never)]
+    fn discover_react_function(
+        &mut self,
+        func: FunctionNode<'_>,
+        name: Option<js_ast::Ref>,
+    ) -> ReactCompilerEntered {
+        if self.react_compiler_search != ReactCompilerSearch::Search {
+            return ReactCompilerEntered::NOTHING;
+        }
+        // A method is no function to upstream: it is not asked about, and what is in it is.
+        let is_method = matches!(func, FunctionNode::Function(method)
+            if method.flags.contains(js_ast::flags::Function::IsUniqueFormalParameters));
+        if is_method {
+            return ReactCompilerEntered::NOTHING;
+        }
+        let Some(mut rc) = self.react_compiler.take() else {
+            return ReactCompilerEntered::NOTHING;
+        };
+        let is_in_class = self.enclosing_class_keyword.len > 0;
+        let is_top_level = self.current_scope == self.module_scope;
+        let (found, name) = rc.enter_function(
+            &ReactCompilerHost::new(self),
+            &func,
+            name,
+            is_in_class,
+            is_top_level,
+        );
+        self.react_compiler = Some(rc);
+        let (search, fn_type) = match found {
+            Discovery::Search => return ReactCompilerEntered::NOTHING,
+            Discovery::Skip => (ReactCompilerSearch::Skip, None),
+            Discovery::Compile(fn_type) => (ReactCompilerSearch::Replace, Some(fn_type)),
+        };
+        ReactCompilerEntered {
+            outer: Some(core::mem::replace(&mut self.react_compiler_search, search)),
+            fn_type,
+            name: name.unwrap_or(js_ast::Ref::NONE),
+        }
+    }
+
+    /// Upstream takes a function that is an argument of `memo()`, `forwardRef()`, `React.memo()`
+    /// or `React.forwardRef()` for a component. The target of `call` is visited, its arguments
+    /// are not.
+    #[inline(never)]
+    pub(crate) fn note_react_wrapper_callbacks(&mut self, call: &js_ast::E::Call) {
+        use js_ast::expr::Data;
+        if self.react_compiler_search != ReactCompilerSearch::Search
+            || self.is_revisit_for_substitution
+            || call.optional_chain.is_some()
+            || !self.is_react_wrapper(&call.target)
         {
-            let name = name
-                .filter(|r| r.is_valid())
-                .or(Some(candidate))
-                .filter(|r| *r != js_ast::Ref::NONE)
-                .map(|r| self.load_name_from_ref(r));
-            self.react_compiler_may_replace_body = rc.may_compile(
-                name,
-                self.react_compiler_in_react_hoc,
-                has_react_hooks_suppression,
-                body,
-            );
+            return;
         }
-        prev
-    }
-
-    /// Port of upstream `findFunctionDeclarationOrExpression` for the
-    /// expression positions (decl init / `export default` / expression
-    /// statement). Returns `Some(in_react_hoc)` only for the shapes the
-    /// Babel plugin accepts, so `react_compiler_candidate_name` cannot leak
-    /// into an unrelated nested arrow.
-    pub(crate) fn react_compiler_candidate_expr(&self, expr: &js_ast::Expr) -> Option<bool> {
-        use js_ast::expr::Data;
-        match &expr.data {
-            Data::EArrow(_) | Data::EFunction(_) => Some(false),
-            Data::ECall(call)
-                if !call.was_jsx_element && self.is_react_hoc_callee(&call.target) =>
-            {
-                matches!(
-                    call.args.first().map(|a| &a.data),
-                    Some(Data::EArrow(_) | Data::EFunction(_))
-                )
-                .then_some(true)
+        let Some(rc) = self.react_compiler.as_deref_mut() else {
+            return;
+        };
+        for arg in call.args.slice() {
+            match &arg.data {
+                Data::EArrow(arrow) => rc.note_wrapper_callback(arrow.body.loc),
+                Data::EFunction(function) => rc.note_wrapper_callback(function.func.body.loc),
+                _ => {}
             }
-            _ => None,
         }
     }
 
-    fn is_react_hoc_callee(&self, target: &js_ast::Expr) -> bool {
+    /// Upstream `isReactAPI`, for a callee that the visit pass has visited: `memo`,
+    /// `forwardRef`, and either as a member of an object that is named `React`.
+    fn is_react_wrapper(&self, target: &js_ast::Expr) -> bool {
         use js_ast::expr::Data;
+        let is_react = |object: js_ast::Ref| self.load_name_from_ref(object) == b"React";
         let name: &[u8] = match &target.data {
             Data::EIdentifier(id) => self.load_name_from_ref(id.ref_),
-            Data::EImportIdentifier(id) => self.load_name_from_ref(id.ref_),
-            Data::EDot(member) => {
-                let obj = match &member.target.data {
-                    Data::EIdentifier(o) => self.load_name_from_ref(o.ref_),
-                    Data::EImportIdentifier(o) => self.load_name_from_ref(o.ref_),
-                    _ => return false,
+            Data::EImportIdentifier(id) if id.was_originally_identifier() => {
+                self.load_name_from_ref(id.ref_)
+            }
+            // `ns.memo`, for a namespace import `ns`.
+            Data::EImportIdentifier(id) => {
+                let name = self.load_name_from_ref(id.ref_);
+                if name != b"forwardRef" && name != b"memo" {
+                    return false;
+                }
+                return self.namespace_of_import_item(id.ref_).is_some_and(is_react);
+            }
+            Data::EDot(member) if member.optional_chain.is_none() => {
+                let is_member_of_react = match &member.target.data {
+                    Data::EIdentifier(object) => is_react(object.ref_),
+                    Data::EImportIdentifier(object) => is_react(object.ref_),
+                    _ => false,
                 };
-                if obj != b"React" {
+                if !is_member_of_react {
                     return false;
                 }
                 member.name.slice()

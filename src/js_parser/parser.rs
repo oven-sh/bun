@@ -696,6 +696,17 @@ pub enum RelocateVarsMode {
     ForInOrForOf,
 }
 
+/// What `visit_func` visits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FnKind {
+    /// A function expression or a method. A name of its own is bound in its own scope.
+    Expr,
+    /// A function declaration. Its name is bound in the scope around it.
+    Decl,
+    /// `export default function () {}`, which has its name from the parser.
+    AnonymousDefault,
+}
+
 #[derive(Default)]
 pub struct VisitArgsOpts<'a> {
     pub(crate) body: &'a [Stmt],

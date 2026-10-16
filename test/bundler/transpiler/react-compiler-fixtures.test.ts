@@ -216,6 +216,38 @@ const SLOT_COUNT_DIVERGENCE: Record<string, number[]> = Object.assign(Object.cre
   // splits `getX` and the JSX into two memo blocks: `_c(2)`. Bun keeps the value
   // of the store, so there is no stray read and one block holds both.
   "hoisting-invalid-tdz-let": [1],
+  // The function with the directive is the test of a `while`. Bun compiles it,
+  // and then its visit pass folds a test that is a function expression to `true`.
+  "nested-function-discovery-while-test-expr": [],
+});
+
+// Fixtures about which functions the compiler finds. A `"use memo"` directive
+// opts the function in, or the mode makes no difference to it, so Bun has to
+// compile what upstream compiles: "Bun compiled nothing" is not accepted for a
+// mode other than `infer`.
+const FINDS_THE_SAME_FUNCTIONS = new Set([
+  "nested-function-discovery-annotation-mode",
+  "nested-function-discovery-for-init",
+  "nested-function-discovery-if-test-expr",
+  "nested-function-discovery-while-test-expr",
+  "outlined-function-in-iife",
+]);
+
+// Fixtures that upstream rejects and Bun compiles, with the memo slot counts Bun
+// produces. Each entry must say why.
+//
+// In these five upstream's error is that `x` changes after the statement
+// `<div>{x}</div>;` used it in JSX. Nothing reads that element, so Bun's visit
+// pass drops the statement before the compiler lowers the function, and the
+// compiler has nothing to report. The component has no other JSX and no hook
+// call. Bun asks about a function as the parser made it, as upstream does, so it
+// takes the function for a component, and then compiles what the visit pass left.
+const COMPILED_WHERE_UPSTREAM_REJECTS: Record<string, number[]> = Object.assign(Object.create(null), {
+  "error.invalid-array-push-frozen": [2],
+  "error.invalid-computed-store-to-frozen-value": [1],
+  "error.invalid-delete-computed-property-of-frozen-value": [1],
+  "error.invalid-delete-property-of-frozen-value": [1],
+  "error.invalid-property-store-to-frozen-value": [1],
 });
 
 // `minify: { syntax: true }` runs the parser's visit-phase folding and the
@@ -251,6 +283,13 @@ const MINIFY_SYNTAX_DIVERGENCE: Record<string, { compiledFunctions: number; buil
       compiledFunctions: 0,
       buildError: true,
       reason: "constant folding rewrites the useMemo deps array entry `x` to the literal `0`",
+    },
+    // The function with the directive is the test of an `if` that has nothing in
+    // its body. minify.syntax drops an `if` like that when its test has no side
+    // effect.
+    "nested-function-discovery-if-test-expr": {
+      compiledFunctions: 0,
+      reason: "the compiled function expression is the test of an empty `if`, which is dropped",
     },
   });
 
@@ -449,7 +488,11 @@ describe("react-compiler upstream fixtures", () => {
           fixture: name,
           slotCounts: slotCounts(output),
           note: "error fixture should not be memoized",
-        }).toEqual({ fixture: name, slotCounts: [], note: "error fixture should not be memoized" });
+        }).toEqual({
+          fixture: name,
+          slotCounts: COMPILED_WHERE_UPSTREAM_REJECTS[name] ?? [],
+          note: "error fixture should not be memoized",
+        });
         return;
       }
 
@@ -475,7 +518,7 @@ describe("react-compiler upstream fixtures", () => {
       // up and a lowercase helper only `all` would compile). Accept when Bun's
       // slot list is a subsequence of upstream's; only fall through to strict
       // equality when Bun compiled every function upstream did.
-      if (!modeMatchesBun) {
+      if (!modeMatchesBun && !FINDS_THE_SAME_FUNCTIONS.has(name)) {
         // A surviving `react/compiler-runtime` import is not evidence a compiled
         // function survived: when the fixture has no `export`, `bun build`
         // tree-shakes the compiled body but the injected import remains. Only

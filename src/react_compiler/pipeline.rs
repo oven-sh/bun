@@ -144,11 +144,11 @@ macro_rules! pass {
     }};
 }
 
-/// Run the compilation pipeline on a single function.
+/// Run the compilation pipeline on a single function. `own_name` is for [`lowering::lower`].
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_fn(
     func: &FunctionNode<'_>,
-    fn_name: Option<&str>,
+    own_name: Option<bun_ast::Ref>,
     host: &mut dyn Host,
     arena: &bun_alloc::Arena,
     fn_type: ReactFunctionType,
@@ -179,7 +179,7 @@ pub(crate) fn compile_fn(
     let mut hir = pass!(
         env,
         "Lowering",
-        lowering::lower(func, fn_name, &*host, &mut env, import_bindings)
+        lowering::lower(func, own_name, &*host, &mut env, import_bindings)
     )?;
 
     dump_lowered(&hir, &env);
@@ -245,10 +245,8 @@ pub(crate) fn compile_fn(
     for o in codegen_result.outlined {
         #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         if let Some(fn_type) = o.fn_type {
-            let outlined_name = o.func.name_hint.clone();
             if let Ok(compiled) = compile_outlined_fn(
                 o.func,
-                outlined_name.as_deref(),
                 host,
                 arena,
                 fn_type,
@@ -281,6 +279,37 @@ pub(crate) fn compile_fn(
     })
 }
 
+/// The lvalues of the function expressions in `Environment::functions_kept_inline`. The lowering
+/// knows such a function by its `FunctionId`. `OutlineFunctions` knows a function that it must
+/// leave in place by the identifier that the function expression is assigned to.
+fn lvalues_kept_inline(
+    func: &crate::hir::HirFunction,
+    env: &Environment,
+    lvalues: &mut HashSet<crate::hir::IdentifierId>,
+) {
+    use crate::hir::InstructionValue;
+    if !env.has_stack() {
+        return;
+    }
+    for block in func.body.blocks.values() {
+        for &instr_id in &block.instructions {
+            let instr = &func.instructions[instr_id.0 as usize];
+            match &instr.value {
+                InstructionValue::FunctionExpression { lowered_func, .. } => {
+                    if env.functions_kept_inline.contains(&lowered_func.func) {
+                        lvalues.insert(instr.lvalue.identifier);
+                    }
+                    lvalues_kept_inline(&env.functions[lowered_func.func.0 as usize], env, lvalues);
+                }
+                InstructionValue::ObjectMethod { lowered_func, .. } => {
+                    lvalues_kept_inline(&env.functions[lowered_func.func.0 as usize], env, lvalues);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 /// Compile an outlined function's codegen AST through the full pipeline.
 ///
 /// Upstream builds a synthetic `FunctionDeclaration` + flat single-scope
@@ -291,7 +320,6 @@ pub(crate) fn compile_fn(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_outlined_fn(
     codegen_fn: CodegenFunction,
-    fn_name: Option<&str>,
     host: &mut dyn Host,
     arena: &bun_alloc::Arena,
     fn_type: ReactFunctionType,
@@ -339,7 +367,7 @@ pub(crate) fn compile_outlined_fn(
     };
 
     let func_node = FunctionNode::Function(&outlined_decl);
-    let mut hir = lowering::lower(&func_node, fn_name, &*host, &mut env, import_bindings)?;
+    let mut hir = lowering::lower(&func_node, None, &*host, &mut env, import_bindings)?;
 
     if env.has_errors() {
         return Err(env.take_errors());
@@ -634,7 +662,7 @@ pub(crate) fn run_reactive_scope_passes(
         )?;
     }
 
-    let fbt_operands = pass!(
+    let mut fbt_operands = pass!(
         env,
         "MemoizeFbtAndMacroOperandsInSameScope",
         crate::inference::memoize_fbt_and_macro_operands_in_same_scope(hir, env)
@@ -659,6 +687,11 @@ pub(crate) fn run_reactive_scope_passes(
     }
 
     if env.config.enable_function_outlining {
+        // `OutlineFunctions` leaves the operands of a macro in place. It has to do the same for
+        // a function that reads a binding of the code around the compiled function.
+        if !env.functions_kept_inline.is_empty() {
+            lvalues_kept_inline(hir, env, &mut fbt_operands.values);
+        }
         pass!(
             env,
             "OutlineFunctions",

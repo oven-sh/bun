@@ -978,17 +978,15 @@ impl<'a> Parser<'a> {
                     .then(|| "ssr".to_owned()),
                 ..Default::default()
             };
-            let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);
-            let import_bindings = bun_react_compiler::collect_import_bindings(
+            // Without a state the visit pass is the one of a build without the flag.
+            p.react_compiler = bun_react_compiler::ReactCompilerState::for_file(
+                rc_options,
+                &p.source.contents,
                 stmts,
                 p.import_records.items(),
                 p.symbols.as_slice(),
-            );
-            p.react_compiler = Some(Box::new(bun_react_compiler::ReactCompilerState::new(
-                rc_options,
-                opt_out,
-                import_bindings,
-            )));
+            )
+            .map(Box::new);
         }
 
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);

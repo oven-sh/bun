@@ -85,6 +85,11 @@ pub struct Environment {
     // Binding name -> next `_N` to try. Valid because an error in a nested function ends all lowering.
     pub(crate) binding_names: HashMap<StoreStr, u32>,
 
+    // Function expressions that read a binding that is not in scope at module level, which is
+    // where an outlined function is declared. Not in upstream, which compiles a function inside
+    // another function too, and declares what it outlines of an arrow at module level.
+    pub(crate) functions_kept_inline: Vec<FunctionId>,
+
     // Node IDs of identifiers that are actual references to bindings.
     // Used by codegen to filter type annotation renames — only rename identifiers
     // whose node_id is in this set (type labels like ObjectTypeIndexer params
@@ -203,6 +208,7 @@ impl Environment {
             hook_guard_name: None,
             renames: AstAlloc::vec(),
             binding_names: HashMap::default(),
+            functions_kept_inline: Vec::new(),
             reference_node_ids: HashSet::default(),
             hoisted_identifiers: HashSet::default(),
             validate_preserve_existing_memoization_guarantees: config

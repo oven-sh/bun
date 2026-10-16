@@ -345,6 +345,42 @@ describe("web worker", () => {
     });
   });
 
+  // Subprocess: inside `bun test` a worker's errors are reported by another route.
+  test.concurrent.each([
+    ["an uncaught exception", `setImmediate(() => { throw new Error("boom"); });`],
+    ["an unhandled rejection", `setImmediate(() => { Promise.reject(new Error("boom")); });`],
+  ])("'close' has code 1 after %s in a later turn", async (_, fail) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(`setInterval(() => {}, 100000); postMessage("loaded"); ${fail}`)}])));
+         worker.addEventListener("message", e => console.log(e.data));
+         worker.addEventListener("error", () => console.log("error"));
+         worker.addEventListener("close", e => console.log("close", e.code, e.wasClean));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "loaded\nerror\nclose 1 false\n", exitCode: 0 });
+  });
+
+  test.concurrent.each([
+    ["while the entry is evaluating", `postMessage(1); for (;;) {}`],
+    ["after the entry has loaded", `setInterval(() => {}, 100000); setTimeout(() => postMessage(1));`],
+    [
+      "while a top-level await is pending",
+      `setInterval(() => {}, 100000); setTimeout(() => postMessage(1)); await new Promise(() => {});`,
+    ],
+  ])("'close' has code 0 after terminate() %s", async (_, body) => {
+    const worker = new Worker(URL.createObjectURL(new Blob([body], { type: "application/javascript" })));
+    worker.onmessage = () => worker.terminate();
+    const { code, wasClean } = await new Promise<CloseEvent>(resolve => worker.addEventListener("close", resolve));
+    expect({ code, wasClean }).toEqual({ code: 0, wasClean: true });
+  });
+
   describe("worker event", () => {
     test("is fired with the right object", () => {
       const { promise, resolve } = Promise.withResolvers();

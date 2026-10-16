@@ -115,7 +115,8 @@ pub struct WebWorker {
     /// Cloned env for the worker VM; boxed on the global heap because the arena
     /// does not run `Drop`. Reclaimed in `shutdown()`.
     worker_env_loader: Cell<*mut bun_dotenv::Loader>,
-    /// `process.exit(code)` ran; later error paths must not overwrite its code.
+    /// `process.exit(code)` ran, or a fatal error ran the 'exit' listeners; later
+    /// error paths must not overwrite the code.
     exit_called: AtomicBool,
     /// The parent asked this thread to stop (`worker.terminate()` or an exiting
     /// parent) while its VM was live — as opposed to the thread stopping itself,
@@ -870,8 +871,9 @@ impl WebWorker {
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
-                // process.exit() may have run during load; don't clobber its code.
-                if !self.exit_called.load(Ordering::Relaxed) {
+                // A stop (process.exit(), a fatal error, terminate()) is not a failed load: the
+                // code is its requester's to set.
+                if !self.has_requested_terminate() {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
@@ -1068,7 +1070,7 @@ impl WebWorker {
             && !self.exit_called.load(Ordering::Relaxed)
     }
 
-    /// process.exit() inside the worker. Worker-thread only.
+    /// process.exit() inside the worker, or its fatal error. Worker-thread only.
     ///
     /// Takes `&self` (not `&mut self`) because `request_termination` /
     /// other threads may concurrently hold `&WebWorker` on another
@@ -1151,6 +1153,8 @@ fn on_unhandled_rejection(
         return;
     }
 
+    vm.exit_handler.exit_code = 1;
+
     let mut error_instance = error_instance_or_exception
         .to_error()
         .unwrap_or(error_instance_or_exception);
@@ -1221,7 +1225,6 @@ fn on_unhandled_rejection(
     // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
     // and its processIsExiting guard stops shutdown() from running them twice.
     virtual_machine::ExitHandler::dispatch_on_exit(vm);
-    let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy
     // the `JSC::VM`, free the Bun `VirtualMachine` + arena, and report
@@ -1233,8 +1236,8 @@ fn on_unhandled_rejection(
     // second time (a second `workerGlobalScopeDestroyed` → double deref of
     // the proxy's thread-held reference).
     //
-    // Instead, request the stop as `exit()` does and unwind to `spin()`'s `shutdown()`.
-    vm.handle_ref().request_termination();
+    // Instead, stop as `process.exit()` does and unwind to `spin()`'s `shutdown()`.
+    worker.exit();
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can

@@ -438,6 +438,28 @@ declare module "bun" {
     expiresIn?: number;
 
     /**
+     * Size in bytes the upload must be, signed into the URL.
+     *
+     * A presigned URL otherwise places no limit on what is sent to it: the signature covers only
+     * the headers it names, so a caller handed a `PUT` URL may upload a body of any size. Setting
+     * this adds `content-length` to the signed headers, and S3 refuses anything whose body is a
+     * different length rather than storing it.
+     *
+     * Supported only when `method` is `PUT`, so this throws for any other method.
+     *
+     * @example
+     * ```ts
+     * // The upload must be exactly this many bytes, or S3 rejects it
+     * const url = file.presign({
+     *   method: "PUT",
+     *   expiresIn: 3600,
+     *   contentLength: 1024 * 1024
+     * });
+     * ```
+     */
+    contentLength?: number;
+
+    /**
      * The HTTP method allowed for the presigned URL.
      *
      * @example

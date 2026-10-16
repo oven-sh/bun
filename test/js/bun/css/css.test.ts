@@ -6162,10 +6162,14 @@ describe("css tests", () => {
     `,
     );
 
-    error_test('.foo { color: red } @namespace "http://example.com/foo";', "ParserError::UnexpectedNamespaceRule");
+    test('ERROR: .foo { color: red } @namespace "http://example.com/foo";', () => {
+      expect(() => minify_test_with_options('.foo { color: red } @namespace "http://example.com/foo";', "")).toThrow(
+        "@namespace rules must come before any other rules except @charset, @import, and @layer",
+      );
+    });
 
     // `bun pm diff` parses and prints CSS with no minify pass, then compares the two prints.
-    test("bun pm diff shows a dropped namespace prefix as a change", async () => {
+    test.concurrent("bun pm diff shows a dropped namespace prefix as a change", async () => {
       const xl = '@namespace xl "urn:example:xlink";\n';
       using dir = tempDir("css-namespace-pm-diff", {
         "a/dropped.css": `${xl}use[xl|href="#i"]{color:green}\n`,

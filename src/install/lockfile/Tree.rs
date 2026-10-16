@@ -58,7 +58,7 @@ impl Default for Tree {
 pub type Id = u32;
 
 const EXTERNAL_SIZE: usize = core::mem::size_of::<Id>()
-    + core::mem::size_of::<PackageID>()
+    + core::mem::size_of::<DependencyID>()
     + core::mem::size_of::<Id>()
     + core::mem::size_of::<DependencyIDSlice>();
 

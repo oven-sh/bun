@@ -19,8 +19,7 @@ pub(crate) use dev_server_body::is_allowed_host_header;
 
 pub(crate) mod router;
 
-#[path = "production.rs"]
-mod production_body;
+pub(crate) mod production;
 
 // `Bun__add{Bake,DevServer}SourceProvider*` host exports — the Rust side of
 // `BakeSourceProvider.h` / `DevServerSourceProvider.h`. Reached only via the
@@ -84,13 +83,6 @@ pub(crate) fn print_warning() {
         );
         Output::flush();
     }
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// production
-// ══════════════════════════════════════════════════════════════════════════
-pub(crate) mod production {
-    pub(crate) use super::production_body::{PerThread, build_command};
 }
 
 // ══════════════════════════════════════════════════════════════════════════

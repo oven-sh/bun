@@ -157,7 +157,7 @@
 "generic_body_not_generic:src/router/lib.rs" = 1
 
 [bun_runtime]
-"always_unwrapped_option:src/runtime/bake/production.rs" = 1
+"always_unwrapped_option:src/runtime/bake/production/per_thread.rs" = 1
 "always_unwrapped_option:src/runtime/cli/init_command.rs" = 1
 "always_unwrapped_option:src/runtime/node/node_fs.rs" = 1
 "always_unwrapped_option:src/runtime/webcore/streams.rs" = 1

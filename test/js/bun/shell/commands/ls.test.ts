@@ -1,6 +1,8 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { isPosix, isRoot, tempDir, tempDirWithFiles } from "harness";
+import { chmodSync, statSync, symlinkSync, utimesSync } from "node:fs";
+import { join } from "node:path";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -121,12 +123,116 @@ describe.concurrent("bunshell ls", () => {
       await TestBuilder.command`ls -d foo`.setTempdir(tempdir).stdout("foo\n").run();
     });
 
-    // test("-1 flag lists one file per line", async () => {
-    //   await TestBuilder.command`ls -1`
-    //     .setTempdir(tempdir)
-    //     .stdout(s => expect(s.split("\n").filter(l => l.trim())).toEqual(["a", "b", "c", "foo"]))
-    //     .run();
-    // });
+    test("-1 flag lists one file per line", async () => {
+      await TestBuilder.command`ls -1`.setTempdir(tempdir).stdout("a\nb\nc\nfoo\n").run();
+    });
+  });
+
+  describe("order and type flags", () => {
+    // Names, sizes and mtimes each give a different order:
+    //   name:  big empty mid
+    //   size:  big(99) mid(2) empty(0)
+    //   mtime: mid(newest) big empty(oldest)
+    function fixture() {
+      const dir = tempDir("ls-order", { big: Buffer.alloc(99, "x").toString(), empty: "", mid: "xy" });
+      utimesSync(join(String(dir), "empty"), 1_000_000, 1_000_000);
+      utimesSync(join(String(dir), "big"), 2_000_000, 2_000_000);
+      utimesSync(join(String(dir), "mid"), 3_000_000, 3_000_000);
+      return dir;
+    }
+
+    test("entries are sorted by name by default", async () => {
+      using dir = fixture();
+      await TestBuilder.command`ls`.setTempdir(String(dir)).stdout("big\nempty\nmid\n").run();
+    });
+
+    test("-r reverses the order", async () => {
+      using dir = fixture();
+      await TestBuilder.command`ls -r`.setTempdir(String(dir)).stdout("mid\nempty\nbig\n").run();
+    });
+
+    test("-t sorts newest first, -tr oldest first", async () => {
+      using dir = fixture();
+      await TestBuilder.command`ls -t`.setTempdir(String(dir)).stdout("mid\nbig\nempty\n").run();
+      await TestBuilder.command`ls -tr`.setTempdir(String(dir)).stdout("empty\nbig\nmid\n").run();
+      await TestBuilder.command`ls -rt .`.setTempdir(String(dir)).stdout("empty\nbig\nmid\n").run();
+    });
+
+    test("-S sorts largest first", async () => {
+      using dir = fixture();
+      await TestBuilder.command`ls -S`.setTempdir(String(dir)).stdout("big\nmid\nempty\n").run();
+      await TestBuilder.command`ls -Sr`.setTempdir(String(dir)).stdout("empty\nmid\nbig\n").run();
+    });
+
+    test("-l shows the -t order too", async () => {
+      using dir = fixture();
+      await TestBuilder.command`ls -lt`
+        .setTempdir(String(dir))
+        .stdout(s => expect(s.split("\n").map(l => l.split(" ").at(-1))).toEqual(["mid", "big", "empty", ""]))
+        .run();
+    });
+
+    test("-p marks directories", async () => {
+      using dir = tempDir("ls-p", { "sub/inner": "", plain: "" });
+      await TestBuilder.command`ls -p`.setTempdir(String(dir)).stdout("plain\nsub/\n").run();
+      await TestBuilder.command`ls -p sub`.setTempdir(String(dir)).stdout("inner\n").run();
+      await TestBuilder.command`ls -dp sub`.setTempdir(String(dir)).stdout("sub/\n").run();
+    });
+
+    test("-l applies to a directory operand under -d", async () => {
+      using dir = tempDir("ls-ld", { "sub/inner": "" });
+      await TestBuilder.command`ls -ld sub`
+        .setTempdir(String(dir))
+        .stdout(s => expect([s[0], s.trimEnd().split(" ").at(-1)]).toEqual(["d", "sub"]))
+        .run();
+    });
+
+    test.if(isPosix)("-F marks directories, executables, symlinks and FIFOs", async () => {
+      using dir = tempDir("ls-F", { "sub/inner": "", plain: "", "run.sh": "#!/bin/sh\n" });
+      chmodSync(join(String(dir), "run.sh"), 0o755);
+      symlinkSync("plain", join(String(dir), "link"));
+      expect(Bun.spawnSync({ cmd: ["mkfifo", join(String(dir), "pipe")] }).exitCode).toBe(0);
+      await TestBuilder.command`ls -F`.setTempdir(String(dir)).stdout("link@\npipe|\nplain\nrun.sh*\nsub/\n").run();
+    });
+
+    test("-i prefixes the inode number", async () => {
+      using dir = fixture();
+      const expected = ["big", "empty", "mid"].map(
+        name => `${statSync(join(String(dir), name), { bigint: true }).ino} ${name}`,
+      );
+      await TestBuilder.command`ls -i`
+        .setTempdir(String(dir))
+        .stdout(s => expect(s.trimEnd().split("\n").map(l => l.trimStart())).toEqual(expected))
+        .run();
+    });
+
+    test("-h prints -l sizes with units", async () => {
+      using dir = tempDir("ls-h", {
+        small: Buffer.alloc(99, "x").toString(),
+        kib: Buffer.alloc(1536, "x").toString(),
+      });
+      await TestBuilder.command`ls -lh`
+        .setTempdir(String(dir))
+        .stdout(s =>
+          expect(Object.fromEntries(s.trimEnd().split("\n").map(l => [l.split(" ").at(-1), l.split(/ +/)[4]]))).toEqual({
+            kib: "1.5K",
+            small: "99",
+          }),
+        )
+        .run();
+    });
+
+    test("flags that are not implemented fail instead of being ignored", async () => {
+      using dir = fixture();
+      for (const flag of ["-x", "-m", "-L", "-ax"]) {
+        await TestBuilder.command`ls ${flag}`
+          .setTempdir(String(dir))
+          .exitCode(1)
+          .stdout("")
+          .stderr(`ls: unsupported option, please open a GitHub issue -- -${flag.at(-1)}\n`)
+          .run();
+      }
+    });
   });
 
   describe("multiple arguments", () => {

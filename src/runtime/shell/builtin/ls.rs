@@ -45,6 +45,8 @@ enum ParseFlag {
     ContinueParsing,
     Done,
     IllegalOption(Box<[u8]>),
+    /// A real `ls` flag that this builtin does not implement.
+    Unsupported(Box<[u8]>),
 }
 
 impl Ls {
@@ -72,18 +74,31 @@ impl Ls {
                 // which case we run once with ".".
                 let paths_start = match Self::parse_opts(interp, cmd) {
                     Ok(p) => p,
-                    Err(opt) => {
-                        let buf: Vec<u8> = Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
-                            Some(Kind::Ls),
-                            format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
-                        )
+                    Err(e) => {
+                        let buf: Vec<u8> = match e {
+                            ParseFlag::Unsupported(opt) => Builtin::fmt_error_arena(
+                                interp,
+                                cmd,
+                                Some(Kind::Ls),
+                                format_args!(
+                                    "unsupported option, please open a GitHub issue -- -{}\n",
+                                    bstr::BStr::new(&opt[..])
+                                ),
+                            ),
+                            ParseFlag::IllegalOption(opt) => Builtin::fmt_error_arena(
+                                interp,
+                                cmd,
+                                Some(Kind::Ls),
+                                format_args!("illegal option -- {}\n", bstr::BStr::new(&opt[..])),
+                            ),
+                            ParseFlag::ContinueParsing | ParseFlag::Done => unreachable!(),
+                        }
                         .to_vec();
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
                         return Builtin::write_failing_error(interp, cmd, &buf, 1);
                     }
                 };
+                Self::state_mut(interp, cmd).opts.resolve();
 
                 let argc = Builtin::of(interp, cmd).args_slice().len();
                 let task_count = match paths_start {
@@ -220,8 +235,8 @@ impl Ls {
     }
 
     /// Returns the index of the first non-flag arg, or `None` if there are no
-    /// positional args. `Err` carries the offending flag byte.
-    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, Box<[u8]>> {
+    /// positional args. `Err` is `IllegalOption` or `Unsupported`.
+    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<Option<usize>, ParseFlag> {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             return Ok(None);
@@ -232,7 +247,7 @@ impl Ls {
             match Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, flag) {
                 ParseFlag::Done => return Ok(Some(idx)),
                 ParseFlag::ContinueParsing => {}
-                ParseFlag::IllegalOption(s) => return Err(s),
+                e @ (ParseFlag::IllegalOption(_) | ParseFlag::Unsupported(_)) => return Err(e),
             }
             idx += 1;
         }
@@ -247,19 +262,35 @@ impl Ls {
         if flag.len() == 1 {
             return ParseFlag::IllegalOption(Box::from(&b"-"[..]));
         }
-        for &ch in &flag[1..] {
+        for (i, &ch) in flag[1..].iter().enumerate() {
             match ch {
                 b'a' => opts.dotfiles = DotfileMode::All,
                 b'A' => opts.dotfiles = DotfileMode::AlmostAll,
                 b'd' => opts.list_directories = true,
-                b'l' => opts.long_listing = true,
+                // `-n`: uid/gid are always printed numerically, so it is just `-l`.
+                b'l' | b'n' => opts.long_listing = true,
                 b'R' => opts.recursive = true,
-                // The remaining short flags are recognised but currently no-op.
-                b'r' | b'1' | b'b' | b'B' | b'c' | b'C' | b'D' | b'f' | b'F' | b'g' | b'G'
-                | b'h' | b'H' | b'i' | b'I' | b'k' | b'L' | b'm' | b'n' | b'N' | b'o' | b'p'
-                | b'q' | b'Q' | b's' | b'S' | b't' | b'T' | b'u' | b'U' | b'v' | b'w' | b'x'
-                | b'X' | b'Z' => {}
-                _ => return ParseFlag::IllegalOption(Box::from(&flag[1..2])),
+                b'r' => opts.reverse = true,
+                b't' => opts.sort = Sort::Time,
+                b'S' => opts.sort = Sort::Size,
+                b'U' => opts.sort = Sort::None,
+                b'f' => {
+                    opts.sort = Sort::None;
+                    opts.dotfiles = DotfileMode::All;
+                }
+                b'c' => opts.time = TimeField::Ctime,
+                b'u' => opts.time = TimeField::Atime,
+                b'F' => opts.indicator = Indicator::Classify,
+                b'p' => opts.indicator = Indicator::Slash,
+                b'h' => opts.human_readable = true,
+                b'i' => opts.inode = true,
+                // One entry per line with literal names is the only output format.
+                b'1' | b'N' => {}
+                b'b' | b'B' | b'C' | b'D' | b'g' | b'G' | b'H' | b'I' | b'k' | b'L' | b'm'
+                | b'o' | b'q' | b'Q' | b's' | b'T' | b'v' | b'w' | b'x' | b'X' | b'Z' => {
+                    return ParseFlag::Unsupported(Box::from(&flag[1 + i..2 + i]));
+                }
+                _ => return ParseFlag::IllegalOption(Box::from(&flag[1 + i..2 + i])),
             }
         }
         ParseFlag::ContinueParsing
@@ -480,10 +511,14 @@ impl ShellLsTask {
             }
 
             let mut iterator = dir_iterator::iterate(fd);
+            let mut entries: Vec<Entry> = Vec::new();
 
             // If `-a` is used, "." and ".." should show up as results. However,
             // our `DirIterator` abstraction skips them, so add them now.
-            this.add_dot_entries_if_needed(fd);
+            if this.opts.dotfiles == DotfileMode::All {
+                entries.push(this.entry_at(fd, b".", bun_sys::EntryKind::Directory));
+                entries.push(this.entry_at(fd, b"..", bun_sys::EntryKind::Directory));
+            }
 
             loop {
                 match iterator.next() {
@@ -494,7 +529,10 @@ impl ShellLsTask {
                     Ok(None) => break,
                     Ok(Some(current)) => {
                         let name = current.name.slice_u8();
-                        this.add_entry(name, fd);
+                        if this.should_skip_entry(name) {
+                            continue;
+                        }
+                        entries.push(this.entry_at(fd, name, current.kind));
                         if matches!(current.kind, bun_sys::EntryKind::Directory)
                             && this.opts.recursive
                         {
@@ -503,11 +541,27 @@ impl ShellLsTask {
                     }
                 }
             }
+
+            sort_entries(&mut entries, &this.opts);
+            this.write_entries(&entries);
             return;
         }
 
-        this.output.extend_from_slice(this.path.as_bytes());
-        this.output.push(b'\n');
+        // `-d`: the operand itself is the entry. `lstat`, since GNU does not
+        // dereference an operand under `-d`.
+        let stat = if this.opts.needs_stat() || this.opts.indicator != Indicator::None {
+            shell_lstatat(this.cwd, this.path.as_zstr()).ok()
+        } else {
+            None
+        };
+        let entry = Entry {
+            name: Box::from(this.path.as_bytes()),
+            kind: stat.as_ref().map_or(bun_sys::EntryKind::Directory, |st| {
+                bun_sys::kind_from_mode(st.st_mode as bun_core::Mode)
+            }),
+            stat,
+        };
+        this.write_entries(core::slice::from_ref(&entry));
     }
 
     /// coreutils operand rule: `stat`, and on ENOENT or ELOOP `lstat` so a symlink is itself.
@@ -528,12 +582,12 @@ impl ShellLsTask {
         match shell_lstatat(self.cwd, self.path.as_zstr()) {
             Ok(stat) => {
                 // An operand is never subject to the -a/-A filter.
-                let name = ZBox::from_bytes(self.path.as_bytes());
-                if self.opts.long_listing {
-                    self.add_entry_long_from_stat(name.as_bytes(), &stat);
-                } else {
-                    self.add_entry_short(name.as_bytes());
-                }
+                let entry = Entry {
+                    name: Box::from(self.path.as_bytes()),
+                    kind: bun_sys::kind_from_mode(stat.st_mode as bun_core::Mode),
+                    stat: Some(stat),
+                };
+                self.write_entries(core::slice::from_ref(&entry));
             }
             Err(e) => self.err = Some(self.error_with_path(&e)),
         }
@@ -547,40 +601,73 @@ impl ShellLsTask {
         }
     }
 
-    // TODO more complex output like multi-column
-    fn add_entry(&mut self, name: &[u8], dir_fd: bun_sys::Fd) {
-        if self.should_skip_entry(name) {
-            return;
-        }
-        if self.opts.long_listing {
-            self.add_entry_long(name, dir_fd);
+    /// `kind` is the dirent type; it is refined from the `lstat` when one is
+    /// taken (some filesystems report `Unknown`).
+    fn entry_at(&self, dir_fd: bun_sys::Fd, name: &[u8], kind: bun_sys::EntryKind) -> Entry {
+        let wants_stat = self.opts.needs_stat()
+            || (self.opts.indicator == Indicator::Slash && kind == bun_sys::EntryKind::Unknown);
+        let stat = if wants_stat {
+            // lstat, so a symlink is listed as itself (`l`, `@`).
+            bun_sys::lstatat(dir_fd, ZBox::from_bytes(name).as_zstr()).ok()
         } else {
-            self.add_entry_short(name);
+            None
+        };
+        let kind = match &stat {
+            Some(st) => bun_sys::kind_from_mode(st.st_mode as bun_core::Mode),
+            None => kind,
+        };
+        Entry {
+            name: Box::from(name),
+            kind,
+            stat,
         }
     }
 
-    fn add_entry_short(&mut self, name: &[u8]) {
-        self.output.reserve(name.len() + 1);
-        self.output.extend_from_slice(name);
-        self.output.push(b'\n');
-    }
-
-    fn add_entry_long(&mut self, name: &[u8], dir_fd: bun_sys::Fd) {
-        // Use lstatat to not follow symlinks (so symlinks show as 'l' type).
-        let name_z = ZBox::from_bytes(name);
-        match bun_sys::lstatat(dir_fd, name_z.as_zstr()) {
-            Err(_) => {
-                // If stat fails, just output the name with placeholders.
-                self.output
-                    .extend_from_slice(b"?????????? ? ? ? ?            ? ");
-                self.output.extend_from_slice(name);
-                self.output.push(b'\n');
+    // TODO more complex output like multi-column
+    fn write_entries(&mut self, entries: &[Entry]) {
+        let inode_width = if self.opts.inode {
+            entries
+                .iter()
+                .map(|e| {
+                    e.stat
+                        .as_ref()
+                        .map_or(1, |st| count_digits(st.st_ino as u64))
+                })
+                .max()
+                .unwrap_or(1)
+        } else {
+            0
+        };
+        for entry in entries {
+            if self.opts.inode {
+                match &entry.stat {
+                    Some(st) => {
+                        let _ = write!(self.output, "{:>inode_width$} ", st.st_ino as u64);
+                    }
+                    None => {
+                        let _ = write!(self.output, "{:>inode_width$} ", "?");
+                    }
+                }
             }
-            Ok(stat) => self.add_entry_long_from_stat(name, &stat),
+            if self.opts.long_listing {
+                match &entry.stat {
+                    Some(st) => self.write_long_columns(st),
+                    // If stat fails, just output the name with placeholders.
+                    None => self
+                        .output
+                        .extend_from_slice(b"?????????? ? ? ? ?            ? "),
+                }
+            }
+            self.output.extend_from_slice(&entry.name);
+            if let Some(c) = self.indicator_for(entry) {
+                self.output.push(c);
+            }
+            self.output.push(b'\n');
         }
     }
 
-    fn add_entry_long_from_stat(&mut self, name: &[u8], stat: &bun_sys::Stat) {
+    /// Everything in a `-l` line before the name, with its trailing space.
+    fn write_long_columns(&mut self, stat: &bun_sys::Stat) {
         // File type and permissions.
         let mode: u32 = stat.st_mode as u32;
         let file_type = get_file_type_char(mode);
@@ -593,12 +680,14 @@ impl ShellLsTask {
         let uid: u64 = stat.st_uid as u64;
         let gid: u64 = stat.st_gid as u64;
 
-        // File size.
-        let size: i64 = stat.st_size as i64;
+        let size = stat.st_size.max(0) as u64;
 
-        // Modification time.
-        let mtime = bun_sys::stat_mtime(stat);
-        let time_str = format_time(mtime.sec, self.now_secs);
+        let time = match self.opts.time {
+            TimeField::Mtime => bun_sys::stat_mtime(stat),
+            TimeField::Ctime => bun_sys::stat_ctime(stat),
+            TimeField::Atime => bun_sys::stat_atime(stat),
+        };
+        let time_str = format_time(time.sec, self.now_secs);
 
         // SAFETY: `format_permissions` only writes ASCII bytes (`r`/`w`/`x`/`s`/`S`/`t`/`T`/`-`).
         let perms_str = unsafe { core::str::from_utf8_unchecked(&perms) };
@@ -606,17 +695,37 @@ impl ShellLsTask {
         let time_s = unsafe { core::str::from_utf8_unchecked(&time_str) };
         let _ = write!(
             self.output,
-            "{}{} {:>3} {:>5} {:>5} {:>8} {} ",
-            file_type as char, perms_str, nlink, uid, gid, size, time_s,
+            "{}{} {:>3} {:>5} {:>5} ",
+            file_type as char, perms_str, nlink, uid, gid
         );
-        self.output.extend_from_slice(name);
-        self.output.push(b'\n');
+        if self.opts.human_readable {
+            let human = format_human_size(size);
+            // SAFETY: `format_human_size` only writes ASCII digits, `.` and a unit letter.
+            let human = unsafe { core::str::from_utf8_unchecked(human.as_slice()) };
+            let _ = write!(self.output, "{:>5} {} ", human, time_s);
+        } else {
+            let _ = write!(self.output, "{:>8} {} ", size, time_s);
+        }
     }
 
-    fn add_dot_entries_if_needed(&mut self, dir_fd: bun_sys::Fd) {
-        // `add_entry()` already checks if we can add "." and ".." to the result.
-        self.add_entry(b".", dir_fd);
-        self.add_entry(b"..", dir_fd);
+    fn indicator_for(&self, entry: &Entry) -> Option<u8> {
+        use bun_sys::EntryKind as K;
+        match self.opts.indicator {
+            Indicator::None => None,
+            Indicator::Slash => (entry.kind == K::Directory).then_some(b'/'),
+            Indicator::Classify => match entry.kind {
+                K::Directory => Some(b'/'),
+                K::SymLink => Some(b'@'),
+                K::NamedPipe => Some(b'|'),
+                K::UnixDomainSocket => Some(b'='),
+                K::File => entry
+                    .stat
+                    .as_ref()
+                    .filter(|st| st.st_mode as u32 & (S::IXUSR | S::IXGRP | S::IXOTH) as u32 != 0)
+                    .map(|_| b'*'),
+                _ => None,
+            },
+        }
     }
 
     fn error_with_path(&self, err: &bun_sys::Error) -> bun_sys::Error {
@@ -632,6 +741,116 @@ impl ShellLsTask {
         let cmd = unsafe { this.as_ref() }.cmd;
         Ls::on_shell_ls_task_done(interp, cmd, this);
     }
+}
+
+/// One name to list, plus its `lstat` when an option needs it.
+struct Entry {
+    name: Box<[u8]>,
+    kind: bun_sys::EntryKind,
+    /// `None` when no option needs it or the `lstat` failed (GNU lists such
+    /// an entry with `?` placeholders too).
+    stat: Option<bun_sys::Stat>,
+}
+
+/// Orders one directory listing the way GNU `ls` does under `LC_ALL=C`: ties
+/// on time or size fall back to the name, and `-r` reverses the whole order.
+fn sort_entries(entries: &mut [Entry], opts: &Opts) {
+    use core::cmp::Ordering;
+    fn time_key(e: &Entry, field: TimeField) -> (i64, i64) {
+        e.stat.as_ref().map_or((i64::MIN, 0), |st| {
+            let t = match field {
+                TimeField::Mtime => bun_sys::stat_mtime(st),
+                TimeField::Ctime => bun_sys::stat_ctime(st),
+                TimeField::Atime => bun_sys::stat_atime(st),
+            };
+            (t.sec, t.nsec)
+        })
+    }
+    fn size_key(e: &Entry) -> i64 {
+        e.stat.as_ref().map_or(i64::MIN, |st| st.st_size as i64)
+    }
+    let compare = |a: &Entry, b: &Entry| -> Ordering {
+        let ord = match opts.sort {
+            Sort::Name | Sort::None => a.name.cmp(&b.name),
+            // Newest first.
+            Sort::Time => time_key(b, opts.time)
+                .cmp(&time_key(a, opts.time))
+                .then_with(|| a.name.cmp(&b.name)),
+            // Largest first.
+            Sort::Size => size_key(b)
+                .cmp(&size_key(a))
+                .then_with(|| a.name.cmp(&b.name)),
+        };
+        if opts.reverse { ord.reverse() } else { ord }
+    };
+    if opts.sort != Sort::None {
+        entries.sort_unstable_by(compare);
+    }
+}
+
+fn count_digits(mut n: u64) -> usize {
+    let mut digits = 1;
+    while n >= 10 {
+        n /= 10;
+        digits += 1;
+    }
+    digits
+}
+
+/// GNU `-h`: powers of 1024, rounded up, one decimal below 10 (`99`, `1.5K`,
+/// `23M`, `1.0G`).
+struct HumanSize {
+    buf: [u8; 8],
+    len: usize,
+}
+
+impl HumanSize {
+    fn as_slice(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+}
+
+fn format_human_size(size: u64) -> HumanSize {
+    const UNITS: &[u8] = b"KMGTPE";
+    let mut out = HumanSize {
+        buf: [0; 8],
+        len: 0,
+    };
+    if size < 1024 {
+        out.len = bun_core::fmt::buf_print_len(&mut out.buf, format_args!("{}", size)).unwrap_or(0);
+        return out;
+    }
+    let mut unit = 0usize;
+    let mut denom: u128 = 1024;
+    while (size as u128) >= denom * 1024 && unit + 1 < UNITS.len() {
+        denom *= 1024;
+        unit += 1;
+    }
+    let size = size as u128;
+    // Round up to one decimal; `10.0` and above drop the decimal.
+    let tenths = (size * 10).div_ceil(denom);
+    out.len = if tenths < 100 {
+        bun_core::fmt::buf_print_len(
+            &mut out.buf,
+            format_args!("{}.{}{}", tenths / 10, tenths % 10, UNITS[unit] as char),
+        )
+    } else {
+        let whole = size.div_ceil(denom);
+        if whole < 1024 || unit + 1 == UNITS.len() {
+            bun_core::fmt::buf_print_len(
+                &mut out.buf,
+                format_args!("{}{}", whole, UNITS[unit] as char),
+            )
+        } else {
+            // e.g. 1023.5K rounds up into the next unit.
+            bun_core::fmt::buf_print_len(
+                &mut out.buf,
+                format_args!("1.0{}", UNITS[unit + 1] as char),
+            )
+        }
+    }
+    .unwrap_or(0);
+    out
 }
 
 fn get_file_type_char(mode: u32) -> u8 {
@@ -809,8 +1028,43 @@ pub(crate) enum DotfileMode {
     All,
 }
 
-/// Only the fields actually consulted are kept; the rest are recognised by
-/// `parse_flag` but not stored.
+/// Entry order within one directory listing. The last of `-t` / `-S` / `-U` /
+/// `-f` on the command line wins (GNU coreutils).
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Sort {
+    /// Byte-wise by name, like `LC_ALL=C ls`.
+    #[default]
+    Name,
+    /// `-t`: newest first by the `-c` / `-u` / default-mtime field.
+    Time,
+    /// `-S`: largest first.
+    Size,
+    /// `-U`, `-f`: directory order.
+    None,
+}
+
+/// Which timestamp `-l` shows and `-t` sorts by.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum TimeField {
+    #[default]
+    Mtime,
+    /// `-c`
+    Ctime,
+    /// `-u`
+    Atime,
+}
+
+/// Suffix appended to each name.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Indicator {
+    #[default]
+    None,
+    /// `-p`: `/` after directories.
+    Slash,
+    /// `-F`: `/` directories, `@` symlinks, `|` FIFOs, `=` sockets, `*` executables.
+    Classify,
+}
+
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Opts {
     pub(crate) dotfiles: DotfileMode,
@@ -820,4 +1074,32 @@ pub(crate) struct Opts {
     pub(crate) long_listing: bool,
     /// `-R`, `--recursive` — list subdirectories recursively
     pub(crate) recursive: bool,
+    /// `-r` — reverse whatever the sort order is
+    pub(crate) reverse: bool,
+    pub(crate) sort: Sort,
+    pub(crate) time: TimeField,
+    pub(crate) indicator: Indicator,
+    /// `-h` — `-l` sizes as `1.5K`, `23M`
+    pub(crate) human_readable: bool,
+    /// `-i` — prefix each entry with its inode number
+    pub(crate) inode: bool,
+}
+
+impl Opts {
+    /// GNU: `-c` / `-u` without `-l` or an explicit sort flag also sort by
+    /// that time.
+    fn resolve(&mut self) {
+        if self.time != TimeField::Mtime && self.sort == Sort::Name && !self.long_listing {
+            self.sort = Sort::Time;
+        }
+    }
+
+    /// Whether listing an entry needs its `lstat` (beyond the name and the
+    /// dirent type).
+    fn needs_stat(&self) -> bool {
+        self.long_listing
+            || self.inode
+            || matches!(self.sort, Sort::Time | Sort::Size)
+            || self.indicator == Indicator::Classify
+    }
 }

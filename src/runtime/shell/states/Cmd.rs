@@ -436,11 +436,9 @@ impl Cmd {
             }
         }
 
-        // No argv[0] at all → exit with the exit code from a sole
-        // command-substitution (stashed by `child_done` from
-        // `Expansion::out_exit_code`), else 0. An empty-string argv[0] is a
-        // real word (e.g. `""` or `"$empty"`) and falls through to `which()`
-        // → "command not found".
+        // No argv[0] → exit
+        // with the exit code from a sole command-substitution (stashed by
+        // `child_done` from `Expansion::out_exit_code`), else 0.
         let first_arg: Vec<u8> = {
             let me = interp.as_cmd(this);
             match me.args.first() {

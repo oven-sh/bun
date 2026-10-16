@@ -48,8 +48,7 @@ pub(crate) struct Expansion {
     /// Without this, `$unset` and `""` are indistinguishable in
     /// [`ExpansionOut`] (both → `buf=[], bounds=[]`) and Cmd would push an
     /// empty arg for unset vars — diverging from POSIX field-splitting.
-    /// A quoted expansion (`"$unset"`) does not set this: it is a fact of the
-    /// word, read from `ast::Atom::has_quoted_expansion`.
+    /// A quoted expansion (`"$unset"`) does not set this: see `ast::Atom::has_quoted_expansion`.
     pub(crate) has_quoted_empty: bool,
     /// Exit code of a sole-command-substitution arg — propagated to `Cmd`
     /// so `$(false)` as argv0 fails.

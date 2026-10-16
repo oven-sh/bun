@@ -679,8 +679,7 @@ pub mod ast {
     pub enum SimpleAtom<'arena> {
         Var(&'arena [u8]),
         VarArgv(u8),
-        /// `"$VAR"`: expands like `Var`. A `bool` on `Var` would grow `SimpleAtom` from
-        /// 24 to 32 bytes: the tag lives in the niche of `CmdSubst::quoted`.
+        /// `"$VAR"`. A variant, because a `bool` on `Var` grows `SimpleAtom` from 24 to 32 bytes.
         QuotedVar(&'arena [u8]),
         /// `"$N"`: expands like `VarArgv`.
         QuotedVarArgv(u8),
@@ -708,8 +707,7 @@ pub mod ast {
             matches!(self, SimpleAtom::Asterisk | SimpleAtom::DoubleAsterisk)
         }
 
-        /// `"$VAR"`, `"$N"` or `"$(cmd)"`. There is no wildcard arm, so a new
-        /// atom kind must say which it is.
+        /// `"$VAR"`, `"$N"` or `"$(cmd)"`. No wildcard arm: a new atom kind must say which it is.
         pub fn is_quoted_expansion(&self) -> bool {
             match self {
                 SimpleAtom::QuotedVar(_) | SimpleAtom::QuotedVarArgv(_) => true,

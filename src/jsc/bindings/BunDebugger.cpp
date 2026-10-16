@@ -644,7 +644,7 @@ extern "C" void BunDebugger__willHotReload()
 // Appended by the debugger thread (one per --inspect / BUN_INSPECT ws+unix:// URL), walked by
 // whichever thread reloads the process, possibly the crash handler; entries are never freed.
 struct InspectorUnixSocket {
-    CString path;
+    UTF8CString path;
     InspectorUnixSocket* next;
 };
 static std::atomic<InspectorUnixSocket*> inspectorUnixSockets { nullptr };
@@ -668,7 +668,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_addInspectorUnixSocketPath, (JSGlobalObject 
 extern "C" void BunDebugger__willReloadProcess()
 {
     for (auto* socket = inspectorUnixSockets.load(); socket; socket = socket->next)
-        Bun__unlink(socket->path.data(), socket->path.length());
+        Bun__unlink(socket->path.legacyCStringPointer(), socket->path.length());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))

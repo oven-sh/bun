@@ -1286,8 +1286,34 @@ fn look_ahead_from_project_folder(this: &mut PackageManager, id: DependencyID, a
     let mut buf = bun_paths::path_buffer_pool::get();
     let abs = project_path(path, &mut buf[..]);
     if let Some(listed) = FolderResolution::listed_dependencies(asked.version.tag, abs, this) {
-        look_ahead_from(this, &listed);
+        let locked = names_locked_for_folder(this, listed.package.name_hash);
+        look_ahead_from(this, &listed, &locked);
     }
+}
+
+/// The names that the folder package `name_hash` had resolved in bun.lock. When its package.json is
+/// read again, `Diff::keep_resolutions` leaves the unchanged ones on their versions, which takes no
+/// manifest. A changed one is left out here too, and requests its manifest when its turn comes.
+fn names_locked_for_folder(
+    this: &PackageManager,
+    name_hash: PackageNameHash,
+) -> Vec<PackageNameHash> {
+    use crate::resolution::Tag;
+    let lockfile = &*this.lockfile;
+    if this.to_update {
+        return Vec::new();
+    }
+    let resolutions = lockfile.packages.items_resolution();
+    let lists = lockfile.packages.items_dependencies();
+    (lockfile.packages_named(name_hash).iter())
+        .filter(|&&id| {
+            id < lockfile.loaded_package_count
+                && matches!(resolutions[id as usize].tag, Tag::Workspace | Tag::Folder)
+        })
+        .flat_map(|&id| lists[id as usize].begin() as usize..lists[id as usize].end() as usize)
+        .filter(|&row| lockfile.buffers.resolutions[row] != invalid_package_id)
+        .map(|row| lockfile.buffers.dependencies[row].name_hash)
+        .collect()
 }
 
 impl Wanted {
@@ -1493,9 +1519,14 @@ impl Follow<'_> {
     }
 }
 
-/// Looks ahead from what a package that waits for its turn depends on.
+/// Looks ahead from what a package that waits for its turn depends on, except for the names in
+/// `locked`.
 #[cold]
-pub(crate) fn look_ahead_from(this: &mut PackageManager, listed: &ListedDependencies) {
+pub(crate) fn look_ahead_from(
+    this: &mut PackageManager,
+    listed: &ListedDependencies,
+    locked: &[PackageNameHash],
+) {
     let follows_peers = this.look_ahead.in_peer_pass;
     let lockfile = &*this.lockfile;
     let buf = listed.lockfile.buffers.string_bytes.as_slice();
@@ -1512,6 +1543,7 @@ pub(crate) fn look_ahead_from(this: &mut PackageManager, listed: &ListedDependen
             !row.behavior.is_bundled()
                 && !row.behavior.is_optional_peer()
                 && (follows_peers || !row.behavior.is_peer())
+                && !locked.contains(&row.name_hash)
         })
         .filter_map(|row| {
             follow.dependency(

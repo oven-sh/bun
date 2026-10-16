@@ -527,7 +527,7 @@ impl PackageManager {
                 Features::NPM,
             );
             if parsed.is_ok() {
-                enqueue::look_ahead_from(self, &listed);
+                enqueue::look_ahead_from(self, &listed, &[]);
             }
         }
         let data = ExtractData {

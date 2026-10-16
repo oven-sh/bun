@@ -178,7 +178,6 @@ public:
     IsoSubspace* m_subspaceForJSHash { nullptr };
     IsoSubspace* m_subspaceForServerRouteList { nullptr };
     IsoSubspace* m_subspaceForBunRequest { nullptr };
-    IsoSubspace* m_subspaceForBakeResponse { nullptr };
     IsoSubspace* m_subspaceForJSDiffieHellman { nullptr };
     IsoSubspace* m_subspaceForJSDiffieHellmanGroup { nullptr };
     IsoSubspace* m_subspaceForJSECDH { nullptr };
